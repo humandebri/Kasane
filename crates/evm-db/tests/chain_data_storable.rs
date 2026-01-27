@@ -107,6 +107,8 @@ fn chain_state_roundtrip() {
     state.mining_scheduled = false;
     state.next_queue_seq = 12;
     state.mining_interval_ms = 7_000;
+    state.base_fee = 1;
+    state.min_gas_price = 2;
     let bytes = state.to_bytes();
     let decoded = ChainStateV1::from_bytes(bytes);
     assert_eq!(state, decoded);

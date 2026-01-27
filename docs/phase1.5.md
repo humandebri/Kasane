@@ -214,6 +214,23 @@ Phase1なら簡略化して良い：
 
 ---
 
+## 5.3 ガスの実運用ルール（Phase1.5 固定）
+
+* base_fee は **0（wei）固定**。運用で更新できるが、自動調整はしない
+* legacy tx は **受け入れて変換**する
+  * `max_fee = gas_price`
+  * `max_priority = gas_price`
+* EIP-1559 風の有効価格は次で決める
+  * `effective = min(max_fee, base_fee + max_priority)`
+  * `base_fee + max_priority` は **checked/飽和**で計算（panic禁止）
+* 拒否条件
+  * `max_fee < base_fee`
+  * `max_priority > max_fee`
+* receipt に `effective_gas_price` を保存
+* **キュー順序はFIFO維持**（並べ替えは将来に回す）
+
+---
+
 ## 6) 最小のインタフェース案（Canister APIとして）
 
 Phase1で揃えるならこのセットが美しい：

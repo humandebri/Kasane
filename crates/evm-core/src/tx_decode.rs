@@ -132,7 +132,7 @@ pub fn decode_eth_raw_tx(bytes: &[u8]) -> Result<TxEnv, DecodeError> {
         nonce,
         chain_id,
         access_list: Default::default(),
-        gas_priority_fee: None,
+        gas_priority_fee: Some(gas_price),
         blob_hashes: Default::default(),
         max_fee_per_blob_gas: 0,
         authorization_list: Default::default(),
