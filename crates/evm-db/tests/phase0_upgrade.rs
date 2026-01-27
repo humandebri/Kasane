@@ -1,7 +1,7 @@
 //! どこで: Phase0テスト / 何を: UPGRADES領域のversion書き込み / なぜ: upgrade耐性の確認
 
-use evm_backend::memory::{get_memory, AppMemoryId};
-use evm_backend::upgrade::pre_upgrade;
+use evm_db::memory::{get_memory, AppMemoryId};
+use evm_db::upgrade::pre_upgrade;
 use ic_stable_structures::reader::Reader;
 
 #[test]

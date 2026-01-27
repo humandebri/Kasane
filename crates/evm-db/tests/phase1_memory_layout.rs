@@ -1,6 +1,6 @@
 //! どこで: Phase1テスト / 何を: MemoryId拡張の固定 / なぜ: レイアウト破壊を防ぐため
 
-use evm_backend::memory::AppMemoryId;
+use evm_db::memory::AppMemoryId;
 
 #[test]
 fn phase1_memory_ids_are_fixed() {

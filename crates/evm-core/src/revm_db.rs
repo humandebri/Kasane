@@ -1,9 +1,9 @@
 //! どこで: Phase1のREVM DB実装 / 何を: StableStateへ接続 / なぜ: 実行エンジンと永続化を繋ぐため
 
 use crate::selfdestruct::selfdestruct_address;
-use evm_backend::stable_state::with_state_mut;
-use evm_backend::types::keys::{make_account_key, make_code_key, make_storage_key};
-use evm_backend::types::values::{AccountVal, CodeVal, U256Val};
+use evm_db::stable_state::with_state_mut;
+use evm_db::types::keys::{make_account_key, make_code_key, make_storage_key};
+use evm_db::types::values::{AccountVal, CodeVal, U256Val};
 use revm::database_interface::{Database, DatabaseCommit};
 use revm::primitives::{Address, B256, StorageKey, StorageValue, U256, KECCAK_EMPTY};
 use revm::state::{Account, AccountInfo, Bytecode};
@@ -17,7 +17,7 @@ impl Database for RevmStableDb {
     fn basic(&mut self, address: Address) -> Result<Option<AccountInfo>, Self::Error> {
         let addr = address_to_bytes(address);
         let key = make_account_key(addr);
-        let value = evm_backend::stable_state::with_state(|state| state.accounts.get(&key));
+        let value = evm_db::stable_state::with_state(|state| state.accounts.get(&key));
         let info = match value {
             Some(account) => account_val_to_info(&account),
             None => return Ok(None),
@@ -30,7 +30,7 @@ impl Database for RevmStableDb {
             return Ok(Bytecode::default());
         }
         let key = make_code_key(b256_to_bytes(code_hash));
-        let code = evm_backend::stable_state::with_state(|state| state.codes.get(&key));
+        let code = evm_db::stable_state::with_state(|state| state.codes.get(&key));
         let bytecode = match code {
             Some(CodeVal(bytes)) => Bytecode::new_legacy(bytes.into()),
             None => Bytecode::default(),
@@ -42,12 +42,12 @@ impl Database for RevmStableDb {
         let addr = address_to_bytes(address);
         let slot = u256_to_bytes(index);
         let key = make_storage_key(addr, slot);
-        let value = evm_backend::stable_state::with_state(|state| state.storage.get(&key));
+        let value = evm_db::stable_state::with_state(|state| state.storage.get(&key));
         Ok(value.map(u256_val_to_u256).unwrap_or(U256::ZERO))
     }
 
     fn block_hash(&mut self, number: u64) -> Result<B256, Self::Error> {
-        let hash = evm_backend::stable_state::with_state(|state| {
+        let hash = evm_db::stable_state::with_state(|state| {
             state.blocks.get(&number).map(|b| b.block_hash)
         });
         Ok(B256::from(hash.unwrap_or([0u8; 32])))

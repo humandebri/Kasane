@@ -1135,7 +1135,7 @@ version = "0.1.0"
 dependencies = [
  "candid",
  "evm-core",
- "evm_backend",
+ "evm-db",
  "ic-cdk",
  "serde",
 ]
@@ -1144,14 +1144,15 @@ dependencies = [
 name = "evm-core"
 version = "0.1.0"
 dependencies = [
- "evm_backend",
+ "alloy-rlp",
+ "evm-db",
  "ic-stable-structures",
  "revm",
  "tiny-keccak",
 ]
 
 [[package]]
-name = "evm_backend"
+name = "evm-db"
 version = "0.1.0"
 dependencies = [
  "candid",

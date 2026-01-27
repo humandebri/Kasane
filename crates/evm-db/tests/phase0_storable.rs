@@ -1,9 +1,9 @@
 //! どこで: Phase0テスト / 何を: Storable roundtrip検証 / なぜ: 凍結仕様の確認
 
-use evm_backend::types::keys::{
+use evm_db::types::keys::{
     make_account_key, make_code_key, make_storage_key,
 };
-use evm_backend::types::values::{AccountVal, CodeVal, U256Val};
+use evm_db::types::values::{AccountVal, CodeVal, U256Val};
 use ic_stable_structures::Storable;
 use std::panic::catch_unwind;
 

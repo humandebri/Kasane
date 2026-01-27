@@ -1,7 +1,7 @@
 //! どこで: Phase1のSELFDESTRUCT対応 / 何を: storage全削除 + account削除 / なぜ: EVM互換の最低限
 
-use evm_backend::stable_state::with_state_mut;
-use evm_backend::types::keys::{make_account_key, make_code_key, make_storage_key, StorageKey};
+use evm_db::stable_state::with_state_mut;
+use evm_db::types::keys::{make_account_key, make_code_key, make_storage_key, StorageKey};
 
 pub fn selfdestruct_address(addr20: [u8; 20]) {
     with_state_mut(|state| {

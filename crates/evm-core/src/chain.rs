@@ -4,8 +4,8 @@ use crate::hash;
 use crate::revm_exec::execute_tx;
 use crate::state_root::compute_state_root;
 use crate::tx_decode::decode_tx;
-use evm_backend::phase1::{BlockData, Head, ReceiptLike, TxEnvelope, TxId, TxIndexEntry, TxKind};
-use evm_backend::stable_state::{with_state, with_state_mut};
+use evm_db::phase1::{BlockData, Head, ReceiptLike, TxEnvelope, TxId, TxIndexEntry, TxKind};
+use evm_db::stable_state::{with_state, with_state_mut};
 use revm::primitives::Address;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -18,12 +18,14 @@ pub enum ChainError {
     ExecFailed,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ExecResult {
     pub tx_id: TxId,
     pub block_number: u64,
     pub tx_index: u32,
     pub status: u8,
+    pub gas_used: u64,
+    pub return_data: Vec<u8>,
 }
 
 pub fn submit_tx(kind: TxKind, tx_bytes: Vec<u8>) -> Result<TxId, ChainError> {
@@ -188,5 +190,7 @@ fn execute_and_seal_with_caller(
         block_number: number,
         tx_index: outcome.tx_index,
         status: outcome.receipt.status,
+        gas_used: outcome.receipt.gas_used,
+        return_data: outcome.return_data,
     })
 }

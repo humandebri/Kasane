@@ -1,6 +1,6 @@
 //! どこで: Phase0テスト / 何を: MemoryIdの固定確認 / なぜ: レイアウト破壊を防ぐため
 
-use evm_backend::memory::AppMemoryId;
+use evm_db::memory::AppMemoryId;
 
 #[test]
 fn memory_id_layout_is_frozen() {

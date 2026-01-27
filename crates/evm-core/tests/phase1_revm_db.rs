@@ -1,10 +1,10 @@
 //! どこで: Phase1テスト / 何を: RevmStableDbの基本読み取り / なぜ: 型変換の確認
 
 use evm_core::revm_db::RevmStableDb;
-use evm_backend::stable_state::init_stable_state;
-use evm_backend::types::keys::{make_account_key, make_storage_key};
-use evm_backend::types::values::{AccountVal, U256Val};
-use evm_backend::stable_state::with_state_mut;
+use evm_db::stable_state::init_stable_state;
+use evm_db::types::keys::{make_account_key, make_storage_key};
+use evm_db::types::values::{AccountVal, U256Val};
+use evm_db::stable_state::with_state_mut;
 use revm::primitives::{address, U256};
 use revm::Database;
 

@@ -10,6 +10,8 @@ crate-type = ["rlib"]
 tiny-keccak = { version = "2", features = ["keccak"] }
 ic-stable-structures = { path = "../../vendor/stable-structures" }
 revm = { path = "../../vendor/revm/crates/revm", default-features = false, features = ["std"] }
+alloy-rlp = "0.3"
 
-[dependencies.evm_backend]
+[dependencies.evm_db]
+package = "evm-db"
 path = "../evm-db"

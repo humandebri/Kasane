@@ -1,10 +1,10 @@
 //! どこで: canister入口 / 何を: Phase1のAPI公開 / なぜ: ICPから同期Tx実行を提供するため
 
 use candid::{CandidType, Principal};
-use evm_backend::meta::init_meta_or_trap;
-use evm_backend::phase1::{BlockData, ReceiptLike, TxId};
-use evm_backend::stable_state::init_stable_state;
-use evm_backend::upgrade;
+use evm_db::meta::init_meta_or_trap;
+use evm_db::phase1::{BlockData, ReceiptLike, TxId};
+use evm_db::stable_state::init_stable_state;
+use evm_db::upgrade;
 use evm_core::chain;
 use evm_core::hash::keccak256;
 use serde::Deserialize;
@@ -15,6 +15,8 @@ pub struct ExecResultDto {
     pub block_number: u64,
     pub tx_index: u32,
     pub status: u8,
+    pub gas_used: u64,
+    pub return_data: Vec<u8>,
 }
 
 #[derive(Clone, Debug, CandidType, Deserialize)]
@@ -66,6 +68,8 @@ fn execute_eth_raw_tx(raw_tx: Vec<u8>) -> ExecResultDto {
         block_number: result.block_number,
         tx_index: result.tx_index,
         status: result.status,
+        gas_used: result.gas_used,
+        return_data: result.return_data,
     }
 }
 
@@ -79,19 +83,21 @@ fn execute_ic_tx(tx_bytes: Vec<u8>) -> ExecResultDto {
         block_number: result.block_number,
         tx_index: result.tx_index,
         status: result.status,
+        gas_used: result.gas_used,
+        return_data: result.return_data,
     }
 }
 
 #[ic_cdk::update]
 fn submit_eth_tx(raw_tx: Vec<u8>) -> Vec<u8> {
-    let tx_id = chain::submit_tx(evm_backend::phase1::TxKind::EthSigned, raw_tx)
+    let tx_id = chain::submit_tx(evm_db::phase1::TxKind::EthSigned, raw_tx)
         .unwrap_or_else(|_| ic_cdk::trap("submit_eth_tx failed"));
     tx_id.0.to_vec()
 }
 
 #[ic_cdk::update]
 fn submit_ic_tx(tx_bytes: Vec<u8>) -> Vec<u8> {
-    let tx_id = chain::submit_tx(evm_backend::phase1::TxKind::IcSynthetic, tx_bytes)
+    let tx_id = chain::submit_tx(evm_db::phase1::TxKind::IcSynthetic, tx_bytes)
         .unwrap_or_else(|_| ic_cdk::trap("submit_ic_tx failed"));
     tx_id.0.to_vec()
 }

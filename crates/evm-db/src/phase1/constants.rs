@@ -10,6 +10,7 @@ pub const MAX_TX_SIZE: usize = 128 * 1024;
 pub const MAX_TX_SIZE_U32: u32 = 131_072;
 pub const MAX_TXS_PER_BLOCK: usize = 1024;
 pub const MAX_TXS_PER_BLOCK_U32: u32 = 1024;
+pub const CHAIN_ID: u64 = 4_801_360;
 
 pub const RECEIPT_CONTRACT_ADDR_LEN: usize = 20;
 pub const RECEIPT_CONTRACT_ADDR_LEN_U32: u32 = 20;

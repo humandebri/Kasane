@@ -34,6 +34,14 @@ execute_ic_tx(to, data, value, gas_limit?, nonce?) -> ExecResult
 
 execute_eth_raw_tx(raw_tx: blob) -> ExecResult
 
+ExecResult（最小返却）
+- tx_id
+- block_number
+- tx_index
+- status
+- gas_used
+- return_data
+
 挙動：内部で「1txブロック」を作る
 enqueue → run tx → commit → root → block保存 → receipt返す
 
@@ -88,6 +96,7 @@ gas_limit: u64 (big-endian)
 nonce: u64 (big-endian)
 data_len: u32 (big-endian)
 data: [u8; data_len]
+chain_id: 4801360 (0x494350, "ICP") をTxEnv/CHAINIDに固定
 
 caller は principal を keccak256 して末尾20 bytes（Phase1暫定）
 

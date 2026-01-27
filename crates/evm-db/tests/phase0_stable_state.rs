@@ -1,8 +1,8 @@
 //! どこで: Phase0テスト / 何を: StableStateの初期化と基本操作 / なぜ: 結線の健全性確認
 
-use evm_backend::stable_state::{init_stable_state, with_state_mut};
-use evm_backend::types::keys::make_account_key;
-use evm_backend::types::values::AccountVal;
+use evm_db::stable_state::{init_stable_state, with_state_mut};
+use evm_db::types::keys::make_account_key;
+use evm_db::types::values::AccountVal;
 
 #[test]
 fn stable_state_init_and_insert() {

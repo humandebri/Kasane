@@ -14,5 +14,6 @@ serde = { version = "1", features = ["derive"] }
 [dependencies.evm-core]
 path = "../evm-core"
 
-[dependencies.evm_backend]
+[dependencies.evm_db]
+package = "evm-db"
 path = "../evm-db"

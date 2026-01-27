@@ -1,8 +1,8 @@
 //! どこで: Phase1のDBアダプタ / 何を: StableState読み取りAPI / なぜ: REVM接続の土台にするため
 
-use evm_backend::stable_state::with_state;
-use evm_backend::types::keys::{AccountKey, CodeKey, StorageKey};
-use evm_backend::types::values::{AccountVal, CodeVal, U256Val};
+use evm_db::stable_state::with_state;
+use evm_db::types::keys::{AccountKey, CodeKey, StorageKey};
+use evm_db::types::values::{AccountVal, CodeVal, U256Val};
 
 #[derive(Clone, Copy, Debug)]
 pub struct StableDbAdapter;

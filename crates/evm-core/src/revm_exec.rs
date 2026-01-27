@@ -3,8 +3,9 @@
 use crate::hash::keccak256;
 use crate::revm_db::RevmStableDb;
 use crate::tx_decode::DecodeError;
-use evm_backend::phase1::{ReceiptLike, TxId, TxIndexEntry};
-use evm_backend::stable_state::with_state_mut;
+use evm_db::phase1::constants::CHAIN_ID;
+use evm_db::phase1::{ReceiptLike, TxId, TxIndexEntry};
+use evm_db::stable_state::with_state_mut;
 use revm::context::{BlockEnv, Context};
 use revm::handler::{ExecuteCommitEvm, ExecuteEvm, MainBuilder};
 use revm::handler::MainnetContext;
@@ -21,6 +22,7 @@ pub struct ExecOutcome {
     pub tx_id: TxId,
     pub tx_index: u32,
     pub receipt: ReceiptLike,
+    pub return_data: Vec<u8>,
 }
 
 pub fn execute_tx(
@@ -37,6 +39,7 @@ pub fn execute_tx(
     block.timestamp = U256::from(timestamp);
     ctx.block = block;
 
+    ctx.cfg.chain_id = CHAIN_ID;
     let mut evm = ctx.build_mainnet();
     let result = evm.transact(tx_env).map_err(|_| ExecError::ExecutionFailed)?;
     let state = result.state;
@@ -77,6 +80,7 @@ pub fn execute_tx(
         tx_id,
         tx_index,
         receipt,
+        return_data: output,
     })
 }
 

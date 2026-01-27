@@ -1,6 +1,6 @@
 {
   "canisters": {
-    "evm_backend": {
+    "evm_db": {
       "candid": "crates/evm-canister/evm_canister.did",
       "package": "evm-canister",
       "type": "rust"

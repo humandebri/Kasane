@@ -1,7 +1,7 @@
 //! どこで: Phase1のstate_root計算 / 何を: 全件走査の決定的root / なぜ: 正しさ優先のため
 
 use crate::hash::keccak256;
-use evm_backend::stable_state::with_state;
+use evm_db::stable_state::with_state;
 use ic_stable_structures::Storable;
 
 fn leaf_hash(key_bytes: &[u8], value_bytes: &[u8]) -> [u8; 32] {
