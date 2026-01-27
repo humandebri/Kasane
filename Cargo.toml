@@ -1,6 +1,8 @@
 [workspace]
 members = [
-    "crates/evm-db"
+    "crates/evm-db",
+    "crates/evm-core",
+    "crates/evm-canister"
 ]
 exclude = [
     "vendor/stable-structures"

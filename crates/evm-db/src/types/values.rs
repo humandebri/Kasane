@@ -4,10 +4,13 @@ pub const ACCOUNT_NONCE_LEN: usize = 8;
 pub const ACCOUNT_BALANCE_LEN: usize = 32;
 pub const ACCOUNT_CODE_HASH_LEN: usize = 32;
 pub const ACCOUNT_VAL_LEN: usize = ACCOUNT_NONCE_LEN + ACCOUNT_BALANCE_LEN + ACCOUNT_CODE_HASH_LEN;
+pub const ACCOUNT_VAL_LEN_U32: u32 = 72;
 
 pub const U256_LEN: usize = 32;
+pub const U256_LEN_U32: u32 = 32;
 
 pub const MAX_CODE_SIZE: usize = 24 * 1024;
+pub const MAX_CODE_SIZE_U32: u32 = 24 * 1024;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct AccountVal(pub [u8; ACCOUNT_VAL_LEN]);

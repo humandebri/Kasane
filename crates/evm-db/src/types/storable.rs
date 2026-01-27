@@ -1,7 +1,10 @@
 //! どこで: Stable構造体のStorable実装 / 何を: 固定長/可変長の境界指定 / なぜ: 安全なシリアライズのため
 
 use crate::types::keys::{AccountKey, CodeKey, StorageKey};
-use crate::types::values::{AccountVal, CodeVal, U256Val, ACCOUNT_VAL_LEN, MAX_CODE_SIZE, U256_LEN};
+use crate::types::values::{
+    AccountVal, CodeVal, U256Val, ACCOUNT_VAL_LEN, ACCOUNT_VAL_LEN_U32, MAX_CODE_SIZE_U32, U256_LEN,
+    U256_LEN_U32,
+};
 use ic_stable_structures::storable::Bound;
 use ic_stable_structures::Storable;
 use std::borrow::Cow;
@@ -101,7 +104,7 @@ impl Storable for AccountVal {
     }
 
     const BOUND: Bound = Bound::Bounded {
-        max_size: ACCOUNT_VAL_LEN as u32,
+        max_size: ACCOUNT_VAL_LEN_U32,
         is_fixed_size: true,
     };
 }
@@ -126,7 +129,7 @@ impl Storable for U256Val {
     }
 
     const BOUND: Bound = Bound::Bounded {
-        max_size: U256_LEN as u32,
+        max_size: U256_LEN_U32,
         is_fixed_size: true,
     };
 }
@@ -145,7 +148,7 @@ impl Storable for CodeVal {
     }
 
     const BOUND: Bound = Bound::Bounded {
-        max_size: MAX_CODE_SIZE as u32,
+        max_size: MAX_CODE_SIZE_U32,
         is_fixed_size: false,
     };
 }

@@ -3,6 +3,7 @@
 pub mod memory;
 pub mod meta;
 pub mod overlay;
+pub mod phase1;
 pub mod stable_state;
 pub mod types;
 pub mod upgrade;

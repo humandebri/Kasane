@@ -15,6 +15,14 @@ pub enum AppMemoryId {
     Storage = 3,
     Codes = 4,
     StateAux = 5,
+    QueueMeta = 6,
+    Queue = 7,
+    SeenTx = 8,
+    TxStore = 9,
+    TxIndex = 10,
+    Receipts = 11,
+    Blocks = 12,
+    Head = 13,
 }
 
 impl AppMemoryId {
@@ -26,6 +34,14 @@ impl AppMemoryId {
             AppMemoryId::Storage => 3,
             AppMemoryId::Codes => 4,
             AppMemoryId::StateAux => 5,
+            AppMemoryId::QueueMeta => 6,
+            AppMemoryId::Queue => 7,
+            AppMemoryId::SeenTx => 8,
+            AppMemoryId::TxStore => 9,
+            AppMemoryId::TxIndex => 10,
+            AppMemoryId::Receipts => 11,
+            AppMemoryId::Blocks => 12,
+            AppMemoryId::Head => 13,
         }
     }
 

@@ -292,3 +292,9 @@ SELFDESTRUCT の後に storageが消えている（最低限）
 DoS制限
 
 max_tx_size / max_gas_per_tx / max_code_size が効く
+
+実装メモ（現状）
+- MAX_TX_SIZE = 128KB（Phase1のPoC上限）
+- MAX_TXS_PER_BLOCK = 1024
+- tx_list_hash/block_hash は spec通りの keccak 連結で実装済み
+- StableDbAdapter / Committer / SELFDESTRUCT の骨組みまで実装済み（REVM統合は次の段階）
