@@ -2,7 +2,7 @@
 
 use crate::hash;
 use crate::revm_exec::execute_tx;
-use crate::state_root::compute_state_root;
+use crate::state_root::{compute_state_root, compute_state_root_with};
 use crate::tx_decode::decode_tx;
 use evm_db::chain_data::{BlockData, Head, ReceiptLike, TxEnvelope, TxId, TxIndexEntry, TxKind};
 use evm_db::stable_state::{with_state, with_state_mut};
@@ -79,7 +79,7 @@ pub fn produce_block(max_txs: usize) -> Result<BlockData, ChainError> {
             tx_id_bytes.push(tx_id.0);
         }
         let tx_list_hash = hash::tx_list_hash(&tx_id_bytes);
-        let state_root = compute_state_root();
+        let state_root = compute_state_root_with(state);
         let empty_return_hash = hash::keccak256(&[]);
         let block_hash = hash::block_hash(parent_hash, number, timestamp, tx_list_hash, state_root);
 

@@ -1,7 +1,7 @@
 //! どこで: Phase1のstate_root計算 / 何を: 全件走査の決定的root / なぜ: 正しさ優先のため
 
 use crate::hash::keccak256;
-use evm_db::stable_state::with_state;
+use evm_db::stable_state::{with_state, StableState};
 use ic_stable_structures::Storable;
 
 fn leaf_hash(key_bytes: &[u8], value_bytes: &[u8]) -> [u8; 32] {
@@ -11,27 +11,29 @@ fn leaf_hash(key_bytes: &[u8], value_bytes: &[u8]) -> [u8; 32] {
     keccak256(&buf)
 }
 
+pub fn compute_state_root_with(state: &StableState) -> [u8; 32] {
+    let mut acc = Vec::new();
+    for entry in state.accounts.iter() {
+        let key = entry.key().to_bytes().into_owned();
+        let value = entry.value().to_bytes().into_owned();
+        let leaf = leaf_hash(&key, &value);
+        acc.extend_from_slice(&leaf);
+    }
+    for entry in state.storage.iter() {
+        let key = entry.key().to_bytes().into_owned();
+        let value = entry.value().to_bytes().into_owned();
+        let leaf = leaf_hash(&key, &value);
+        acc.extend_from_slice(&leaf);
+    }
+    for entry in state.codes.iter() {
+        let key = entry.key().to_bytes().into_owned();
+        let value = entry.value().to_bytes().into_owned();
+        let leaf = leaf_hash(&key, &value);
+        acc.extend_from_slice(&leaf);
+    }
+    keccak256(&acc)
+}
+
 pub fn compute_state_root() -> [u8; 32] {
-    with_state(|state| {
-        let mut acc = Vec::new();
-        for entry in state.accounts.iter() {
-            let key = entry.key().to_bytes().into_owned();
-            let value = entry.value().to_bytes().into_owned();
-            let leaf = leaf_hash(&key, &value);
-            acc.extend_from_slice(&leaf);
-        }
-        for entry in state.storage.iter() {
-            let key = entry.key().to_bytes().into_owned();
-            let value = entry.value().to_bytes().into_owned();
-            let leaf = leaf_hash(&key, &value);
-            acc.extend_from_slice(&leaf);
-        }
-        for entry in state.codes.iter() {
-            let key = entry.key().to_bytes().into_owned();
-            let value = entry.value().to_bytes().into_owned();
-            let leaf = leaf_hash(&key, &value);
-            acc.extend_from_slice(&leaf);
-        }
-        keccak256(&acc)
-    })
+    with_state(compute_state_root_with)
 }
