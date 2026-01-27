@@ -80,6 +80,20 @@ nonce? 指定があるなら 一致しなければ reject（同期API向け）
 
 ※ 以前出てた nonce_ic: Map<principal,u64> は不要にできる。簡単で壊れにくい。
 
+2.3 IcSynthetic bytes（Phase1の暫定フォーマット）
+version: u8 (=1)
+to: [u8;20]
+value: [u8;32] (big-endian)
+gas_limit: u64 (big-endian)
+nonce: u64 (big-endian)
+data_len: u32 (big-endian)
+data: [u8; data_len]
+
+caller は principal を keccak256 して末尾20 bytes（Phase1暫定）
+
+注記
+- Eth raw tx のデコードは未実装（Phase1の次段で追加予定）
+
 3. ブロックモデル（Phase1で固定）
 3.1 BlockData（stable）
 BlockData {
@@ -297,4 +311,4 @@ max_tx_size / max_gas_per_tx / max_code_size が効く
 - MAX_TX_SIZE = 128KB（Phase1のPoC上限）
 - MAX_TXS_PER_BLOCK = 1024
 - tx_list_hash/block_hash は spec通りの keccak 連結で実装済み
-- StableDbAdapter / Committer / SELFDESTRUCT の骨組みまで実装済み（REVM統合は次の段階）
+- StableDbAdapter / Committer / SELFDESTRUCT / RevmStableDb の骨組みまで実装済み（REVM実行統合は次の段階）

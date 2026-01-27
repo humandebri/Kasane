@@ -6,3 +6,6 @@ pub mod db_adapter;
 pub mod hash;
 pub mod selfdestruct;
 pub mod state_root;
+pub mod revm_db;
+pub mod revm_exec;
+pub mod tx_decode;

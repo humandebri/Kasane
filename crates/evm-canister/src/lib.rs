@@ -1,11 +1,12 @@
 //! どこで: canister入口 / 何を: Phase1のAPI公開 / なぜ: ICPから同期Tx実行を提供するため
 
-use candid::CandidType;
+use candid::{CandidType, Principal};
 use evm_backend::meta::init_meta_or_trap;
 use evm_backend::phase1::{BlockData, ReceiptLike, TxId};
 use evm_backend::stable_state::init_stable_state;
 use evm_backend::upgrade;
 use evm_core::chain;
+use evm_core::hash::keccak256;
 use serde::Deserialize;
 
 #[derive(Clone, Debug, CandidType, Deserialize)]
@@ -70,7 +71,8 @@ fn execute_eth_raw_tx(raw_tx: Vec<u8>) -> ExecResultDto {
 
 #[ic_cdk::update]
 fn execute_ic_tx(tx_bytes: Vec<u8>) -> ExecResultDto {
-    let result = chain::execute_ic_tx(tx_bytes)
+    let caller = principal_to_evm_address(ic_cdk::api::msg_caller());
+    let result = chain::execute_ic_tx(caller, tx_bytes)
         .unwrap_or_else(|_| ic_cdk::trap("execute_ic_tx failed"));
     ExecResultDto {
         tx_id: result.tx_id.0.to_vec(),
@@ -116,6 +118,13 @@ fn get_receipt(tx_id: Vec<u8>) -> Option<ReceiptView> {
     buf.copy_from_slice(&tx_id);
     let receipt = chain::get_receipt(&TxId(buf))?;
     Some(receipt_to_view(receipt))
+}
+
+fn principal_to_evm_address(principal: Principal) -> [u8; 20] {
+    let hash = keccak256(principal.as_slice());
+    let mut out = [0u8; 20];
+    out.copy_from_slice(&hash[12..32]);
+    out
 }
 
 fn block_to_view(block: BlockData) -> BlockView {

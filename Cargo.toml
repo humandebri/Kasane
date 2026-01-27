@@ -6,5 +6,6 @@ members = [
 ]
 exclude = [
     "vendor/stable-structures"
+    ,"vendor/revm"
 ]
 resolver = "2"

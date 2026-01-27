@@ -1,11 +1,12 @@
 //! どこで: Phase1のチェーン操作 / 何を: submit/produce/execute / なぜ: 同期Tx体験の基盤のため
 
 use crate::hash;
+use crate::revm_exec::execute_tx;
 use crate::state_root::compute_state_root;
-use evm_backend::phase1::{
-    BlockData, Head, ReceiptLike, TxEnvelope, TxId, TxIndexEntry, TxKind,
-};
+use crate::tx_decode::decode_tx;
+use evm_backend::phase1::{BlockData, Head, ReceiptLike, TxEnvelope, TxId, TxIndexEntry, TxKind};
 use evm_backend::stable_state::{with_state, with_state_mut};
+use revm::primitives::Address;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ChainError {
@@ -13,6 +14,8 @@ pub enum ChainError {
     QueueEmpty,
     TxTooLarge,
     InvalidLimit,
+    DecodeFailed,
+    ExecFailed,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -120,28 +123,13 @@ pub fn produce_block(max_txs: usize) -> Result<BlockData, ChainError> {
 
 pub fn execute_eth_raw_tx(raw_tx: Vec<u8>) -> Result<ExecResult, ChainError> {
     let tx_id = submit_tx(TxKind::EthSigned, raw_tx)?;
-    let block = produce_block(1)?;
-    let entry = with_state(|state| state.tx_index.get(&tx_id));
-    let tx_index = entry.map(|value| value.tx_index).unwrap_or(0);
-    Ok(ExecResult {
-        tx_id,
-        block_number: block.number,
-        tx_index,
-        status: 1,
-    })
+    let result = execute_and_seal(tx_id, TxKind::EthSigned)?;
+    Ok(result)
 }
 
-pub fn execute_ic_tx(tx_bytes: Vec<u8>) -> Result<ExecResult, ChainError> {
+pub fn execute_ic_tx(caller: [u8; 20], tx_bytes: Vec<u8>) -> Result<ExecResult, ChainError> {
     let tx_id = submit_tx(TxKind::IcSynthetic, tx_bytes)?;
-    let block = produce_block(1)?;
-    let entry = with_state(|state| state.tx_index.get(&tx_id));
-    let tx_index = entry.map(|value| value.tx_index).unwrap_or(0);
-    Ok(ExecResult {
-        tx_id,
-        block_number: block.number,
-        tx_index,
-        status: 1,
-    })
+    execute_and_seal_with_caller(tx_id, TxKind::IcSynthetic, caller)
 }
 
 pub fn get_block(number: u64) -> Option<BlockData> {
@@ -150,4 +138,55 @@ pub fn get_block(number: u64) -> Option<BlockData> {
 
 pub fn get_receipt(tx_id: &TxId) -> Option<ReceiptLike> {
     with_state(|state| state.receipts.get(tx_id))
+}
+
+fn execute_and_seal(tx_id: TxId, kind: TxKind) -> Result<ExecResult, ChainError> {
+    execute_and_seal_with_caller(tx_id, kind, [0u8; 20])
+}
+
+fn execute_and_seal_with_caller(
+    tx_id: TxId,
+    kind: TxKind,
+    caller: [u8; 20],
+) -> Result<ExecResult, ChainError> {
+    let envelope = with_state(|state| state.tx_store.get(&tx_id)).ok_or(ChainError::ExecFailed)?;
+
+    let head = with_state(|state| *state.head.get());
+    let number = head.number.saturating_add(1);
+    let timestamp = head.timestamp.saturating_add(1);
+    let parent_hash = head.block_hash;
+
+    let tx_env = decode_tx(kind, Address::from(caller), &envelope.tx_bytes)
+        .map_err(|_| ChainError::DecodeFailed)?;
+
+    let outcome = execute_tx(tx_id, 0, tx_env, number, timestamp).map_err(|_| ChainError::ExecFailed)?;
+
+    let tx_list_hash = hash::tx_list_hash(&[tx_id.0]);
+    let block_hash = hash::block_hash(parent_hash, number, timestamp, tx_list_hash, compute_state_root());
+
+    let block = BlockData::new(
+        number,
+        parent_hash,
+        block_hash,
+        timestamp,
+        vec![tx_id],
+        tx_list_hash,
+        compute_state_root(),
+    );
+
+    with_state_mut(|state| {
+        state.blocks.insert(number, block.clone());
+        state.head.set(Head {
+            number,
+            block_hash,
+            timestamp,
+        });
+    });
+
+    Ok(ExecResult {
+        tx_id,
+        block_number: number,
+        tx_index: outcome.tx_index,
+        status: outcome.receipt.status,
+    })
 }

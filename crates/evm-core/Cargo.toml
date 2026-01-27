@@ -9,6 +9,7 @@ crate-type = ["rlib"]
 [dependencies]
 tiny-keccak = { version = "2", features = ["keccak"] }
 ic-stable-structures = { path = "../../vendor/stable-structures" }
+revm = { path = "../../vendor/revm/crates/revm", default-features = false, features = ["std"] }
 
 [dependencies.evm_backend]
 path = "../evm-db"
