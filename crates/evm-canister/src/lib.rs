@@ -178,6 +178,11 @@ fn get_receipt(tx_id: Vec<u8>) -> Option<ReceiptView> {
     Some(receipt_to_view(receipt))
 }
 
+#[ic_cdk::query]
+fn get_cycle_balance() -> u128 {
+    ic_cdk::api::canister_cycle_balance()
+}
+
 #[ic_cdk::update]
 fn set_auto_mine(enabled: bool) {
     evm_db::stable_state::with_state_mut(|state| {

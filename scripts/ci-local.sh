@@ -32,6 +32,15 @@ echo "[smoke] get_block(0)"
 dfx canister call evm_canister get_block '(0)' >/dev/null
 
 echo "[smoke] execute_ic_tx"
+echo "[smoke] cycles before execute_ic_tx"
+BEFORE_CYCLES=$(dfx canister call evm_canister get_cycle_balance --output json)
+BEFORE_CYCLES_VAL=$(BEFORE_CYCLES="$BEFORE_CYCLES" python - <<'PY'
+import os, re
+text = os.environ.get("BEFORE_CYCLES", "")
+m = re.search(r"(\\d+)", text)
+print(m.group(1) if m else "0")
+PY
+)
 TX_HEX=$(python - <<'PY'
 version = b'\x01'
 to = bytes.fromhex('0000000000000000000000000000000000000001')
@@ -50,6 +59,22 @@ tx = bytes.fromhex("$TX_HEX")
 print('; '.join(str(b) for b in tx))
 PY
 ) })")
+echo "[smoke] cycles after execute_ic_tx"
+AFTER_CYCLES=$(dfx canister call evm_canister get_cycle_balance --output json)
+AFTER_CYCLES_VAL=$(AFTER_CYCLES="$AFTER_CYCLES" python - <<'PY'
+import os, re
+text = os.environ.get("AFTER_CYCLES", "")
+m = re.search(r"(\\d+)", text)
+print(m.group(1) if m else "0")
+PY
+)
+EXEC_COST=$(python - <<PY
+before = int("$BEFORE_CYCLES_VAL")
+after = int("$AFTER_CYCLES_VAL")
+print(before - after if before >= after else 0)
+PY
+)
+echo "[smoke] execute_ic_tx cycles_used=${EXEC_COST}"
 
 TX_ID=$(EXEC_OUT="$EXEC_OUT" python - <<'PY'
 import os, re, sys

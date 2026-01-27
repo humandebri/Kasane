@@ -44,6 +44,7 @@ service : () -> {
   execute_eth_raw_tx : (blob) -> (ExecResultDto);
   execute_ic_tx : (blob) -> (ExecResultDto);
   get_block : (nat64) -> (opt BlockView) query;
+  get_cycle_balance : () -> (nat) query;
   get_pending : (blob) -> (PendingStatusView) query;
   get_queue_snapshot : (nat32, opt nat64) -> (QueueSnapshotView) query;
   get_receipt : (blob) -> (opt ReceiptView) query;
