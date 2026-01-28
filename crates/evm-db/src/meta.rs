@@ -34,6 +34,12 @@ impl Meta {
     }
 }
 
+impl Default for Meta {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Storable for Meta {
     fn to_bytes(&self) -> Cow<'_, [u8]> {
         let mut buf = [0u8; 40];

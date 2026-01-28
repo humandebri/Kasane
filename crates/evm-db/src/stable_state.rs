@@ -41,7 +41,7 @@ pub struct StableState {
 }
 
 thread_local! {
-    static STABLE_STATE: RefCell<Option<StableState>> = RefCell::new(None);
+    static STABLE_STATE: RefCell<Option<StableState>> = const { RefCell::new(None) };
 }
 
 pub fn init_stable_state() {

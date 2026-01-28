@@ -1,6 +1,7 @@
 //! どこで: canister入口 / 何を: Phase1のAPI公開 / なぜ: ICPから同期Tx実行を提供するため
 
 use candid::{CandidType, Principal};
+use ic_cdk::api::debug_print;
 use evm_db::meta::init_meta_or_trap;
 use evm_db::chain_data::constants::MAX_RETURN_DATA;
 use evm_db::chain_data::{BlockData, ReceiptLike, TxId, TxKind, TxLoc, TxLocKind};
@@ -107,8 +108,10 @@ fn pre_upgrade() {
 
 #[ic_cdk::update]
 fn execute_eth_raw_tx(raw_tx: Vec<u8>) -> ExecResultDto {
-    let result = chain::execute_eth_raw_tx(raw_tx)
-        .unwrap_or_else(|_| ic_cdk::trap("execute_eth_raw_tx failed"));
+    let result = chain::execute_eth_raw_tx(raw_tx).unwrap_or_else(|err| {
+        debug_print(format!("execute_eth_raw_tx err: {:?}", err));
+        ic_cdk::trap(&format!("execute_eth_raw_tx failed: {:?}", err));
+    });
     ExecResultDto {
         tx_id: result.tx_id.0.to_vec(),
         block_number: result.block_number,
@@ -146,12 +149,24 @@ fn submit_eth_tx(raw_tx: Vec<u8>) -> Vec<u8> {
 
 #[ic_cdk::update]
 fn submit_ic_tx(tx_bytes: Vec<u8>) -> Vec<u8> {
+    let caller = principal_to_evm_address(ic_cdk::api::msg_caller());
     let caller_principal = ic_cdk::api::msg_caller().as_slice().to_vec();
     let canister_id = ic_cdk::api::canister_self().as_slice().to_vec();
-    let tx_id = chain::submit_ic_tx(caller_principal, canister_id, tx_bytes)
+    let tx_id = chain::submit_ic_tx(caller, caller_principal, canister_id, tx_bytes)
         .unwrap_or_else(|_| ic_cdk::trap("submit_ic_tx failed"));
     schedule_mining();
     tx_id.0.to_vec()
+}
+
+#[cfg(feature = "dev-faucet")]
+#[ic_cdk::update]
+fn dev_mint(address: Vec<u8>, amount: u128) {
+    if address.len() != 20 {
+        ic_cdk::trap("dev_mint: address must be 20 bytes");
+    }
+    let mut addr = [0u8; 20];
+    addr.copy_from_slice(&address);
+    chain::dev_mint(addr, amount).unwrap_or_else(|_| ic_cdk::trap("dev_mint failed"));
 }
 
 #[ic_cdk::update]
@@ -219,24 +234,6 @@ fn get_pending(tx_id: Vec<u8>) -> PendingStatusView {
     pending_to_view(loc)
 }
 
-#[ic_cdk::query]
-fn get_queue_snapshot(limit: u32, cursor: Option<u64>) -> QueueSnapshotView {
-    let limit = usize::try_from(limit).unwrap_or(0);
-    let snapshot = chain::get_queue_snapshot(limit, cursor);
-    let mut items = Vec::with_capacity(snapshot.items.len());
-    for item in snapshot.items.into_iter() {
-        items.push(QueueItemView {
-            seq: item.seq,
-            tx_id: item.tx_id.0.to_vec(),
-            kind: tx_kind_to_view(item.kind),
-        });
-    }
-    QueueSnapshotView {
-        items,
-        next_cursor: snapshot.next_cursor,
-    }
-}
-
 fn principal_to_evm_address(principal: Principal) -> [u8; 20] {
     let hash = keccak256(principal.as_slice());
     let mut out = [0u8; 20];
@@ -265,27 +262,6 @@ fn clamp_return_data(return_data: Vec<u8>) -> Option<Vec<u8>> {
         return None;
     }
     Some(return_data)
-}
-
-ic_cdk::export_candid!();
-
-#[cfg(test)]
-mod tests {
-    use super::clamp_return_data;
-    use evm_db::chain_data::constants::MAX_RETURN_DATA;
-
-    #[test]
-    fn clamp_return_data_rejects_oversize() {
-        let data = vec![0u8; MAX_RETURN_DATA + 1];
-        assert_eq!(clamp_return_data(data), None);
-    }
-
-    #[test]
-    fn clamp_return_data_allows_limit() {
-        let data = vec![7u8; MAX_RETURN_DATA];
-        let out = clamp_return_data(data.clone());
-        assert_eq!(out, Some(data));
-    }
 }
 
 fn receipt_to_view(receipt: ReceiptLike) -> ReceiptView {
@@ -395,4 +371,42 @@ fn mining_tick() {
         });
     }
     schedule_mining();
+}
+
+#[ic_cdk::query]
+fn get_queue_snapshot(limit: u32, cursor: Option<u64>) -> QueueSnapshotView {
+    let limit = usize::try_from(limit).unwrap_or(0);
+    let snapshot = chain::get_queue_snapshot(limit, cursor);
+    let mut items = Vec::with_capacity(snapshot.items.len());
+    for item in snapshot.items.into_iter() {
+        items.push(QueueItemView {
+            seq: item.seq,
+            tx_id: item.tx_id.0.to_vec(),
+            kind: tx_kind_to_view(item.kind),
+        });
+    }
+    QueueSnapshotView {
+        items,
+        next_cursor: snapshot.next_cursor,
+    }
+}
+ic_cdk::export_candid!();
+
+#[cfg(test)]
+mod tests {
+    use super::clamp_return_data;
+    use evm_db::chain_data::constants::MAX_RETURN_DATA;
+
+    #[test]
+    fn clamp_return_data_rejects_oversize() {
+        let data = vec![0u8; MAX_RETURN_DATA + 1];
+        assert_eq!(clamp_return_data(data), None);
+    }
+
+    #[test]
+    fn clamp_return_data_allows_limit() {
+        let data = vec![7u8; MAX_RETURN_DATA];
+        let out = clamp_return_data(data.clone());
+        assert_eq!(out, Some(data));
+    }
 }

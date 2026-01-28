@@ -34,3 +34,9 @@ impl<K: Ord, V> OverlayMap<K, V> {
         }
     }
 }
+
+impl<K: Ord, V> Default for OverlayMap<K, V> {
+    fn default() -> Self {
+        Self::new()
+    }
+}

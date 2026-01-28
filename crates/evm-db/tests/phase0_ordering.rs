@@ -11,7 +11,7 @@ fn key_prefix_ordering_is_stable() {
     let account_key = make_account_key(addr);
     let storage_key = make_storage_key(addr, slot);
 
-    assert!(&account_key.0[..] < &storage_key.0[..]);
+    assert!(account_key.0[..] < storage_key.0[..]);
 }
 
 #[test]

@@ -16,7 +16,7 @@ use revm::context_interface::result::ExecutionResult;
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ExecError {
     Decode(DecodeError),
-    ExecutionFailed,
+    ExecutionFailed(String),
     InvalidGasFee,
 }
 
@@ -41,15 +41,19 @@ pub fn execute_tx(
         compute_effective_gas_price(max_fee, max_priority, base_fee).ok_or(ExecError::InvalidGasFee)?;
     let db = RevmStableDb;
     let mut ctx: MainnetContext<RevmStableDb> = Context::new(db, SpecId::CANCUN);
-    let mut block = BlockEnv::default();
-    block.number = U256::from(block_number);
-    block.timestamp = U256::from(timestamp);
-    block.basefee = base_fee;
+    let block = BlockEnv {
+        number: U256::from(block_number),
+        timestamp: U256::from(timestamp),
+        basefee: base_fee,
+        ..Default::default()
+    };
     ctx.block = block;
 
     ctx.cfg.chain_id = CHAIN_ID;
     let mut evm = ctx.build_mainnet();
-    let result = evm.transact(tx_env).map_err(|_| ExecError::ExecutionFailed)?;
+    let result = evm
+        .transact(tx_env)
+        .map_err(|err| ExecError::ExecutionFailed(format!("{:?}", err)))?;
     let state = result.state;
     evm.commit(state);
 
@@ -128,7 +132,7 @@ fn compute_effective_gas_price(
     if max_fee < base_fee {
         return None;
     }
-    let sum = base_fee.checked_add(max_priority).unwrap_or(u128::MAX);
+    let sum = base_fee.saturating_add(max_priority);
     let effective = if max_fee < sum { max_fee } else { sum };
     u64::try_from(effective).ok()
 }

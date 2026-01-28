@@ -10,10 +10,28 @@ use ic_stable_structures::Storable;
 #[test]
 fn tx_envelope_roundtrip() {
     let tx_id = TxId([0x11u8; 32]);
-    let envelope = TxEnvelope::new(tx_id, TxKind::EthSigned, vec![1, 2, 3]);
+    let caller = [0x22u8; 20];
+    let envelope = TxEnvelope::new_with_caller(tx_id, TxKind::IcSynthetic, vec![1, 2, 3], caller);
     let bytes = envelope.to_bytes();
     let decoded = TxEnvelope::from_bytes(bytes);
     assert_eq!(envelope, decoded);
+}
+
+#[test]
+fn tx_envelope_accepts_legacy_format() {
+    let tx_id = TxId([0x33u8; 32]);
+    let tx_bytes = vec![7u8, 8, 9];
+    let mut bytes = Vec::new();
+    bytes.push(TxKind::EthSigned.to_u8());
+    bytes.extend_from_slice(&tx_id.0);
+    let len = u32::try_from(tx_bytes.len()).unwrap_or(0);
+    bytes.extend_from_slice(&len.to_be_bytes());
+    bytes.extend_from_slice(&tx_bytes);
+    let decoded = TxEnvelope::from_bytes(bytes.into());
+    assert_eq!(decoded.tx_id, tx_id);
+    assert_eq!(decoded.kind, TxKind::EthSigned);
+    assert_eq!(decoded.tx_bytes, tx_bytes);
+    assert_eq!(decoded.caller_evm, None);
 }
 
 #[test]

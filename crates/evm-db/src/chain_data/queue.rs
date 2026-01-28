@@ -36,6 +36,12 @@ impl QueueMeta {
     }
 }
 
+impl Default for QueueMeta {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Storable for QueueMeta {
     fn to_bytes(&self) -> Cow<'_, [u8]> {
         let mut out = [0u8; 16];

@@ -244,6 +244,8 @@ Phase1で揃えるならこのセットが美しい：
 * `get_block_by_number(n) -> Block { header, tx_ids, ... }`
 * `get_receipt(tx_id) -> Receipt?`
 
+`scripts/playground_smoke.sh` runs the same scenarios (cycle tracking + block/tx probes + raw eth tx creation) for the playground canister.
+
 Phase2のJSON-RPCは、結局これらの薄いラッパーになる。
 
 ---

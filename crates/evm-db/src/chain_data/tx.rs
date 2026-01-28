@@ -62,6 +62,7 @@ pub struct TxEnvelope {
     pub tx_id: TxId,
     pub kind: TxKind,
     pub tx_bytes: Vec<u8>,
+    pub caller_evm: Option<[u8; 20]>,
 }
 
 impl TxEnvelope {
@@ -70,15 +71,36 @@ impl TxEnvelope {
             tx_id,
             kind,
             tx_bytes,
+            caller_evm: None,
+        }
+    }
+
+    pub fn new_with_caller(
+        tx_id: TxId,
+        kind: TxKind,
+        tx_bytes: Vec<u8>,
+        caller_evm: [u8; 20],
+    ) -> Self {
+        Self {
+            tx_id,
+            kind,
+            tx_bytes,
+            caller_evm: Some(caller_evm),
         }
     }
 }
 
 impl Storable for TxEnvelope {
     fn to_bytes(&self) -> Cow<'_, [u8]> {
-        let mut out = Vec::with_capacity(1 + TX_ID_LEN + 4 + self.tx_bytes.len());
+        let mut out = Vec::with_capacity(1 + TX_ID_LEN + 1 + 20 + 4 + self.tx_bytes.len());
         out.push(self.kind.to_u8());
         out.extend_from_slice(&self.tx_id.0);
+        let (flag, caller) = match self.caller_evm {
+            Some(value) => (1u8, value),
+            None => (0u8, [0u8; 20]),
+        };
+        out.push(flag);
+        out.extend_from_slice(&caller);
         let len = len_to_u32(self.tx_bytes.len(), "tx_envelope: len overflow");
         out.extend_from_slice(&len.to_be_bytes());
         out.extend_from_slice(&self.tx_bytes);
@@ -86,9 +108,15 @@ impl Storable for TxEnvelope {
     }
 
     fn into_bytes(self) -> Vec<u8> {
-        let mut out = Vec::with_capacity(1 + TX_ID_LEN + 4 + self.tx_bytes.len());
+        let mut out = Vec::with_capacity(1 + TX_ID_LEN + 1 + 20 + 4 + self.tx_bytes.len());
         out.push(self.kind.to_u8());
         out.extend_from_slice(&self.tx_id.0);
+        let (flag, caller) = match self.caller_evm {
+            Some(value) => (1u8, value),
+            None => (0u8, [0u8; 20]),
+        };
+        out.push(flag);
+        out.extend_from_slice(&caller);
         let len = len_to_u32(self.tx_bytes.len(), "tx_envelope: len overflow");
         out.extend_from_slice(&len.to_be_bytes());
         out.extend_from_slice(&self.tx_bytes);
@@ -97,32 +125,59 @@ impl Storable for TxEnvelope {
 
     fn from_bytes(bytes: Cow<'_, [u8]>) -> Self {
         let data = bytes.as_ref();
-        if data.len() < 1 + TX_ID_LEN + 4 {
+        let base = 1 + TX_ID_LEN;
+        if data.len() < base + 4 {
             ic_cdk::trap("tx_envelope: invalid length");
         }
         let kind = TxKind::from_u8(data[0]).unwrap_or_else(|| ic_cdk::trap("tx_envelope: kind"));
         let mut tx_id = [0u8; TX_ID_LEN];
         tx_id.copy_from_slice(&data[1..1 + TX_ID_LEN]);
         let mut len_bytes = [0u8; 4];
-        len_bytes.copy_from_slice(&data[1 + TX_ID_LEN..1 + TX_ID_LEN + 4]);
+        len_bytes.copy_from_slice(&data[base..base + 4]);
+        let old_len = len_to_usize(u32::from_be_bytes(len_bytes), "tx_envelope: len overflow");
+        let old_expected = base + 4 + old_len;
+        if old_expected == data.len() && old_len <= MAX_TX_SIZE {
+            let tx_bytes = data[base + 4..].to_vec();
+            return Self {
+                tx_id: TxId(tx_id),
+                kind,
+                tx_bytes,
+                caller_evm: None,
+            };
+        }
+        if data.len() < base + 1 + 20 + 4 {
+            ic_cdk::trap("tx_envelope: invalid length");
+        }
+        let flag = data[base];
+        let caller_evm = match flag {
+            0 => None,
+            1 => {
+                let mut caller = [0u8; 20];
+                caller.copy_from_slice(&data[base + 1..base + 21]);
+                Some(caller)
+            }
+            _ => ic_cdk::trap("tx_envelope: caller flag"),
+        };
+        len_bytes.copy_from_slice(&data[base + 21..base + 25]);
         let len = len_to_usize(u32::from_be_bytes(len_bytes), "tx_envelope: len overflow");
-        let expected = 1 + TX_ID_LEN + 4 + len;
+        let expected = base + 1 + 20 + 4 + len;
         if expected != data.len() {
             ic_cdk::trap("tx_envelope: length mismatch");
         }
         if len > MAX_TX_SIZE {
             ic_cdk::trap("tx_envelope: tx too large");
         }
-        let tx_bytes = data[1 + TX_ID_LEN + 4..].to_vec();
+        let tx_bytes = data[base + 25..].to_vec();
         Self {
             tx_id: TxId(tx_id),
             kind,
             tx_bytes,
+            caller_evm,
         }
     }
 
     const BOUND: Bound = Bound::Bounded {
-        max_size: 1 + TX_ID_LEN_U32 + 4 + MAX_TX_SIZE_U32,
+        max_size: 1 + TX_ID_LEN_U32 + 1 + 20 + 4 + MAX_TX_SIZE_U32,
         is_fixed_size: false,
     };
 }

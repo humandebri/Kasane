@@ -68,7 +68,6 @@ pub fn decode_ic_synthetic(caller: Address, bytes: &[u8]) -> Result<TxEnv, Decod
         max_fee_per_blob_gas: 0,
         authorization_list: Default::default(),
         tx_type: 0,
-        ..Default::default()
     };
     Ok(tx)
 }
@@ -137,7 +136,6 @@ pub fn decode_eth_raw_tx(bytes: &[u8]) -> Result<TxEnv, DecodeError> {
         max_fee_per_blob_gas: 0,
         authorization_list: Default::default(),
         tx_type: 0,
-        ..Default::default()
     })
 }
 
@@ -192,16 +190,13 @@ fn v_to_chain_id(v: u64) -> Result<(Option<u64>, u8), DecodeError> {
 
 fn legacy_signing_hash(fields: &[RlpBytes], chain_id: Option<u64>) -> Result<[u8; 32], DecodeError> {
     let mut list: Vec<RlpBytes> = Vec::with_capacity(9);
-    for i in 0..6 {
-        list.push(trim_rlp_bytes(&fields[i]));
+    for item in fields.iter().take(6) {
+        list.push(trim_rlp_bytes(item));
     }
-    match chain_id {
-        Some(id) => {
-            list.push(int_to_rlp_bytes(id));
-            list.push(RlpBytes::new());
-            list.push(RlpBytes::new());
-        }
-        None => {}
+    if let Some(id) = chain_id {
+        list.push(int_to_rlp_bytes(id));
+        list.push(RlpBytes::new());
+        list.push(RlpBytes::new());
     }
     let mut out = Vec::new();
     alloy_rlp::encode_list::<RlpBytes, [u8]>(&list, &mut out);
