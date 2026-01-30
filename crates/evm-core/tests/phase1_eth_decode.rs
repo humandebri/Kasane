@@ -3,10 +3,10 @@
 use evm_core::tx_decode::{decode_eth_raw_tx, DecodeError};
 
 #[test]
-fn eth_raw_typed_is_rejected() {
+fn eth_raw_typed_invalid_is_rejected() {
     let bytes = vec![0x02, 0x01, 0x02];
     let err = decode_eth_raw_tx(&bytes).err();
-    assert_eq!(err, Some(DecodeError::UnsupportedType));
+    assert_eq!(err, Some(DecodeError::InvalidRlp));
 }
 
 #[test]

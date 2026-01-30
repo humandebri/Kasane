@@ -12,6 +12,9 @@ tiny-keccak = { version = "2", features = ["keccak"] }
 ic-stable-structures = { path = "../../vendor/stable-structures" }
 revm = { path = "../../vendor/revm/crates/revm", default-features = false, features = ["std"] }
 alloy-rlp = "0.3"
+alloy-primitives = { version = "1.5.2", default-features = false, features = ["std", "rlp"] }
+alloy-eips = { version = "1.5.2", default-features = false, features = ["std", "k256"] }
+alloy-consensus = { version = "1.5.2", default-features = false, features = ["std", "k256"] }
 
 [dependencies.evm_db]
 package = "evm-db"

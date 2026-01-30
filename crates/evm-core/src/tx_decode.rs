@@ -1,11 +1,15 @@
-//! どこで: Phase1のTxデコード / 何を: IcSyntheticの最小フォーマット / なぜ: 決定的な解釈のため
+//! どこで: Phase1のTxデコード / 何を: IcSynthetic + Eth raw tx の安全なデコード / なぜ: 互換性とtrap回避
 
-use alloy_rlp::{Bytes as RlpBytes, Rlp};
+use alloy_consensus::transaction::SignerRecoverable;
+use alloy_consensus::{Transaction, TxEnvelope, TxType};
+use alloy_eips::eip2718::{Decodable2718, Eip2718Error};
+use alloy_primitives::{Address as AlloyAddress, TxKind as AlloyTxKind, B256, U256 as AlloyU256};
 use evm_db::chain_data::constants::{CHAIN_ID, MAX_TX_SIZE};
 use evm_db::chain_data::TxKind;
 use revm::context::TxEnv;
-use revm::precompile::secp256k1::ec_recover_run;
-use revm::primitives::{Address, Bytes, TxKind as RevmTxKind, U256};
+use revm::primitives::{
+    Address as RevmAddress, Bytes as RevmBytes, TxKind as RevmTxKind, U256 as RevmU256,
+};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum DecodeError {
@@ -14,13 +18,31 @@ pub enum DecodeError {
     DataTooLarge,
     UnsupportedType,
     InvalidSignature,
+    InvalidRlp,
+    TrailingBytes,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct DecodedTx {
+    from: AlloyAddress,
+    to: Option<AlloyAddress>,
+    nonce: u64,
+    value: AlloyU256,
+    input: Vec<u8>,
+    gas_limit: u64,
+    gas_price: Option<u128>,
+    max_fee_per_gas: Option<u128>,
+    max_priority_fee_per_gas: Option<u128>,
+    chain_id: Option<u64>,
+    tx_hash: [u8; 32],
+    tx_type: u8,
 }
 
 // IcSynthetic v1: [version:1][to:20][value:32][gas_limit:8][nonce:8][data_len:4][data]
 const IC_TX_VERSION: u8 = 1;
 const IC_TX_HEADER_LEN: usize = 1 + 20 + 32 + 8 + 8 + 4;
 
-pub fn decode_ic_synthetic(caller: Address, bytes: &[u8]) -> Result<TxEnv, DecodeError> {
+pub fn decode_ic_synthetic(caller: RevmAddress, bytes: &[u8]) -> Result<TxEnv, DecodeError> {
     if bytes.len() < IC_TX_HEADER_LEN {
         return Err(DecodeError::InvalidLength);
     }
@@ -57,9 +79,9 @@ pub fn decode_ic_synthetic(caller: Address, bytes: &[u8]) -> Result<TxEnv, Decod
         caller,
         gas_limit: u64::from_be_bytes(gas),
         gas_price: 0,
-        kind: RevmTxKind::Call(Address::from(to)),
-        value: U256::from_be_bytes(value),
-        data: Bytes::from(data),
+        kind: RevmTxKind::Call(RevmAddress::from(to)),
+        value: RevmU256::from_be_bytes(value),
+        data: RevmBytes::from(data),
         nonce: u64::from_be_bytes(nonce),
         chain_id: Some(CHAIN_ID),
         access_list: Default::default(),
@@ -72,7 +94,7 @@ pub fn decode_ic_synthetic(caller: Address, bytes: &[u8]) -> Result<TxEnv, Decod
     Ok(tx)
 }
 
-pub fn decode_tx(kind: TxKind, caller: Address, bytes: &[u8]) -> Result<TxEnv, DecodeError> {
+pub fn decode_tx(kind: TxKind, caller: RevmAddress, bytes: &[u8]) -> Result<TxEnv, DecodeError> {
     match kind {
         TxKind::IcSynthetic => decode_ic_synthetic(caller, bytes),
         TxKind::EthSigned => decode_eth_raw_tx(bytes),
@@ -96,191 +118,161 @@ pub fn decode_tx_view(
     caller: [u8; 20],
     bytes: &[u8],
 ) -> Result<DecodedTxView, DecodeError> {
-    let tx_env = decode_tx(kind, Address::from(caller), bytes)?;
-    let to = match tx_env.kind {
-        RevmTxKind::Call(addr) => {
-            let mut out = [0u8; 20];
-            out.copy_from_slice(addr.as_ref());
-            Some(out)
+    match kind {
+        TxKind::EthSigned => {
+            let decoded = decode_eth_raw_tx_to_decoded(bytes)?;
+            Ok(DecodedTxView {
+                from: address_to_array(decoded.from),
+                to: decoded.to.map(address_to_array),
+                nonce: decoded.nonce,
+                value: decoded.value.to_be_bytes(),
+                input: decoded.input,
+                gas_limit: decoded.gas_limit,
+                gas_price: decoded.gas_price.or(decoded.max_fee_per_gas).unwrap_or(0),
+                chain_id: decoded.chain_id,
+            })
         }
-        RevmTxKind::Create => None,
-    };
-    let mut from = [0u8; 20];
-    from.copy_from_slice(tx_env.caller.as_ref());
-    Ok(DecodedTxView {
-        from,
-        to,
-        nonce: tx_env.nonce,
-        value: tx_env.value.to_be_bytes(),
-        input: tx_env.data.to_vec(),
-        gas_limit: tx_env.gas_limit,
-        gas_price: tx_env.gas_price,
-        chain_id: tx_env.chain_id,
-    })
+        TxKind::IcSynthetic => {
+            let tx_env = decode_ic_synthetic(RevmAddress::from(caller), bytes)?;
+            let to = match tx_env.kind {
+                RevmTxKind::Call(addr) => {
+                    let mut out = [0u8; 20];
+                    out.copy_from_slice(addr.as_ref());
+                    Some(out)
+                }
+                RevmTxKind::Create => None,
+            };
+            let mut from = [0u8; 20];
+            from.copy_from_slice(tx_env.caller.as_ref());
+            Ok(DecodedTxView {
+                from,
+                to,
+                nonce: tx_env.nonce,
+                value: tx_env.value.to_be_bytes(),
+                input: tx_env.data.to_vec(),
+                gas_limit: tx_env.gas_limit,
+                gas_price: tx_env.gas_price,
+                chain_id: tx_env.chain_id,
+            })
+        }
+    }
 }
 
 pub fn decode_eth_raw_tx(bytes: &[u8]) -> Result<TxEnv, DecodeError> {
+    let decoded = decode_eth_raw_tx_to_decoded(bytes)?;
+    Ok(decoded_to_tx_env(&decoded))
+}
+
+fn decode_eth_raw_tx_to_decoded(bytes: &[u8]) -> Result<DecodedTx, DecodeError> {
     if bytes.is_empty() {
         return Err(DecodeError::InvalidLength);
     }
-    // EIP-2718 typed tx: first byte < 0x80 and not a list prefix
-    if bytes[0] <= 0x7f && bytes[0] != 0xc0 && bytes[0] != 0xf8 {
-        return Err(DecodeError::UnsupportedType);
+    if bytes.len() > MAX_TX_SIZE {
+        return Err(DecodeError::DataTooLarge);
     }
-    let mut rlp = Rlp::new(bytes).map_err(|_| DecodeError::InvalidLength)?;
-    let mut fields: Vec<RlpBytes> = Vec::with_capacity(9);
-    while let Some(item) = rlp.get_next::<RlpBytes>().map_err(|_| DecodeError::InvalidLength)? {
-        fields.push(item);
+    let envelope = TxEnvelope::decode_2718_exact(bytes).map_err(map_eip2718_error)?;
+    let sender = envelope
+        .recover_signer()
+        .map_err(|_| DecodeError::InvalidSignature)?;
+    let tx_hash = *envelope.tx_hash();
+
+    match envelope {
+        TxEnvelope::Legacy(tx) => Ok(decoded_from_tx(
+            tx.tx(),
+            sender,
+            tx_hash,
+            TxType::Legacy as u8,
+        )),
+        TxEnvelope::Eip2930(tx) => Ok(decoded_from_tx(
+            tx.tx(),
+            sender,
+            tx_hash,
+            TxType::Eip2930 as u8,
+        )),
+        TxEnvelope::Eip1559(tx) => Ok(decoded_from_tx(
+            tx.tx(),
+            sender,
+            tx_hash,
+            TxType::Eip1559 as u8,
+        )),
+        TxEnvelope::Eip4844(_) | TxEnvelope::Eip7702(_) => Err(DecodeError::UnsupportedType),
     }
-    if fields.len() != 9 {
-        return Err(DecodeError::InvalidLength);
-    }
+}
 
-    let nonce = parse_u64(&fields[0])?;
-    let gas_price = parse_u128(&fields[1])?;
-    let gas_limit = parse_u64(&fields[2])?;
-    let to = fields[3].clone();
-    let value = parse_u256(&fields[4])?;
-    let data = fields[5].clone();
-    let v = parse_u64(&fields[6])?;
-    let r = parse_bytes_32(&fields[7])?;
-    let s = parse_bytes_32(&fields[8])?;
-
-    let (chain_id, recid) = v_to_chain_id(v)?;
-    let msg = legacy_signing_hash(&fields, chain_id)?;
-    let caller = recover_legacy_sender(msg, r, s, recid)?;
-
-    let kind = if to.is_empty() {
-        RevmTxKind::Create
-    } else {
-        let mut addr = [0u8; 20];
-        if to.len() != 20 {
-            return Err(DecodeError::InvalidLength);
-        }
-        addr.copy_from_slice(&to);
-        RevmTxKind::Call(Address::from(addr))
+fn decoded_from_tx<T: Transaction>(
+    tx: &T,
+    from: AlloyAddress,
+    tx_hash: B256,
+    tx_type: u8,
+) -> DecodedTx {
+    let to = match tx.kind() {
+        AlloyTxKind::Call(addr) => Some(addr),
+        AlloyTxKind::Create => None,
     };
+    let is_dynamic_fee = tx.is_dynamic_fee();
+    let gas_price = if is_dynamic_fee { None } else { tx.gas_price() };
+    let max_fee_per_gas = if is_dynamic_fee { Some(tx.max_fee_per_gas()) } else { None };
+    let max_priority_fee_per_gas = if is_dynamic_fee {
+        tx.max_priority_fee_per_gas()
+    } else {
+        None
+    };
+    DecodedTx {
+        from,
+        to,
+        nonce: tx.nonce(),
+        value: tx.value(),
+        input: tx.input().to_vec(),
+        gas_limit: tx.gas_limit(),
+        gas_price,
+        max_fee_per_gas,
+        max_priority_fee_per_gas,
+        chain_id: tx.chain_id().map(|id| id),
+        tx_hash: tx_hash.0,
+        tx_type,
+    }
+}
 
-    Ok(TxEnv {
-        caller,
-        gas_limit,
+fn decoded_to_tx_env(decoded: &DecodedTx) -> TxEnv {
+    let gas_price = decoded.gas_price.or(decoded.max_fee_per_gas).unwrap_or(0);
+    let gas_priority_fee = decoded.max_priority_fee_per_gas;
+    let kind = match decoded.to {
+        Some(addr) => RevmTxKind::Call(revm_address_from_alloy(addr)),
+        None => RevmTxKind::Create,
+    };
+    TxEnv {
+        caller: revm_address_from_alloy(decoded.from),
+        gas_limit: decoded.gas_limit,
         gas_price,
         kind,
-        value,
-        data: Bytes::from(data.to_vec()),
-        nonce,
-        chain_id,
+        value: RevmU256::from_be_bytes(decoded.value.to_be_bytes::<32>()),
+        data: RevmBytes::from(decoded.input.clone()),
+        nonce: decoded.nonce,
+        chain_id: decoded.chain_id,
         access_list: Default::default(),
-        gas_priority_fee: Some(gas_price),
+        gas_priority_fee,
         blob_hashes: Default::default(),
         max_fee_per_blob_gas: 0,
         authorization_list: Default::default(),
-        tx_type: 0,
-    })
+        tx_type: decoded.tx_type,
+    }
 }
 
-fn parse_u64(bytes: &RlpBytes) -> Result<u64, DecodeError> {
-    if bytes.len() > 8 {
-        return Err(DecodeError::InvalidLength);
+fn map_eip2718_error(error: Eip2718Error) -> DecodeError {
+    match error {
+        Eip2718Error::UnexpectedType(_) => DecodeError::UnsupportedType,
+        Eip2718Error::RlpError(alloy_rlp::Error::UnexpectedLength) => DecodeError::TrailingBytes,
+        Eip2718Error::RlpError(_) => DecodeError::InvalidRlp,
+        _ => DecodeError::InvalidRlp,
     }
-    let mut buf = [0u8; 8];
-    buf[8 - bytes.len()..].copy_from_slice(bytes);
-    Ok(u64::from_be_bytes(buf))
 }
 
-fn parse_u128(bytes: &RlpBytes) -> Result<u128, DecodeError> {
-    if bytes.len() > 16 {
-        return Err(DecodeError::InvalidLength);
-    }
-    let mut buf = [0u8; 16];
-    buf[16 - bytes.len()..].copy_from_slice(bytes);
-    Ok(u128::from_be_bytes(buf))
+fn revm_address_from_alloy(addr: AlloyAddress) -> RevmAddress {
+    RevmAddress::from_slice(addr.as_slice())
 }
 
-fn parse_u256(bytes: &RlpBytes) -> Result<U256, DecodeError> {
-    if bytes.len() > 32 {
-        return Err(DecodeError::InvalidLength);
-    }
-    let mut buf = [0u8; 32];
-    buf[32 - bytes.len()..].copy_from_slice(bytes);
-    Ok(U256::from_be_bytes(buf))
-}
-
-fn parse_bytes_32(bytes: &RlpBytes) -> Result<[u8; 32], DecodeError> {
-    if bytes.len() > 32 {
-        return Err(DecodeError::InvalidLength);
-    }
-    let mut buf = [0u8; 32];
-    buf[32 - bytes.len()..].copy_from_slice(bytes);
-    Ok(buf)
-}
-
-fn v_to_chain_id(v: u64) -> Result<(Option<u64>, u8), DecodeError> {
-    if v == 27 || v == 28 {
-        let recid = u8::try_from(v - 27).map_err(|_| DecodeError::InvalidSignature)?;
-        return Ok((None, recid));
-    }
-    if v >= 35 {
-        let chain_id = (v - 35) / 2;
-        let recid = u8::try_from((v - 35) % 2).map_err(|_| DecodeError::InvalidSignature)?;
-        return Ok((Some(chain_id), recid));
-    }
-    Err(DecodeError::InvalidSignature)
-}
-
-fn legacy_signing_hash(fields: &[RlpBytes], chain_id: Option<u64>) -> Result<[u8; 32], DecodeError> {
-    let mut list: Vec<RlpBytes> = Vec::with_capacity(9);
-    for item in fields.iter().take(6) {
-        list.push(trim_rlp_bytes(item));
-    }
-    if let Some(id) = chain_id {
-        list.push(int_to_rlp_bytes(id));
-        list.push(RlpBytes::new());
-        list.push(RlpBytes::new());
-    }
-    let mut out = Vec::new();
-    alloy_rlp::encode_list::<RlpBytes, [u8]>(&list, &mut out);
-    Ok(crate::hash::keccak256(&out))
-}
-
-fn int_to_rlp_bytes(value: u64) -> RlpBytes {
-    let mut buf = [0u8; 8];
-    buf.copy_from_slice(&value.to_be_bytes());
-    let trimmed = trim_bytes(&buf);
-    RlpBytes::from(trimmed.to_vec())
-}
-
-fn trim_bytes(bytes: &[u8]) -> &[u8] {
-    let mut i = 0;
-    while i < bytes.len() && bytes[i] == 0 {
-        i += 1;
-    }
-    &bytes[i..]
-}
-
-fn trim_rlp_bytes(bytes: &RlpBytes) -> RlpBytes {
-    let trimmed = trim_bytes(bytes);
-    RlpBytes::from(trimmed.to_vec())
-}
-
-fn recover_legacy_sender(
-    msg: [u8; 32],
-    r: [u8; 32],
-    s: [u8; 32],
-    recid: u8,
-) -> Result<Address, DecodeError> {
-    let v_byte = 27u8
-        .checked_add(recid)
-        .ok_or(DecodeError::InvalidSignature)?;
-    // ecrecover precompile input: msg || v(32) || r(32) || s(32)
-    let mut input = [0u8; 128];
-    input[0..32].copy_from_slice(&msg);
-    input[63] = v_byte;
-    input[64..96].copy_from_slice(&r);
-    input[96..128].copy_from_slice(&s);
-    let output = ec_recover_run(&input, u64::MAX).map_err(|_| DecodeError::InvalidSignature)?;
-    if output.bytes.len() != 32 {
-        return Err(DecodeError::InvalidSignature);
-    }
-    Ok(Address::from_slice(&output.bytes[12..32]))
+fn address_to_array(addr: AlloyAddress) -> [u8; 20] {
+    let mut out = [0u8; 20];
+    out.copy_from_slice(addr.as_slice());
+    out
 }
