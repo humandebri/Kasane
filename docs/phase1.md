@@ -67,7 +67,7 @@ eth_call_like(...) -> return_data（overlayで実行、永続変更なし）
 2.1 TxEnvelope（stableで保存する最小単位）
 TxEnvelope {
   tx_id: [u8;32],      // keccak256(bytes)
-  kind: {EthSigned, IcSynthetic},
+  kind: {EthSigned, ICSynthetic},
   tx_bytes: Vec<u8>,   // raw_tx or ic_tx_bytes（Phase0で凍結した形式）
 }
 
@@ -88,7 +88,7 @@ nonce? 指定があるなら 一致しなければ reject（同期API向け）
 
 ※ 以前出てた nonce_ic: Map<principal,u64> は不要にできる。簡単で壊れにくい。
 
-2.3 IcSynthetic bytes（Phase1の暫定フォーマット）
+2.3 ICSynthetic bytes（Phase1の暫定フォーマット）
 version: u8 (=1)
 to: [u8;20]
 value: [u8;32] (big-endian)
@@ -241,7 +241,7 @@ head: Cell<Head>（tip番号/parent_hash/timestamp 等）
 
 8. エラー規約（Phase1で固定）
 
-decode不能（Eth raw tx / IcSynthetic bytes不正）：reject（updateでtrapではなくResult推奨）
+decode不能（Eth raw tx / ICSynthetic bytes不正）：reject（updateでtrapではなくResult推奨）
 
 nonce mismatch（execute系でnonce指定時）：reject
 

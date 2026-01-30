@@ -14,7 +14,7 @@ Phase 0: 仕様凍結（手戻り防止フェーズ）
 
 principal_to_evm_address（あなたの案でOK）
 
-IcSyntheticのcanonical encoding（CBORならcanonical CBORを明記、個人的にはRLP/TLV推奨）
+ICSyntheticのcanonical encoding（CBORならcanonical CBORを明記、個人的にはRLP/TLV推奨）
 
 StateDB keyspace（例：0x01||addr / 0x02||addr||slot / 0x03||code_hash）
 

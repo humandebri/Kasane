@@ -80,7 +80,7 @@ struct StableStateV1 {
 
 2.2 Queue（mempool無しの中核）
 QueueItem
-enum TxKind { RawEth = 0, IcSynthetic = 1 }
+enum TxKind { RawEth = 0, ICSynthetic = 1 }
 
 struct QueuedTx {
   tx_id: [u8; 32],

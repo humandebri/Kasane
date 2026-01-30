@@ -89,7 +89,7 @@ drop_code（現行実装の一覧）:
 * 1: decode失敗
 * 2: 予約（実行失敗は **Included + status=0** として扱い、dropにはしない）
 * 3: tx_store欠落（キューにあるが本体が無い）
-* 4: caller不足（IcSyntheticでcaller_evm未保存）
+* 4: caller不足（ICSyntheticでcaller_evm未保存）
 
 拡張ルール:
 

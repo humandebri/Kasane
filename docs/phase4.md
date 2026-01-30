@@ -1,208 +1,142 @@
-Phase4（OP + FPVM）改訂版ロードマップ
-Phase4の到達点（これが“L1担保”の定義）
+# Phase4 Spec（OP / Fault Proof / L1担保）
 
-L1に データ（tx列） があり、誰でも 同じ再実行ができる
+## Phase4の到達点
 
-出力（state_rootなど）の投稿に対し、第三者が challengeして差し止め可能
+* L1に **tx列（DA）** があり、誰でも再実行できる
+* 出力（state_root等）に対し **第三者がchallenge可能**
+* disputeが起きたら **L1上の1-step FPVM** で決着
+* 出金は **finalized output のみ**を根拠にする
 
-争いが起きたら、L1上の Dispute Game が FPVMの1-step検証で白黒つける
+---
 
-ブリッジ出金は finalized output にのみ紐づく（運営/relayerの裁量なし）
+## 0) Phase4で凍結する仕様（Freeze）
 
-Phase4.0 追加で凍結する仕様（Phase0〜3の上に乗る“OP用Freeze”）
-0.1 L2 OutputRoot（L1が扱う「出力」の定義）を凍結
+### 0.1 OutputRootの定義
 
-L1で最終的に守りたいのは state_root だけじゃなく、ブリッジの出金根拠も含むべきなので、最低これを固定します。
+```
+output_root = keccak256(domain || l2_block_hash || state_root || tx_list_hash || outbox_root)
+```
 
-output_root = keccak256( domain || l2_block_hash || state_root || tx_list_hash || outbox_root )
+* domain: 固定（衝突回避）
+* outbox_root: 出金要求のMerkle根
 
-outbox_root は L2の「出金要求（withdrawal）」を Merkle 化した根（後述）。
-※ domain は固定（衝突回避）。
-※ Phase3の掲示板（OutputOracle）は state_root だけだったが、Phase4ではこれを output_root に上げる。
+### 0.2 Batch（DAデータ）のエンコード
 
-0.2 Batch（DAデータ）のエンコード凍結
-
-L1に投稿する tx列の表現（再実行入力）を凍結。
-
+```
 batch = concat( u32_be(len) || tx_bytes )*
-
 batch_hash = keccak256(batch)
+```
 
-tx_bytesは Phase0/1で凍結済み（Eth raw or IcSynthetic bytes）。
+* tx_bytes: Phase0/1で凍結済み（Eth raw / ICSynthetic）
 
-0.3 再実行環境（Fixed Env）を“検証用”として凍結
+### 0.3 再実行環境（Fixed Env）
 
-あなたの Phase1 でやってる timestamp = parent+1 等の決定性Envは、Phase4では「検証可能性」の要件になるので、ここからは破れない（破るとFPVMが一致しない）。
+* timestamp = parent + 1 などの決定性ルールを固定
+* ここを破るとFPVM一致が崩れる
 
-Phase4.1 DA（Data Availability）— L1に tx列を置く
-4.1.1 L1: BatchInbox コントラクト
+---
 
-appendBatch(bytes batch, bytes32 batchHash, uint64 startBlock, uint64 endBlock)
+## 1) Phase4.1 DA（Data Availability）
 
-BatchAppended(batchHash, startBlock, endBlock) event
+### 1.1 L1: BatchInbox
 
-権限：proposer（DAO管理）で開始してOK（Phase4の“trustless”はここではなく dispute 側で担保する）
+* `appendBatch(bytes batch, bytes32 batchHash, uint64 startBlock, uint64 endBlock)`
+* event: `BatchAppended(batchHash, startBlock, endBlock)`
 
-4.1.2 L2（EVM canister）側の変更
+### 1.2 L2: batch_hash を BlockData に記録
 
-ブロック保存時に batch_hash を BlockData に記録（後で output と紐づける）
+* `block.batch_hash` を保存
+* relayer生成用に `get_batch_bytes(start,end)` を用意
 
-get_batch_bytes(start,end) みたいな内部関数（relayer生成用。RPC経由でも良い）
+### 1.3 OutputOracle拡張
 
-4.1.3 OutputOracle の投稿内容を拡張
+* `proposeOutput(l2BlockNumber, output_root, batch_hash)`
 
-proposeOutput(l2BlockNumber, output_root, batch_hash) を最低限にする
+**合格条件**
 
-4.1 合格条件
+* L1の batch だけで第三者が再実行入力を得られる
 
-L1の batch だけで第三者が “再実行入力” を取れる
-（＝ challenger が材料不足で負ける状況を潰す）
+---
 
-Phase4.2 Outbox（出金要求を“証明可能”にする）
+## 2) Phase4.2 Outbox（出金の証明可能化）
 
-ログを拾って出金、はL1で検証できないので終わり。ここは Outbox Merkle が必要です。
+### 2.1 L2: Outbox Merkle
 
-4.2.1 L2: Outbox（Merkle 木）
+* withdrawal leaf を集めて outbox_root を算出
 
-各ブロックで withdrawal_leaves を集めて outbox_root を確定
-
-leaf例：
-
+```
 leaf = keccak256(domain || l1Token || toL1 || amount || l2TxId || index)
+```
 
-outbox_root はブロックメタに保存し、output_root に含める（Phase4.0で凍結）
+### 2.2 L1: proof-based withdraw
 
-4.2.2 L1: Bridge は “proof-based withdraw” に変える
+* `proveWithdrawal(output, leaf, proof)` が通ったら `finalizeWithdrawal`
 
-proveWithdrawal(output, leaf, merkleProof) が通ったら finalizeWithdrawal
+**合格条件**
 
-output は finalized 済みであることが条件
+* L2→L1出金が「運営承認」ではなく **証明**で通る
 
-4.2 合格条件
+---
 
-L2→L1出金が「運営承認」じゃなく「証明」で通る形になる（ただしoutput finalizationはまだ次のOP）
+## 3) Phase4.3 OP（Fault Proof）
 
-Phase4.3 OP（Fault Proof）— FPVM（1-step）＋ Dispute Game
+### 3.1 FPVMの選定
 
-ここが指定の(A)。
+* **Cannon系（MIPS風）推奨**
+* RISC-Vも可だが実装量が増える
 
-4.3.1 FPVMの選定（“特定VM”）
+### 3.2 再実行プログラム
 
-この手の設計で現実的なのは **Cannon系（MIPS風）**か RISC-V。Solidityで1-step実装するコストと前例を考えると、計画としては：
+入力:
 
-FPVM = MIPS32相当の小さいISA（Cannonライク） を推奨
-理由：1-stepの実装が比較的現実的、設計パターンが固い
+* pre_state_root
+* batch（L1 BatchInbox）
+* fixed_env_params
 
-（RISC-Vでも可能だが、実装量が増えがち）
+出力:
 
-4.3.2 “再実行プログラム”（Client Program）
+* post_state_root
+* outbox_root
 
-やることは単純で、重い。
+### 3.3 Preimage Oracle
 
-入力：
+* `loadPreimage(hash, bytes)` を L1に用意
+* 必要時に提示（ガス最適化）
 
-pre_state_root
+### 3.4 Dispute Game
 
-batch（L1 BatchInboxから）
+* proposer が output_root 提案
+* challenger が challenge（bond）
+* 二分探索で1-stepに縮約
+* FPVM stepper で勝敗決定
 
-fixed_env_params（凍結）
-出力：
+**合格条件**
 
-post_state_root
+* 不正 output を第三者が止められる
+* dispute が L1上の1-stepで完結
 
-outbox_root（同時に計算して良い）
+---
 
-これを FPVM上で動くバイナリとして固定（ツールチェーンも凍結する：Rustのバージョン・コンパイラ設定含む）。
+## 4) Phase4.4 ブリッジの最終化
 
-4.3.3 Preimage Oracle（L1上）
+* 正規ルート: `proveWithdrawal(finalized_output, proof) -> finalize`
+* trustedルート: 緊急用としてのみ残す（timelock必須）
 
-FPVMは「メモリの中身」を全部L1に載せられないので、必要なデータは
+---
 
-ハッシュ（コミット）＋
+## 5) 作業順序（依存関係）
 
-必要になった時に preimage を提示
-で取り出す。
+1. DA（BatchInbox）
+2. Outbox（proof-based withdraw）
+3. FPVM（再実行 + 1-step）
+4. Dispute Game（二分探索 + step）
+5. Bridgeをfinalized outputに接続
 
-L1に PreimageOracle を置いて、
+---
 
-loadPreimage(hash, bytes)（proposer/challengerが提示）
+## 6) Phase4の重さ（正直な見積もり）
 
-以後、DisputeGameが参照できる
-という形にする（“必要になるまで出さない”でガスを抑える）。
+* 再実行プログラムの作成は可能だが **FPVM向けに落とすのが重い**
+* 1-step検証 + preimage は **大工事**
 
-4.3.4 Dispute Game（バイセクション）
-
-proposerが output_root を提案（L1）
-
-challengerが challenge(output_root) を開始（bondを積む）
-
-両者は「実行トレースの中間状態（state）」を提出して 二分探索
-
-最後に 1 step（1命令）まで絞ったら、L1の FPVM stepper が
-
-“この1ステップは正しいか”
-を判定して勝敗を決める
-
-勝った側がbond回収、負けた側はスラッシュ。
-
-4.3.5 L1コントラクト群（Phase4-OPの構成）
-
-BatchInbox（Phase4.1）
-
-OutputOracle（propose/finalize、finalize条件に dispute を繋ぐ）
-
-DisputeGameFactory（ゲーム生成）
-
-FaultDisputeGame（二分探索＋最終1-step判定）
-
-PreimageOracle（preimage格納）
-
-BridgeVault（withdrawは finalized output + inclusion proof）
-
-4.3 合格条件
-
-不正な output を出しても、第三者が challenge して finalizeを止められる
-
-dispute は最終的に L1の1-stepで決着し、運営に依存しない
-
-Phase4.4 ブリッジを “OP finality” に接続して trusted 経路を落とす
-
-Phase3の RELAYER_ROLE finalizeWithdrawal を主系から外す。
-
-正規ルート：proveWithdrawal(finalized_output, leaf, proof) -> finalize
-
-trustedルート：緊急用に pause解除/資産救済としてだけ残す（timelock必須）
-
-追加で入れるべき「作業順序（依存関係）」まとめ
-
-Phase4はこの順が手戻りしない：
-
-DA（BatchInbox）：再実行入力をL1に固定
-
-Outbox：出金を証明可能にする（ログ依存を捨てる）
-
-FPVM（再実行プログラム + 1-step）：裁判の最小単位を作る
-
-Dispute Game：二分探索＋1-step判定
-
-Bridgeをfinalized outputに接続：初めてL1担保の体裁が完成
-
-Phase4で増える実装負荷（正直な見積もり感覚）
-
-“再実行プログラム” 自体は Rust で作れるが、FPVM向けに落とすのが重い
-
-Solidity側の 1-step実装 + メモリ証明が大工事
-
-ただし「EVMの1-step」をやるよりは遥かにマシ（あなたが選んだ(A)は正しい）
-
-Phase4の「凍結ポイント」（後で変えると死ぬ）
-
-batchエンコード
-
-output_root の定義（含めるフィールド）
-
-outbox leafの定義
-
-FPVM ISAと state hash 形式
-
-再実行プログラムのツールチェーン固定
+ただし「EVMの1-step」を作るよりは遥かに現実的。
