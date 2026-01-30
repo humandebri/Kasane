@@ -51,11 +51,11 @@ print('; '.join(str(b) for b in addr))
 PY
 }
 
-parse_blob_bytes() {
+parse_ok_blob_bytes() {
   python - <<'PY'
 import re, sys
 text = sys.stdin.read()
-m = re.search(r'blob\\s*\"([^\"]*)\"', text)
+m = re.search(r'variant\s*\{\s*(?:ok|Ok)\s*=\s*blob\s*\"([^\"]*)\"', text)
 if not m:
     sys.exit(1)
 s = m.group(1)
@@ -78,6 +78,15 @@ print('; '.join(str(b) for b in out))
 PY
 }
 
+assert_ok_variant() {
+  python - <<'PY'
+import re, sys
+text = sys.stdin.read()
+if not re.search(r'variant\s*\{\s*(?:ok|Ok)\s*=', text):
+    sys.exit(1)
+PY
+}
+
 assert_command() {
   bash -c "$1" >/dev/null
 }
@@ -85,7 +94,8 @@ assert_command() {
 log "starting playground smoke"
 before=$(cycle_balance "before")
 log "triggering ic tx"
-assert_command "$DFX canister call $CANISTER_ID execute_ic_tx \"(vec { 1; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 1; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 7; 161; 32; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0 }\")"
+EXEC_OUT=$($DFX canister call $CANISTER_ID execute_ic_tx "(vec { 1; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 1; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 7; 161; 32; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0 }")
+echo "$EXEC_OUT" | assert_ok_variant
 if [[ "$USE_DEV_FAUCET" == "1" ]]; then
   log "dev_mint for eth sender"
   SENDER_BYTES=$(raw_tx_sender_bytes)
@@ -94,7 +104,7 @@ fi
 log "submitting eth raw tx"
 RAW_TX=$(encode_raw_tx)
 SUBMIT_ETH_OUT=$($DFX canister call $CANISTER_ID submit_eth_tx "(vec { $RAW_TX })")
-ETH_TX_ID_BYTES=$(echo "$SUBMIT_ETH_OUT" | parse_blob_bytes)
+ETH_TX_ID_BYTES=$(echo "$SUBMIT_ETH_OUT" | parse_ok_blob_bytes)
 log "producing block"
 assert_command "$DFX canister call $CANISTER_ID produce_block '(1)'"
 log "fetching receipt for eth tx"

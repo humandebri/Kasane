@@ -17,3 +17,6 @@ lto = true
 codegen-units = 1
 strip = "symbols"
 debug = false
+
+[patch.crates-io]
+ark-relations = { path = "vendor/ark-relations" }

@@ -1,9 +1,10 @@
 [package]
-name = "evm-core"
+name = "ic-evm-core"
 version = "0.1.0"
 edition = "2021"
 
 [lib]
+name = "evm_core"
 crate-type = ["rlib"]
 
 [dependencies]

@@ -5,10 +5,10 @@ use crate::revm_exec::{execute_tx, ExecError};
 use crate::state_root::compute_state_root;
 use crate::tx_decode::decode_tx;
 use evm_db::chain_data::constants::{
-    CHAIN_ID, DROP_CODE_CALLER_MISSING, DROP_CODE_DECODE, DROP_CODE_EXEC, DROP_CODE_MISSING,
+    CHAIN_ID, DROP_CODE_CALLER_MISSING, DROP_CODE_DECODE, DROP_CODE_MISSING,
 };
 use evm_db::chain_data::{
-    BlockData, CallerKey, Head, ReceiptLike, TxEnvelope, TxId, TxKind, TxLoc,
+    BlockData, CallerKey, Head, ReceiptLike, TxEnvelope, TxId, TxIndexEntry, TxKind, TxLoc,
 };
 use evm_db::stable_state::{with_state, with_state_mut};
 use evm_db::types::keys::make_account_key;
@@ -36,6 +36,12 @@ pub struct ExecResult {
     pub status: u8,
     pub gas_used: u64,
     pub return_data: Vec<u8>,
+}
+
+pub struct PruneResult {
+    pub did_work: bool,
+    pub remaining: u64,
+    pub pruned_before_block: Option<u64>,
 }
 
 pub fn submit_tx(kind: TxKind, tx_bytes: Vec<u8>) -> Result<TxId, ChainError> {
@@ -188,9 +194,28 @@ pub fn produce_block(max_txs: usize) -> Result<BlockData, ChainError> {
         let tx_index = u32::try_from(included.len()).unwrap_or(u32::MAX);
         let outcome = match execute_tx(tx_id, tx_index, tx_env, number, timestamp) {
             Ok(value) => value,
-            Err(_) => {
-                with_state_mut(|state| state.tx_locs.insert(tx_id, TxLoc::dropped(DROP_CODE_EXEC)));
-                track_drop(&mut dropped_total, &mut dropped_by_code, DROP_CODE_EXEC);
+            Err(_err) => {
+                let output = Vec::new();
+                let receipt = ReceiptLike {
+                    tx_id,
+                    block_number: number,
+                    tx_index,
+                    status: 0,
+                    gas_used: 0,
+                    effective_gas_price: 0,
+                    return_data_hash: hash::keccak256(&output),
+                    return_data: output,
+                    contract_address: None,
+                    logs: Vec::new(),
+                };
+                with_state_mut(|state| {
+                    state
+                        .tx_index
+                        .insert(tx_id, TxIndexEntry { block_number: number, tx_index });
+                    state.receipts.insert(tx_id, receipt);
+                    state.tx_locs.insert(tx_id, TxLoc::included(number, tx_index));
+                });
+                included.push(tx_id);
                 continue;
             }
         };
@@ -349,6 +374,72 @@ fn execute_and_seal_with_caller(
 
 pub fn get_tx_loc(tx_id: &TxId) -> Option<TxLoc> {
     with_state(|state| state.tx_locs.get(tx_id))
+}
+
+pub fn prune_blocks(retain: u64, max_ops: u32) -> Result<PruneResult, ChainError> {
+    if retain == 0 || max_ops == 0 {
+        return Err(ChainError::InvalidLimit);
+    }
+    with_state_mut(|state| {
+        let head_number = state.head.get().number;
+        if head_number <= retain {
+            let pruned_before = state.prune_state.get().pruned_before();
+            return Ok(PruneResult {
+                did_work: false,
+                remaining: 0,
+                pruned_before_block: pruned_before,
+            });
+        }
+        let prune_before = head_number.saturating_sub(retain);
+        let mut prune_state = *state.prune_state.get();
+        let mut next = prune_state.next_prune_block;
+        if let Some(pruned) = prune_state.pruned_before() {
+            if next <= pruned {
+                next = pruned.saturating_add(1);
+            }
+        }
+        let mut did_work = false;
+        let mut ops_used: u64 = 0;
+        let max_ops = u64::from(max_ops);
+        while next <= prune_before {
+            let block = match state.blocks.get(&next) {
+                Some(value) => value,
+                None => {
+                    prune_state.set_pruned_before(next);
+                    next = next.saturating_add(1);
+                    did_work = true;
+                    continue;
+                }
+            };
+            let needed = 1u64 + (block.tx_ids.len() as u64).saturating_mul(4);
+            if ops_used.saturating_add(needed) > max_ops {
+                break;
+            }
+            let block = state.blocks.remove(&next).unwrap_or(block);
+            for tx_id in block.tx_ids.iter() {
+                state.receipts.remove(tx_id);
+                state.tx_index.remove(tx_id);
+                state.tx_locs.remove(tx_id);
+                state.tx_store.remove(tx_id);
+            }
+            ops_used = ops_used.saturating_add(needed);
+            prune_state.set_pruned_before(next);
+            next = next.saturating_add(1);
+            did_work = true;
+        }
+        prune_state.next_prune_block = next;
+        state.prune_state.set(prune_state);
+        let remaining = if next > prune_before {
+            0
+        } else {
+            prune_before.saturating_sub(next).saturating_add(1)
+        };
+        Ok(PruneResult {
+            did_work,
+            remaining,
+            pruned_before_block: prune_state.pruned_before(),
+        })
+    })
 }
 
 pub struct QueueItem {

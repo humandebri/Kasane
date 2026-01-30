@@ -2,7 +2,7 @@
 
 use evm_core::chain::{self, ChainError};
 use evm_db::chain_data::constants::{
-    DROP_CODE_CALLER_MISSING, DROP_CODE_DECODE, DROP_CODE_EXEC, DROP_CODE_MISSING,
+    DROP_CODE_CALLER_MISSING, DROP_CODE_DECODE, DROP_CODE_MISSING,
 };
 use evm_db::chain_data::{TxEnvelope, TxId, TxKind, TxLocKind};
 use evm_db::stable_state::{init_stable_state, with_state_mut};
@@ -84,12 +84,14 @@ fn produce_block_marks_exec_drop() {
         state.chain_state.set(chain_state);
     });
 
-    let err = chain::produce_block(1).expect_err("produce_block should fail");
-    assert_eq!(err, ChainError::NoExecutableTx);
+    let block = chain::produce_block(1).expect("produce_block should succeed");
+    assert_eq!(block.tx_ids.len(), 1);
 
     let loc = chain::get_tx_loc(&tx_id).expect("tx_loc");
-    assert_eq!(loc.kind, TxLocKind::Dropped);
-    assert_eq!(loc.drop_code, DROP_CODE_EXEC);
+    assert_eq!(loc.kind, TxLocKind::Included);
+
+    let receipt = chain::get_receipt(&tx_id).expect("receipt");
+    assert_eq!(receipt.status, 0);
 }
 
 fn build_ic_tx_bytes() -> Vec<u8> {

@@ -5,6 +5,7 @@ pub mod caller;
 pub mod chain_state;
 pub mod constants;
 pub mod metrics;
+pub mod prune_state;
 pub mod queue;
 pub mod receipt;
 pub mod tx_loc;
@@ -18,6 +19,7 @@ pub use constants::{
     MAX_TX_SIZE, RECEIPT_CONTRACT_ADDR_LEN, TX_ID_LEN,
 };
 pub use metrics::{MetricsStateV1, MetricsWindowSummary, METRICS_BUCKETS};
+pub use prune_state::PruneStateV1;
 pub use queue::QueueMeta;
 pub use receipt::ReceiptLike;
 pub use tx_loc::{TxLoc, TxLocKind};

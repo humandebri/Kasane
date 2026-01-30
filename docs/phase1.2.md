@@ -12,13 +12,15 @@
 * 平均tx/ブロック（直近Nブロックから）
 * reject率（drop_code別のカウント）
 * cycles残量（get_cycle_balance）
+* pruned_before_block（prune未実施なら None）
 
 ### 1.1.2 metricsの「返す値の定義」を固定する（必須）
 
-* `ema_block_rate`
-  * 単位: **blocks/sec**
+* `ema_block_rate_per_sec_x1000`
+  * 単位: **(blocks/sec) × 1000**（小数表現のため x1000 で固定）
   * `alpha`: **0.2**（指数移動平均の平滑化係数）
-* `ema_txs_per_block`
+* `ema_txs_per_block_x1000`
+  * 単位: **(txs/block) × 1000**
   * **生成したブロックのみ**を対象にする（空ブロックは作らない前提）
 * `last_k_block_stats`
   * `tx_count`
@@ -38,8 +40,8 @@
 
 * `tip_height`
 * `last_block_time`
-* `ema_block_rate`（指数移動平均でも可）
-* `ema_txs_per_block`
+* `ema_block_rate_per_sec_x1000`（指数移動平均）
+* `ema_txs_per_block_x1000`
 * `reject_count_by_code`（累積）
 * `last_k_block_stats`（固定長リング: 例 K=64）
 
@@ -85,7 +87,7 @@ queryで毎回「正確な cycles」を取得できる前提にしない。
 drop_code（現行実装の一覧）:
 
 * 1: decode失敗
-* 2: 実行失敗（ガス条件/実行エラー等）
+* 2: 予約（実行失敗は **Included + status=0** として扱い、dropにはしない）
 * 3: tx_store欠落（キューにあるが本体が無い）
 * 4: caller不足（IcSyntheticでcaller_evm未保存）
 
@@ -166,13 +168,13 @@ Option 2（暫定案）: **最新 N ブロックのみ保持（pruning）**
 
 ### 3.2 “None” の意味問題（重要）
 
-`get_receipt == None` が以下を区別できない:
+`get_block` / `get_receipt` の結果が **None** だと以下を区別できない:
 
 * NotFound（存在しない）
 * Pending（未確定）
 * Pruned（削除済み）
 
-最低限どれかが必要:
+この曖昧さを避けるため、**Phase1.2では Result で返す**方針にする。
 
 * `get_pruned_before() -> Option<u64>` を追加する
 * もしくは `pruned_before_block` を `metrics` に含める
@@ -183,9 +185,13 @@ Option 2（暫定案）: **最新 N ブロックのみ保持（pruning）**
 * `metrics.pruned_before_block: Option<u64>` を追加
   * `None`: prune未実施
   * `Some(x)`: **number <= x は取得不能**（仕様として）
-* `get_block/get_receipt` が `None` の場合の解釈
-  * `requested_number <= pruned_before_block` → **Pruned**
-  * それ以外 → **NotFound or Pending**（API次第）
+* **Candid API は Result にする**
+  * `get_block(number) -> Result<BlockView, LookupError>`
+  * `get_receipt(tx_id) -> Result<ReceiptView, LookupError>`
+* `LookupError` の意味を固定
+  * `Pruned { pruned_before_block }`: `requested_number <= pruned_before_block`
+  * `Pending`: `tx_loc.kind == Queued`
+  * `NotFound`: それ以外
 
 ### 3.3 tx_store / seen_tx の最小方針案
 

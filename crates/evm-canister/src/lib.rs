@@ -31,6 +31,51 @@ pub struct ExecResultDto {
 }
 
 #[derive(Clone, Debug, CandidType, Deserialize)]
+pub enum LookupError {
+    NotFound,
+    Pending,
+    Pruned { pruned_before_block: u64 },
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize)]
+pub enum ProduceBlockStatus {
+    Produced {
+        block_number: u64,
+        txs: u32,
+        gas_used: u64,
+        dropped: u32,
+    },
+    NoOp {
+        reason: NoOpReason,
+    },
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize)]
+pub enum NoOpReason {
+    NoExecutableTx,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize)]
+pub enum ProduceBlockError {
+    Internal(String),
+    InvalidArgument(String),
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize)]
+pub enum SubmitTxError {
+    InvalidArgument(String),
+    Rejected(String),
+    Internal(String),
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize)]
+pub enum ExecuteTxError {
+    InvalidArgument(String),
+    Rejected(String),
+    Internal(String),
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize)]
 pub struct BlockView {
     pub number: u64,
     pub parent_hash: Vec<u8>,
@@ -99,12 +144,22 @@ pub struct MetricsView {
     pub txs: u64,
     pub avg_txs_per_block: u64,
     pub block_rate_per_sec_x1000: Option<u64>,
+    pub ema_block_rate_per_sec_x1000: u64,
+    pub ema_txs_per_block_x1000: u64,
     pub queue_len: u64,
     pub drop_counts: Vec<DropCountView>,
     pub total_submitted: u64,
     pub total_included: u64,
     pub total_dropped: u64,
     pub cycles: u128,
+    pub pruned_before_block: Option<u64>,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize)]
+pub struct PruneResultView {
+    pub did_work: bool,
+    pub remaining: u64,
+    pub pruned_before_block: Option<u64>,
 }
 
 #[derive(Clone, Debug, CandidType, Deserialize)]
@@ -191,55 +246,109 @@ fn pre_upgrade() {
 }
 
 #[ic_cdk::update]
-fn execute_eth_raw_tx(raw_tx: Vec<u8>) -> ExecResultDto {
-    let result = chain::execute_eth_raw_tx(raw_tx).unwrap_or_else(|err| {
-        debug_print(format!("execute_eth_raw_tx err: {:?}", err));
-        ic_cdk::trap(&format!("execute_eth_raw_tx failed: {:?}", err));
-    });
-    ExecResultDto {
+fn execute_eth_raw_tx(raw_tx: Vec<u8>) -> Result<ExecResultDto, ExecuteTxError> {
+    let result = match chain::execute_eth_raw_tx(raw_tx) {
+        Ok(value) => value,
+        Err(chain::ChainError::DecodeFailed) => {
+            return Err(ExecuteTxError::InvalidArgument("decode failed".to_string()));
+        }
+        Err(chain::ChainError::TxTooLarge) => {
+            return Err(ExecuteTxError::InvalidArgument("tx too large".to_string()));
+        }
+        Err(chain::ChainError::TxAlreadySeen) => {
+            return Err(ExecuteTxError::Rejected("tx already seen".to_string()));
+        }
+        Err(chain::ChainError::ExecFailed(_)) => {
+            return Err(ExecuteTxError::Rejected("execution failed".to_string()));
+        }
+        Err(err) => {
+            debug_print(format!("execute_eth_raw_tx err: {:?}", err));
+            return Err(ExecuteTxError::Internal(format!("{:?}", err)));
+        }
+    };
+    Ok(ExecResultDto {
         tx_id: result.tx_id.0.to_vec(),
         block_number: result.block_number,
         tx_index: result.tx_index,
         status: result.status,
         gas_used: result.gas_used,
         return_data: clamp_return_data(result.return_data),
-    }
+    })
 }
 
 #[ic_cdk::update]
-fn execute_ic_tx(tx_bytes: Vec<u8>) -> ExecResultDto {
+fn execute_ic_tx(tx_bytes: Vec<u8>) -> Result<ExecResultDto, ExecuteTxError> {
     let caller = principal_to_evm_address(ic_cdk::api::msg_caller());
     let caller_principal = ic_cdk::api::msg_caller().as_slice().to_vec();
     let canister_id = ic_cdk::api::canister_self().as_slice().to_vec();
-    let result = chain::execute_ic_tx(caller, caller_principal, canister_id, tx_bytes)
-        .unwrap_or_else(|_| ic_cdk::trap("execute_ic_tx failed"));
-    ExecResultDto {
+    let result = match chain::execute_ic_tx(caller, caller_principal, canister_id, tx_bytes) {
+        Ok(value) => value,
+        Err(chain::ChainError::DecodeFailed) => {
+            return Err(ExecuteTxError::InvalidArgument("decode failed".to_string()));
+        }
+        Err(chain::ChainError::TxTooLarge) => {
+            return Err(ExecuteTxError::InvalidArgument("tx too large".to_string()));
+        }
+        Err(chain::ChainError::TxAlreadySeen) => {
+            return Err(ExecuteTxError::Rejected("tx already seen".to_string()));
+        }
+        Err(chain::ChainError::ExecFailed(_)) => {
+            return Err(ExecuteTxError::Rejected("execution failed".to_string()));
+        }
+        Err(err) => {
+            debug_print(format!("execute_ic_tx err: {:?}", err));
+            return Err(ExecuteTxError::Internal(format!("{:?}", err)));
+        }
+    };
+    Ok(ExecResultDto {
         tx_id: result.tx_id.0.to_vec(),
         block_number: result.block_number,
         tx_index: result.tx_index,
         status: result.status,
         gas_used: result.gas_used,
         return_data: clamp_return_data(result.return_data),
-    }
+    })
 }
 
 #[ic_cdk::update]
-fn submit_eth_tx(raw_tx: Vec<u8>) -> Vec<u8> {
-    let tx_id = chain::submit_tx(evm_db::chain_data::TxKind::EthSigned, raw_tx)
-        .unwrap_or_else(|_| ic_cdk::trap("submit_eth_tx failed"));
+fn submit_eth_tx(raw_tx: Vec<u8>) -> Result<Vec<u8>, SubmitTxError> {
+    let tx_id = match chain::submit_tx(evm_db::chain_data::TxKind::EthSigned, raw_tx) {
+        Ok(value) => value,
+        Err(chain::ChainError::TxTooLarge) => {
+            return Err(SubmitTxError::InvalidArgument("tx too large".to_string()));
+        }
+        Err(chain::ChainError::TxAlreadySeen) => {
+            return Err(SubmitTxError::Rejected("tx already seen".to_string()));
+        }
+        Err(err) => {
+            debug_print(format!("submit_eth_tx err: {:?}", err));
+            return Err(SubmitTxError::Internal(format!("{:?}", err)));
+        }
+    };
     schedule_mining();
-    tx_id.0.to_vec()
+    Ok(tx_id.0.to_vec())
 }
 
 #[ic_cdk::update]
-fn submit_ic_tx(tx_bytes: Vec<u8>) -> Vec<u8> {
+fn submit_ic_tx(tx_bytes: Vec<u8>) -> Result<Vec<u8>, SubmitTxError> {
     let caller = principal_to_evm_address(ic_cdk::api::msg_caller());
     let caller_principal = ic_cdk::api::msg_caller().as_slice().to_vec();
     let canister_id = ic_cdk::api::canister_self().as_slice().to_vec();
-    let tx_id = chain::submit_ic_tx(caller, caller_principal, canister_id, tx_bytes)
-        .unwrap_or_else(|_| ic_cdk::trap("submit_ic_tx failed"));
+    let tx_id = match chain::submit_ic_tx(caller, caller_principal, canister_id, tx_bytes) {
+        Ok(value) => value,
+        Err(chain::ChainError::TxTooLarge) => {
+            return Err(SubmitTxError::InvalidArgument("tx too large".to_string()));
+        }
+        Err(chain::ChainError::TxAlreadySeen) => {
+            return Err(SubmitTxError::Rejected("tx already seen".to_string()));
+        }
+        Err(err) => {
+            debug_print(format!("submit_ic_tx err: {:?}", err));
+            return Err(SubmitTxError::Internal(format!("{:?}", err)));
+        }
+    };
     schedule_mining();
-    tx_id.0.to_vec()
+    Ok(tx_id.0.to_vec())
 }
 
 #[cfg(feature = "dev-faucet")]
@@ -254,29 +363,94 @@ fn dev_mint(address: Vec<u8>, amount: u128) {
 }
 
 #[ic_cdk::update]
-fn produce_block(max_txs: u32) -> BlockView {
+fn produce_block(max_txs: u32) -> Result<ProduceBlockStatus, ProduceBlockError> {
     let limit = usize::try_from(max_txs).unwrap_or(0);
-    let block = chain::produce_block(limit).unwrap_or_else(|err| {
-        debug_print(format!("produce_block err: {:?}", err));
-        ic_cdk::trap("produce_block failed");
-    });
-    block_to_view(block)
+    match chain::produce_block(limit) {
+        Ok(block) => {
+            let gas_used = with_state(|state| {
+                let mut total = 0u64;
+                for tx_id in block.tx_ids.iter() {
+                    if let Some(receipt) = state.receipts.get(tx_id) {
+                        total = total.saturating_add(receipt.gas_used);
+                    }
+                }
+                total
+            });
+            let dropped = with_state(|state| {
+                let metrics = *state.metrics_state.get();
+                let mut count = 0u64;
+                for bucket in metrics.buckets.iter() {
+                    if bucket.block_number == block.number {
+                        count = bucket.drops;
+                        break;
+                    }
+                }
+                count
+            });
+            Ok(ProduceBlockStatus::Produced {
+                block_number: block.number,
+                txs: block.tx_ids.len().try_into().unwrap_or(u32::MAX),
+                gas_used,
+                dropped: dropped.try_into().unwrap_or(u32::MAX),
+            })
+        }
+        Err(chain::ChainError::NoExecutableTx) | Err(chain::ChainError::QueueEmpty) => {
+            Ok(ProduceBlockStatus::NoOp {
+                reason: NoOpReason::NoExecutableTx,
+            })
+        }
+        Err(chain::ChainError::InvalidLimit) => Err(ProduceBlockError::InvalidArgument(
+            "max_txs must be > 0".to_string(),
+        )),
+        Err(err) => {
+            debug_print(format!("produce_block err: {:?}", err));
+            Err(ProduceBlockError::Internal(format!("{:?}", err)))
+        }
+    }
 }
 
 #[ic_cdk::query]
-fn get_block(number: u64) -> Option<BlockView> {
-    chain::get_block(number).map(block_to_view)
+fn get_block(number: u64) -> Result<BlockView, LookupError> {
+    let pruned_before = with_state(|state| state.prune_state.get().pruned_before());
+    if let Some(pruned) = pruned_before {
+        if number <= pruned {
+            return Err(LookupError::Pruned {
+                pruned_before_block: pruned,
+            });
+        }
+    }
+    chain::get_block(number)
+        .map(block_to_view)
+        .ok_or(LookupError::NotFound)
 }
 
 #[ic_cdk::query]
-fn get_receipt(tx_id: Vec<u8>) -> Option<ReceiptView> {
+fn get_receipt(tx_id: Vec<u8>) -> Result<ReceiptView, LookupError> {
     if tx_id.len() != 32 {
-        return None;
+        return Err(LookupError::NotFound);
     }
     let mut buf = [0u8; 32];
     buf.copy_from_slice(&tx_id);
-    let receipt = chain::get_receipt(&TxId(buf))?;
-    Some(receipt_to_view(receipt))
+    if let Some(receipt) = chain::get_receipt(&TxId(buf)) {
+        return Ok(receipt_to_view(receipt));
+    }
+    let pruned_before = with_state(|state| state.prune_state.get().pruned_before());
+    let loc = chain::get_tx_loc(&TxId(buf));
+    if let Some(loc) = loc {
+        if loc.kind == TxLocKind::Queued {
+            return Err(LookupError::Pending);
+        }
+        if loc.kind == TxLocKind::Included {
+            if let Some(pruned) = pruned_before {
+                if loc.block_number <= pruned {
+                    return Err(LookupError::Pruned {
+                        pruned_before_block: pruned,
+                    });
+                }
+            }
+        }
+    }
+    Err(LookupError::NotFound)
 }
 
 #[ic_cdk::query]
@@ -327,11 +501,22 @@ fn rpc_eth_get_transaction_receipt(tx_hash: Vec<u8>) -> Option<EthReceiptView> {
 }
 
 #[ic_cdk::update]
-fn rpc_eth_send_raw_transaction(raw_tx: Vec<u8>) -> Vec<u8> {
-    let tx_id = chain::submit_tx(TxKind::EthSigned, raw_tx)
-        .unwrap_or_else(|_| ic_cdk::trap("rpc_eth_send_raw_transaction failed"));
+fn rpc_eth_send_raw_transaction(raw_tx: Vec<u8>) -> Result<Vec<u8>, SubmitTxError> {
+    let tx_id = match chain::submit_tx(TxKind::EthSigned, raw_tx) {
+        Ok(value) => value,
+        Err(chain::ChainError::TxTooLarge) => {
+            return Err(SubmitTxError::InvalidArgument("tx too large".to_string()));
+        }
+        Err(chain::ChainError::TxAlreadySeen) => {
+            return Err(SubmitTxError::Rejected("tx already seen".to_string()));
+        }
+        Err(err) => {
+            debug_print(format!("rpc_eth_send_raw_transaction err: {:?}", err));
+            return Err(SubmitTxError::Internal(format!("{:?}", err)));
+        }
+    };
     schedule_mining();
-    tx_id.0.to_vec()
+    Ok(tx_id.0.to_vec())
 }
 
 #[ic_cdk::query]
@@ -365,6 +550,7 @@ fn metrics(window: u64) -> MetricsView {
         let window = clamp_metrics_window(window);
         let metrics = *state.metrics_state.get();
         let summary = metrics.window_summary(window);
+        let pruned_before_block = state.prune_state.get().pruned_before();
         let rate = summary.block_rate_per_sec_x1000();
         let avg = if summary.blocks == 0 {
             0
@@ -377,12 +563,15 @@ fn metrics(window: u64) -> MetricsView {
             txs: summary.txs,
             avg_txs_per_block: avg,
             block_rate_per_sec_x1000: rate,
+            ema_block_rate_per_sec_x1000: metrics.ema_block_rate_x1000,
+            ema_txs_per_block_x1000: metrics.ema_txs_per_block_x1000,
             queue_len: queue_len_from_meta(queue_meta),
             drop_counts: collect_drop_counts(&metrics),
             total_submitted: metrics.total_submitted,
             total_included: metrics.total_included,
             total_dropped: metrics.total_dropped,
             cycles,
+            pruned_before_block,
         }
     })
 }
@@ -410,6 +599,21 @@ fn set_mining_interval_ms(interval_ms: u64) {
         state.chain_state.set(chain_state);
     });
     schedule_mining();
+}
+
+#[ic_cdk::update]
+fn prune_blocks(retain: u64, max_ops: u32) -> Result<PruneResultView, ProduceBlockError> {
+    match chain::prune_blocks(retain, max_ops) {
+        Ok(result) => Ok(PruneResultView {
+            did_work: result.did_work,
+            remaining: result.remaining,
+            pruned_before_block: result.pruned_before_block,
+        }),
+        Err(chain::ChainError::InvalidLimit) => Err(ProduceBlockError::InvalidArgument(
+            "retain/max_ops must be > 0".to_string(),
+        )),
+        Err(err) => Err(ProduceBlockError::Internal(format!("{:?}", err))),
+    }
 }
 
 #[ic_cdk::query]

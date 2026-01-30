@@ -35,6 +35,9 @@ pub struct MetricsStateV1 {
     pub total_included: u64,
     pub total_dropped: u64,
     pub drop_counts: [u64; DROP_CODE_SLOTS],
+    pub ema_block_rate_x1000: u64,
+    pub ema_txs_per_block_x1000: u64,
+    pub last_ema_timestamp: u64,
     pub bucket_cursor: u32,
     pub buckets: [MetricsBucket; METRICS_BUCKETS],
 }
@@ -47,6 +50,9 @@ impl MetricsStateV1 {
             total_included: 0,
             total_dropped: 0,
             drop_counts: [0u64; DROP_CODE_SLOTS],
+            ema_block_rate_x1000: 0,
+            ema_txs_per_block_x1000: 0,
+            last_ema_timestamp: 0,
             bucket_cursor: 0,
             buckets: [MetricsBucket::empty(); METRICS_BUCKETS],
         }
@@ -73,6 +79,7 @@ impl MetricsStateV1 {
     }
 
     pub fn record_block(&mut self, block_number: u64, timestamp: u64, txs: u64, drops: u64) {
+        self.update_ema(timestamp, txs);
         let idx = usize::try_from(self.bucket_cursor).unwrap_or(0) % METRICS_BUCKETS;
         self.buckets[idx] = MetricsBucket {
             block_number,
@@ -81,6 +88,28 @@ impl MetricsStateV1 {
             drops,
         };
         self.bucket_cursor = self.bucket_cursor.wrapping_add(1) % METRICS_BUCKETS_U32;
+    }
+
+    fn update_ema(&mut self, timestamp: u64, txs: u64) {
+        if timestamp == 0 {
+            return;
+        }
+        if self.last_ema_timestamp == 0 {
+            self.last_ema_timestamp = timestamp;
+            self.ema_txs_per_block_x1000 = txs.saturating_mul(1000);
+            return;
+        }
+        let delta = timestamp.saturating_sub(self.last_ema_timestamp);
+        if delta == 0 {
+            return;
+        }
+        let inst_rate_x1000 = 1000u64.saturating_div(delta);
+        let inst_txs_x1000 = txs.saturating_mul(1000);
+        self.ema_block_rate_x1000 =
+            ((self.ema_block_rate_x1000.saturating_mul(4)).saturating_add(inst_rate_x1000)) / 5;
+        self.ema_txs_per_block_x1000 =
+            ((self.ema_txs_per_block_x1000.saturating_mul(4)).saturating_add(inst_txs_x1000)) / 5;
+        self.last_ema_timestamp = timestamp;
     }
 
     pub fn window_summary(&self, window: u64) -> MetricsWindowSummary {
@@ -164,6 +193,9 @@ impl Storable for MetricsStateV1 {
         for count in self.drop_counts.iter() {
             out.extend_from_slice(&count.to_be_bytes());
         }
+        out.extend_from_slice(&self.ema_block_rate_x1000.to_be_bytes());
+        out.extend_from_slice(&self.ema_txs_per_block_x1000.to_be_bytes());
+        out.extend_from_slice(&self.last_ema_timestamp.to_be_bytes());
         out.extend_from_slice(&self.bucket_cursor.to_be_bytes());
         out.extend_from_slice(&[0u8; 4]);
         for bucket in self.buckets.iter() {
@@ -193,6 +225,9 @@ impl Storable for MetricsStateV1 {
         for slot in drop_counts.iter_mut() {
             *slot = read_u64(data, &mut offset);
         }
+        let ema_block_rate_x1000 = read_u64(data, &mut offset);
+        let ema_txs_per_block_x1000 = read_u64(data, &mut offset);
+        let last_ema_timestamp = read_u64(data, &mut offset);
         let bucket_cursor = read_u32(data, &mut offset);
         offset = offset.saturating_add(4);
         let mut buckets = [MetricsBucket::empty(); METRICS_BUCKETS];
@@ -208,6 +243,9 @@ impl Storable for MetricsStateV1 {
             total_included,
             total_dropped,
             drop_counts,
+            ema_block_rate_x1000,
+            ema_txs_per_block_x1000,
+            last_ema_timestamp,
             bucket_cursor,
             buckets,
         }
@@ -220,7 +258,8 @@ impl Storable for MetricsStateV1 {
 }
 
 const METRICS_BUCKET_SIZE: u32 = 8 * 4;
-const METRICS_STATE_BASE: u32 = 4 + 8 * 3 + 8 * (DROP_CODE_SLOTS as u32) + 4 + 4;
+const METRICS_STATE_BASE: u32 =
+    4 + 8 * 3 + 8 * (DROP_CODE_SLOTS as u32) + 8 * 3 + 4 + 4;
 const METRICS_STATE_SIZE_U32: u32 = METRICS_STATE_BASE + METRICS_BUCKET_SIZE * METRICS_BUCKETS_U32;
 const METRICS_STATE_SIZE: u32 = METRICS_STATE_SIZE_U32;
 
@@ -236,4 +275,19 @@ fn read_u32(data: &[u8], offset: &mut usize) -> u32 {
     buf.copy_from_slice(&data[*offset..*offset + 4]);
     *offset += 4;
     u32::from_be_bytes(buf)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::MetricsStateV1;
+
+    #[test]
+    fn ema_updates_with_alpha_point_two() {
+        let mut metrics = MetricsStateV1::new();
+        metrics.record_block(1, 10, 5, 0);
+        assert_eq!(metrics.ema_txs_per_block_x1000, 5000);
+        metrics.record_block(2, 15, 1, 0);
+        assert_eq!(metrics.ema_block_rate_x1000, 40);
+        assert_eq!(metrics.ema_txs_per_block_x1000, 4200);
+    }
 }

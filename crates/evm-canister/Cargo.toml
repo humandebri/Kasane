@@ -17,6 +17,7 @@ serde = { version = "1", features = ["derive"] }
 getrandom = { version = "0.2", features = ["custom"] }
 
 [dependencies.evm-core]
+package = "ic-evm-core"
 path = "../evm-core"
 
 [dependencies.evm_db]

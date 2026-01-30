@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# where: manual build/deploy helper
+# where: playground-only manual build/deploy helper
 # what: build wasm with cargo (no dfx build) and install via dfx
 # why: keep wasm small and reproducible; avoid dfx-internal build/strip issues
+# note: this is intended for playground use only (size issues); not needed for mainnet deploys
 set -euo pipefail
 
 NETWORK="${NETWORK:-playground}"

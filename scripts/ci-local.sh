@@ -21,7 +21,7 @@ fi
 
 dfx start --clean --background
 
-cargo test -p evm-db -p evm-core -p evm-canister
+cargo test -p evm-db -p ic-evm-core -p evm-canister
 
 dfx deploy evm_canister
 
@@ -79,8 +79,14 @@ echo "[smoke] execute_ic_tx cycles_used=${EXEC_COST}"
 TX_ID=$(EXEC_OUT="$EXEC_OUT" python - <<'PY'
 import os, re, sys
 text = os.environ.get("EXEC_OUT", "")
-m = re.search(r'tx_id\s*=\s*blob\s*"([^"]*)"', text)
+if not re.search(r'variant\s*\{\s*(?:ok|Ok)\s*=', text):
+    sys.stderr.write("[smoke] execute_ic_tx returned Err\\n")
+    sys.stderr.write(text + "\\n")
+    sys.exit(1)
+m = re.search(r'tx_id\s*=\s*blob\s*\"([^\"]*)\"', text)
 if not m:
+    sys.stderr.write("[smoke] execute_ic_tx ok but tx_id not found\\n")
+    sys.stderr.write(text + "\\n")
     sys.exit(1)
 s = m.group(1)
 out = bytearray()
@@ -118,8 +124,14 @@ PY
 SUBMIT_TX_ID_BYTES=$(SUBMIT_TX_ID="$SUBMIT_TX_ID" python - <<'PY'
 import os, re, sys
 text = os.environ.get("SUBMIT_TX_ID", "")
-m = re.search(r'blob\s*"([^"]*)"', text)
+if not re.search(r'variant\s*\{\s*(?:ok|Ok)\s*=', text):
+    sys.stderr.write("[smoke] submit_ic_tx returned Err\\n")
+    sys.stderr.write(text + "\\n")
+    sys.exit(1)
+m = re.search(r'variant\s*\{\s*(?:ok|Ok)\s*=\s*blob\s*\"([^\"]*)\"', text)
 if not m:
+    sys.stderr.write("[smoke] submit_ic_tx ok but tx_id not found\\n")
+    sys.stderr.write(text + "\\n")
     sys.exit(1)
 s = m.group(1)
 out = bytearray()
