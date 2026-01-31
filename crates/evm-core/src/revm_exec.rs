@@ -3,7 +3,7 @@
 use crate::hash::keccak256;
 use crate::revm_db::RevmStableDb;
 use crate::tx_decode::DecodeError;
-use evm_db::chain_data::constants::CHAIN_ID;
+use evm_db::chain_data::constants::{CHAIN_ID, DEFAULT_BLOCK_GAS_LIMIT};
 use evm_db::chain_data::receipt::LogEntry;
 use evm_db::chain_data::{ReceiptLike, TxId, TxIndexEntry};
 use evm_db::stable_state::{with_state, with_state_mut};
@@ -44,6 +44,7 @@ pub fn execute_tx(
     let block = BlockEnv {
         number: U256::from(block_number),
         timestamp: U256::from(timestamp),
+        gas_limit: DEFAULT_BLOCK_GAS_LIMIT,
         basefee: base_fee,
         ..Default::default()
     };
@@ -120,7 +121,7 @@ fn address_to_bytes(address: revm::primitives::Address) -> [u8; 20] {
     out
 }
 
-fn compute_effective_gas_price(
+pub(crate) fn compute_effective_gas_price(
     max_fee: u128,
     max_priority: u128,
     base_fee: u64,

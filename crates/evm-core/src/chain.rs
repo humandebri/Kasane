@@ -1,14 +1,17 @@
 //! どこで: Phase1のチェーン操作 / 何を: submit/produce/execute / なぜ: 同期Tx体験の基盤のため
 
+use crate::base_fee::compute_next_base_fee;
 use crate::hash;
-use crate::revm_exec::{execute_tx, ExecError};
+use crate::revm_exec::{compute_effective_gas_price, execute_tx, ExecError};
 use crate::state_root::compute_state_root;
 use crate::tx_decode::decode_tx;
 use evm_db::chain_data::constants::{
-    CHAIN_ID, DROP_CODE_CALLER_MISSING, DROP_CODE_DECODE, DROP_CODE_MISSING,
+    CHAIN_ID, DEFAULT_BLOCK_GAS_LIMIT, DROP_CODE_CALLER_MISSING, DROP_CODE_DECODE, DROP_CODE_MISSING,
+    DROP_CODE_INVALID_FEE, MAX_TX_SIZE,
 };
 use evm_db::chain_data::{
-    BlockData, CallerKey, Head, ReceiptLike, TxEnvelope, TxId, TxIndexEntry, TxKind, TxLoc,
+    BlockData, CallerKey, Head, ReceiptLike, ReadyKey, SenderKey, SenderNonceKey, TxEnvelope, TxId,
+    TxIndexEntry, TxKind, TxLoc,
 };
 use evm_db::stable_state::{with_state, with_state_mut};
 use evm_db::types::keys::make_account_key;
@@ -23,6 +26,8 @@ pub enum ChainError {
     TxTooLarge,
     InvalidLimit,
     DecodeFailed,
+    InvalidFee,
+    NonceConflict,
     ExecFailed(Option<ExecError>),
     NoExecutableTx,
     MintOverflow,
@@ -47,23 +52,52 @@ pub struct PruneResult {
 pub fn submit_tx(kind: TxKind, tx_bytes: Vec<u8>) -> Result<TxId, ChainError> {
     let tx_id = TxId(hash::tx_id(&tx_bytes));
     with_state_mut(|state| {
+        if tx_bytes.len() > MAX_TX_SIZE {
+            return Err(ChainError::TxTooLarge);
+        }
         if state.seen_tx.get(&tx_id).is_some() {
             return Err(ChainError::TxAlreadySeen);
         }
         let envelope = TxEnvelope::new(tx_id, kind, tx_bytes);
+        let caller = match envelope.kind {
+            TxKind::IcSynthetic => envelope.caller_evm.unwrap_or([0u8; 20]),
+            TxKind::EthSigned => [0u8; 20],
+        };
+        let tx_env = decode_tx(envelope.kind, Address::from(caller), &envelope.tx_bytes)
+            .map_err(|_| ChainError::DecodeFailed)?;
+        let chain_state = state.chain_state.get();
+        let base_fee = chain_state.base_fee;
+        let min_gas_price = chain_state.min_gas_price;
+        let min_priority_fee = chain_state.min_priority_fee;
+        if !min_fee_satisfied(&tx_env, base_fee, min_priority_fee, min_gas_price) {
+            return Err(ChainError::InvalidFee);
+        }
+        let effective_gas_price = compute_effective_gas_price(
+            tx_env.gas_price,
+            tx_env.gas_priority_fee.unwrap_or(0),
+            base_fee,
+        )
+        .ok_or(ChainError::InvalidFee)?;
         state.seen_tx.insert(tx_id, 1);
         state.tx_store.insert(tx_id, envelope);
         let mut metrics = *state.metrics_state.get();
         metrics.record_submission(1);
         state.metrics_state.set(metrics);
         let mut meta = *state.queue_meta.get();
-        let index = meta.push();
+        let seq = meta.push();
         state.queue_meta.set(meta);
-        state.tx_locs.insert(tx_id, TxLoc::queued(index));
+        state.tx_locs.insert(tx_id, TxLoc::queued(seq));
         let mut chain_state = *state.chain_state.get();
         chain_state.next_queue_seq = meta.tail;
         state.chain_state.set(chain_state);
-        state.queue.insert(index, tx_id);
+        let sender_key = SenderKey::new(address_to_bytes(tx_env.caller));
+        let pending_key = SenderNonceKey::new(sender_key.0, tx_env.nonce);
+        if state.pending_by_sender_nonce.get(&pending_key).is_some() {
+            return Err(ChainError::NonceConflict);
+        }
+        state.pending_by_sender_nonce.insert(pending_key, tx_id);
+        state.pending_meta_by_tx_id.insert(tx_id, pending_key);
+        promote_if_next_nonce(state, sender_key, tx_id, tx_env.nonce, effective_gas_price, seq)?;
         Ok(tx_id)
     })
 }
@@ -75,6 +109,9 @@ pub fn submit_ic_tx(
     tx_bytes: Vec<u8>,
 ) -> Result<TxId, ChainError> {
     with_state_mut(|state| {
+        if tx_bytes.len() > MAX_TX_SIZE {
+            return Err(ChainError::TxTooLarge);
+        }
         let caller_key = CallerKey::from_principal_bytes(&caller_principal);
         let current_nonce = state.caller_nonces.get(&caller_key).unwrap_or(0);
         let next_nonce = current_nonce.saturating_add(1);
@@ -90,19 +127,45 @@ pub fn submit_ic_tx(
             return Err(ChainError::TxAlreadySeen);
         }
         let envelope = TxEnvelope::new_with_caller(tx_id, TxKind::IcSynthetic, tx_bytes, caller_evm);
+        let tx_env = decode_tx(
+            envelope.kind,
+            Address::from(caller_evm),
+            &envelope.tx_bytes,
+        )
+        .map_err(|_| ChainError::DecodeFailed)?;
+        let chain_state = state.chain_state.get();
+        let base_fee = chain_state.base_fee;
+        let min_gas_price = chain_state.min_gas_price;
+        let min_priority_fee = chain_state.min_priority_fee;
+        if !min_fee_satisfied(&tx_env, base_fee, min_priority_fee, min_gas_price) {
+            return Err(ChainError::InvalidFee);
+        }
+        let effective_gas_price = compute_effective_gas_price(
+            tx_env.gas_price,
+            tx_env.gas_priority_fee.unwrap_or(0),
+            base_fee,
+        )
+        .ok_or(ChainError::InvalidFee)?;
         state.seen_tx.insert(tx_id, 1);
         state.tx_store.insert(tx_id, envelope);
         let mut metrics = *state.metrics_state.get();
         metrics.record_submission(1);
         state.metrics_state.set(metrics);
         let mut meta = *state.queue_meta.get();
-        let index = meta.push();
+        let seq = meta.push();
         state.queue_meta.set(meta);
-        state.tx_locs.insert(tx_id, TxLoc::queued(index));
+        state.tx_locs.insert(tx_id, TxLoc::queued(seq));
         let mut chain_state = *state.chain_state.get();
         chain_state.next_queue_seq = meta.tail;
         state.chain_state.set(chain_state);
-        state.queue.insert(index, tx_id);
+        let sender_key = SenderKey::new(address_to_bytes(tx_env.caller));
+        let pending_key = SenderNonceKey::new(sender_key.0, tx_env.nonce);
+        if state.pending_by_sender_nonce.get(&pending_key).is_some() {
+            return Err(ChainError::NonceConflict);
+        }
+        state.pending_by_sender_nonce.insert(pending_key, tx_id);
+        state.pending_meta_by_tx_id.insert(tx_id, pending_key);
+        promote_if_next_nonce(state, sender_key, tx_id, tx_env.nonce, effective_gas_price, seq)?;
         Ok(tx_id)
     })
 }
@@ -128,30 +191,6 @@ pub fn produce_block(max_txs: usize) -> Result<BlockData, ChainError> {
     if max_txs == 0 {
         return Err(ChainError::InvalidLimit);
     }
-    let tx_ids = with_state_mut(|state| {
-        let mut meta = *state.queue_meta.get();
-        if meta.is_empty() {
-            return Err(ChainError::QueueEmpty);
-        }
-        let mut ids: Vec<TxId> = Vec::new();
-        while ids.len() < max_txs {
-            let index = match meta.pop() {
-                Some(value) => value,
-                None => break,
-            };
-            let tx_id = match state.queue.remove(&index) {
-                Some(value) => value,
-                None => continue,
-            };
-            ids.push(tx_id);
-        }
-        state.queue_meta.set(meta);
-        Ok(ids)
-    })?;
-    if tx_ids.is_empty() {
-        return Err(ChainError::QueueEmpty);
-    }
-
     let head = with_state(|state| *state.head.get());
     let number = head.number.saturating_add(1);
     let timestamp = head.timestamp.saturating_add(1);
@@ -160,6 +199,31 @@ pub fn produce_block(max_txs: usize) -> Result<BlockData, ChainError> {
     let mut included: Vec<TxId> = Vec::new();
     let mut dropped_total = 0u64;
     let mut dropped_by_code = [0u64; evm_db::chain_data::metrics::DROP_CODE_SLOTS];
+    with_state_mut(|state| {
+        let base_fee = state.chain_state.get().base_fee;
+        rekey_ready_queue_with_drop(state, base_fee, &mut dropped_total, &mut dropped_by_code);
+    });
+    let mut tx_ids = Vec::new();
+    with_state_mut(|state| {
+        if state.ready_queue.len() == 0 {
+            return;
+        }
+        while tx_ids.len() < max_txs {
+            let entry = match state.ready_queue.range(..).next() {
+                Some(value) => value,
+                None => break,
+            };
+            let key = *entry.key();
+            let tx_id = entry.value();
+            state.ready_queue.remove(&key);
+            state.ready_key_by_tx_id.remove(&tx_id);
+            tx_ids.push(tx_id);
+        }
+    });
+    if tx_ids.is_empty() && dropped_total == 0 {
+        return Err(ChainError::QueueEmpty);
+    }
+    let mut block_gas_used = 0u64;
     for tx_id in tx_ids {
         let envelope = with_state(|state| state.tx_store.get(&tx_id));
         let envelope = match envelope {
@@ -167,6 +231,7 @@ pub fn produce_block(max_txs: usize) -> Result<BlockData, ChainError> {
             None => {
                 with_state_mut(|state| state.tx_locs.insert(tx_id, TxLoc::dropped(DROP_CODE_MISSING)));
                 track_drop(&mut dropped_total, &mut dropped_by_code, DROP_CODE_MISSING);
+                with_state_mut(|state| advance_sender_after_tx(state, tx_id, None, None));
                 continue;
             }
         };
@@ -178,6 +243,7 @@ pub fn produce_block(max_txs: usize) -> Result<BlockData, ChainError> {
                         state.tx_locs.insert(tx_id, TxLoc::dropped(DROP_CODE_CALLER_MISSING));
                     });
                     track_drop(&mut dropped_total, &mut dropped_by_code, DROP_CODE_CALLER_MISSING);
+                    with_state_mut(|state| advance_sender_after_tx(state, tx_id, None, None));
                     continue;
                 }
             },
@@ -188,13 +254,22 @@ pub fn produce_block(max_txs: usize) -> Result<BlockData, ChainError> {
             Err(_) => {
                 with_state_mut(|state| state.tx_locs.insert(tx_id, TxLoc::dropped(DROP_CODE_DECODE)));
                 track_drop(&mut dropped_total, &mut dropped_by_code, DROP_CODE_DECODE);
+                with_state_mut(|state| advance_sender_after_tx(state, tx_id, Some(caller), None));
                 continue;
             }
         };
+        let sender_bytes = address_to_bytes(tx_env.caller);
+        let sender_nonce = tx_env.nonce;
         let tx_index = u32::try_from(included.len()).unwrap_or(u32::MAX);
         let outcome = match execute_tx(tx_id, tx_index, tx_env, number, timestamp) {
             Ok(value) => value,
-            Err(_err) => {
+            Err(err) => {
+                if err == ExecError::InvalidGasFee {
+                    with_state_mut(|state| state.tx_locs.insert(tx_id, TxLoc::dropped(DROP_CODE_INVALID_FEE)));
+                    track_drop(&mut dropped_total, &mut dropped_by_code, DROP_CODE_INVALID_FEE);
+                    with_state_mut(|state| advance_sender_after_tx(state, tx_id, Some(sender_bytes), Some(sender_nonce)));
+                    continue;
+                }
                 let output = Vec::new();
                 let receipt = ReceiptLike {
                     tx_id,
@@ -216,9 +291,16 @@ pub fn produce_block(max_txs: usize) -> Result<BlockData, ChainError> {
                     state.tx_locs.insert(tx_id, TxLoc::included(number, tx_index));
                 });
                 included.push(tx_id);
+                with_state_mut(|state| {
+                    advance_sender_after_tx(state, tx_id, Some(sender_bytes), Some(sender_nonce))
+                });
                 continue;
             }
         };
+        with_state_mut(|state| {
+            advance_sender_after_tx(state, tx_id, Some(sender_bytes), Some(sender_nonce))
+        });
+        block_gas_used = block_gas_used.saturating_add(outcome.receipt.gas_used);
         with_state_mut(|state| {
             state
                 .tx_locs
@@ -272,6 +354,8 @@ pub fn produce_block(max_txs: usize) -> Result<BlockData, ChainError> {
         let mut chain_state = *state.chain_state.get();
         chain_state.last_block_number = number;
         chain_state.last_block_time = timestamp;
+        chain_state.base_fee =
+            compute_next_base_fee(chain_state.base_fee, block_gas_used, DEFAULT_BLOCK_GAS_LIMIT);
         state.chain_state.set(chain_state);
     });
 
@@ -329,6 +413,8 @@ fn execute_and_seal_with_caller(
 
     let tx_env = decode_tx(kind, Address::from(caller), &envelope.tx_bytes)
         .map_err(|_| ChainError::DecodeFailed)?;
+    let sender_bytes = address_to_bytes(tx_env.caller);
+    let sender_nonce = tx_env.nonce;
 
     let outcome = execute_tx(tx_id, 0, tx_env, number, timestamp)
         .map_err(|err| ChainError::ExecFailed(Some(err)))?;
@@ -356,6 +442,21 @@ fn execute_and_seal_with_caller(
         state
             .tx_locs
             .insert(tx_id, TxLoc::included(number, outcome.tx_index));
+        advance_sender_after_tx(
+            state,
+            tx_id,
+            Some(sender_bytes),
+            Some(sender_nonce),
+        );
+        let mut chain_state = *state.chain_state.get();
+        chain_state.last_block_number = number;
+        chain_state.last_block_time = timestamp;
+        chain_state.base_fee = compute_next_base_fee(
+            chain_state.base_fee,
+            outcome.receipt.gas_used,
+            DEFAULT_BLOCK_GAS_LIMIT,
+        );
+        state.chain_state.set(chain_state);
         let mut metrics = *state.metrics_state.get();
         metrics.record_included(1);
         metrics.record_block(number, timestamp, 1, 0);
@@ -455,15 +556,20 @@ pub struct QueueSnapshot {
 
 pub fn get_queue_snapshot(limit: usize, cursor: Option<u64>) -> QueueSnapshot {
     with_state(|state| {
-        let start = cursor.unwrap_or_else(|| state.queue_meta.get().head);
+        let start = cursor.unwrap_or(0);
         let mut items = Vec::new();
         let mut next_cursor = None;
-        for entry in state.queue.range(start..) {
+        let mut seen = 0u64;
+        for entry in state.ready_queue.range(..) {
             if items.len() >= limit {
-                next_cursor = Some(*entry.key());
+                next_cursor = Some(seen);
                 break;
             }
-            let seq = *entry.key();
+            if seen < start {
+                seen = seen.saturating_add(1);
+                continue;
+            }
+            let seq = entry.key().seq();
             let tx_id = entry.value();
             let kind = state
                 .tx_store
@@ -471,6 +577,7 @@ pub fn get_queue_snapshot(limit: usize, cursor: Option<u64>) -> QueueSnapshot {
                 .map(|e| e.kind)
                 .unwrap_or(TxKind::EthSigned);
             items.push(QueueItem { seq, tx_id, kind });
+            seen = seen.saturating_add(1);
         }
         QueueSnapshot { items, next_cursor }
     })
@@ -482,4 +589,277 @@ fn track_drop(total: &mut u64, by_code: &mut [u64], code: u16) {
     if idx < by_code.len() {
         by_code[idx] = by_code[idx].saturating_add(1);
     }
+}
+
+fn promote_if_next_nonce(
+    state: &mut evm_db::stable_state::StableState,
+    sender: SenderKey,
+    tx_id: TxId,
+    nonce: u64,
+    effective_gas_price: u64,
+    seq: u64,
+) -> Result<(), ChainError> {
+    match state.pending_min_nonce.get(&sender) {
+        None => {
+            state.pending_min_nonce.insert(sender, nonce);
+            insert_ready(state, tx_id, effective_gas_price, seq)?;
+        }
+        Some(current) => {
+            if nonce < current {
+                let old_key = SenderNonceKey::new(sender.0, current);
+                if let Some(old_tx_id) = state.pending_by_sender_nonce.get(&old_key) {
+                    remove_ready_by_tx_id(state, old_tx_id);
+                }
+                state.pending_min_nonce.insert(sender, nonce);
+                insert_ready(state, tx_id, effective_gas_price, seq)?;
+            }
+        }
+    }
+    Ok(())
+}
+
+fn insert_ready(
+    state: &mut evm_db::stable_state::StableState,
+    tx_id: TxId,
+    effective_gas_price: u64,
+    seq: u64,
+) -> Result<(), ChainError> {
+    let key = ReadyKey::new(u128::from(effective_gas_price), seq, tx_id.0);
+    state.ready_queue.insert(key, tx_id);
+    state.ready_key_by_tx_id.insert(tx_id, key);
+    Ok(())
+}
+
+fn remove_ready_by_tx_id(state: &mut evm_db::stable_state::StableState, tx_id: TxId) {
+    if let Some(key) = state.ready_key_by_tx_id.remove(&tx_id) {
+        state.ready_queue.remove(&key);
+    }
+}
+
+fn advance_sender_after_tx(
+    state: &mut evm_db::stable_state::StableState,
+    tx_id: TxId,
+    sender_override: Option<[u8; 20]>,
+    nonce_override: Option<u64>,
+) {
+    remove_ready_by_tx_id(state, tx_id);
+    let pending_key = match state.pending_meta_by_tx_id.remove(&tx_id) {
+        Some(key) => key,
+        None => match (sender_override, nonce_override) {
+            (Some(sender), Some(nonce)) => SenderNonceKey::new(sender, nonce),
+            _ => return,
+        },
+    };
+    state.pending_by_sender_nonce.remove(&pending_key);
+    let sender = pending_key.sender;
+    if state.pending_min_nonce.get(&sender) != Some(pending_key.nonce) {
+        return;
+    }
+    let mut cursor_nonce = pending_key.nonce;
+    loop {
+        match next_pending_for_sender(state, sender, cursor_nonce) {
+            Some((next_nonce, next_tx_id)) => {
+                state.pending_min_nonce.insert(sender, next_nonce);
+                if let Some((effective_gas_price, seq)) =
+                    load_effective_fee_and_seq(state, next_tx_id)
+                {
+                    let _ = insert_ready(state, next_tx_id, effective_gas_price, seq);
+                    return;
+                }
+                drop_invalid_fee_pending(state, next_tx_id, None, None);
+                cursor_nonce = next_nonce;
+            }
+            None => {
+                state.pending_min_nonce.remove(&sender);
+                return;
+            }
+        }
+    }
+}
+
+fn drop_invalid_fee_pending(
+    state: &mut evm_db::stable_state::StableState,
+    tx_id: TxId,
+    dropped_total: Option<&mut u64>,
+    dropped_by_code: Option<&mut [u64]>,
+) {
+    remove_ready_by_tx_id(state, tx_id);
+    if let Some(pending_key) = state.pending_meta_by_tx_id.remove(&tx_id) {
+        state.pending_by_sender_nonce.remove(&pending_key);
+    }
+    state.tx_locs.insert(tx_id, TxLoc::dropped(DROP_CODE_INVALID_FEE));
+    if let (Some(total), Some(by_code)) = (dropped_total, dropped_by_code) {
+        track_drop(total, by_code, DROP_CODE_INVALID_FEE);
+    } else {
+        let mut metrics = *state.metrics_state.get();
+        metrics.record_drop(DROP_CODE_INVALID_FEE, 1);
+        state.metrics_state.set(metrics);
+    }
+}
+
+fn next_pending_for_sender(
+    state: &mut evm_db::stable_state::StableState,
+    sender: SenderKey,
+    after_nonce: u64,
+) -> Option<(u64, TxId)> {
+    let start = SenderNonceKey::new(sender.0, after_nonce.saturating_add(1));
+    for entry in state.pending_by_sender_nonce.range(start..) {
+        let key = *entry.key();
+        if key.sender != sender {
+            break;
+        }
+        return Some((key.nonce, entry.value()));
+    }
+    None
+}
+
+fn load_effective_fee_and_seq(
+    state: &mut evm_db::stable_state::StableState,
+    tx_id: TxId,
+) -> Option<(u64, u64)> {
+    let envelope = match state.tx_store.get(&tx_id) {
+        Some(value) => value,
+        None => return None,
+    };
+    let caller = match envelope.kind {
+        TxKind::IcSynthetic => match envelope.caller_evm {
+            Some(value) => value,
+            None => return None,
+        },
+        TxKind::EthSigned => [0u8; 20],
+    };
+    let tx_env = decode_tx(envelope.kind, Address::from(caller), &envelope.tx_bytes).ok()?;
+    let chain_state = state.chain_state.get();
+    let base_fee = chain_state.base_fee;
+    let min_gas_price = chain_state.min_gas_price;
+    let min_priority_fee = chain_state.min_priority_fee;
+    if !min_fee_satisfied(&tx_env, base_fee, min_priority_fee, min_gas_price) {
+        return None;
+    }
+    let effective_gas_price = compute_effective_gas_price(
+        tx_env.gas_price,
+        tx_env.gas_priority_fee.unwrap_or(0),
+        base_fee,
+    )?;
+    let seq = match state.tx_locs.get(&tx_id) {
+        Some(loc) => loc.seq,
+        None => return None,
+    };
+    Some((effective_gas_price, seq))
+}
+
+fn address_to_bytes(address: Address) -> [u8; 20] {
+    let mut out = [0u8; 20];
+    out.copy_from_slice(address.as_ref());
+    out
+}
+
+fn min_fee_satisfied(
+    tx_env: &revm::context::TxEnv,
+    base_fee: u64,
+    min_priority_fee: u64,
+    min_gas_price: u64,
+) -> bool {
+    if let Some(priority) = tx_env.gas_priority_fee {
+        let min_priority_fee = u128::from(min_priority_fee);
+        if priority < min_priority_fee {
+            return false;
+        }
+        let base_fee = u128::from(base_fee);
+        let base_plus_min = base_fee.saturating_add(min_priority_fee);
+        let max_fee = tx_env.gas_price;
+        max_fee >= base_fee && max_fee >= base_plus_min
+    } else {
+        tx_env.gas_price >= u128::from(min_gas_price)
+    }
+}
+
+fn rekey_ready_queue_with_drop(
+    state: &mut evm_db::stable_state::StableState,
+    base_fee: u64,
+    dropped_total: &mut u64,
+    dropped_by_code: &mut [u64],
+) {
+    let mut updates: Vec<(ReadyKey, TxId, Option<ReadyKey>, Option<u16>)> = Vec::new();
+    let mut keys: Vec<ReadyKey> = Vec::new();
+    for entry in state.ready_queue.range(..) {
+        keys.push(*entry.key());
+    }
+    for old_key in keys {
+        let tx_id = match state.ready_queue.get(&old_key) {
+            Some(value) => value,
+            None => continue,
+        };
+        let effective = load_effective_fee_and_seq_with_base_fee(state, tx_id, base_fee);
+        match effective {
+            Ok(Some((fee, seq))) => {
+                let new_key = ReadyKey::new(u128::from(fee), seq, tx_id.0);
+                if new_key != old_key {
+                    updates.push((old_key, tx_id, Some(new_key), None));
+                }
+            }
+            Ok(None) => updates.push((old_key, tx_id, None, None)),
+            Err(RekeyError::DecodeFailed) => {
+                updates.push((old_key, tx_id, None, Some(DROP_CODE_DECODE)));
+            }
+        }
+    }
+
+    for (old_key, tx_id, next_key, drop_code) in updates {
+        state.ready_queue.remove(&old_key);
+        state.ready_key_by_tx_id.remove(&tx_id);
+        match next_key {
+            Some(new_key) => {
+                state.ready_queue.insert(new_key, tx_id);
+                state.ready_key_by_tx_id.insert(tx_id, new_key);
+            }
+            None => {
+                let code = drop_code.unwrap_or(DROP_CODE_INVALID_FEE);
+                state.tx_locs.insert(tx_id, TxLoc::dropped(code));
+                track_drop(dropped_total, dropped_by_code, code);
+                advance_sender_after_tx(state, tx_id, None, None);
+            }
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum RekeyError {
+    DecodeFailed,
+}
+
+fn load_effective_fee_and_seq_with_base_fee(
+    state: &mut evm_db::stable_state::StableState,
+    tx_id: TxId,
+    base_fee: u64,
+) -> Result<Option<(u64, u64)>, RekeyError> {
+    let envelope = match state.tx_store.get(&tx_id) {
+        Some(value) => value,
+        None => return Ok(None),
+    };
+    let caller = match envelope.kind {
+        TxKind::IcSynthetic => match envelope.caller_evm {
+            Some(value) => value,
+            None => return Err(RekeyError::DecodeFailed),
+        },
+        TxKind::EthSigned => [0u8; 20],
+    };
+    let tx_env = decode_tx(envelope.kind, Address::from(caller), &envelope.tx_bytes)
+        .map_err(|_| RekeyError::DecodeFailed)?;
+    let min_gas_price = state.chain_state.get().min_gas_price;
+    let min_priority_fee = state.chain_state.get().min_priority_fee;
+    if !min_fee_satisfied(&tx_env, base_fee, min_priority_fee, min_gas_price) {
+        return Ok(None);
+    }
+    let effective_gas_price = compute_effective_gas_price(
+        tx_env.gas_price,
+        tx_env.gas_priority_fee.unwrap_or(0),
+        base_fee,
+    )
+    .ok_or(RekeyError::DecodeFailed)?;
+    let seq = match state.tx_locs.get(&tx_id) {
+        Some(loc) => loc.seq,
+        None => return Ok(None),
+    };
+    Ok(Some((effective_gas_price, seq)))
 }

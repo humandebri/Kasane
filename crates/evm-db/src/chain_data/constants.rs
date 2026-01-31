@@ -23,14 +23,18 @@ pub const MAX_PRINCIPAL_LEN: usize = 29;
 pub const CALLER_KEY_LEN: usize = 30;
 
 // StableCellの固定長ヘッダ
-pub const CHAIN_STATE_SIZE_U32: u32 = 64;
+pub const CHAIN_STATE_SIZE_U32: u32 = 72;
 
 // 自動ブロック生成の既定間隔（ms）
 pub const DEFAULT_MINING_INTERVAL_MS: u64 = 5_000;
 
 // ガス関連の既定値（Phase1の足場）
-pub const DEFAULT_BASE_FEE: u64 = 0;
+pub const DEFAULT_BASE_FEE: u64 = 1_000_000_000;
 pub const DEFAULT_MIN_GAS_PRICE: u64 = 0;
+pub const DEFAULT_MIN_PRIORITY_FEE: u64 = 1_000_000_000;
+pub const DEFAULT_BLOCK_GAS_LIMIT: u64 = 15_000_000;
+pub const ELASTICITY_MULTIPLIER: u64 = 2;
+pub const BASE_FEE_MAX_CHANGE_DENOMINATOR: u64 = 8;
 
 // TxLocの固定長
 pub const TX_LOC_SIZE_U32: u32 = 24;
@@ -40,6 +44,7 @@ pub const DROP_CODE_DECODE: u16 = 1;
 pub const DROP_CODE_EXEC: u16 = 2;
 pub const DROP_CODE_MISSING: u16 = 3;
 pub const DROP_CODE_CALLER_MISSING: u16 = 4;
+pub const DROP_CODE_INVALID_FEE: u16 = 5;
 
 // logs/receiptの上限
 pub const MAX_LOGS_PER_TX: usize = 64;

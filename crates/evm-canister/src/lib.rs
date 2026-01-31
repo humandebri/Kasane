@@ -258,6 +258,12 @@ fn execute_eth_raw_tx(raw_tx: Vec<u8>) -> Result<ExecResultDto, ExecuteTxError> 
         Err(chain::ChainError::TxAlreadySeen) => {
             return Err(ExecuteTxError::Rejected("tx already seen".to_string()));
         }
+        Err(chain::ChainError::InvalidFee) => {
+            return Err(ExecuteTxError::Rejected("invalid fee".to_string()));
+        }
+        Err(chain::ChainError::NonceConflict) => {
+            return Err(ExecuteTxError::Rejected("nonce conflict".to_string()));
+        }
         Err(chain::ChainError::ExecFailed(_)) => {
             return Err(ExecuteTxError::Rejected("execution failed".to_string()));
         }
@@ -292,6 +298,12 @@ fn execute_ic_tx(tx_bytes: Vec<u8>) -> Result<ExecResultDto, ExecuteTxError> {
         Err(chain::ChainError::TxAlreadySeen) => {
             return Err(ExecuteTxError::Rejected("tx already seen".to_string()));
         }
+        Err(chain::ChainError::InvalidFee) => {
+            return Err(ExecuteTxError::Rejected("invalid fee".to_string()));
+        }
+        Err(chain::ChainError::NonceConflict) => {
+            return Err(ExecuteTxError::Rejected("nonce conflict".to_string()));
+        }
         Err(chain::ChainError::ExecFailed(_)) => {
             return Err(ExecuteTxError::Rejected("execution failed".to_string()));
         }
@@ -317,8 +329,17 @@ fn submit_eth_tx(raw_tx: Vec<u8>) -> Result<Vec<u8>, SubmitTxError> {
         Err(chain::ChainError::TxTooLarge) => {
             return Err(SubmitTxError::InvalidArgument("tx too large".to_string()));
         }
+        Err(chain::ChainError::DecodeFailed) => {
+            return Err(SubmitTxError::InvalidArgument("decode failed".to_string()));
+        }
         Err(chain::ChainError::TxAlreadySeen) => {
             return Err(SubmitTxError::Rejected("tx already seen".to_string()));
+        }
+        Err(chain::ChainError::InvalidFee) => {
+            return Err(SubmitTxError::Rejected("invalid fee".to_string()));
+        }
+        Err(chain::ChainError::NonceConflict) => {
+            return Err(SubmitTxError::Rejected("nonce conflict".to_string()));
         }
         Err(err) => {
             debug_print(format!("submit_eth_tx err: {:?}", err));
@@ -339,8 +360,17 @@ fn submit_ic_tx(tx_bytes: Vec<u8>) -> Result<Vec<u8>, SubmitTxError> {
         Err(chain::ChainError::TxTooLarge) => {
             return Err(SubmitTxError::InvalidArgument("tx too large".to_string()));
         }
+        Err(chain::ChainError::DecodeFailed) => {
+            return Err(SubmitTxError::InvalidArgument("decode failed".to_string()));
+        }
         Err(chain::ChainError::TxAlreadySeen) => {
             return Err(SubmitTxError::Rejected("tx already seen".to_string()));
+        }
+        Err(chain::ChainError::InvalidFee) => {
+            return Err(SubmitTxError::Rejected("invalid fee".to_string()));
+        }
+        Err(chain::ChainError::NonceConflict) => {
+            return Err(SubmitTxError::Rejected("nonce conflict".to_string()));
         }
         Err(err) => {
             debug_print(format!("submit_ic_tx err: {:?}", err));
@@ -507,8 +537,17 @@ fn rpc_eth_send_raw_transaction(raw_tx: Vec<u8>) -> Result<Vec<u8>, SubmitTxErro
         Err(chain::ChainError::TxTooLarge) => {
             return Err(SubmitTxError::InvalidArgument("tx too large".to_string()));
         }
+        Err(chain::ChainError::DecodeFailed) => {
+            return Err(SubmitTxError::InvalidArgument("decode failed".to_string()));
+        }
         Err(chain::ChainError::TxAlreadySeen) => {
             return Err(SubmitTxError::Rejected("tx already seen".to_string()));
+        }
+        Err(chain::ChainError::InvalidFee) => {
+            return Err(SubmitTxError::Rejected("invalid fee".to_string()));
+        }
+        Err(chain::ChainError::NonceConflict) => {
+            return Err(SubmitTxError::Rejected("nonce conflict".to_string()));
         }
         Err(err) => {
             debug_print(format!("rpc_eth_send_raw_transaction err: {:?}", err));
@@ -529,12 +568,12 @@ fn health() -> HealthView {
     with_state(|state| {
         let head = *state.head.get();
         let chain_state = *state.chain_state.get();
-        let queue_meta = *state.queue_meta.get();
+        let queue_len = state.pending_by_sender_nonce.len();
         HealthView {
             tip_number: head.number,
             tip_hash: head.block_hash.to_vec(),
             last_block_time: chain_state.last_block_time,
-            queue_len: queue_len_from_meta(queue_meta),
+            queue_len,
             auto_mine_enabled: chain_state.auto_mine_enabled,
             is_producing: chain_state.is_producing,
             mining_scheduled: chain_state.mining_scheduled,
@@ -546,7 +585,7 @@ fn health() -> HealthView {
 fn metrics(window: u64) -> MetricsView {
     let cycles = ic_cdk::api::canister_cycle_balance();
     with_state(|state| {
-        let queue_meta = *state.queue_meta.get();
+        let queue_len = state.pending_by_sender_nonce.len();
         let window = clamp_metrics_window(window);
         let metrics = *state.metrics_state.get();
         let summary = metrics.window_summary(window);
@@ -565,7 +604,7 @@ fn metrics(window: u64) -> MetricsView {
             block_rate_per_sec_x1000: rate,
             ema_block_rate_per_sec_x1000: metrics.ema_block_rate_x1000,
             ema_txs_per_block_x1000: metrics.ema_txs_per_block_x1000,
-            queue_len: queue_len_from_meta(queue_meta),
+            queue_len,
             drop_counts: collect_drop_counts(&metrics),
             total_submitted: metrics.total_submitted,
             total_included: metrics.total_included,
@@ -712,10 +751,6 @@ fn pending_to_view(loc: Option<TxLoc>) -> PendingStatusView {
     }
 }
 
-fn queue_len_from_meta(meta: evm_db::chain_data::QueueMeta) -> u64 {
-    meta.tail.saturating_sub(meta.head)
-}
-
 fn clamp_metrics_window(window: u64) -> u64 {
     const DEFAULT_WINDOW: u64 = 128;
     const MAX_WINDOW: u64 = 2048;
@@ -852,7 +887,7 @@ fn mining_tick() {
             state.chain_state.set(chain_state);
             return false;
         }
-        if state.queue_meta.get().is_empty() {
+        if state.ready_queue.len() == 0 {
             state.chain_state.set(chain_state);
             return false;
         }

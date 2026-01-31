@@ -2,6 +2,7 @@
 
 pub mod chain;
 pub mod commit;
+pub mod base_fee;
 pub mod db_adapter;
 pub mod hash;
 pub mod selfdestruct;

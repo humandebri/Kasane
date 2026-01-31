@@ -42,14 +42,16 @@ print(m.group(1) if m else "0")
 PY
 )
 TX_HEX=$(python - <<'PY'
-version = b'\x01'
+version = b'\x02'
 to = bytes.fromhex('0000000000000000000000000000000000000001')
 value = (0).to_bytes(32, 'big')
 gas = (500000).to_bytes(8, 'big')
 nonce = (0).to_bytes(8, 'big')
+max_fee = (2_000_000_000).to_bytes(16, 'big')
+max_priority = (1_000_000_000).to_bytes(16, 'big')
 data = b''
 data_len = len(data).to_bytes(4, 'big')
-tx = version + to + value + gas + nonce + data_len + data
+tx = version + to + value + gas + nonce + max_fee + max_priority + data_len + data
 print(tx.hex())
 PY
 )

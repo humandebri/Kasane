@@ -1,0 +1,142 @@
+//! どこで: Phase1.3の手数料順序 / 何を: ready_queue用キーとpendingキー / なぜ: 決定的な優先順とnonce待ちを両立するため
+
+use ic_stable_structures::storable::Bound;
+use ic_stable_structures::Storable;
+use std::borrow::Cow;
+
+pub const READY_KEY_LEN: usize = 56;
+pub const READY_KEY_LEN_U32: u32 = 56;
+pub const SENDER_KEY_LEN: usize = 20;
+pub const SENDER_KEY_LEN_U32: u32 = 20;
+pub const SENDER_NONCE_KEY_LEN: usize = 28;
+pub const SENDER_NONCE_KEY_LEN_U32: u32 = 28;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
+pub struct ReadyKey(pub [u8; READY_KEY_LEN]);
+
+impl ReadyKey {
+    pub fn new(effective_fee: u128, seq: u64, tx_hash: [u8; 32]) -> Self {
+        let fee_inv = u128::MAX.saturating_sub(effective_fee);
+        let mut buf = [0u8; READY_KEY_LEN];
+        buf[0..16].copy_from_slice(&fee_inv.to_be_bytes());
+        buf[16..24].copy_from_slice(&seq.to_be_bytes());
+        buf[24..56].copy_from_slice(&tx_hash);
+        Self(buf)
+    }
+
+    pub fn seq(self) -> u64 {
+        let mut raw = [0u8; 8];
+        raw.copy_from_slice(&self.0[16..24]);
+        u64::from_be_bytes(raw)
+    }
+}
+
+impl Storable for ReadyKey {
+    fn to_bytes(&self) -> Cow<'_, [u8]> {
+        Cow::Owned(self.0.to_vec())
+    }
+
+    fn into_bytes(self) -> Vec<u8> {
+        self.0.to_vec()
+    }
+
+    fn from_bytes(bytes: Cow<'_, [u8]>) -> Self {
+        let data = bytes.as_ref();
+        if data.len() != READY_KEY_LEN {
+            ic_cdk::trap("ready_key: invalid length");
+        }
+        let mut buf = [0u8; READY_KEY_LEN];
+        buf.copy_from_slice(data);
+        Self(buf)
+    }
+
+    const BOUND: Bound = Bound::Bounded {
+        max_size: READY_KEY_LEN_U32,
+        is_fixed_size: true,
+    };
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
+pub struct SenderKey(pub [u8; SENDER_KEY_LEN]);
+
+impl SenderKey {
+    pub fn new(sender: [u8; 20]) -> Self {
+        Self(sender)
+    }
+}
+
+impl Storable for SenderKey {
+    fn to_bytes(&self) -> Cow<'_, [u8]> {
+        Cow::Owned(self.0.to_vec())
+    }
+
+    fn into_bytes(self) -> Vec<u8> {
+        self.0.to_vec()
+    }
+
+    fn from_bytes(bytes: Cow<'_, [u8]>) -> Self {
+        let data = bytes.as_ref();
+        if data.len() != SENDER_KEY_LEN {
+            ic_cdk::trap("sender_key: invalid length");
+        }
+        let mut buf = [0u8; SENDER_KEY_LEN];
+        buf.copy_from_slice(data);
+        Self(buf)
+    }
+
+    const BOUND: Bound = Bound::Bounded {
+        max_size: SENDER_KEY_LEN_U32,
+        is_fixed_size: true,
+    };
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
+pub struct SenderNonceKey {
+    pub sender: SenderKey,
+    pub nonce: u64,
+}
+
+impl SenderNonceKey {
+    pub fn new(sender: [u8; 20], nonce: u64) -> Self {
+        Self {
+            sender: SenderKey::new(sender),
+            nonce,
+        }
+    }
+}
+
+impl Storable for SenderNonceKey {
+    fn to_bytes(&self) -> Cow<'_, [u8]> {
+        let mut out = [0u8; SENDER_NONCE_KEY_LEN];
+        out[0..20].copy_from_slice(&self.sender.0);
+        out[20..28].copy_from_slice(&self.nonce.to_be_bytes());
+        Cow::Owned(out.to_vec())
+    }
+
+    fn into_bytes(self) -> Vec<u8> {
+        let mut out = [0u8; SENDER_NONCE_KEY_LEN];
+        out[0..20].copy_from_slice(&self.sender.0);
+        out[20..28].copy_from_slice(&self.nonce.to_be_bytes());
+        out.to_vec()
+    }
+
+    fn from_bytes(bytes: Cow<'_, [u8]>) -> Self {
+        let data = bytes.as_ref();
+        if data.len() != SENDER_NONCE_KEY_LEN {
+            ic_cdk::trap("sender_nonce_key: invalid length");
+        }
+        let mut sender = [0u8; 20];
+        sender.copy_from_slice(&data[0..20]);
+        let mut nonce = [0u8; 8];
+        nonce.copy_from_slice(&data[20..28]);
+        Self {
+            sender: SenderKey(sender),
+            nonce: u64::from_be_bytes(nonce),
+        }
+    }
+
+    const BOUND: Bound = Bound::Bounded {
+        max_size: SENDER_NONCE_KEY_LEN_U32,
+        is_fixed_size: true,
+    };
+}

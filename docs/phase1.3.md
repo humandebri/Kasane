@@ -20,7 +20,7 @@ block_gas_limit: u64
 
 min_priority_fee_per_gas: u128（EIP-1559用、tip下限）
 
-min_gas_price_legacy: u128（legacy用下限）
+min_gas_price_legacy: u128（legacy用下限。min_priority_feeとは分離）
 
 base_fee_per_gas: u128（**固定ではなく可変**。0は禁止）
 initial_base_fee_per_gas: u128 = 1_000_000_000（**非0の初期値**。1 gwei）
@@ -63,8 +63,9 @@ effective = min(max_fee_per_gas, base_fee_per_gas + max_priority_fee_per_gas)
 
 さらに inclusion 条件（最低要求）も明記：
 
-* `max_priority_fee_per_gas >= min_priority_fee_per_gas`
-* `max_fee_per_gas >= base_fee_per_gas + min_priority_fee_per_gas`
+* 1559: `max_priority_fee_per_gas >= min_priority_fee_per_gas`
+* 1559: `max_fee_per_gas >= base_fee_per_gas + min_priority_fee_per_gas`
+* legacy: `gas_price >= min_gas_price_legacy`
 
 さらに inclusion条件として
 max_priority_fee_per_gas >= min_priority_fee_per_gas
@@ -192,7 +193,7 @@ tx を読み出して dynamic_check：
 nonce == current_nonce(sender) でないなら
 → 本来は ready_queue に載せない設計なので、ここに来たらバグ or race。drop ではなく “再構築” 寄り。
 
-balance 足りない / base_fee 条件満たさない → drop_code
+balance 足りない / base_fee 条件満たさない → drop_code（INVALID_FEE）
 
 実行して Included / Dropped を記録
 
@@ -208,7 +209,8 @@ drop_code / reject の追加（今の Phase1.2 ドキュメントに足すなら
 
 少なくともこれを追加すると運用が楽：
 
-LOW_FEE（min fee未満）
+LOW_FEE（min fee未満）※実装は INVALID_FEE に統合してもよい
+INVALID_FEE（base_fee 変動で有効手数料を満たさなくなった場合を含む）
 
 GAS_LIMIT_TOO_HIGH
 
@@ -247,6 +249,8 @@ senderごとのnonce待ち＋ready_queueに進化（ここで完成）
 sender A の nonce 0/2 があっても nonce 2 は ready に上がらない（nonceゲート）
 
 base_fee/min_tip を満たさない 1559 が確実に drop（コード一致）
+
+queue_snapshot の cursor は **seq ではなく offset**（ready_queue の先頭からの件数）で扱う。
 
 legacy の gas_price < min は submit で reject
 

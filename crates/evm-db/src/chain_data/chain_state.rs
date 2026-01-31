@@ -2,6 +2,7 @@
 
 use crate::chain_data::constants::{
     CHAIN_STATE_SIZE_U32, DEFAULT_BASE_FEE, DEFAULT_MINING_INTERVAL_MS, DEFAULT_MIN_GAS_PRICE,
+    DEFAULT_MIN_PRIORITY_FEE,
 };
 use ic_stable_structures::storable::Bound;
 use ic_stable_structures::Storable;
@@ -20,12 +21,13 @@ pub struct ChainStateV1 {
     pub mining_interval_ms: u64,
     pub base_fee: u64,
     pub min_gas_price: u64,
+    pub min_priority_fee: u64,
 }
 
 impl ChainStateV1 {
     pub fn new(chain_id: u64) -> Self {
         Self {
-            schema_version: 1,
+            schema_version: 2,
             chain_id,
             last_block_number: 0,
             last_block_time: 0,
@@ -36,6 +38,7 @@ impl ChainStateV1 {
             mining_interval_ms: DEFAULT_MINING_INTERVAL_MS,
             base_fee: DEFAULT_BASE_FEE,
             min_gas_price: DEFAULT_MIN_GAS_PRICE,
+            min_priority_fee: DEFAULT_MIN_PRIORITY_FEE,
         }
     }
 
@@ -62,7 +65,7 @@ impl ChainStateV1 {
 
 impl Storable for ChainStateV1 {
     fn to_bytes(&self) -> Cow<'_, [u8]> {
-        let mut out = [0u8; 64];
+        let mut out = [0u8; 72];
         out[0..4].copy_from_slice(&self.schema_version.to_be_bytes());
         out[4..12].copy_from_slice(&self.chain_id.to_be_bytes());
         out[12..20].copy_from_slice(&self.last_block_number.to_be_bytes());
@@ -72,6 +75,7 @@ impl Storable for ChainStateV1 {
         out[40..48].copy_from_slice(&self.mining_interval_ms.to_be_bytes());
         out[48..56].copy_from_slice(&self.base_fee.to_be_bytes());
         out[56..64].copy_from_slice(&self.min_gas_price.to_be_bytes());
+        out[64..72].copy_from_slice(&self.min_priority_fee.to_be_bytes());
         Cow::Owned(out.to_vec())
     }
 
@@ -81,7 +85,7 @@ impl Storable for ChainStateV1 {
 
     fn from_bytes(bytes: Cow<'_, [u8]>) -> Self {
         let data = bytes.as_ref();
-        if data.len() != 64 {
+        if data.len() != 72 {
             ic_cdk::trap("chain_state: invalid length");
         }
         let mut schema = [0u8; 4];
@@ -101,6 +105,8 @@ impl Storable for ChainStateV1 {
         base_fee.copy_from_slice(&data[48..56]);
         let mut min_gas_price = [0u8; 8];
         min_gas_price.copy_from_slice(&data[56..64]);
+        let mut min_priority_fee = [0u8; 8];
+        min_priority_fee.copy_from_slice(&data[64..72]);
         let mut state = Self {
             schema_version: u32::from_be_bytes(schema),
             chain_id: u64::from_be_bytes(chain_id),
@@ -113,6 +119,7 @@ impl Storable for ChainStateV1 {
             mining_interval_ms: u64::from_be_bytes(mining_interval_ms),
             base_fee: u64::from_be_bytes(base_fee),
             min_gas_price: u64::from_be_bytes(min_gas_price),
+            min_priority_fee: u64::from_be_bytes(min_priority_fee),
         };
         state.apply_flags(flags);
         state

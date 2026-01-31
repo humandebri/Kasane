@@ -38,9 +38,10 @@ struct DecodedTx {
     tx_type: u8,
 }
 
-// IcSynthetic v1: [version:1][to:20][value:32][gas_limit:8][nonce:8][data_len:4][data]
-const IC_TX_VERSION: u8 = 1;
-const IC_TX_HEADER_LEN: usize = 1 + 20 + 32 + 8 + 8 + 4;
+// IcSynthetic v2: [version:1][to:20][value:32][gas_limit:8][nonce:8]
+//                [max_fee_per_gas:16][max_priority_fee_per_gas:16][data_len:4][data]
+const IC_TX_VERSION: u8 = 2;
+const IC_TX_HEADER_LEN: usize = 1 + 20 + 32 + 8 + 8 + 16 + 16 + 4;
 
 pub fn decode_ic_synthetic(caller: RevmAddress, bytes: &[u8]) -> Result<TxEnv, DecodeError> {
     if bytes.len() < IC_TX_HEADER_LEN {
@@ -62,6 +63,12 @@ pub fn decode_ic_synthetic(caller: RevmAddress, bytes: &[u8]) -> Result<TxEnv, D
     let mut nonce = [0u8; 8];
     nonce.copy_from_slice(&bytes[offset..offset + 8]);
     offset += 8;
+    let mut max_fee = [0u8; 16];
+    max_fee.copy_from_slice(&bytes[offset..offset + 16]);
+    offset += 16;
+    let mut max_priority = [0u8; 16];
+    max_priority.copy_from_slice(&bytes[offset..offset + 16]);
+    offset += 16;
     let mut len = [0u8; 4];
     len.copy_from_slice(&bytes[offset..offset + 4]);
     offset += 4;
@@ -78,18 +85,18 @@ pub fn decode_ic_synthetic(caller: RevmAddress, bytes: &[u8]) -> Result<TxEnv, D
     let tx = TxEnv {
         caller,
         gas_limit: u64::from_be_bytes(gas),
-        gas_price: 0,
+        gas_price: u128::from_be_bytes(max_fee),
         kind: RevmTxKind::Call(RevmAddress::from(to)),
         value: RevmU256::from_be_bytes(value),
         data: RevmBytes::from(data),
         nonce: u64::from_be_bytes(nonce),
         chain_id: Some(CHAIN_ID),
         access_list: Default::default(),
-        gas_priority_fee: None,
+        gas_priority_fee: Some(u128::from_be_bytes(max_priority)),
         blob_hashes: Default::default(),
         max_fee_per_blob_gas: 0,
         authorization_list: Default::default(),
-        tx_type: 0,
+        tx_type: 2,
     };
     Ok(tx)
 }

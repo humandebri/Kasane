@@ -89,11 +89,13 @@ nonce? 指定があるなら 一致しなければ reject（同期API向け）
 ※ 以前出てた nonce_ic: Map<principal,u64> は不要にできる。簡単で壊れにくい。
 
 2.3 ICSynthetic bytes（Phase1の暫定フォーマット）
-version: u8 (=1)
+version: u8 (=2)
 to: [u8;20]
 value: [u8;32] (big-endian)
 gas_limit: u64 (big-endian)
 nonce: u64 (big-endian)
+max_fee_per_gas: u128 (big-endian)
+max_priority_fee_per_gas: u128 (big-endian)
 data_len: u32 (big-endian)
 data: [u8; data_len]
 chain_id: 4801360 (0x494350, "ICP") をTxEnv/CHAINIDに固定

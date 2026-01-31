@@ -27,6 +27,11 @@ pub enum AppMemoryId {
     CallerNonces = 15,
     TxLocs = 16,
     PruneState = 17,
+    ReadyQueue = 18,
+    ReadyKeyByTxId = 19,
+    PendingBySenderNonce = 20,
+    PendingMinNonce = 21,
+    PendingMetaByTxId = 22,
 }
 
 impl AppMemoryId {
@@ -50,6 +55,11 @@ impl AppMemoryId {
             AppMemoryId::CallerNonces => 15,
             AppMemoryId::TxLocs => 16,
             AppMemoryId::PruneState => 17,
+            AppMemoryId::ReadyQueue => 18,
+            AppMemoryId::ReadyKeyByTxId => 19,
+            AppMemoryId::PendingBySenderNonce => 20,
+            AppMemoryId::PendingMinNonce => 21,
+            AppMemoryId::PendingMetaByTxId => 22,
         }
     }
 
