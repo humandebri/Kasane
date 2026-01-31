@@ -3,7 +3,7 @@
 use crate::memory::{get_memory, AppMemoryId, VMem};
 use crate::chain_data::{
     BlockData, CallerKey, ChainStateV1, Head, MetricsStateV1, PruneStateV1, QueueMeta, ReceiptLike,
-    SenderKey, SenderNonceKey, TxEnvelope, TxId, TxIndexEntry, ReadyKey,
+    SenderKey, SenderNonceKey, StoredTx, TxId, TxIndexEntry, ReadyKey,
 };
 use crate::chain_data::constants::CHAIN_ID;
 use crate::types::keys::{AccountKey, CodeKey, StorageKey};
@@ -16,7 +16,7 @@ pub type Storage = StableBTreeMap<StorageKey, U256Val, VMem>;
 pub type Codes = StableBTreeMap<CodeKey, CodeVal, VMem>;
 pub type Queue = StableBTreeMap<u64, TxId, VMem>;
 pub type SeenTx = StableBTreeMap<TxId, u8, VMem>;
-pub type TxStore = StableBTreeMap<TxId, TxEnvelope, VMem>;
+pub type TxStore = StableBTreeMap<TxId, StoredTx, VMem>;
 pub type TxIndex = StableBTreeMap<TxId, TxIndexEntry, VMem>;
 pub type Receipts = StableBTreeMap<TxId, ReceiptLike, VMem>;
 pub type Blocks = StableBTreeMap<u64, BlockData, VMem>;

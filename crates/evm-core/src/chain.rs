@@ -10,7 +10,7 @@ use evm_db::chain_data::constants::{
     DROP_CODE_INVALID_FEE, MAX_TX_SIZE,
 };
 use evm_db::chain_data::{
-    BlockData, CallerKey, Head, ReceiptLike, ReadyKey, SenderKey, SenderNonceKey, TxEnvelope, TxId,
+    BlockData, CallerKey, Head, ReceiptLike, ReadyKey, SenderKey, SenderNonceKey, StoredTx, TxId,
     TxIndexEntry, TxKind, TxLoc,
 };
 use evm_db::stable_state::{with_state, with_state_mut};
@@ -58,13 +58,27 @@ pub fn submit_tx(kind: TxKind, tx_bytes: Vec<u8>) -> Result<TxId, ChainError> {
         if state.seen_tx.get(&tx_id).is_some() {
             return Err(ChainError::TxAlreadySeen);
         }
-        let envelope = TxEnvelope::new(tx_id, kind, tx_bytes);
-        let caller = match envelope.kind {
-            TxKind::IcSynthetic => envelope.caller_evm.unwrap_or([0u8; 20]),
+        let caller = match kind {
+            TxKind::IcSynthetic => [0u8; 20],
             TxKind::EthSigned => [0u8; 20],
         };
-        let tx_env = decode_tx(envelope.kind, Address::from(caller), &envelope.tx_bytes)
+        let tx_env = decode_tx(kind, Address::from(caller), &tx_bytes)
             .map_err(|_| ChainError::DecodeFailed)?;
+        let (max_fee_per_gas, max_priority_fee_per_gas, is_dynamic_fee) =
+            fee_fields_from_tx_env(&tx_env);
+        let caller_evm = match kind {
+            TxKind::IcSynthetic => Some(caller),
+            TxKind::EthSigned => None,
+        };
+        let envelope = StoredTx::new_with_fees(
+            tx_id,
+            kind,
+            tx_bytes,
+            caller_evm,
+            max_fee_per_gas,
+            max_priority_fee_per_gas,
+            is_dynamic_fee,
+        );
         let chain_state = state.chain_state.get();
         let base_fee = chain_state.base_fee;
         let min_gas_price = chain_state.min_gas_price;
@@ -126,13 +140,19 @@ pub fn submit_ic_tx(
         if state.seen_tx.get(&tx_id).is_some() {
             return Err(ChainError::TxAlreadySeen);
         }
-        let envelope = TxEnvelope::new_with_caller(tx_id, TxKind::IcSynthetic, tx_bytes, caller_evm);
-        let tx_env = decode_tx(
-            envelope.kind,
-            Address::from(caller_evm),
-            &envelope.tx_bytes,
-        )
+        let tx_env = decode_tx(TxKind::IcSynthetic, Address::from(caller_evm), &tx_bytes)
         .map_err(|_| ChainError::DecodeFailed)?;
+        let (max_fee_per_gas, max_priority_fee_per_gas, is_dynamic_fee) =
+            fee_fields_from_tx_env(&tx_env);
+        let envelope = StoredTx::new_with_fees(
+            tx_id,
+            TxKind::IcSynthetic,
+            tx_bytes,
+            Some(caller_evm),
+            max_fee_per_gas,
+            max_priority_fee_per_gas,
+            is_dynamic_fee,
+        );
         let chain_state = state.chain_state.get();
         let base_fee = chain_state.base_fee;
         let min_gas_price = chain_state.min_gas_price;
@@ -235,8 +255,15 @@ pub fn produce_block(max_txs: usize) -> Result<BlockData, ChainError> {
                 continue;
             }
         };
-        let caller = match envelope.kind {
-            TxKind::IcSynthetic => match envelope.caller_evm {
+        if envelope.validate().is_err() {
+            with_state_mut(|state| state.tx_locs.insert(tx_id, TxLoc::dropped(DROP_CODE_DECODE)));
+            track_drop(&mut dropped_total, &mut dropped_by_code, DROP_CODE_DECODE);
+            with_state_mut(|state| advance_sender_after_tx(state, tx_id, None, None));
+            continue;
+        }
+        let kind = envelope.kind();
+        let caller = match kind {
+            TxKind::IcSynthetic => match envelope.caller_evm() {
                 Some(value) => value,
                 None => {
                     with_state_mut(|state| {
@@ -249,7 +276,7 @@ pub fn produce_block(max_txs: usize) -> Result<BlockData, ChainError> {
             },
             TxKind::EthSigned => [0u8; 20],
         };
-        let tx_env = match decode_tx(envelope.kind, Address::from(caller), &envelope.tx_bytes) {
+        let tx_env = match decode_tx(kind, Address::from(caller), envelope.raw()) {
             Ok(value) => value,
             Err(_) => {
                 with_state_mut(|state| state.tx_locs.insert(tx_id, TxLoc::dropped(DROP_CODE_DECODE)));
@@ -390,7 +417,7 @@ pub fn get_receipt(tx_id: &TxId) -> Option<ReceiptLike> {
     with_state(|state| state.receipts.get(tx_id))
 }
 
-pub fn get_tx_envelope(tx_id: &TxId) -> Option<TxEnvelope> {
+pub fn get_tx_envelope(tx_id: &TxId) -> Option<StoredTx> {
     with_state(|state| state.tx_store.get(tx_id))
 }
 
@@ -411,7 +438,7 @@ fn execute_and_seal_with_caller(
     let timestamp = head.timestamp.saturating_add(1);
     let parent_hash = head.block_hash;
 
-    let tx_env = decode_tx(kind, Address::from(caller), &envelope.tx_bytes)
+    let tx_env = decode_tx(kind, Address::from(caller), envelope.raw())
         .map_err(|_| ChainError::DecodeFailed)?;
     let sender_bytes = address_to_bytes(tx_env.caller);
     let sender_nonce = tx_env.nonce;
@@ -574,7 +601,7 @@ pub fn get_queue_snapshot(limit: usize, cursor: Option<u64>) -> QueueSnapshot {
             let kind = state
                 .tx_store
                 .get(&tx_id)
-                .map(|e| e.kind)
+                .map(|e| e.kind())
                 .unwrap_or(TxKind::EthSigned);
             items.push(QueueItem { seq, tx_id, kind });
             seen = seen.saturating_add(1);
@@ -660,13 +687,18 @@ fn advance_sender_after_tx(
         match next_pending_for_sender(state, sender, cursor_nonce) {
             Some((next_nonce, next_tx_id)) => {
                 state.pending_min_nonce.insert(sender, next_nonce);
-                if let Some((effective_gas_price, seq)) =
-                    load_effective_fee_and_seq(state, next_tx_id)
-                {
-                    let _ = insert_ready(state, next_tx_id, effective_gas_price, seq);
-                    return;
+                match load_effective_fee_and_seq(state, next_tx_id) {
+                    Ok(Some((effective_gas_price, seq))) => {
+                        let _ = insert_ready(state, next_tx_id, effective_gas_price, seq);
+                        return;
+                    }
+                    Ok(None) => {
+                        drop_invalid_fee_pending(state, next_tx_id, None, None);
+                    }
+                    Err(RekeyError::DecodeFailed) => {
+                        drop_invalid_fee_pending_decode(state, next_tx_id, None, None);
+                    }
                 }
-                drop_invalid_fee_pending(state, next_tx_id, None, None);
                 cursor_nonce = next_nonce;
             }
             None => {
@@ -697,6 +729,26 @@ fn drop_invalid_fee_pending(
     }
 }
 
+fn drop_invalid_fee_pending_decode(
+    state: &mut evm_db::stable_state::StableState,
+    tx_id: TxId,
+    dropped_total: Option<&mut u64>,
+    dropped_by_code: Option<&mut [u64]>,
+) {
+    remove_ready_by_tx_id(state, tx_id);
+    if let Some(pending_key) = state.pending_meta_by_tx_id.remove(&tx_id) {
+        state.pending_by_sender_nonce.remove(&pending_key);
+    }
+    state.tx_locs.insert(tx_id, TxLoc::dropped(DROP_CODE_DECODE));
+    if let (Some(total), Some(by_code)) = (dropped_total, dropped_by_code) {
+        track_drop(total, by_code, DROP_CODE_DECODE);
+    } else {
+        let mut metrics = *state.metrics_state.get();
+        metrics.record_drop(DROP_CODE_DECODE, 1);
+        state.metrics_state.set(metrics);
+    }
+}
+
 fn next_pending_for_sender(
     state: &mut evm_db::stable_state::StableState,
     sender: SenderKey,
@@ -716,36 +768,44 @@ fn next_pending_for_sender(
 fn load_effective_fee_and_seq(
     state: &mut evm_db::stable_state::StableState,
     tx_id: TxId,
-) -> Option<(u64, u64)> {
+) -> Result<Option<(u64, u64)>, RekeyError> {
     let envelope = match state.tx_store.get(&tx_id) {
         Some(value) => value,
-        None => return None,
+        None => return Ok(None),
     };
-    let caller = match envelope.kind {
-        TxKind::IcSynthetic => match envelope.caller_evm {
-            Some(value) => value,
-            None => return None,
-        },
-        TxKind::EthSigned => [0u8; 20],
-    };
-    let tx_env = decode_tx(envelope.kind, Address::from(caller), &envelope.tx_bytes).ok()?;
+    if envelope.validate().is_err() {
+        return Err(RekeyError::DecodeFailed);
+    }
+    let kind = envelope.kind();
+    if kind == TxKind::IcSynthetic && envelope.caller_evm().is_none() {
+        return Err(RekeyError::DecodeFailed);
+    }
+    let (max_fee_per_gas, max_priority_fee_per_gas, is_dynamic_fee) = envelope.fee_fields();
     let chain_state = state.chain_state.get();
     let base_fee = chain_state.base_fee;
     let min_gas_price = chain_state.min_gas_price;
     let min_priority_fee = chain_state.min_priority_fee;
-    if !min_fee_satisfied(&tx_env, base_fee, min_priority_fee, min_gas_price) {
-        return None;
+    if !min_fee_satisfied_from_fields(
+        max_fee_per_gas,
+        max_priority_fee_per_gas,
+        is_dynamic_fee,
+        base_fee,
+        min_priority_fee,
+        min_gas_price,
+    ) {
+        return Ok(None);
     }
     let effective_gas_price = compute_effective_gas_price(
-        tx_env.gas_price,
-        tx_env.gas_priority_fee.unwrap_or(0),
+        max_fee_per_gas,
+        if is_dynamic_fee { max_priority_fee_per_gas } else { 0 },
         base_fee,
-    )?;
+    )
+    .ok_or(RekeyError::DecodeFailed)?;
     let seq = match state.tx_locs.get(&tx_id) {
         Some(loc) => loc.seq,
-        None => return None,
+        None => return Ok(None),
     };
-    Some((effective_gas_price, seq))
+    Ok(Some((effective_gas_price, seq)))
 }
 
 fn address_to_bytes(address: Address) -> [u8; 20] {
@@ -771,6 +831,36 @@ fn min_fee_satisfied(
         max_fee >= base_fee && max_fee >= base_plus_min
     } else {
         tx_env.gas_price >= u128::from(min_gas_price)
+    }
+}
+
+// V2に保存するため、TxEnvから確定済みのfee値を抽出する。
+fn fee_fields_from_tx_env(tx_env: &revm::context::TxEnv) -> (u128, u128, bool) {
+    let max_fee_per_gas = tx_env.gas_price;
+    let max_priority_fee_per_gas = tx_env.gas_priority_fee.unwrap_or(0);
+    let is_dynamic_fee = tx_env.gas_priority_fee.is_some();
+    (max_fee_per_gas, max_priority_fee_per_gas, is_dynamic_fee)
+}
+
+// 保存値だけで最小fee条件を判定する。
+fn min_fee_satisfied_from_fields(
+    max_fee_per_gas: u128,
+    max_priority_fee_per_gas: u128,
+    is_dynamic_fee: bool,
+    base_fee: u64,
+    min_priority_fee: u64,
+    min_gas_price: u64,
+) -> bool {
+    if is_dynamic_fee {
+        let min_priority_fee = u128::from(min_priority_fee);
+        if max_priority_fee_per_gas < min_priority_fee {
+            return false;
+        }
+        let base_fee = u128::from(base_fee);
+        let base_plus_min = base_fee.saturating_add(min_priority_fee);
+        max_fee_per_gas >= base_fee && max_fee_per_gas >= base_plus_min
+    } else {
+        max_fee_per_gas >= u128::from(min_gas_price)
     }
 }
 
@@ -837,23 +927,29 @@ fn load_effective_fee_and_seq_with_base_fee(
         Some(value) => value,
         None => return Ok(None),
     };
-    let caller = match envelope.kind {
-        TxKind::IcSynthetic => match envelope.caller_evm {
-            Some(value) => value,
-            None => return Err(RekeyError::DecodeFailed),
-        },
-        TxKind::EthSigned => [0u8; 20],
-    };
-    let tx_env = decode_tx(envelope.kind, Address::from(caller), &envelope.tx_bytes)
-        .map_err(|_| RekeyError::DecodeFailed)?;
+    if envelope.validate().is_err() {
+        return Err(RekeyError::DecodeFailed);
+    }
+    let kind = envelope.kind();
+    if kind == TxKind::IcSynthetic && envelope.caller_evm().is_none() {
+        return Err(RekeyError::DecodeFailed);
+    }
+    let (max_fee_per_gas, max_priority_fee_per_gas, is_dynamic_fee) = envelope.fee_fields();
     let min_gas_price = state.chain_state.get().min_gas_price;
     let min_priority_fee = state.chain_state.get().min_priority_fee;
-    if !min_fee_satisfied(&tx_env, base_fee, min_priority_fee, min_gas_price) {
+    if !min_fee_satisfied_from_fields(
+        max_fee_per_gas,
+        max_priority_fee_per_gas,
+        is_dynamic_fee,
+        base_fee,
+        min_priority_fee,
+        min_gas_price,
+    ) {
         return Ok(None);
     }
     let effective_gas_price = compute_effective_gas_price(
-        tx_env.gas_price,
-        tx_env.gas_priority_fee.unwrap_or(0),
+        max_fee_per_gas,
+        if is_dynamic_fee { max_priority_fee_per_gas } else { 0 },
         base_fee,
     )
     .ok_or(RekeyError::DecodeFailed)?;

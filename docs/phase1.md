@@ -318,6 +318,26 @@ DoS制限
 
 max_tx_size / max_gas_per_tx / max_code_size が効く
 
+11. 最低限のスモーク手順（canister）
+
+目的: canister上での落ち方/起動を確認し、stable上の壊れたtxを巻き込んで落ちないことを保証する。
+
+必須:
+- cargo test -p evm-canister
+
+手動スモーク（dfx）:
+- dfx start --clean --background
+- dfx deploy
+- dfx canister call <canister> dev_mint '(vec {0x11: nat8; ...}, 1000000000000:nat)' ※任意
+- dfx canister call <canister> submit_tx '(blob "<raw_eip2718_tx>")'
+- dfx canister call <canister> produce_block '(1:nat)'
+- dfx canister call <canister> get_block '(0:nat)' / get_receipt
+
+旧データ混入の起動確認（最低1回）:
+- 旧バージョンで tx_store に不整合を作る
+- upgrade して起動
+- その後の query/update が落ちず、該当txが drop_code=decode で処理されることを確認
+
 実装メモ（現状）
 - MAX_TX_SIZE = 128KB（Phase1のPoC上限）
 - MAX_TXS_PER_BLOCK = 1024

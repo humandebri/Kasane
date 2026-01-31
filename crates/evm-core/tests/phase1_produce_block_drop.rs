@@ -4,7 +4,7 @@ use evm_core::chain::{self, ChainError};
 use evm_db::chain_data::constants::{
     DROP_CODE_DECODE, DROP_CODE_INVALID_FEE,
 };
-use evm_db::chain_data::{ReadyKey, SenderKey, SenderNonceKey, TxEnvelope, TxId, TxKind, TxLoc, TxLocKind};
+use evm_db::chain_data::{ReadyKey, SenderKey, SenderNonceKey, StoredTx, TxId, TxKind, TxLoc, TxLocKind};
 use evm_db::stable_state::{init_stable_state, with_state_mut};
 
 #[test]
@@ -12,7 +12,15 @@ fn produce_block_marks_decode_drop() {
     init_stable_state();
 
     let tx_id = TxId([0x10u8; 32]);
-    let envelope = TxEnvelope::new(tx_id, TxKind::EthSigned, vec![0x01]);
+    let envelope = StoredTx::new_with_fees(
+        tx_id,
+        TxKind::EthSigned,
+        vec![0x01],
+        None,
+        0,
+        0,
+        false,
+    );
     let sender = [0x11u8; 20];
     let pending_key = SenderNonceKey::new(sender, 0);
     with_state_mut(|state| {
@@ -65,7 +73,15 @@ fn produce_block_marks_caller_missing() {
 
     let tx_bytes = build_ic_tx_bytes_with_fee(2_000_000_000, 1_000_000_000);
     let tx_id = TxId([0x33u8; 32]);
-    let envelope = TxEnvelope::new(tx_id, TxKind::IcSynthetic, tx_bytes);
+    let envelope = StoredTx::new_with_fees(
+        tx_id,
+        TxKind::IcSynthetic,
+        tx_bytes,
+        None,
+        2_000_000_000,
+        1_000_000_000,
+        true,
+    );
     let sender = [0x44u8; 20];
     let pending_key = SenderNonceKey::new(sender, 0);
     with_state_mut(|state| {

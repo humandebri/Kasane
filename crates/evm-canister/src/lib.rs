@@ -5,7 +5,7 @@ use ic_cdk::api::debug_print;
 use evm_db::meta::init_meta_or_trap;
 use evm_db::chain_data::constants::MAX_RETURN_DATA;
 use evm_db::chain_data::constants::CHAIN_ID;
-use evm_db::chain_data::{BlockData, ReceiptLike, TxEnvelope, TxId, TxKind, TxLoc, TxLocKind};
+use evm_db::chain_data::{BlockData, ReceiptLike, StoredTx, TxId, TxKind, TxLoc, TxLocKind};
 use evm_db::stable_state::{init_stable_state, with_state};
 use evm_db::upgrade;
 use evm_core::chain;
@@ -805,16 +805,17 @@ fn tx_to_view(tx_id: TxId) -> Option<EthTxView> {
 }
 
 fn envelope_to_eth_view(
-    envelope: TxEnvelope,
+    envelope: StoredTx,
     block_number: Option<u64>,
     tx_index: Option<u32>,
 ) -> Option<EthTxView> {
-    let caller = match envelope.kind {
-        TxKind::IcSynthetic => envelope.caller_evm.unwrap_or([0u8; 20]),
+    let kind = envelope.kind();
+    let caller = match kind {
+        TxKind::IcSynthetic => envelope.caller_evm().unwrap_or([0u8; 20]),
         TxKind::EthSigned => [0u8; 20],
     };
     let decoded = if let Ok(decoded) =
-        evm_core::tx_decode::decode_tx_view(envelope.kind, caller, &envelope.tx_bytes)
+        evm_core::tx_decode::decode_tx_view(kind, caller, envelope.raw())
     {
         Some(DecodedTxView {
             from: decoded.from.to_vec(),
@@ -831,9 +832,9 @@ fn envelope_to_eth_view(
     };
 
     Some(EthTxView {
-        hash: envelope.tx_id.0.to_vec(),
-        kind: tx_kind_to_view(envelope.kind),
-        raw: envelope.tx_bytes,
+        hash: envelope.tx_id().0.to_vec(),
+        kind: tx_kind_to_view(kind),
+        raw: envelope.raw().clone(),
         decode_ok: decoded.is_some(),
         decoded,
         block_number,

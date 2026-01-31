@@ -2,7 +2,7 @@
 
 use evm_db::chain_data::receipt::LogEntry;
 use evm_db::chain_data::{
-    BlockData, CallerKey, ChainStateV1, Head, QueueMeta, ReceiptLike, TxEnvelope, TxId,
+    BlockData, CallerKey, ChainStateV1, Head, QueueMeta, ReceiptLike, StoredTx, TxId,
     TxIndexEntry, TxKind, TxLoc,
 };
 use ic_stable_structures::Storable;
@@ -10,28 +10,30 @@ use ic_stable_structures::Storable;
 #[test]
 fn tx_envelope_roundtrip() {
     let tx_id = TxId([0x11u8; 32]);
-    let caller = [0x22u8; 20];
-    let envelope = TxEnvelope::new_with_caller(tx_id, TxKind::IcSynthetic, vec![1, 2, 3], caller);
+    let envelope = StoredTx::new_with_fees(
+        tx_id,
+        TxKind::IcSynthetic,
+        vec![1, 2, 3],
+        Some([0x22u8; 20]),
+        2_000_000_000u128,
+        1_000_000_000u128,
+        true,
+    );
     let bytes = envelope.to_bytes();
-    let decoded = TxEnvelope::from_bytes(bytes);
+    let decoded = StoredTx::from_bytes(bytes);
     assert_eq!(envelope, decoded);
 }
 
 #[test]
-fn tx_envelope_accepts_legacy_format() {
-    let tx_id = TxId([0x33u8; 32]);
-    let tx_bytes = vec![7u8, 8, 9];
+fn tx_envelope_rejects_unsupported_version_without_trap() {
     let mut bytes = Vec::new();
-    bytes.push(TxKind::EthSigned.to_u8());
-    bytes.extend_from_slice(&tx_id.0);
-    let len = u32::try_from(tx_bytes.len()).unwrap_or(0);
-    bytes.extend_from_slice(&len.to_be_bytes());
-    bytes.extend_from_slice(&tx_bytes);
-    let decoded = TxEnvelope::from_bytes(bytes.into());
-    assert_eq!(decoded.tx_id, tx_id);
-    assert_eq!(decoded.kind, TxKind::EthSigned);
-    assert_eq!(decoded.tx_bytes, tx_bytes);
-    assert_eq!(decoded.caller_evm, None);
+    bytes.push(1u8);
+    bytes.extend_from_slice(&[0u8; 10]);
+    let decoded = StoredTx::from_bytes(bytes.into());
+    assert!(decoded.is_invalid());
+    assert!(decoded.validate().is_err());
+    assert_eq!(decoded.kind(), TxKind::EthSigned);
+    assert_ne!(decoded.tx_id().0, [0u8; 32]);
 }
 
 #[test]
