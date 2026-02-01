@@ -162,6 +162,13 @@ POCは **モードA** が簡単で強い。
 * contractAddress（create時のみ）
 * logs: []
 
+### 5.1 pruning 状態（Phase1.4準拠・追記）
+
+* `policy.max_ops_per_tick`  
+  * 1tick あたりの上限 ops。自動 prune の暴走防止に使う
+* `oldest_kept_timestamp`  
+  * `oldest_kept_block` の timestamp をキャッシュ（should_prune を O(1) にする）
+
 ---
 
 ## 6) DoS/制限（Gateway側で必須）

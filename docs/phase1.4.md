@@ -27,12 +27,21 @@
 **固定 retain_blocks は危険**。  
 `target_bytes = 500GB` を超えたら古いものから prune する方式が最も安定。
 
+**仕様固定（重要）**: `target_bytes` の判定に使うのは **estimated_kept_bytes**（保存時の積算）。  
+`stable_pages` は **参考（アラート・検知用）**に留める。
+
+**重要**: IC の stable memory は **一度 grow したら基本的に縮まらない**。  
+そのため `target_bytes` は「今のサイズを減らす」指標ではなく、  
+**これ以上 grow させないための圧力**として効く。  
+古いキーを消す意味は、**次の書き込みで再利用できる領域を作る**ことにある。
+prune は **キー削除**ではなく **Blob領域の回収（free list）**を伴うこと。  
+これにより `target_bytes` が **grow抑止**として実際に効く。
+
 ### 2.1 目安の計算（概算でOK）
 
 必要なのは「平均1ブロックあたりのバイト数」。  
 （block本体 + receipts/logs + tx_index/loc 等）
 
-ブロックあたりサイズ別：500GBで持てるブロック数  
 ※ヘッドルーム20%確保 → **実効400GB**で計算
 
 * 100KB / block → 約 4,000,000 blocks
@@ -59,11 +68,13 @@
 * **安定メモリの増分で測る**  
   `produce_block` 前後の stable ページ差分を観測して平均化
 
-これで「500GBに収まる保持期間」が自動で見えてくる。
-
 **注意（推定誤差）**  
 ここで得られる値は **推定**であり誤差がある前提で運用する。  
 過小評価を避けるため、**安全側（やや大きめ）**に見積もる。
+
+補足: stable pages の差分観測は **補助メトリクス**に留める。  
+推定の主体は **保存時のサイズ積算**とし、  
+`estimated_kept_bytes` として運用に使う。
 
 ### 2.3 実務上の初期値（500GB前提）
 
@@ -75,30 +86,78 @@
 
 ---
 
-## 3) pruning 実装: prune_blocks(retain, max_ops) を手動で運用
+## 3) pruning 実装: 自動 prune デーモン + 手動は緊急用
 
-Phase1.4では **自動prune無し**が妥当。理由：
+Phase1.4では **自動化を薄く入れる**のが正解。理由：
 
-* 自動pruneは運用ポリシーと密結合（いつ/どれだけ消すか）
-* まずは **安全な分割pruneの原語**だけ入れるのが正しい
+* 「消し忘れ＝チェーン死亡」になる運用はプロダクト側で吸収すべき
+* 自動化は **ポリシー設定 + 呼び出し**に限定し、暴走を防ぐ
 
-### 3.1 最低限の仕様（必須）
+### 3.1 追加する状態（最小）
+
+* `pruning_enabled: bool`
+* `policy: PrunePolicy { target_bytes, retain_days, retain_blocks, headroom_ratio, timer_interval, max_ops_per_tick }`
+* `high_water_bytes / low_water_bytes`（ヒステリシス用・例: 0.90 / 0.80）
+* `pruned_before_block: Option<u64>`（既存）
+* `prune_cursor: u64`（次に消すブロック）
+* `prune_running: bool`（再入防止）
+* `oldest_kept_block: u64`（= `pruned_before_block + 1`）
+* `oldest_kept_timestamp: u64`（`oldest_kept_block` の timestamp をキャッシュ）
+
+### 3.2 自動実行の仕組み（IC的に安全）
+
+* `timer_interval` で `prune_tick()` を呼ぶ  
+* `produce_block` の中では行わない（重くて詰む）
+* `prune_tick()` は **1回で少しだけ**進める  
+  → `prune_blocks(retain, max_ops)` を1回呼んで終了
+* `max_ops_per_tick` で 1tick の仕事量を固定（暴走防止）
+
+### 3.3 should_prune() の判定（単純化）
+
+トリガは2系統のみ：
+
+* **保持期間**: `oldest_kept_timestamp < now - retain_days`
+* **容量**: `estimated_kept_bytes > high_water_bytes`
+  * prune 後は `<= low_water_bytes` まで戻す（ヒステリシス）
+
+`estimated_kept_bytes` は 2.2 の積算値を使う。  
+stable pages 観測は **参考**に留める。
+
+retain の優先順位（コード化）:
+
+* `retain_min_block = max(head - retain_blocks, block_at(now - retain_days))`
+* `retain_days` が無い/0 の場合は `retain_blocks` のみ
+* `retain_blocks` が無い/0 の場合は `retain_days` のみ
+* **容量トリガが発動したら retain を無視**して古い方から削る
+
+### 3.4 prune_blocks(retain, max_ops) の仕様（必須）
 
 * **冪等**（何回呼んでも壊れない）
 * **max_ops** は「削除エントリ数の合計」  
   （blocks + receipts + tx_index + tx_locs を全て数える）
 * **部分実行**できること（時間超過対策）
+* **1ブロック原子**で削除する  
+  * 次のブロックを **消し切れないなら着手しない**
+* 安全な削除順序（固定）  
+  1) 対象ブロックの `tx_ids` を読む  
+  2) `tx_ids` で receipts / tx_index / tx_locs を削除（無ければスキップ）  
+  3) 最後に block 本体（`block->tx_ids` を含むエントリ）を削除  
+  4) 成功時のみ `pruned_before_block` / `prune_cursor` を進める  
+  5) `estimated_kept_bytes` を安全側で減算
 
-### 3.2 失敗時のルール（明文化）
+### 3.5 失敗時のルール（明文化）
 
 * `pruned_before_block` は **完了したブロックまで**更新  
   （途中失敗時は “最後に完了した番号” を保持）
 
-### 3.3 任意だけど強い追加
+### 3.6 API（運用に必要な最小）
 
-* **dry_run**（どれだけ消えるか見積もり）
-* **remaining**（残タスク量を返す）
-* **max_blocks_per_call**（1回のブロック上限）
+* `set_prune_policy(policy)`（target/retain/headroom/interval）
+* `set_pruning_enabled(bool)`（キルスイッチ）
+* `prune_now(max_ops)`（緊急・テスト用）
+* `get_prune_status()`  
+  * `pruned_before_block / estimated_kept_bytes / stable_pages / need_prune / last_prune_at`
+* `dry_run` は任意（入れるなら `prune_plan()` で概算のみ返す）
 
 ---
 
@@ -150,3 +209,6 @@ Phase1.4では **自動prune無し**が妥当。理由：
 
 補足:
 * 将来もし `null` を採用する場合は、**別APIで pruned_before_block を必ず返す**こと
+* `Unavailable` は将来の拡張余地（Phase1.4 では不要）
+
+pruning は **データ可用性の仕様**であり、削除された範囲は API で明確に区別される（`Pruned` を返す）。
