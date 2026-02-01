@@ -171,6 +171,45 @@ retain の優先順位（コード化）:
 
 ---
 
+## 4.5 外部 indexer への export（pull 前提）
+
+**最も現実的な構成:** indexer が **pull** で取りに来る。  
+canister は **エクスポートAPIを提供**するだけ。
+
+利点:
+* canister からの HTTP outcall が不要（安い・壊れにくい）
+* 再試行が簡単（同じ cursor で取り直せる）
+* 取り込み速度を indexer 側で制御できる（バックプレッシャ）
+
+API 形（おすすめ）:
+
+* `get_head() -> u64`
+* `export_blocks(cursor, max_bytes) -> { items, next_cursor, approx_bytes }`
+
+cursor は **ブロック内の分割**を表現できる形（例: `(block_number, within_block_offset)`）にする。  
+1ブロックが 2MiB を超える可能性を潰すため **必須**。
+
+`BlockBundle` は **同じブロック単位**で返す（block本体 + receipts + tx_index など）。
+
+サイズ上限（安全側）:
+* Ingress payload 最大 **2MiB**
+* 返信も **2MiB前提で分割**が無難  
+* `max_bytes = 1_000_000〜1_500_000` を推奨
+
+### pruning と export の連携（事故防止）
+
+* `exported_before_block` を canister 側に保持
+* indexer が `ack_exported(block)` で進捗を返す
+* prune は **min(prune_cursor, exported_before_block)** までしか進めない
+
+これで「未exportのブロックが消える」事故を防げる。
+
+注意:
+* Candid のオーバーヘッドがあるため、上限ギリギリは避ける  
+* push（outcall）する場合は `max_response_bytes` を小さく固定（例: 4KB〜16KB）
+
+---
+
 ## 5) API仕様（prune / LookupError）
 
 ### 5.1 metrics.pruned_before_block
