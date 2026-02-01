@@ -293,6 +293,8 @@ length-prefix 形式は **export API では使わない**。
 
 **tx_index payload:**
 * 同一ブロック内の tx_index を列挙  
+* v1/v2 では **エントリ本体は 12 bytes 固定**（block_number: u64 + tx_index: u32）
+* 取り込み側は len != 12 を検出したら **Decode 扱いで停止**（ブロック単位のスキップは禁止）
 * 形式: `repeat { tx_id(32) + u32be(len) + bytes }`
 
 **バージョニング:**
@@ -648,15 +650,21 @@ cursor は JSON で保存し、互換性と可読性を固定する。
 
 ```
 Cursor {
-  block_number: u64,
-  segment: u8,      // 0=block, 1=receipts, 2=tx_index
-  byte_offset: u32  // payload offset (prefixは含めない)
+  v: 1,
+  block_number: "u64(文字列)", // JSの安全範囲超えを避けるため文字列固定
+  segment: u8,                // 0=block, 1=receipts, 2=tx_index
+  byte_offset: u32            // payload offset (prefixは含めない)
 }
 ```
 
 補足:
 
 * cursor が存在しない場合は None とみなす（初回同期）
+* block_number は **10進ASCII、先頭0なし**（"0" は許可）
+* segment は **0/1/2 のみ**
+* byte_offset は **0..=u32**
+
+理由: JSの安全整数範囲（2^53-1）を越えたときのサイレント破壊を避ける。
 
 ## v2.3 Pull ループのコミット境界（固定）
 
@@ -677,6 +685,14 @@ canister の仕様として、追いつき時は chunks=[] かつ next_cursor=cu
 * 上限: 5秒固定
 * chunks=[] が続く限り、sleep を挟んで再試行する
 
+## v2.4.1 1レスポンス1ブロックの検知（固定）
+
+export_blocks は **1レスポンス1ブロック**である。取得側はこれを前提とし、次を満たさない返却は InvalidCursor 相当として停止する。
+
+* chunks は **単調増加**（segment → start）
+* next_cursor.block_number は cursor.block_number または cursor.block_number + 1
+  * +1 以外は “ブロック跨ぎ” の可能性が高いので停止
+
 ## v2.5 エラー分類と停止条件（固定）
 
 取得側は以下のエラー分類を持つ。
@@ -695,7 +711,7 @@ canister の仕様として、追いつき時は chunks=[] かつ next_cursor=cu
 v2 の最小スキーマは「追いつく」「復旧できる」「容量が測れる」に必要な最小に限定する。
 
 * meta(key PRIMARY KEY, value)
-  * cursor（CBOR）
+  * cursor（JSON）
   * schema_version
   * last_head
   * last_ingest_at
@@ -703,6 +719,8 @@ v2 の最小スキーマは「追いつく」「復旧できる」「容量が�
 * blocks(number PRIMARY KEY, hash?, timestamp, tx_count)
 * txs(tx_hash PRIMARY KEY, block_number, tx_index)
 * metrics_daily(day PRIMARY KEY, raw_bytes, compressed_bytes, sqlite_growth_bytes, blocks_ingested, errors)
+
+※ metrics_daily は v2.1 でも **最小更新を入れる**（raw_bytes / blocks_ingested / errors）。
 
 ※ from/to/status/gas_used 等は v2.1 では必須にしない（必要になった時点で拡張する）。
 
