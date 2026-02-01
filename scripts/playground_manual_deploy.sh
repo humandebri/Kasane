@@ -12,7 +12,7 @@ MODE="${MODE:-reinstall}"
 ENABLE_DEV_FAUCET="${ENABLE_DEV_FAUCET:-0}"
 RUN_SMOKE="${RUN_SMOKE:-0}"
 
-DFX="dfx --network ${NETWORK}"
+DFX="dfx canister --network ${NETWORK}"
 
 log() {
   echo "[manual-deploy] $*"
@@ -42,10 +42,10 @@ install_wasm() {
       exit 1
     fi
     log "install wasm to canister_id=${CANISTER_ID} mode=${MODE}"
-    ${DFX} canister install --mode "${MODE}" --wasm "${wasm_path}" "${CANISTER_ID}"
+    ${DFX} install -y --mode "${MODE}" --wasm "${wasm_path}" "${CANISTER_ID}"
   else
     log "install wasm to canister_name=${CANISTER_NAME} mode=${MODE}"
-    ${DFX} canister install --mode "${MODE}" --wasm "${wasm_path}" "${CANISTER_NAME}"
+    ${DFX} install -y --mode "${MODE}" --wasm "${wasm_path}" "${CANISTER_NAME}"
   fi
 }
 

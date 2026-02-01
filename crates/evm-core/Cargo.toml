@@ -7,6 +7,14 @@ edition = "2021"
 name = "evm_core"
 crate-type = ["rlib"]
 
+[[bin]]
+name = "caller_evm"
+path = "src/test_bin/caller_evm.rs"
+
+[[bin]]
+name = "eth_raw_tx"
+path = "src/test_bin/eth_raw_tx.rs"
+
 [dependencies]
 tiny-keccak = { version = "2", features = ["keccak"] }
 ic-stable-structures = { path = "../../vendor/stable-structures" }
@@ -15,6 +23,8 @@ alloy-rlp = "0.3"
 alloy-primitives = { version = "1.5.2", default-features = false, features = ["std", "rlp"] }
 alloy-eips = { version = "1.5.2", default-features = false, features = ["std", "k256"] }
 alloy-consensus = { version = "1.5.2", default-features = false, features = ["std", "k256"] }
+alloy-signer = { version = "1.5.2", default-features = false }
+alloy-signer-local = { version = "1.5.2", default-features = false }
 
 [dependencies.evm_db]
 package = "evm-db"
