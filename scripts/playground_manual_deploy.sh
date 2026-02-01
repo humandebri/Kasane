@@ -20,7 +20,7 @@ log() {
 
 build_wasm() {
   local -a args
-  args=("--release" "--target" "wasm32-unknown-unknown" "-p" "evm-canister")
+  args=("--release" "--target" "wasm32-unknown-unknown" "-p" "ic-evm-wrapper")
   if [[ "${ENABLE_DEV_FAUCET}" == "1" ]]; then
     args+=("--features" "dev-faucet")
   fi
@@ -29,7 +29,7 @@ build_wasm() {
 }
 
 install_wasm() {
-  local wasm_path="target/wasm32-unknown-unknown/release/evm_canister.wasm"
+  local wasm_path="target/wasm32-unknown-unknown/release/ic_evm_wrapper.wasm"
   if [[ ! -f "${wasm_path}" ]]; then
     log "wasm not found: ${wasm_path}"
     exit 1

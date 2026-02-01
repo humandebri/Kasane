@@ -76,13 +76,13 @@ fn wasm_path() -> PathBuf {
         .join("target")
         .join("wasm32-unknown-unknown")
         .join("release")
-        .join("evm_canister.wasm")
+        .join("ic_evm_wrapper.wasm")
 }
 
 fn install_canister(pic: &PocketIc) -> Principal {
     let path = wasm_path();
     if !path.exists() {
-        panic!("wasm not found: build evm-canister first: {:?}", path);
+        panic!("wasm not found: build ic-evm-wrapper first: {:?}", path);
     }
     let wasm = std::fs::read(path).expect("read wasm");
     let canister_id = pic.create_canister();

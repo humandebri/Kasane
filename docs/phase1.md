@@ -323,7 +323,7 @@ max_tx_size / max_gas_per_tx / max_code_size が効く
 目的: canister上での落ち方/起動を確認し、stable上の壊れたtxを巻き込んで落ちないことを保証する。
 
 必須:
-- cargo test -p evm-canister
+- cargo test -p ic-evm-wrapper
 
 手動スモーク（dfx）:
 - dfx start --clean --background

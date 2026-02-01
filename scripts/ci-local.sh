@@ -21,7 +21,7 @@ fi
 
 dfx start --clean --background
 
-cargo test -p evm-db -p ic-evm-core -p evm-canister
+cargo test -p evm-db -p ic-evm-core -p ic-evm-wrapper
 
 dfx deploy evm_canister
 

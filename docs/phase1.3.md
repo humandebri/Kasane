@@ -316,6 +316,7 @@ caller_evm = last20bytes(keccak256("ic-evm:caller_evm:v1" || principal_bytes))
 
 * IcSynthetic は `caller_evm / canister_id / caller_principal` が必須
 * EthSigned は raw が EIP-2718、生caller/principalは空
+* nonce運用/置換ルールは **EthSigned も同一**
 
 ### 7) IcSynthetic の nonce 運用（固定）
 

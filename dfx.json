@@ -1,8 +1,8 @@
 {
   "canisters": {
     "evm_canister": {
-      "candid": "crates/evm-canister/evm_canister.did",
-      "package": "evm-canister",
+      "candid": "crates/ic-evm-wrapper/evm_canister.did",
+      "package": "ic-evm-wrapper",
       "metadata": [
         {
           "name": "candid:service",

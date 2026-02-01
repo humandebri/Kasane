@@ -1181,19 +1181,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "evm-canister"
-version = "0.1.0"
-dependencies = [
- "candid",
- "evm-db",
- "getrandom 0.2.17",
- "ic-cdk",
- "ic-cdk-timers",
- "ic-evm-core",
- "serde",
-]
-
-[[package]]
 name = "evm-db"
 version = "0.1.0"
 dependencies = [
@@ -1492,6 +1479,19 @@ dependencies = [
  "ic-stable-structures",
  "revm",
  "tiny-keccak",
+]
+
+[[package]]
+name = "ic-evm-wrapper"
+version = "0.1.0"
+dependencies = [
+ "candid",
+ "evm-db",
+ "getrandom 0.2.17",
+ "ic-cdk",
+ "ic-cdk-timers",
+ "ic-evm-core",
+ "serde",
 ]
 
 [[package]]

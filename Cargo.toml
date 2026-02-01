@@ -2,7 +2,7 @@
 members = [
     "crates/evm-db",
     "crates/evm-core",
-    "crates/evm-canister"
+    "crates/ic-evm-wrapper"
 ]
 exclude = [
     "vendor/stable-structures"

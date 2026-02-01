@@ -305,6 +305,12 @@ fn execute_ic_tx(tx_bytes: Vec<u8>) -> Result<ExecResultDto, ExecuteTxError> {
         Err(chain::ChainError::InvalidFee) => {
             return Err(ExecuteTxError::Rejected("invalid fee".to_string()));
         }
+        Err(chain::ChainError::NonceTooLow) => {
+            return Err(ExecuteTxError::Rejected("nonce too low".to_string()));
+        }
+        Err(chain::ChainError::NonceGap) => {
+            return Err(ExecuteTxError::Rejected("nonce gap".to_string()));
+        }
         Err(chain::ChainError::NonceConflict) => {
             return Err(ExecuteTxError::Rejected("nonce conflict".to_string()));
         }
@@ -377,6 +383,12 @@ fn submit_ic_tx(tx_bytes: Vec<u8>) -> Result<Vec<u8>, SubmitTxError> {
         }
         Err(chain::ChainError::InvalidFee) => {
             return Err(SubmitTxError::Rejected("invalid fee".to_string()));
+        }
+        Err(chain::ChainError::NonceTooLow) => {
+            return Err(SubmitTxError::Rejected("nonce too low".to_string()));
+        }
+        Err(chain::ChainError::NonceGap) => {
+            return Err(SubmitTxError::Rejected("nonce gap".to_string()));
         }
         Err(chain::ChainError::NonceConflict) => {
             return Err(SubmitTxError::Rejected("nonce conflict".to_string()));

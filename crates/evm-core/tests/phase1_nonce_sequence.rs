@@ -61,7 +61,7 @@ fn nonce_too_low_is_rejected() {
     chain::submit_ic_tx(vec![0x99], vec![0x09], tx0).expect("submit 0");
     let _ = chain::produce_block(1).expect("produce block");
 
-    let tx0_again = build_ic_tx_bytes(2_000_000_000, 1_000_000_000, 0);
+    let tx0_again = build_ic_tx_bytes(3_000_000_000, 1_000_000_000, 0);
     let err = chain::submit_ic_tx(vec![0x99], vec![0x09], tx0_again).expect_err("nonce too low");
     assert_eq!(err, ChainError::NonceTooLow);
 }

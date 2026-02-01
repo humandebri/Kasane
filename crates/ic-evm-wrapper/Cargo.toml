@@ -1,5 +1,5 @@
 [package]
-name = "evm-canister"
+name = "ic-evm-wrapper"
 version = "0.1.0"
 edition = "2021"
 
