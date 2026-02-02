@@ -21,6 +21,7 @@ npm run dev
 - `INDEXER_MAX_BYTES` (任意, 既定: 1200000)
 - `INDEXER_BACKOFF_INITIAL_MS` (任意, 既定: 200)
 - `INDEXER_BACKOFF_MAX_MS` (任意, 既定: 5000)
+- `INDEXER_IDLE_POLL_MS` (任意, 既定: 1000)
 - `INDEXER_FETCH_ROOT_KEY` (任意, 1/true で有効。local向け)
 - `INDEXER_ARCHIVE_DIR` (任意, 既定: ./archive)
 - `INDEXER_CHAIN_ID` (任意, 既定: unknown)

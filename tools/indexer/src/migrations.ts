@@ -20,7 +20,7 @@ export function applyMigrations(db: Database.Database, migrations: readonly stri
     );
   `);
 
-  const rows = db.prepare<{ id: string }>("select id from schema_migrations").all();
+  const rows = db.prepare<[], { id: string }>("select id from schema_migrations").all();
   const applied = new Set<string>(rows.map((row) => row.id));
 
   const insert = db.prepare(

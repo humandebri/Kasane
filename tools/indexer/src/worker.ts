@@ -1,3 +1,4 @@
+/// <reference path="./globals.d.ts" />
 // どこで: indexer本体 / 何を: pull→検証→DBコミット / なぜ: 仕様のコミット境界を守るため
 
 import { Config, sleep } from "./config";
@@ -7,50 +8,56 @@ import { archiveBlock } from "./archiver";
 import { runArchiveGc } from "./archive_gc";
 import { decodeBlockPayload, decodeTxIndexPayload } from "./decode";
 import { Chunk, Cursor, ExportError, ExportResponse, Result } from "./types";
+import type { ArchiveResult } from "./archiver";
+import type { BlockInfo, TxIndexInfo } from "./decode";
 
 export async function runWorker(config: Config): Promise<void> {
   const db = new IndexerDb(config.dbPath);
   try {
     await runArchiveGc(db, config.archiveDir, config.chainId);
   } catch (err) {
-    logError("archive gc failed", err);
+    logWarn(config.chainId, "archive_gc_failed", { message: errMessage(err) });
   }
   const client = await createClient(config);
   let cursor: Cursor | null = db.getCursor();
+  let lastHead: bigint | null = null;
   let backoffMs = config.backoffInitialMs;
   let pending: Pending | null = null;
   let retryCount = 0;
-  let lastBackoffLogAt = 0;
+  let lastIdleLogAt = 0;
   let stopRequested = false;
 
-  setupSignalHandlers(() => {
+  setupSignalHandlers(config.chainId, () => {
     stopRequested = true;
+  });
+  setupFatalHandlers((err) => {
+    logFatal(config.chainId, "Unknown", cursor, lastHead, null, null, "uncaught", err);
+    process.exit(1);
   });
 
   for (;;) {
     if (stopRequested) {
-      process.stderr.write("[indexer] stop requested; exiting loop\n");
+      logInfo(config.chainId, "stop_requested", { message: "exiting loop" });
       break;
     }
     let headNumber: bigint;
     try {
       headNumber = await client.getHeadNumber();
     } catch (err) {
-      logError("head fetch failed", err);
       retryCount += 1;
-      logRetry(backoffMs, retryCount, err);
+      logRetry(config.chainId, backoffMs, retryCount, "head_fetch_failed", err);
       await sleep(backoffMs);
       backoffMs = nextBackoff(backoffMs, config.backoffMaxMs);
       continue;
     }
+    lastHead = headNumber;
 
     let result: Result<ExportResponse, ExportError>;
     try {
       result = await client.exportBlocks(cursor, config.maxBytes);
     } catch (err) {
-      logError("export_blocks network error", err);
       retryCount += 1;
-      logRetry(backoffMs, retryCount, err);
+      logRetry(config.chainId, backoffMs, retryCount, "export_blocks_failed", err);
       await sleep(backoffMs);
       backoffMs = nextBackoff(backoffMs, config.backoffMaxMs);
       continue;
@@ -58,27 +65,42 @@ export async function runWorker(config: Config): Promise<void> {
 
     if ("Err" in result) {
       const classified = classifyExportError(result.Err, db);
-      logFatal(classified.kind, cursor, headNumber, null, null, classified.message);
+      logFatal(
+        config.chainId,
+        classified.kind,
+        cursor,
+        headNumber,
+        null,
+        null,
+        classified.message
+      );
       process.exit(1);
-    }
-
-    const response = result.Ok;
-    if (response.chunks.length === 0) {
+    } else {
+      const response = result.Ok;
+      if (response.chunks.length === 0) {
+        retryCount = 0;
+        const idleSleep = config.idlePollMs;
+        logIdle(config.chainId, cursor, headNumber, idleSleep, lastIdleLogAt, (ts) => {
+          lastIdleLogAt = ts;
+        });
+        await sleep(idleSleep);
+        backoffMs = config.backoffInitialMs;
+        continue;
+      }
+      backoffMs = config.backoffInitialMs;
       retryCount = 0;
-      const nextBackoffMs = nextBackoff(backoffMs, config.backoffMaxMs);
-      logBackoffOnce(backoffMs, nextBackoffMs, lastBackoffLogAt, (ts) => {
-        lastBackoffLogAt = ts;
-      });
-      await sleep(nextBackoffMs);
-      backoffMs = nextBackoffMs;
-      continue;
-    }
-    backoffMs = config.backoffInitialMs;
-    retryCount = 0;
-    lastBackoffLogAt = 0;
+      lastIdleLogAt = 0;
 
     if (!response.next_cursor) {
-      logFatal("InvalidCursor", cursor, headNumber, response, null, "missing next_cursor");
+      logFatal(
+        config.chainId,
+        "InvalidCursor",
+        cursor,
+        headNumber,
+        response,
+        null,
+        "missing next_cursor"
+      );
       process.exit(1);
     }
 
@@ -86,7 +108,16 @@ export async function runWorker(config: Config): Promise<void> {
       try {
         enforceNextCursor(response, cursor);
       } catch (err) {
-        logFatal("InvalidCursor", cursor, headNumber, response, null, errMessage(err));
+        logFatal(
+          config.chainId,
+          "InvalidCursor",
+          cursor,
+          headNumber,
+          response,
+          null,
+          errMessage(err),
+          err
+        );
         process.exit(1);
       }
     }
@@ -102,39 +133,90 @@ export async function runWorker(config: Config): Promise<void> {
     try {
       applyChunks(pending, response.chunks, cursor);
     } catch (err) {
-      logFatal("InvalidCursor", cursor, headNumber, response, null, errMessage(err));
+      logFatal(
+        config.chainId,
+        "InvalidCursor",
+        cursor,
+        headNumber,
+        response,
+        null,
+        errMessage(err),
+        err
+      );
       process.exit(1);
     }
     const previousCursor = cursor;
     cursor = response.next_cursor;
 
     if (pending.complete) {
-      let blockInfo;
-      let txIndex;
+      let blockInfo: BlockInfo | null = null;
+      let txIndex: TxIndexInfo[] | null = null;
+      const payloads = finalizePayloads(pending);
       try {
-        blockInfo = decodeBlockPayload(pending.payloads[0]);
-        txIndex = decodeTxIndexPayload(pending.payloads[2]);
+        blockInfo = decodeBlockPayload(payloads[0]);
+        txIndex = decodeTxIndexPayload(payloads[2]);
       } catch (err) {
-        logFatal("Decode", previousCursor, headNumber, response, null, errMessage(err));
+        logFatal(
+          config.chainId,
+          "Decode",
+          previousCursor,
+          headNumber,
+          response,
+          null,
+          errMessage(err),
+          err
+        );
         process.exit(1);
       }
-      let archive;
+      if (!blockInfo || !txIndex) {
+        logFatal(
+          config.chainId,
+          "Decode",
+          previousCursor,
+          headNumber,
+          response,
+          null,
+          "decode result missing"
+        );
+        process.exit(1);
+      }
+      let archive: ArchiveResult | null = null;
       try {
         archive = await archiveBlock({
           archiveDir: config.archiveDir,
           chainId: config.chainId,
           blockNumber: blockInfo.number,
-          blockPayload: pending.payloads[0],
-          receiptsPayload: pending.payloads[1],
-          txIndexPayload: pending.payloads[2],
+          blockPayload: payloads[0],
+          receiptsPayload: payloads[1],
+          txIndexPayload: payloads[2],
           zstdLevel: config.zstdLevel,
         });
       } catch (err) {
-        logFatal("ArchiveIO", previousCursor, headNumber, response, null, errMessage(err));
+        logFatal(
+          config.chainId,
+          "ArchiveIO",
+          previousCursor,
+          headNumber,
+          response,
+          null,
+          errMessage(err),
+          err
+        );
         process.exit(1);
       }
-      const blocksIngested =
-        previousCursor && cursor && cursor.block_number === previousCursor.block_number + 1n ? 1 : 0;
+      if (!archive) {
+        logFatal(
+          config.chainId,
+          "ArchiveIO",
+          previousCursor,
+          headNumber,
+          response,
+          null,
+          "archive result missing"
+        );
+        process.exit(1);
+      }
+      const blocksIngested = 1;
       try {
         db.transaction(() => {
           db.upsertBlock({
@@ -167,10 +249,20 @@ export async function runWorker(config: Config): Promise<void> {
           db.setMeta("last_ingest_at", Date.now().toString());
         });
       } catch (err) {
-        logFatal("ArchiveIO", previousCursor, headNumber, response, archive, errMessage(err));
+        logFatal(
+          config.chainId,
+          "Db",
+          previousCursor,
+          headNumber,
+          response,
+          archive,
+          errMessage(err),
+          err
+        );
         process.exit(1);
       }
       pending = null;
+    }
     }
   }
 
@@ -178,7 +270,7 @@ export async function runWorker(config: Config): Promise<void> {
 }
 
 type Pending = {
-  payloads: Buffer[];
+  payloadParts: Buffer[][];
   payloadLens: number[];
   segment: number;
   offset: number;
@@ -187,7 +279,7 @@ type Pending = {
 
 function newPending(cursor: Cursor): Pending {
   return {
-    payloads: [Buffer.alloc(0), Buffer.alloc(0), Buffer.alloc(0)],
+    payloadParts: [[], [], []],
     payloadLens: [0, 0, 0],
     segment: cursor.segment,
     offset: cursor.byte_offset,
@@ -197,7 +289,7 @@ function newPending(cursor: Cursor): Pending {
 
 function newPendingFromChunk(chunk: Chunk): Pending {
   return {
-    payloads: [Buffer.alloc(0), Buffer.alloc(0), Buffer.alloc(0)],
+    payloadParts: [[], [], []],
     payloadLens: [0, 0, 0],
     segment: chunk.segment,
     offset: chunk.start,
@@ -242,7 +334,7 @@ function applyChunks(pending: Pending, chunks: Chunk[], cursor: Cursor | null): 
       if (nextOffset > payloadLen) {
         throw new Error("chunk exceeds payload length");
       }
-      pending.payloads[segIndex] = Buffer.concat([pending.payloads[segIndex], Buffer.from(chunk.bytes)]);
+      pending.payloadParts[segIndex].push(Buffer.from(chunk.bytes));
       pending.offset = nextOffset;
     }
 
@@ -268,6 +360,16 @@ function ensurePayloadLen(pending: Pending, segment: number, len: number): numbe
     throw new Error("payload_len mismatch");
   }
   return existing;
+}
+
+function finalizePayloads(pending: Pending): Buffer[] {
+  const out: Buffer[] = [];
+  for (let i = 0; i < 3; i += 1) {
+    const len = pending.payloadLens[i] ?? 0;
+    const parts = pending.payloadParts[i] ?? [];
+    out.push(Buffer.concat(parts, len));
+  }
+  return out;
 }
 
 function classifyExportError(
@@ -299,70 +401,99 @@ function nextBackoff(current: number, max: number): number {
   return next > max ? max : next;
 }
 
-function logError(message: string, err: unknown): void {
-  const detail = err instanceof Error ? err.message : String(err);
-  process.stderr.write(`[indexer] ${message}: ${detail}\n`);
+function logInfo(chainId: string, event: string, payload: Record<string, unknown>): void {
+  logJson("info", chainId, event, payload);
 }
 
-function logRetry(backoffMs: number, retryCount: number, err: unknown): void {
-  const detail = errMessage(err);
-  const payload = {
-    level: "warn",
-    event: "retry",
+function logWarn(chainId: string, event: string, payload: Record<string, unknown>): void {
+  logJson("warn", chainId, event, payload);
+}
+
+function logError(chainId: string, event: string, payload: Record<string, unknown>): void {
+  logJson("error", chainId, event, payload);
+}
+
+function logJson(
+  level: "info" | "warn" | "error",
+  chainId: string,
+  event: string,
+  payload: Record<string, unknown>
+): void {
+  const out = {
+    ts_ms: Date.now(),
+    level,
+    event,
+    chain_id: chainId,
+    pid: process.pid,
+    ...payload,
+  };
+  process.stderr.write(`${JSON.stringify(out)}\n`);
+}
+
+function logRetry(
+  chainId: string,
+  backoffMs: number,
+  retryCount: number,
+  reason: string,
+  err: unknown
+): void {
+  logWarn(chainId, "retry", {
     retry_count: retryCount,
     backoff_ms: backoffMs,
-    error: detail,
-    ts: Date.now(),
-  };
-  process.stderr.write(`${JSON.stringify(payload)}\n`);
+    reason,
+    err: errMessage(err),
+  });
 }
 
-function logBackoffOnce(previous: number, next: number, lastLoggedAt: number, update: (ts: number) => void): void {
-  if (next <= previous) {
-    return;
-  }
+function logIdle(
+  chainId: string,
+  cursor: Cursor | null,
+  head: bigint,
+  sleepMs: number,
+  lastLoggedAt: number,
+  update: (ts: number) => void
+): void {
   const now = Date.now();
   if (now - lastLoggedAt < 60_000) {
     return;
   }
   update(now);
-  const payload = {
-    level: "info",
-    event: "idle_backoff",
-    backoff_ms: next,
-    ts: now,
-  };
-  process.stderr.write(`${JSON.stringify(payload)}\n`);
+  logInfo(chainId, "idle", {
+    cursor: cursor ? cursorToJsonSafe(cursor) : null,
+    head: head.toString(),
+    cursor_lag: cursor ? toLag(head, cursor) : null,
+    sleep_ms: sleepMs,
+  });
 }
 
 function logFatal(
-  kind: "Pruned" | "InvalidCursor" | "Decode" | "ArchiveIO",
+  chainId: string,
+  kind: "Pruned" | "InvalidCursor" | "Decode" | "ArchiveIO" | "Db" | "Net" | "Unknown",
   cursor: Cursor | null,
-  head: bigint,
+  head: bigint | null,
   response: ExportResponse | null,
   archive: { path: string; sizeBytes: number; sha256: Buffer } | null,
-  message: string
+  message: string,
+  err?: unknown
 ): void {
   const summary = response ? summarizeChunks(response.chunks) : null;
-  const payload = {
-    level: "error",
-    event: "fatal",
+  logError(chainId, "fatal", {
     error_kind: kind,
     cursor: cursor ? cursorToJsonSafe(cursor) : null,
-    head: head.toString(),
+    head: head ? head.toString() : null,
     next_cursor: response?.next_cursor ? cursorToJsonSafe(response.next_cursor) : null,
+    cursor_lag: head && cursor ? toLag(head, cursor) : null,
     chunks_summary: summary,
     archive: archive
       ? {
           path: archive.path,
           size_bytes: archive.sizeBytes,
-          sha256: archive.sha256.toString("hex"),
+          sha256_hex: archive.sha256.toString("hex"),
         }
       : null,
     message,
-    ts: Date.now(),
-  };
-  process.stderr.write(`${JSON.stringify(payload)}\n`);
+    err: errToJson(err),
+  });
 }
 
 function summarizeChunks(chunks: Chunk[]): {
@@ -412,13 +543,48 @@ function errMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
-function setupSignalHandlers(onStop: () => void): void {
+function errToJson(err: unknown): { name?: string; message?: string; stack?: string } {
+  if (!err) {
+    return {};
+  }
+  if (err instanceof Error) {
+    return {
+      name: err.name,
+      message: err.message,
+      stack: err.stack,
+    };
+  }
+  return { message: String(err) };
+}
+
+function toLag(head: bigint, cursor: Cursor): number {
+  const diff = head - cursor.block_number;
+  if (diff < 0n) {
+    return 0;
+  }
+  const limit = BigInt(Number.MAX_SAFE_INTEGER);
+  if (diff > limit) {
+    return Number.MAX_SAFE_INTEGER;
+  }
+  return Number(diff);
+}
+
+function setupSignalHandlers(chainId: string, onStop: () => void): void {
   const handler = (signal: NodeJS.Signals) => {
-    process.stderr.write(`[indexer] received ${signal}, stopping after current loop\n`);
+    logInfo(chainId, "signal", { signal });
     onStop();
   };
   process.on("SIGINT", handler);
   process.on("SIGTERM", handler);
+}
+
+function setupFatalHandlers(onFatal: (err: unknown) => void): void {
+  process.on("uncaughtException", (err) => {
+    onFatal(err);
+  });
+  process.on("unhandledRejection", (err) => {
+    onFatal(err);
+  });
 }
 
 function toDayKey(): number {
@@ -430,6 +596,9 @@ function toDayKey(): number {
 }
 
 function enforceNextCursor(response: ExportResponse, cursor: Cursor): void {
+  if (!response.next_cursor) {
+    throw new Error("missing next_cursor");
+  }
   if (response.chunks.length === 0) {
     if (response.next_cursor.block_number !== cursor.block_number) {
       throw new Error("next_cursor block_number mismatch on empty response");

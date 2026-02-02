@@ -1,3 +1,10 @@
+/// <reference path="./globals.d.ts" />
+declare const process: {
+  exit(code?: number): never;
+  env: Record<string, string | undefined>;
+  stderr: { write(chunk: string): void };
+};
+
 // どこで: CLIエントリ / 何を: 設定ロードと起動 / なぜ: 実行を単純化するため
 
 import { loadConfig } from "./config";

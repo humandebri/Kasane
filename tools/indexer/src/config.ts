@@ -9,6 +9,7 @@ export type Config = {
   maxBytes: number;
   backoffInitialMs: number;
   backoffMaxMs: number;
+  idlePollMs: number;
   fetchRootKey: boolean;
   archiveDir: string;
   chainId: string;
@@ -20,6 +21,7 @@ const DEFAULT_DB_PATH = "./indexer.sqlite";
 const DEFAULT_MAX_BYTES = 1_200_000;
 const DEFAULT_BACKOFF_INITIAL_MS = 200;
 const DEFAULT_BACKOFF_MAX_MS = 5_000;
+const DEFAULT_IDLE_POLL_MS = 1_000;
 const DEFAULT_ARCHIVE_DIR = "./archive";
 const DEFAULT_CHAIN_ID = "unknown";
 const DEFAULT_ZSTD_LEVEL = 3;
@@ -42,6 +44,7 @@ export function loadConfig(env: NodeJS.ProcessEnv): Config {
     DEFAULT_BACKOFF_MAX_MS,
     "INDEXER_BACKOFF_MAX_MS"
   );
+  const idlePollMs = readNumber(env.INDEXER_IDLE_POLL_MS, DEFAULT_IDLE_POLL_MS, "INDEXER_IDLE_POLL_MS");
   const fetchRootKey = env.INDEXER_FETCH_ROOT_KEY === "1" || env.INDEXER_FETCH_ROOT_KEY === "true";
   const archiveDirRaw = env.INDEXER_ARCHIVE_DIR ?? DEFAULT_ARCHIVE_DIR;
   const archiveDir = path.resolve(archiveDirRaw);
@@ -54,6 +57,7 @@ export function loadConfig(env: NodeJS.ProcessEnv): Config {
     maxBytes,
     backoffInitialMs,
     backoffMaxMs,
+    idlePollMs,
     fetchRootKey,
     archiveDir,
     chainId,
