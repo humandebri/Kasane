@@ -1,8 +1,8 @@
 //! どこで: chain_data のヘッダ状態 / 何を: 固定サイズのStableStateV1 / なぜ: upgrade耐性と最小メタ保持のため
 
 use crate::chain_data::constants::{
-    CHAIN_STATE_SIZE_U32, DEFAULT_BASE_FEE, DEFAULT_MINING_INTERVAL_MS, DEFAULT_MIN_GAS_PRICE,
-    DEFAULT_MIN_PRIORITY_FEE,
+    CHAIN_ID, CHAIN_STATE_SIZE_U32, DEFAULT_BASE_FEE, DEFAULT_MINING_INTERVAL_MS,
+    DEFAULT_MIN_GAS_PRICE, DEFAULT_MIN_PRIORITY_FEE,
 };
 use ic_stable_structures::storable::Bound;
 use ic_stable_structures::Storable;
@@ -86,7 +86,7 @@ impl Storable for ChainStateV1 {
     fn from_bytes(bytes: Cow<'_, [u8]>) -> Self {
         let data = bytes.as_ref();
         if data.len() != 72 {
-            ic_cdk::trap("chain_state: invalid length");
+            return ChainStateV1::new(CHAIN_ID);
         }
         let mut schema = [0u8; 4];
         schema.copy_from_slice(&data[0..4]);

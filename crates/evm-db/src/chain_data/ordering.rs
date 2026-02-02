@@ -1,5 +1,6 @@
 //! どこで: Phase1.3の手数料順序 / 何を: ready_queue用キーとpendingキー / なぜ: 決定的な優先順とnonce待ちを両立するため
 
+use crate::decode::hash_to_array;
 use ic_stable_structures::storable::Bound;
 use ic_stable_structures::Storable;
 use std::borrow::Cow;
@@ -71,7 +72,7 @@ impl Storable for ReadyKey {
                 buf[40..72].copy_from_slice(&tx_hash);
                 Self(buf)
             }
-            _ => ic_cdk::trap("ready_key: invalid length"),
+            _ => ReadyKey(hash_to_array(b"ready_key", data)),
         }
     }
 
@@ -102,7 +103,7 @@ impl Storable for SenderKey {
     fn from_bytes(bytes: Cow<'_, [u8]>) -> Self {
         let data = bytes.as_ref();
         if data.len() != SENDER_KEY_LEN {
-            ic_cdk::trap("sender_key: invalid length");
+            return SenderKey(hash_to_array(b"sender_key", data));
         }
         let mut buf = [0u8; SENDER_KEY_LEN];
         buf.copy_from_slice(data);
@@ -148,7 +149,15 @@ impl Storable for SenderNonceKey {
     fn from_bytes(bytes: Cow<'_, [u8]>) -> Self {
         let data = bytes.as_ref();
         if data.len() != SENDER_NONCE_KEY_LEN {
-            ic_cdk::trap("sender_nonce_key: invalid length");
+            let hashed = hash_to_array::<SENDER_NONCE_KEY_LEN>(b"sender_nonce_key", data);
+            let mut sender = [0u8; 20];
+            sender.copy_from_slice(&hashed[0..20]);
+            let mut nonce = [0u8; 8];
+            nonce.copy_from_slice(&hashed[20..28]);
+            return Self {
+                sender: SenderKey(sender),
+                nonce: u64::from_be_bytes(nonce),
+            };
         }
         let mut sender = [0u8; 20];
         sender.copy_from_slice(&data[0..20]);

@@ -38,6 +38,7 @@ pub enum ChainError {
     NonceGap,
     NonceConflict,
     ExecFailed(Option<ExecError>),
+    InvariantViolation(String),
     NoExecutableTx,
     MintOverflow,
 }
@@ -576,7 +577,9 @@ pub fn produce_block(max_txs: usize) -> Result<BlockData, ChainError> {
         return Err(ChainError::NoExecutableTx);
     }
     if tx_change_hashes.len() != included.len() {
-        return Err(ChainError::ExecFailed(None));
+        return Err(ChainError::InvariantViolation(
+            "tx_change_hashes mismatch".to_string(),
+        ));
     }
     debug_assert_eq!(tx_change_hashes.len(), included.len());
 

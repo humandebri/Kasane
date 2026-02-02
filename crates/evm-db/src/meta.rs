@@ -60,7 +60,7 @@ impl Storable for Meta {
     fn from_bytes(bytes: Cow<'_, [u8]>) -> Self {
         let data = bytes.as_ref();
         if data.len() != 40 {
-            ic_cdk::trap("meta: invalid length");
+            return Meta::new();
         }
         let mut magic = [0u8; 4];
         let mut schema_hash = [0u8; 32];

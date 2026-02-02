@@ -72,13 +72,13 @@ impl Storable for TxLoc {
     fn from_bytes(bytes: Cow<'_, [u8]>) -> Self {
         let data = bytes.as_ref();
         if data.len() != 24 {
-            ic_cdk::trap("tx_loc: invalid length");
+            return TxLoc::queued(0);
         }
         let kind = match data[0] {
             0 => TxLocKind::Queued,
             1 => TxLocKind::Included,
             2 => TxLocKind::Dropped,
-            _ => ic_cdk::trap("tx_loc: kind"),
+            _ => TxLocKind::Queued,
         };
         let mut seq = [0u8; 8];
         seq.copy_from_slice(&data[1..9]);

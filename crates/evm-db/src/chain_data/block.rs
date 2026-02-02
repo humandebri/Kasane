@@ -76,7 +76,15 @@ impl Storable for BlockData {
         let data = bytes.as_ref();
         let base_len = 8 + HASH_LEN + HASH_LEN + 8 + HASH_LEN + HASH_LEN + 4;
         if data.len() < base_len {
-            ic_cdk::trap("block: invalid length");
+            return BlockData {
+                number: 0,
+                parent_hash: [0u8; HASH_LEN],
+                block_hash: [0u8; HASH_LEN],
+                timestamp: 0,
+                tx_ids: Vec::new(),
+                tx_list_hash: [0u8; HASH_LEN],
+                state_root: [0u8; HASH_LEN],
+            };
         }
         let mut offset = 0;
         let mut num = [0u8; 8];
@@ -100,13 +108,42 @@ impl Storable for BlockData {
         let mut len_bytes = [0u8; 4];
         len_bytes.copy_from_slice(&data[offset..offset + 4]);
         offset += 4;
-        let tx_len = len_to_usize(u32::from_be_bytes(len_bytes), "block: tx_len overflow");
+        let tx_len = match usize::try_from(u32::from_be_bytes(len_bytes)) {
+            Ok(value) => value,
+            Err(_) => {
+                return BlockData {
+                    number: 0,
+                    parent_hash: [0u8; HASH_LEN],
+                    block_hash: [0u8; HASH_LEN],
+                    timestamp: 0,
+                    tx_ids: Vec::new(),
+                    tx_list_hash: [0u8; HASH_LEN],
+                    state_root: [0u8; HASH_LEN],
+                };
+            }
+        };
         if tx_len > MAX_TXS_PER_BLOCK {
-            ic_cdk::trap("block: tx list too long");
+            return BlockData {
+                number: 0,
+                parent_hash: [0u8; HASH_LEN],
+                block_hash: [0u8; HASH_LEN],
+                timestamp: 0,
+                tx_ids: Vec::new(),
+                tx_list_hash: [0u8; HASH_LEN],
+                state_root: [0u8; HASH_LEN],
+            };
         }
         let expected = base_len + tx_len * HASH_LEN;
         if expected != data.len() {
-            ic_cdk::trap("block: length mismatch");
+            return BlockData {
+                number: 0,
+                parent_hash: [0u8; HASH_LEN],
+                block_hash: [0u8; HASH_LEN],
+                timestamp: 0,
+                tx_ids: Vec::new(),
+                tx_list_hash: [0u8; HASH_LEN],
+                state_root: [0u8; HASH_LEN],
+            };
         }
         let mut tx_ids = Vec::with_capacity(tx_len);
         for _ in 0..tx_len {
@@ -159,7 +196,11 @@ impl Storable for Head {
     fn from_bytes(bytes: Cow<'_, [u8]>) -> Self {
         let data = bytes.as_ref();
         if data.len() != 8 + HASH_LEN + 8 {
-            ic_cdk::trap("head: invalid length");
+            return Head {
+                number: 0,
+                block_hash: [0u8; HASH_LEN],
+                timestamp: 0,
+            };
         }
         let mut num = [0u8; 8];
         num.copy_from_slice(&data[0..8]);
@@ -182,8 +223,4 @@ impl Storable for Head {
 
 fn len_to_u32(len: usize, msg: &str) -> u32 {
     u32::try_from(len).unwrap_or_else(|_| ic_cdk::trap(msg))
-}
-
-fn len_to_usize(len: u32, msg: &str) -> usize {
-    usize::try_from(len).unwrap_or_else(|_| ic_cdk::trap(msg))
 }

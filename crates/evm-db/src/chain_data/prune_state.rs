@@ -81,7 +81,7 @@ impl Storable for PruneStateV1 {
     fn from_bytes(bytes: Cow<'_, [u8]>) -> Self {
         let data = bytes.as_ref();
         if data.len() != 32 {
-            ic_cdk::trap("prune_state: invalid length");
+            return PruneStateV1::new();
         }
         let mut schema = [0u8; 4];
         schema.copy_from_slice(&data[0..4]);
@@ -133,24 +133,27 @@ impl Storable for PruneJournal {
     fn from_bytes(bytes: Cow<'_, [u8]>) -> Self {
         let data = bytes.as_ref();
         if data.len() < 4 {
-            ic_cdk::trap("prune_journal: invalid length");
+            return PruneJournal { ptrs: Vec::new() };
         }
         let mut len_bytes = [0u8; 4];
         len_bytes.copy_from_slice(&data[0..4]);
         let len = u32::from_be_bytes(len_bytes);
         if len > MAX_PTRS_U32 {
-            ic_cdk::trap("prune_journal: too many ptrs");
+            return PruneJournal { ptrs: Vec::new() };
         }
         let expected = 4usize
             .checked_add((len as usize).saturating_mul(20))
             .unwrap_or(0);
         if data.len() != expected {
-            ic_cdk::trap("prune_journal: length mismatch");
+            return PruneJournal { ptrs: Vec::new() };
         }
         let mut ptrs = Vec::with_capacity(len as usize);
         let mut offset = 4usize;
         for _ in 0..len {
             let end = offset + 20;
+            if end > data.len() {
+                return PruneJournal { ptrs: Vec::new() };
+            }
             let ptr = BlobPtr::from_bytes(Cow::Owned(data[offset..end].to_vec()));
             ptrs.push(ptr);
             offset = end;

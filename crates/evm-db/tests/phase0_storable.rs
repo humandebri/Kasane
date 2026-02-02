@@ -64,8 +64,8 @@ fn account_val_layout_is_fixed() {
 #[test]
 fn storable_rejects_wrong_length() {
     let bad = vec![0u8; 20];
-    let result = catch_unwind(|| {
-        let _ = AccountVal::from_bytes(bad.into());
-    });
-    assert!(result.is_err());
+    let result = catch_unwind(|| AccountVal::from_bytes(bad.into()));
+    assert!(result.is_ok());
+    let value = result.expect("no panic");
+    assert_eq!(value, AccountVal([0u8; 72]));
 }

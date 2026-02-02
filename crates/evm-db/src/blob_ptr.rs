@@ -34,7 +34,12 @@ impl Storable for BlobPtr {
     fn from_bytes(bytes: Cow<'_, [u8]>) -> Self {
         let data = bytes.as_ref();
         if data.len() != 20 {
-            ic_cdk::trap("blob_ptr: invalid length");
+            return Self {
+                offset: 0,
+                len: 0,
+                class: 0,
+                gen: 0,
+            };
         }
         let mut offset = [0u8; 8];
         offset.copy_from_slice(&data[0..8]);

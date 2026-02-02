@@ -151,7 +151,7 @@ impl Storable for PruneConfigV1 {
     fn from_bytes(bytes: Cow<'_, [u8]>) -> Self {
         let data = bytes.as_ref();
         if data.len() != PRUNE_CONFIG_SIZE_U32 as usize {
-            ic_cdk::trap("prune_config: invalid length");
+            return PruneConfigV1::new();
         }
         let mut schema = [0u8; 4];
         schema.copy_from_slice(&data[0..4]);

@@ -3,7 +3,6 @@
 use ic_stable_structures::storable::Bound;
 use ic_stable_structures::Storable;
 use std::borrow::Cow;
-use ic_cdk;
 
 pub const METRICS_BUCKETS: usize = 256;
 pub const METRICS_BUCKETS_U32: u32 = 256;
@@ -214,7 +213,7 @@ impl Storable for MetricsStateV1 {
     fn from_bytes(bytes: Cow<'_, [u8]>) -> Self {
         let data = bytes.as_ref();
         if data.len() != METRICS_STATE_SIZE as usize {
-            ic_cdk::trap("metrics_state: invalid length");
+            return MetricsStateV1::new();
         }
         let mut offset = 0usize;
         let schema_version = read_u32(data, &mut offset);

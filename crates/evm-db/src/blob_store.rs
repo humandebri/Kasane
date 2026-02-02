@@ -59,7 +59,7 @@ impl Storable for AllocKey {
     fn from_bytes(bytes: Cow<'_, [u8]>) -> Self {
         let data = bytes.as_ref();
         if data.len() != 12 {
-            ic_cdk::trap("alloc_key: invalid length");
+            return Self { class: 0, offset: 0 };
         }
         let mut class = [0u8; 4];
         class.copy_from_slice(&data[0..4]);
@@ -101,13 +101,14 @@ impl Storable for AllocEntry {
     fn from_bytes(bytes: Cow<'_, [u8]>) -> Self {
         let data = bytes.as_ref();
         if data.len() != 8 {
-            ic_cdk::trap("alloc_entry: invalid length");
+            return Self {
+                gen: 0,
+                state: BlobState::Free,
+            };
         }
         let mut gen = [0u8; 4];
         gen.copy_from_slice(&data[0..4]);
-        let state = BlobState::from_u8(data[4]).unwrap_or_else(|| {
-            ic_cdk::trap("alloc_entry: invalid state");
-        });
+        let state = BlobState::from_u8(data[4]).unwrap_or(BlobState::Free);
         Self {
             gen: u32::from_be_bytes(gen),
             state,

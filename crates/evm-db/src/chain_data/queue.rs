@@ -60,7 +60,7 @@ impl Storable for QueueMeta {
     fn from_bytes(bytes: Cow<'_, [u8]>) -> Self {
         let data = bytes.as_ref();
         if data.len() != 16 {
-            ic_cdk::trap("queue_meta: invalid length");
+            return QueueMeta::new();
         }
         let mut head = [0u8; 8];
         head.copy_from_slice(&data[0..8]);
