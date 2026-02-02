@@ -295,6 +295,8 @@ fn post_upgrade() {
     upgrade::post_upgrade();
     init_meta_or_trap();
     init_stable_state();
+    chain::clear_mempool_on_upgrade();
+    debug_print("mempool cleared on upgrade".to_string());
     schedule_prune();
 }
 

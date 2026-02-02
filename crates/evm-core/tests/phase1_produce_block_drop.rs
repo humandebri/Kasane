@@ -31,7 +31,7 @@ fn produce_block_marks_decode_drop() {
         state.pending_by_sender_nonce.insert(pending_key, tx_id);
         state.pending_meta_by_tx_id.insert(tx_id, pending_key);
         state.pending_min_nonce.insert(SenderKey::new(sender), 0);
-        let key = ReadyKey::new(1, 0, tx_id.0);
+        let key = ReadyKey::new(1, 0, 0, tx_id.0);
         state.ready_queue.insert(key, tx_id);
         state.ready_key_by_tx_id.insert(tx_id, key);
     });
@@ -56,7 +56,7 @@ fn produce_block_marks_missing_envelope() {
         state.pending_by_sender_nonce.insert(pending_key, tx_id);
         state.pending_meta_by_tx_id.insert(tx_id, pending_key);
         state.pending_min_nonce.insert(SenderKey::new(sender), 0);
-        let key = ReadyKey::new(1, 0, tx_id.0);
+        let key = ReadyKey::new(1, 0, 0, tx_id.0);
         state.ready_queue.insert(key, tx_id);
         state.ready_key_by_tx_id.insert(tx_id, key);
     });
@@ -94,7 +94,7 @@ fn produce_block_marks_caller_missing() {
         state.pending_by_sender_nonce.insert(pending_key, tx_id);
         state.pending_meta_by_tx_id.insert(tx_id, pending_key);
         state.pending_min_nonce.insert(SenderKey::new(sender), 0);
-        let key = ReadyKey::new(1, 0, tx_id.0);
+        let key = ReadyKey::new(1, 0, 0, tx_id.0);
         state.ready_queue.insert(key, tx_id);
         state.ready_key_by_tx_id.insert(tx_id, key);
     });

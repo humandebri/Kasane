@@ -4,8 +4,9 @@ use ic_stable_structures::storable::Bound;
 use ic_stable_structures::Storable;
 use std::borrow::Cow;
 
-pub const READY_KEY_LEN: usize = 56;
-pub const READY_KEY_LEN_U32: u32 = 56;
+pub const READY_KEY_LEN: usize = 72;
+pub const READY_KEY_LEN_U32: u32 = 72;
+const READY_KEY_LEN_V1: usize = 56;
 pub const SENDER_KEY_LEN: usize = 20;
 pub const SENDER_KEY_LEN_U32: u32 = 20;
 pub const SENDER_NONCE_KEY_LEN: usize = 28;
@@ -15,18 +16,25 @@ pub const SENDER_NONCE_KEY_LEN_U32: u32 = 28;
 pub struct ReadyKey(pub [u8; READY_KEY_LEN]);
 
 impl ReadyKey {
-    pub fn new(effective_fee: u128, seq: u64, tx_hash: [u8; 32]) -> Self {
-        let fee_inv = u128::MAX.saturating_sub(effective_fee);
+    pub fn new(
+        max_fee_per_gas: u128,
+        max_priority_fee_per_gas: u128,
+        seq: u64,
+        tx_hash: [u8; 32],
+    ) -> Self {
+        let max_fee_inv = u128::MAX.saturating_sub(max_fee_per_gas);
+        let max_priority_inv = u128::MAX.saturating_sub(max_priority_fee_per_gas);
         let mut buf = [0u8; READY_KEY_LEN];
-        buf[0..16].copy_from_slice(&fee_inv.to_be_bytes());
-        buf[16..24].copy_from_slice(&seq.to_be_bytes());
-        buf[24..56].copy_from_slice(&tx_hash);
+        buf[0..16].copy_from_slice(&max_fee_inv.to_be_bytes());
+        buf[16..32].copy_from_slice(&max_priority_inv.to_be_bytes());
+        buf[32..40].copy_from_slice(&seq.to_be_bytes());
+        buf[40..72].copy_from_slice(&tx_hash);
         Self(buf)
     }
 
     pub fn seq(self) -> u64 {
         let mut raw = [0u8; 8];
-        raw.copy_from_slice(&self.0[16..24]);
+        raw.copy_from_slice(&self.0[32..40]);
         u64::from_be_bytes(raw)
     }
 }
@@ -42,12 +50,27 @@ impl Storable for ReadyKey {
 
     fn from_bytes(bytes: Cow<'_, [u8]>) -> Self {
         let data = bytes.as_ref();
-        if data.len() != READY_KEY_LEN {
-            ic_cdk::trap("ready_key: invalid length");
+        if data.len() == READY_KEY_LEN {
+            let mut buf = [0u8; READY_KEY_LEN];
+            buf.copy_from_slice(data);
+            return Self(buf);
         }
-        let mut buf = [0u8; READY_KEY_LEN];
-        buf.copy_from_slice(data);
-        Self(buf)
+        if data.len() == READY_KEY_LEN_V1 {
+            let mut max_fee_inv = [0u8; 16];
+            max_fee_inv.copy_from_slice(&data[0..16]);
+            let mut seq = [0u8; 8];
+            seq.copy_from_slice(&data[16..24]);
+            let mut tx_hash = [0u8; 32];
+            tx_hash.copy_from_slice(&data[24..56]);
+            let max_priority_inv = u128::MAX.to_be_bytes();
+            let mut buf = [0u8; READY_KEY_LEN];
+            buf[0..16].copy_from_slice(&max_fee_inv);
+            buf[16..32].copy_from_slice(&max_priority_inv);
+            buf[32..40].copy_from_slice(&seq);
+            buf[40..72].copy_from_slice(&tx_hash);
+            return Self(buf);
+        }
+        ic_cdk::trap("ready_key: invalid length");
     }
 
     const BOUND: Bound = Bound::Bounded {

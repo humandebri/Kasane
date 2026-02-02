@@ -3,20 +3,24 @@
 use crate::base_fee::compute_next_base_fee;
 use crate::hash;
 use crate::revm_exec::{compute_effective_gas_price, execute_tx, ExecError};
-use crate::state_root::compute_state_root;
+use crate::state_root::{
+    compute_block_change_hash, compute_state_root_from_changes, empty_tx_change_hash,
+};
 use crate::tx_submit;
 use crate::tx_decode::decode_tx;
 use evm_db::chain_data::constants::{
     DEFAULT_BLOCK_GAS_LIMIT, DROP_CODE_CALLER_MISSING, DROP_CODE_DECODE, DROP_CODE_MISSING,
-    DROP_CODE_EXEC, DROP_CODE_INVALID_FEE, DROP_CODE_REPLACED, MAX_TX_SIZE,
+    DROP_CODE_EXEC, DROP_CODE_INVALID_FEE, DROP_CODE_REPLACED, MAX_TX_SIZE, READY_CANDIDATE_LIMIT,
 };
 use evm_db::chain_data::{
     BlockData, Head, PruneJournal, PrunePolicy, RawTx, ReceiptLike, ReadyKey, SenderKey,
     SenderNonceKey, StoredTx, StoredTxBytes, TxId, TxIndexEntry, TxKind, TxLoc,
 };
+use evm_db::memory::VMem;
 use evm_db::stable_state::{with_state, with_state_mut, StableState};
 use evm_db::types::keys::make_account_key;
 use evm_db::types::values::AccountVal;
+use ic_stable_structures::StableBTreeMap;
 use ic_stable_structures::Storable;
 use revm::primitives::Address;
 use revm::primitives::U256;
@@ -84,6 +88,28 @@ pub fn set_pruning_enabled(enabled: bool) -> Result<(), ChainError> {
         state.prune_config.set(config);
     });
     Ok(())
+}
+
+pub fn clear_mempool_on_upgrade() {
+    with_state_mut(|state| {
+        clear_map(&mut state.ready_queue);
+        clear_map(&mut state.ready_key_by_tx_id);
+        clear_map(&mut state.pending_by_sender_nonce);
+        clear_map(&mut state.pending_min_nonce);
+        clear_map(&mut state.pending_meta_by_tx_id);
+        clear_map(&mut state.pending_current_by_sender);
+        clear_map(&mut state.sender_expected_nonce);
+    });
+}
+
+fn clear_map<K: Copy + Ord + Storable, V: Storable>(map: &mut StableBTreeMap<K, V, VMem>) {
+    let mut keys: Vec<K> = Vec::new();
+    for entry in map.range(..) {
+        keys.push(*entry.key());
+    }
+    for key in keys {
+        map.remove(&key);
+    }
 }
 
 pub fn get_prune_status() -> PruneStatus {
@@ -281,7 +307,16 @@ pub fn submit_tx(kind: TxKind, tx_bytes: Vec<u8>) -> Result<TxId, ChainError> {
         }
         state.pending_by_sender_nonce.insert(pending_key, tx_id);
         state.pending_meta_by_tx_id.insert(tx_id, pending_key);
-        promote_if_next_nonce(state, sender_key, tx_id, tx_env.nonce, effective_gas_price, seq)?;
+        promote_if_next_nonce(
+            state,
+            sender_key,
+            tx_id,
+            tx_env.nonce,
+            max_fee_per_gas,
+            max_priority_fee_per_gas,
+            is_dynamic_fee,
+            seq,
+        )?;
         Ok(tx_id)
     })
 }
@@ -356,7 +391,16 @@ pub fn submit_ic_tx(
         }
         state.pending_by_sender_nonce.insert(pending_key, tx_id);
         state.pending_meta_by_tx_id.insert(tx_id, pending_key);
-        promote_if_next_nonce(state, sender_key, tx_id, tx_env.nonce, effective_gas_price, seq)?;
+        promote_if_next_nonce(
+            state,
+            sender_key,
+            tx_id,
+            tx_env.nonce,
+            max_fee_per_gas,
+            max_priority_fee_per_gas,
+            is_dynamic_fee,
+            seq,
+        )?;
         Ok(tx_id)
     })
 }
@@ -399,28 +443,19 @@ pub fn produce_block(max_txs: usize) -> Result<BlockData, ChainError> {
     let parent_hash = head.block_hash;
 
     let mut included: Vec<TxId> = Vec::new();
+    let mut tx_change_hashes: Vec<[u8; 32]> = Vec::new();
     let mut dropped_total = 0u64;
     let mut dropped_by_code = [0u64; evm_db::chain_data::metrics::DROP_CODE_SLOTS];
-    with_state_mut(|state| {
-        let base_fee = state.chain_state.get().base_fee;
-        rekey_ready_queue_with_drop(state, base_fee, &mut dropped_total, &mut dropped_by_code);
-    });
     let mut tx_ids = Vec::new();
     with_state_mut(|state| {
-        if state.ready_queue.len() == 0 {
-            return;
-        }
-        while tx_ids.len() < max_txs {
-            let entry = match state.ready_queue.range(..).next() {
-                Some(value) => value,
-                None => break,
-            };
-            let key = *entry.key();
-            let tx_id = entry.value();
-            state.ready_queue.remove(&key);
-            state.ready_key_by_tx_id.remove(&tx_id);
-            tx_ids.push(tx_id);
-        }
+        let base_fee = state.chain_state.get().base_fee;
+        tx_ids = select_ready_candidates(
+            state,
+            base_fee,
+            max_txs,
+            &mut dropped_total,
+            &mut dropped_by_code,
+        );
     });
     if tx_ids.is_empty() && dropped_total == 0 {
         return Err(ChainError::QueueEmpty);
@@ -502,6 +537,7 @@ pub fn produce_block(max_txs: usize) -> Result<BlockData, ChainError> {
             state.receipts.insert(tx_id, receipt_ptr);
             state.tx_locs.insert(tx_id, TxLoc::included(number, tx_index));
         });
+                tx_change_hashes.push(empty_tx_change_hash());
                 included.push(tx_id);
                 with_state_mut(|state| {
                     advance_sender_after_tx(state, tx_id, Some(sender_bytes), Some(sender_nonce))
@@ -518,6 +554,7 @@ pub fn produce_block(max_txs: usize) -> Result<BlockData, ChainError> {
                 .tx_locs
                 .insert(tx_id, TxLoc::included(number, outcome.tx_index));
         });
+        tx_change_hashes.push(outcome.state_change_hash);
         included.push(tx_id);
     }
 
@@ -544,7 +581,10 @@ pub fn produce_block(max_txs: usize) -> Result<BlockData, ChainError> {
         tx_id_bytes.push(tx_id.0);
     }
     let tx_list_hash = hash::tx_list_hash(&tx_id_bytes);
-    let state_root = compute_state_root();
+    let prev_state_root = load_parent_state_root(head.number);
+    let block_change_hash = compute_block_change_hash(&tx_change_hashes);
+    let state_root =
+        compute_state_root_from_changes(prev_state_root, number, tx_list_hash, block_change_hash);
     let block_hash = hash::block_hash(parent_hash, number, timestamp, tx_list_hash, state_root);
     let block = BlockData::new(
         number,
@@ -657,6 +697,18 @@ fn load_receipt(state: &StableState, tx_id: &TxId) -> Option<ReceiptLike> {
     None
 }
 
+fn load_parent_state_root(parent_number: u64) -> [u8; 32] {
+    with_state(|state| {
+        if let Some(ptr) = state.blocks.get(&parent_number) {
+            if let Ok(bytes) = state.blob_store.read(&ptr) {
+                let block = BlockData::from_bytes(Cow::Owned(bytes));
+                return block.state_root;
+            }
+        }
+        [0u8; 32]
+    })
+}
+
 pub fn get_tx_envelope(tx_id: &TxId) -> Option<StoredTxBytes> {
     with_state(|state| state.tx_store.get(tx_id))
 }
@@ -694,7 +746,15 @@ fn execute_and_seal_with_caller(
     };
 
     let tx_list_hash = hash::tx_list_hash(&[tx_id.0]);
-    let block_hash = hash::block_hash(parent_hash, number, timestamp, tx_list_hash, compute_state_root());
+    let prev_state_root = load_parent_state_root(head.number);
+    let block_change_hash = compute_block_change_hash(&[outcome.state_change_hash]);
+    let state_root = compute_state_root_from_changes(
+        prev_state_root,
+        number,
+        tx_list_hash,
+        block_change_hash,
+    );
+    let block_hash = hash::block_hash(parent_hash, number, timestamp, tx_list_hash, state_root);
 
     let block = BlockData::new(
         number,
@@ -703,7 +763,7 @@ fn execute_and_seal_with_caller(
         timestamp,
         vec![tx_id],
         tx_list_hash,
-        compute_state_root(),
+        state_root,
     );
 
     with_state_mut(|state| {
@@ -1009,13 +1069,22 @@ fn promote_if_next_nonce(
     sender: SenderKey,
     tx_id: TxId,
     nonce: u64,
-    effective_gas_price: u64,
+    max_fee_per_gas: u128,
+    max_priority_fee_per_gas: u128,
+    is_dynamic_fee: bool,
     seq: u64,
 ) -> Result<(), ChainError> {
     match state.pending_min_nonce.get(&sender) {
         None => {
             state.pending_min_nonce.insert(sender, nonce);
-            insert_ready(state, tx_id, effective_gas_price, seq)?;
+            insert_ready(
+                state,
+                tx_id,
+                max_fee_per_gas,
+                max_priority_fee_per_gas,
+                is_dynamic_fee,
+                seq,
+            )?;
         }
         Some(current) => {
             if nonce < current {
@@ -1024,7 +1093,14 @@ fn promote_if_next_nonce(
                     remove_ready_by_tx_id(state, old_tx_id);
                 }
                 state.pending_min_nonce.insert(sender, nonce);
-                insert_ready(state, tx_id, effective_gas_price, seq)?;
+                insert_ready(
+                    state,
+                    tx_id,
+                    max_fee_per_gas,
+                    max_priority_fee_per_gas,
+                    is_dynamic_fee,
+                    seq,
+                )?;
             }
         }
     }
@@ -1034,10 +1110,13 @@ fn promote_if_next_nonce(
 fn insert_ready(
     state: &mut evm_db::stable_state::StableState,
     tx_id: TxId,
-    effective_gas_price: u64,
+    max_fee_per_gas: u128,
+    max_priority_fee_per_gas: u128,
+    is_dynamic_fee: bool,
     seq: u64,
 ) -> Result<(), ChainError> {
-    let key = ReadyKey::new(u128::from(effective_gas_price), seq, tx_id.0);
+    let priority = if is_dynamic_fee { max_priority_fee_per_gas } else { 0 };
+    let key = ReadyKey::new(max_fee_per_gas, priority, seq, tx_id.0);
     state.ready_queue.insert(key, tx_id);
     state.ready_key_by_tx_id.insert(tx_id, key);
     Ok(())
@@ -1074,9 +1153,16 @@ fn advance_sender_after_tx(
         match next_pending_for_sender(state, sender, cursor_nonce) {
             Some((next_nonce, next_tx_id)) => {
                 state.pending_min_nonce.insert(sender, next_nonce);
-                match load_effective_fee_and_seq(state, next_tx_id) {
-                    Ok(Some((effective_gas_price, seq))) => {
-                        let _ = insert_ready(state, next_tx_id, effective_gas_price, seq);
+                match load_fee_fields_and_seq(state, next_tx_id) {
+                    Ok(Some((max_fee_per_gas, max_priority_fee_per_gas, is_dynamic_fee, seq))) => {
+                        let _ = insert_ready(
+                            state,
+                            next_tx_id,
+                            max_fee_per_gas,
+                            max_priority_fee_per_gas,
+                            is_dynamic_fee,
+                            seq,
+                        );
                         return;
                     }
                     Ok(None) => {
@@ -1102,11 +1188,7 @@ fn drop_invalid_fee_pending(
     dropped_total: Option<&mut u64>,
     dropped_by_code: Option<&mut [u64]>,
 ) {
-    remove_ready_by_tx_id(state, tx_id);
-    if let Some(pending_key) = state.pending_meta_by_tx_id.remove(&tx_id) {
-        state.pending_by_sender_nonce.remove(&pending_key);
-        finalize_pending_for_sender(state, pending_key.sender, tx_id);
-    }
+    advance_sender_after_tx(state, tx_id, None, None);
     state.tx_locs.insert(tx_id, TxLoc::dropped(DROP_CODE_INVALID_FEE));
     if let (Some(total), Some(by_code)) = (dropped_total, dropped_by_code) {
         track_drop(total, by_code, DROP_CODE_INVALID_FEE);
@@ -1123,11 +1205,7 @@ fn drop_invalid_fee_pending_decode(
     dropped_total: Option<&mut u64>,
     dropped_by_code: Option<&mut [u64]>,
 ) {
-    remove_ready_by_tx_id(state, tx_id);
-    if let Some(pending_key) = state.pending_meta_by_tx_id.remove(&tx_id) {
-        state.pending_by_sender_nonce.remove(&pending_key);
-        finalize_pending_for_sender(state, pending_key.sender, tx_id);
-    }
+    advance_sender_after_tx(state, tx_id, None, None);
     state.tx_locs.insert(tx_id, TxLoc::dropped(DROP_CODE_DECODE));
     if let (Some(total), Some(by_code)) = (dropped_total, dropped_by_code) {
         track_drop(total, by_code, DROP_CODE_DECODE);
@@ -1166,10 +1244,10 @@ fn next_pending_for_sender(
     None
 }
 
-fn load_effective_fee_and_seq(
+fn load_fee_fields_and_seq(
     state: &mut evm_db::stable_state::StableState,
     tx_id: TxId,
-) -> Result<Option<(u64, u64)>, RekeyError> {
+) -> Result<Option<(u128, u128, bool, u64)>, RekeyError> {
     let envelope = match state.tx_store.get(&tx_id) {
         Some(value) => value,
         None => return Ok(None),
@@ -1194,17 +1272,11 @@ fn load_effective_fee_and_seq(
     ) {
         return Ok(None);
     }
-    let effective_gas_price = compute_effective_gas_price(
-        max_fee_per_gas,
-        if is_dynamic_fee { max_priority_fee_per_gas } else { 0 },
-        base_fee,
-    )
-    .ok_or(RekeyError::DecodeFailed)?;
     let seq = match state.tx_locs.get(&tx_id) {
         Some(loc) => loc.seq,
         None => return Ok(None),
     };
-    Ok(Some((effective_gas_price, seq)))
+    Ok(Some((max_fee_per_gas, max_priority_fee_per_gas, is_dynamic_fee, seq)))
 }
 
 fn address_to_bytes(address: Address) -> [u8; 20] {
@@ -1320,96 +1392,90 @@ fn min_fee_satisfied_from_fields(
     }
 }
 
-fn rekey_ready_queue_with_drop(
+struct ReadyCandidate {
+    key: ReadyKey,
+    tx_id: TxId,
+    effective_gas_price: u64,
+    seq: u64,
+}
+
+fn select_ready_candidates(
     state: &mut evm_db::stable_state::StableState,
     base_fee: u64,
+    max_txs: usize,
     dropped_total: &mut u64,
     dropped_by_code: &mut [u64],
-) {
-    let mut updates: Vec<(ReadyKey, TxId, Option<ReadyKey>, Option<u16>)> = Vec::new();
+) -> Vec<TxId> {
     let mut keys: Vec<ReadyKey> = Vec::new();
-    for entry in state.ready_queue.range(..) {
+    for entry in state.ready_queue.range(..).take(READY_CANDIDATE_LIMIT) {
         keys.push(*entry.key());
     }
-    for old_key in keys {
-        let tx_id = match state.ready_queue.get(&old_key) {
+
+    let mut candidates: Vec<ReadyCandidate> = Vec::new();
+    for key in keys {
+        let tx_id = match state.ready_queue.get(&key) {
             Some(value) => value,
             None => continue,
         };
-        let effective = load_effective_fee_and_seq_with_base_fee(state, tx_id, base_fee);
-        match effective {
-            Ok(Some((fee, seq))) => {
-                let new_key = ReadyKey::new(u128::from(fee), seq, tx_id.0);
-                if new_key != old_key {
-                    updates.push((old_key, tx_id, Some(new_key), None));
-                }
+        let fields = load_fee_fields_and_seq(state, tx_id);
+        let (max_fee_per_gas, max_priority_fee_per_gas, is_dynamic_fee, seq) = match fields {
+            Ok(Some(value)) => value,
+            Ok(None) => {
+                drop_invalid_fee_pending(state, tx_id, Some(dropped_total), Some(dropped_by_code));
+                continue;
             }
-            Ok(None) => updates.push((old_key, tx_id, None, None)),
             Err(RekeyError::DecodeFailed) => {
-                updates.push((old_key, tx_id, None, Some(DROP_CODE_DECODE)));
+                drop_invalid_fee_pending_decode(
+                    state,
+                    tx_id,
+                    Some(dropped_total),
+                    Some(dropped_by_code),
+                );
+                continue;
             }
-        }
+        };
+        let effective_gas_price = match compute_effective_gas_price(
+            max_fee_per_gas,
+            if is_dynamic_fee { max_priority_fee_per_gas } else { 0 },
+            base_fee,
+        ) {
+            Some(value) => value,
+            None => {
+                drop_invalid_fee_pending_decode(
+                    state,
+                    tx_id,
+                    Some(dropped_total),
+                    Some(dropped_by_code),
+                );
+                continue;
+            }
+        };
+        candidates.push(ReadyCandidate {
+            key,
+            tx_id,
+            effective_gas_price,
+            seq,
+        });
     }
 
-    for (old_key, tx_id, next_key, drop_code) in updates {
-        state.ready_queue.remove(&old_key);
-        state.ready_key_by_tx_id.remove(&tx_id);
-        match next_key {
-            Some(new_key) => {
-                state.ready_queue.insert(new_key, tx_id);
-                state.ready_key_by_tx_id.insert(tx_id, new_key);
-            }
-            None => {
-                let code = drop_code.unwrap_or(DROP_CODE_INVALID_FEE);
-                state.tx_locs.insert(tx_id, TxLoc::dropped(code));
-                track_drop(dropped_total, dropped_by_code, code);
-                advance_sender_after_tx(state, tx_id, None, None);
-            }
-        }
+    candidates.sort_by(|left, right| {
+        right
+            .effective_gas_price
+            .cmp(&left.effective_gas_price)
+            .then_with(|| left.seq.cmp(&right.seq))
+            .then_with(|| left.tx_id.0.cmp(&right.tx_id.0))
+    });
+
+    let mut selected: Vec<TxId> = Vec::new();
+    for candidate in candidates.into_iter().take(max_txs) {
+        state.ready_queue.remove(&candidate.key);
+        state.ready_key_by_tx_id.remove(&candidate.tx_id);
+        selected.push(candidate.tx_id);
     }
+    selected
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum RekeyError {
     DecodeFailed,
-}
-
-fn load_effective_fee_and_seq_with_base_fee(
-    state: &mut evm_db::stable_state::StableState,
-    tx_id: TxId,
-    base_fee: u64,
-) -> Result<Option<(u64, u64)>, RekeyError> {
-    let envelope = match state.tx_store.get(&tx_id) {
-        Some(value) => value,
-        None => return Ok(None),
-    };
-    let stored = StoredTx::try_from(envelope).map_err(|_| RekeyError::DecodeFailed)?;
-    let (max_fee_per_gas, max_priority_fee_per_gas, is_dynamic_fee) = (
-        stored.fee.max_fee_per_gas,
-        stored.fee.max_priority_fee_per_gas,
-        stored.fee.is_dynamic_fee,
-    );
-    let min_gas_price = state.chain_state.get().min_gas_price;
-    let min_priority_fee = state.chain_state.get().min_priority_fee;
-    if !min_fee_satisfied_from_fields(
-        max_fee_per_gas,
-        max_priority_fee_per_gas,
-        is_dynamic_fee,
-        base_fee,
-        min_priority_fee,
-        min_gas_price,
-    ) {
-        return Ok(None);
-    }
-    let effective_gas_price = compute_effective_gas_price(
-        max_fee_per_gas,
-        if is_dynamic_fee { max_priority_fee_per_gas } else { 0 },
-        base_fee,
-    )
-    .ok_or(RekeyError::DecodeFailed)?;
-    let seq = match state.tx_locs.get(&tx_id) {
-        Some(loc) => loc.seq,
-        None => return Ok(None),
-    };
-    Ok(Some((effective_gas_price, seq)))
 }

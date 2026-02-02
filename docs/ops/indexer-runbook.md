@@ -16,6 +16,75 @@
   - raw(3seg) を zstd 圧縮して `*.bundle.zst` として保存（任意キャッシュ）
   - 起動時に archive GC（tmp削除 + orphan削除）
 
+## 1.5 dfx ローカル復旧（503/timeout対策）
+
+前提:
+- 以降の手順で **ローカル状態が消える**（問題ないことを確認）
+- ログを必ず残す（`/tmp/dfx-logs` を使う）
+
+### 1.5.1 dfx/replica/icx-proxy を物理killしてクリーン起動
+
+```bash
+scripts/dfx_local_clean_start.sh
+```
+
+別ターミナルでヘルスチェック（2秒以内に返らなければ再度 1.5.1）：
+
+```bash
+curl -m 2 -sSf http://127.0.0.1:4943/api/v2/status > /dev/null && echo "replica OK"
+curl -m 2 -sSf http://127.0.0.1:8080/api/v2/status > /dev/null && echo "icx-proxy OK"
+```
+
+### 1.5.2 dfx 接続先の混入チェック
+
+```bash
+scripts/indexer_env_sanity_check.sh
+```
+
+`.env` / dotenv がある場合は同様に確認する。
+
+### 1.5.3 canister を非対話で reinstall
+
+```bash
+dfx deploy --network local --mode reinstall --yes 2>&1 | tee /tmp/dfx-logs/deploy.log
+```
+
+ここで 503 が出たら 1.5.1 に戻る。
+
+### 1.5.4 indexer の接続先固定チェック
+
+```bash
+rg -n "4943|8080|IC_HOST|REPLICA|icx-proxy|api/v2/status|http://127\.0\.0\.1" .
+```
+
+ハードコードがあれば、環境変数経由に逃がす（`INDEXER_IC_HOST` など）。
+
+### 1.5.5 indexer DB/チェックポイントのクリア
+
+まず “それっぽいディレクトリ” を探す:
+
+```bash
+find . -maxdepth 4 -type d \( -iname "*indexer*" -o -iname "*db*" -o -iname "*data*" -o -iname "*leveldb*" -o -iname "*rocksdb*" \) 2>/dev/null
+```
+
+自動化（削除は明示許可が必要）:
+
+```bash
+ALLOW_DELETE=1 scripts/indexer_reset_local_state.sh
+```
+
+次に “チェックポイントっぽいキー” を検索:
+
+```bash
+rg -n "checkpoint|cursor|last.*block|last_synced|synced_height|from_block|start_block" path/to/indexer
+```
+
+ログに DB path を出している場合は一度起動して確認:
+
+```bash
+RUST_LOG=info ./path/to/indexer 2>&1 | tee /tmp/dfx-logs/indexer_once.log
+```
+
 ## 2. 起動手順
 
 ### 2.1 依存
@@ -148,3 +217,65 @@ pruning enable の手順をスクリプト化（set_policy → enabled=true を�
 * `get_prune_status()` を定期ポーリングして `meta.prune_status` に JSON 保存
 * JSON は `estimated_kept_bytes` / `high_water_bytes` / `hard_emergency_bytes` を文字列で保持して追跡
 * 監視側は `need_prune` フラグと `cursor_lag` を合わせてアラート
+
+## 10. ローカル統合スモーク（最優先）
+
+狙い: 「設計は正しいが、実接続で死ぬ」事故を潰す。
+
+前提:
+- `dfx`, `cargo`, `npm`, `python` が使える
+- 既存のlocal dfxを止めて良い（`DFX_CLEAN=1` が既定）
+
+手順:
+1) ローカルIC起動 + canisterデプロイ + tx投入 + indexer起動 + 検証を **一括** 実行
+
+```bash
+scripts/local_indexer_smoke.sh
+```
+
+確認されること:
+- pruning は `enabled=false` のまま
+- tx投入 → block生成
+- indexer起動 → cursor前進 / archive生成 / metrics_daily埋まる
+- 追いついたら idle（1秒ポーリング + 60秒に1回の idle ログ）
+
+失敗時は `INDEXER_LOG` を確認すること。
+
+## 11. 失敗注入（運用で死ぬところを先に殺す）
+
+狙い: 夜間運用で起こりやすい復旧/再起動パスを先に通す。
+
+```bash
+scripts/local_indexer_fault_injection.sh
+```
+
+実施内容:
+- ingest中に indexer を kill → 同じcursorから復旧（DBトランザクション境界の確認）
+- `.tmp` を残した状態で再起動 → 起動時GCで削除される
+- canister停止（dfx stop）→ retry/backoff が暴走せずログが読みやすい
+
+## 12. pruning は段階的に実地確認（いきなりONしない）
+
+狙い: pruning有効化の事故を防ぐ。
+
+```bash
+scripts/local_pruning_stage.sh
+```
+
+確認されること:
+- `need_prune` が enabled=false でも true になり得る
+- ゆるい policy → export が `Pruned` を返さない範囲で prune が進む
+- aggressive policy → `Pruned` を発生させ、止まり方と復旧手順を確認
+
+## 13. 24h 実測（容量の意思決定は最後に数字で殴る）
+
+狙い: 1日あたり増加量/圧縮率/prune policyの実値を出す。
+
+運用:
+- indexer を **24h連続稼働** させる
+- `metrics_daily` を毎日確認する
+
+補助:
+```bash
+DB_PATH=tools/indexer/indexer.db scripts/indexer_metrics_snapshot.sh
+```
