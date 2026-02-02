@@ -1,8 +1,8 @@
 // どこで: ローカルアーカイブ / 何を: 1ブロック分のpayloadをzstd圧縮保存 / なぜ: prune前の保険のため
 
 import { createHash } from "crypto";
-import { promises as fs } from "fs";
-import path from "path";
+import { promises as fs } from "node:fs";
+import path from "node:path";
 import { compress } from "@mongodb-js/zstd";
 
 export type ArchiveInput = {
@@ -24,14 +24,37 @@ export type ArchiveResult = {
 
 export async function archiveBlock(input: ArchiveInput): Promise<ArchiveResult> {
   const raw = buildRaw(input.blockPayload, input.receiptsPayload, input.txIndexPayload);
+  const outPath = buildPath(input.archiveDir, input.chainId, input.blockNumber);
+  const existing = await readExistingArchive(outPath);
+  if (existing) {
+    return {
+      path: outPath,
+      sha256: existing.sha256,
+      sizeBytes: existing.sizeBytes,
+      rawBytes: raw.length,
+    };
+  }
   const compressed = await compress(raw, input.zstdLevel);
   const sha256 = createHash("sha256").update(compressed).digest();
-  const outPath = buildPath(input.archiveDir, input.chainId, input.blockNumber);
   const dir = path.dirname(outPath);
   await fs.mkdir(dir, { recursive: true });
   const tmpPath = `${outPath}.tmp`;
   await fs.writeFile(tmpPath, compressed);
-  await fs.rename(tmpPath, outPath);
+  try {
+    await fs.rename(tmpPath, outPath);
+  } catch (err) {
+    const existingAfter = await readExistingArchive(outPath);
+    if (existingAfter) {
+      await removeTmp(tmpPath);
+      return {
+        path: outPath,
+        sha256: existingAfter.sha256,
+        sizeBytes: existingAfter.sizeBytes,
+        rawBytes: raw.length,
+      };
+    }
+    throw err;
+  }
   return {
     path: outPath,
     sha256,
@@ -55,6 +78,10 @@ function buildRaw(block: Uint8Array, receipts: Uint8Array, txIndex: Uint8Array):
   offset += receiptsLen;
   offset = writeLen(out, offset, txIndexLen);
   Buffer.from(txIndex).copy(out, offset);
+  offset += txIndexLen;
+  if (offset !== total) {
+    throw new Error("buildRaw size mismatch");
+  }
   return out;
 }
 
@@ -73,4 +100,28 @@ function toU32(value: number, label: string): number {
 function buildPath(baseDir: string, chainId: string, blockNumber: bigint): string {
   const fileName = `${blockNumber.toString()}.bundle.zst`;
   return path.join(baseDir, chainId, fileName);
+}
+
+async function readExistingArchive(
+  outPath: string
+): Promise<{ sha256: Buffer; sizeBytes: number } | null> {
+  try {
+    const stat = await fs.stat(outPath);
+    if (!stat.isFile()) {
+      return null;
+    }
+    const data = await fs.readFile(outPath);
+    const sha256 = createHash("sha256").update(data).digest();
+    return { sha256, sizeBytes: stat.size };
+  } catch {
+    return null;
+  }
+}
+
+async function removeTmp(tmpPath: string): Promise<void> {
+  try {
+    await fs.unlink(tmpPath);
+  } catch {
+    // ベストエフォート
+  }
 }

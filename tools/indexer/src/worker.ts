@@ -13,12 +13,26 @@ import type { BlockInfo, TxIndexInfo } from "./decode";
 
 export async function runWorker(config: Config): Promise<void> {
   const db = new IndexerDb(config.dbPath);
-  try {
-    await runArchiveGc(db, config.archiveDir, config.chainId);
-  } catch (err) {
-    logWarn(config.chainId, "archive_gc_failed", { message: errMessage(err) });
-  }
   const client = await createClient(config);
+  await runWorkerWithDeps(config, db, client, { skipGc: false });
+}
+
+export async function runWorkerWithDeps(
+  config: Config,
+  db: IndexerDb,
+  client: {
+    getHeadNumber: () => Promise<bigint>;
+    exportBlocks: (cursor: Cursor | null, maxBytes: number) => Promise<Result<ExportResponse, ExportError>>;
+  },
+  options: { skipGc: boolean }
+): Promise<void> {
+  if (!options.skipGc) {
+    try {
+      await runArchiveGc(db, config.archiveDir, config.chainId);
+    } catch (err) {
+      logWarn(config.chainId, "archive_gc_failed", { message: errMessage(err) });
+    }
+  }
   let cursor: Cursor | null = db.getCursor();
   let lastHead: bigint | null = null;
   let backoffMs = config.backoffInitialMs;
@@ -90,6 +104,18 @@ export async function runWorker(config: Config): Promise<void> {
       backoffMs = config.backoffInitialMs;
       retryCount = 0;
       lastIdleLogAt = 0;
+      if (totalChunkBytes(response.chunks) > config.maxBytes) {
+        logFatal(
+          config.chainId,
+          "InvalidCursor",
+          cursor,
+          headNumber,
+          response,
+          null,
+          "chunk bytes exceed max_bytes"
+        );
+        process.exit(1);
+      }
 
     if (!response.next_cursor) {
       logFatal(
@@ -367,9 +393,24 @@ function finalizePayloads(pending: Pending): Buffer[] {
   for (let i = 0; i < 3; i += 1) {
     const len = pending.payloadLens[i] ?? 0;
     const parts = pending.payloadParts[i] ?? [];
+    if (len === 0) {
+      out.push(Buffer.alloc(0));
+      continue;
+    }
+    if (parts.length === 0) {
+      throw new Error("missing payload parts");
+    }
     out.push(Buffer.concat(parts, len));
   }
   return out;
+}
+
+function totalChunkBytes(chunks: Chunk[]): number {
+  let total = 0;
+  for (const chunk of chunks) {
+    total += chunk.bytes.length;
+  }
+  return total;
 }
 
 function classifyExportError(
@@ -614,3 +655,11 @@ function enforceNextCursor(response: ExportResponse, cursor: Cursor): void {
     throw new Error("next_cursor block_number out of range");
   }
 }
+
+export const _test = {
+  applyChunks,
+  enforceNextCursor,
+  newPending,
+  newPendingFromChunk,
+  totalChunkBytes,
+};

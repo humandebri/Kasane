@@ -135,16 +135,17 @@ pub fn prune_tick() -> Result<PruneResult, ChainError> {
         });
     }
 
-    let result = with_state_mut(|state| {
+    let (retain, max_ops, last_prune_at) = with_state(|state| {
         let policy = state.prune_config.get().policy();
         let retain = compute_retain_count(state, policy);
-        let max_ops = policy.max_ops_per_tick;
-        let result = prune_blocks(retain, max_ops);
+        (retain, policy.max_ops_per_tick, state.head.get().timestamp)
+    });
+    let result = prune_blocks(retain, max_ops);
+    with_state_mut(|state| {
         let mut config = *state.prune_config.get();
         config.prune_running = false;
-        config.last_prune_at = state.head.get().timestamp;
+        config.last_prune_at = last_prune_at;
         state.prune_config.set(config);
-        result
     });
     result
 }
