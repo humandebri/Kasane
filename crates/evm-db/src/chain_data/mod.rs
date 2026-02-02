@@ -5,6 +5,7 @@ pub mod caller;
 pub mod chain_state;
 pub mod constants;
 pub mod metrics;
+pub mod ops;
 pub mod ordering;
 pub mod prune_config;
 pub mod prune_state;
@@ -21,6 +22,7 @@ pub use constants::{
     MAX_TX_SIZE, RECEIPT_CONTRACT_ADDR_LEN, TX_ID_LEN,
 };
 pub use metrics::{MetricsStateV1, MetricsWindowSummary, METRICS_BUCKETS};
+pub use ops::{OpsConfigV1, OpsMode, OpsStateV1};
 pub use ordering::{ReadyKey, SenderKey, SenderNonceKey};
 pub use prune_config::{PruneConfigV1, PrunePolicy};
 pub use prune_state::{PruneJournal, PruneStateV1};

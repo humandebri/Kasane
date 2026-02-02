@@ -1,11 +1,14 @@
 //! どこで: canister入口 / 何を: Phase1のAPI公開 / なぜ: ICPから同期Tx実行を提供するため
 
 use candid::CandidType;
-use ic_cdk::api::debug_print;
-use evm_db::meta::init_meta_or_trap;
+use ic_cdk::api::{canister_cycle_balance, debug_print, is_controller, msg_caller, time};
 use evm_db::chain_data::constants::MAX_RETURN_DATA;
 use evm_db::chain_data::constants::CHAIN_ID;
-use evm_db::chain_data::{BlockData, RawTx, ReceiptLike, StoredTx, StoredTxBytes, TxId, TxKind, TxLoc, TxLocKind};
+use evm_db::chain_data::{
+    BlockData, OpsConfigV1, OpsMode, RawTx, ReceiptLike, StoredTx, StoredTxBytes,
+    TxId, TxKind, TxLoc, TxLocKind,
+};
+use evm_db::meta::{current_schema_version, ensure_meta_initialized, get_meta, mark_migration_applied};
 use evm_db::stable_state::{init_stable_state, with_state};
 use evm_db::upgrade;
 use evm_core::{chain, hash};
@@ -52,12 +55,39 @@ pub enum ProduceBlockStatus {
 #[derive(Clone, Debug, CandidType, Deserialize)]
 pub enum NoOpReason {
     NoExecutableTx,
+    CycleCritical,
+    NeedsMigration,
 }
 
 #[derive(Clone, Debug, CandidType, Deserialize)]
 pub enum ProduceBlockError {
     Internal(String),
     InvalidArgument(String),
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize)]
+pub struct OpsConfigView {
+    pub low_watermark: u128,
+    pub critical: u128,
+    pub freeze_on_critical: bool,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize)]
+pub enum OpsModeView {
+    Normal,
+    Low,
+    Critical,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize)]
+pub struct OpsStatusView {
+    pub config: OpsConfigView,
+    pub last_cycle_balance: u128,
+    pub last_check_ts: u64,
+    pub mode: OpsModeView,
+    pub safe_stop_latched: bool,
+    pub needs_migration: bool,
+    pub schema_version: u32,
 }
 
 #[derive(Clone, Debug, CandidType, Deserialize)]
@@ -285,18 +315,21 @@ pub struct PruneStatusView {
 
 #[ic_cdk::init]
 fn init() {
-    init_meta_or_trap();
+    let _ = ensure_meta_initialized();
     init_stable_state();
+    observe_cycles();
+    schedule_cycle_observer();
     schedule_prune();
 }
 
 #[ic_cdk::post_upgrade]
 fn post_upgrade() {
     upgrade::post_upgrade();
-    init_meta_or_trap();
+    let _ = ensure_meta_initialized();
     init_stable_state();
-    chain::clear_mempool_on_upgrade();
-    debug_print("mempool cleared on upgrade".to_string());
+    apply_post_upgrade_migrations();
+    observe_cycles();
+    schedule_cycle_observer();
     schedule_prune();
 }
 
@@ -307,6 +340,9 @@ fn pre_upgrade() {
 
 #[ic_cdk::update]
 fn execute_eth_raw_tx(raw_tx: Vec<u8>) -> Result<ExecResultDto, ExecuteTxError> {
+    if let Some(reason) = reject_write_reason() {
+        return Err(ExecuteTxError::Rejected(reason));
+    }
     let result = match chain::execute_eth_raw_tx(raw_tx) {
         Ok(value) => value,
         Err(chain::ChainError::DecodeFailed) => {
@@ -352,6 +388,9 @@ fn execute_eth_raw_tx(raw_tx: Vec<u8>) -> Result<ExecResultDto, ExecuteTxError> 
 
 #[ic_cdk::update]
 fn execute_ic_tx(tx_bytes: Vec<u8>) -> Result<ExecResultDto, ExecuteTxError> {
+    if let Some(reason) = reject_write_reason() {
+        return Err(ExecuteTxError::Rejected(reason));
+    }
     let caller_principal = ic_cdk::api::msg_caller().as_slice().to_vec();
     let canister_id = ic_cdk::api::canister_self().as_slice().to_vec();
     let result = match chain::execute_ic_tx(caller_principal, canister_id, tx_bytes) {
@@ -397,6 +436,9 @@ fn execute_ic_tx(tx_bytes: Vec<u8>) -> Result<ExecResultDto, ExecuteTxError> {
 
 #[ic_cdk::update]
 fn submit_eth_tx(raw_tx: Vec<u8>) -> Result<Vec<u8>, SubmitTxError> {
+    if let Some(reason) = reject_write_reason() {
+        return Err(SubmitTxError::Rejected(reason));
+    }
     let tx_id = match chain::submit_tx(evm_db::chain_data::TxKind::EthSigned, raw_tx) {
         Ok(value) => value,
         Err(chain::ChainError::TxTooLarge) => {
@@ -431,6 +473,9 @@ fn submit_eth_tx(raw_tx: Vec<u8>) -> Result<Vec<u8>, SubmitTxError> {
 
 #[ic_cdk::update]
 fn submit_ic_tx(tx_bytes: Vec<u8>) -> Result<Vec<u8>, SubmitTxError> {
+    if let Some(reason) = reject_write_reason() {
+        return Err(SubmitTxError::Rejected(reason));
+    }
     let caller_principal = ic_cdk::api::msg_caller().as_slice().to_vec();
     let canister_id = ic_cdk::api::canister_self().as_slice().to_vec();
     let tx_id = match chain::submit_ic_tx(caller_principal, canister_id, tx_bytes) {
@@ -468,6 +513,9 @@ fn submit_ic_tx(tx_bytes: Vec<u8>) -> Result<Vec<u8>, SubmitTxError> {
 #[cfg(feature = "dev-faucet")]
 #[ic_cdk::update]
 fn dev_mint(address: Vec<u8>, amount: u128) {
+    if reject_write_reason().is_some() {
+        return;
+    }
     let caller = ic_cdk::api::msg_caller();
     if !ic_cdk::api::is_controller(&caller) {
         ic_cdk::trap("dev_mint: caller is not a controller");
@@ -482,6 +530,16 @@ fn dev_mint(address: Vec<u8>, amount: u128) {
 
 #[ic_cdk::update]
 fn produce_block(max_txs: u32) -> Result<ProduceBlockStatus, ProduceBlockError> {
+    if migration_pending() {
+        return Ok(ProduceBlockStatus::NoOp {
+            reason: NoOpReason::NeedsMigration,
+        });
+    }
+    if cycle_mode() == OpsMode::Critical {
+        return Ok(ProduceBlockStatus::NoOp {
+            reason: NoOpReason::CycleCritical,
+        });
+    }
     let limit = usize::try_from(max_txs).unwrap_or(0);
     match chain::produce_block(limit) {
         Ok(block) => {
@@ -631,6 +689,9 @@ fn rpc_eth_block_number() -> u64 {
 
 #[ic_cdk::update]
 fn set_prune_policy(policy: PrunePolicyView) -> Result<(), String> {
+    if let Some(reason) = reject_write_reason() {
+        return Err(reason);
+    }
     let core_policy = evm_db::chain_data::PrunePolicy {
         target_bytes: policy.target_bytes,
         retain_days: policy.retain_days,
@@ -647,6 +708,9 @@ fn set_prune_policy(policy: PrunePolicyView) -> Result<(), String> {
 
 #[ic_cdk::update]
 fn set_pruning_enabled(enabled: bool) -> Result<(), String> {
+    if let Some(reason) = reject_write_reason() {
+        return Err(reason);
+    }
     chain::set_pruning_enabled(enabled).map_err(|_| "set_pruning_enabled failed".to_string())?;
     schedule_prune();
     Ok(())
@@ -709,6 +773,9 @@ fn rpc_eth_get_transaction_receipt(tx_hash: Vec<u8>) -> Option<EthReceiptView> {
 
 #[ic_cdk::update]
 fn rpc_eth_send_raw_transaction(raw_tx: Vec<u8>) -> Result<Vec<u8>, SubmitTxError> {
+    if let Some(reason) = reject_write_reason() {
+        return Err(SubmitTxError::Rejected(reason));
+    }
     let tx_id = match chain::submit_tx(TxKind::EthSigned, raw_tx) {
         Ok(value) => value,
         Err(chain::ChainError::TxTooLarge) => {
@@ -737,7 +804,49 @@ fn rpc_eth_send_raw_transaction(raw_tx: Vec<u8>) -> Result<Vec<u8>, SubmitTxErro
 
 #[ic_cdk::query]
 fn get_cycle_balance() -> u128 {
-    ic_cdk::api::canister_cycle_balance()
+    canister_cycle_balance()
+}
+
+#[ic_cdk::query]
+fn get_ops_status() -> OpsStatusView {
+    with_state(|state| {
+        let config = *state.ops_config.get();
+        let ops = *state.ops_state.get();
+        let meta = get_meta();
+        OpsStatusView {
+            config: OpsConfigView {
+                low_watermark: config.low_watermark,
+                critical: config.critical,
+                freeze_on_critical: config.freeze_on_critical,
+            },
+            last_cycle_balance: ops.last_cycle_balance,
+            last_check_ts: ops.last_check_ts,
+            mode: mode_to_view(ops.mode),
+            safe_stop_latched: ops.safe_stop_latched,
+            needs_migration: meta.needs_migration,
+            schema_version: meta.schema_version,
+        }
+    })
+}
+
+#[ic_cdk::update]
+fn set_ops_config(config: OpsConfigView) -> Result<(), String> {
+    require_controller()?;
+    if config.critical == 0 {
+        return Err("critical must be > 0".to_string());
+    }
+    if config.critical >= config.low_watermark {
+        return Err("critical must be less than low_watermark".to_string());
+    }
+    evm_db::stable_state::with_state_mut(|state| {
+        let _ = state.ops_config.set(OpsConfigV1 {
+            low_watermark: config.low_watermark,
+            critical: config.critical,
+            freeze_on_critical: config.freeze_on_critical,
+        });
+    });
+    observe_cycles();
+    Ok(())
 }
 
 #[ic_cdk::query]
@@ -805,6 +914,9 @@ fn metrics(window: u64) -> MetricsView {
 
 #[ic_cdk::update]
 fn set_auto_mine(enabled: bool) {
+    if reject_write_reason().is_some() {
+        return;
+    }
     evm_db::stable_state::with_state_mut(|state| {
         let mut chain_state = *state.chain_state.get();
         chain_state.auto_mine_enabled = enabled;
@@ -817,6 +929,9 @@ fn set_auto_mine(enabled: bool) {
 
 #[ic_cdk::update]
 fn set_mining_interval_ms(interval_ms: u64) {
+    if reject_write_reason().is_some() {
+        return;
+    }
     if interval_ms == 0 {
         ic_cdk::trap("mining interval must be > 0");
     }
@@ -830,6 +945,9 @@ fn set_mining_interval_ms(interval_ms: u64) {
 
 #[ic_cdk::update]
 fn prune_blocks(retain: u64, max_ops: u32) -> Result<PruneResultView, ProduceBlockError> {
+    if let Some(reason) = reject_write_reason() {
+        return Err(ProduceBlockError::Internal(reason));
+    }
     match chain::prune_blocks(retain, max_ops) {
         Ok(result) => Ok(PruneResultView {
             did_work: result.did_work,
@@ -1048,7 +1166,111 @@ fn receipt_to_eth_view(receipt: ReceiptLike) -> EthReceiptView {
     }
 }
 
+fn mode_to_view(mode: OpsMode) -> OpsModeView {
+    match mode {
+        OpsMode::Normal => OpsModeView::Normal,
+        OpsMode::Low => OpsModeView::Low,
+        OpsMode::Critical => OpsModeView::Critical,
+    }
+}
+
+fn require_controller() -> Result<(), String> {
+    let caller = msg_caller();
+    if !is_controller(&caller) {
+        return Err("caller is not a controller".to_string());
+    }
+    Ok(())
+}
+
+fn migration_pending() -> bool {
+    let meta = get_meta();
+    meta.needs_migration || meta.schema_version < current_schema_version()
+}
+
+fn observe_cycles() -> OpsMode {
+    let balance = canister_cycle_balance();
+    let now = time();
+    evm_db::stable_state::with_state_mut(|state| {
+        let config = *state.ops_config.get();
+        let mut ops = *state.ops_state.get();
+        let next_mode = if balance < config.critical {
+            if config.freeze_on_critical {
+                ops.safe_stop_latched = true;
+            }
+            OpsMode::Critical
+        } else if ops.safe_stop_latched && config.freeze_on_critical && balance < config.low_watermark {
+            OpsMode::Critical
+        } else {
+            if balance >= config.low_watermark {
+                ops.safe_stop_latched = false;
+            }
+            if balance < config.low_watermark {
+                OpsMode::Low
+            } else {
+                OpsMode::Normal
+            }
+        };
+        ops.last_cycle_balance = balance;
+        ops.last_check_ts = now;
+        ops.mode = next_mode;
+        let _ = state.ops_state.set(ops);
+        next_mode
+    })
+}
+
+fn cycle_mode() -> OpsMode {
+    observe_cycles()
+}
+
+fn reject_write_reason() -> Option<String> {
+    if migration_pending() {
+        return Some("canister needs migration".to_string());
+    }
+    if cycle_mode() == OpsMode::Critical {
+        return Some("cycle critical: write operations are paused".to_string());
+    }
+    None
+}
+
+fn apply_post_upgrade_migrations() {
+    let meta = get_meta();
+    let current = current_schema_version();
+    if meta.schema_version > current {
+        debug_print(format!(
+            "upgrade: schema {} is newer than supported {}",
+            meta.schema_version, current
+        ));
+        let mut next = meta;
+        next.needs_migration = true;
+        evm_db::meta::set_meta(next);
+        return;
+    }
+
+    let from = meta.schema_version;
+    let mut to = from;
+    if from < 2 {
+        chain::clear_mempool_on_upgrade();
+        debug_print("mempool cleared on upgrade migration".to_string());
+        to = 2;
+    }
+    if to != from || meta.needs_migration {
+        mark_migration_applied(from, to, time());
+    }
+}
+
+fn schedule_cycle_observer() {
+    ic_cdk_timers::set_timer_interval(std::time::Duration::from_secs(60), || async {
+        let mode = observe_cycles();
+        if mode != OpsMode::Critical && !migration_pending() {
+            schedule_mining();
+        }
+    });
+}
+
 fn schedule_mining() {
+    if reject_write_reason().is_some() {
+        return;
+    }
     let interval_ms = evm_db::stable_state::with_state_mut(|state| {
         let mut chain_state = *state.chain_state.get();
         if !chain_state.auto_mine_enabled {
@@ -1105,6 +1327,15 @@ fn pruning_tick() {
 }
 
 fn mining_tick() {
+    if reject_write_reason().is_some() {
+        evm_db::stable_state::with_state_mut(|state| {
+            let mut chain_state = *state.chain_state.get();
+            chain_state.mining_scheduled = false;
+            chain_state.is_producing = false;
+            state.chain_state.set(chain_state);
+        });
+        return;
+    }
     let should_produce = evm_db::stable_state::with_state_mut(|state| {
         let mut chain_state = *state.chain_state.get();
         chain_state.mining_scheduled = false;

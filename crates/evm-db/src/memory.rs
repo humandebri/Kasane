@@ -44,6 +44,8 @@ pub enum AppMemoryId {
     PruneJournal = 32,
     PruneConfig = 33,
     CorruptLog = 34,
+    OpsConfig = 35,
+    OpsState = 36,
 }
 
 impl AppMemoryId {
@@ -84,6 +86,8 @@ impl AppMemoryId {
             AppMemoryId::PruneJournal => 32,
             AppMemoryId::PruneConfig => 33,
             AppMemoryId::CorruptLog => 34,
+            AppMemoryId::OpsConfig => 35,
+            AppMemoryId::OpsState => 36,
         }
     }
 

@@ -113,7 +113,22 @@ type MetricsView = record {
   total_included : nat64;
   dev_faucet_enabled : bool;
 };
-type NoOpReason = variant { NoExecutableTx };
+type NoOpReason = variant { NoExecutableTx; CycleCritical; NeedsMigration };
+type OpsConfigView = record {
+  low_watermark : nat;
+  critical : nat;
+  freeze_on_critical : bool;
+};
+type OpsModeView = variant { Normal; Low; Critical };
+type OpsStatusView = record {
+  config : OpsConfigView;
+  last_cycle_balance : nat;
+  last_check_ts : nat64;
+  mode : OpsModeView;
+  safe_stop_latched : bool;
+  needs_migration : bool;
+  schema_version : nat32;
+};
 type PendingStatusView = variant {
   Queued : record { seq : nat64 };
   Included : record { tx_index : nat32; block_number : nat64 };
@@ -196,6 +211,7 @@ service : () -> {
   export_blocks : (opt ExportCursorView, nat32) -> (Result_2) query;
   get_block : (nat64) -> (Result_3) query;
   get_cycle_balance : () -> (nat) query;
+  get_ops_status : () -> (OpsStatusView) query;
   get_pending : (blob) -> (PendingStatusView) query;
   get_prune_status : () -> (PruneStatusView) query;
   get_queue_snapshot : (nat32, opt nat64) -> (QueueSnapshotView) query;
@@ -212,6 +228,7 @@ service : () -> {
   rpc_eth_send_raw_transaction : (blob) -> (Result_7);
   set_auto_mine : (bool) -> ();
   set_mining_interval_ms : (nat64) -> ();
+  set_ops_config : (OpsConfigView) -> (Result_8);
   set_prune_policy : (PrunePolicyView) -> (Result_8);
   set_pruning_enabled : (bool) -> (Result_8);
   submit_eth_tx : (blob) -> (Result_7);

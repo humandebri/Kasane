@@ -1,13 +1,16 @@
-//! どこで: META領域 / 何を: magic/version/schema_hashの検証 / なぜ: 壊れた起動を防ぐため
+//! どこで: META領域 / 何を: schema版管理とmigration状態の保持 / なぜ: upgradeを安全に再実行可能にするため
 
-use crate::memory::{get_memory, AppMemoryId, VMem};
 use crate::corrupt_log::record_corrupt;
+use crate::memory::{get_memory, AppMemoryId, VMem};
 use ic_stable_structures::storable::Bound;
 use ic_stable_structures::{StableCell, Storable};
 use std::borrow::Cow;
 
 const META_MAGIC: [u8; 4] = *b"EVM0";
-const META_LAYOUT_VERSION: u32 = 1;
+const META_LAYOUT_VERSION: u32 = 2;
+const META_LEGACY_SIZE: usize = 40;
+const META_SIZE: usize = 64;
+pub const CURRENT_SCHEMA_VERSION: u32 = 2;
 #[allow(dead_code)]
 const META_SCHEMA_STRING: &str = "mem:0..4|keys:v1|ic_tx:rlp-fixed|merkle:v1|env:v1";
 // Keccak-256(META_SCHEMA_STRING)
@@ -23,6 +26,11 @@ pub struct Meta {
     pub magic: [u8; 4],
     pub layout_version: u32,
     pub schema_hash: [u8; 32],
+    pub schema_version: u32,
+    pub needs_migration: bool,
+    pub last_migration_from: u32,
+    pub last_migration_to: u32,
+    pub last_migration_ts: u64,
 }
 
 impl Meta {
@@ -31,6 +39,11 @@ impl Meta {
             magic: META_MAGIC,
             layout_version: META_LAYOUT_VERSION,
             schema_hash: META_SCHEMA_HASH,
+            schema_version: CURRENT_SCHEMA_VERSION,
+            needs_migration: false,
+            last_migration_from: CURRENT_SCHEMA_VERSION,
+            last_migration_to: CURRENT_SCHEMA_VERSION,
+            last_migration_ts: 0,
         }
     }
 }
@@ -43,24 +56,25 @@ impl Default for Meta {
 
 impl Storable for Meta {
     fn to_bytes(&self) -> Cow<'_, [u8]> {
-        let mut buf = [0u8; 40];
+        let mut buf = [0u8; META_SIZE];
         buf[0..4].copy_from_slice(&self.magic);
         buf[4..8].copy_from_slice(&self.layout_version.to_be_bytes());
         buf[8..40].copy_from_slice(&self.schema_hash);
+        buf[40..44].copy_from_slice(&self.schema_version.to_be_bytes());
+        buf[44] = u8::from(self.needs_migration);
+        buf[48..52].copy_from_slice(&self.last_migration_from.to_be_bytes());
+        buf[52..56].copy_from_slice(&self.last_migration_to.to_be_bytes());
+        buf[56..64].copy_from_slice(&self.last_migration_ts.to_be_bytes());
         Cow::Owned(buf.to_vec())
     }
 
     fn into_bytes(self) -> Vec<u8> {
-        let mut buf = [0u8; 40];
-        buf[0..4].copy_from_slice(&self.magic);
-        buf[4..8].copy_from_slice(&self.layout_version.to_be_bytes());
-        buf[8..40].copy_from_slice(&self.schema_hash);
-        buf.to_vec()
+        self.to_bytes().into_owned()
     }
 
     fn from_bytes(bytes: Cow<'_, [u8]>) -> Self {
         let data = bytes.as_ref();
-        if data.len() != 40 {
+        if data.len() != META_LEGACY_SIZE && data.len() != META_SIZE {
             record_corrupt(b"meta");
             return Meta::new();
         }
@@ -71,15 +85,45 @@ impl Storable for Meta {
             data[4], data[5], data[6], data[7],
         ]);
         schema_hash.copy_from_slice(&data[8..40]);
+        if data.len() == META_LEGACY_SIZE {
+            return Self {
+                magic,
+                layout_version,
+                schema_hash,
+                schema_version: 1,
+                needs_migration: true,
+                last_migration_from: 1,
+                last_migration_to: 1,
+                last_migration_ts: 0,
+            };
+        }
+        let schema_version = u32::from_be_bytes([
+            data[40], data[41], data[42], data[43],
+        ]);
+        let needs_migration = data[44] != 0;
+        let last_migration_from = u32::from_be_bytes([
+            data[48], data[49], data[50], data[51],
+        ]);
+        let last_migration_to = u32::from_be_bytes([
+            data[52], data[53], data[54], data[55],
+        ]);
+        let last_migration_ts = u64::from_be_bytes([
+            data[56], data[57], data[58], data[59], data[60], data[61], data[62], data[63],
+        ]);
         Self {
             magic,
             layout_version,
             schema_hash,
+            schema_version,
+            needs_migration,
+            last_migration_from,
+            last_migration_to,
+            last_migration_ts,
         }
     }
 
     const BOUND: Bound = Bound::Bounded {
-        max_size: 40,
+        max_size: META_SIZE as u32,
         is_fixed_size: true,
     };
 }
@@ -89,15 +133,123 @@ fn init_meta_cell() -> StableCell<Meta, VMem> {
 }
 
 pub fn init_meta_or_trap() {
-    let cell = init_meta_cell();
-    let meta = cell.get();
+    let _ = ensure_meta_initialized();
+}
+
+pub fn ensure_meta_initialized() -> Meta {
+    let mut cell = init_meta_cell();
+    let mut meta = *cell.get();
+    let mut dirty = false;
     if meta.magic != META_MAGIC {
-        ic_cdk::trap("meta: magic mismatch");
+        record_corrupt(b"meta_magic");
+        ic_cdk::api::debug_print("meta: magic mismatch; repaired".to_string());
+        meta.magic = META_MAGIC;
+        meta.needs_migration = true;
+        dirty = true;
     }
     if meta.layout_version != META_LAYOUT_VERSION {
-        ic_cdk::trap("meta: layout_version mismatch");
+        record_corrupt(b"meta_layout");
+        ic_cdk::api::debug_print("meta: layout_version mismatch; repaired".to_string());
+        meta.layout_version = META_LAYOUT_VERSION;
+        meta.needs_migration = true;
+        dirty = true;
     }
     if meta.schema_hash != META_SCHEMA_HASH {
-        ic_cdk::trap("meta: schema_hash mismatch");
+        record_corrupt(b"meta_schema_hash");
+        ic_cdk::api::debug_print("meta: schema_hash mismatch; repaired".to_string());
+        meta.schema_hash = META_SCHEMA_HASH;
+        meta.needs_migration = true;
+        dirty = true;
+    }
+    if meta.schema_version == 0 {
+        record_corrupt(b"meta_schema_version");
+        ic_cdk::api::debug_print("meta: schema_version=0; repaired".to_string());
+        meta.schema_version = 1;
+        meta.needs_migration = true;
+        dirty = true;
+    }
+    if dirty {
+        let _ = cell.set(meta);
+    }
+    meta
+}
+
+pub fn get_meta() -> Meta {
+    ensure_meta_initialized()
+}
+
+pub fn set_meta(meta: Meta) {
+    let mut cell = init_meta_cell();
+    let _ = cell.set(meta);
+}
+
+pub fn mark_migration_applied(from: u32, to: u32, ts: u64) {
+    let mut meta = ensure_meta_initialized();
+    meta.schema_version = to;
+    meta.needs_migration = false;
+    meta.last_migration_from = from;
+    meta.last_migration_to = to;
+    meta.last_migration_ts = ts;
+    set_meta(meta);
+}
+
+pub fn set_needs_migration(value: bool) {
+    let mut meta = ensure_meta_initialized();
+    meta.needs_migration = value;
+    set_meta(meta);
+}
+
+pub fn needs_migration() -> bool {
+    ensure_meta_initialized().needs_migration
+}
+
+pub fn schema_version() -> u32 {
+    ensure_meta_initialized().schema_version
+}
+
+pub fn current_schema_version() -> u32 {
+    CURRENT_SCHEMA_VERSION
+}
+
+pub fn last_migration() -> (u32, u32, u64) {
+    let meta = ensure_meta_initialized();
+    (
+        meta.last_migration_from,
+        meta.last_migration_to,
+        meta.last_migration_ts,
+    )
+}
+
+pub fn set_schema_version(version: u32) {
+    let mut meta = ensure_meta_initialized();
+    meta.schema_version = version;
+    set_meta(meta);
+}
+
+pub fn clear_needs_migration() {
+    set_needs_migration(false);
+}
+
+pub fn set_needs_migration_and_schema(version: u32) {
+    let mut meta = ensure_meta_initialized();
+    meta.schema_version = version;
+    meta.needs_migration = true;
+    set_meta(meta);
+}
+
+pub fn is_schema_supported() -> bool {
+    let version = schema_version();
+    version <= current_schema_version()
+}
+
+pub fn migration_pending() -> bool {
+    let meta = ensure_meta_initialized();
+    meta.needs_migration || meta.schema_version < current_schema_version()
+}
+
+pub fn mark_meta_needs_migration_if_unsupported() {
+    let version = schema_version();
+    if version > current_schema_version() {
+        set_needs_migration(true);
     }
 }
