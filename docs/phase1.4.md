@@ -138,12 +138,21 @@ retain の優先順位（コード化）:
 * **部分実行**できること（時間超過対策）
 * **1ブロック原子**で削除する  
   * 次のブロックを **消し切れないなら着手しない**
-* 安全な削除順序（固定）  
-  1) 対象ブロックの `tx_ids` を読む  
-  2) `tx_ids` で receipts / tx_index / tx_locs を削除（無ければスキップ）  
-  3) 最後に block 本体（`block->tx_ids` を含むエントリ）を削除  
-  4) 成功時のみ `pruned_before_block` / `prune_cursor` を進める  
-  5) `estimated_kept_bytes` を安全側で減算
+* 安全な削除順序（固定・2フェーズ）  
+  1) 対象ブロックのメタから `tx_ids / receipt_ptrs / tx_index_ptrs` を読む  
+  2) それらの `BlobPtr` を **Quarantine** に遷移（再利用禁止化）  
+  3) map の参照エントリ（block/receipt/index）を削除  
+  4) ここまで成功したら **Quarantine → Free** に遷移（free_list に戻す）  
+  5) 成功時のみ `pruned_before_block` / `prune_cursor` を進める  
+  6) `estimated_kept_bytes` を **class 単位で減算**（Used→Free のときのみ）
+
+Quarantine を挟む理由:
+「参照が残った状態で領域が再利用される」事故を防ぐため。  
+Quarantine 中は allocate 対象に入らない。
+
+PruneJournal（復旧）:
+* prune の途中状態は **PruneJournal** に記録し、再実行で Free まで到達できること  
+* `pruned_before_block` は **完了済みブロックまで**しか進めない
 
 ### 3.5 失敗時のルール（明文化）
 
@@ -158,6 +167,12 @@ retain の優先順位（コード化）:
 * `get_prune_status()`  
   * `pruned_before_block / estimated_kept_bytes / stable_pages / need_prune / last_prune_at`
 * `dry_run` は任意（入れるなら `prune_plan()` で概算のみ返す）
+
+need_prune の意味（監視用途）:
+* `pruning_enabled` を **無視**して判定する  
+* **時間トリガ（retain_days）**または **容量トリガ（target_bytes / high_water 超え）**で true  
+* 実際に prune を実行するのは `pruning_enabled == true` のときのみ  
+  * `need_prune == true` でも enabled=false なら prune は走らない（アラート用途）
 
 ---
 
@@ -181,20 +196,37 @@ canister は **エクスポートAPIを提供**するだけ。
 * 再試行が簡単（同じ cursor で取り直せる）
 * 取り込み速度を indexer 側で制御できる（バックプレッシャ）
 
-API 形（おすすめ）:
+API 形（v1）:
 
 * `get_head() -> u64`
-* `export_blocks(cursor, max_bytes) -> { chunks, next_cursor }`
+* `export_blocks(cursor: opt Cursor, max_bytes: nat32) -> { chunks, next_cursor }`
 
-cursor は **ブロック内の分割**を表現できる形にする。  
-1ブロックが 2MiB を超える可能性を潰すため **必須**。
+返却は **Chunk 単位**であり、**1レスポンスにつき最大1 block_number**。  
+segment は数値タグ固定:
+* `0 = block`
+* `1 = receipts`
+* `2 = tx_index`
 
-`chunks` は **同一ブロック単位**で返す（block/receipts/tx_index を分割）。
+`byte_offset` は **payload 内 offset**（prefix は含めない）。
 
 サイズ上限（安全側）:
 * Ingress payload 最大 **2MiB**
 * 返信も **2MiB前提で分割**が無難  
 * `max_bytes = 1_000_000〜1_500_000` を推奨
+
+### 追いつき時（catch-up）
+
+要求 `cursor.block_number > head` のとき:
+* `chunks = []`
+* `next_cursor = cursor`（そのまま返す）
+
+### チャンク整合（固定）
+
+* `chunks[0]` は要求 cursor と一致（cursor がある場合）  
+* `chunks` は同一 block_number 内で **単調増加**（segment → start）  
+* `next_cursor` は返却した最後の直後（exclusive）
+
+詳細な wire 仕様（Cursor/Chunk の型、分割ルール、validation）は **indexer-v1.md を正**とする。
 
 ### pruning と export の関係（方針A: 外部DBはキャッシュ）
 

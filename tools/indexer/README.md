@@ -25,7 +25,7 @@ npm run dev
 - `INDEXER_PRUNE_STATUS_POLL_MS` (任意, 既定: 30000)
 - `INDEXER_FETCH_ROOT_KEY` (任意, 1/true で有効。local向け)
 - `INDEXER_ARCHIVE_DIR` (任意, 既定: ./archive)
-- `INDEXER_CHAIN_ID` (任意, 既定: unknown)
+- `INDEXER_CHAIN_ID` (任意, 既定: 4801360)
 - `INDEXER_ZSTD_LEVEL` (任意, 既定: 3)
 
 注: ローカル（dfx）向けに接続する場合は `INDEXER_IC_HOST` を `http://127.0.0.1:4943` にし、`INDEXER_FETCH_ROOT_KEY=true` を推奨。
