@@ -103,11 +103,11 @@ pub fn clear_mempool_on_upgrade() {
 }
 
 fn clear_map<K: Copy + Ord + Storable, V: Storable>(map: &mut StableBTreeMap<K, V, VMem>) {
-    let mut keys: Vec<K> = Vec::new();
-    for entry in map.range(..) {
-        keys.push(*entry.key());
-    }
-    for key in keys {
+    loop {
+        let key = match map.range(..).next() {
+            Some(entry) => *entry.key(),
+            None => break,
+        };
         map.remove(&key);
     }
 }
@@ -575,6 +575,10 @@ pub fn produce_block(max_txs: usize) -> Result<BlockData, ChainError> {
     if included.is_empty() {
         return Err(ChainError::NoExecutableTx);
     }
+    if tx_change_hashes.len() != included.len() {
+        return Err(ChainError::ExecFailed(None));
+    }
+    debug_assert_eq!(tx_change_hashes.len(), included.len());
 
     let mut tx_id_bytes = Vec::with_capacity(included.len());
     for tx_id in included.iter() {
@@ -1406,6 +1410,9 @@ fn select_ready_candidates(
     dropped_total: &mut u64,
     dropped_by_code: &mut [u64],
 ) -> Vec<TxId> {
+    let chain_state = state.chain_state.get();
+    let min_gas_price = chain_state.min_gas_price;
+    let min_priority_fee = chain_state.min_priority_fee;
     let mut keys: Vec<ReadyKey> = Vec::new();
     for entry in state.ready_queue.range(..).take(READY_CANDIDATE_LIMIT) {
         keys.push(*entry.key());
@@ -1434,6 +1441,17 @@ fn select_ready_candidates(
                 continue;
             }
         };
+        if !min_fee_satisfied_from_fields(
+            max_fee_per_gas,
+            max_priority_fee_per_gas,
+            is_dynamic_fee,
+            base_fee,
+            min_priority_fee,
+            min_gas_price,
+        ) {
+            drop_invalid_fee_pending(state, tx_id, Some(dropped_total), Some(dropped_by_code));
+            continue;
+        }
         let effective_gas_price = match compute_effective_gas_price(
             max_fee_per_gas,
             if is_dynamic_fee { max_priority_fee_per_gas } else { 0 },
@@ -1441,12 +1459,7 @@ fn select_ready_candidates(
         ) {
             Some(value) => value,
             None => {
-                drop_invalid_fee_pending_decode(
-                    state,
-                    tx_id,
-                    Some(dropped_total),
-                    Some(dropped_by_code),
-                );
+                drop_invalid_fee_pending(state, tx_id, Some(dropped_total), Some(dropped_by_code));
                 continue;
             }
         };

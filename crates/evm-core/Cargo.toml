@@ -29,3 +29,6 @@ alloy-signer-local = { version = "1.5.2", default-features = false }
 [dependencies.evm_db]
 package = "evm-db"
 path = "../evm-db"
+
+[features]
+full_state_root = []

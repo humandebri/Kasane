@@ -50,27 +50,29 @@ impl Storable for ReadyKey {
 
     fn from_bytes(bytes: Cow<'_, [u8]>) -> Self {
         let data = bytes.as_ref();
-        if data.len() == READY_KEY_LEN {
-            let mut buf = [0u8; READY_KEY_LEN];
-            buf.copy_from_slice(data);
-            return Self(buf);
+        match data.len() {
+            READY_KEY_LEN => {
+                let mut buf = [0u8; READY_KEY_LEN];
+                buf.copy_from_slice(data);
+                Self(buf)
+            }
+            READY_KEY_LEN_V1 => {
+                let mut max_fee_inv = [0u8; 16];
+                max_fee_inv.copy_from_slice(&data[0..16]);
+                let mut seq = [0u8; 8];
+                seq.copy_from_slice(&data[16..24]);
+                let mut tx_hash = [0u8; 32];
+                tx_hash.copy_from_slice(&data[24..56]);
+                let max_priority_inv = u128::MAX.to_be_bytes();
+                let mut buf = [0u8; READY_KEY_LEN];
+                buf[0..16].copy_from_slice(&max_fee_inv);
+                buf[16..32].copy_from_slice(&max_priority_inv);
+                buf[32..40].copy_from_slice(&seq);
+                buf[40..72].copy_from_slice(&tx_hash);
+                Self(buf)
+            }
+            _ => ic_cdk::trap("ready_key: invalid length"),
         }
-        if data.len() == READY_KEY_LEN_V1 {
-            let mut max_fee_inv = [0u8; 16];
-            max_fee_inv.copy_from_slice(&data[0..16]);
-            let mut seq = [0u8; 8];
-            seq.copy_from_slice(&data[16..24]);
-            let mut tx_hash = [0u8; 32];
-            tx_hash.copy_from_slice(&data[24..56]);
-            let max_priority_inv = u128::MAX.to_be_bytes();
-            let mut buf = [0u8; READY_KEY_LEN];
-            buf[0..16].copy_from_slice(&max_fee_inv);
-            buf[16..32].copy_from_slice(&max_priority_inv);
-            buf[32..40].copy_from_slice(&seq);
-            buf[40..72].copy_from_slice(&tx_hash);
-            return Self(buf);
-        }
-        ic_cdk::trap("ready_key: invalid length");
     }
 
     const BOUND: Bound = Bound::Bounded {
