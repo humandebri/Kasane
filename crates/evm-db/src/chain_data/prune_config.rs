@@ -76,7 +76,7 @@ impl PruneConfigV1 {
         }
     }
 
-    pub fn set_policy(&mut self, policy: PrunePolicy) {
+pub fn set_policy(&mut self, policy: PrunePolicy) {
         self.target_bytes = policy.target_bytes;
         self.retain_days = policy.retain_days;
         self.retain_blocks = policy.retain_blocks;
@@ -256,4 +256,42 @@ fn compute_low_water(target: u64, headroom_bps: u32) -> u64 {
     }
     let ratio = 10_000u32.saturating_sub(headroom_bps);
     compute_ratio_bytes(target, ratio)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{compute_high_water, compute_low_water, compute_ratio_bytes, PruneConfigV1, PrunePolicy};
+
+    #[test]
+    fn ratio_bytes_rounds_down() {
+        assert_eq!(compute_ratio_bytes(1000, 5000), 500);
+    }
+
+    #[test]
+    fn headroom_bounds() {
+        let target = 1_000_000u64;
+        let headroom = 2000u32;
+        let high = compute_high_water(target, headroom);
+        let low = compute_low_water(target, headroom);
+        assert!(high > low);
+        assert!(high <= target);
+    }
+
+    #[test]
+    fn set_policy_updates_watermarks() {
+        let mut config = PruneConfigV1::new();
+        let policy = PrunePolicy {
+            target_bytes: 1_000_000,
+            retain_days: 7,
+            retain_blocks: 100,
+            headroom_ratio_bps: 2000,
+            hard_emergency_ratio_bps: 9500,
+            timer_interval_ms: 30_000,
+            max_ops_per_tick: 1000,
+        };
+        config.set_policy(policy);
+        assert!(config.high_water_bytes > 0);
+        assert!(config.low_water_bytes > 0);
+        assert!(config.hard_emergency_bytes > 0);
+    }
 }

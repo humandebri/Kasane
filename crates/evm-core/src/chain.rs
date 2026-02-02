@@ -109,15 +109,20 @@ pub fn get_prune_status() -> PruneStatus {
 pub fn prune_tick() -> Result<PruneResult, ChainError> {
     let should_run = with_state_mut(|state| {
         let mut config = *state.prune_config.get();
+        ensure_oldest(state, &mut config);
         if !config.pruning_enabled {
+            state.prune_config.set(config);
             return false;
         }
         if config.prune_running {
+            state.prune_config.set(config);
             return false;
         }
+        state.prune_config.set(config);
         if !should_prune_internal(state) {
             return false;
         }
+        let mut config = *state.prune_config.get();
         config.prune_running = true;
         state.prune_config.set(config);
         true
@@ -146,37 +151,37 @@ pub fn prune_tick() -> Result<PruneResult, ChainError> {
 
 fn should_prune_internal(state: &StableState) -> bool {
     let config = *state.prune_config.get();
-    if !config.pruning_enabled {
-        return false;
-    }
-    if config.target_bytes == 0 {
-        return false;
-    }
     let now = state.head.get().timestamp;
-    if let Some(oldest_ts) = config.oldest_timestamp() {
-        if config.retain_days > 0 {
+    let time_trigger = if config.retain_days > 0 {
+        if let Some(oldest_ts) = config.oldest_timestamp() {
             let retain_secs = config.retain_days.saturating_mul(86_400);
-            if oldest_ts < now.saturating_sub(retain_secs) {
-                return true;
-            }
+            oldest_ts < now.saturating_sub(retain_secs)
+        } else {
+            false
         }
-    }
-    if config.estimated_kept_bytes > config.high_water_bytes {
-        return true;
-    }
-    false
+    } else {
+        false
+    };
+    let cap_trigger = config.target_bytes > 0
+        && config.estimated_kept_bytes > config.high_water_bytes;
+    time_trigger || cap_trigger
 }
 
 fn compute_retain_count(state: &StableState, policy: PrunePolicy) -> u64 {
     let head = state.head.get().number;
+    let config = state.prune_config.get();
     let emergency = policy.target_bytes > 0
-        && state.prune_config.get().estimated_kept_bytes > state.prune_config.get().hard_emergency_bytes;
+        && config.estimated_kept_bytes > config.hard_emergency_bytes;
     if emergency {
         return 1;
     }
-    let mut retain_min_block = 0u64;
+    if policy.target_bytes > 0 && config.estimated_kept_bytes > config.high_water_bytes {
+        // 容量トリガ発動時は retain を無視して古い方から削る
+        return 1;
+    }
+    let mut retain_min_block = head;
     if policy.retain_blocks > 0 {
-        retain_min_block = head.saturating_sub(policy.retain_blocks);
+        retain_min_block = head.saturating_sub(policy.retain_blocks).saturating_add(1);
     }
     if policy.retain_days > 0 {
         let retain_secs = policy.retain_days.saturating_mul(86_400);
@@ -187,7 +192,7 @@ fn compute_retain_count(state: &StableState, policy: PrunePolicy) -> u64 {
             }
         }
     }
-    let retain = head.saturating_sub(retain_min_block);
+    let retain = head.saturating_sub(retain_min_block).saturating_add(1);
     if retain == 0 { 1 } else { retain }
 }
 
@@ -916,15 +921,34 @@ fn refresh_oldest(state: &mut StableState) {
         Some(value) => value.saturating_add(1),
         None => 0,
     };
-    if let Some(block) = load_block(state, next) {
+    if let Some((block_number, timestamp)) = find_next_existing_block(state, next) {
         let mut config = *state.prune_config.get();
-        config.set_oldest(next, block.timestamp);
+        config.set_oldest(block_number, timestamp);
         state.prune_config.set(config);
+    }
+}
+
+fn ensure_oldest(state: &mut StableState, config: &mut evm_db::chain_data::PruneConfigV1) {
+    if config.oldest_block().is_some() {
         return;
     }
-    let mut config = *state.prune_config.get();
-    config.clear_oldest();
-    state.prune_config.set(config);
+    let next = match state.prune_state.get().pruned_before() {
+        Some(value) => value.saturating_add(1),
+        None => 0,
+    };
+    if let Some((block_number, timestamp)) = find_next_existing_block(state, next) {
+        config.set_oldest(block_number, timestamp);
+    }
+}
+
+fn find_next_existing_block(state: &StableState, start: u64) -> Option<(u64, u64)> {
+    for entry in state.blocks.range(start..) {
+        let number = *entry.key();
+        if let Some(block) = load_block(state, number) {
+            return Some((number, block.timestamp));
+        }
+    }
+    None
 }
 
 pub struct QueueItem {

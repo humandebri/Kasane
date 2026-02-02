@@ -4,11 +4,17 @@ import { Config, sleep } from "./config";
 import { createClient } from "./client";
 import { IndexerDb } from "./db";
 import { archiveBlock } from "./archiver";
+import { runArchiveGc } from "./archive_gc";
 import { decodeBlockPayload, decodeTxIndexPayload } from "./decode";
 import { Chunk, Cursor, ExportError, ExportResponse, Result } from "./types";
 
 export async function runWorker(config: Config): Promise<void> {
   const db = new IndexerDb(config.dbPath);
+  try {
+    await runArchiveGc(db, config.archiveDir, config.chainId);
+  } catch (err) {
+    logError("archive gc failed", err);
+  }
   const client = await createClient(config);
   let cursor: Cursor | null = db.getCursor();
   let backoffMs = config.backoffInitialMs;

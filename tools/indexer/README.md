@@ -46,6 +46,7 @@ npm run dev
 ## archive_parts
 
 `archive_parts` は **再構築可能なキャッシュ**。消しても canister から再作成できる。
+起動時に **DBに紐づかないアーカイブファイルは削除** される可能性がある。
 
 ## metrics_daily
 
@@ -53,4 +54,11 @@ npm run dev
 
 ## マイグレーション（SQLite）
 
-起動時に `PRAGMA user_version` を見て自動マイグレーションします。
+起動時に `schema_migrations` を見て **未適用のSQLのみ** 実行します。
+
+```
+tools/indexer/migrations/
+  001_init.sql
+  002_metrics.sql
+  003_archive.sql
+```

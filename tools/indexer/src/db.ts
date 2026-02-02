@@ -1,10 +1,9 @@
 // どこで: SQLiteアクセス / 何を: スキーマとUPSERT / なぜ: コミット境界を守るため
 
 import Database from "better-sqlite3";
+import { applyMigrations, MIGRATIONS } from "./migrations";
 import { cursorFromJson, cursorToJson } from "./cursor";
 import { Cursor } from "./types";
-
-const SCHEMA_VERSION = 3;
 
 export type BlockRow = {
   number: bigint;
@@ -27,12 +26,13 @@ export class IndexerDb {
   private upsertTxStmt: Database.Statement;
   private upsertMetricsStmt: Database.Statement;
   private upsertArchiveStmt: Database.Statement;
+  private listArchiveStmt: Database.Statement;
 
   constructor(path: string) {
     this.db = new Database(path);
     this.db.pragma("journal_mode = WAL");
     this.db.pragma("synchronous = NORMAL");
-    migrate(this.db);
+    applyMigrations(this.db, MIGRATIONS);
     this.getMetaStmt = this.db.prepare("SELECT value FROM meta WHERE key = ?");
     this.upsertMetaStmt = this.db.prepare(
       "INSERT INTO meta(key, value) VALUES(?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value"
@@ -61,6 +61,7 @@ export class IndexerDb {
         "raw_bytes = excluded.raw_bytes, " +
         "created_at = excluded.created_at"
     );
+    this.listArchiveStmt = this.db.prepare<{ path: string }>("select path from archive_parts");
   }
 
   close(): void {
@@ -119,6 +120,17 @@ export class IndexerDb {
   transaction<T>(fn: () => T): T {
     return this.db.transaction(fn).immediate();
   }
+
+  listArchivePaths(): Set<string> {
+    const rows = this.listArchiveStmt.all();
+    const out = new Set<string>();
+    for (const row of rows) {
+      if (typeof row.path === "string") {
+        out.add(row.path);
+      }
+    }
+    return out;
+  }
 }
 
 function readValueString(row: unknown): string | null {
@@ -137,72 +149,4 @@ function readValueString(row: unknown): string | null {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
-}
-
-function migrate(db: Database.Database): void {
-  const row = db.prepare("PRAGMA user_version").get() as { user_version: number };
-  let version = row.user_version ?? 0;
-  if (version < 1) {
-    db.exec(schemaV1());
-    version = 1;
-  }
-  if (version < 2) {
-    db.exec(schemaV2());
-    version = 2;
-  }
-  if (version < 3) {
-    db.exec(schemaV3());
-    version = 3;
-  }
-  if (version !== SCHEMA_VERSION) {
-    db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
-  }
-}
-
-function schemaV1(): string {
-  return `
-    create table if not exists meta (
-      key text primary key,
-      value blob
-    );
-
-    create table if not exists blocks (
-      number integer primary key,
-      hash blob,
-      timestamp integer not null,
-      tx_count integer not null
-    );
-
-    create table if not exists txs (
-      tx_hash blob primary key,
-      block_number integer not null,
-      tx_index integer not null
-    );
-  `;
-}
-
-function schemaV2(): string {
-  return `
-    create table if not exists metrics_daily (
-      day integer primary key,
-      raw_bytes integer,
-      compressed_bytes integer,
-      sqlite_growth_bytes integer,
-      blocks_ingested integer,
-      errors integer
-    );
-  `;
-}
-
-function schemaV3(): string {
-  return `
-    create table if not exists archive_parts (
-      block_number integer primary key,
-      path text not null,
-      sha256 blob not null,
-      size_bytes integer not null,
-      raw_bytes integer not null,
-      created_at integer not null
-    );
-  `;
 }

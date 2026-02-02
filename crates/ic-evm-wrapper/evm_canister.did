@@ -130,10 +130,32 @@ type ProduceBlockStatus = variant {
     gas_used : nat64;
   };
 };
+type PrunePolicyView = record {
+  headroom_ratio_bps : nat32;
+  timer_interval_ms : nat64;
+  target_bytes : nat64;
+  retain_blocks : nat64;
+  retain_days : nat64;
+  hard_emergency_ratio_bps : nat32;
+  max_ops_per_tick : nat32;
+};
 type PruneResultView = record {
   pruned_before_block : opt nat64;
   did_work : bool;
   remaining : nat64;
+};
+type PruneStatusView = record {
+  pruning_enabled : bool;
+  hard_emergency_bytes : nat64;
+  pruned_before_block : opt nat64;
+  low_water_bytes : nat64;
+  high_water_bytes : nat64;
+  oldest_kept_timestamp : opt nat64;
+  estimated_kept_bytes : nat64;
+  need_prune : bool;
+  last_prune_at : nat64;
+  prune_running : bool;
+  oldest_kept_block : opt nat64;
 };
 type QueueItemView = record { seq : nat64; tx_id : blob; kind : TxKindView };
 type QueueSnapshotView = record {
@@ -160,6 +182,7 @@ type Result_4 = variant { Ok : ReceiptView; Err : LookupError };
 type Result_5 = variant { Ok : ProduceBlockStatus; Err : ProduceBlockError };
 type Result_6 = variant { Ok : PruneResultView; Err : ProduceBlockError };
 type Result_7 = variant { Ok : blob; Err : SubmitTxError };
+type Result_8 = variant { Ok; Err : text };
 type SubmitTxError = variant {
   Internal : text;
   Rejected : text;
@@ -174,6 +197,7 @@ service : () -> {
   get_block : (nat64) -> (Result_3) query;
   get_cycle_balance : () -> (nat) query;
   get_pending : (blob) -> (PendingStatusView) query;
+  get_prune_status : () -> (PruneStatusView) query;
   get_queue_snapshot : (nat32, opt nat64) -> (QueueSnapshotView) query;
   get_receipt : (blob) -> (Result_4) query;
   health : () -> (HealthView) query;
@@ -188,6 +212,8 @@ service : () -> {
   rpc_eth_send_raw_transaction : (blob) -> (Result_7);
   set_auto_mine : (bool) -> ();
   set_mining_interval_ms : (nat64) -> ();
+  set_prune_policy : (PrunePolicyView) -> (Result_8);
+  set_pruning_enabled : (bool) -> (Result_8);
   submit_eth_tx : (blob) -> (Result_7);
   submit_ic_tx : (blob) -> (Result_7);
 }
