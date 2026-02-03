@@ -1733,6 +1733,7 @@ dependencies = [
  "alloy-rlp",
  "alloy-signer",
  "alloy-signer-local",
+ "alloy-trie",
  "evm-db",
  "ic-stable-structures",
  "op-revm",

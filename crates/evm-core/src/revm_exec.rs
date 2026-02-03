@@ -40,7 +40,6 @@ pub struct ExecOutcome {
     pub tx_index: u32,
     pub receipt: ReceiptLike,
     pub return_data: Vec<u8>,
-    pub state_change_hash: [u8; 32],
     pub final_status: String,
     pub l1_fee_fallback_used: bool,
 }
@@ -93,7 +92,6 @@ pub fn execute_tx(
     let op_tx = build_op_transaction(tx_kind, raw_tx, tx_env, exec_path)?;
     let result = evm.transact(op_tx).map_err(|_| ExecError::ExecutionFailed)?;
     let state_diff = collect_state_diff(result.state);
-    let state_change_hash = compute_tx_change_hash(&state_diff);
     commit_state_diff(&mut evm, state_diff);
 
     let (status, gas_used, output, contract_address, logs, final_status) = match result.result {
@@ -163,13 +161,12 @@ pub fn execute_tx(
         tx_index,
         receipt,
         return_data: output,
-        state_change_hash,
         final_status,
         l1_fee_fallback_used: fee_breakdown.fallback_used,
     })
 }
 
-pub fn execute_l1_block_info_system_tx(exec_ctx: &BlockExecContext) -> Result<[u8; 32], ExecError> {
+pub fn execute_l1_block_info_system_tx(exec_ctx: &BlockExecContext) -> Result<(), ExecError> {
     let spec = op_spec_id_from_u8(exec_ctx.l1_params.spec_id).map_err(ExecError::InvalidL1SpecId)?;
     let mut evm = build_op_context(exec_ctx, spec).build_op();
     let call_data = build_l1blockinfo_calldata(spec, exec_ctx)?;
@@ -182,9 +179,8 @@ pub fn execute_l1_block_info_system_tx(exec_ctx: &BlockExecContext) -> Result<[u
         ExecutionResult::Halt { reason, .. } => return Err(ExecError::EvmHalt(format!("{reason:?}"))),
     }
     let state_diff = collect_state_diff(result.state);
-    let state_change_hash = compute_tx_change_hash(&state_diff);
     commit_state_diff(&mut evm, state_diff);
-    Ok(state_change_hash)
+    Ok(())
 }
 
 fn build_l1blockinfo_calldata(
@@ -416,68 +412,6 @@ fn address_to_bytes(address: revm::primitives::Address) -> [u8; 20] {
     let mut out = [0u8; 20];
     out.copy_from_slice(address.as_ref());
     out
-}
-
-fn b256_to_bytes(hash: B256) -> [u8; 32] {
-    let mut out = [0u8; 32];
-    out.copy_from_slice(hash.as_ref());
-    out
-}
-
-fn u256_to_bytes(value: U256) -> [u8; 32] {
-    value.to_be_bytes()
-}
-
-fn compute_tx_change_hash(state: &revm::primitives::HashMap<Address, revm::state::Account>) -> [u8; 32] {
-    let mut accounts: Vec<([u8; 20], &revm::state::Account)> = Vec::new();
-    for (address, account) in state.iter() {
-        accounts.push((address_to_bytes(*address), account));
-    }
-    accounts.sort_by(|left, right| left.0.cmp(&right.0));
-
-    let mut buf = Vec::new();
-    buf.extend_from_slice(b"ic-evm:tx-change:v1");
-
-    for (address_bytes, account) in accounts.into_iter() {
-        buf.extend_from_slice(&address_bytes);
-        let mut flags = 0u8;
-        if account.is_selfdestructed() {
-            flags |= 0x01;
-        }
-        if account.is_empty() && account.is_touched() {
-            flags |= 0x02;
-        }
-        if account.info.code.is_some() {
-            flags |= 0x04;
-        }
-        buf.push(flags);
-        buf.extend_from_slice(&account.info.nonce.to_be_bytes());
-        buf.extend_from_slice(&u256_to_bytes(account.info.balance));
-        buf.extend_from_slice(&b256_to_bytes(account.info.code_hash));
-        if let Some(code) = account.info.code.as_ref() {
-            let bytes = code.original_byte_slice();
-            let len = u32::try_from(bytes.len()).unwrap_or(u32::MAX);
-            buf.extend_from_slice(&len.to_be_bytes());
-            buf.extend_from_slice(bytes);
-        } else {
-            buf.extend_from_slice(&0u32.to_be_bytes());
-        }
-
-        let mut slots: Vec<([u8; 32], [u8; 32])> = Vec::new();
-        for (slot, entry) in account.changed_storage_slots() {
-            let slot_bytes = u256_to_bytes(*slot);
-            let value_bytes = u256_to_bytes(entry.present_value);
-            slots.push((slot_bytes, value_bytes));
-        }
-        slots.sort_by(|left, right| left.0.cmp(&right.0));
-        let count = u32::try_from(slots.len()).unwrap_or(u32::MAX);
-        buf.extend_from_slice(&count.to_be_bytes());
-        for (slot_bytes, value_bytes) in slots.into_iter() {
-            buf.extend_from_slice(&slot_bytes);
-            buf.extend_from_slice(&value_bytes);
-        }
-    }
-    keccak256(&buf)
 }
 
 pub(crate) fn compute_effective_gas_price(

@@ -1,192 +1,146 @@
-Phase 0: 緊急止血（当日〜即時パッチ）
+# fixplan（運用・防御補助計画）
 
-目的：第三者に止められない状態にする（Critical潰し）
+この文書は `docs/ops/fixplan2.md` を最優先にした補助計画です。  
+**実装順・仕様凍結の主導は fixplan2（PR0〜PR9）** とし、本書は運用防御と事故防止の観点を補います。
 
-0.1 管理系 update の認可を完全に統一
+---
 
-対象（例）
+## 0. 優先順位ルール（更新）
 
-set_auto_mine
+1. **fixplan2.md が正（Source of Truth）**
+2. 本書は矛盾しない範囲でのみ有効
+3. 矛盾した場合は本書側を修正する
 
-set_mining_interval_ms
+---
 
-set_prune_policy
+## 1. 認可・API方針（fixplan2に合わせて改訂）
 
-set_pruning_enabled
+### 1.1 管理系 update の認可統一
 
-（追加で）set_ops_config 等、運用設定を変えるもの全部
+対象例:
+- `set_auto_mine`
+- `set_mining_interval_ms`
+- `set_prune_policy`
+- `set_pruning_enabled`
+- `set_ops_config` など運用設定変更API
 
-実装
+実装方針:
+- `ic-evm-wrapper/src/lib.rs` で管理系APIの認可を統一
+- guard関数で漏れを防ぐ
 
-ic-evm-wrapper/src/lib.rs に fn ensure_controller() を追加し、管理系update全て冒頭で呼ぶ
+### 1.2 エラー返却方針（trap乱用を避ける）
 
-可能なら #[update(guard = "ensure_controller_guard")] 型に統一（漏れ防止）
+旧方針の「unauthorizedでtrap」は撤回。  
+fixplan2（PR7: 安定分類）に合わせ、**外部APIは安定したエラー分類を返す**。
 
-受け入れ条件（AC）
+原則:
+- 入力不正/権限不足/業務拒否は分類済みエラーで返す
+- trapは不変条件違反・破損検知など内部異常に限定
 
-controller以外が呼ぶと必ず unauthorized でtrap
+---
 
-監査観点で「管理系API一覧」が列挙できる状態（README or doc）
+## 2. 永続肥大化・メモリ圧迫対策（fixplan2と整合）
 
-Phase 1: 永続肥大化の根絶（High）
+### 2.1 Dropped Tx の扱い
 
-目的：“ブロックに乗らない/失敗するTxが永遠に残る” を止める
+方針:
+- drop確定時に重い本文を削除（必要なら軽量墓標のみ残す）
+- 関連インデックスを同時に掃除し、幽霊参照を禁止
 
-1.1 Dropped Tx の “墓標設計” か “即時削除” を選ぶ
+注意:
+- `StoredTx`/index設計は PR1 の型整理後に最終反映
+- 実装位置は `chain.rs` の drop確定経路に集約
 
-即削除で
+### 2.2 滞留対策（cap優先、TTL後追い）
 
-実装方針（即時削除）
+優先度:
+1. Global cap / Per-sender cap
+2. nonce window
+3. TTL eviction
 
-evm-core/src/chain.rs（produce_block / select_ready_candidates 等、drop判定が起きる箇所）で drop判定した瞬間に 次を行う：
+理由:
+- 先に「無限投入できない」状態を作るほうが止血効果が高い
 
-本文削除（重いデータを消す）
+---
 
-state.tx_store.remove(txid)
+## 3. IC特有のDoS防御（fixplan2 PR8と非衝突）
 
-Tx本文（RawTx / Envelope / Blob等、サイズが大きいもの）を削除
+### 3.1 inspect_message は軽量のみ
 
-もし本文が BlobStore 側にもあるなら、対応するポインタもここで削除対象に含める（実装の実態に合わせる）
+許可:
+- メソッド名
+- payload/txサイズ
+- 形式の軽量チェック
 
-Dropped状態を記録（軽量メタだけ）
+非推奨:
+- 重い署名検証
+- 状態依存の高コスト検証
 
-state.tx_locs.insert(txid, TxLoc::Dropped { reason, ts })
+### 3.2 検証責務の境界
 
-reason: drop理由コード（decode error / insufficient gas / fee too low / nonce window 逸脱 等）
+fixplan2 PR8に合わせて以下を明確化:
+- Ingress入口: 形式/サイズ/基本妥当性
+- EVM内部: precompile責務（例: `ecrecover`）
+- 二重実装は禁止
 
-ts: ic0::time() で良い（観測用途。不要なら省略してもいいが、あるとデバッグが楽）
+---
 
-関連インデックスを必ず削除（最重要）
-Tx本文を消しても、インデックスが残ると「幽霊Tx」が発生して整合性が崩れるので、drop時に必ず掃除する。
+## 4. 整合性・復旧（PR0/PR5に合わせる）
 
-txid -> key/meta（例：seen_tx, tx_index, txid_to_queue_key など）
+### 4.1 不変条件のコード化
 
-pending_by_sender_nonce から該当エントリ（drop判定の段階が pending/ready どこかにより分岐）
+例:
+- pending参照が孤立しない
+- dropped tx が pending/ready に残らない
 
-ready_queue から該当エントリ
+実施:
+- debug用 invariant check
+- ランダム操作列テスト（PBT）
 
-sender/nonce の補助インデックスがあるならそれも
+### 4.2 upgrade方針の固定
 
-要するに「このtxidを辿る全ルートを断つ」。削除対象を1箇所に集約するのが事故を減らす。
+原則:
+- `MemoryId` は変更しない（追加のみ）
+- `Storable` 変更は versioned encoding
+- upgrade前後互換テストを更新
 
-1.2 Pending/Queue の “無限滞留” をTTLか容量制限で止める
+---
 
-最初は実装が軽い 容量制限（cap） を先に入れて止血、そのあと TTL。
+## 5. 実装順（fixplan2優先で再編）
 
-容量制限（先に入れる）
+### 最優先（fixplan2と並走で即対応）
 
-Global cap（全体の pending/ready 合計）
+1. 管理API認可統一（本書 1.1）
+2. エラー返却方針の統一（本書 1.2、PR7準備）
+3. 入力サイズ上限と snapshot hard cap
 
-Per-sender cap（送信者ごとの pending数）
+### fixplan2 PR進行中に差し込む項目
 
-cap超過時は Rejected（または evictionポリシーで古い/低feeを落とす）
+- PR1〜PR3中: dropped掃除・cap/nonce window の反映点を確定
+- PR3〜PR5中: invariantチェックと互換テスト更新
+- PR7〜PR8中: エラーマッピング表と検証責務境界を確定
 
-AC
+### 後段
 
-任意のユーザーが無限に tx を溜められない
+- TTL eviction
+- pruning運用最適化
+- 監視メトリクス強化
 
-Phase 2: IC特有のDoS耐性（High〜Medium）
+---
 
-目的：“無料で殴られて運営がサイクル/命令数を払う” 非対称を縮める
+## 6. 受け入れ条件（改訂）
 
-2.1 inspect_message による軽量フィルタ（最優先の防波堤）
+- fixplan2のPR順を崩さずに本書の防御項目が入る
+- 管理APIで権限制御漏れがない
+- unauthorized/invalid input が分類済みエラーで観測できる
+- queue/pendingが無限増加しない
+- dropped後に孤立インデックスが残らない
+- upgrade前後で互換テストが通る
 
-やりすぎ注意。重い署名検証はここに入れないのが基本。
+---
 
-canister_inspect_message でやること（軽量のみ）
+## 7. 運用最低ライン
 
-メソッド名チェック（管理系はここで即rejectでも良い）
-
-payload size / tx size（上限）
-
-形式的に壊れている入力（デコード前段で弾ける範囲）
-
-署名検証・残高検証は原則 submit / produce_block 側へ（段階的に前倒し）
-
-2.2 Nonce window（未来Nonceの無限投入を抑止）
-
-submit_tx 時点で
-
-current_nonce から current_nonce + WINDOW 以内のみ受理（例：+64）
-
-AC
-
-未来Nonceを何万個も積まれて永続化されない
-
-2.3 TTL eviction（Gethライク）
-
-evm-db に (timestamp, txid) 索引（BTree）を追加
-
-定期タスク（timer/heartbeat）で cutoff より古い pending を順に削除
-
-AC
-
-“時間が経てば勝手に掃除される” が成立
-
-Phase 3: 状態整合性と障害復旧（Medium）
-
-目的：“索引ズレ/再起動/upgradeで壊れない” を固める
-
-3.1 不変条件（Invariant）をコード化（デバッグ/テスト）
-
-例
-
-pending_by_sender_nonce にあるtxidは必ず tx_locs か tx_store のどちらかに存在
-
-Dropped墓標の txid は pending/ready に存在しない
-
-実装
-
-debug_assert_invariants()（feature gate でもOK）
-
-プロパティテスト（PBT）でランダム操作列から検証
-
-3.2 upgrade時の挙動を明文化
-
-PendingをHeapに寄せるなら「upgradeで消える」前提をAPIで明示、または pre_upgrade退避（ただし巨大だと危険）
-
-AC
-
-“upgradeでTx消えた” が仕様として説明されている、または消えないよう実装されている
-
-Phase 4: 最適化・簡素化（Low〜Medium）
-
-目的：コスト削減、複雑性削減、運用事故耐性アップ
-
-4.1 get_queue_snapshot(limit) にサーバー側ハードキャップ
-
-limit = min(limit, MAX_SNAPSHOT)
-
-AC：極端なlimitで壊れない
-
-4.2 PruneJournal の扱いを整理
-
-pruneが単発updateで完結するなら削除して簡素化
-
-分割prune（再開が必要）なら “再開点” として残す価値あり
-
-AC：設計方針がドキュメントに落ちている
-
-実装順（現実の手戻りが少ない順）
-
-管理API認可統一（Phase0）
-
-Dropped本文削除（墓標/即時削除）（Phase1.1）
-
-Global/Per-sender cap + nonce window（Phase1.2 + Phase2.2）
-
-inspect_message（軽量フィルタ）（Phase2.1）
-
-TTL eviction（索引 + 定期掃除）（Phase2.3）
-
-不変条件テスト・PBT（Phase3）
-
-query cap / prune整理（Phase4）
-
-仕上げの観点（運用上の最低ライン）
-
-メトリクス：pending数、sender別上位、dropped理由別カウント、stable使用量、cycles残量
-
-緊急停止：controller限定＋できればタイムロック
-
-エラーモデル：Reject理由を体系化（DoS対策は“拒否できること”が武器）
+- メトリクス: pending数、sender上位、dropped理由、stable使用量、cycles残量
+- 緊急停止: controller限定、運用手順をRunbook化
+- 障害時: 「拒否理由が分類されている」ことを最優先で確認

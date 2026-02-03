@@ -71,17 +71,7 @@
 - `crates/evm-core/src/revm_db.rs`
 - `crates/evm-core/Cargo.toml`
 
-## PR5: state root標準化（最優先）
 
-- [ ] 独自 `leaf_hash` / `compute_state_root_from_changes` 依存を廃止
-- [ ] 標準trie実装（`alloy-trie` or `reth-trie`）へ置換
-- [ ] iteration順序・エンコード差異によるrootずれをテストで固定
-- [ ] 参照実装一致テストを追加
-
-対象ファイル（主）:
-- `crates/evm-core/src/state_root.rs`
-- `crates/evm-core/src/chain.rs`
-- `crates/evm-core/tests/phase1_hash.rs`
 
 ## PR4: base fee標準化
 
@@ -105,6 +95,19 @@
 - `crates/evm-core/src/base_fee.rs`
 - `crates/evm-core/src/chain.rs`
 - `crates/evm-core/tests/phase1_fee_rules.rs`
+
+
+## PR5: state root標準化（最優先）
+
+- [x] 独自 `leaf_hash` / `compute_state_root_from_changes` 依存を廃止
+- [x] 標準trie実装（`alloy-trie`）へ置換
+- [x] iteration順序・エンコード差異によるrootずれをテストで固定
+- [x] 参照実装一致テストを追加（`phase1_hash` + `pr0_snapshots`意図差分固定）
+
+対象ファイル（主）:
+- `crates/evm-core/src/state_root.rs`
+- `crates/evm-core/src/chain.rs`
+- `crates/evm-core/tests/phase1_hash.rs`
 
 ## PR6: receipt/log型を標準へ
 

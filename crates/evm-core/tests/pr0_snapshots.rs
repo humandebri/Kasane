@@ -63,9 +63,10 @@ fn snapshot_tx_outcome_matrix_and_block_fields() {
         matrix,
         "tx_statuses=[1, 0, 0] final_statuses=[Success, Revert, Halt:Base(InvalidFEOpcode)]"
     );
+    // PR5意図差分: state_root計算を標準trieへ置換したため block_hash/state_root が更新される。
     assert_eq!(
         block_outcome,
-        "number=3 block_hash=6c2aa373072a8428fc3f3e6ec7c2d16f1bbf314e3801167d49ff168a7bafcc19 tx_list_hash=4ad087ec0641a22f03bb82cb8cf391aca8c73cb30fd8eeda10b813d1f2a6c6df state_root=a3db5fce7068f75e0787c28737ea17cd4e1bd4f8052b9f581bef62bb6f333143"
+        "number=3 block_hash=0866e39a6ef9ee4e39746e320ca7907f3100139501562ca164679dd59fcce3fa tx_list_hash=4ad087ec0641a22f03bb82cb8cf391aca8c73cb30fd8eeda10b813d1f2a6c6df state_root=ad98fb2213d5dd5ea90e9fff9d21e693101ca495331ff8b6da589ffeba49fed6"
     );
 }
 
