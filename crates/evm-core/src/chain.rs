@@ -2,7 +2,10 @@
 
 use crate::base_fee::compute_next_base_fee;
 use crate::hash;
-use crate::revm_exec::{compute_effective_gas_price, execute_tx, BlockExecContext, ExecError};
+use crate::revm_exec::{
+    compute_effective_gas_price, execute_l1_block_info_system_tx, execute_tx, BlockExecContext,
+    ExecError, ExecPath,
+};
 use crate::state_root::{
     compute_block_change_hash, compute_state_root_from_changes, empty_tx_change_hash,
 };
@@ -474,9 +477,11 @@ pub fn produce_block(max_txs: usize) -> Result<BlockData, ChainError> {
         l1_params: *state.l1_block_info_params.get(),
         l1_snapshot: *state.l1_block_info_snapshot.get(),
     });
+    let system_tx_change_hash =
+        execute_l1_block_info_system_tx(&exec_ctx).map_err(|err| ChainError::ExecFailed(Some(err)))?;
 
     let mut included: Vec<TxId> = Vec::new();
-    let mut tx_change_hashes: Vec<[u8; 32]> = Vec::new();
+    let mut tx_change_hashes: Vec<[u8; 32]> = vec![system_tx_change_hash];
     let mut dropped_total = 0u64;
     let mut dropped_by_code = [0u64; evm_db::chain_data::metrics::DROP_CODE_SLOTS];
     let mut tx_ids = Vec::new();
@@ -541,7 +546,15 @@ pub fn produce_block(max_txs: usize) -> Result<BlockData, ChainError> {
         let sender_bytes = address_to_bytes(tx_env.caller);
         let sender_nonce = tx_env.nonce;
         let tx_index = u32::try_from(included.len()).unwrap_or(u32::MAX);
-        let outcome = match execute_tx(tx_id, tx_index, kind, &stored.raw, tx_env, &exec_ctx) {
+        let outcome = match execute_tx(
+            tx_id,
+            tx_index,
+            kind,
+            &stored.raw,
+            tx_env,
+            &exec_ctx,
+            ExecPath::UserTx,
+        ) {
             Ok(value) => value,
             Err(err) => {
                 if err == ExecError::InvalidGasFee {
@@ -614,12 +627,12 @@ pub fn produce_block(max_txs: usize) -> Result<BlockData, ChainError> {
     if included.is_empty() {
         return Err(ChainError::NoExecutableTx);
     }
-    if tx_change_hashes.len() != included.len() {
+    if tx_change_hashes.len() != included.len().saturating_add(1) {
         return Err(ChainError::InvariantViolation(
             "tx_change_hashes mismatch".to_string(),
         ));
     }
-    debug_assert_eq!(tx_change_hashes.len(), included.len());
+    debug_assert_eq!(tx_change_hashes.len(), included.len().saturating_add(1));
 
     let mut tx_id_bytes = Vec::with_capacity(included.len());
     for tx_id in included.iter() {
@@ -786,13 +799,15 @@ fn execute_and_seal_with_caller(
         l1_params: *state.l1_block_info_params.get(),
         l1_snapshot: *state.l1_block_info_snapshot.get(),
     });
+    let system_tx_change_hash =
+        execute_l1_block_info_system_tx(&exec_ctx).map_err(|err| ChainError::ExecFailed(Some(err)))?;
 
     let tx_env = decode_tx(kind, Address::from(caller), &stored.raw)
         .map_err(|_| ChainError::DecodeFailed)?;
     let sender_bytes = address_to_bytes(tx_env.caller);
     let sender_nonce = tx_env.nonce;
 
-    let outcome = match execute_tx(tx_id, 0, kind, &stored.raw, tx_env, &exec_ctx) {
+    let outcome = match execute_tx(tx_id, 0, kind, &stored.raw, tx_env, &exec_ctx, ExecPath::UserTx) {
         Ok(value) => value,
         Err(err) => {
             let sender_key = SenderKey::new(sender_bytes);
@@ -806,7 +821,7 @@ fn execute_and_seal_with_caller(
 
     let tx_list_hash = hash::tx_list_hash(&[tx_id.0]);
     let prev_state_root = load_parent_state_root(head.number);
-    let block_change_hash = compute_block_change_hash(&[outcome.state_change_hash]);
+    let block_change_hash = compute_block_change_hash(&[system_tx_change_hash, outcome.state_change_hash]);
     let state_root = compute_state_root_from_changes(
         prev_state_root,
         number,

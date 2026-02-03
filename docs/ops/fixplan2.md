@@ -49,16 +49,18 @@
 
 ## PR3: 実行フローをop-revmへ
 
-- [ ] `MainnetContext` 実行を `OpContext + OpBuilder` ベースへ移行
-- [ ] L1BlockInfo system tx をブロック先頭に注入
-- [ ] L1 data fee徴収をhandler準拠で適用
-- [ ] deposit/system txの特例処理とhalt理由（FailedDeposit等）を反映
-- [ ] DBコミットは差分（Bundle/State差分）反映に整理
+- [x] `MainnetContext` 実行を `OpContext + OpBuilder` ベースへ移行
+- [x] L1BlockInfo system tx をブロック先頭に注入（内部実行のみ）
+- [x] L1 data fee徴収をhandler準拠で適用
+- [x] deposit/system txの特例処理とhalt理由（FailedDeposit等）を反映
+- [x] DBコミットは差分（Bundle/State差分）反映に整理
 - [x] `effective_gas_price` はL2ガス価格の意味を維持（L1/operator feeは別会計）
 - [x] `total_fee = gas_used * effective_gas_price + l1_data_fee + operator_fee` を固定
 - [x] L1 snapshotはブロック開始時に1回キャプチャし、同ブロック中の更新は次ブロック反映
 - [x] `set_l1_block_info_snapshot` は `is_producing=true` 中に拒否
 - [x] `revm_exec` は `BlockExecContext` 経由のみで実行し、stable readを行わない
+- [x] system tx は内部専用・非計上（receipt/index未保存、ユーザー向けgas/fee集計に不算入）
+- [x] 既存データ互換・移行はPR3で扱わない（新運用データ前提）
 
 対象ファイル（主）:
 - `crates/evm-core/src/revm_exec.rs`
