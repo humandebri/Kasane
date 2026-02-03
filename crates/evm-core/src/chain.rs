@@ -648,7 +648,7 @@ pub fn produce_block(max_txs: usize) -> Result<BlockData, ChainError> {
 }
 
 pub fn execute_eth_raw_tx(raw_tx: Vec<u8>) -> Result<ExecResult, ChainError> {
-    let tx_id = submit_tx(TxKind::EthSigned, raw_tx)?;
+    let tx_id = submit_tx_in(TxIn::EthSigned(raw_tx))?;
     let result = execute_and_seal(tx_id, TxKind::EthSigned)?;
     Ok(result)
 }
@@ -659,7 +659,11 @@ pub fn execute_ic_tx(
     tx_bytes: Vec<u8>,
 ) -> Result<ExecResult, ChainError> {
     let caller_evm = hash::caller_evm_from_principal(&caller_principal);
-    let tx_id = submit_ic_tx(caller_principal, canister_id, tx_bytes)?;
+    let tx_id = submit_tx_in(TxIn::IcSynthetic {
+        caller_principal,
+        canister_id,
+        tx_bytes,
+    })?;
     execute_and_seal_with_caller(tx_id, TxKind::IcSynthetic, caller_evm)
 }
 

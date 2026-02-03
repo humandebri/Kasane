@@ -439,13 +439,16 @@ fn submit_eth_tx(raw_tx: Vec<u8>) -> Result<Vec<u8>, SubmitTxError> {
     if let Some(reason) = reject_write_reason() {
         return Err(SubmitTxError::Rejected(reason));
     }
-    let tx_id = match chain::submit_tx(evm_db::chain_data::TxKind::EthSigned, raw_tx) {
+    let tx_id = match chain::submit_tx_in(chain::TxIn::EthSigned(raw_tx)) {
         Ok(value) => value,
         Err(chain::ChainError::TxTooLarge) => {
             return Err(SubmitTxError::InvalidArgument("tx too large".to_string()));
         }
         Err(chain::ChainError::DecodeFailed) => {
             return Err(SubmitTxError::InvalidArgument("decode failed".to_string()));
+        }
+        Err(chain::ChainError::UnsupportedTxKind) => {
+            return Err(SubmitTxError::InvalidArgument("unsupported tx kind".to_string()));
         }
         Err(chain::ChainError::TxAlreadySeen) => {
             return Err(SubmitTxError::Rejected("tx already seen".to_string()));
@@ -478,13 +481,20 @@ fn submit_ic_tx(tx_bytes: Vec<u8>) -> Result<Vec<u8>, SubmitTxError> {
     }
     let caller_principal = ic_cdk::api::msg_caller().as_slice().to_vec();
     let canister_id = ic_cdk::api::canister_self().as_slice().to_vec();
-    let tx_id = match chain::submit_ic_tx(caller_principal, canister_id, tx_bytes) {
+    let tx_id = match chain::submit_tx_in(chain::TxIn::IcSynthetic {
+        caller_principal,
+        canister_id,
+        tx_bytes,
+    }) {
         Ok(value) => value,
         Err(chain::ChainError::TxTooLarge) => {
             return Err(SubmitTxError::InvalidArgument("tx too large".to_string()));
         }
         Err(chain::ChainError::DecodeFailed) => {
             return Err(SubmitTxError::InvalidArgument("decode failed".to_string()));
+        }
+        Err(chain::ChainError::UnsupportedTxKind) => {
+            return Err(SubmitTxError::InvalidArgument("unsupported tx kind".to_string()));
         }
         Err(chain::ChainError::TxAlreadySeen) => {
             return Err(SubmitTxError::Rejected("tx already seen".to_string()));
@@ -776,7 +786,7 @@ fn rpc_eth_send_raw_transaction(raw_tx: Vec<u8>) -> Result<Vec<u8>, SubmitTxErro
     if let Some(reason) = reject_write_reason() {
         return Err(SubmitTxError::Rejected(reason));
     }
-    let tx_id = match chain::submit_tx(TxKind::EthSigned, raw_tx) {
+    let tx_id = match chain::submit_tx_in(chain::TxIn::EthSigned(raw_tx)) {
         Ok(value) => value,
         Err(chain::ChainError::TxTooLarge) => {
             return Err(SubmitTxError::InvalidArgument("tx too large".to_string()));
@@ -784,11 +794,20 @@ fn rpc_eth_send_raw_transaction(raw_tx: Vec<u8>) -> Result<Vec<u8>, SubmitTxErro
         Err(chain::ChainError::DecodeFailed) => {
             return Err(SubmitTxError::InvalidArgument("decode failed".to_string()));
         }
+        Err(chain::ChainError::UnsupportedTxKind) => {
+            return Err(SubmitTxError::InvalidArgument("unsupported tx kind".to_string()));
+        }
         Err(chain::ChainError::TxAlreadySeen) => {
             return Err(SubmitTxError::Rejected("tx already seen".to_string()));
         }
         Err(chain::ChainError::InvalidFee) => {
             return Err(SubmitTxError::Rejected("invalid fee".to_string()));
+        }
+        Err(chain::ChainError::NonceTooLow) => {
+            return Err(SubmitTxError::Rejected("nonce too low".to_string()));
+        }
+        Err(chain::ChainError::NonceGap) => {
+            return Err(SubmitTxError::Rejected("nonce gap".to_string()));
         }
         Err(chain::ChainError::NonceConflict) => {
             return Err(SubmitTxError::Rejected("nonce conflict".to_string()));
