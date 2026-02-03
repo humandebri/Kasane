@@ -60,6 +60,9 @@
 - [x] `set_l1_block_info_snapshot` は `is_producing=true` 中に拒否
 - [x] `revm_exec` は `BlockExecContext` 経由のみで実行し、stable readを行わない
 - [x] system tx は内部専用・非計上（receipt/index未保存、ユーザー向けgas/fee集計に不算入）
+- [x] L1BlockInfo calldata は spec 分岐（pre-ECOTONE / post-ECOTONE）で構築
+- [x] `snapshot.enabled=false` のとき system tx 注入をスキップ
+- [x] system tx の storage 更新をテストで検証
 - [x] 既存データ互換・移行はPR3で扱わない（新運用データ前提）
 
 対象ファイル（主）:
@@ -67,6 +70,21 @@
 - `crates/evm-core/src/chain.rs`
 - `crates/evm-core/src/revm_db.rs`
 - `crates/evm-core/Cargo.toml`
+
+
+PR4: Base Fee（EIP-1559）を alloy の標準計算へ
+
+やること
+
+evm-core/src/base_fee.rs の compute_next_base_fee を置換
+
+alloy_eips::eip1559 の計算関数へ委譲
+
+自前定数（elasticity等）を削除して、参照元に寄せる
+
+完了条件
+
+ベースフィー遷移が参照実装と一致（テストで担保）
 
 ## PR5: state root標準化（最優先）
 

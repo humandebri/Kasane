@@ -477,11 +477,21 @@ pub fn produce_block(max_txs: usize) -> Result<BlockData, ChainError> {
         l1_params: *state.l1_block_info_params.get(),
         l1_snapshot: *state.l1_block_info_snapshot.get(),
     });
-    let system_tx_change_hash =
-        execute_l1_block_info_system_tx(&exec_ctx).map_err(|err| ChainError::ExecFailed(Some(err)))?;
+    let system_tx_change_hash = if exec_ctx.l1_snapshot.enabled {
+        Some(
+            execute_l1_block_info_system_tx(&exec_ctx)
+                .map_err(|err| ChainError::ExecFailed(Some(err)))?,
+        )
+    } else {
+        eprintln!("l1 block info system tx skipped: snapshot disabled");
+        None
+    };
 
     let mut included: Vec<TxId> = Vec::new();
-    let mut tx_change_hashes: Vec<[u8; 32]> = vec![system_tx_change_hash];
+    let mut tx_change_hashes: Vec<[u8; 32]> = Vec::new();
+    if let Some(system_hash) = system_tx_change_hash {
+        tx_change_hashes.push(system_hash);
+    }
     let mut dropped_total = 0u64;
     let mut dropped_by_code = [0u64; evm_db::chain_data::metrics::DROP_CODE_SLOTS];
     let mut tx_ids = Vec::new();
@@ -627,12 +637,13 @@ pub fn produce_block(max_txs: usize) -> Result<BlockData, ChainError> {
     if included.is_empty() {
         return Err(ChainError::NoExecutableTx);
     }
-    if tx_change_hashes.len() != included.len().saturating_add(1) {
+    let expected_hashes = included.len().saturating_add(usize::from(system_tx_change_hash.is_some()));
+    if tx_change_hashes.len() != expected_hashes {
         return Err(ChainError::InvariantViolation(
             "tx_change_hashes mismatch".to_string(),
         ));
     }
-    debug_assert_eq!(tx_change_hashes.len(), included.len().saturating_add(1));
+    debug_assert_eq!(tx_change_hashes.len(), expected_hashes);
 
     let mut tx_id_bytes = Vec::with_capacity(included.len());
     for tx_id in included.iter() {
@@ -799,8 +810,15 @@ fn execute_and_seal_with_caller(
         l1_params: *state.l1_block_info_params.get(),
         l1_snapshot: *state.l1_block_info_snapshot.get(),
     });
-    let system_tx_change_hash =
-        execute_l1_block_info_system_tx(&exec_ctx).map_err(|err| ChainError::ExecFailed(Some(err)))?;
+    let system_tx_change_hash = if exec_ctx.l1_snapshot.enabled {
+        Some(
+            execute_l1_block_info_system_tx(&exec_ctx)
+                .map_err(|err| ChainError::ExecFailed(Some(err)))?,
+        )
+    } else {
+        eprintln!("l1 block info system tx skipped: snapshot disabled");
+        None
+    };
 
     let tx_env = decode_tx(kind, Address::from(caller), &stored.raw)
         .map_err(|_| ChainError::DecodeFailed)?;
@@ -821,7 +839,12 @@ fn execute_and_seal_with_caller(
 
     let tx_list_hash = hash::tx_list_hash(&[tx_id.0]);
     let prev_state_root = load_parent_state_root(head.number);
-    let block_change_hash = compute_block_change_hash(&[system_tx_change_hash, outcome.state_change_hash]);
+    let mut change_hashes = Vec::with_capacity(2);
+    if let Some(system_hash) = system_tx_change_hash {
+        change_hashes.push(system_hash);
+    }
+    change_hashes.push(outcome.state_change_hash);
+    let block_change_hash = compute_block_change_hash(&change_hashes);
     let state_root = compute_state_root_from_changes(
         prev_state_root,
         number,

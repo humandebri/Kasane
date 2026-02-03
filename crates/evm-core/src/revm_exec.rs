@@ -172,7 +172,7 @@ pub fn execute_tx(
 pub fn execute_l1_block_info_system_tx(exec_ctx: &BlockExecContext) -> Result<[u8; 32], ExecError> {
     let spec = op_spec_id_from_u8(exec_ctx.l1_params.spec_id).map_err(ExecError::InvalidL1SpecId)?;
     let mut evm = build_op_context(exec_ctx, spec).build_op();
-    let call_data = build_l1_block_info_call_data(exec_ctx);
+    let call_data = build_l1blockinfo_calldata(spec, exec_ctx)?;
     let result = evm
         .system_call(L1_BLOCK_CONTRACT, call_data)
         .map_err(|_| ExecError::SystemTxRejected)?;
@@ -187,7 +187,18 @@ pub fn execute_l1_block_info_system_tx(exec_ctx: &BlockExecContext) -> Result<[u
     Ok(state_change_hash)
 }
 
-fn build_l1_block_info_call_data(exec_ctx: &BlockExecContext) -> Bytes {
+fn build_l1blockinfo_calldata(
+    spec: OpSpecId,
+    exec_ctx: &BlockExecContext,
+) -> Result<Bytes, ExecError> {
+    if spec.is_enabled_in(OpSpecId::ECOTONE) {
+        Ok(build_l1blockinfo_calldata_v2(exec_ctx))
+    } else {
+        Ok(build_l1blockinfo_calldata_v1(exec_ctx))
+    }
+}
+
+fn build_l1blockinfo_calldata_v1(exec_ctx: &BlockExecContext) -> Bytes {
     // setL1BlockValues(uint64,uint64,uint256,bytes32,uint64,bytes32,uint256,uint256)
     let selector_hash = keccak256(
         b"setL1BlockValues(uint64,uint64,uint256,bytes32,uint64,bytes32,uint256,uint256)",
@@ -203,6 +214,37 @@ fn build_l1_block_info_call_data(exec_ctx: &BlockExecContext) -> Bytes {
     push_u256_word(&mut out, U256::from(exec_ctx.l1_params.l1_fee_overhead));
     push_u256_word(&mut out, U256::from(exec_ctx.l1_params.l1_base_fee_scalar));
     Bytes::from(out)
+}
+
+fn build_l1blockinfo_calldata_v2(exec_ctx: &BlockExecContext) -> Bytes {
+    // setL1BlockValuesEcotone(uint32,uint32,uint64,uint64,uint64,uint256,uint256,bytes32,bytes32)
+    let selector_hash = keccak256(
+        b"setL1BlockValuesEcotone(uint32,uint32,uint64,uint64,uint64,uint256,uint256,bytes32,bytes32)",
+    );
+    let mut out = Vec::with_capacity(4 + 9 * 32);
+    out.extend_from_slice(&selector_hash[..4]);
+    push_u32_word(
+        &mut out,
+        u32::try_from(exec_ctx.l1_params.l1_base_fee_scalar).unwrap_or(u32::MAX),
+    );
+    push_u32_word(
+        &mut out,
+        u32::try_from(exec_ctx.l1_params.l1_blob_base_fee_scalar).unwrap_or(u32::MAX),
+    );
+    push_u64_word(&mut out, 0); // sequence number
+    push_u64_word(&mut out, exec_ctx.timestamp);
+    push_u64_word(&mut out, exec_ctx.l1_snapshot.l2_block_number);
+    push_u256_word(&mut out, U256::from(exec_ctx.l1_snapshot.l1_base_fee));
+    push_u256_word(&mut out, U256::from(exec_ctx.l1_snapshot.l1_blob_base_fee));
+    push_b256_word(&mut out, B256::ZERO);
+    push_b256_word(&mut out, B256::ZERO);
+    Bytes::from(out)
+}
+
+fn push_u32_word(out: &mut Vec<u8>, value: u32) {
+    let mut word = [0u8; 32];
+    word[28..32].copy_from_slice(&value.to_be_bytes());
+    out.extend_from_slice(&word);
 }
 
 fn push_u64_word(out: &mut Vec<u8>, value: u64) {
@@ -458,7 +500,7 @@ pub(crate) fn compute_effective_gas_price(
 #[cfg(test)]
 mod tests {
     use super::{
-        build_l1_block_info_call_data, build_op_transaction, compute_effective_gas_price,
+        build_l1blockinfo_calldata, build_op_transaction, compute_effective_gas_price,
         compute_fee_breakdown, execute_tx, op_spec_id_from_u8, BlockExecContext, ExecError,
         ExecPath, FeeBreakdown,
     };
@@ -582,10 +624,42 @@ mod tests {
                 l1_blob_base_fee: 0,
             },
         };
-        let data = build_l1_block_info_call_data(&ctx);
+        let data = build_l1blockinfo_calldata(OpSpecId::REGOLITH, &ctx).expect("calldata");
         assert_eq!(data.len(), 4 + 8 * 32);
         let selector = &crate::hash::keccak256(
             b"setL1BlockValues(uint64,uint64,uint256,bytes32,uint64,bytes32,uint256,uint256)",
+        )[..4];
+        assert_eq!(&data[..4], selector);
+    }
+
+    #[test]
+    fn l1_block_info_call_data_v2_has_expected_shape() {
+        let ctx = BlockExecContext {
+            block_number: 11,
+            timestamp: 22,
+            base_fee: 33,
+            l1_params: L1BlockInfoParamsV1 {
+                schema_version: 1,
+                spec_id: 103,
+                empty_ecotone_scalars: false,
+                l1_fee_overhead: 44,
+                l1_base_fee_scalar: 55,
+                l1_blob_base_fee_scalar: 66,
+                operator_fee_scalar: 0,
+                operator_fee_constant: 0,
+            },
+            l1_snapshot: L1BlockInfoSnapshotV1 {
+                schema_version: 1,
+                enabled: true,
+                l2_block_number: 66,
+                l1_base_fee: 77,
+                l1_blob_base_fee: 88,
+            },
+        };
+        let data = build_l1blockinfo_calldata(OpSpecId::ECOTONE, &ctx).expect("calldata");
+        assert_eq!(data.len(), 4 + 9 * 32);
+        let selector = &crate::hash::keccak256(
+            b"setL1BlockValuesEcotone(uint32,uint32,uint64,uint64,uint64,uint256,uint256,bytes32,bytes32)",
         )[..4];
         assert_eq!(&data[..4], selector);
     }
