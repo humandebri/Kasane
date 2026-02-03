@@ -32,6 +32,7 @@ pub enum ChainError {
     QueueEmpty,
     TxTooLarge,
     InvalidLimit,
+    UnsupportedTxKind,
     DecodeFailed,
     InvalidFee,
     NonceTooLow,
@@ -51,6 +52,30 @@ pub struct ExecResult {
     pub status: u8,
     pub gas_used: u64,
     pub return_data: Vec<u8>,
+    pub final_status: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum TxIn {
+    EthSigned(Vec<u8>),
+    IcSynthetic {
+        caller_principal: Vec<u8>,
+        canister_id: Vec<u8>,
+        tx_bytes: Vec<u8>,
+    },
+    OpDeposit(Vec<u8>),
+}
+
+pub fn submit_tx_in(tx_in: TxIn) -> Result<TxId, ChainError> {
+    match tx_in {
+        TxIn::EthSigned(raw) => submit_tx(TxKind::EthSigned, raw),
+        TxIn::IcSynthetic {
+            caller_principal,
+            canister_id,
+            tx_bytes,
+        } => submit_ic_tx(caller_principal, canister_id, tx_bytes),
+        TxIn::OpDeposit(_) => Err(ChainError::UnsupportedTxKind),
+    }
 }
 
 pub struct PruneResult {
@@ -812,6 +837,7 @@ fn execute_and_seal_with_caller(
         status: outcome.receipt.status,
         gas_used: outcome.receipt.gas_used,
         return_data: outcome.return_data,
+        final_status: outcome.final_status,
     })
 }
 

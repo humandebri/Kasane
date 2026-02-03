@@ -1,0 +1,2 @@
+SNAPSHOT_TX_MATRIX: tx_statuses=[1, 0, 0] final_statuses=[Success, Revert, Halt:InvalidFEOpcode]
+SNAPSHOT_BLOCK: number=3 block_hash=2a5350cda7cbd4979c99e391ae7303eb606a0ad7b2190d836b80006a527eda35 tx_list_hash=4ad087ec0641a22f03bb82cb8cf391aca8c73cb30fd8eeda10b813d1f2a6c6df state_root=d570ddc14bfde8d46ce2582654c9fb862ad23e0608ee3c3225cdbe66fe7d20c4

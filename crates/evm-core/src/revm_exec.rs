@@ -27,6 +27,7 @@ pub struct ExecOutcome {
     pub receipt: ReceiptLike,
     pub return_data: Vec<u8>,
     pub state_change_hash: [u8; 32],
+    pub final_status: String,
 }
 
 pub fn execute_tx(
@@ -61,7 +62,7 @@ pub fn execute_tx(
     let state_change_hash = compute_tx_change_hash(&state);
     evm.commit(state);
 
-    let (status, gas_used, output, contract_address, logs) = match result.result {
+    let (status, gas_used, output, contract_address, logs, final_status) = match result.result {
         ExecutionResult::Success {
             gas_used,
             output,
@@ -77,12 +78,29 @@ pub fn execute_tx(
                     data: log.data.data.to_vec(),
                 })
                 .collect::<Vec<_>>();
-            (1u8, gas_used, output.data().as_ref().to_vec(), addr, mapped)
+            (
+                1u8,
+                gas_used,
+                output.data().as_ref().to_vec(),
+                addr,
+                mapped,
+                "Success".to_string(),
+            )
         }
         ExecutionResult::Revert { gas_used, output } => {
-            (0u8, gas_used, output.to_vec(), None, Vec::new())
+            (0u8, gas_used, output.to_vec(), None, Vec::new(), "Revert".to_string())
         }
-        ExecutionResult::Halt { gas_used, .. } => (0u8, gas_used, Vec::new(), None, Vec::new()),
+        ExecutionResult::Halt {
+            gas_used,
+            reason,
+        } => (
+            0u8,
+            gas_used,
+            Vec::new(),
+            None,
+            Vec::new(),
+            format!("Halt:{reason:?}"),
+        ),
     };
 
     let return_data_hash = keccak256(&output);
@@ -124,6 +142,7 @@ pub fn execute_tx(
         receipt,
         return_data: output,
         state_change_hash,
+        final_status,
     })
 }
 

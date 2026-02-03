@@ -28,6 +28,12 @@ scripts/check_getrandom_wasm_features.sh
 
 cargo test -p evm-db -p ic-evm-core -p ic-evm-wrapper
 
+echo "[guard] PR0 differential check"
+PR0_DIFF_LOCAL_FILE="${PR0_DIFF_LOCAL:-/tmp/pr0_snapshot_local.txt}"
+PR0_DIFF_REFERENCE_FILE="${PR0_DIFF_REFERENCE:-docs/ops/pr0_snapshot_reference.txt}"
+scripts/pr0_capture_local_snapshot.sh "$PR0_DIFF_LOCAL_FILE"
+scripts/pr0_differential_compare.sh "$PR0_DIFF_LOCAL_FILE" "$PR0_DIFF_REFERENCE_FILE"
+
 dfx canister create evm_canister
 echo "[build] ic-evm-wrapper with dev-faucet"
 cargo build --target wasm32-unknown-unknown --release -p ic-evm-wrapper --features dev-faucet --locked
