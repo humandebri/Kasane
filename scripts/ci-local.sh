@@ -3,6 +3,7 @@
 set -euo pipefail
 
 DFX_LOCAL_DIR="$HOME/Library/Application Support/org.dfinity.dfx/network/local"
+source "$(dirname "$0")/lib_init_args.sh"
 
 cleanup() {
   dfx stop >/dev/null 2>&1 || true
@@ -44,7 +45,8 @@ fi
 WASM_IN=target/wasm32-unknown-unknown/release/ic_evm_wrapper.wasm
 WASM_OUT=target/wasm32-unknown-unknown/release/ic_evm_wrapper.candid.wasm
 ic-wasm "$WASM_IN" -o "$WASM_OUT" metadata candid:service -f crates/ic-evm-wrapper/evm_canister.did
-dfx canister install evm_canister --wasm "$WASM_OUT"
+INIT_ARGS="$(build_init_args_for_current_identity 1000000000000000000)"
+dfx canister install evm_canister --wasm "$WASM_OUT" --argument "$INIT_ARGS"
 
 echo "[smoke] wait for replica"
 for i in {1..10}; do

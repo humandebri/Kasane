@@ -4,6 +4,15 @@
 
 ---
 
+## 重要: インストール運用ルール（必読）
+
+- `ic-evm-wrapper` の install 時は `InitArgs` が必須です（`Some(InitArgs)` を必ず渡す）。
+- 空引数 install（`()` / `null` / `opt none` / 引数省略）はサポートしません。
+- 推奨: `scripts/lib_init_args.sh` の `build_init_args_for_current_identity` を使って `--argument` を生成してください。
+- `rpc_compat_e2e` 実行前は `scripts/run_rpc_compat_e2e.sh` を使い、最新wasmを再ビルドしてから検証してください。
+
+---
+
 ## 0. 免責事項
 
 本書は、IC-OP（Internet Computer上のEVM互換実行レイヤー）の技術と事業計画を説明するための資料です。  

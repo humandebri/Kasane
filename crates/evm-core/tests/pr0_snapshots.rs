@@ -63,7 +63,9 @@ fn snapshot_tx_outcome_matrix_and_block_fields() {
         matrix,
         "tx_statuses=[1, 0, 0] final_statuses=[Success, Revert, Halt:Base(InvalidFEOpcode)]"
     );
-    // PR5意図差分: state_root計算を標準trieへ置換したため block_hash/state_root が更新される。
+    // 意図差分の履歴:
+    // - PR4: system tx skip導入で state_root/block_hash が更新
+    // - PR5: state_root計算を標準trieへ置換して state_root/block_hash が再更新
     assert_eq!(
         block_outcome,
         "number=3 block_hash=0866e39a6ef9ee4e39746e320ca7907f3100139501562ca164679dd59fcce3fa tx_list_hash=4ad087ec0641a22f03bb82cb8cf391aca8c73cb30fd8eeda10b813d1f2a6c6df state_root=ad98fb2213d5dd5ea90e9fff9d21e693101ca495331ff8b6da589ffeba49fed6"

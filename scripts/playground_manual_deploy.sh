@@ -4,6 +4,7 @@
 # why: keep wasm small and reproducible; avoid dfx-internal build/strip issues
 # note: this is intended for playground use only (size issues); not needed for mainnet deploys
 set -euo pipefail
+source "$(dirname "$0")/lib_init_args.sh"
 
 NETWORK="${NETWORK:-playground}"
 CANISTER_NAME="${CANISTER_NAME:-evm_canister}"
@@ -54,7 +55,9 @@ install_wasm() {
       log "aborted"
       exit 1
     fi
-    ${DFX} install --mode "${MODE}" --wasm "${wasm_out}" "${CANISTER_ID}"
+    local init_args
+    init_args="$(build_init_args_for_current_identity 1000000000000000000)"
+    ${DFX} install --mode "${MODE}" --wasm "${wasm_out}" --argument "${init_args}" "${CANISTER_ID}"
   else
     log "install wasm to canister_name=${CANISTER_NAME} mode=${MODE}"
     echo "This will ${MODE} the canister ${CANISTER_NAME}. Type YES to continue:"
@@ -63,7 +66,9 @@ install_wasm() {
       log "aborted"
       exit 1
     fi
-    ${DFX} install --mode "${MODE}" --wasm "${wasm_out}" "${CANISTER_NAME}"
+    local init_args
+    init_args="$(build_init_args_for_current_identity 1000000000000000000)"
+    ${DFX} install --mode "${MODE}" --wasm "${wasm_out}" --argument "${init_args}" "${CANISTER_NAME}"
   fi
 }
 

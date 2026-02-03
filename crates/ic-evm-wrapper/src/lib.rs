@@ -340,10 +340,53 @@ pub struct PruneStatusView {
     pub need_prune: bool,
 }
 
+#[derive(Clone, Debug, CandidType, Deserialize)]
+pub struct GenesisBalanceView {
+    pub address: Vec<u8>,
+    pub amount: u128,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize)]
+pub struct InitArgs {
+    pub genesis_balances: Vec<GenesisBalanceView>,
+}
+
+impl InitArgs {
+    fn validate(&self) -> Result<(), String> {
+        let mut seen_addresses = std::collections::BTreeSet::new();
+        if self.genesis_balances.is_empty() {
+            return Err("genesis_balances must be non-empty".to_string());
+        }
+        for (idx, alloc) in self.genesis_balances.iter().enumerate() {
+            if alloc.address.len() != 20 {
+                return Err(format!("balance[{idx}].address must be 20 bytes"));
+            }
+            if alloc.amount == 0 {
+                return Err(format!("balance[{idx}].amount must be > 0"));
+            }
+            if !seen_addresses.insert(alloc.address.clone()) {
+                return Err(format!("duplicate genesis address at balance[{idx}]"));
+            }
+        }
+        Ok(())
+    }
+}
+
 #[ic_cdk::init]
-fn init() {
+fn init(args: Option<InitArgs>) {
     let _ = ensure_meta_initialized();
     init_stable_state();
+    let args = args.unwrap_or_else(|| {
+        ic_cdk::trap("InitArgsRequired: InitArgs is required; pass (opt record {...})")
+    });
+    if let Err(reason) = args.validate() {
+        ic_cdk::trap(&format!("InvalidInitArgs: {reason}"));
+    }
+    for alloc in args.genesis_balances.iter() {
+        let mut addr = [0u8; 20];
+        addr.copy_from_slice(&alloc.address);
+        chain::dev_mint(addr, alloc.amount).unwrap_or_else(|_| ic_cdk::trap("init: genesis mint failed"));
+    }
     observe_cycles();
     schedule_cycle_observer();
     schedule_prune();
@@ -1105,9 +1148,14 @@ fn receipt_to_view(receipt: ReceiptLike) -> ReceiptView {
 
 fn log_to_view(log: evm_db::chain_data::receipt::LogEntry) -> LogView {
     LogView {
-        address: log.address.to_vec(),
-        topics: log.topics.into_iter().map(|t| t.to_vec()).collect(),
-        data: log.data,
+        address: log.address.as_slice().to_vec(),
+        topics: log
+            .data
+            .topics()
+            .iter()
+            .map(|topic| topic.as_slice().to_vec())
+            .collect(),
+        data: log.data.data.to_vec(),
     }
 }
 

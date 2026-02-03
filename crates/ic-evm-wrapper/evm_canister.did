@@ -30,6 +30,9 @@ type EthReceiptView = record {
   effective_gas_price : nat64;
   status : nat8;
   tx_index : nat32;
+  l1_data_fee : nat;
+  operator_fee : nat;
+  total_fee : nat;
   logs : vec LogView;
   block_number : nat64;
   gas_used : nat64;
@@ -81,6 +84,7 @@ type ExportResponseView = record {
   next_cursor : opt ExportCursorView;
   chunks : vec ExportChunkView;
 };
+type GenesisBalanceView = record { address : blob; amount : nat };
 type HealthView = record {
   is_producing : bool;
   mining_scheduled : bool;
@@ -126,6 +130,7 @@ type OpsStatusView = record {
   last_check_ts : nat64;
   mode : OpsModeView;
   safe_stop_latched : bool;
+  l1_fee_fallback_count : nat64;
   needs_migration : bool;
   schema_version : nat32;
 };
@@ -182,6 +187,9 @@ type ReceiptView = record {
   status : nat8;
   tx_id : blob;
   tx_index : nat32;
+  l1_data_fee : nat;
+  operator_fee : nat;
+  total_fee : nat;
   return_data_hash : blob;
   logs : vec LogView;
   return_data : opt blob;
@@ -204,7 +212,9 @@ type SubmitTxError = variant {
   InvalidArgument : text;
 };
 type TxKindView = variant { EthSigned; IcSynthetic; OpDeposit };
-service : () -> {
+// NOTE: opt is kept for wire compatibility, but runtime rejects null/opt none.
+type InitArgs = record { genesis_balances : vec GenesisBalanceView };
+service : (opt InitArgs) -> {
   execute_eth_raw_tx : (blob) -> (Result);
   execute_ic_tx : (blob) -> (Result);
   expected_nonce_by_address : (blob) -> (Result_1) query;

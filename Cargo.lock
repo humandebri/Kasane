@@ -1424,6 +1424,7 @@ dependencies = [
 name = "evm-db"
 version = "0.1.0"
 dependencies = [
+ "alloy-primitives",
  "candid",
  "ic-cdk",
  "ic-cdk-timers",

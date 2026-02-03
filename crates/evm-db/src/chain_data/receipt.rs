@@ -7,16 +7,12 @@ use crate::chain_data::constants::{
 use crate::chain_data::tx::TxId;
 use crate::corrupt_log::record_corrupt;
 use crate::decode::{read_array, read_u32, read_u64, read_u8, read_vec};
+use alloy_primitives::{Address, B256, Bytes, Log, LogData};
 use ic_stable_structures::storable::Bound;
 use ic_stable_structures::Storable;
 use std::borrow::Cow;
 
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct LogEntry {
-    pub address: [u8; 20],
-    pub topics: Vec<[u8; 32]>,
-    pub data: Vec<u8>,
-}
+pub type LogEntry = Log;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ReceiptLike {
@@ -37,6 +33,9 @@ pub struct ReceiptLike {
 
 impl Storable for ReceiptLike {
     fn to_bytes(&self) -> Cow<'_, [u8]> {
+        if self.status > 1 {
+            ic_cdk::trap("receipt: status must be 0 or 1");
+        }
         if self.return_data.len() > MAX_RETURN_DATA {
             ic_cdk::trap("receipt: return_data too large");
         }
@@ -73,23 +72,25 @@ impl Storable for ReceiptLike {
             .unwrap_or_else(|_| ic_cdk::trap("receipt: logs len"));
         out.extend_from_slice(&logs_len.to_be_bytes());
         for log in self.logs.iter() {
-            if log.topics.len() > MAX_LOG_TOPICS {
+            let topics = log.data.topics();
+            if topics.len() > MAX_LOG_TOPICS {
                 ic_cdk::trap("receipt: too many topics");
             }
-            if log.data.len() > MAX_LOG_DATA {
+            let data = log.data.data.as_ref();
+            if data.len() > MAX_LOG_DATA {
                 ic_cdk::trap("receipt: log data too large");
             }
-            out.extend_from_slice(&log.address);
-            let topics_len = u32::try_from(log.topics.len())
+            out.extend_from_slice(log.address.as_ref());
+            let topics_len = u32::try_from(topics.len())
                 .unwrap_or_else(|_| ic_cdk::trap("receipt: topics len"));
             out.extend_from_slice(&topics_len.to_be_bytes());
-            for topic in log.topics.iter() {
-                out.extend_from_slice(topic);
+            for topic in topics.iter() {
+                out.extend_from_slice(topic.as_ref());
             }
-            let data_len = u32::try_from(log.data.len())
+            let data_len = u32::try_from(data.len())
                 .unwrap_or_else(|_| ic_cdk::trap("receipt: log data len"));
             out.extend_from_slice(&data_len.to_be_bytes());
-            out.extend_from_slice(&log.data);
+            out.extend_from_slice(data);
         }
         Cow::Owned(out)
     }
@@ -124,6 +125,9 @@ impl Storable for ReceiptLike {
             Some(value) => value,
             None => return corrupt_receipt(),
         };
+        if status > 1 {
+            return corrupt_receipt();
+        }
         let gas_used = match read_u64(data, &mut offset) {
             Some(value) => value,
             None => return corrupt_receipt(),
@@ -205,13 +209,13 @@ impl Storable for ReceiptLike {
             if topics_len_usize > MAX_LOG_TOPICS {
                 return corrupt_receipt();
             }
-            let mut topics = Vec::with_capacity(topics_len_usize);
+            let mut topics: Vec<B256> = Vec::with_capacity(topics_len_usize);
             for _ in 0..topics_len_usize {
                 let topic = match read_array::<32>(data, &mut offset) {
                     Some(value) => value,
                     None => return corrupt_receipt(),
                 };
-                topics.push(topic);
+                topics.push(B256::from(topic));
             }
             let data_len = match read_u32(data, &mut offset) {
                 Some(value) => value,
@@ -228,10 +232,14 @@ impl Storable for ReceiptLike {
                 Some(value) => value,
                 None => return corrupt_receipt(),
             };
+            let log_data = LogData::new(topics, Bytes::from(data));
+            let log_data = match log_data {
+                Some(value) => value,
+                None => return corrupt_receipt(),
+            };
             logs.push(LogEntry {
-                address,
-                topics,
-                data,
+                address: Address::from(address),
+                data: log_data,
             });
         }
         Self {

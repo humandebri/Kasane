@@ -5,8 +5,7 @@ members = [
     "crates/ic-evm-wrapper"
 ]
 exclude = [
-    "vendor/stable-structures"
-    ,"vendor/revm"
+    "vendor/revm"
     ,"crates/evm-rpc-e2e"
 ]
 resolver = "2"

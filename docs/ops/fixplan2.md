@@ -75,21 +75,21 @@
 
 ## PR4: base fee標準化
 
-- [ ] **必須（PR4本体）**
-- [ ] `compute_next_base_fee` を alloy EIP-1559計算へ置換
-- [ ] 自前定数依存を削減し参照元準拠に統一
-- [ ] `phase1_fee_rules` へベースフィー遷移の参照実装一致テストを追加
-- [ ] **同梱ガード（推奨）**
-- [ ] `pr0_snapshots` 差分理由（system tx skip由来）をドキュメント化
-- [ ] system tx 不算入（receipt/index/gas/fee/tx件数）を共通アサートで固定
-- [ ] `spec_id` 分岐漏れ防止テスト（境界 + 全match）を追加
-- [ ] disabledスキップ時の観測性（メトリクス優先、ログ抑制）を維持
-- [ ] **受け入れ条件（PR4 Done）**
-- [ ] base fee遷移が参照実装と一致
-- [ ] `pr0_snapshots` の差分が「意図差分」として説明可能
-- [ ] system txがユーザー会計へ混入しないことをテストで保証
-- [ ] `spec_id` 境界（pre/post）および未対応追加時の検知導線がある
-- [ ] disabledスキップを観測できる
+- [x] **必須（PR4本体）**
+- [x] `compute_next_base_fee` を alloy EIP-1559計算へ置換
+- [x] 自前定数依存を削減し参照元準拠に統一
+- [x] `phase1_fee_rules` へベースフィー遷移の参照実装一致テストを追加
+- [x] **同梱ガード（推奨）**
+- [x] `pr0_snapshots` 差分理由（system tx skip由来）をドキュメント化
+- [x] system tx 不算入（receipt/index/gas/fee/tx件数）を共通アサートで固定
+- [x] `spec_id` 分岐漏れ防止テスト（境界 + 全match）を追加
+- [x] disabledスキップ時の観測性（メトリクス優先、ログ抑制）を維持
+- [x] **受け入れ条件（PR4 Done）**
+- [x] base fee遷移が参照実装と一致
+- [x] `pr0_snapshots` の差分が「意図差分」として説明可能
+- [x] system txがユーザー会計へ混入しないことをテストで保証
+- [x] `spec_id` 境界（pre/post）および未対応追加時の検知導線がある
+- [x] disabledスキップを観測できる
 
 対象ファイル（主）:
 - `crates/evm-core/src/base_fee.rs`
@@ -111,10 +111,17 @@
 
 ## PR6: receipt/log型を標準へ
 
-- [ ] `ReceiptLike/LogEntry` をalloy型準拠に整理（保存層のみ独自）
-- [ ] RPC変換コードを薄くする
-- [ ] export/indexer互換の確認・必要修正
-- [ ] Candid型を更新
+- [x] `ReceiptLike/LogEntry` をalloy型準拠に整理（保存層のみ独自）
+- [x] RPC変換コードを薄くする
+- [x] export/indexer互換の確認・必要修正
+- [x] Candid型を更新
+- [x] 固定仕様を明文化
+  - topics順序保持・data生バイト保持
+  - topics>4 decode reject（truncateしない）
+  - statusは0/1固定
+  - contract_addressはCREATE時のみSome
+  - logs_bloomはPR6では非保存/非公開
+  - `rpc_compat_e2e` 前に wrapper wasm を再ビルドしてから実行（`scripts/run_rpc_compat_e2e.sh`）
 
 対象ファイル（主）:
 - `crates/evm-db/src/chain_data/receipt.rs`

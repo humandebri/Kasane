@@ -3,6 +3,7 @@
 # what: deploy local canister, generate blocks, run indexer, verify cursor/archive/metrics/idle
 # why: "設計は正しいが実接続で死ぬ"事故を最短で潰すため
 set -euo pipefail
+source "$(dirname "$0")/lib_init_args.sh"
 
 NETWORK="${NETWORK:-local}"
 CANISTER_NAME="${CANISTER_NAME:-evm_canister}"
@@ -100,7 +101,9 @@ build_and_install() {
 
   ${DFX_CANISTER} create "${CANISTER_NAME}" >/dev/null 2>&1 || true
   log "install wasm (mode=${MODE})"
-  printf "yes\n" | ${DFX_CANISTER} install --mode "${MODE}" --wasm "${wasm_out}" "${CANISTER_NAME}"
+  local init_args
+  init_args="$(build_init_args_for_current_identity 1000000000000000000)"
+  printf "yes\n" | ${DFX_CANISTER} install --mode "${MODE}" --wasm "${wasm_out}" --argument "${init_args}" "${CANISTER_NAME}"
 }
 
 caller_blob() {

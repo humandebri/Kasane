@@ -7,3 +7,4 @@ edition = "2021"
 candid = "0.10"
 pocket-ic = "12.0.0"
 serde = { version = "1", features = ["derive"] }
+evm_core = { package = "ic-evm-core", path = "../evm-core" }

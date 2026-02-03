@@ -102,14 +102,7 @@ pub fn execute_tx(
             ..
         } => {
             let addr = output.address().map(|a| address_to_bytes(*a));
-            let mapped = logs
-                .into_iter()
-                .map(|log| LogEntry {
-                    address: address_to_bytes(log.address),
-                    topics: log.topics().iter().map(|t| t.0).collect(),
-                    data: log.data.data.to_vec(),
-                })
-                .collect::<Vec<_>>();
+            let mapped = logs.into_iter().map(revm_log_to_receipt_log).collect::<Vec<_>>();
             (
                 1u8,
                 gas_used,
@@ -412,6 +405,17 @@ fn address_to_bytes(address: revm::primitives::Address) -> [u8; 20] {
     let mut out = [0u8; 20];
     out.copy_from_slice(address.as_ref());
     out
+}
+
+fn revm_log_to_receipt_log(log: revm::primitives::Log) -> LogEntry {
+    let address = alloy_primitives::Address::from(address_to_bytes(log.address));
+    let topics = log
+        .topics()
+        .iter()
+        .map(|topic| alloy_primitives::B256::from(topic.0))
+        .collect::<Vec<_>>();
+    let data = alloy_primitives::Bytes::from(log.data.data.to_vec());
+    LogEntry::new_unchecked(address, topics, data)
 }
 
 pub(crate) fn compute_effective_gas_price(

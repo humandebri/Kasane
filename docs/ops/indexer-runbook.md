@@ -43,10 +43,20 @@ scripts/indexer_env_sanity_check.sh
 
 `.env` / dotenv がある場合は同様に確認する。
 
-### 1.5.3 canister を非対話で reinstall
+### 1.5.3 canister を非対話で reinstall（InitArgs 必須）
+
+注記:
+- `null` / `opt none` / 引数省略はすべて拒否されるため、必ず `opt record` を渡す。
 
 ```bash
-dfx deploy --network local --mode reinstall --yes 2>&1 | tee /tmp/dfx-logs/deploy.log
+source scripts/lib_init_args.sh
+INIT_ARGS="$(build_init_args_for_current_identity 1000000000000000000)"
+dfx canister install evm_canister \
+  --network local \
+  --mode reinstall \
+  --wasm target/wasm32-unknown-unknown/release/ic_evm_wrapper.candid.wasm \
+  --argument "$INIT_ARGS" \
+  2>&1 | tee /tmp/dfx-logs/deploy.log
 ```
 
 ここで 503 が出たら 1.5.1 に戻る。

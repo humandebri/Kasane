@@ -2,8 +2,10 @@
 
 use candid::{Decode, Encode, Principal, CandidType};
 use candid::Deserialize;
+use evm_core::hash;
 use pocket_ic::PocketIc;
 use std::path::PathBuf;
+use std::panic::{self, AssertUnwindSafe};
 
 #[derive(Clone, Debug, CandidType, Deserialize, Eq, PartialEq)]
 enum EthTxListView {
@@ -63,6 +65,51 @@ struct EthReceiptView {
 }
 
 #[derive(Clone, Debug, CandidType, Deserialize, Eq, PartialEq)]
+struct EthReceiptViewV2 {
+    tx_hash: Vec<u8>,
+    block_number: u64,
+    tx_index: u32,
+    status: u8,
+    gas_used: u64,
+    effective_gas_price: u64,
+    l1_data_fee: candid::Nat,
+    operator_fee: candid::Nat,
+    total_fee: candid::Nat,
+    contract_address: Option<Vec<u8>>,
+    logs: Vec<LogView>,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize, Eq, PartialEq)]
+struct GenesisBalanceView {
+    address: Vec<u8>,
+    amount: u128,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize, Eq, PartialEq)]
+struct InitArgs {
+    genesis_balances: Vec<GenesisBalanceView>,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize, Eq, PartialEq)]
+enum ExecuteTxError {
+    InvalidArgument(String),
+    Rejected(String),
+    Internal(String),
+}
+
+type ExecuteTxResult = Result<ExecResultDto, ExecuteTxError>;
+
+#[derive(Clone, Debug, CandidType, Deserialize, Eq, PartialEq)]
+struct ExecResultDto {
+    tx_id: Vec<u8>,
+    block_number: u64,
+    tx_index: u32,
+    status: u8,
+    gas_used: u64,
+    return_data: Option<Vec<u8>>,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize, Eq, PartialEq)]
 struct LogView {
     address: Vec<u8>,
     topics: Vec<Vec<u8>>,
@@ -80,6 +127,18 @@ fn wasm_path() -> PathBuf {
 }
 
 fn install_canister(pic: &PocketIc) -> Principal {
+    let caller = Principal::anonymous();
+    let init = Some(InitArgs {
+        genesis_balances: vec![GenesisBalanceView {
+            address: hash::caller_evm_from_principal(caller.as_slice()).to_vec(),
+            amount: 1_000_000_000_000_000_000u128,
+        }],
+    });
+    let init_arg = Encode!(&init).expect("encode init args");
+    install_canister_with_arg(pic, init_arg)
+}
+
+fn install_canister_with_arg(pic: &PocketIc, init_arg: Vec<u8>) -> Principal {
     let path = wasm_path();
     if !path.exists() {
         panic!("wasm not found: build ic-evm-wrapper first: {:?}", path);
@@ -87,13 +146,45 @@ fn install_canister(pic: &PocketIc) -> Principal {
     let wasm = std::fs::read(path).expect("read wasm");
     let canister_id = pic.create_canister();
     pic.add_cycles(canister_id, 5_000_000_000_000u128);
-    pic.install_canister(canister_id, wasm, vec![], None);
+    pic.install_canister(canister_id, wasm, init_arg, None);
     canister_id
+}
+
+fn expect_install_trap(pic: &PocketIc, init_arg: Vec<u8>, expected: &str) {
+    let previous_hook = panic::take_hook();
+    panic::set_hook(Box::new(|_| {}));
+    let result = panic::catch_unwind(AssertUnwindSafe(|| {
+        let _ = install_canister_with_arg(pic, init_arg);
+    }));
+    panic::set_hook(previous_hook);
+    let payload = result.expect_err("install should fail");
+    let message = panic_payload_message(payload);
+    assert!(
+        message.contains(expected),
+        "unexpected trap message: {} (expected to contain {})",
+        message,
+        expected
+    );
+}
+
+fn panic_payload_message(payload: Box<dyn std::any::Any + Send>) -> String {
+    if let Some(msg) = payload.downcast_ref::<String>() {
+        return msg.clone();
+    }
+    if let Some(msg) = payload.downcast_ref::<&str>() {
+        return (*msg).to_string();
+    }
+    "unknown panic payload".to_string()
 }
 
 fn call_query(pic: &PocketIc, canister_id: Principal, method: &str, arg: Vec<u8>) -> Vec<u8> {
     pic.query_call(canister_id, Principal::anonymous(), method, arg)
         .unwrap_or_else(|err| panic!("query error: {err}"))
+}
+
+fn call_update(pic: &PocketIc, canister_id: Principal, method: &str, arg: Vec<u8>) -> Vec<u8> {
+    pic.update_call(canister_id, Principal::anonymous(), method, arg)
+        .unwrap_or_else(|err| panic!("update error: {err}"))
 }
 
 #[test]
@@ -140,4 +231,129 @@ fn rpc_get_transaction_by_hash_and_receipt_return_none() {
     let receipt: Option<EthReceiptView> =
         Decode!(&receipt_bytes, Option<EthReceiptView>).expect("decode receipt");
     assert!(receipt.is_none());
+}
+
+#[test]
+fn rpc_receipt_decode_is_backward_compatible() {
+    let pic = PocketIc::new();
+    let canister_id = install_canister(&pic);
+    let tx_bytes = build_ic_tx_bytes([0x10u8; 20], 0);
+    let exec_bytes = call_update(
+        &pic,
+        canister_id,
+        "execute_ic_tx",
+        Encode!(&tx_bytes).expect("encode execute"),
+    );
+    let exec: ExecuteTxResult = Decode!(&exec_bytes, ExecuteTxResult).expect("decode execute");
+    let exec = exec.expect("execute ok");
+
+    let receipt_bytes = call_query(
+        &pic,
+        canister_id,
+        "rpc_eth_get_transaction_receipt",
+        Encode!(&exec.tx_id).expect("encode receipt arg"),
+    );
+    let legacy: Option<EthReceiptView> =
+        Decode!(&receipt_bytes, Option<EthReceiptView>).expect("decode legacy");
+    let v2: Option<EthReceiptViewV2> =
+        Decode!(&receipt_bytes, Option<EthReceiptViewV2>).expect("decode v2");
+    let legacy = legacy.expect("legacy receipt");
+    let v2 = v2.expect("v2 receipt");
+    assert_eq!(legacy.tx_hash, v2.tx_hash);
+    assert_eq!(legacy.block_number, v2.block_number);
+    assert_eq!(legacy.tx_index, v2.tx_index);
+    assert_eq!(legacy.status, v2.status);
+    assert_eq!(legacy.gas_used, v2.gas_used);
+    assert_eq!(legacy.effective_gas_price, v2.effective_gas_price);
+}
+
+#[test]
+fn install_rejects_none_init_args() {
+    let pic = PocketIc::new();
+    let init_arg = Encode!(&Option::<InitArgs>::None).expect("encode none init args");
+    expect_install_trap(
+        &pic,
+        init_arg,
+        "InitArgsRequired: InitArgs is required; pass (opt record {...})",
+    );
+}
+
+#[test]
+fn install_rejects_invalid_init_args() {
+    let pic = PocketIc::new();
+    let empty = Some(InitArgs {
+        genesis_balances: Vec::new(),
+    });
+    let empty_arg = Encode!(&empty).expect("encode empty init args");
+    expect_install_trap(
+        &pic,
+        empty_arg,
+        "InvalidInitArgs: genesis_balances must be non-empty",
+    );
+
+    let bad_address = Some(InitArgs {
+        genesis_balances: vec![GenesisBalanceView {
+            address: vec![0u8; 19],
+            amount: 1,
+        }],
+    });
+    let bad_address_arg = Encode!(&bad_address).expect("encode bad address init args");
+    expect_install_trap(
+        &pic,
+        bad_address_arg,
+        "InvalidInitArgs: balance[0].address must be 20 bytes",
+    );
+
+    let zero_amount = Some(InitArgs {
+        genesis_balances: vec![GenesisBalanceView {
+            address: vec![0u8; 20],
+            amount: 0,
+        }],
+    });
+    let zero_amount_arg = Encode!(&zero_amount).expect("encode zero amount init args");
+    expect_install_trap(
+        &pic,
+        zero_amount_arg,
+        "InvalidInitArgs: balance[0].amount must be > 0",
+    );
+
+    let duplicate = Some(InitArgs {
+        genesis_balances: vec![
+            GenesisBalanceView {
+                address: vec![0x11u8; 20],
+                amount: 1,
+            },
+            GenesisBalanceView {
+                address: vec![0x11u8; 20],
+                amount: 2,
+            },
+        ],
+    });
+    let duplicate_arg = Encode!(&duplicate).expect("encode duplicate init args");
+    expect_install_trap(
+        &pic,
+        duplicate_arg,
+        "InvalidInitArgs: duplicate genesis address at balance[1]",
+    );
+}
+
+fn build_ic_tx_bytes(to: [u8; 20], nonce: u64) -> Vec<u8> {
+    let value = [0u8; 32];
+    let gas_limit = 50_000u64.to_be_bytes();
+    let nonce = nonce.to_be_bytes();
+    let max_fee = 2_000_000_000u128.to_be_bytes();
+    let max_priority = 1_000_000_000u128.to_be_bytes();
+    let data: Vec<u8> = Vec::new();
+    let data_len = u32::try_from(data.len()).unwrap_or(0).to_be_bytes();
+    let mut out = Vec::new();
+    out.push(2u8);
+    out.extend_from_slice(&to);
+    out.extend_from_slice(&value);
+    out.extend_from_slice(&gas_limit);
+    out.extend_from_slice(&nonce);
+    out.extend_from_slice(&max_fee);
+    out.extend_from_slice(&max_priority);
+    out.extend_from_slice(&data_len);
+    out.extend_from_slice(&data);
+    out
 }
