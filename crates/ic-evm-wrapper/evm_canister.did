@@ -230,7 +230,6 @@ type SubmitTxError = variant {
 };
 type TxKindView = variant { OpDeposit; EthSigned; IcSynthetic };
 service : (opt InitArgs) -> {
-  execute_eth_raw_tx : (blob) -> (Result);
   expected_nonce_by_address : (blob) -> (Result_1) query;
   export_blocks : (opt ExportCursorView, nat32) -> (Result_2) query;
   get_block : (nat64) -> (Result_3) query;

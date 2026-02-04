@@ -49,6 +49,7 @@ pub enum AppMemoryId {
     L1BlockInfoParams = 37,
     L1BlockInfoSnapshot = 38,
     OpsMetrics = 39,
+    SystemTxHealth = 40,
 }
 
 impl AppMemoryId {
@@ -94,6 +95,7 @@ impl AppMemoryId {
             AppMemoryId::L1BlockInfoParams => 37,
             AppMemoryId::L1BlockInfoSnapshot => 38,
             AppMemoryId::OpsMetrics => 39,
+            AppMemoryId::SystemTxHealth => 40,
         }
     }
 

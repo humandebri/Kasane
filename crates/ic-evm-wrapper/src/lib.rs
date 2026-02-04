@@ -432,7 +432,6 @@ fn inspect_method_allowed(method: &str) -> bool {
         "submit_eth_tx"
             | "submit_ic_tx"
             | "rpc_eth_send_raw_transaction"
-            | "execute_eth_raw_tx"
             | "set_auto_mine"
             | "set_mining_interval_ms"
             | "set_prune_policy"
@@ -448,14 +447,6 @@ fn inspect_method_allowed(method: &str) -> bool {
 #[allow(deprecated)]
 fn inspect_payload_len() -> usize {
     ic_cdk::api::call::arg_data_raw_size()
-}
-
-#[ic_cdk::update]
-fn execute_eth_raw_tx(raw_tx: Vec<u8>) -> Result<ExecResultDto, ExecuteTxError> {
-    if let Some(reason) = reject_write_reason() {
-        return Err(ExecuteTxError::Rejected(reason));
-    }
-    map_execute_chain_result(chain::execute_eth_raw_tx(raw_tx))
 }
 
 fn map_execute_chain_result(
@@ -1195,6 +1186,7 @@ fn exec_error_to_code(err: Option<&evm_core::revm_exec::ExecError>) -> &'static 
         Some(ExecError::Revert) => "exec.revert",
         Some(ExecError::FailedDeposit) => "exec.deposit.failed",
         Some(ExecError::SystemTxRejected) => "exec.system_tx.rejected",
+        Some(ExecError::SystemTxBackoff) => "exec.system_tx.backoff",
         Some(ExecError::EvmHalt(OpHaltReason::OutOfGas)) => "exec.halt.out_of_gas",
         Some(ExecError::EvmHalt(OpHaltReason::InvalidOpcode)) => "exec.halt.invalid_opcode",
         Some(ExecError::EvmHalt(OpHaltReason::StackOverflow)) => "exec.halt.stack_overflow",
@@ -1692,6 +1684,7 @@ mod tests {
             Some(ExecError::Revert),
             Some(ExecError::FailedDeposit),
             Some(ExecError::SystemTxRejected),
+            Some(ExecError::SystemTxBackoff),
             Some(ExecError::EvmHalt(OpHaltReason::OutOfGas)),
             Some(ExecError::EvmHalt(OpHaltReason::InvalidOpcode)),
             Some(ExecError::EvmHalt(OpHaltReason::StackOverflow)),

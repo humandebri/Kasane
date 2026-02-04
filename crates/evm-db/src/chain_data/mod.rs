@@ -13,6 +13,7 @@ pub mod prune_config;
 pub mod prune_state;
 pub mod queue;
 pub mod receipt;
+pub mod system_tx_health;
 pub mod tx_loc;
 pub mod tx;
 
@@ -35,5 +36,6 @@ pub use prune_config::{PruneConfigV1, PrunePolicy};
 pub use prune_state::{PruneJournal, PruneStateV1};
 pub use queue::QueueMeta;
 pub use receipt::ReceiptLike;
+pub use system_tx_health::{SystemTxHealthV1, SYSTEM_TX_HEALTH_SIZE_U32};
 pub use tx_loc::{TxLoc, TxLocKind};
 pub use tx::{StoredTx, StoredTxBytes, StoredTxBytesError, StoredTxError, TxId, TxIndexEntry, TxKind};

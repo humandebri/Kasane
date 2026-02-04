@@ -3,7 +3,8 @@
 use evm_db::chain_data::receipt::LogEntry;
 use evm_db::chain_data::{
     BlockData, CallerKey, ChainStateV1, Head, L1BlockInfoParamsV1, L1BlockInfoSnapshotV1,
-    OpsMetricsV1, QueueMeta, ReceiptLike, StoredTx, StoredTxBytes, TxId, TxIndexEntry, TxKind,
+    OpsMetricsV1, QueueMeta, ReceiptLike, StoredTx, StoredTxBytes, SystemTxHealthV1, TxId,
+    TxIndexEntry, TxKind,
     TxLoc,
 };
 use ic_stable_structures::Storable;
@@ -209,6 +210,20 @@ fn ops_metrics_v1_decode_backfills_snapshot_fields_with_zero() {
     assert_eq!(decoded.last_exec_halt_unknown_warn_ts, 99);
     assert_eq!(decoded.l1_snapshot_disabled_skip_count, 0);
     assert_eq!(decoded.last_l1_snapshot_disabled_warn_ts, 0);
+}
+
+#[test]
+fn system_tx_health_roundtrip() {
+    let health = SystemTxHealthV1 {
+        schema_version: 1,
+        consecutive_failures: 3,
+        last_fail_ts: 10,
+        last_warn_ts: 11,
+        backoff_until_ts: 12,
+        backoff_hits: 13,
+    };
+    let decoded = SystemTxHealthV1::from_bytes(health.to_bytes());
+    assert_eq!(health, decoded);
 }
 
 #[test]

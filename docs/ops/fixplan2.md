@@ -145,6 +145,7 @@
 - `TxError(TxExecutionFailed)` -> `exec.tx.execution_failed`
 - `FailedDeposit` -> `exec.deposit.failed`
 - `SystemTxRejected` -> `exec.system_tx.rejected`
+- `SystemTxBackoff` -> `exec.system_tx.backoff`（抑止通知。実失敗とは別扱い）
 - `InvalidL1SpecId(_)` -> `exec.l1_spec.invalid`
 - `InvalidGasFee` -> `exec.gas_fee.invalid`
 - `EvmHalt(OutOfGas)` -> `exec.halt.out_of_gas`
@@ -161,6 +162,9 @@
 - user tx の `Revert/Halt` は `ExecResult(status=0)` で返す（Rejectedにしない）
 - `Rejected("exec.*")` は `ChainError::ExecFailed` 経路に限定する
 - Unknown halt 観測は `ExecFailed` だけでなく `Ok(ExecOutcome)` 境界でも実施する
+- `produce_block` は prepare/commit分離を維持し、`system tx` は実行可能 user tx がある場合のみ実行する
+- `system tx` 失敗時の非破壊対象は chain/mempool/index/receipt で、ops/health metrics 更新のみ例外として許容する
+- `system tx` 連続失敗は `SystemTxHealthV1` で観測し、backoff中は prepare/system tx 実行を抑止する
 
 対象ファイル（主）:
 - `crates/evm-core/src/revm_exec.rs`
@@ -179,7 +183,7 @@
 
 ## 運用ポリシー追記（2026-02-04）
 
-- 公開APIから `execute_ic_tx` を削除し、書き込み導線は `submit_* + produce_block` に統一する。
+- 公開APIから同期実行（`execute_ic_tx` / `execute_eth_raw_tx`）を削除し、書き込み導線は `submit_* + produce_block` に統一する。
 
 ## PR9: SIMD性能PR（最後に分離）
 

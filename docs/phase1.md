@@ -263,8 +263,6 @@ REVM実行revert：ブロックに含める＋status=0（EVM的）
 
 9.4 canister API
 
- execute_eth_raw_tx（互換維持）
-
  submit_* + produce_block（唯一の標準書き込み導線）
 
  query get_block/get_receipt/eth_call_like

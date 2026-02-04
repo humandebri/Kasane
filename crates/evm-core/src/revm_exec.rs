@@ -28,6 +28,7 @@ pub enum ExecError {
     Revert,
     FailedDeposit,
     SystemTxRejected,
+    SystemTxBackoff,
     EvmHalt(OpHaltReason),
     InvalidL1SpecId(u8),
     ExecutionFailed,

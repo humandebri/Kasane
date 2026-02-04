@@ -27,6 +27,15 @@ use ic_stable_structures::Storable;
 use revm::primitives::Address;
 use revm::primitives::U256;
 use std::borrow::Cow;
+use std::time::{SystemTime, UNIX_EPOCH};
+#[cfg(test)]
+use std::sync::atomic::{AtomicU64, Ordering};
+
+const SYSTEM_TX_BACKOFF_SECS: u64 = 2;
+const OPS_WARN_RATE_LIMIT_SECS: u64 = 60;
+
+#[cfg(test)]
+static TEST_NOW_SEC: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ChainError {
@@ -501,6 +510,10 @@ pub fn produce_block(max_txs: usize) -> Result<BlockData, ChainError> {
     if tx_ids.is_empty() {
         return Err(ChainError::QueueEmpty);
     }
+    let now = now_sec();
+    if exec_ctx.l1_snapshot.enabled && record_system_tx_backoff_hit_if_active(now) {
+        return Err(ChainError::ExecFailed(Some(ExecError::SystemTxBackoff)));
+    }
     let mut block_gas_used = 0u64;
     for tx_id in tx_ids {
         let envelope = with_state(|state| state.tx_store.get(&tx_id));
@@ -605,9 +618,11 @@ pub fn produce_block(max_txs: usize) -> Result<BlockData, ChainError> {
 
     if exec_ctx.l1_snapshot.enabled {
         execute_l1_block_info_system_tx(&exec_ctx).map_err(|err| {
+            record_system_tx_failure(now);
             observe_exec_error(&err, timestamp);
             ChainError::ExecFailed(Some(err))
         })?;
+        clear_system_tx_failure_streak();
     } else {
         record_l1_snapshot_disabled_skip(timestamp);
     }
@@ -790,12 +805,6 @@ struct QueuedDrop {
     nonce_override: Option<u64>,
 }
 
-pub fn execute_eth_raw_tx(raw_tx: Vec<u8>) -> Result<ExecResult, ChainError> {
-    let tx_id = submit_tx_in(TxIn::EthSigned(raw_tx))?;
-    let result = execute_and_seal(tx_id, TxKind::EthSigned)?;
-    Ok(result)
-}
-
 pub fn execute_ic_tx(
     caller_principal: Vec<u8>,
     canister_id: Vec<u8>,
@@ -880,10 +889,6 @@ pub fn get_tx_envelope(tx_id: &TxId) -> Option<StoredTxBytes> {
     with_state(|state| state.tx_store.get(tx_id))
 }
 
-fn execute_and_seal(tx_id: TxId, kind: TxKind) -> Result<ExecResult, ChainError> {
-    execute_and_seal_with_caller(tx_id, kind, [0u8; 20])
-}
-
 fn execute_and_seal_with_caller(
     tx_id: TxId,
     kind: TxKind,
@@ -891,6 +896,7 @@ fn execute_and_seal_with_caller(
 ) -> Result<ExecResult, ChainError> {
     let envelope =
         with_state(|state| state.tx_store.get(&tx_id)).ok_or(ChainError::ExecFailed(None))?;
+    let mut sync_finalize_guard = SyncFinalizeGuard::new(tx_id);
     let stored = StoredTx::try_from(envelope).map_err(|_| ChainError::DecodeFailed)?;
 
     let head = with_state(|state| *state.head.get());
@@ -904,11 +910,17 @@ fn execute_and_seal_with_caller(
         l1_params: *state.l1_block_info_params.get(),
         l1_snapshot: *state.l1_block_info_snapshot.get(),
     });
+    let now = now_sec();
+    if exec_ctx.l1_snapshot.enabled && record_system_tx_backoff_hit_if_active(now) {
+        return Err(ChainError::ExecFailed(Some(ExecError::SystemTxBackoff)));
+    }
     if exec_ctx.l1_snapshot.enabled {
         execute_l1_block_info_system_tx(&exec_ctx).map_err(|err| {
+            record_system_tx_failure(now);
             observe_exec_error(&err, timestamp);
             ChainError::ExecFailed(Some(err))
         })?;
+        clear_system_tx_failure_streak();
     } else {
         record_l1_snapshot_disabled_skip(timestamp);
     }
@@ -922,8 +934,6 @@ fn execute_and_seal_with_caller(
         Ok(value) => value,
         Err(err) => {
             observe_exec_error(&err, timestamp);
-            let sender_key = SenderKey::new(sender_bytes);
-            with_state_mut(|state| drop_exec_pending(state, tx_id, sender_key));
             return Err(ChainError::ExecFailed(Some(err)));
         }
     };
@@ -977,6 +987,7 @@ fn execute_and_seal_with_caller(
         metrics.record_block(number, timestamp, 1, 0);
         state.metrics_state.set(metrics);
     });
+    sync_finalize_guard.disarm();
 
     Ok(ExecResult {
         tx_id,
@@ -1250,7 +1261,7 @@ fn record_l1_fee_fallback() {
         let mut ops = *state.ops_state.get();
         ops.l1_fee_fallback_count = ops.l1_fee_fallback_count.saturating_add(1);
         let now = state.head.get().timestamp;
-        let should_warn = now.saturating_sub(ops.last_l1_fee_warn_ts) >= 60;
+        let should_warn = now.saturating_sub(ops.last_l1_fee_warn_ts) >= OPS_WARN_RATE_LIMIT_SECS;
         if should_warn {
             ops.last_l1_fee_warn_ts = now;
         }
@@ -1268,7 +1279,8 @@ fn record_l1_snapshot_disabled_skip(now: u64) {
         metrics.l1_snapshot_disabled_skip_count =
             metrics.l1_snapshot_disabled_skip_count.saturating_add(1);
         let should_warn = metrics.last_l1_snapshot_disabled_warn_ts == 0
-            || now.saturating_sub(metrics.last_l1_snapshot_disabled_warn_ts) >= 60;
+            || now.saturating_sub(metrics.last_l1_snapshot_disabled_warn_ts)
+                >= OPS_WARN_RATE_LIMIT_SECS;
         if should_warn {
             metrics.last_l1_snapshot_disabled_warn_ts = now;
         }
@@ -1297,7 +1309,7 @@ fn record_exec_halt_unknown(now: u64) {
         let mut metrics = *state.ops_metrics.get();
         metrics.exec_halt_unknown_count = metrics.exec_halt_unknown_count.saturating_add(1);
         let should_warn = metrics.last_exec_halt_unknown_warn_ts == 0
-            || now.saturating_sub(metrics.last_exec_halt_unknown_warn_ts) >= 60;
+            || now.saturating_sub(metrics.last_exec_halt_unknown_warn_ts) >= OPS_WARN_RATE_LIMIT_SECS;
         if should_warn {
             metrics.last_exec_halt_unknown_warn_ts = now;
         }
@@ -1307,6 +1319,81 @@ fn record_exec_halt_unknown(now: u64) {
     if should_warn {
         eprintln!("exec halt reason fell back to unknown");
     }
+}
+
+fn record_system_tx_backoff_hit_if_active(now: u64) -> bool {
+    let (active, should_warn) = with_state_mut(|state| {
+        let mut health = *state.system_tx_health.get();
+        if now >= health.backoff_until_ts {
+            return (false, false);
+        }
+        health.backoff_hits = health.backoff_hits.saturating_add(1);
+        let should_warn = health.last_warn_ts == 0
+            || now.saturating_sub(health.last_warn_ts) >= OPS_WARN_RATE_LIMIT_SECS;
+        if should_warn {
+            health.last_warn_ts = now;
+        }
+        state.system_tx_health.set(health);
+        (true, should_warn)
+    });
+    if should_warn {
+        eprintln!("system tx execution skipped: backoff active");
+    }
+    active
+}
+
+fn record_system_tx_failure(now: u64) {
+    let should_warn = with_state_mut(|state| {
+        let mut health = *state.system_tx_health.get();
+        health.consecutive_failures = health.consecutive_failures.saturating_add(1);
+        health.last_fail_ts = now;
+        health.backoff_until_ts = now.saturating_add(SYSTEM_TX_BACKOFF_SECS);
+        let should_warn = health.last_warn_ts == 0
+            || now.saturating_sub(health.last_warn_ts) >= OPS_WARN_RATE_LIMIT_SECS;
+        if should_warn {
+            health.last_warn_ts = now;
+        }
+        state.system_tx_health.set(health);
+        should_warn
+    });
+    if should_warn {
+        eprintln!("system tx execution failed; backoff enabled");
+    }
+}
+
+fn clear_system_tx_failure_streak() {
+    with_state_mut(|state| {
+        let mut health = *state.system_tx_health.get();
+        health.consecutive_failures = 0;
+        health.backoff_until_ts = 0;
+        state.system_tx_health.set(health);
+    });
+}
+
+fn now_sec() -> u64 {
+    #[cfg(test)]
+    {
+        let injected = TEST_NOW_SEC.load(Ordering::Relaxed);
+        if injected != 0 {
+            return injected;
+        }
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        return ic_cdk::api::time() / 1_000_000_000;
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+    }
+}
+
+#[cfg(test)]
+fn set_test_now_sec(value: u64) {
+    TEST_NOW_SEC.store(value, Ordering::Relaxed);
 }
 
 fn promote_if_next_nonce(
@@ -1487,16 +1574,48 @@ fn drop_invalid_fee_pending_decode(
     }
 }
 
-fn drop_exec_pending(state: &mut evm_db::stable_state::StableState, tx_id: TxId, sender: SenderKey) {
+fn drop_exec_pending_sync(state: &mut evm_db::stable_state::StableState, tx_id: TxId) {
+    let has_pending = state.pending_meta_by_tx_id.get(&tx_id).is_some();
+    let has_ready = state.ready_key_by_tx_id.get(&tx_id).is_some();
+    if !has_pending && !has_ready {
+        return;
+    }
     remove_ready_by_tx_id(state, tx_id);
     if let Some(pending_key) = state.pending_meta_by_tx_id.remove(&tx_id) {
         state.pending_by_sender_nonce.remove(&pending_key);
+        finalize_pending_for_sender(state, pending_key.sender, tx_id);
     }
-    finalize_pending_for_sender(state, sender, tx_id);
     mark_dropped_and_purge_payload(state, tx_id, DROP_CODE_EXEC);
     let mut metrics = *state.metrics_state.get();
     metrics.record_drop(DROP_CODE_EXEC, 1);
     state.metrics_state.set(metrics);
+}
+
+struct SyncFinalizeGuard {
+    tx_id: TxId,
+    active: bool,
+}
+
+impl SyncFinalizeGuard {
+    fn new(tx_id: TxId) -> Self {
+        Self {
+            tx_id,
+            active: true,
+        }
+    }
+
+    fn disarm(&mut self) {
+        self.active = false;
+    }
+}
+
+impl Drop for SyncFinalizeGuard {
+    fn drop(&mut self) {
+        if !self.active {
+            return;
+        }
+        with_state_mut(|state| drop_exec_pending_sync(state, self.tx_id));
+    }
 }
 
 fn next_pending_for_sender(
@@ -1704,8 +1823,9 @@ enum RekeyError {
 #[cfg(test)]
 mod tests {
     use super::{
-        observe_exec_error, observe_exec_outcome, record_exec_halt_unknown,
+        now_sec, observe_exec_error, observe_exec_outcome, record_exec_halt_unknown,
         record_l1_snapshot_disabled_skip,
+        set_test_now_sec,
     };
     use crate::revm_exec::{ExecError, OpHaltReason};
     use evm_db::chain_data::{ReceiptLike, TxId};
@@ -1790,5 +1910,12 @@ mod tests {
         let metrics = with_state(|state| *state.ops_metrics.get());
         assert_eq!(metrics.l1_snapshot_disabled_skip_count, 3);
         assert_eq!(metrics.last_l1_snapshot_disabled_warn_ts, 80);
+    }
+
+    #[test]
+    fn now_sec_uses_injected_clock_in_tests() {
+        set_test_now_sec(123);
+        assert_eq!(now_sec(), 123);
+        set_test_now_sec(0);
     }
 }

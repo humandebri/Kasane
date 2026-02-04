@@ -48,7 +48,7 @@ update submit_ic_tx(...) -> tx_id
 update submit_eth_tx(raw_tx) -> tx_id
 update produce_block(max_txs) -> ProduceBlockStatus
 
-※ 同期実行が必要なケースは `execute_eth_raw_tx` を限定的に維持し、`execute_ic_tx` は削除する。
+※ 同期実行APIは提供しない。書き込みは `submit_* + produce_block` に統一する。
 
 1.3 最小のブロック/Tx/Receipt保存
 

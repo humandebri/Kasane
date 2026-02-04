@@ -228,10 +228,3 @@ POCは **モードA** が簡単で強い。
 * 同一stateなら同一レスポンス（決定性）
 
 ---
-
-## 9) 明確に“やらない”宣言（Phase2を守る）
-
-* pending（latestのみ）
-* eth_getLogs / filter
-* EIP-1559を真面目に（basefee固定で逃げる）
-* 過去ブロックのstate参照
