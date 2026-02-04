@@ -4,15 +4,15 @@ use crate::tx_decode_deposit::decode_op_deposit;
 use alloy_consensus::transaction::SignerRecoverable;
 use alloy_consensus::{Transaction, TxEnvelope};
 use alloy_eips::eip2718::{Decodable2718, Eip2718Error};
-use alloy_eips::Typed2718;
 use alloy_eips::eip7702::SignedAuthorization as AlloySignedAuthorization;
+use alloy_eips::Typed2718;
 use alloy_primitives::{Address as AlloyAddress, TxKind as AlloyTxKind, B256, U256 as AlloyU256};
 use evm_db::chain_data::constants::{CHAIN_ID, MAX_TX_SIZE};
 use evm_db::chain_data::TxKind;
 use revm::context::TxEnv;
 use revm::context_interface::either::Either;
 use revm::primitives::{
-    Address as RevmAddress, B256 as RevmB256, Bytes as RevmBytes, TxKind as RevmTxKind,
+    Address as RevmAddress, Bytes as RevmBytes, TxKind as RevmTxKind, B256 as RevmB256,
     U256 as RevmU256,
 };
 

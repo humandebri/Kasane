@@ -23,7 +23,7 @@ fn injected_system_tx_is_internal_only() {
         let _ = state.l1_block_info_snapshot.set(L1BlockInfoSnapshotV1 {
             schema_version: 1,
             enabled: true,
-            l2_block_number: 1,
+            l1_block_number: 1,
             l1_base_fee: 1,
             l1_blob_base_fee: 0,
         });
@@ -62,7 +62,7 @@ fn disabled_snapshot_skips_system_tx_and_keeps_user_indexing() {
         let _ = state.l1_block_info_snapshot.set(L1BlockInfoSnapshotV1 {
             schema_version: 1,
             enabled: false,
-            l2_block_number: 1,
+            l1_block_number: 1,
             l1_base_fee: 1,
             l1_blob_base_fee: 0,
         });

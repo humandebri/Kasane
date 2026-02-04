@@ -177,7 +177,7 @@ fn l1_block_info_roundtrip() {
     let snapshot = L1BlockInfoSnapshotV1 {
         schema_version: 1,
         enabled: true,
-        l2_block_number: 10,
+        l1_block_number: 10,
         l1_base_fee: 20,
         l1_blob_base_fee: 30,
     };

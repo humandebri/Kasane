@@ -113,12 +113,12 @@ fn configure_l1_params_custom(spec_id: u8, operator_fee_scalar: u128, operator_f
     });
 }
 
-fn set_snapshot(enabled: bool, l2_block_number: u64, l1_base_fee: u128) {
+fn set_snapshot(enabled: bool, l1_block_number: u64, l1_base_fee: u128) {
     with_state_mut(|state| {
         let _ = state.l1_block_info_snapshot.set(L1BlockInfoSnapshotV1 {
             schema_version: 1,
             enabled,
-            l2_block_number,
+            l1_block_number,
             l1_base_fee,
             l1_blob_base_fee: 0,
         });

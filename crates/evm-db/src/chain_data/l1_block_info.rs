@@ -101,7 +101,7 @@ impl Storable for L1BlockInfoParamsV1 {
 pub struct L1BlockInfoSnapshotV1 {
     pub schema_version: u32,
     pub enabled: bool,
-    pub l2_block_number: u64,
+    pub l1_block_number: u64,
     pub l1_base_fee: u128,
     pub l1_blob_base_fee: u128,
 }
@@ -111,7 +111,7 @@ impl L1BlockInfoSnapshotV1 {
         Self {
             schema_version: 1,
             enabled: false,
-            l2_block_number: 0,
+            l1_block_number: 0,
             l1_base_fee: 0,
             l1_blob_base_fee: 0,
         }
@@ -129,7 +129,7 @@ impl Storable for L1BlockInfoSnapshotV1 {
         let mut out = [0u8; L1_BLOCK_INFO_SNAPSHOT_SIZE_U32 as usize];
         out[0..4].copy_from_slice(&self.schema_version.to_be_bytes());
         out[4] = u8::from(self.enabled);
-        out[8..16].copy_from_slice(&self.l2_block_number.to_be_bytes());
+        out[8..16].copy_from_slice(&self.l1_block_number.to_be_bytes());
         out[16..32].copy_from_slice(&self.l1_base_fee.to_be_bytes());
         out[32..48].copy_from_slice(&self.l1_blob_base_fee.to_be_bytes());
         Cow::Owned(out.to_vec())
@@ -148,8 +148,8 @@ impl Storable for L1BlockInfoSnapshotV1 {
         let mut schema = [0u8; 4];
         schema.copy_from_slice(&data[0..4]);
         let enabled = data[4] != 0;
-        let mut l2_block = [0u8; 8];
-        l2_block.copy_from_slice(&data[8..16]);
+        let mut l1_block = [0u8; 8];
+        l1_block.copy_from_slice(&data[8..16]);
         let mut l1_base_fee = [0u8; 16];
         l1_base_fee.copy_from_slice(&data[16..32]);
         let mut l1_blob_base_fee = [0u8; 16];
@@ -157,7 +157,7 @@ impl Storable for L1BlockInfoSnapshotV1 {
         Self {
             schema_version: u32::from_be_bytes(schema),
             enabled,
-            l2_block_number: u64::from_be_bytes(l2_block),
+            l1_block_number: u64::from_be_bytes(l1_block),
             l1_base_fee: u128::from_be_bytes(l1_base_fee),
             l1_blob_base_fee: u128::from_be_bytes(l1_blob_base_fee),
         }

@@ -138,7 +138,11 @@ pub fn export_blocks(
                     continue;
                 }
                 let available = payload_len.saturating_sub(offset);
-                let take = if available > remaining { remaining } else { available };
+                let take = if available > remaining {
+                    remaining
+                } else {
+                    available
+                };
                 let start =
                     usize::try_from(offset).map_err(|_| ExportError::InvalidCursor("offset"))?;
                 let end = start
@@ -225,9 +229,12 @@ fn build_block_payloads(
     let block_payload = block_bytes;
     let payloads = [block_payload, receipts_payload, tx_index_payload];
     let payload_lens = [
-        u32::try_from(payloads[0].len()).map_err(|_| ExportError::InvalidCursor("block too large"))?,
-        u32::try_from(payloads[1].len()).map_err(|_| ExportError::InvalidCursor("receipts too large"))?,
-        u32::try_from(payloads[2].len()).map_err(|_| ExportError::InvalidCursor("tx_index too large"))?,
+        u32::try_from(payloads[0].len())
+            .map_err(|_| ExportError::InvalidCursor("block too large"))?,
+        u32::try_from(payloads[1].len())
+            .map_err(|_| ExportError::InvalidCursor("receipts too large"))?,
+        u32::try_from(payloads[2].len())
+            .map_err(|_| ExportError::InvalidCursor("tx_index too large"))?,
     ];
     for len in payload_lens.iter() {
         if *len > MAX_SEGMENT_LEN {

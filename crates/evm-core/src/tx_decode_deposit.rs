@@ -4,7 +4,7 @@ use crate::tx_decode::{DecodeError, DepositInvalidReason};
 use evm_db::chain_data::constants::{CHAIN_ID, MAX_TX_SIZE};
 use op_revm::transaction::OpTransaction;
 use revm::context::TxEnv;
-use revm::primitives::{Address, B256, Bytes, TxKind, U256};
+use revm::primitives::{Address, Bytes, TxKind, B256, U256};
 
 const OP_DEPOSIT_WIRE_V1: u8 = 1;
 // version + source_hash + from + to_flag + mint + value + gas_limit + is_system + data_len
@@ -32,59 +32,81 @@ struct OpDepositWireV1 {
 impl OpDepositWireV1 {
     fn decode(bytes: &[u8]) -> Result<Self, DecodeError> {
         if bytes.len() < OP_DEPOSIT_MIN_LEN {
-            return Err(DecodeError::DepositInvalid(DepositInvalidReason::LengthMismatch));
+            return Err(DecodeError::DepositInvalid(
+                DepositInvalidReason::LengthMismatch,
+            ));
         }
         let mut cursor = 0usize;
         let version = bytes[cursor];
         cursor += 1;
         if version != OP_DEPOSIT_WIRE_V1 {
-            return Err(DecodeError::DepositInvalid(DepositInvalidReason::VersionMismatch));
+            return Err(DecodeError::DepositInvalid(
+                DepositInvalidReason::VersionMismatch,
+            ));
         }
 
-        let source_hash = read_fixed_32(bytes, &mut cursor)
-            .ok_or(DecodeError::DepositInvalid(DepositInvalidReason::LengthMismatch))?;
-        let from = read_fixed_20(bytes, &mut cursor)
-            .ok_or(DecodeError::DepositInvalid(DepositInvalidReason::LengthMismatch))?;
+        let source_hash = read_fixed_32(bytes, &mut cursor).ok_or(DecodeError::DepositInvalid(
+            DepositInvalidReason::LengthMismatch,
+        ))?;
+        let from = read_fixed_20(bytes, &mut cursor).ok_or(DecodeError::DepositInvalid(
+            DepositInvalidReason::LengthMismatch,
+        ))?;
 
-        let to_flag = *bytes
-            .get(cursor)
-            .ok_or(DecodeError::DepositInvalid(DepositInvalidReason::LengthMismatch))?;
+        let to_flag = *bytes.get(cursor).ok_or(DecodeError::DepositInvalid(
+            DepositInvalidReason::LengthMismatch,
+        ))?;
         cursor += 1;
         let to = match to_flag {
             0 => None,
             1 => Some(
-                read_fixed_20(bytes, &mut cursor)
-                    .ok_or(DecodeError::DepositInvalid(DepositInvalidReason::LengthMismatch))?,
+                read_fixed_20(bytes, &mut cursor).ok_or(DecodeError::DepositInvalid(
+                    DepositInvalidReason::LengthMismatch,
+                ))?,
             ),
             _ => return Err(DecodeError::DepositInvalid(DepositInvalidReason::BadToFlag)),
         };
 
-        let mint = read_fixed_32(bytes, &mut cursor)
-            .ok_or(DecodeError::DepositInvalid(DepositInvalidReason::LengthMismatch))?;
-        let value = read_fixed_32(bytes, &mut cursor)
-            .ok_or(DecodeError::DepositInvalid(DepositInvalidReason::LengthMismatch))?;
-        let gas_limit = read_u64_be(bytes, &mut cursor)
-            .ok_or(DecodeError::DepositInvalid(DepositInvalidReason::LengthMismatch))?;
-        let is_system = *bytes
-            .get(cursor)
-            .ok_or(DecodeError::DepositInvalid(DepositInvalidReason::LengthMismatch))?;
+        let mint = read_fixed_32(bytes, &mut cursor).ok_or(DecodeError::DepositInvalid(
+            DepositInvalidReason::LengthMismatch,
+        ))?;
+        let value = read_fixed_32(bytes, &mut cursor).ok_or(DecodeError::DepositInvalid(
+            DepositInvalidReason::LengthMismatch,
+        ))?;
+        let gas_limit = read_u64_be(bytes, &mut cursor).ok_or(DecodeError::DepositInvalid(
+            DepositInvalidReason::LengthMismatch,
+        ))?;
+        let is_system = *bytes.get(cursor).ok_or(DecodeError::DepositInvalid(
+            DepositInvalidReason::LengthMismatch,
+        ))?;
         cursor += 1;
         let is_system_transaction = match is_system {
             0 => false,
             // PR2方針: Regolith以降を前提にし、wireからのsystem depositは許可しない。
-            1 => return Err(DecodeError::DepositInvalid(DepositInvalidReason::BadIsSystemFlag)),
-            _ => return Err(DecodeError::DepositInvalid(DepositInvalidReason::BadIsSystemFlag)),
+            1 => {
+                return Err(DecodeError::DepositInvalid(
+                    DepositInvalidReason::BadIsSystemFlag,
+                ))
+            }
+            _ => {
+                return Err(DecodeError::DepositInvalid(
+                    DepositInvalidReason::BadIsSystemFlag,
+                ))
+            }
         };
 
-        let data_len = read_u32_be(bytes, &mut cursor)
-            .ok_or(DecodeError::DepositInvalid(DepositInvalidReason::LengthMismatch))?
-            as usize;
+        let data_len = read_u32_be(bytes, &mut cursor).ok_or(DecodeError::DepositInvalid(
+            DepositInvalidReason::LengthMismatch,
+        ))? as usize;
         if data_len > MAX_TX_SIZE {
-            return Err(DecodeError::DepositInvalid(DepositInvalidReason::DataTooLarge));
+            return Err(DecodeError::DepositInvalid(
+                DepositInvalidReason::DataTooLarge,
+            ));
         }
         let end = cursor.saturating_add(data_len);
         if end != bytes.len() {
-            return Err(DecodeError::DepositInvalid(DepositInvalidReason::LengthMismatch));
+            return Err(DecodeError::DepositInvalid(
+                DepositInvalidReason::LengthMismatch,
+            ));
         }
         let data = bytes[cursor..end].to_vec();
 
@@ -102,7 +124,9 @@ impl OpDepositWireV1 {
 
     fn validate(&self) -> Result<(), DecodeError> {
         if self.source_hash == [0u8; 32] {
-            return Err(DecodeError::DepositInvalid(DepositInvalidReason::SourceHashZero));
+            return Err(DecodeError::DepositInvalid(
+                DepositInvalidReason::SourceHashZero,
+            ));
         }
         Ok(())
     }
@@ -126,9 +150,9 @@ impl OpDepositWireV1 {
             op_tx_builder = op_tx_builder.mint(mint_u128);
         }
 
-        op_tx_builder
-            .build()
-            .map_err(|_| DecodeError::DepositInvalid(DepositInvalidReason::OpRevmValidationFailed))?;
+        op_tx_builder.build().map_err(|_| {
+            DecodeError::DepositInvalid(DepositInvalidReason::OpRevmValidationFailed)
+        })?;
         Ok(())
     }
 

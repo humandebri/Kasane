@@ -27,7 +27,7 @@ fn produce_block_backoff_counts_only_real_system_tx_failures() {
         let _ = state.l1_block_info_snapshot.set(L1BlockInfoSnapshotV1 {
             schema_version: 1,
             enabled: true,
-            l2_block_number: 1,
+            l1_block_number: 1,
             l1_base_fee: 1,
             l1_blob_base_fee: 0,
         });
@@ -209,7 +209,7 @@ fn configure_l1(spec_id: u8, enabled: bool) {
         let _ = state.l1_block_info_snapshot.set(L1BlockInfoSnapshotV1 {
             schema_version: 1,
             enabled,
-            l2_block_number: 1,
+            l1_block_number: 1,
             l1_base_fee: 1,
             l1_blob_base_fee: 0,
         });

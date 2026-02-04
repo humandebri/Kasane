@@ -50,19 +50,6 @@ type EthTxView = record {
   eth_tx_hash : opt blob;
   decoded : opt DecodedTxView;
 };
-type ExecResultDto = record {
-  status : nat8;
-  tx_id : blob;
-  tx_index : nat32;
-  return_data : opt blob;
-  block_number : nat64;
-  gas_used : nat64;
-};
-type ExecuteTxError = variant {
-  Internal : text;
-  Rejected : text;
-  InvalidArgument : text;
-};
 type ExportChunkView = record {
   start : nat32;
   segment : nat8;
@@ -94,7 +81,6 @@ type HealthView = record {
   queue_len : nat64;
   auto_mine_enabled : bool;
 };
-// NOTE: opt is kept for wire compatibility, but runtime rejects null/opt none.
 type InitArgs = record { genesis_balances : vec GenesisBalanceView };
 type L1BlockInfoParamsView = record {
   operator_fee_constant : nat;
@@ -107,7 +93,7 @@ type L1BlockInfoParamsView = record {
 };
 type L1BlockInfoSnapshotView = record {
   l1_blob_base_fee : nat;
-  l2_block_number : nat64;
+  l1_block_number : nat64;
   l1_base_fee : nat;
   enabled : bool;
 };
@@ -214,15 +200,14 @@ type ReceiptView = record {
   gas_used : nat64;
   contract_address : opt blob;
 };
-type Result = variant { Ok : ExecResultDto; Err : ExecuteTxError };
-type Result_1 = variant { Ok : nat64; Err : text };
-type Result_2 = variant { Ok : ExportResponseView; Err : ExportErrorView };
-type Result_3 = variant { Ok : BlockView; Err : LookupError };
-type Result_4 = variant { Ok : ReceiptView; Err : LookupError };
-type Result_5 = variant { Ok : ProduceBlockStatus; Err : ProduceBlockError };
-type Result_6 = variant { Ok : PruneResultView; Err : ProduceBlockError };
-type Result_7 = variant { Ok : blob; Err : SubmitTxError };
-type Result_8 = variant { Ok; Err : text };
+type Result = variant { Ok : nat64; Err : text };
+type Result_1 = variant { Ok : ExportResponseView; Err : ExportErrorView };
+type Result_2 = variant { Ok : BlockView; Err : LookupError };
+type Result_3 = variant { Ok : ReceiptView; Err : LookupError };
+type Result_4 = variant { Ok : ProduceBlockStatus; Err : ProduceBlockError };
+type Result_5 = variant { Ok : PruneResultView; Err : ProduceBlockError };
+type Result_6 = variant { Ok : blob; Err : SubmitTxError };
+type Result_7 = variant { Ok; Err : text };
 type SubmitTxError = variant {
   Internal : text;
   Rejected : text;
@@ -230,9 +215,9 @@ type SubmitTxError = variant {
 };
 type TxKindView = variant { OpDeposit; EthSigned; IcSynthetic };
 service : (opt InitArgs) -> {
-  expected_nonce_by_address : (blob) -> (Result_1) query;
-  export_blocks : (opt ExportCursorView, nat32) -> (Result_2) query;
-  get_block : (nat64) -> (Result_3) query;
+  expected_nonce_by_address : (blob) -> (Result) query;
+  export_blocks : (opt ExportCursorView, nat32) -> (Result_1) query;
+  get_block : (nat64) -> (Result_2) query;
   get_cycle_balance : () -> (nat) query;
   get_l1_block_info_params : () -> (L1BlockInfoParamsView) query;
   get_l1_block_info_snapshot : () -> (L1BlockInfoSnapshotView) query;
@@ -240,24 +225,24 @@ service : (opt InitArgs) -> {
   get_pending : (blob) -> (PendingStatusView) query;
   get_prune_status : () -> (PruneStatusView) query;
   get_queue_snapshot : (nat32, opt nat64) -> (QueueSnapshotView) query;
-  get_receipt : (blob) -> (Result_4) query;
+  get_receipt : (blob) -> (Result_3) query;
   health : () -> (HealthView) query;
   metrics : (nat64) -> (MetricsView) query;
-  produce_block : (nat32) -> (Result_5);
-  prune_blocks : (nat64, nat32) -> (Result_6);
+  produce_block : (nat32) -> (Result_4);
+  prune_blocks : (nat64, nat32) -> (Result_5);
   rpc_eth_block_number : () -> (nat64) query;
   rpc_eth_chain_id : () -> (nat64) query;
   rpc_eth_get_block_by_number : (nat64, bool) -> (opt EthBlockView) query;
   rpc_eth_get_transaction_by_hash : (blob) -> (opt EthTxView) query;
   rpc_eth_get_transaction_receipt : (blob) -> (opt EthReceiptView) query;
-  rpc_eth_send_raw_transaction : (blob) -> (Result_7);
-  set_auto_mine : (bool) -> (Result_8);
-  set_l1_block_info_params : (L1BlockInfoParamsView) -> (Result_8);
-  set_l1_block_info_snapshot : (L1BlockInfoSnapshotView) -> (Result_8);
-  set_mining_interval_ms : (nat64) -> (Result_8);
-  set_ops_config : (OpsConfigView) -> (Result_8);
-  set_prune_policy : (PrunePolicyView) -> (Result_8);
-  set_pruning_enabled : (bool) -> (Result_8);
-  submit_eth_tx : (blob) -> (Result_7);
-  submit_ic_tx : (blob) -> (Result_7);
+  rpc_eth_send_raw_transaction : (blob) -> (Result_6);
+  set_auto_mine : (bool) -> (Result_7);
+  set_l1_block_info_params : (L1BlockInfoParamsView) -> (Result_7);
+  set_l1_block_info_snapshot : (L1BlockInfoSnapshotView) -> (Result_7);
+  set_mining_interval_ms : (nat64) -> (Result_7);
+  set_ops_config : (OpsConfigView) -> (Result_7);
+  set_prune_policy : (PrunePolicyView) -> (Result_7);
+  set_pruning_enabled : (bool) -> (Result_7);
+  submit_eth_tx : (blob) -> (Result_6);
+  submit_ic_tx : (blob) -> (Result_6);
 }

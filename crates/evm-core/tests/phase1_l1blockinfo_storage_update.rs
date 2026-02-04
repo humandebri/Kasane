@@ -12,10 +12,12 @@ use revm::primitives::U256;
 #[test]
 fn enabled_snapshot_updates_l1_storage_v1_layout() {
     init_stable_state();
-    install_l1block_mock_runtime();
-    configure_l1(101, true, 777, 0);
+    install_l1block_mock_runtime(0x04);
+    configure_l1(101, true, 123, 777, 0);
     run_single_user_tx(0x61);
 
+    let slot0 = read_storage_word(0);
+    assert_eq!(slot0, U256::from(123u64));
     let slot1 = read_storage_word(1);
     assert_eq!(slot1, U256::from(777u64));
     assert_user_accounting_is_not_polluted();
@@ -24,10 +26,12 @@ fn enabled_snapshot_updates_l1_storage_v1_layout() {
 #[test]
 fn enabled_snapshot_updates_l1_storage_v2_layout() {
     init_stable_state();
-    install_l1block_mock_runtime();
-    configure_l1(103, true, 888, 222);
+    install_l1block_mock_runtime(0x84);
+    configure_l1(103, true, 456, 888, 222);
     run_single_user_tx(0x62);
 
+    let slot0 = read_storage_word(0);
+    assert_eq!(slot0, U256::from(456u64));
     let slot2 = read_storage_word(2);
     assert_eq!(slot2, U256::from(888u64));
     assert_user_accounting_is_not_polluted();
@@ -36,16 +40,23 @@ fn enabled_snapshot_updates_l1_storage_v2_layout() {
 #[test]
 fn disabled_snapshot_skips_l1_storage_update() {
     init_stable_state();
-    install_l1block_mock_runtime();
-    configure_l1(101, false, 999, 0);
+    install_l1block_mock_runtime(0x04);
+    configure_l1(101, false, 999, 999, 0);
     run_single_user_tx(0x63);
 
+    assert_eq!(read_storage_word(0), U256::ZERO);
     assert_eq!(read_storage_word(1), U256::ZERO);
     assert_eq!(read_storage_word(2), U256::ZERO);
     assert_user_accounting_is_not_polluted();
 }
 
-fn configure_l1(spec_id: u8, enabled: bool, l1_base_fee: u128, l1_blob_base_fee: u128) {
+fn configure_l1(
+    spec_id: u8,
+    enabled: bool,
+    l1_block_number: u64,
+    l1_base_fee: u128,
+    l1_blob_base_fee: u128,
+) {
     with_state_mut(|state| {
         let _ = state.l1_block_info_params.set(L1BlockInfoParamsV1 {
             schema_version: 1,
@@ -60,7 +71,7 @@ fn configure_l1(spec_id: u8, enabled: bool, l1_base_fee: u128, l1_blob_base_fee:
         let _ = state.l1_block_info_snapshot.set(L1BlockInfoSnapshotV1 {
             schema_version: 1,
             enabled,
-            l2_block_number: 1,
+            l1_block_number,
             l1_base_fee,
             l1_blob_base_fee,
         });
@@ -93,9 +104,11 @@ fn install_user_stop_contract(address: [u8; 20]) {
     });
 }
 
-fn install_l1block_mock_runtime() {
-    // slot0 = calldataload(0), slot1 = calldataload(0x44), slot2 = calldataload(0xa4)
-    let code = hex_to_bytes("60003560005560443560015560a43560025500");
+fn install_l1block_mock_runtime(block_number_offset: u8) {
+    // slot0 = calldataload(block_number_offset), slot1 = calldataload(0x44), slot2 = calldataload(0xa4)
+    let code = hex_to_bytes(&format!(
+        "60{block_number_offset:02x}3560005560443560015560a43560025500"
+    ));
     let code_hash = hash::keccak256(&code);
     let mut addr = [0u8; 20];
     addr.copy_from_slice(L1_BLOCK_CONTRACT.as_ref());

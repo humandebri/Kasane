@@ -7,16 +7,16 @@ use crate::revm_exec::{
     ExecError, ExecOutcome, ExecPath, OpHaltReason,
 };
 use crate::state_root::compute_state_root_with;
-use crate::tx_submit;
 use crate::tx_decode::decode_tx;
+use crate::tx_submit;
 use evm_db::chain_data::constants::{
-    DEFAULT_BLOCK_GAS_LIMIT, DROP_CODE_CALLER_MISSING, DROP_CODE_DECODE, DROP_CODE_MISSING,
-    DROP_CODE_EXEC, DROP_CODE_INVALID_FEE, DROP_CODE_REPLACED, MAX_PENDING_GLOBAL,
+    DEFAULT_BLOCK_GAS_LIMIT, DROP_CODE_CALLER_MISSING, DROP_CODE_DECODE, DROP_CODE_EXEC,
+    DROP_CODE_INVALID_FEE, DROP_CODE_MISSING, DROP_CODE_REPLACED, MAX_PENDING_GLOBAL,
     MAX_PENDING_PER_SENDER, MAX_TX_SIZE, READY_CANDIDATE_LIMIT,
 };
 use evm_db::chain_data::{
-    BlockData, Head, PruneJournal, PrunePolicy, ReceiptLike, ReadyKey, SenderKey,
-    SenderNonceKey, StoredTx, StoredTxBytes, TxId, TxIndexEntry, TxKind, TxLoc,
+    BlockData, Head, PruneJournal, PrunePolicy, ReadyKey, ReceiptLike, SenderKey, SenderNonceKey,
+    StoredTx, StoredTxBytes, TxId, TxIndexEntry, TxKind, TxLoc,
 };
 use evm_db::memory::VMem;
 use evm_db::stable_state::{with_state, with_state_mut, StableState};
@@ -27,15 +27,9 @@ use ic_stable_structures::Storable;
 use revm::primitives::Address;
 use revm::primitives::U256;
 use std::borrow::Cow;
-use std::time::{SystemTime, UNIX_EPOCH};
-#[cfg(test)]
-use std::sync::atomic::{AtomicU64, Ordering};
 
 const SYSTEM_TX_BACKOFF_SECS: u64 = 2;
 const OPS_WARN_RATE_LIMIT_SECS: u64 = 60;
-
-#[cfg(test)]
-static TEST_NOW_SEC: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ChainError {
@@ -228,18 +222,18 @@ fn need_prune_internal(state: &StableState) -> bool {
     } else {
         false
     };
-    let cap_trigger = config.target_bytes > 0
-        && config.estimated_kept_bytes > config.high_water_bytes;
+    let cap_trigger =
+        config.target_bytes > 0 && config.estimated_kept_bytes > config.high_water_bytes;
     time_trigger || cap_trigger
 }
 
 fn compute_retain_count(state: &StableState, policy: PrunePolicy) -> u64 {
     let head = state.head.get().number;
     let config = state.prune_config.get();
-    let emergency = policy.target_bytes > 0
-        && config.estimated_kept_bytes > config.hard_emergency_bytes;
-    let cap_trigger = policy.target_bytes > 0
-        && config.estimated_kept_bytes > config.high_water_bytes;
+    let emergency =
+        policy.target_bytes > 0 && config.estimated_kept_bytes > config.hard_emergency_bytes;
+    let cap_trigger =
+        policy.target_bytes > 0 && config.estimated_kept_bytes > config.high_water_bytes;
     if emergency || cap_trigger {
         // 容量トリガ発動時は retain を無視して古い方から削る
         return 1;
@@ -261,7 +255,11 @@ fn compute_retain_count(state: &StableState, policy: PrunePolicy) -> u64 {
         }
     }
     let retain = head.saturating_sub(retain_min_block).saturating_add(1);
-    if retain == 0 { 1 } else { retain }
+    if retain == 0 {
+        1
+    } else {
+        retain
+    }
 }
 
 fn find_block_at_timestamp(state: &StableState, cutoff_ts: u64) -> Option<(u64, u64)> {
@@ -321,13 +319,22 @@ pub fn submit_tx(kind: TxKind, tx_bytes: Vec<u8>) -> Result<TxId, ChainError> {
         }
         let effective_gas_price = compute_effective_gas_price(
             max_fee_per_gas,
-            if is_dynamic_fee { max_priority_fee_per_gas } else { 0 },
+            if is_dynamic_fee {
+                max_priority_fee_per_gas
+            } else {
+                0
+            },
             base_fee,
         )
         .ok_or(ChainError::InvalidFee)?;
         let sender_key = SenderKey::new(address_to_bytes(tx_env.caller));
-        let replaced =
-            apply_nonce_and_replacement(state, sender_key, tx_env.nonce, effective_gas_price, base_fee)?;
+        let replaced = apply_nonce_and_replacement(
+            state,
+            sender_key,
+            tx_env.nonce,
+            effective_gas_price,
+            base_fee,
+        )?;
         if replaced.is_none() {
             enforce_pending_caps(state, sender_key)?;
         }
@@ -409,12 +416,21 @@ pub fn submit_ic_tx(
         }
         let effective_gas_price = compute_effective_gas_price(
             max_fee_per_gas,
-            if is_dynamic_fee { max_priority_fee_per_gas } else { 0 },
+            if is_dynamic_fee {
+                max_priority_fee_per_gas
+            } else {
+                0
+            },
             base_fee,
         )
         .ok_or(ChainError::InvalidFee)?;
-        let replaced =
-            apply_nonce_and_replacement(state, sender_key, tx_env.nonce, effective_gas_price, base_fee)?;
+        let replaced = apply_nonce_and_replacement(
+            state,
+            sender_key,
+            tx_env.nonce,
+            effective_gas_price,
+            base_fee,
+        )?;
         if replaced.is_none() {
             enforce_pending_caps(state, sender_key)?;
         }
@@ -476,7 +492,11 @@ pub fn expected_nonce_for_sender_view(sender: [u8; 20]) -> u64 {
             return value;
         }
         let key = make_account_key(sender);
-        state.accounts.get(&key).map(|value| value.nonce()).unwrap_or(0)
+        state
+            .accounts
+            .get(&key)
+            .map(|value| value.nonce())
+            .unwrap_or(0)
     })
 }
 
@@ -569,12 +589,7 @@ pub fn produce_block(max_txs: usize) -> Result<BlockData, ChainError> {
                 continue;
             }
         };
-        if !min_fee_satisfied(
-            &tx_env,
-            exec_ctx.base_fee,
-            min_priority_fee,
-            min_gas_price,
-        ) {
+        if !min_fee_satisfied(&tx_env, exec_ctx.base_fee, min_priority_fee, min_gas_price) {
             let sender_bytes = address_to_bytes(tx_env.caller);
             prepared.push(PreparedItem::Drop(QueuedDrop {
                 tx_id,
@@ -612,7 +627,10 @@ pub fn produce_block(max_txs: usize) -> Result<BlockData, ChainError> {
     }
 
     // 方針: user tx を1件も実行できない場合は空ブロックを作らず system tx も実行しない。
-    if !prepared.iter().any(|item| matches!(item, PreparedItem::Tx(_))) {
+    if !prepared
+        .iter()
+        .any(|item| matches!(item, PreparedItem::Tx(_)))
+    {
         return Err(ChainError::NoExecutableTx);
     }
 
@@ -662,7 +680,11 @@ pub fn produce_block(max_txs: usize) -> Result<BlockData, ChainError> {
                     with_state_mut(|state| {
                         mark_dropped_and_purge_payload(state, tx_id, DROP_CODE_INVALID_FEE)
                     });
-                    track_drop(&mut dropped_total, &mut dropped_by_code, DROP_CODE_INVALID_FEE);
+                    track_drop(
+                        &mut dropped_total,
+                        &mut dropped_by_code,
+                        DROP_CODE_INVALID_FEE,
+                    );
                     with_state_mut(|state| {
                         advance_sender_after_tx(
                             state,
@@ -689,13 +711,21 @@ pub fn produce_block(max_txs: usize) -> Result<BlockData, ChainError> {
                     contract_address: None,
                     logs: Vec::new(),
                 };
-        with_state_mut(|state| {
-            let tx_index_ptr = store_tx_index_entry(state, TxIndexEntry { block_number: number, tx_index });
-            let receipt_ptr = store_receipt(state, &receipt);
-            state.tx_index.insert(tx_id, tx_index_ptr);
-            state.receipts.insert(tx_id, receipt_ptr);
-            state.tx_locs.insert(tx_id, TxLoc::included(number, tx_index));
-        });
+                with_state_mut(|state| {
+                    let tx_index_ptr = store_tx_index_entry(
+                        state,
+                        TxIndexEntry {
+                            block_number: number,
+                            tx_index,
+                        },
+                    );
+                    let receipt_ptr = store_receipt(state, &receipt);
+                    state.tx_index.insert(tx_id, tx_index_ptr);
+                    state.receipts.insert(tx_id, receipt_ptr);
+                    state
+                        .tx_locs
+                        .insert(tx_id, TxLoc::included(number, tx_index));
+                });
                 included.push(tx_id);
                 with_state_mut(|state| {
                     advance_sender_after_tx(
@@ -775,8 +805,11 @@ pub fn produce_block(max_txs: usize) -> Result<BlockData, ChainError> {
         let mut chain_state = *state.chain_state.get();
         chain_state.last_block_number = number;
         chain_state.last_block_time = timestamp;
-        chain_state.base_fee =
-            compute_next_base_fee(chain_state.base_fee, block_gas_used, DEFAULT_BLOCK_GAS_LIMIT);
+        chain_state.base_fee = compute_next_base_fee(
+            chain_state.base_fee,
+            block_gas_used,
+            DEFAULT_BLOCK_GAS_LIMIT,
+        );
         state.chain_state.set(chain_state);
     });
 
@@ -856,10 +889,7 @@ fn store_receipt(state: &mut StableState, receipt: &ReceiptLike) -> evm_db::blob
     ptr
 }
 
-fn store_tx_index_entry(
-    state: &mut StableState,
-    entry: TxIndexEntry,
-) -> evm_db::blob_ptr::BlobPtr {
+fn store_tx_index_entry(state: &mut StableState, entry: TxIndexEntry) -> evm_db::blob_ptr::BlobPtr {
     let bytes = entry.to_bytes().into_owned();
     let ptr = state
         .blob_store
@@ -930,7 +960,15 @@ fn execute_and_seal_with_caller(
     let sender_bytes = address_to_bytes(tx_env.caller);
     let sender_nonce = tx_env.nonce;
 
-    let outcome = match execute_tx(tx_id, 0, kind, &stored.raw, tx_env, &exec_ctx, ExecPath::UserTx) {
+    let outcome = match execute_tx(
+        tx_id,
+        0,
+        kind,
+        &stored.raw,
+        tx_env,
+        &exec_ctx,
+        ExecPath::UserTx,
+    ) {
         Ok(value) => value,
         Err(err) => {
             observe_exec_error(&err, timestamp);
@@ -967,12 +1005,7 @@ fn execute_and_seal_with_caller(
         state
             .tx_locs
             .insert(tx_id, TxLoc::included(number, outcome.tx_index));
-        advance_sender_after_tx(
-            state,
-            tx_id,
-            Some(sender_bytes),
-            Some(sender_nonce),
-        );
+        advance_sender_after_tx(state, tx_id, Some(sender_bytes), Some(sender_nonce));
         let mut chain_state = *state.chain_state.get();
         chain_state.last_block_number = number;
         chain_state.last_block_time = timestamp;
@@ -1051,12 +1084,9 @@ pub fn prune_blocks(retain: u64, max_ops: u32) -> Result<PruneResult, ChainError
                     .mark_quarantine(ptr)
                     .map_err(|_| ChainError::ExecFailed(None))?;
             }
-            state.prune_journal.insert(
-                next,
-                PruneJournal {
-                    ptrs: ptrs.clone(),
-                },
-            );
+            state
+                .prune_journal
+                .insert(next, PruneJournal { ptrs: ptrs.clone() });
             prune_state.set_journal_block(next);
 
             let _ = state.blocks.remove(&next);
@@ -1157,17 +1187,13 @@ fn collect_ptrs_for_block(
 
 fn increment_estimated_kept_bytes(state: &mut StableState, class: u32) {
     let mut config = *state.prune_config.get();
-    config.estimated_kept_bytes = config
-        .estimated_kept_bytes
-        .saturating_add(u64::from(class));
+    config.estimated_kept_bytes = config.estimated_kept_bytes.saturating_add(u64::from(class));
     state.prune_config.set(config);
 }
 
 fn decrement_estimated_kept_bytes(state: &mut StableState, class: u32) {
     let mut config = *state.prune_config.get();
-    config.estimated_kept_bytes = config
-        .estimated_kept_bytes
-        .saturating_sub(u64::from(class));
+    config.estimated_kept_bytes = config.estimated_kept_bytes.saturating_sub(u64::from(class));
     state.prune_config.set(config);
 }
 
@@ -1234,14 +1260,22 @@ pub fn get_queue_snapshot(limit: usize, cursor: Option<u64>) -> QueueSnapshot {
             }
             let seq = entry.key().seq();
             let tx_id = entry.value();
-            let stored = match state.tx_store.get(&tx_id).and_then(|e| StoredTx::try_from(e).ok()) {
+            let stored = match state
+                .tx_store
+                .get(&tx_id)
+                .and_then(|e| StoredTx::try_from(e).ok())
+            {
                 Some(value) => value,
                 None => {
                     seen = seen.saturating_add(1);
                     continue;
                 }
             };
-            items.push(QueueItem { seq, tx_id, kind: stored.kind });
+            items.push(QueueItem {
+                seq,
+                tx_id,
+                kind: stored.kind,
+            });
             seen = seen.saturating_add(1);
         }
         QueueSnapshot { items, next_cursor }
@@ -1309,7 +1343,8 @@ fn record_exec_halt_unknown(now: u64) {
         let mut metrics = *state.ops_metrics.get();
         metrics.exec_halt_unknown_count = metrics.exec_halt_unknown_count.saturating_add(1);
         let should_warn = metrics.last_exec_halt_unknown_warn_ts == 0
-            || now.saturating_sub(metrics.last_exec_halt_unknown_warn_ts) >= OPS_WARN_RATE_LIMIT_SECS;
+            || now.saturating_sub(metrics.last_exec_halt_unknown_warn_ts)
+                >= OPS_WARN_RATE_LIMIT_SECS;
         if should_warn {
             metrics.last_exec_halt_unknown_warn_ts = now;
         }
@@ -1371,29 +1406,12 @@ fn clear_system_tx_failure_streak() {
 }
 
 fn now_sec() -> u64 {
-    #[cfg(test)]
-    {
-        let injected = TEST_NOW_SEC.load(Ordering::Relaxed);
-        if injected != 0 {
-            return injected;
-        }
-    }
-    #[cfg(target_arch = "wasm32")]
-    {
-        return ic_cdk::api::time() / 1_000_000_000;
-    }
-    #[cfg(not(target_arch = "wasm32"))]
-    {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0)
-    }
+    crate::time::now_sec()
 }
 
 #[cfg(test)]
 fn set_test_now_sec(value: u64) {
-    TEST_NOW_SEC.store(value, Ordering::Relaxed);
+    crate::time::set_test_now_sec(value);
 }
 
 fn promote_if_next_nonce(
@@ -1473,7 +1491,11 @@ fn insert_ready(
     is_dynamic_fee: bool,
     seq: u64,
 ) -> Result<(), ChainError> {
-    let priority = if is_dynamic_fee { max_priority_fee_per_gas } else { 0 };
+    let priority = if is_dynamic_fee {
+        max_priority_fee_per_gas
+    } else {
+        0
+    };
     let key = ReadyKey::new(max_fee_per_gas, priority, seq, tx_id.0);
     state.ready_queue.insert(key, tx_id);
     state.ready_key_by_tx_id.insert(tx_id, key);
@@ -1652,7 +1674,12 @@ fn load_fee_fields_and_seq(
         Some(loc) => loc.seq,
         None => return Ok(None),
     };
-    Ok(Some((max_fee_per_gas, max_priority_fee_per_gas, is_dynamic_fee, seq)))
+    Ok(Some((
+        max_fee_per_gas,
+        max_priority_fee_per_gas,
+        is_dynamic_fee,
+        seq,
+    )))
 }
 
 fn address_to_bytes(address: Address) -> [u8; 20] {
@@ -1660,7 +1687,6 @@ fn address_to_bytes(address: Address) -> [u8; 20] {
     out.copy_from_slice(address.as_ref());
     out
 }
-
 
 fn apply_nonce_and_replacement(
     state: &mut evm_db::stable_state::StableState,
@@ -1824,8 +1850,7 @@ enum RekeyError {
 mod tests {
     use super::{
         now_sec, observe_exec_error, observe_exec_outcome, record_exec_halt_unknown,
-        record_l1_snapshot_disabled_skip,
-        set_test_now_sec,
+        record_l1_snapshot_disabled_skip, set_test_now_sec,
     };
     use crate::revm_exec::{ExecError, OpHaltReason};
     use evm_db::chain_data::{ReceiptLike, TxId};

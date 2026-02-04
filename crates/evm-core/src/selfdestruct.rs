@@ -16,7 +16,10 @@ pub fn selfdestruct_address(addr20: [u8; 20]) {
         let start = make_storage_key(addr20, [0x00u8; 32]);
         let end = make_storage_key(addr20, [0xFFu8; 32]);
         let mut keys: Vec<StorageKey> = Vec::new();
-        for entry in state.storage.range((std::ops::Bound::Included(start), std::ops::Bound::Included(end))) {
+        for entry in state.storage.range((
+            std::ops::Bound::Included(start),
+            std::ops::Bound::Included(end),
+        )) {
             keys.push(*entry.key());
         }
         for key in keys.into_iter() {

@@ -6,7 +6,7 @@ use evm_db::types::keys::{make_account_key, make_code_key, make_storage_key};
 use evm_db::types::values::{AccountVal, CodeVal, U256Val};
 use ic_stable_structures::Storable;
 use revm::database_interface::{Database, DatabaseCommit};
-use revm::primitives::{Address, B256, StorageKey, StorageValue, U256, KECCAK_EMPTY};
+use revm::primitives::{Address, StorageKey, StorageValue, B256, KECCAK_EMPTY, U256};
 use revm::state::{Account, AccountInfo, Bytecode};
 use std::borrow::Cow;
 
@@ -40,7 +40,11 @@ impl Database for RevmStableDb {
         Ok(bytecode)
     }
 
-    fn storage(&mut self, address: Address, index: StorageKey) -> Result<StorageValue, Self::Error> {
+    fn storage(
+        &mut self,
+        address: Address,
+        index: StorageKey,
+    ) -> Result<StorageValue, Self::Error> {
         let addr = address_to_bytes(address);
         let slot = u256_to_bytes(index);
         let key = make_storage_key(addr, slot);
@@ -83,7 +87,9 @@ impl DatabaseCommit for RevmStableDb {
                     if present.is_zero() {
                         state.storage.remove(&storage_key);
                     } else {
-                        state.storage.insert(storage_key, U256Val(u256_to_bytes(present)));
+                        state
+                            .storage
+                            .insert(storage_key, U256Val(u256_to_bytes(present)));
                     }
                 }
 

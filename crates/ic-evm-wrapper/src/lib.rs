@@ -108,7 +108,7 @@ pub struct L1BlockInfoParamsView {
 #[derive(Clone, Debug, CandidType, Deserialize)]
 pub struct L1BlockInfoSnapshotView {
     pub enabled: bool,
-    pub l2_block_number: u64,
+    pub l1_block_number: u64,
     pub l1_base_fee: u128,
     pub l1_blob_base_fee: u128,
 }
@@ -1377,7 +1377,7 @@ fn l1_params_from_view(params: L1BlockInfoParamsView) -> L1BlockInfoParamsV1 {
 fn l1_snapshot_to_view(snapshot: L1BlockInfoSnapshotV1) -> L1BlockInfoSnapshotView {
     L1BlockInfoSnapshotView {
         enabled: snapshot.enabled,
-        l2_block_number: snapshot.l2_block_number,
+        l1_block_number: snapshot.l1_block_number,
         l1_base_fee: snapshot.l1_base_fee,
         l1_blob_base_fee: snapshot.l1_blob_base_fee,
     }
@@ -1387,7 +1387,7 @@ fn l1_snapshot_from_view(snapshot: L1BlockInfoSnapshotView) -> L1BlockInfoSnapsh
     L1BlockInfoSnapshotV1 {
         schema_version: 1,
         enabled: snapshot.enabled,
-        l2_block_number: snapshot.l2_block_number,
+        l1_block_number: snapshot.l1_block_number,
         l1_base_fee: snapshot.l1_base_fee,
         l1_blob_base_fee: snapshot.l1_blob_base_fee,
     }

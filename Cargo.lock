@@ -1736,6 +1736,7 @@ dependencies = [
  "alloy-signer-local",
  "alloy-trie",
  "evm-db",
+ "ic-cdk",
  "ic-stable-structures",
  "op-revm",
  "revm",

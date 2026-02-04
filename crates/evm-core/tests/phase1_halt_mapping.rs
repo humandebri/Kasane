@@ -22,7 +22,7 @@ fn invalid_spec_id_is_mapped_as_fixed_error() {
         let _ = state.l1_block_info_snapshot.set(L1BlockInfoSnapshotV1 {
             schema_version: 1,
             enabled: true,
-            l2_block_number: 1,
+            l1_block_number: 1,
             l1_base_fee: 1,
             l1_blob_base_fee: 0,
         });

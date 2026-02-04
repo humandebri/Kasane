@@ -4,6 +4,7 @@
 
 - InitArgs: Candidは service : (opt InitArgs) を維持するが、互換性維持目的であり runtime では None を拒否する。
 - OpDeposit: decode 実装はあるが submit API からの投入は未対応。
+- L1 snapshot: block number は `l1_block_number` を使用する（旧 `l2_block_number` は破壊的に廃止）。
 - submit系APIの役割:
 
   | API | 用途 | 同期性 | 戻り値 |

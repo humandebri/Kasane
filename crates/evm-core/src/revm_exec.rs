@@ -19,7 +19,7 @@ use op_revm::{
 use revm::context::{BlockEnv, TxEnv};
 use revm::context_interface::result::{EVMError, ExecutionResult, HaltReason};
 use revm::handler::{ExecuteCommitEvm, ExecuteEvm, SystemCallEvm};
-use revm::primitives::{Address, B256, Bytes, U256};
+use revm::primitives::{Address, Bytes, B256, U256};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ExecError {
@@ -108,7 +108,8 @@ pub fn execute_tx(
     if exec_path == ExecPath::SystemTx {
         return Err(ExecError::SystemTxRejected);
     }
-    let spec = op_spec_id_from_u8(exec_ctx.l1_params.spec_id).map_err(ExecError::InvalidL1SpecId)?;
+    let spec =
+        op_spec_id_from_u8(exec_ctx.l1_params.spec_id).map_err(ExecError::InvalidL1SpecId)?;
     let effective_gas_price = compute_effective_gas_price(
         tx_env.gas_price,
         tx_env.gas_priority_fee.unwrap_or(0),
@@ -121,27 +122,30 @@ pub fn execute_tx(
     let state_diff = collect_state_diff(result.state);
     commit_state_diff(&mut evm, state_diff);
 
-    let (status, gas_used, output, contract_address, logs, final_status, halt_reason) = match result.result {
-        ExecutionResult::Success {
-            gas_used,
-            output,
-            logs,
-            ..
-        } => {
-            let addr = output.address().map(|a| address_to_bytes(*a));
-            let mapped = logs.into_iter().map(revm_log_to_receipt_log).collect::<Vec<_>>();
-            (
-                1u8,
+    let (status, gas_used, output, contract_address, logs, final_status, halt_reason) =
+        match result.result {
+            ExecutionResult::Success {
                 gas_used,
-                output.data().as_ref().to_vec(),
-                addr,
-                mapped,
-                "Success".to_string(),
-                None,
-            )
-        }
-        ExecutionResult::Revert { gas_used, output } => {
-            (
+                output,
+                logs,
+                ..
+            } => {
+                let addr = output.address().map(|a| address_to_bytes(*a));
+                let mapped = logs
+                    .into_iter()
+                    .map(revm_log_to_receipt_log)
+                    .collect::<Vec<_>>();
+                (
+                    1u8,
+                    gas_used,
+                    output.data().as_ref().to_vec(),
+                    addr,
+                    mapped,
+                    "Success".to_string(),
+                    None,
+                )
+            }
+            ExecutionResult::Revert { gas_used, output } => (
                 0u8,
                 gas_used,
                 output.to_vec(),
@@ -149,21 +153,20 @@ pub fn execute_tx(
                 Vec::new(),
                 "Revert".to_string(),
                 None,
-            )
-        }
-        ExecutionResult::Halt { gas_used, reason } => {
-            let fixed = map_halt_reason(reason);
-            (
-                0u8,
-                gas_used,
-                Vec::new(),
-                None,
-                Vec::new(),
-                format!("Halt:{fixed:?}"),
-                Some(fixed),
-            )
-        }
-    };
+            ),
+            ExecutionResult::Halt { gas_used, reason } => {
+                let fixed = map_halt_reason(reason);
+                (
+                    0u8,
+                    gas_used,
+                    Vec::new(),
+                    None,
+                    Vec::new(),
+                    format!("Halt:{fixed:?}"),
+                    Some(fixed),
+                )
+            }
+        };
     let fee_breakdown = compute_fee_breakdown(raw_tx, gas_used, spec, exec_ctx);
 
     let return_data_hash = keccak256(&output);
@@ -198,7 +201,8 @@ pub fn execute_tx(
 }
 
 pub fn execute_l1_block_info_system_tx(exec_ctx: &BlockExecContext) -> Result<(), ExecError> {
-    let spec = op_spec_id_from_u8(exec_ctx.l1_params.spec_id).map_err(ExecError::InvalidL1SpecId)?;
+    let spec =
+        op_spec_id_from_u8(exec_ctx.l1_params.spec_id).map_err(ExecError::InvalidL1SpecId)?;
     let mut evm = build_op_context(exec_ctx, spec).build_op();
     let call_data = build_l1blockinfo_calldata(spec, exec_ctx)?;
     let result = evm
@@ -238,7 +242,8 @@ fn build_l1blockinfo_calldata_v1(exec_ctx: &BlockExecContext) -> Bytes {
     );
     let mut out = Vec::with_capacity(4 + 8 * 32);
     out.extend_from_slice(&selector_hash[..4]);
-    push_u64_word(&mut out, exec_ctx.l1_snapshot.l2_block_number);
+    // arg0: Optimism L1 block number
+    push_u64_word(&mut out, exec_ctx.l1_snapshot.l1_block_number);
     push_u64_word(&mut out, exec_ctx.timestamp);
     push_u256_word(&mut out, U256::from(exec_ctx.l1_snapshot.l1_base_fee));
     push_b256_word(&mut out, B256::ZERO);
@@ -266,7 +271,8 @@ fn build_l1blockinfo_calldata_v2(exec_ctx: &BlockExecContext) -> Bytes {
     );
     push_u64_word(&mut out, 0); // sequence number
     push_u64_word(&mut out, exec_ctx.timestamp);
-    push_u64_word(&mut out, exec_ctx.l1_snapshot.l2_block_number);
+    // arg4: Optimism L1 block number
+    push_u64_word(&mut out, exec_ctx.l1_snapshot.l1_block_number);
     push_u256_word(&mut out, U256::from(exec_ctx.l1_snapshot.l1_base_fee));
     push_u256_word(&mut out, U256::from(exec_ctx.l1_snapshot.l1_blob_base_fee));
     push_b256_word(&mut out, B256::ZERO);
@@ -395,9 +401,11 @@ fn compute_fee_breakdown(
     let mut l1_block_info = l1_block_info_from_context(exec_ctx);
     let l1_data_fee = saturating_u256_to_u128(l1_block_info.calculate_tx_l1_cost(raw_tx, spec));
     let operator_fee = if spec.is_enabled_in(OpSpecId::ISTHMUS) {
-        saturating_u256_to_u128(
-            l1_block_info.operator_fee_charge(raw_tx, U256::from(gas_used), spec),
-        )
+        saturating_u256_to_u128(l1_block_info.operator_fee_charge(
+            raw_tx,
+            U256::from(gas_used),
+            spec,
+        ))
     } else {
         0
     };
@@ -410,7 +418,8 @@ fn compute_fee_breakdown(
 
 fn l1_block_info_from_context(exec_ctx: &BlockExecContext) -> L1BlockInfo {
     L1BlockInfo {
-        l2_block: Some(U256::from(exec_ctx.l1_snapshot.l2_block_number)),
+        // upstream type keeps the field name `l2_block`, but semantically this value is L1 block number.
+        l2_block: Some(U256::from(exec_ctx.l1_snapshot.l1_block_number)),
         l1_base_fee: U256::from(exec_ctx.l1_snapshot.l1_base_fee),
         l1_fee_overhead: Some(U256::from(exec_ctx.l1_params.l1_fee_overhead)),
         l1_base_fee_scalar: U256::from(exec_ctx.l1_params.l1_base_fee_scalar),
@@ -461,7 +470,9 @@ fn map_halt_reason(reason: RevmOpHaltReason) -> OpHaltReason {
     }
 }
 
-fn map_tx_error_stage(error: EVMError<core::convert::Infallible, RevmOpTransactionError>) -> ExecError {
+fn map_tx_error_stage(
+    error: EVMError<core::convert::Infallible, RevmOpTransactionError>,
+) -> ExecError {
     match error {
         EVMError::Transaction(tx_err) => match tx_err {
             RevmOpTransactionError::DepositSystemTxPostRegolith => {
@@ -471,7 +482,9 @@ fn map_tx_error_stage(error: EVMError<core::convert::Infallible, RevmOpTransacti
             RevmOpTransactionError::MissingEnvelopedTx => {
                 ExecError::TxError(OpTransactionError::TxBuildFailed)
             }
-            RevmOpTransactionError::Base(_) => ExecError::TxError(OpTransactionError::TxPrecheckFailed),
+            RevmOpTransactionError::Base(_) => {
+                ExecError::TxError(OpTransactionError::TxPrecheckFailed)
+            }
         },
         EVMError::Header(_) => ExecError::TxError(OpTransactionError::TxPrecheckFailed),
         EVMError::Database(_) => ExecError::TxError(OpTransactionError::TxExecutionFailed),
@@ -524,12 +537,12 @@ mod tests {
         compute_fee_breakdown, execute_tx, op_spec_id_from_u8, BlockExecContext, ExecError,
         ExecPath, FeeBreakdown,
     };
-    use op_revm::{OpHaltReason as RevmOpHaltReason, OpSpecId};
-    use op_revm::transaction::deposit::DEPOSIT_TRANSACTION_TYPE;
-    use revm::context_interface::result::{HaltReason, OutOfGasError};
-    use revm::context::TxEnv;
-    use evm_db::chain_data::{L1BlockInfoParamsV1, L1BlockInfoSnapshotV1, TxId, TxKind};
     use super::{map_halt_reason, OpHaltReason};
+    use evm_db::chain_data::{L1BlockInfoParamsV1, L1BlockInfoSnapshotV1, TxId, TxKind};
+    use op_revm::transaction::deposit::DEPOSIT_TRANSACTION_TYPE;
+    use op_revm::{OpHaltReason as RevmOpHaltReason, OpSpecId};
+    use revm::context::TxEnv;
+    use revm::context_interface::result::{HaltReason, OutOfGasError};
 
     #[test]
     fn effective_price_uses_min_of_max_and_base_plus_priority() {
@@ -610,7 +623,7 @@ mod tests {
             l1_snapshot: L1BlockInfoSnapshotV1 {
                 schema_version: 1,
                 enabled: true,
-                l2_block_number: 66,
+                l1_block_number: 66,
                 l1_base_fee: 77,
                 l1_blob_base_fee: 88,
             },
@@ -679,7 +692,7 @@ mod tests {
             l1_snapshot: L1BlockInfoSnapshotV1 {
                 schema_version: 1,
                 enabled: true,
-                l2_block_number: 66,
+                l1_block_number: 66,
                 l1_base_fee: 77,
                 l1_blob_base_fee: 0,
             },
@@ -711,7 +724,7 @@ mod tests {
             l1_snapshot: L1BlockInfoSnapshotV1 {
                 schema_version: 1,
                 enabled: true,
-                l2_block_number: 66,
+                l1_block_number: 66,
                 l1_base_fee: 77,
                 l1_blob_base_fee: 88,
             },
@@ -727,7 +740,9 @@ mod tests {
     #[test]
     fn halt_reason_mapping_covers_known_variants() {
         assert_eq!(
-            map_halt_reason(RevmOpHaltReason::Base(HaltReason::OutOfGas(OutOfGasError::Basic))),
+            map_halt_reason(RevmOpHaltReason::Base(HaltReason::OutOfGas(
+                OutOfGasError::Basic
+            ))),
             OpHaltReason::OutOfGas
         );
         assert_eq!(
@@ -738,6 +753,9 @@ mod tests {
 
     #[test]
     fn failed_deposit_halt_maps_to_unknown_bucket() {
-        assert_eq!(map_halt_reason(RevmOpHaltReason::FailedDeposit), OpHaltReason::Unknown);
+        assert_eq!(
+            map_halt_reason(RevmOpHaltReason::FailedDeposit),
+            OpHaltReason::Unknown
+        );
     }
 }

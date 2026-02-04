@@ -4,9 +4,9 @@ use crate::hash::keccak256;
 use alloy_primitives::{Address, B256, U256};
 use alloy_trie::root::{state_root_unhashed, storage_root_unhashed};
 use alloy_trie::{TrieAccount, EMPTY_ROOT_HASH, KECCAK_EMPTY};
-use evm_db::stable_state::StableState;
 #[cfg(feature = "full_state_root")]
 use evm_db::stable_state::with_state;
+use evm_db::stable_state::StableState;
 use std::collections::BTreeMap;
 
 pub fn compute_state_root_with(state: &StableState) -> [u8; 32] {
