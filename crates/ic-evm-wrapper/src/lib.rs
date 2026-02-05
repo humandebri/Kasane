@@ -10,8 +10,8 @@ use evm_db::chain_data::{
 };
 use evm_db::meta::{
     current_schema_version, ensure_meta_initialized, get_meta, mark_migration_applied,
-    schema_migration_state, set_needs_migration, set_schema_migration_state, SchemaMigrationPhase,
-    SchemaMigrationState,
+    schema_migration_state, set_needs_migration, set_schema_migration_state, set_tx_locs_v3_active,
+    tx_locs_v3_active, SchemaMigrationPhase, SchemaMigrationState,
 };
 use evm_db::stable_state::{init_stable_state, with_state};
 use evm_db::upgrade;
@@ -1490,39 +1490,46 @@ fn schema_migration_tick(max_steps: u32) -> bool {
             SchemaMigrationPhase::Done => return true,
             SchemaMigrationPhase::Error => return false,
             SchemaMigrationPhase::Init => {
+                set_tx_locs_v3_active(false);
+                chain::clear_tx_locs_v3();
                 state.phase = SchemaMigrationPhase::Scan;
                 state.cursor = 0;
                 set_schema_migration_state(state);
             }
             SchemaMigrationPhase::Scan => {
                 state.phase = SchemaMigrationPhase::Rewrite;
-                state.cursor = 1;
+                state.cursor = 0;
                 set_schema_migration_state(state);
             }
             SchemaMigrationPhase::Rewrite => {
-                if state.from_version < 2 {
-                    chain::clear_mempool_on_upgrade();
+                if state.from_version < 3 {
+                    let (copied, done) = chain::migrate_tx_locs_batch(state.cursor, 512);
+                    state.cursor = state.cursor.saturating_add(copied);
+                    set_schema_migration_state(state);
+                    if !done {
+                        return false;
+                    }
+                    set_tx_locs_v3_active(true);
                 }
                 state.phase = SchemaMigrationPhase::Verify;
-                state.cursor = 2;
+                state.cursor = 0;
                 set_schema_migration_state(state);
             }
             SchemaMigrationPhase::Verify => {
-                let mempool_empty = with_state(|s| {
-                    s.ready_queue.is_empty()
-                        && s.pending_by_sender_nonce.is_empty()
-                        && s.pending_current_by_sender.is_empty()
-                });
-                if !mempool_empty {
+                let tx_locs_migrated = with_state(|s| s.tx_locs.len() == s.tx_locs_v3.len());
+                if !tx_locs_migrated || !tx_locs_v3_active() {
                     state.phase = SchemaMigrationPhase::Error;
                     state.last_error = 1;
                     set_schema_migration_state(state);
                     return false;
                 }
+                if state.from_version < 2 {
+                    chain::clear_mempool_on_upgrade();
+                }
                 mark_migration_applied(state.from_version, state.to_version, time());
                 set_needs_migration(false);
                 state.phase = SchemaMigrationPhase::Done;
-                state.cursor = 3;
+                state.cursor = 0;
                 set_schema_migration_state(state);
                 return true;
             }

@@ -22,6 +22,7 @@ dfx canister snapshot create <canister_id>
 5. `get_ops_status` で `needs_migration` を確認する。
 6. write系APIが拒否されること（`ops.write.needs_migration`）を確認する。
 7. 通常トラフィック下で migration tick が進み、`needs_migration=false` になるまで監視する。
+8. 完了後、dual-store の active 先が v3（`tx_locs_v3`）へ切替済みであることを確認する。
 
 ```bash
 dfx canister stop <canister_id>

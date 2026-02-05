@@ -20,6 +20,7 @@ use evm_db::chain_data::{
     StoredTx, StoredTxBytes, TxId, TxIndexEntry, TxKind, TxLoc, TxLocKind,
 };
 use evm_db::memory::VMem;
+use evm_db::meta::tx_locs_v3_active;
 use evm_db::stable_state::{with_state, with_state_mut, StableState};
 use evm_db::types::keys::make_account_key;
 use evm_db::types::values::AccountVal;
@@ -128,6 +129,29 @@ pub fn state_root_migration_tick(max_steps: u32) -> bool {
     with_state_mut(|state| trie_commit::migration_tick(state, max_steps))
 }
 
+pub fn clear_tx_locs_v3() {
+    with_state_mut(|state| {
+        clear_map(&mut state.tx_locs_v3);
+    });
+}
+
+pub fn migrate_tx_locs_batch(start: u64, max_items: u32) -> (u64, bool) {
+    with_state_mut(|state| {
+        let mut copied = 0u64;
+        for entry in state
+            .tx_locs
+            .iter()
+            .skip(start as usize)
+            .take(max_items as usize)
+        {
+            state.tx_locs_v3.insert(*entry.key(), entry.value());
+            copied = copied.saturating_add(1);
+        }
+        let done = copied < u64::from(max_items);
+        (copied, done)
+    })
+}
+
 pub fn clear_mempool_on_upgrade() {
     with_state_mut(|state| {
         clear_map(&mut state.ready_queue);
@@ -147,6 +171,30 @@ fn clear_map<K: Copy + Ord + Storable, V: Storable>(map: &mut StableBTreeMap<K, 
             None => break,
         };
         map.remove(&key);
+    }
+}
+
+fn tx_locs_get(state: &StableState, tx_id: &TxId) -> Option<TxLoc> {
+    if tx_locs_v3_active() {
+        state.tx_locs_v3.get(tx_id)
+    } else {
+        state.tx_locs.get(tx_id)
+    }
+}
+
+fn tx_locs_insert(state: &mut StableState, tx_id: TxId, loc: TxLoc) {
+    if tx_locs_v3_active() {
+        state.tx_locs_v3.insert(tx_id, loc);
+    } else {
+        state.tx_locs.insert(tx_id, loc);
+    }
+}
+
+fn tx_locs_remove(state: &mut StableState, tx_id: &TxId) {
+    if tx_locs_v3_active() {
+        state.tx_locs_v3.remove(tx_id);
+    } else {
+        state.tx_locs.remove(tx_id);
     }
 }
 
@@ -352,7 +400,7 @@ pub fn submit_tx(kind: TxKind, tx_bytes: Vec<u8>) -> Result<TxId, ChainError> {
         let mut meta = *state.queue_meta.get();
         let seq = meta.push();
         state.queue_meta.set(meta);
-        state.tx_locs.insert(tx_id, TxLoc::queued(seq));
+        tx_locs_insert(state, tx_id, TxLoc::queued(seq));
         let mut chain_state = *state.chain_state.get();
         chain_state.next_queue_seq = meta.tail;
         state.chain_state.set(chain_state);
@@ -448,7 +496,7 @@ pub fn submit_ic_tx(
         let mut meta = *state.queue_meta.get();
         let seq = meta.push();
         state.queue_meta.set(meta);
-        state.tx_locs.insert(tx_id, TxLoc::queued(seq));
+        tx_locs_insert(state, tx_id, TxLoc::queued(seq));
         let mut chain_state = *state.chain_state.get();
         chain_state.next_queue_seq = meta.tail;
         state.chain_state.set(chain_state);
@@ -801,9 +849,7 @@ pub fn produce_block(max_txs: usize) -> Result<BlockData, ChainError> {
                     let receipt_ptr = store_receipt(state, &outcome.receipt);
                     state.tx_index.insert(*tx_id, tx_index_ptr);
                     state.receipts.insert(*tx_id, receipt_ptr);
-                    state
-                        .tx_locs
-                        .insert(*tx_id, TxLoc::included(number, outcome.tx_index));
+                    tx_locs_insert(state, *tx_id, TxLoc::included(number, outcome.tx_index));
                     advance_sender_after_tx(
                         state,
                         *tx_id,
@@ -828,9 +874,7 @@ pub fn produce_block(max_txs: usize) -> Result<BlockData, ChainError> {
                     let receipt_ptr = store_receipt(state, receipt);
                     state.tx_index.insert(*tx_id, tx_index_ptr);
                     state.receipts.insert(*tx_id, receipt_ptr);
-                    state
-                        .tx_locs
-                        .insert(*tx_id, TxLoc::included(number, *tx_index));
+                    tx_locs_insert(state, *tx_id, TxLoc::included(number, *tx_index));
                     advance_sender_after_tx(
                         state,
                         *tx_id,
@@ -1104,9 +1148,7 @@ fn execute_and_seal_with_caller(
         state.tx_index.insert(tx_id, tx_index_ptr);
         let receipt_ptr = store_receipt(state, &outcome.receipt);
         state.receipts.insert(tx_id, receipt_ptr);
-        state
-            .tx_locs
-            .insert(tx_id, TxLoc::included(number, outcome.tx_index));
+        tx_locs_insert(state, tx_id, TxLoc::included(number, outcome.tx_index));
         advance_sender_after_tx(state, tx_id, Some(sender_bytes), Some(sender_nonce));
         let mut chain_state = *state.chain_state.get();
         chain_state.last_block_number = number;
@@ -1136,7 +1178,7 @@ fn execute_and_seal_with_caller(
 }
 
 pub fn get_tx_loc(tx_id: &TxId) -> Option<TxLoc> {
-    with_state(|state| state.tx_locs.get(tx_id))
+    with_state(|state| tx_locs_get(state, tx_id))
 }
 
 pub fn prune_blocks(retain: u64, max_ops: u32) -> Result<PruneResult, ChainError> {
@@ -1195,7 +1237,7 @@ pub fn prune_blocks(retain: u64, max_ops: u32) -> Result<PruneResult, ChainError
             for tx_id in block.tx_ids.iter() {
                 state.receipts.remove(tx_id);
                 state.tx_index.remove(tx_id);
-                state.tx_locs.remove(tx_id);
+                tx_locs_remove(state, tx_id);
                 state.tx_store.remove(tx_id);
             }
             ops_used = ops_used.saturating_add(needed);
@@ -1241,7 +1283,7 @@ fn recover_prune_journal(state: &mut evm_db::stable_state::StableState) -> Resul
             for tx_id in block.tx_ids.iter() {
                 state.receipts.remove(tx_id);
                 state.tx_index.remove(tx_id);
-                state.tx_locs.remove(tx_id);
+                tx_locs_remove(state, tx_id);
                 state.tx_store.remove(tx_id);
             }
             if let Some(pruned) = prune_state.pruned_before() {
@@ -1688,7 +1730,7 @@ fn load_fee_fields_and_seq(
         stored.max_priority_fee_per_gas,
         stored.is_dynamic_fee,
     );
-    let seq = match state.tx_locs.get(&tx_id) {
+    let seq = match tx_locs_get(state, &tx_id) {
         Some(loc) => loc.seq,
         None => return Ok(None),
     };
@@ -1762,7 +1804,7 @@ fn mark_dropped_and_purge_payload(
     drop_code: u16,
 ) {
     state.tx_store.remove(&tx_id);
-    state.tx_locs.insert(tx_id, TxLoc::dropped(drop_code));
+    tx_locs_insert(state, tx_id, TxLoc::dropped(drop_code));
     push_dropped_ring(state, tx_id);
 }
 
@@ -1779,9 +1821,9 @@ fn push_dropped_ring(state: &mut evm_db::stable_state::StableState, tx_id: TxId)
 
     let evict_seq = seq.saturating_sub(DROPPED_RING_CAPACITY);
     if let Some(evicted_tx_id) = state.dropped_ring.remove(&evict_seq) {
-        if let Some(loc) = state.tx_locs.get(&evicted_tx_id) {
+        if let Some(loc) = tx_locs_get(state, &evicted_tx_id) {
             if loc.kind == TxLocKind::Dropped {
-                state.tx_locs.remove(&evicted_tx_id);
+                tx_locs_remove(state, &evicted_tx_id);
             }
         }
     }

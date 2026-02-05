@@ -66,6 +66,7 @@ pub struct StableState {
     pub prune_journal: PruneJournalMap,
     pub caller_nonces: CallerNonces,
     pub tx_locs: TxLocs,
+    pub tx_locs_v3: TxLocs,
     pub ready_queue: ReadyQueue,
     pub ready_key_by_tx_id: ReadyKeyByTxId,
     pub pending_by_sender_nonce: PendingBySenderNonce,
@@ -130,6 +131,7 @@ pub fn init_stable_state() {
     let prune_journal = StableBTreeMap::init(get_memory(AppMemoryId::PruneJournal));
     let caller_nonces = StableBTreeMap::init(get_memory(AppMemoryId::CallerNonces));
     let tx_locs = StableBTreeMap::init(get_memory(AppMemoryId::TxLocs));
+    let tx_locs_v3 = StableBTreeMap::init(get_memory(AppMemoryId::Reserved40));
     let ready_queue = StableBTreeMap::init(get_memory(AppMemoryId::ReadyQueue));
     let ready_key_by_tx_id = StableBTreeMap::init(get_memory(AppMemoryId::ReadyKeyByTxId));
     let pending_by_sender_nonce =
@@ -190,6 +192,7 @@ pub fn init_stable_state() {
             prune_journal,
             caller_nonces,
             tx_locs,
+            tx_locs_v3,
             ready_queue,
             ready_key_by_tx_id,
             pending_by_sender_nonce,

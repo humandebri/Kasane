@@ -2,12 +2,12 @@
 
 use crate::chain_data::codec::{encode_guarded, mark_decode_failure};
 use crate::chain_data::constants::TX_LOC_SIZE_U32;
-use bincode::{Decode, Encode};
 use ic_stable_structures::storable::Bound;
 use ic_stable_structures::Storable;
 use std::borrow::Cow;
+use wincode::{SchemaRead, SchemaWrite};
 
-#[derive(Clone, Copy, Debug, Decode, Encode, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, SchemaRead, SchemaWrite, Eq, PartialEq)]
 #[repr(u8)]
 pub enum TxLocKind {
     Queued = 0,
@@ -15,7 +15,7 @@ pub enum TxLocKind {
     Dropped = 2,
 }
 
-#[derive(Clone, Copy, Debug, Decode, Encode, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, SchemaRead, SchemaWrite, Eq, PartialEq)]
 pub struct TxLoc {
     pub kind: TxLocKind,
     pub seq: u64,
@@ -58,7 +58,7 @@ impl TxLoc {
 
 impl Storable for TxLoc {
     fn to_bytes(&self) -> Cow<'_, [u8]> {
-        let encoded = bincode::encode_to_vec(*self, tx_loc_bincode_config())
+        let encoded = wincode::config::serialize(self, tx_loc_wincode_config())
             .unwrap_or_else(|_| ic_cdk::trap("tx_loc: encode failed"));
         encode_guarded(b"tx_loc_encode", encoded, TX_LOC_SIZE_U32)
     }
@@ -69,8 +69,8 @@ impl Storable for TxLoc {
 
     fn from_bytes(bytes: Cow<'_, [u8]>) -> Self {
         let data = bytes.as_ref();
-        match bincode::decode_from_slice::<TxLoc, _>(data, tx_loc_bincode_config()) {
-            Ok((value, read)) if read == data.len() => value,
+        match wincode::config::deserialize::<TxLoc, _>(data, tx_loc_wincode_config()) {
+            Ok(value) => value,
             _ => decode_legacy_tx_loc(data),
         }
     }
@@ -81,11 +81,11 @@ impl Storable for TxLoc {
     };
 }
 
-fn tx_loc_bincode_config() -> impl bincode::config::Config {
-    bincode::config::standard()
-        .with_fixed_int_encoding()
+fn tx_loc_wincode_config() -> impl wincode::config::Config {
+    wincode::config::Configuration::default()
         .with_big_endian()
-        .with_limit::<{ TX_LOC_SIZE_U32 as usize }>()
+        .with_fixint_encoding()
+        .with_preallocation_size_limit::<{ TX_LOC_SIZE_U32 as usize }>()
 }
 
 // NOTE: 旧形式デコードは移行ウィンドウのための例外経路。

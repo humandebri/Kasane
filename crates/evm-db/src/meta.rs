@@ -118,6 +118,7 @@ pub struct Meta {
     pub schema_hash: [u8; 32],
     pub schema_version: u32,
     pub needs_migration: bool,
+    pub active_tx_locs_v3: bool,
     pub last_migration_from: u32,
     pub last_migration_to: u32,
     pub last_migration_ts: u64,
@@ -131,6 +132,7 @@ impl Meta {
             schema_hash: META_SCHEMA_HASH,
             schema_version: CURRENT_SCHEMA_VERSION,
             needs_migration: false,
+            active_tx_locs_v3: false,
             last_migration_from: CURRENT_SCHEMA_VERSION,
             last_migration_to: CURRENT_SCHEMA_VERSION,
             last_migration_ts: 0,
@@ -152,6 +154,7 @@ impl Storable for Meta {
         buf[8..40].copy_from_slice(&self.schema_hash);
         buf[40..44].copy_from_slice(&self.schema_version.to_be_bytes());
         buf[44] = u8::from(self.needs_migration);
+        buf[45] = u8::from(self.active_tx_locs_v3);
         buf[48..52].copy_from_slice(&self.last_migration_from.to_be_bytes());
         buf[52..56].copy_from_slice(&self.last_migration_to.to_be_bytes());
         buf[56..64].copy_from_slice(&self.last_migration_ts.to_be_bytes());
@@ -180,6 +183,7 @@ impl Storable for Meta {
                 schema_hash,
                 schema_version: 1,
                 needs_migration: true,
+                active_tx_locs_v3: false,
                 last_migration_from: 1,
                 last_migration_to: 1,
                 last_migration_ts: 0,
@@ -187,6 +191,7 @@ impl Storable for Meta {
         }
         let schema_version = u32::from_be_bytes([data[40], data[41], data[42], data[43]]);
         let needs_migration = data[44] != 0;
+        let active_tx_locs_v3 = data[45] != 0;
         let last_migration_from = u32::from_be_bytes([data[48], data[49], data[50], data[51]]);
         let last_migration_to = u32::from_be_bytes([data[52], data[53], data[54], data[55]]);
         let last_migration_ts = u64::from_be_bytes([
@@ -198,6 +203,7 @@ impl Storable for Meta {
             schema_hash,
             schema_version,
             needs_migration,
+            active_tx_locs_v3,
             last_migration_from,
             last_migration_to,
             last_migration_ts,
@@ -272,6 +278,16 @@ pub fn mark_migration_applied(from: u32, to: u32, ts: u64) {
     meta.last_migration_from = from;
     meta.last_migration_to = to;
     meta.last_migration_ts = ts;
+    set_meta(meta);
+}
+
+pub fn tx_locs_v3_active() -> bool {
+    ensure_meta_initialized().active_tx_locs_v3
+}
+
+pub fn set_tx_locs_v3_active(value: bool) {
+    let mut meta = ensure_meta_initialized();
+    meta.active_tx_locs_v3 = value;
     set_meta(meta);
 }
 
