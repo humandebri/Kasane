@@ -8,6 +8,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 #[cfg(test)]
 static TEST_NOW_SEC: AtomicU64 = AtomicU64::new(0);
 
+#[allow(dead_code)]
 pub(crate) fn now_sec() -> u64 {
     #[cfg(test)]
     {
@@ -26,11 +27,13 @@ pub(crate) fn set_test_now_sec(value: u64) {
 }
 
 #[cfg(target_arch = "wasm32")]
+#[allow(dead_code)]
 fn now_ns() -> u64 {
     ic_cdk::api::time()
 }
 
 #[cfg(not(target_arch = "wasm32"))]
+#[allow(dead_code)]
 fn now_ns() -> u64 {
     let nanos_u128 = SystemTime::now()
         .duration_since(UNIX_EPOCH)

@@ -29,6 +29,20 @@ scripts/check_getrandom_wasm_features.sh
 echo "[guard] did sync check"
 scripts/check_did_sync.sh
 
+echo "[guard] deny OP stack references"
+DENY_PATTERN='op-revm|op_revm|op-node|op-geth|optimism|superchain|OpDeposit|L1BlockInfo'
+if grep -RInE "$DENY_PATTERN" \
+  --exclude-dir=.git \
+  --exclude-dir=target \
+  --exclude-dir=vendor \
+  --exclude-dir=node_modules \
+  --exclude='scripts/ci-local.sh' \
+  --exclude='docs/ops/pr0-differential-runbook.md' \
+  crates docs scripts README.md Cargo.toml; then
+  echo "[guard] forbidden OP stack reference found"
+  exit 1
+fi
+
 cargo test -p evm-db -p ic-evm-core -p ic-evm-wrapper
 
 echo "[guard] PR0 differential check"

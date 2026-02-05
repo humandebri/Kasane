@@ -26,7 +26,6 @@ alloy-primitives = { version = "1.5.2", default-features = false, features = ["s
 alloy-eips = { version = "1.5.2", default-features = false, features = ["std", "k256"] }
 alloy-consensus = { version = "1.5.2", default-features = false, features = ["std", "k256"] }
 alloy-trie = { version = "0.9.3", default-features = false, features = ["std", "ethereum"] }
-op-revm = { path = "../../vendor/revm/crates/op-revm", default-features = false, features = ["std"] }
 alloy-signer = { version = "1.5.2", default-features = false, optional = true }
 alloy-signer-local = { version = "1.5.2", default-features = false, optional = true }
 

@@ -2,10 +2,8 @@
 
 use evm_db::chain_data::receipt::LogEntry;
 use evm_db::chain_data::{
-    BlockData, CallerKey, ChainStateV1, Head, L1BlockInfoParamsV1, L1BlockInfoSnapshotV1,
-    OpsMetricsV1, QueueMeta, ReceiptLike, StoredTx, StoredTxBytes, SystemTxHealthV1, TxId,
-    TxIndexEntry, TxKind,
-    TxLoc,
+    BlockData, CallerKey, ChainStateV1, Head, OpsMetricsV1, QueueMeta, ReceiptLike, StoredTx,
+    StoredTxBytes, TxId, TxIndexEntry, TxKind, TxLoc,
 };
 use ic_stable_structures::Storable;
 
@@ -160,47 +158,19 @@ fn receipt_decode_rejects_topics_over_limit() {
 }
 
 #[test]
-fn l1_block_info_roundtrip() {
-    let params = L1BlockInfoParamsV1 {
-        schema_version: 1,
-        spec_id: 107,
-        empty_ecotone_scalars: false,
-        l1_fee_overhead: 1,
-        l1_base_fee_scalar: 2,
-        l1_blob_base_fee_scalar: 3,
-        operator_fee_scalar: 4,
-        operator_fee_constant: 5,
-    };
-    let params_decoded = L1BlockInfoParamsV1::from_bytes(params.to_bytes());
-    assert_eq!(params, params_decoded);
-
-    let snapshot = L1BlockInfoSnapshotV1 {
-        schema_version: 1,
-        enabled: true,
-        l1_block_number: 10,
-        l1_base_fee: 20,
-        l1_blob_base_fee: 30,
-    };
-    let snapshot_decoded = L1BlockInfoSnapshotV1::from_bytes(snapshot.to_bytes());
-    assert_eq!(snapshot, snapshot_decoded);
-}
-
-#[test]
 fn ops_metrics_roundtrip() {
     let metrics = OpsMetricsV1 {
         schema_version: 1,
         exec_halt_unknown_count: 7,
         last_exec_halt_unknown_warn_ts: 99,
-        l1_snapshot_disabled_skip_count: 13,
-        last_l1_snapshot_disabled_warn_ts: 101,
     };
     let decoded = OpsMetricsV1::from_bytes(metrics.to_bytes());
     assert_eq!(metrics, decoded);
 }
 
 #[test]
-fn ops_metrics_v1_decode_backfills_snapshot_fields_with_zero() {
-    let mut legacy = vec![0u8; 24];
+fn ops_metrics_decode_legacy_v1_size() {
+    let mut legacy = vec![0u8; 40];
     legacy[0] = 1;
     legacy[8..16].copy_from_slice(&7u64.to_be_bytes());
     legacy[16..24].copy_from_slice(&99u64.to_be_bytes());
@@ -208,22 +178,6 @@ fn ops_metrics_v1_decode_backfills_snapshot_fields_with_zero() {
     assert_eq!(decoded.schema_version, 1);
     assert_eq!(decoded.exec_halt_unknown_count, 7);
     assert_eq!(decoded.last_exec_halt_unknown_warn_ts, 99);
-    assert_eq!(decoded.l1_snapshot_disabled_skip_count, 0);
-    assert_eq!(decoded.last_l1_snapshot_disabled_warn_ts, 0);
-}
-
-#[test]
-fn system_tx_health_roundtrip() {
-    let health = SystemTxHealthV1 {
-        schema_version: 1,
-        consecutive_failures: 3,
-        last_fail_ts: 10,
-        last_warn_ts: 11,
-        backoff_until_ts: 12,
-        backoff_hits: 13,
-    };
-    let decoded = SystemTxHealthV1::from_bytes(health.to_bytes());
-    assert_eq!(health, decoded);
 }
 
 #[test]

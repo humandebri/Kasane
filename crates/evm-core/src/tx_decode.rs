@@ -1,6 +1,4 @@
-//! どこで: Phase1のTxデコード / 何を: IcSynthetic + Eth/OpDeposit の安全なデコード / なぜ: 互換性とtrap回避
-
-use crate::tx_decode_deposit::decode_op_deposit;
+//! どこで: Phase1のTxデコード / 何を: IcSynthetic + Eth の安全なデコード / なぜ: 互換性とtrap回避
 use alloy_consensus::transaction::SignerRecoverable;
 use alloy_consensus::{Transaction, TxEnvelope};
 use alloy_eips::eip2718::{Decodable2718, Eip2718Error};
@@ -27,19 +25,6 @@ pub enum DecodeError {
     InvalidSignature,
     InvalidRlp,
     TrailingBytes,
-    DepositInvalid(DepositInvalidReason),
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum DepositInvalidReason {
-    VersionMismatch,
-    LengthMismatch,
-    SourceHashZero,
-    BadToFlag,
-    BadIsSystemFlag,
-    DataTooLarge,
-    MintTooLargeForOpRevm,
-    OpRevmValidationFailed,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -127,7 +112,6 @@ pub fn decode_tx(kind: TxKind, caller: RevmAddress, bytes: &[u8]) -> Result<TxEn
     match kind {
         TxKind::IcSynthetic => decode_ic_synthetic(caller, bytes),
         TxKind::EthSigned => decode_eth_raw_tx(bytes),
-        TxKind::OpDeposit => decode_op_deposit(bytes),
     }
 }
 

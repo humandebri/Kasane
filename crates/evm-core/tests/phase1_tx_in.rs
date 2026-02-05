@@ -5,13 +5,6 @@ use evm_db::chain_data::{TxKind, TxLocKind};
 use evm_db::stable_state::init_stable_state;
 
 #[test]
-fn submit_tx_in_rejects_unsupported_kind() {
-    init_stable_state();
-    let err = chain::submit_tx_in(TxIn::OpDeposit(vec![0xde, 0xad])).unwrap_err();
-    assert_eq!(err, ChainError::UnsupportedTxKind);
-}
-
-#[test]
 fn submit_tx_in_eth_keeps_existing_decode_rules() {
     init_stable_state();
     let err = chain::submit_tx_in(TxIn::EthSigned(vec![0x02, 0x01, 0x02])).unwrap_err();

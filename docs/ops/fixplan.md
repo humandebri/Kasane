@@ -121,14 +121,14 @@
 
 ---
 
-## フェーズ3：OP互換（必要なら）／system tx の扱いを確定
+## フェーズ3：外部互換方針（必要なら）／system tx の扱いを確定
 
 ここは「今すぐ必須」ではないが、監査項目として出てるなら整理が必要。
 
 ### 3-1. system tx をブロックに含めるか
 
-* **OP互換を名乗るなら**：block body / receipts / index を一貫させて含める
-* **名乗らないなら**：内部txとして扱い、外部仕様を明確化（“OP互換ではない”）
+* **外部互換を重視するなら**：block body / receipts / index を一貫させて含める
+* **重視しないなら**：内部txとして扱い、外部仕様を明確化する
   **AC**
 * 仕様が一貫し、インデクサ/RPCが矛盾しない
 
@@ -141,7 +141,7 @@
 * **PR-A（フェーズ0）**：Poison Pill + pruning journal + mempool jamming
 * **PR-B（フェーズ1）**：allowlist + inspect許可漏れ + RPC制限 + error固定
 * **PR-C（フェーズ2）**：永続MPT + TrieDelta + fail-closed（＋サンプリング検証）
-* **PR-D（任意）**：system tx / OP互換整理
+* **PR-D（任意）**：system tx / 外部互換整理
 
 こう分けると、**どの時点でもチェーンが死なない**状態を維持しながら進められる。
 

@@ -35,8 +35,6 @@ fn ops_state_roundtrip() {
         last_check_ts: 8,
         mode: OpsMode::Critical,
         safe_stop_latched: true,
-        l1_fee_fallback_count: 2,
-        last_l1_fee_warn_ts: 9,
     };
     let decoded = OpsStateV1::from_bytes(Cow::Owned(state.to_bytes().into_owned()));
     assert_eq!(decoded, state);

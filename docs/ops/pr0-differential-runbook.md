@@ -17,7 +17,7 @@ scripts/pr0_capture_local_snapshot.sh /tmp/pr0_snapshot_local.txt
 
 ## 2. 参照実装スナップショットを用意
 
-`docs/ops/pr0_snapshot_reference.txt` と同じ2行形式で、参照実装（op-geth/reth等）から生成した値を保存します。
+`docs/ops/pr0_snapshot_reference.txt` と同じ2行形式で、参照実装（reth等）から生成した値を保存します。
 
 例:
 

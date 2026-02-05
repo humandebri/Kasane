@@ -46,7 +46,6 @@ impl Storable for TxId {
 pub enum TxKind {
     EthSigned,
     IcSynthetic,
-    OpDeposit,
 }
 
 impl TxKind {
@@ -54,7 +53,6 @@ impl TxKind {
         match self {
             TxKind::EthSigned => 0x01,
             TxKind::IcSynthetic => 0x02,
-            TxKind::OpDeposit => 0x03,
         }
     }
 
@@ -62,7 +60,6 @@ impl TxKind {
         match value {
             0x01 => Some(TxKind::EthSigned),
             0x02 => Some(TxKind::IcSynthetic),
-            0x03 => Some(TxKind::OpDeposit),
             _ => None,
         }
     }

@@ -3,8 +3,8 @@
 use crate::base_fee::compute_next_base_fee;
 use crate::hash;
 use crate::revm_exec::{
-    commit_state_diff_to_db, compute_effective_gas_price, execute_l1_block_info_system_tx_on,
-    execute_tx_on, BlockExecContext, ExecError, ExecOutcome, ExecPath, OpHaltReason, StateDiff,
+    commit_state_diff_to_db, compute_effective_gas_price, execute_tx_on, BlockExecContext,
+    ExecError, ExecOutcome, ExecPath, OpHaltReason, StateDiff,
 };
 use crate::state_root::TouchedSummary;
 use crate::trie_commit;
@@ -32,7 +32,6 @@ use revm::primitives::U256;
 use std::borrow::Cow;
 use std::collections::BTreeSet;
 
-const SYSTEM_TX_BACKOFF_SECS: u64 = 2;
 const OPS_WARN_RATE_LIMIT_SECS: u64 = 60;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -74,7 +73,6 @@ pub enum TxIn {
         canister_id: Vec<u8>,
         tx_bytes: Vec<u8>,
     },
-    OpDeposit(Vec<u8>),
 }
 
 pub fn submit_tx_in(tx_in: TxIn) -> Result<TxId, ChainError> {
@@ -85,7 +83,6 @@ pub fn submit_tx_in(tx_in: TxIn) -> Result<TxId, ChainError> {
             canister_id,
             tx_bytes,
         } => submit_ic_tx(caller_principal, canister_id, tx_bytes),
-        TxIn::OpDeposit(_) => Err(ChainError::UnsupportedTxKind),
     }
 }
 
@@ -520,8 +517,6 @@ pub fn produce_block(max_txs: usize) -> Result<BlockData, ChainError> {
         block_number: number,
         timestamp,
         base_fee: state.chain_state.get().base_fee,
-        l1_params: *state.l1_block_info_params.get(),
-        l1_snapshot: *state.l1_block_info_snapshot.get(),
     });
     let mut included_tx_ids: Vec<TxId> = Vec::new();
     let mut dropped_total = 0u64;
@@ -543,10 +538,6 @@ pub fn produce_block(max_txs: usize) -> Result<BlockData, ChainError> {
     });
     if tx_ids.is_empty() {
         return Err(ChainError::QueueEmpty);
-    }
-    let now = now_sec();
-    if exec_ctx.l1_snapshot.enabled && record_system_tx_backoff_hit_if_active(now) {
-        return Err(ChainError::ExecFailed(Some(ExecError::SystemTxBackoff)));
     }
     let mut block_gas_used = 0u64;
     for tx_id in tx_ids {
@@ -589,7 +580,7 @@ pub fn produce_block(max_txs: usize) -> Result<BlockData, ChainError> {
                     continue;
                 }
             },
-            TxKind::EthSigned | TxKind::OpDeposit => [0u8; 20],
+            TxKind::EthSigned => [0u8; 20],
         };
         let tx_env = match decode_tx(kind, Address::from(caller), &stored.raw) {
             Ok(value) => value,
@@ -632,8 +623,6 @@ pub fn produce_block(max_txs: usize) -> Result<BlockData, ChainError> {
         let sender_nonce = tx_env.nonce;
         prepared.push(PreparedItem::Tx(PreparedTx {
             tx_id,
-            kind,
-            raw: stored.raw,
             tx_env,
             sender_bytes,
             sender_nonce,
@@ -645,27 +634,6 @@ pub fn produce_block(max_txs: usize) -> Result<BlockData, ChainError> {
         .any(|item| matches!(item, PreparedItem::Tx(_)))
     {
         return Err(ChainError::NoExecutableTx);
-    }
-
-    if exec_ctx.l1_snapshot.enabled {
-        let base_db = CacheDB::new(crate::revm_db::RevmStableDb);
-        let (system_diff, _db) = execute_l1_block_info_system_tx_on(base_db, &exec_ctx).map_err(
-            |err| {
-                record_system_tx_failure(now);
-                observe_exec_error(&err, timestamp);
-                ChainError::ExecFailed(Some(err))
-            },
-        )?;
-        collect_touched_addresses(
-            &system_diff,
-            &mut touched_addrs,
-            &mut touched_slots,
-            &mut delta_digests,
-        );
-        staged_state_diffs.push(system_diff);
-        clear_system_tx_failure_streak();
-    } else {
-        record_l1_snapshot_disabled_skip(timestamp);
     }
 
     for item in prepared {
@@ -687,15 +655,13 @@ pub fn produce_block(max_txs: usize) -> Result<BlockData, ChainError> {
             exec_db,
             tx_id,
             tx_index,
-            prepared_tx.kind,
-            &prepared_tx.raw,
             prepared_tx.tx_env,
             &exec_ctx,
             ExecPath::UserTx,
             false,
         );
         let outcome = match execution {
-            Ok((value, user_diff, _next_db)) => {
+            Ok((value, user_diff)) => {
                 collect_touched_addresses(
                     &user_diff,
                     &mut touched_addrs,
@@ -749,11 +715,7 @@ pub fn produce_block(max_txs: usize) -> Result<BlockData, ChainError> {
             }
         };
         let gas_used = outcome.receipt.gas_used;
-        let used_fallback = outcome.l1_fee_fallback_used;
         observe_exec_outcome(timestamp, &outcome);
-        if used_fallback {
-            record_l1_fee_fallback();
-        }
         block_gas_used = block_gas_used.saturating_add(gas_used);
         staged_included.push(StagedIncludedTx::Success {
             tx_id,
@@ -915,8 +877,6 @@ enum StagedIncludedTx {
 
 struct PreparedTx {
     tx_id: TxId,
-    kind: TxKind,
-    raw: Vec<u8>,
     tx_env: revm::context::TxEnv,
     sender_bytes: [u8; 20],
     sender_nonce: u64,
@@ -1034,47 +994,21 @@ fn execute_and_seal_with_caller(
         block_number: number,
         timestamp,
         base_fee: state.chain_state.get().base_fee,
-        l1_params: *state.l1_block_info_params.get(),
-        l1_snapshot: *state.l1_block_info_snapshot.get(),
     });
     let tx_env = decode_tx(kind, Address::from(caller), &stored.raw)
         .map_err(|_| ChainError::DecodeFailed)?;
     let sender_bytes = address_to_bytes(tx_env.caller);
     let sender_nonce = tx_env.nonce;
 
-    let now = now_sec();
-    if exec_ctx.l1_snapshot.enabled && record_system_tx_backoff_hit_if_active(now) {
-        return Err(ChainError::ExecFailed(Some(ExecError::SystemTxBackoff)));
-    }
-    let mut sync_db = CacheDB::new(crate::revm_db::RevmStableDb);
+    let sync_db = CacheDB::new(crate::revm_db::RevmStableDb);
     let mut staged_state_diffs: Vec<StateDiff> = Vec::new();
     let mut touched_addrs: BTreeSet<[u8; 20]> = BTreeSet::new();
     let mut touched_slots: u32 = 0;
     let mut delta_digests: Vec<[u8; 32]> = Vec::new();
-    if exec_ctx.l1_snapshot.enabled {
-        let (state_diff, next_db) = execute_l1_block_info_system_tx_on(sync_db, &exec_ctx)
-            .map_err(|err| {
-                record_system_tx_failure(now);
-                observe_exec_error(&err, timestamp);
-                ChainError::ExecFailed(Some(err))
-            })?;
-        collect_touched_addresses(
-            &state_diff,
-            &mut touched_addrs,
-            &mut touched_slots,
-            &mut delta_digests,
-        );
-        sync_db = next_db;
-        staged_state_diffs.push(state_diff);
-    } else {
-        record_l1_snapshot_disabled_skip(timestamp);
-    }
-    let (outcome, user_state_diff, _db_after_user) = match execute_tx_on(
+    let (outcome, user_state_diff) = match execute_tx_on(
         sync_db,
         tx_id,
         0,
-        kind,
-        &stored.raw,
         tx_env,
         &exec_ctx,
         ExecPath::UserTx,
@@ -1094,9 +1028,6 @@ fn execute_and_seal_with_caller(
     );
     staged_state_diffs.push(user_state_diff);
     observe_exec_outcome(timestamp, &outcome);
-    if outcome.l1_fee_fallback_used {
-        record_l1_fee_fallback();
-    }
     let tx_list_hash = hash::tx_list_hash(&[tx_id.0]);
     let touched: Vec<[u8; 20]> = touched_addrs.into_iter().collect();
     let summary = TouchedSummary {
@@ -1128,9 +1059,6 @@ fn execute_and_seal_with_caller(
     };
     for state_diff in staged_state_diffs {
         commit_state_diff_to_db(state_diff);
-    }
-    if exec_ctx.l1_snapshot.enabled {
-        clear_system_tx_failure_streak();
     }
     let state_root = prepared_root.state_root;
     let block_hash = hash::block_hash(parent_hash, number, timestamp, tx_list_hash, state_root);
@@ -1452,42 +1380,6 @@ fn track_drop(total: &mut u64, by_code: &mut [u64], code: u16) {
     }
 }
 
-fn record_l1_fee_fallback() {
-    let should_warn = with_state_mut(|state| {
-        let mut ops = *state.ops_state.get();
-        ops.l1_fee_fallback_count = ops.l1_fee_fallback_count.saturating_add(1);
-        let now = state.head.get().timestamp;
-        let should_warn = now.saturating_sub(ops.last_l1_fee_warn_ts) >= OPS_WARN_RATE_LIMIT_SECS;
-        if should_warn {
-            ops.last_l1_fee_warn_ts = now;
-        }
-        state.ops_state.set(ops);
-        should_warn
-    });
-    if should_warn {
-        eprintln!("l1 fee fallback used: snapshot is disabled");
-    }
-}
-
-fn record_l1_snapshot_disabled_skip(now: u64) {
-    let should_warn = with_state_mut(|state| {
-        let mut metrics = *state.ops_metrics.get();
-        metrics.l1_snapshot_disabled_skip_count =
-            metrics.l1_snapshot_disabled_skip_count.saturating_add(1);
-        let should_warn = metrics.last_l1_snapshot_disabled_warn_ts == 0
-            || now.saturating_sub(metrics.last_l1_snapshot_disabled_warn_ts)
-                >= OPS_WARN_RATE_LIMIT_SECS;
-        if should_warn {
-            metrics.last_l1_snapshot_disabled_warn_ts = now;
-        }
-        state.ops_metrics.set(metrics);
-        should_warn
-    });
-    if should_warn {
-        eprintln!("l1 block info system tx skipped: snapshot disabled");
-    }
-}
-
 fn observe_exec_error(err: &ExecError, now: u64) {
     if let ExecError::EvmHalt(OpHaltReason::Unknown) = err {
         record_exec_halt_unknown(now);
@@ -1518,55 +1410,7 @@ fn record_exec_halt_unknown(now: u64) {
     }
 }
 
-fn record_system_tx_backoff_hit_if_active(now: u64) -> bool {
-    let (active, should_warn) = with_state_mut(|state| {
-        let mut health = *state.system_tx_health.get();
-        if now >= health.backoff_until_ts {
-            return (false, false);
-        }
-        health.backoff_hits = health.backoff_hits.saturating_add(1);
-        let should_warn = health.last_warn_ts == 0
-            || now.saturating_sub(health.last_warn_ts) >= OPS_WARN_RATE_LIMIT_SECS;
-        if should_warn {
-            health.last_warn_ts = now;
-        }
-        state.system_tx_health.set(health);
-        (true, should_warn)
-    });
-    if should_warn {
-        eprintln!("system tx execution skipped: backoff active");
-    }
-    active
-}
-
-fn record_system_tx_failure(now: u64) {
-    let should_warn = with_state_mut(|state| {
-        let mut health = *state.system_tx_health.get();
-        health.consecutive_failures = health.consecutive_failures.saturating_add(1);
-        health.last_fail_ts = now;
-        health.backoff_until_ts = now.saturating_add(SYSTEM_TX_BACKOFF_SECS);
-        let should_warn = health.last_warn_ts == 0
-            || now.saturating_sub(health.last_warn_ts) >= OPS_WARN_RATE_LIMIT_SECS;
-        if should_warn {
-            health.last_warn_ts = now;
-        }
-        state.system_tx_health.set(health);
-        should_warn
-    });
-    if should_warn {
-        eprintln!("system tx execution failed; backoff enabled");
-    }
-}
-
-fn clear_system_tx_failure_streak() {
-    with_state_mut(|state| {
-        let mut health = *state.system_tx_health.get();
-        health.consecutive_failures = 0;
-        health.backoff_until_ts = 0;
-        state.system_tx_health.set(health);
-    });
-}
-
+#[cfg(test)]
 fn now_sec() -> u64 {
     crate::time::now_sec()
 }
@@ -2056,10 +1900,7 @@ enum RekeyError {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        now_sec, observe_exec_error, observe_exec_outcome, record_exec_halt_unknown,
-        record_l1_snapshot_disabled_skip, set_test_now_sec,
-    };
+    use super::{now_sec, observe_exec_error, observe_exec_outcome, record_exec_halt_unknown, set_test_now_sec};
     use crate::revm_exec::{ExecError, OpHaltReason};
     use evm_db::chain_data::{ReceiptLike, TxId};
     use evm_db::stable_state::{init_stable_state, with_state};
@@ -2118,31 +1959,10 @@ mod tests {
             return_data: Vec::new(),
             final_status: "Halt:Unknown".to_string(),
             halt_reason: Some(OpHaltReason::Unknown),
-            l1_fee_fallback_used: false,
         };
         observe_exec_outcome(11, &outcome);
         let state = with_state(|state| *state.ops_metrics.get());
         assert_eq!(state.exec_halt_unknown_count, 1);
-    }
-
-    #[test]
-    fn record_l1_snapshot_disabled_skip_updates_metrics() {
-        init_stable_state();
-        record_l1_snapshot_disabled_skip(10);
-        let metrics = with_state(|state| *state.ops_metrics.get());
-        assert_eq!(metrics.l1_snapshot_disabled_skip_count, 1);
-        assert_eq!(metrics.last_l1_snapshot_disabled_warn_ts, 10);
-    }
-
-    #[test]
-    fn record_l1_snapshot_disabled_skip_rate_limits_warning_timestamp() {
-        init_stable_state();
-        record_l1_snapshot_disabled_skip(10);
-        record_l1_snapshot_disabled_skip(40);
-        record_l1_snapshot_disabled_skip(80);
-        let metrics = with_state(|state| *state.ops_metrics.get());
-        assert_eq!(metrics.l1_snapshot_disabled_skip_count, 3);
-        assert_eq!(metrics.last_l1_snapshot_disabled_warn_ts, 80);
     }
 
     #[test]

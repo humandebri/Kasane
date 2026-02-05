@@ -82,21 +82,6 @@ type HealthView = record {
   auto_mine_enabled : bool;
 };
 type InitArgs = record { genesis_balances : vec GenesisBalanceView };
-type L1BlockInfoParamsView = record {
-  operator_fee_constant : nat;
-  l1_fee_overhead : nat;
-  operator_fee_scalar : nat;
-  l1_base_fee_scalar : nat;
-  spec_id : nat8;
-  l1_blob_base_fee_scalar : nat;
-  empty_ecotone_scalars : bool;
-};
-type L1BlockInfoSnapshotView = record {
-  l1_blob_base_fee : nat;
-  l1_block_number : nat64;
-  l1_base_fee : nat;
-  enabled : bool;
-};
 type LogView = record { data : blob; topics : vec blob; address : blob };
 type LookupError = variant {
   NotFound;
@@ -134,7 +119,6 @@ type OpsStatusView = record {
   last_check_ts : nat64;
   schema_version : nat32;
   safe_stop_latched : bool;
-  l1_fee_fallback_count : nat64;
   config : OpsConfigView;
 };
 type PendingStatusView = variant {
@@ -213,14 +197,12 @@ type SubmitTxError = variant {
   Rejected : text;
   InvalidArgument : text;
 };
-type TxKindView = variant { OpDeposit; EthSigned; IcSynthetic };
+type TxKindView = variant { EthSigned; IcSynthetic };
 service : (opt InitArgs) -> {
   expected_nonce_by_address : (blob) -> (Result) query;
   export_blocks : (opt ExportCursorView, nat32) -> (Result_1) query;
   get_block : (nat64) -> (Result_2) query;
   get_cycle_balance : () -> (nat) query;
-  get_l1_block_info_params : () -> (L1BlockInfoParamsView) query;
-  get_l1_block_info_snapshot : () -> (L1BlockInfoSnapshotView) query;
   get_miner_allowlist : () -> (vec principal) query;
   get_ops_status : () -> (OpsStatusView) query;
   get_pending : (blob) -> (PendingStatusView) query;
@@ -238,8 +220,6 @@ service : (opt InitArgs) -> {
   rpc_eth_get_transaction_receipt : (blob) -> (opt EthReceiptView) query;
   rpc_eth_send_raw_transaction : (blob) -> (Result_6);
   set_auto_mine : (bool) -> (Result_7);
-  set_l1_block_info_params : (L1BlockInfoParamsView) -> (Result_7);
-  set_l1_block_info_snapshot : (L1BlockInfoSnapshotView) -> (Result_7);
   set_miner_allowlist : (vec principal) -> (Result_7);
   set_mining_interval_ms : (nat64) -> (Result_7);
   set_ops_config : (OpsConfigView) -> (Result_7);

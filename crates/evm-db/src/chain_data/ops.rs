@@ -102,8 +102,6 @@ pub struct OpsStateV1 {
     pub last_check_ts: u64,
     pub mode: OpsMode,
     pub safe_stop_latched: bool,
-    pub l1_fee_fallback_count: u64,
-    pub last_l1_fee_warn_ts: u64,
 }
 
 impl OpsStateV1 {
@@ -113,8 +111,6 @@ impl OpsStateV1 {
             last_check_ts: 0,
             mode: OpsMode::Normal,
             safe_stop_latched: false,
-            l1_fee_fallback_count: 0,
-            last_l1_fee_warn_ts: 0,
         }
     }
 }
@@ -132,8 +128,6 @@ impl Storable for OpsStateV1 {
         out[16..24].copy_from_slice(&self.last_check_ts.to_be_bytes());
         out[24] = self.mode.as_u8();
         out[25] = u8::from(self.safe_stop_latched);
-        out[32..40].copy_from_slice(&self.l1_fee_fallback_count.to_be_bytes());
-        out[40..48].copy_from_slice(&self.last_l1_fee_warn_ts.to_be_bytes());
         Cow::Owned(out.to_vec())
     }
 
@@ -153,17 +147,11 @@ impl Storable for OpsStateV1 {
         last_check_ts.copy_from_slice(&data[16..24]);
         let mode = OpsMode::from_u8(data[24]);
         let safe_stop_latched = data[25] != 0;
-        let mut l1_fee_fallback_count = [0u8; 8];
-        l1_fee_fallback_count.copy_from_slice(&data[32..40]);
-        let mut last_l1_fee_warn_ts = [0u8; 8];
-        last_l1_fee_warn_ts.copy_from_slice(&data[40..48]);
         Self {
             last_cycle_balance: u128::from_be_bytes(cycle_balance),
             last_check_ts: u64::from_be_bytes(last_check_ts),
             mode,
             safe_stop_latched,
-            l1_fee_fallback_count: u64::from_be_bytes(l1_fee_fallback_count),
-            last_l1_fee_warn_ts: u64::from_be_bytes(last_l1_fee_warn_ts),
         }
     }
 

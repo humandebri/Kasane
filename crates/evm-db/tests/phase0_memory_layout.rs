@@ -13,8 +13,8 @@ fn memory_id_layout_is_frozen() {
     assert_eq!(AppMemoryId::CorruptLog.as_u8(), 34);
     assert_eq!(AppMemoryId::OpsConfig.as_u8(), 35);
     assert_eq!(AppMemoryId::OpsState.as_u8(), 36);
-    assert_eq!(AppMemoryId::L1BlockInfoParams.as_u8(), 37);
-    assert_eq!(AppMemoryId::L1BlockInfoSnapshot.as_u8(), 38);
+    assert_eq!(AppMemoryId::Reserved37.as_u8(), 37);
+    assert_eq!(AppMemoryId::Reserved38.as_u8(), 38);
     assert_eq!(AppMemoryId::OpsMetrics.as_u8(), 39);
-    assert_eq!(AppMemoryId::SystemTxHealth.as_u8(), 40);
+    assert_eq!(AppMemoryId::Reserved40.as_u8(), 40);
 }

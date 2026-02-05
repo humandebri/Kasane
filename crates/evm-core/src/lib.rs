@@ -13,5 +13,4 @@ pub mod state_root;
 pub(crate) mod trie_commit;
 pub(crate) mod time;
 pub mod tx_decode;
-pub(crate) mod tx_decode_deposit;
 pub mod tx_submit;

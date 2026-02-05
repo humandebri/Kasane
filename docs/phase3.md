@@ -9,7 +9,7 @@
 ## 非目的
 
 * Fault Proof / ZK証明（=L1担保）
-* 完全なOP Stack互換
+* 特定L2実装への互換追従
 * P2P / mempool / eth_subscribe
 
 ---

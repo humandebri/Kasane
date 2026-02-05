@@ -5,8 +5,8 @@ use evm_core::{chain, hash};
 use evm_db::chain_data::constants::CHAIN_ID;
 use evm_db::chain_data::constants::{MAX_QUEUE_SNAPSHOT_LIMIT, MAX_RETURN_DATA, MAX_TX_SIZE};
 use evm_db::chain_data::{
-    BlockData, CallerKey, L1BlockInfoParamsV1, L1BlockInfoSnapshotV1, MigrationPhase, OpsConfigV1,
-    OpsMode, ReceiptLike, StoredTx, StoredTxBytes, TxId, TxKind, TxLoc, TxLocKind,
+    BlockData, CallerKey, MigrationPhase, OpsConfigV1, OpsMode, ReceiptLike, StoredTx,
+    StoredTxBytes, TxId, TxKind, TxLoc, TxLocKind,
 };
 use evm_db::meta::{
     current_schema_version, ensure_meta_initialized, get_meta, mark_migration_applied,
@@ -91,28 +91,8 @@ pub struct OpsStatusView {
     pub last_check_ts: u64,
     pub mode: OpsModeView,
     pub safe_stop_latched: bool,
-    pub l1_fee_fallback_count: u64,
     pub needs_migration: bool,
     pub schema_version: u32,
-}
-
-#[derive(Clone, Debug, CandidType, Deserialize)]
-pub struct L1BlockInfoParamsView {
-    pub spec_id: u8,
-    pub empty_ecotone_scalars: bool,
-    pub l1_fee_overhead: u128,
-    pub l1_base_fee_scalar: u128,
-    pub l1_blob_base_fee_scalar: u128,
-    pub operator_fee_scalar: u128,
-    pub operator_fee_constant: u128,
-}
-
-#[derive(Clone, Debug, CandidType, Deserialize)]
-pub struct L1BlockInfoSnapshotView {
-    pub enabled: bool,
-    pub l1_block_number: u64,
-    pub l1_base_fee: u128,
-    pub l1_blob_base_fee: u128,
 }
 
 #[derive(Clone, Debug, CandidType, Deserialize)]
@@ -316,7 +296,6 @@ pub enum PendingStatusView {
 pub enum TxKindView {
     EthSigned,
     IcSynthetic,
-    OpDeposit,
 }
 
 #[derive(Clone, Debug, CandidType, Deserialize)]
@@ -440,8 +419,6 @@ fn inspect_method_allowed(method: &str) -> bool {
             | "set_prune_policy"
             | "set_pruning_enabled"
             | "set_ops_config"
-            | "set_l1_block_info_params"
-            | "set_l1_block_info_snapshot"
             | "set_miner_allowlist"
             | "prune_blocks"
             | "produce_block"
@@ -453,6 +430,7 @@ fn inspect_payload_len() -> usize {
     ic_cdk::api::call::arg_data_raw_size()
 }
 
+#[cfg(test)]
 fn map_execute_chain_result(
     result: Result<chain::ExecResult, chain::ChainError>,
 ) -> Result<ExecResultDto, ExecuteTxError> {
@@ -968,7 +946,6 @@ fn get_ops_status() -> OpsStatusView {
             last_check_ts: ops.last_check_ts,
             mode: mode_to_view(ops.mode),
             safe_stop_latched: ops.safe_stop_latched,
-            l1_fee_fallback_count: ops.l1_fee_fallback_count,
             needs_migration: meta.needs_migration,
             schema_version: meta.schema_version,
         }
@@ -992,43 +969,6 @@ fn set_ops_config(config: OpsConfigView) -> Result<(), String> {
         });
     });
     observe_cycles();
-    Ok(())
-}
-
-#[ic_cdk::query]
-fn get_l1_block_info_params() -> L1BlockInfoParamsView {
-    with_state(|state| l1_params_to_view(*state.l1_block_info_params.get()))
-}
-
-#[ic_cdk::query]
-fn get_l1_block_info_snapshot() -> L1BlockInfoSnapshotView {
-    with_state(|state| l1_snapshot_to_view(*state.l1_block_info_snapshot.get()))
-}
-
-#[ic_cdk::update]
-fn set_l1_block_info_params(params: L1BlockInfoParamsView) -> Result<(), String> {
-    require_manage_write()?;
-    if !is_valid_l1_spec_id(params.spec_id) {
-        return Err("input.l1_spec.invalid".to_string());
-    }
-    let next = l1_params_from_view(params);
-    evm_db::stable_state::with_state_mut(|state| {
-        let _ = state.l1_block_info_params.set(next);
-    });
-    Ok(())
-}
-
-#[ic_cdk::update]
-fn set_l1_block_info_snapshot(snapshot: L1BlockInfoSnapshotView) -> Result<(), String> {
-    require_manage_write()?;
-    let producing = with_state(|state| state.chain_state.get().is_producing);
-    if producing {
-        return Err("ops.busy_producing".to_string());
-    }
-    let next = l1_snapshot_from_view(snapshot);
-    evm_db::stable_state::with_state_mut(|state| {
-        let _ = state.l1_block_info_snapshot.set(next);
-    });
     Ok(())
 }
 
@@ -1211,10 +1151,10 @@ fn tx_kind_to_view(kind: TxKind) -> TxKindView {
     match kind {
         TxKind::EthSigned => TxKindView::EthSigned,
         TxKind::IcSynthetic => TxKindView::IcSynthetic,
-        TxKind::OpDeposit => TxKindView::OpDeposit,
     }
 }
 
+#[cfg(test)]
 fn exec_error_to_code(err: Option<&evm_core::revm_exec::ExecError>) -> &'static str {
     use evm_core::revm_exec::{ExecError, OpHaltReason, OpTransactionError};
 
@@ -1230,9 +1170,6 @@ fn exec_error_to_code(err: Option<&evm_core::revm_exec::ExecError>) -> &'static 
             "exec.tx.execution_failed"
         }
         Some(ExecError::Revert) => "exec.revert",
-        Some(ExecError::FailedDeposit) => "exec.deposit.failed",
-        Some(ExecError::SystemTxRejected) => "exec.system_tx.rejected",
-        Some(ExecError::SystemTxBackoff) => "exec.system_tx.backoff",
         Some(ExecError::EvmHalt(OpHaltReason::OutOfGas)) => "exec.halt.out_of_gas",
         Some(ExecError::EvmHalt(OpHaltReason::InvalidOpcode)) => "exec.halt.invalid_opcode",
         Some(ExecError::EvmHalt(OpHaltReason::StackOverflow)) => "exec.halt.stack_overflow",
@@ -1243,7 +1180,6 @@ fn exec_error_to_code(err: Option<&evm_core::revm_exec::ExecError>) -> &'static 
         }
         Some(ExecError::EvmHalt(OpHaltReason::PrecompileError)) => "exec.halt.precompile_error",
         Some(ExecError::EvmHalt(OpHaltReason::Unknown)) => "exec.halt.unknown",
-        Some(ExecError::InvalidL1SpecId(_)) => "exec.l1_spec.invalid",
         Some(ExecError::InvalidGasFee) => "exec.gas_fee.invalid",
         Some(ExecError::ExecutionFailed) => "exec.execution.failed",
     }
@@ -1336,7 +1272,7 @@ fn envelope_to_eth_view(
     let kind = stored.kind;
     let caller = match kind {
         TxKind::IcSynthetic => stored.caller_evm.unwrap_or([0u8; 20]),
-        TxKind::EthSigned | TxKind::OpDeposit => [0u8; 20],
+        TxKind::EthSigned => [0u8; 20],
     };
     let decoded =
         if let Ok(decoded) = evm_core::tx_decode::decode_tx_view(kind, caller, &stored.raw) {
@@ -1392,54 +1328,6 @@ fn mode_to_view(mode: OpsMode) -> OpsModeView {
         OpsMode::Low => OpsModeView::Low,
         OpsMode::Critical => OpsModeView::Critical,
     }
-}
-
-fn l1_params_to_view(params: L1BlockInfoParamsV1) -> L1BlockInfoParamsView {
-    L1BlockInfoParamsView {
-        spec_id: params.spec_id,
-        empty_ecotone_scalars: params.empty_ecotone_scalars,
-        l1_fee_overhead: params.l1_fee_overhead,
-        l1_base_fee_scalar: params.l1_base_fee_scalar,
-        l1_blob_base_fee_scalar: params.l1_blob_base_fee_scalar,
-        operator_fee_scalar: params.operator_fee_scalar,
-        operator_fee_constant: params.operator_fee_constant,
-    }
-}
-
-fn l1_params_from_view(params: L1BlockInfoParamsView) -> L1BlockInfoParamsV1 {
-    L1BlockInfoParamsV1 {
-        schema_version: 1,
-        spec_id: params.spec_id,
-        empty_ecotone_scalars: params.empty_ecotone_scalars,
-        l1_fee_overhead: params.l1_fee_overhead,
-        l1_base_fee_scalar: params.l1_base_fee_scalar,
-        l1_blob_base_fee_scalar: params.l1_blob_base_fee_scalar,
-        operator_fee_scalar: params.operator_fee_scalar,
-        operator_fee_constant: params.operator_fee_constant,
-    }
-}
-
-fn l1_snapshot_to_view(snapshot: L1BlockInfoSnapshotV1) -> L1BlockInfoSnapshotView {
-    L1BlockInfoSnapshotView {
-        enabled: snapshot.enabled,
-        l1_block_number: snapshot.l1_block_number,
-        l1_base_fee: snapshot.l1_base_fee,
-        l1_blob_base_fee: snapshot.l1_blob_base_fee,
-    }
-}
-
-fn l1_snapshot_from_view(snapshot: L1BlockInfoSnapshotView) -> L1BlockInfoSnapshotV1 {
-    L1BlockInfoSnapshotV1 {
-        schema_version: 1,
-        enabled: snapshot.enabled,
-        l1_block_number: snapshot.l1_block_number,
-        l1_base_fee: snapshot.l1_base_fee,
-        l1_blob_base_fee: snapshot.l1_blob_base_fee,
-    }
-}
-
-fn is_valid_l1_spec_id(spec_id: u8) -> bool {
-    (100..=110).contains(&spec_id)
 }
 
 fn require_controller() -> Result<(), String> {
@@ -1725,8 +1613,8 @@ pub fn export_did() -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        clamp_return_data, exec_error_to_code, inspect_method_allowed, is_valid_l1_spec_id,
-        map_execute_chain_result, tx_id_from_bytes, ExecuteTxError,
+        clamp_return_data, exec_error_to_code, inspect_method_allowed, map_execute_chain_result,
+        tx_id_from_bytes, ExecuteTxError,
     };
     use evm_core::chain::{ChainError, ExecResult};
     use evm_core::revm_exec::{ExecError, OpHaltReason, OpTransactionError};
@@ -1760,18 +1648,6 @@ mod tests {
     }
 
     #[test]
-    fn l1_spec_id_validation_accepts_known_range() {
-        assert!(is_valid_l1_spec_id(100));
-        assert!(is_valid_l1_spec_id(110));
-    }
-
-    #[test]
-    fn l1_spec_id_validation_rejects_unknown_values() {
-        assert!(!is_valid_l1_spec_id(99));
-        assert!(!is_valid_l1_spec_id(111));
-    }
-
-    #[test]
     fn exec_error_codes_match_fixed_pattern() {
         let inputs = [
             Some(ExecError::Decode(
@@ -1782,9 +1658,6 @@ mod tests {
             Some(ExecError::TxError(OpTransactionError::TxPrecheckFailed)),
             Some(ExecError::TxError(OpTransactionError::TxExecutionFailed)),
             Some(ExecError::Revert),
-            Some(ExecError::FailedDeposit),
-            Some(ExecError::SystemTxRejected),
-            Some(ExecError::SystemTxBackoff),
             Some(ExecError::EvmHalt(OpHaltReason::OutOfGas)),
             Some(ExecError::EvmHalt(OpHaltReason::InvalidOpcode)),
             Some(ExecError::EvmHalt(OpHaltReason::StackOverflow)),
@@ -1795,7 +1668,6 @@ mod tests {
             )),
             Some(ExecError::EvmHalt(OpHaltReason::PrecompileError)),
             Some(ExecError::EvmHalt(OpHaltReason::Unknown)),
-            Some(ExecError::InvalidL1SpecId(99)),
             Some(ExecError::InvalidGasFee),
             Some(ExecError::ExecutionFailed),
             None,

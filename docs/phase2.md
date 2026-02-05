@@ -10,7 +10,7 @@
 
 * mempool / pending / eth_subscribe（WS）
 * eth_getLogs / filter（ログインデックス沼）
-* OP互換やL1投稿（Phase3以降）
+* 特定L2仕様への互換追従やL1投稿（Phase3以降）
 
 ---
 

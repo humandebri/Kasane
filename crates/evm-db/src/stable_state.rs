@@ -4,11 +4,10 @@ use crate::blob_ptr::BlobPtr;
 use crate::blob_store::BlobStore;
 use crate::chain_data::constants::CHAIN_ID;
 use crate::chain_data::{
-    CallerKey, ChainStateV1, DroppedRingStateV1, GcStateV1, HashKey, Head, L1BlockInfoParamsV1,
-    L1BlockInfoSnapshotV1, MetricsStateV1, MigrationStateV1, MismatchRecordV1, NodeRecord,
-    OpsConfigV1, OpsMetricsV1, OpsStateV1, PruneConfigV1, PruneJournal, PruneStateV1, QueueMeta,
-    ReadyKey, SenderKey, SenderNonceKey, StateRootMetaV1, StateRootMetricsV1, StoredTxBytes,
-    SystemTxHealthV1, TxId,
+    CallerKey, ChainStateV1, DroppedRingStateV1, GcStateV1, HashKey, Head, MetricsStateV1,
+    MigrationStateV1, MismatchRecordV1, NodeRecord, OpsConfigV1, OpsMetricsV1, OpsStateV1,
+    PruneConfigV1, PruneJournal, PruneStateV1, QueueMeta, ReadyKey, SenderKey, SenderNonceKey,
+    StateRootMetaV1, StateRootMetricsV1, StoredTxBytes, TxId,
 };
 use crate::memory::{get_memory, AppMemoryId, VMem};
 use crate::types::keys::{AccountKey, CodeKey, StorageKey};
@@ -63,9 +62,6 @@ pub struct StableState {
     pub ops_config: StableCell<OpsConfigV1, VMem>,
     pub ops_state: StableCell<OpsStateV1, VMem>,
     pub ops_metrics: StableCell<OpsMetricsV1, VMem>,
-    pub system_tx_health: StableCell<SystemTxHealthV1, VMem>,
-    pub l1_block_info_params: StableCell<L1BlockInfoParamsV1, VMem>,
-    pub l1_block_info_snapshot: StableCell<L1BlockInfoSnapshotV1, VMem>,
     pub prune_journal: PruneJournalMap,
     pub caller_nonces: CallerNonces,
     pub tx_locs: TxLocs,
@@ -129,18 +125,6 @@ pub fn init_stable_state() {
     let ops_config = StableCell::init(get_memory(AppMemoryId::OpsConfig), OpsConfigV1::new());
     let ops_state = StableCell::init(get_memory(AppMemoryId::OpsState), OpsStateV1::new());
     let ops_metrics = StableCell::init(get_memory(AppMemoryId::OpsMetrics), OpsMetricsV1::new());
-    let system_tx_health = StableCell::init(
-        get_memory(AppMemoryId::SystemTxHealth),
-        SystemTxHealthV1::new(),
-    );
-    let l1_block_info_params = StableCell::init(
-        get_memory(AppMemoryId::L1BlockInfoParams),
-        L1BlockInfoParamsV1::new(),
-    );
-    let l1_block_info_snapshot = StableCell::init(
-        get_memory(AppMemoryId::L1BlockInfoSnapshot),
-        L1BlockInfoSnapshotV1::new(),
-    );
     let prune_journal = StableBTreeMap::init(get_memory(AppMemoryId::PruneJournal));
     let caller_nonces = StableBTreeMap::init(get_memory(AppMemoryId::CallerNonces));
     let tx_locs = StableBTreeMap::init(get_memory(AppMemoryId::TxLocs));
@@ -202,9 +186,6 @@ pub fn init_stable_state() {
             ops_config,
             ops_state,
             ops_metrics,
-            system_tx_health,
-            l1_block_info_params,
-            l1_block_info_snapshot,
             prune_journal,
             caller_nonces,
             tx_locs,
