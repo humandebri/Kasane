@@ -69,6 +69,12 @@
 - [ ] `ecrecover` 等の二重実装を排除
 - [ ] 境界仕様（どこで何を検証するか）を文書化
 
+### 運用ルール（2026-02-05 追加）
+
+- [x] 全 public `update` は anonymous caller を拒否する（エラー: `auth.anonymous_forbidden`）
+- [x] `inspect_message` で anonymous `update` を early reject し、不要な処理コストを抑制
+- [x] 各 `update` 本体でも同一エラーで拒否する（inspectをバイパスしても fail-closed）
+
 ## PR9: SIMD性能PR（最後に分離）
 
 - [ ] wasm32向け `+simd128` 有効プロファイルを追加

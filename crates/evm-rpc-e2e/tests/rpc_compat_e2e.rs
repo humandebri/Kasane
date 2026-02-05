@@ -135,6 +135,7 @@ struct PruneResultView {
 }
 
 type PruneBlocksResult = Result<PruneResultView, ProduceBlockError>;
+type ManageWriteResult = Result<(), String>;
 
 #[derive(Clone, Debug, CandidType, Deserialize, Eq, PartialEq)]
 struct LogView {
@@ -153,8 +154,12 @@ fn wasm_path() -> PathBuf {
         .join("ic_evm_wrapper.wasm")
 }
 
+fn test_caller() -> Principal {
+    Principal::self_authenticating(b"rpc-e2e-test-caller")
+}
+
 fn install_canister(pic: &PocketIc) -> Principal {
-    let caller = Principal::anonymous();
+    let caller = test_caller();
     let init = Some(InitArgs {
         genesis_balances: vec![GenesisBalanceView {
             address: hash::caller_evm_from_principal(caller.as_slice()).to_vec(),
@@ -210,7 +215,17 @@ fn call_query(pic: &PocketIc, canister_id: Principal, method: &str, arg: Vec<u8>
 }
 
 fn call_update(pic: &PocketIc, canister_id: Principal, method: &str, arg: Vec<u8>) -> Vec<u8> {
-    pic.update_call(canister_id, Principal::anonymous(), method, arg)
+    call_update_as(pic, canister_id, test_caller(), method, arg)
+}
+
+fn call_update_as(
+    pic: &PocketIc,
+    canister_id: Principal,
+    caller: Principal,
+    method: &str,
+    arg: Vec<u8>,
+) -> Vec<u8> {
+    pic.update_call(canister_id, caller, method, arg)
         .unwrap_or_else(|err| panic!("update error: {err}"))
 }
 
@@ -341,6 +356,78 @@ fn prune_blocks_requires_controller() {
             );
         }
         Err(other) => panic!("unexpected prune error: {other:?}"),
+    }
+}
+
+#[test]
+fn anonymous_submit_ic_tx_is_rejected() {
+    let pic = PocketIc::new();
+    let canister_id = install_canister(&pic);
+    let tx_bytes = build_ic_tx_bytes([0x20u8; 20], 0);
+    let out = call_update_as(
+        &pic,
+        canister_id,
+        Principal::anonymous(),
+        "submit_ic_tx",
+        Encode!(&tx_bytes).expect("encode submit"),
+    );
+    let result: SubmitTxResult = Decode!(&out, SubmitTxResult).expect("decode submit");
+    match result {
+        Ok(_) => panic!("anonymous submit must be rejected"),
+        Err(SubmitTxError::Rejected(message)) => {
+            assert!(
+                message.contains("auth.anonymous_forbidden"),
+                "unexpected message: {message}"
+            );
+        }
+        Err(other) => panic!("unexpected submit error: {other:?}"),
+    }
+}
+
+#[test]
+fn anonymous_produce_block_is_rejected() {
+    let pic = PocketIc::new();
+    let canister_id = install_canister(&pic);
+    let out = call_update_as(
+        &pic,
+        canister_id,
+        Principal::anonymous(),
+        "produce_block",
+        Encode!(&1u32).expect("encode produce"),
+    );
+    let result: ProduceBlockResult = Decode!(&out, ProduceBlockResult).expect("decode produce");
+    match result {
+        Ok(_) => panic!("anonymous produce_block must be rejected"),
+        Err(ProduceBlockError::Internal(message)) => {
+            assert!(
+                message.contains("auth.anonymous_forbidden"),
+                "unexpected message: {message}"
+            );
+        }
+        Err(other) => panic!("unexpected produce error: {other:?}"),
+    }
+}
+
+#[test]
+fn anonymous_set_auto_mine_is_rejected() {
+    let pic = PocketIc::new();
+    let canister_id = install_canister(&pic);
+    let out = call_update_as(
+        &pic,
+        canister_id,
+        Principal::anonymous(),
+        "set_auto_mine",
+        Encode!(&true).expect("encode set_auto_mine"),
+    );
+    let result: ManageWriteResult = Decode!(&out, ManageWriteResult).expect("decode set_auto_mine");
+    match result {
+        Ok(()) => panic!("anonymous set_auto_mine must be rejected"),
+        Err(message) => {
+            assert!(
+                message.contains("auth.anonymous_forbidden"),
+                "unexpected message: {message}"
+            );
+        }
     }
 }
 

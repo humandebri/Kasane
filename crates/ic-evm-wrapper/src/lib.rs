@@ -399,6 +399,9 @@ fn inspect_message() {
     if !inspect_method_allowed(method.as_str()) {
         return;
     }
+    if reject_anonymous_update().is_some() {
+        return;
+    }
     let payload_len = inspect_payload_len();
     if payload_len <= MAX_TX_SIZE.saturating_mul(2) {
         accept_message();
@@ -484,6 +487,9 @@ fn map_execute_chain_result(
 
 #[ic_cdk::update]
 fn submit_eth_tx(raw_tx: Vec<u8>) -> Result<Vec<u8>, SubmitTxError> {
+    if let Some(reason) = reject_anonymous_update() {
+        return Err(SubmitTxError::Rejected(reason));
+    }
     if let Some(reason) = reject_write_reason() {
         return Err(SubmitTxError::Rejected(reason));
     }
@@ -532,6 +538,9 @@ fn submit_eth_tx(raw_tx: Vec<u8>) -> Result<Vec<u8>, SubmitTxError> {
 
 #[ic_cdk::update]
 fn submit_ic_tx(tx_bytes: Vec<u8>) -> Result<Vec<u8>, SubmitTxError> {
+    if let Some(reason) = reject_anonymous_update() {
+        return Err(SubmitTxError::Rejected(reason));
+    }
     if let Some(reason) = reject_write_reason() {
         return Err(SubmitTxError::Rejected(reason));
     }
@@ -587,6 +596,9 @@ fn submit_ic_tx(tx_bytes: Vec<u8>) -> Result<Vec<u8>, SubmitTxError> {
 #[cfg(feature = "dev-faucet")]
 #[ic_cdk::update]
 fn dev_mint(address: Vec<u8>, amount: u128) {
+    if let Some(reason) = reject_anonymous_update() {
+        ic_cdk::trap(&reason);
+    }
     if reject_write_reason().is_some() {
         return;
     }
@@ -604,6 +616,9 @@ fn dev_mint(address: Vec<u8>, amount: u128) {
 
 #[ic_cdk::update]
 fn produce_block(max_txs: u32) -> Result<ProduceBlockStatus, ProduceBlockError> {
+    if let Some(reason) = reject_anonymous_update() {
+        return Err(ProduceBlockError::Internal(reason));
+    }
     if let Err(reason) = require_producer_write() {
         return Err(ProduceBlockError::Internal(reason));
     }
@@ -766,6 +781,9 @@ fn rpc_eth_block_number() -> u64 {
 
 #[ic_cdk::update]
 fn set_prune_policy(policy: PrunePolicyView) -> Result<(), String> {
+    if let Some(reason) = reject_anonymous_update() {
+        return Err(reason);
+    }
     require_manage_write()?;
     let core_policy = evm_db::chain_data::PrunePolicy {
         target_bytes: policy.target_bytes,
@@ -783,6 +801,9 @@ fn set_prune_policy(policy: PrunePolicyView) -> Result<(), String> {
 
 #[ic_cdk::update]
 fn set_pruning_enabled(enabled: bool) -> Result<(), String> {
+    if let Some(reason) = reject_anonymous_update() {
+        return Err(reason);
+    }
     require_manage_write()?;
     chain::set_pruning_enabled(enabled).map_err(|_| "set_pruning_enabled failed".to_string())?;
     schedule_prune();
@@ -846,6 +867,9 @@ fn rpc_eth_get_transaction_receipt(tx_hash: Vec<u8>) -> Option<EthReceiptView> {
 
 #[ic_cdk::update]
 fn rpc_eth_send_raw_transaction(raw_tx: Vec<u8>) -> Result<Vec<u8>, SubmitTxError> {
+    if let Some(reason) = reject_anonymous_update() {
+        return Err(SubmitTxError::Rejected(reason));
+    }
     if let Some(reason) = reject_write_reason() {
         return Err(SubmitTxError::Rejected(reason));
     }
@@ -907,6 +931,9 @@ fn get_miner_allowlist() -> Vec<Principal> {
 
 #[ic_cdk::update]
 fn set_miner_allowlist(principals: Vec<Principal>) -> Result<(), String> {
+    if let Some(reason) = reject_anonymous_update() {
+        return Err(reason);
+    }
     require_manage_write()?;
     evm_db::stable_state::with_state_mut(|state| {
         let old_keys: Vec<_> = state
@@ -954,6 +981,9 @@ fn get_ops_status() -> OpsStatusView {
 
 #[ic_cdk::update]
 fn set_ops_config(config: OpsConfigView) -> Result<(), String> {
+    if let Some(reason) = reject_anonymous_update() {
+        return Err(reason);
+    }
     require_manage_write()?;
     if config.critical == 0 {
         return Err("input.ops_config.critical.non_positive".to_string());
@@ -1037,6 +1067,9 @@ fn metrics(window: u64) -> MetricsView {
 
 #[ic_cdk::update]
 fn set_auto_mine(enabled: bool) -> Result<(), String> {
+    if let Some(reason) = reject_anonymous_update() {
+        return Err(reason);
+    }
     require_manage_write()?;
     evm_db::stable_state::with_state_mut(|state| {
         let mut chain_state = *state.chain_state.get();
@@ -1051,6 +1084,9 @@ fn set_auto_mine(enabled: bool) -> Result<(), String> {
 
 #[ic_cdk::update]
 fn set_mining_interval_ms(interval_ms: u64) -> Result<(), String> {
+    if let Some(reason) = reject_anonymous_update() {
+        return Err(reason);
+    }
     require_manage_write()?;
     if interval_ms == 0 {
         return Err("input.mining_interval.non_positive".to_string());
@@ -1066,6 +1102,9 @@ fn set_mining_interval_ms(interval_ms: u64) -> Result<(), String> {
 
 #[ic_cdk::update]
 fn prune_blocks(retain: u64, max_ops: u32) -> Result<PruneResultView, ProduceBlockError> {
+    if let Some(reason) = reject_anonymous_update() {
+        return Err(ProduceBlockError::Internal(reason));
+    }
     if let Err(reason) = require_manage_write() {
         return Err(ProduceBlockError::Internal(reason));
     }
@@ -1430,6 +1469,13 @@ fn reject_write_reason() -> Option<String> {
     }
     if cycle_mode() == OpsMode::Critical {
         return Some("ops.write.cycle_critical".to_string());
+    }
+    None
+}
+
+fn reject_anonymous_update() -> Option<String> {
+    if msg_caller() == Principal::anonymous() {
+        return Some("auth.anonymous_forbidden".to_string());
     }
     None
 }
