@@ -1,152 +1,174 @@
-# fixplan（運用・防御補助計画）
-
-この文書は `docs/ops/fixplan2.md` を最優先にした補助計画です。  
-**実装順・仕様凍結の主導は fixplan2（PR0〜PR9）** とし、本書は運用防御と事故防止の観点を補います。
 
 ---
 
-## 0. 優先順位ルール（更新）
+# 改訂 修正計画（監査全項目網羅・実装形まで）
 
-1. **fixplan2.md が正（Source of Truth）**
-2. 本書は矛盾しない範囲でのみ有効
-3. 矛盾した場合は本書側を修正する
+## ゴール（変えない）
 
----
-
-## 1. 認可・API方針（fixplan2に合わせて改訂）
-
-### 1.1 管理系 update の認可統一
-
-対象例:
-- `set_auto_mine`
-- `set_mining_interval_ms`
-- `set_prune_policy`
-- `set_pruning_enabled`
-- `set_ops_config` など運用設定変更API
-
-実装方針:
-- `ic-evm-wrapper/src/lib.rs` で管理系APIの認可を統一
-- guard関数で漏れを防ぐ
-
-### 1.2 エラー返却方針（trap乱用を避ける）
-
-旧方針の「unauthorizedでtrap」は撤回。  
-fixplan2（PR7: 安定分類）に合わせ、**外部APIは安定したエラー分類を返す**。
-
-原則:
-- 入力不正/権限不足/業務拒否は分類済みエラーで返す
-- trapは不変条件違反・破損検知など内部異常に限定
-
-### 1.3 同期即時実行APIの廃止
-
-方針:
-- `execute_ic_tx` は公開APIから削除し、`submit_* + produce_block` に統一
-- 同期即時実行レーンを閉じ、キュー設計（公平性/ピーク耐性）を一本化
+* **最終：フルトラストレス**
+* **今：チェーンが止まらず、壊れず、進む**
+* **state_root は永続MPTへ**（ただし“順番”が重要）
+* **fail-closed は本番前提**（ただし導入ステップは分ける）
 
 ---
 
-## 2. 永続肥大化・メモリ圧迫対策（fixplan2と整合）
+## フェーズ0：Poison Pill / 永久停止系を先に潰す（最優先）
 
-### 2.1 Dropped Tx の扱い
+ここを先にやらないと、MPT入れてもチェーンが死ぬ。
 
-方針:
-- drop確定時に重い本文を削除（必要なら軽量墓標のみ残す）
-- 関連インデックスを同時に掃除し、幽霊参照を禁止
+### 0-1. Receipt保存で trap しない（Poison Pill 根絶）
 
-注意:
-- `StoredTx`/index設計は PR1 の型整理後に最終反映
-- 実装位置は `chain.rs` の drop確定経路に集約
+**問題**: `ReceiptLike::to_bytes` がログ数/return_dataで trap → 永久停止
+**実装方針（確定）**
 
-### 2.2 滞留対策（cap優先、TTL後追い）
+* 保存層（evm-db）の Storable 経路で **trap禁止**
+* **BlobStore 退避**に統一：`receipt` には `return_data_ptr` / `logs_ptr` を保存
+* RPCは巨大データをデフォルトで返さない（必要なら別取得/上限）
+  **AC**
+* どんな tx でも「保存が原因で」trapしない
+* 大ログ tx でもブロック生成が継続する
 
-優先度:
-1. Global cap / Per-sender cap
-2. nonce window
-3. TTL eviction
+### 0-2. Pruning crash-consistency の自己矛盾解消
 
-理由:
-- 先に「無限投入できない」状態を作るほうが止血効果が高い
+**問題**: blocks.remove後にtrap → journal復旧がload_block依存で詰む
+**実装方針（確定）**
 
----
+* journal に **削除対象TxId一覧（復元可能な最小情報）** を保存
+* 順序：`journal write -> 付随データ削除 -> 最後に blocks削除`
+  **AC**
+* prune途中で落ちても次回起動で必ず回復して前進
 
-## 3. IC特有のDoS防御（fixplan2 PR8と非衝突）
+### 0-3. mempool jamming（残高不足 + 高fee占有）対策
 
-### 3.1 inspect_message は軽量のみ
+**実装方針（確定）**
 
-許可:
-- メソッド名
-- payload/txサイズ
-- 形式の軽量チェック
-
-非推奨:
-- 重い署名検証
-- 状態依存の高コスト検証
-
-### 3.2 検証責務の境界
-
-fixplan2 PR8に合わせて以下を明確化:
-- Ingress入口: 形式/サイズ/基本妥当性
-- EVM内部: precompile責務（例: `ecrecover`）
-- 二重実装は禁止
+* submit時：`max_cost = gas_limit*max_fee + value` 上界チェックで即reject
+* produce時：base_fee/残高で再判定
+* candidate選定：sender単位の占有制限（同一senderで枠埋め禁止）
+  **AC**
+* 残高不足 tx で ready枠が詰まらない
 
 ---
 
-## 4. 整合性・復旧（PR0/PR5に合わせる）
+## フェーズ1：入口DoS・運用死を止める（P1の“前提”）
 
-### 4.1 不変条件のコード化
+### 1-1. `produce_block` 呼び出し制御（allowlist）
 
-例:
-- pending参照が孤立しない
-- dropped tx が pending/ready に残らない
+**実装方針（確定）**
 
-実施:
-- debug用 invariant check
-- ランダム操作列テスト（PBT）
+* `MinerAllowlistV1` を stable に
+* `produce_block` 冒頭 `require_miner()?`
+* `inspect_message` でも弾く（ただし最終防波堤は `require_miner`）
+  **関連バグ**
+* `set_miner_allowlist` inspect許可漏れ → **ここで一緒に直す**
+  **AC**
+* allowlist API が実際に呼べる
+* 無権限の produce_block は入口で落ちる（cycle燃やさない）
 
-### 4.2 upgrade方針の固定
+### 1-2. RPC重クエリの爆発を潰す
 
-原則:
-- `MemoryId` は変更しない（追加のみ）
-- `Storable` 変更は versioned encoding
-- upgrade前後互換テストを更新
+* `eth_getBlockByNumber(full_tx=true)` に上限/ページング/禁止のいずれか
+* 外部エラーは固定コード、詳細はログのみ（`format!("{:?}", err)`排除）
+  **AC**
+* 低コストで耐える（攻撃でcycleが溶けない）
 
----
+### 1-3. RNG経路の封鎖（CI機械検査＋feature固定）
 
-## 5. 実装順（fixplan2優先で再編）
-
-### 最優先（fixplan2と並走で即対応）
-
-1. 管理API認可統一（本書 1.1）
-2. エラー返却方針の統一（本書 1.2、PR7準備）
-3. 入力サイズ上限と snapshot hard cap
-
-### fixplan2 PR進行中に差し込む項目
-
-- PR1〜PR3中: dropped掃除・cap/nonce window の反映点を確定
-- PR3〜PR5中: invariantチェックと互換テスト更新
-- PR7〜PR8中: エラーマッピング表と検証責務境界を確定
-
-### 後段
-
-- TTL eviction
-- pruning運用最適化
-- 監視メトリクス強化
+* workspace 全体で禁止経路検査（あなたが既にやってる）
+* wasm側 getrandom は custom 以外禁止
+  **AC**
+* 本番で trap 経路にならない
 
 ---
 
-## 6. 受け入れ条件（改訂）
+## フェーズ2：state_root を “根本修正” する（永続MPT＋slot差分）
 
-- fixplan2のPR順を崩さずに本書の防御項目が入る
-- 管理APIで権限制御漏れがない
-- unauthorized/invalid input が分類済みエラーで観測できる
-- queue/pendingが無限増加しない
-- dropped後に孤立インデックスが残らない
-- upgrade前後で互換テストが通る
+ここがあなたの当初のP1。**ただしフェーズ0/1を先に入れる**のが違い。
+
+### 2-1. 永続MPT（node DB）導入
+
+**実装形（ほぼあなた案でOK）**
+
+* `node_db: StableBTreeMap<B256, NodeVal>`
+  ※`NodeVal = { rlp: Bytes, refcnt/epoch: u32 }` を推奨（膨張地獄回避）
+* `state_root_meta: { current_root, initialized, schema_version }`
+* 「source of truth」を account leaf に寄せる（`storage_root_by_address` はキャッシュ扱い）
+  **移行**
+* `initialized=false` は **1回だけ再構築**（ただし冪等・進捗保存必須）
+  **AC**
+* 全件走査経路（旧 `compute_state_root_*`）が本番コードから消える
+
+### 2-2. touched storage を slot 単位で増分反映（TrieDelta）
+
+**実装形**
+
+* `TrieDelta { account_deltas, storage_slot_deltas }`
+* コミットパスは1箇所（`trie_commit`）に統一
+* `selfdestruct/empty account` は leaf delete + 関連 storage trie 到達不能化
+  **AC**
+* 大量slotのあるアドレスでも touched slot 数に比例
+
+### 2-3. fail-closed（ただし“検出”を強くする）
+
+**挙動（本番）**
+
+* mismatch → `produce_block` は必ず失敗、ブロック確定しない
+* `is_producing`解除、`state_root_mismatch_count++`
+* 再現情報（block、2root、delta要約）を stable に保存
+  **検証**
+* “限定ケース”ではなく **サンプリング検証**（例：1/1024）を推奨
+  ＝壊れ始めを早期に捕まえる
 
 ---
 
-## 7. 運用最低ライン
+## フェーズ3：OP互換（必要なら）／system tx の扱いを確定
 
-- メトリクス: pending数、sender上位、dropped理由、stable使用量、cycles残量
-- 緊急停止: controller限定、運用手順をRunbook化
-- 障害時: 「拒否理由が分類されている」ことを最優先で確認
+ここは「今すぐ必須」ではないが、監査項目として出てるなら整理が必要。
+
+### 3-1. system tx をブロックに含めるか
+
+* **OP互換を名乗るなら**：block body / receipts / index を一貫させて含める
+* **名乗らないなら**：内部txとして扱い、外部仕様を明確化（“OP互換ではない”）
+  **AC**
+* 仕様が一貫し、インデクサ/RPCが矛盾しない
+
+---
+
+# PR構成（巨大PR地獄を避ける）
+
+あなたの「3点同時」は思想として正しいが、レビュー不能になりがち。現実解：
+
+* **PR-A（フェーズ0）**：Poison Pill + pruning journal + mempool jamming
+* **PR-B（フェーズ1）**：allowlist + inspect許可漏れ + RPC制限 + error固定
+* **PR-C（フェーズ2）**：永続MPT + TrieDelta + fail-closed（＋サンプリング検証）
+* **PR-D（任意）**：system tx / OP互換整理
+
+こう分けると、**どの時点でもチェーンが死なない**状態を維持しながら進められる。
+
+---
+
+# 受け入れ基準（更新版）
+
+* 保存層で trap が起きない（Poison Pill根絶）
+* prune がクラッシュしても復旧する
+* mempool jamming が成立しない
+* produce_block は許可制・APIがinspectで呼べる
+* state_root は全件走査/全storage走査が残っていない
+* node_db の増加が制御されている（GC/保持ポリシー）
+* mismatch は fail-closed + 再現情報が残る
+* 既存テスト全通過＋性能退行が “差分量に比例” を満たす
+
+---
+
+## 要するに
+
+「網羅版」を **優先順位とPR境界で再構成**したのが上の計画。
+この形に変えると、あなたが欲しい
+
+* まず動く（死なない）
+* でも将来フルトラストレスに接続できる
+* 監査指摘を全部潰してる
+
+が全部同時に取れる。
+
+必要なら、あなたのリポ構造（`evm-core/evm-db/wrapper` のどこに何を置くか）に合わせて、各PRの **ファイル単位タスクリスト（差分粒度）**まで落とす。
