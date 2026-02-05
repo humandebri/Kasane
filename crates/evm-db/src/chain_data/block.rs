@@ -1,10 +1,10 @@
 //! どこで: Phase1のブロックモデル / 何を: BlockDataとHead / なぜ: 決定的なブロック保存のため
 
+use crate::chain_data::codec::{encode_guarded, mark_decode_failure};
 use crate::chain_data::constants::{
     HASH_LEN, HASH_LEN_U32, MAX_BLOCK_DATA_SIZE_U32, MAX_TXS_PER_BLOCK,
 };
 use crate::chain_data::tx::TxId;
-use crate::corrupt_log::record_corrupt;
 use ic_stable_structures::storable::Bound;
 use ic_stable_structures::Storable;
 use std::borrow::Cow;
@@ -56,7 +56,7 @@ impl Storable for BlockData {
         for tx_id in self.tx_ids.iter() {
             out.extend_from_slice(&tx_id.0);
         }
-        Cow::Owned(out)
+        encode_guarded(b"block_data_encode", out, MAX_BLOCK_DATA_SIZE_U32)
     }
 
     fn into_bytes(self) -> Vec<u8> {
@@ -79,7 +79,7 @@ impl Storable for BlockData {
         let data = bytes.as_ref();
         let base_len = 8 + HASH_LEN + HASH_LEN + 8 + HASH_LEN + HASH_LEN + 4;
         if data.len() < base_len {
-            record_corrupt(b"block_data");
+            mark_decode_failure(b"block_data", true);
             return BlockData {
                 number: 0,
                 parent_hash: [0u8; HASH_LEN],
@@ -115,7 +115,7 @@ impl Storable for BlockData {
         let tx_len = match usize::try_from(u32::from_be_bytes(len_bytes)) {
             Ok(value) => value,
             Err(_) => {
-                record_corrupt(b"block_data");
+                mark_decode_failure(b"block_data", true);
                 return BlockData {
                     number: 0,
                     parent_hash: [0u8; HASH_LEN],
@@ -128,7 +128,7 @@ impl Storable for BlockData {
             }
         };
         if tx_len > MAX_TXS_PER_BLOCK {
-            record_corrupt(b"block_data");
+            mark_decode_failure(b"block_data", true);
             return BlockData {
                 number: 0,
                 parent_hash: [0u8; HASH_LEN],
@@ -141,7 +141,7 @@ impl Storable for BlockData {
         }
         let expected = base_len + tx_len * HASH_LEN;
         if expected != data.len() {
-            record_corrupt(b"block_data");
+            mark_decode_failure(b"block_data", true);
             return BlockData {
                 number: 0,
                 parent_hash: [0u8; HASH_LEN],
@@ -189,7 +189,7 @@ impl Storable for Head {
         out[0..8].copy_from_slice(&self.number.to_be_bytes());
         out[8..8 + HASH_LEN].copy_from_slice(&self.block_hash);
         out[8 + HASH_LEN..8 + HASH_LEN + 8].copy_from_slice(&self.timestamp.to_be_bytes());
-        Cow::Owned(out.to_vec())
+        encode_guarded(b"head_encode", out.to_vec(), 8 + HASH_LEN_U32 + 8)
     }
 
     fn into_bytes(self) -> Vec<u8> {
@@ -203,7 +203,7 @@ impl Storable for Head {
     fn from_bytes(bytes: Cow<'_, [u8]>) -> Self {
         let data = bytes.as_ref();
         if data.len() != 8 + HASH_LEN + 8 {
-            record_corrupt(b"head");
+            mark_decode_failure(b"head", true);
             return Head {
                 number: 0,
                 block_hash: [0u8; HASH_LEN],

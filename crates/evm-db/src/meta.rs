@@ -11,7 +11,7 @@ const META_MAGIC: [u8; 4] = *b"EVM0";
 const META_LAYOUT_VERSION: u32 = 2;
 const META_LEGACY_SIZE: usize = 40;
 const META_SIZE: usize = 64;
-pub const CURRENT_SCHEMA_VERSION: u32 = 2;
+pub const CURRENT_SCHEMA_VERSION: u32 = 3;
 #[allow(dead_code)]
 const META_SCHEMA_STRING: &str = "mem:0..4|keys:v1|ic_tx:rlp-fixed|merkle:v1|env:v1";
 // Keccak-256(META_SCHEMA_STRING)
@@ -19,6 +19,97 @@ const META_SCHEMA_HASH: [u8; 32] = [
     0x6d, 0x56, 0xd9, 0x15, 0xe8, 0x9e, 0x5d, 0x97, 0xd7, 0xbe, 0xc4, 0xe0, 0x52, 0xa0, 0xc7, 0xb1,
     0xc1, 0xd3, 0x38, 0x12, 0x71, 0x77, 0x5e, 0xdd, 0x07, 0xc2, 0xc5, 0xa4, 0x77, 0xd5, 0xa8, 0x1b,
 ];
+const SCHEMA_MIGRATION_SIZE: usize = 32;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(u8)]
+pub enum SchemaMigrationPhase {
+    Init = 0,
+    Scan = 1,
+    Rewrite = 2,
+    Verify = 3,
+    Done = 4,
+    Error = 5,
+}
+
+impl SchemaMigrationPhase {
+    fn from_u8(value: u8) -> Self {
+        match value {
+            0 => Self::Init,
+            1 => Self::Scan,
+            2 => Self::Rewrite,
+            3 => Self::Verify,
+            4 => Self::Done,
+            5 => Self::Error,
+            _ => Self::Error,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct SchemaMigrationState {
+    pub phase: SchemaMigrationPhase,
+    pub cursor: u64,
+    pub from_version: u32,
+    pub to_version: u32,
+    pub last_error: u32,
+}
+
+impl SchemaMigrationState {
+    pub fn done() -> Self {
+        Self {
+            phase: SchemaMigrationPhase::Done,
+            cursor: 0,
+            from_version: CURRENT_SCHEMA_VERSION,
+            to_version: CURRENT_SCHEMA_VERSION,
+            last_error: 0,
+        }
+    }
+}
+
+impl Storable for SchemaMigrationState {
+    fn to_bytes(&self) -> Cow<'_, [u8]> {
+        let mut out = [0u8; SCHEMA_MIGRATION_SIZE];
+        out[0] = self.phase as u8;
+        out[8..16].copy_from_slice(&self.cursor.to_be_bytes());
+        out[16..20].copy_from_slice(&self.from_version.to_be_bytes());
+        out[20..24].copy_from_slice(&self.to_version.to_be_bytes());
+        out[24..28].copy_from_slice(&self.last_error.to_be_bytes());
+        Cow::Owned(out.to_vec())
+    }
+
+    fn into_bytes(self) -> Vec<u8> {
+        self.to_bytes().into_owned()
+    }
+
+    fn from_bytes(bytes: Cow<'_, [u8]>) -> Self {
+        let data = bytes.as_ref();
+        if data.len() != SCHEMA_MIGRATION_SIZE {
+            record_corrupt(b"schema_migration_state");
+            return Self::done();
+        }
+        let mut cursor = [0u8; 8];
+        cursor.copy_from_slice(&data[8..16]);
+        let mut from_version = [0u8; 4];
+        from_version.copy_from_slice(&data[16..20]);
+        let mut to_version = [0u8; 4];
+        to_version.copy_from_slice(&data[20..24]);
+        let mut last_error = [0u8; 4];
+        last_error.copy_from_slice(&data[24..28]);
+        Self {
+            phase: SchemaMigrationPhase::from_u8(data[0]),
+            cursor: u64::from_be_bytes(cursor),
+            from_version: u32::from_be_bytes(from_version),
+            to_version: u32::from_be_bytes(to_version),
+            last_error: u32::from_be_bytes(last_error),
+        }
+    }
+
+    const BOUND: Bound = Bound::Bounded {
+        max_size: SCHEMA_MIGRATION_SIZE as u32,
+        is_fixed_size: true,
+    };
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct Meta {
@@ -243,4 +334,20 @@ pub fn mark_meta_needs_migration_if_unsupported() {
     if version > current_schema_version() {
         set_needs_migration(true);
     }
+}
+
+fn init_schema_migration_cell() -> StableCell<SchemaMigrationState, VMem> {
+    StableCell::init(
+        get_memory(AppMemoryId::Reserved38),
+        SchemaMigrationState::done(),
+    )
+}
+
+pub fn schema_migration_state() -> SchemaMigrationState {
+    *init_schema_migration_cell().get()
+}
+
+pub fn set_schema_migration_state(next: SchemaMigrationState) {
+    let mut cell = init_schema_migration_cell();
+    let _ = cell.set(next);
 }

@@ -1,6 +1,6 @@
 //! どこで: Phase1.3の手数料順序 / 何を: ready_queue用キーとpendingキー / なぜ: 決定的な優先順とnonce待ちを両立するため
 
-use crate::corrupt_log::record_corrupt;
+use crate::chain_data::codec::{encode_guarded, mark_decode_failure};
 use crate::decode::hash_to_array;
 use ic_stable_structures::storable::Bound;
 use ic_stable_structures::Storable;
@@ -42,7 +42,7 @@ impl ReadyKey {
 
 impl Storable for ReadyKey {
     fn to_bytes(&self) -> Cow<'_, [u8]> {
-        Cow::Owned(self.0.to_vec())
+        encode_guarded(b"ready_key", self.0.to_vec(), READY_KEY_LEN_U32)
     }
 
     fn into_bytes(self) -> Vec<u8> {
@@ -58,7 +58,7 @@ impl Storable for ReadyKey {
                 Self(buf)
             }
             _ => {
-                record_corrupt(b"ready_key");
+                mark_decode_failure(b"ready_key", false);
                 ReadyKey(hash_to_array(b"ready_key", data))
             }
         }
@@ -81,7 +81,7 @@ impl SenderKey {
 
 impl Storable for SenderKey {
     fn to_bytes(&self) -> Cow<'_, [u8]> {
-        Cow::Owned(self.0.to_vec())
+        encode_guarded(b"sender_key", self.0.to_vec(), SENDER_KEY_LEN_U32)
     }
 
     fn into_bytes(self) -> Vec<u8> {
@@ -91,7 +91,7 @@ impl Storable for SenderKey {
     fn from_bytes(bytes: Cow<'_, [u8]>) -> Self {
         let data = bytes.as_ref();
         if data.len() != SENDER_KEY_LEN {
-            record_corrupt(b"sender_key");
+            mark_decode_failure(b"sender_key", false);
             return SenderKey(hash_to_array(b"sender_key", data));
         }
         let mut buf = [0u8; SENDER_KEY_LEN];
@@ -125,7 +125,7 @@ impl Storable for SenderNonceKey {
         let mut out = [0u8; SENDER_NONCE_KEY_LEN];
         out[0..20].copy_from_slice(&self.sender.0);
         out[20..28].copy_from_slice(&self.nonce.to_be_bytes());
-        Cow::Owned(out.to_vec())
+        encode_guarded(b"sender_nonce_key", out.to_vec(), SENDER_NONCE_KEY_LEN_U32)
     }
 
     fn into_bytes(self) -> Vec<u8> {
@@ -138,7 +138,7 @@ impl Storable for SenderNonceKey {
     fn from_bytes(bytes: Cow<'_, [u8]>) -> Self {
         let data = bytes.as_ref();
         if data.len() != SENDER_NONCE_KEY_LEN {
-            record_corrupt(b"sender_nonce_key");
+            mark_decode_failure(b"sender_nonce_key", false);
             let hashed = hash_to_array::<SENDER_NONCE_KEY_LEN>(b"sender_nonce_key", data);
             let mut sender = [0u8; 20];
             sender.copy_from_slice(&hashed[0..20]);

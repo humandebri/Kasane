@@ -3,8 +3,10 @@
 pub mod block;
 pub mod caller;
 pub mod chain_state;
+pub(crate) mod codec;
 pub mod constants;
 pub mod dropped_ring;
+pub mod log_config;
 pub mod metrics;
 pub mod ops;
 pub mod ops_metrics;
@@ -26,6 +28,7 @@ pub use constants::{
     MAX_TX_SIZE, RECEIPT_CONTRACT_ADDR_LEN, TX_ID_LEN,
 };
 pub use dropped_ring::{DroppedRingStateV1, DROPPED_RING_STATE_SIZE_U32};
+pub use log_config::{LogConfigV1, LOG_CONFIG_FILTER_MAX};
 pub use metrics::{MetricsStateV1, MetricsWindowSummary, METRICS_BUCKETS};
 pub use ops::{OpsConfigV1, OpsMode, OpsStateV1};
 pub use ops_metrics::{OpsMetricsV1, OPS_METRICS_SIZE_U32};

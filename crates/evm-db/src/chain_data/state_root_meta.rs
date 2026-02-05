@@ -1,6 +1,6 @@
 //! どこで: state root 管理 / 何を: 差分更新のルート状態を保持 / なぜ: ブロック毎の全ステート再計算を避けるため
 
-use crate::corrupt_log::record_corrupt;
+use crate::chain_data::codec::{encode_guarded, mark_decode_failure};
 use ic_stable_structures::storable::Bound;
 use ic_stable_structures::Storable;
 use std::borrow::Cow;
@@ -36,7 +36,11 @@ impl Storable for StateRootMetaV1 {
         out[0..4].copy_from_slice(&self.schema_version.to_be_bytes());
         out[4] = if self.initialized { 1 } else { 0 };
         out[8..40].copy_from_slice(&self.state_root);
-        Cow::Owned(out.to_vec())
+        encode_guarded(
+            b"state_root_meta_encode",
+            out.to_vec(),
+            STATE_ROOT_META_SIZE_U32,
+        )
     }
 
     fn into_bytes(self) -> Vec<u8> {
@@ -46,7 +50,7 @@ impl Storable for StateRootMetaV1 {
     fn from_bytes(bytes: Cow<'_, [u8]>) -> Self {
         let data = bytes.as_ref();
         if data.len() != 40 {
-            record_corrupt(b"state_root_meta");
+            mark_decode_failure(b"state_root_meta", true);
             return StateRootMetaV1::new();
         }
         let mut schema = [0u8; 4];

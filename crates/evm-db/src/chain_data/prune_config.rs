@@ -1,6 +1,6 @@
 //! どこで: pruning設定とメトリクス / 何を: policy+状態の固定サイズ / なぜ: upgrade耐性と安全運用のため
 
-use crate::corrupt_log::record_corrupt;
+use crate::chain_data::codec::{encode_guarded, mark_decode_failure};
 use ic_stable_structures::storable::Bound;
 use ic_stable_structures::Storable;
 use std::borrow::Cow;
@@ -147,7 +147,7 @@ impl Storable for PruneConfigV1 {
         out[88..96].copy_from_slice(&self.oldest_kept_block.to_be_bytes());
         out[96..104].copy_from_slice(&self.oldest_kept_timestamp.to_be_bytes());
         out[104..112].copy_from_slice(&self.last_prune_at.to_be_bytes());
-        Cow::Owned(out.to_vec())
+        encode_guarded(b"prune_config", out.to_vec(), PRUNE_CONFIG_SIZE_U32)
     }
 
     fn into_bytes(self) -> Vec<u8> {
@@ -157,7 +157,7 @@ impl Storable for PruneConfigV1 {
     fn from_bytes(bytes: Cow<'_, [u8]>) -> Self {
         let data = bytes.as_ref();
         if data.len() != PRUNE_CONFIG_SIZE_U32 as usize {
-            record_corrupt(b"prune_config");
+            mark_decode_failure(b"prune_config", false);
             return PruneConfigV1::new();
         }
         let mut schema = [0u8; 4];

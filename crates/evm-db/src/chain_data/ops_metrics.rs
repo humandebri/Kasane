@@ -1,6 +1,6 @@
 //! どこで: wrapper運用観測の補助セル / 何を: 実行警告メトリクスを保持 / なぜ: OpsStateの固定サイズを壊さないため
 
-use crate::corrupt_log::record_corrupt;
+use crate::chain_data::codec::{encode_guarded, mark_decode_failure};
 use ic_stable_structures::storable::Bound;
 use ic_stable_structures::Storable;
 use std::borrow::Cow;
@@ -36,7 +36,7 @@ impl Storable for OpsMetricsV1 {
         out[0] = self.schema_version;
         out[8..16].copy_from_slice(&self.exec_halt_unknown_count.to_be_bytes());
         out[16..24].copy_from_slice(&self.last_exec_halt_unknown_warn_ts.to_be_bytes());
-        Cow::Owned(out.to_vec())
+        encode_guarded(b"ops_metrics", out.to_vec(), OPS_METRICS_SIZE_U32)
     }
 
     fn into_bytes(self) -> Vec<u8> {
@@ -46,7 +46,7 @@ impl Storable for OpsMetricsV1 {
     fn from_bytes(bytes: Cow<'_, [u8]>) -> Self {
         let data = bytes.as_ref();
         if data.len() != OPS_METRICS_SIZE_U32 as usize && data.len() != 40 {
-            record_corrupt(b"ops_metrics");
+            mark_decode_failure(b"ops_metrics", false);
             return Self::new();
         }
         let mut unknown_count = [0u8; 8];

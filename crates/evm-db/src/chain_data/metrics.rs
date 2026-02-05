@@ -1,6 +1,6 @@
 //! どこで: Phase1.6のメトリクス / 何を: 永続カウンタとウィンドウ集計 / なぜ: 低コスト監視のため
 
-use crate::corrupt_log::record_corrupt;
+use crate::chain_data::codec::{encode_guarded, mark_decode_failure};
 use ic_stable_structures::storable::Bound;
 use ic_stable_structures::Storable;
 use std::borrow::Cow;
@@ -204,7 +204,7 @@ impl Storable for MetricsStateV1 {
             out.extend_from_slice(&bucket.txs.to_be_bytes());
             out.extend_from_slice(&bucket.drops.to_be_bytes());
         }
-        Cow::Owned(out)
+        encode_guarded(b"metrics_state", out, METRICS_STATE_SIZE)
     }
 
     fn into_bytes(self) -> Vec<u8> {
@@ -214,7 +214,7 @@ impl Storable for MetricsStateV1 {
     fn from_bytes(bytes: Cow<'_, [u8]>) -> Self {
         let data = bytes.as_ref();
         if data.len() != METRICS_STATE_SIZE as usize {
-            record_corrupt(b"metrics_state");
+            mark_decode_failure(b"metrics_state", false);
             return MetricsStateV1::new();
         }
         let mut offset = 0usize;

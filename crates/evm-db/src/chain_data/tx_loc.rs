@@ -1,7 +1,7 @@
 //! どこで: chain_data のTx位置 / 何を: Pending/Included/Dropped の最小表現 / なぜ: pending可視化を安定化するため
 
+use crate::chain_data::codec::{encode_guarded, mark_decode_failure};
 use crate::chain_data::constants::TX_LOC_SIZE_U32;
-use crate::corrupt_log::record_corrupt;
 use bincode::{Decode, Encode};
 use ic_stable_structures::storable::Bound;
 use ic_stable_structures::Storable;
@@ -60,7 +60,7 @@ impl Storable for TxLoc {
     fn to_bytes(&self) -> Cow<'_, [u8]> {
         let encoded = bincode::encode_to_vec(*self, tx_loc_bincode_config())
             .unwrap_or_else(|_| ic_cdk::trap("tx_loc: encode failed"));
-        Cow::Owned(encoded)
+        encode_guarded(b"tx_loc_encode", encoded, TX_LOC_SIZE_U32)
     }
 
     fn into_bytes(self) -> Vec<u8> {
@@ -85,11 +85,14 @@ fn tx_loc_bincode_config() -> impl bincode::config::Config {
     bincode::config::standard()
         .with_fixed_int_encoding()
         .with_big_endian()
+        .with_limit::<{ TX_LOC_SIZE_U32 as usize }>()
 }
 
+// NOTE: 旧形式デコードは移行ウィンドウのための例外経路。
+// 通常経路に旧decodeを増やさない方針を維持し、v3安定化後に削除する。
 fn decode_legacy_tx_loc(data: &[u8]) -> TxLoc {
     if data.len() != 24 {
-        record_corrupt(b"tx_loc");
+        mark_decode_failure(b"tx_loc", true);
         return TxLoc::queued(0);
     }
     let kind = match data[0] {
@@ -97,7 +100,7 @@ fn decode_legacy_tx_loc(data: &[u8]) -> TxLoc {
         1 => TxLocKind::Included,
         2 => TxLocKind::Dropped,
         _ => {
-            record_corrupt(b"tx_loc_kind");
+            mark_decode_failure(b"tx_loc_kind", true);
             TxLocKind::Queued
         }
     };

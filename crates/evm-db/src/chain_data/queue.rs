@@ -1,6 +1,6 @@
 //! どこで: Phase1のQueue / 何を: submit系の順序管理 / なぜ: 決定性を保つため
 
-use crate::corrupt_log::record_corrupt;
+use crate::chain_data::codec::{encode_guarded, mark_decode_failure};
 use ic_stable_structures::storable::Bound;
 use ic_stable_structures::Storable;
 use std::borrow::Cow;
@@ -48,7 +48,7 @@ impl Storable for QueueMeta {
         let mut out = [0u8; 16];
         out[0..8].copy_from_slice(&self.head.to_be_bytes());
         out[8..16].copy_from_slice(&self.tail.to_be_bytes());
-        Cow::Owned(out.to_vec())
+        encode_guarded(b"queue_meta", out.to_vec(), 16)
     }
 
     fn into_bytes(self) -> Vec<u8> {
@@ -61,7 +61,7 @@ impl Storable for QueueMeta {
     fn from_bytes(bytes: Cow<'_, [u8]>) -> Self {
         let data = bytes.as_ref();
         if data.len() != 16 {
-            record_corrupt(b"queue_meta");
+            mark_decode_failure(b"queue_meta", false);
             return QueueMeta::new();
         }
         let mut head = [0u8; 8];

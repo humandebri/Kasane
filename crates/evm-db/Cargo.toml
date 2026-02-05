@@ -14,5 +14,5 @@ ic-cdk = "0.19.0"
 ic-cdk-timers = "1.0.0" # Keep in sync with ic-evm-wrapper to avoid links conflicts
 ic-stable-structures = "0.7.2"
 alloy-primitives = { version = "1.5.2", default-features = false, features = ["std"] }
-bincode = { version = "2.0.1", features = ["derive"] }
+bincode = { version = "=2.0.1", features = ["derive"] }
 tracing = "0.1.41"

@@ -1,6 +1,6 @@
 //! どこで: wrapper運用ガード用のStableセル / 何を: cycle閾値設定と観測状態 / なぜ: 枯渇時に安全停止へ移行するため
 
-use crate::corrupt_log::record_corrupt;
+use crate::chain_data::codec::{encode_guarded, mark_decode_failure};
 use ic_stable_structures::storable::Bound;
 use ic_stable_structures::Storable;
 use std::borrow::Cow;
@@ -65,7 +65,7 @@ impl Storable for OpsConfigV1 {
         out[0..16].copy_from_slice(&self.low_watermark.to_be_bytes());
         out[16..32].copy_from_slice(&self.critical.to_be_bytes());
         out[32] = u8::from(self.freeze_on_critical);
-        Cow::Owned(out.to_vec())
+        encode_guarded(b"ops_config", out.to_vec(), OPS_CONFIG_SIZE_U32)
     }
 
     fn into_bytes(self) -> Vec<u8> {
@@ -75,7 +75,7 @@ impl Storable for OpsConfigV1 {
     fn from_bytes(bytes: Cow<'_, [u8]>) -> Self {
         let data = bytes.as_ref();
         if data.len() != OPS_CONFIG_SIZE_U32 as usize {
-            record_corrupt(b"ops_config");
+            mark_decode_failure(b"ops_config", false);
             return Self::new();
         }
         let mut low = [0u8; 16];
@@ -128,7 +128,7 @@ impl Storable for OpsStateV1 {
         out[16..24].copy_from_slice(&self.last_check_ts.to_be_bytes());
         out[24] = self.mode.as_u8();
         out[25] = u8::from(self.safe_stop_latched);
-        Cow::Owned(out.to_vec())
+        encode_guarded(b"ops_state", out.to_vec(), OPS_STATE_SIZE_U32)
     }
 
     fn into_bytes(self) -> Vec<u8> {
@@ -138,7 +138,7 @@ impl Storable for OpsStateV1 {
     fn from_bytes(bytes: Cow<'_, [u8]>) -> Self {
         let data = bytes.as_ref();
         if data.len() != OPS_STATE_SIZE_U32 as usize {
-            record_corrupt(b"ops_state");
+            mark_decode_failure(b"ops_state", false);
             return Self::new();
         }
         let mut cycle_balance = [0u8; 16];

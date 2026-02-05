@@ -87,3 +87,19 @@
 - [x] ハッシュ実装を `tiny-keccak` 直接呼び出しから `alloy-primitives::keccak256` へ統一
 - [x] `tx_loc` の `Storable` を bincode v2（fixed-int + big-endian）へ移行し、旧24byte形式の後方互換デコードを追加
 - [x] `debug_print` 中心のログを `tracing` イベントへ移行し、wrapper で JSON 出力サブスクライバを初期化
+
+## 安全強化（2026-02-05, Guard/Migration/Log）
+
+- [x] `Storable::to_bytes` は `encode_guarded` 経由で `BOUND.max_size` 超過を即時検知（`storable.encode.bound_exceeded`）
+- [x] decode失敗時ポリシーを型別に分離
+  - [x] fail-closed: `tx`, `receipt`, `state_root_meta`, `tx_loc`, `block`, `tx_index`
+  - [x] default継続: `metrics`, `prune_state`, `ops` など運用補助系
+- [x] schema移行は tick前提（`SchemaMigrationPhase` + cursor）で one-shot依存を排除
+- [x] ログフィルタは `LOG_FILTER`（canister env var）> stable override > `info` の優先順
+- [x] ログwriterは再入時に `debug_print` へ直接フォールバックし、長文は `truncated=true` のJSONで安全出力
+- [x] `bincode` は `=2.0.1` に厳密固定
+- [x] bincode decodeは `with_limit(BOUND.max_size)` を必須化（OOM/過大確保の抑止）
+- [x] env var 読み取りは `exists -> value` と長さガードを共通化（`LOG_FILTER`）
+- [x] fail-closed 時の外部応答を統一（`rpc.state_unavailable.corrupt_or_migrating`）
+- [ ] dual-store（新MemoryIdへ copy 後に active store 切替）は次phaseで実装
+- [x] 旧decodeは移行例外として `tx_loc` に限定し、方針コメントを明記

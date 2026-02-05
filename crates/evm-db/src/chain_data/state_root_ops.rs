@@ -1,6 +1,6 @@
 //! どこで: state root運用情報 / 何を: 検証メトリクス・不一致記録・移行状態 / なぜ: fail-closed運用を再現可能にするため
 
-use crate::corrupt_log::record_corrupt;
+use crate::chain_data::codec::{encode_guarded, mark_decode_failure};
 use ic_stable_structures::storable::Bound;
 use ic_stable_structures::Storable;
 use std::borrow::Cow;
@@ -16,7 +16,7 @@ pub struct HashKey(pub [u8; 32]);
 
 impl Storable for HashKey {
     fn to_bytes(&self) -> Cow<'_, [u8]> {
-        Cow::Owned(self.0.to_vec())
+        encode_guarded(b"state_root_hash_key", self.0.to_vec(), 32)
     }
 
     fn into_bytes(self) -> Vec<u8> {
@@ -26,7 +26,7 @@ impl Storable for HashKey {
     fn from_bytes(bytes: Cow<'_, [u8]>) -> Self {
         let data = bytes.as_ref();
         if data.len() != 32 {
-            record_corrupt(b"state_root_hash_key");
+            mark_decode_failure(b"state_root_hash_key", false);
             return HashKey([0u8; 32]);
         }
         let mut out = [0u8; 32];
@@ -59,7 +59,11 @@ impl Storable for NodeRecord {
         out.extend_from_slice(&self.refcnt.to_be_bytes());
         out.extend_from_slice(&len.to_be_bytes());
         out.extend_from_slice(&self.rlp);
-        Cow::Owned(out)
+        encode_guarded(
+            b"state_root_node_record",
+            out,
+            STATE_ROOT_NODE_RECORD_MAX_U32,
+        )
     }
 
     fn into_bytes(self) -> Vec<u8> {
@@ -69,7 +73,7 @@ impl Storable for NodeRecord {
     fn from_bytes(bytes: Cow<'_, [u8]>) -> Self {
         let data = bytes.as_ref();
         if data.len() < 8 {
-            record_corrupt(b"state_root_node_record");
+            mark_decode_failure(b"state_root_node_record", false);
             return NodeRecord::new(0, Vec::new());
         }
         let mut refcnt = [0u8; 4];
@@ -78,7 +82,7 @@ impl Storable for NodeRecord {
         len.copy_from_slice(&data[4..8]);
         let rlp_len = usize::try_from(u32::from_be_bytes(len)).unwrap_or(0);
         if data.len() != 8 + rlp_len {
-            record_corrupt(b"state_root_node_record");
+            mark_decode_failure(b"state_root_node_record", false);
             return NodeRecord::new(0, Vec::new());
         }
         NodeRecord::new(u32::from_be_bytes(refcnt), data[8..].to_vec())
@@ -113,7 +117,11 @@ impl Storable for GcStateV1 {
         out[0..8].copy_from_slice(&self.enqueue_seq.to_be_bytes());
         out[8..16].copy_from_slice(&self.dequeue_seq.to_be_bytes());
         out[16..24].copy_from_slice(&self.len.to_be_bytes());
-        Cow::Owned(out.to_vec())
+        encode_guarded(
+            b"state_root_gc_state",
+            out.to_vec(),
+            STATE_ROOT_GC_STATE_SIZE_U32,
+        )
     }
 
     fn into_bytes(self) -> Vec<u8> {
@@ -123,7 +131,7 @@ impl Storable for GcStateV1 {
     fn from_bytes(bytes: Cow<'_, [u8]>) -> Self {
         let data = bytes.as_ref();
         if data.len() != 32 {
-            record_corrupt(b"state_root_gc_state");
+            mark_decode_failure(b"state_root_gc_state", false);
             return Self::new();
         }
         let mut enqueue = [0u8; 8];
@@ -197,7 +205,11 @@ impl Storable for MigrationStateV1 {
         out[8..16].copy_from_slice(&self.cursor.to_be_bytes());
         out[16..20].copy_from_slice(&self.last_error.to_be_bytes());
         out[20..24].copy_from_slice(&self.schema_version_target.to_be_bytes());
-        Cow::Owned(out.to_vec())
+        encode_guarded(
+            b"state_root_migration",
+            out.to_vec(),
+            STATE_ROOT_MIGRATION_SIZE_U32,
+        )
     }
 
     fn into_bytes(self) -> Vec<u8> {
@@ -207,7 +219,7 @@ impl Storable for MigrationStateV1 {
     fn from_bytes(bytes: Cow<'_, [u8]>) -> Self {
         let data = bytes.as_ref();
         if data.len() != 32 {
-            record_corrupt(b"state_root_migration");
+            mark_decode_failure(b"state_root_migration", false);
             return MigrationStateV1::new_done(1);
         }
         let mut schema = [0u8; 4];
@@ -274,7 +286,11 @@ impl Storable for StateRootMetricsV1 {
         out[48..56].copy_from_slice(&self.node_db_unreachable.to_be_bytes());
         out[56..64].copy_from_slice(&self.gc_progress.to_be_bytes());
         out[64] = self.migration_phase;
-        Cow::Owned(out.to_vec())
+        encode_guarded(
+            b"state_root_metrics",
+            out.to_vec(),
+            STATE_ROOT_METRICS_SIZE_U32,
+        )
     }
 
     fn into_bytes(self) -> Vec<u8> {
@@ -284,7 +300,7 @@ impl Storable for StateRootMetricsV1 {
     fn from_bytes(bytes: Cow<'_, [u8]>) -> Self {
         let data = bytes.as_ref();
         if data.len() != 72 {
-            record_corrupt(b"state_root_metrics");
+            mark_decode_failure(b"state_root_metrics", false);
             return StateRootMetricsV1::new();
         }
         let mut schema = [0u8; 4];
@@ -345,7 +361,11 @@ impl Storable for MismatchRecordV1 {
         out[108..112].copy_from_slice(&self.touched_slots_count.to_be_bytes());
         out[112..144].copy_from_slice(&self.delta_digest);
         out[144..152].copy_from_slice(&self.timestamp.to_be_bytes());
-        Cow::Owned(out.to_vec())
+        encode_guarded(
+            b"state_root_mismatch_record",
+            out.to_vec(),
+            STATE_ROOT_MISMATCH_SIZE_U32,
+        )
     }
 
     fn into_bytes(self) -> Vec<u8> {
@@ -355,7 +375,7 @@ impl Storable for MismatchRecordV1 {
     fn from_bytes(bytes: Cow<'_, [u8]>) -> Self {
         let data = bytes.as_ref();
         if data.len() != 152 {
-            record_corrupt(b"state_root_mismatch_record");
+            mark_decode_failure(b"state_root_mismatch_record", false);
             return Self {
                 block_number: 0,
                 parent_hash: [0u8; 32],

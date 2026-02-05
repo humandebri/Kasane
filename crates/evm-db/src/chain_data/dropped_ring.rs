@@ -1,6 +1,6 @@
 //! どこで: dropped tx の保持管理 / 何を: 固定長リング状態を保持 / なぜ: tx_locs の無限増加を防ぐため
 
-use crate::corrupt_log::record_corrupt;
+use crate::chain_data::codec::{encode_guarded, mark_decode_failure};
 use ic_stable_structures::storable::Bound;
 use ic_stable_structures::Storable;
 use std::borrow::Cow;
@@ -36,7 +36,11 @@ impl Storable for DroppedRingStateV1 {
         out[0..4].copy_from_slice(&self.schema_version.to_be_bytes());
         out[4..12].copy_from_slice(&self.next_seq.to_be_bytes());
         out[12..16].copy_from_slice(&self.len.to_be_bytes());
-        Cow::Owned(out.to_vec())
+        encode_guarded(
+            b"dropped_ring_state",
+            out.to_vec(),
+            DROPPED_RING_STATE_SIZE_U32,
+        )
     }
 
     fn into_bytes(self) -> Vec<u8> {
@@ -46,7 +50,7 @@ impl Storable for DroppedRingStateV1 {
     fn from_bytes(bytes: Cow<'_, [u8]>) -> Self {
         let data = bytes.as_ref();
         if data.len() != 16 {
-            record_corrupt(b"dropped_ring_state");
+            mark_decode_failure(b"dropped_ring_state", false);
             return DroppedRingStateV1::new();
         }
         let mut schema = [0u8; 4];

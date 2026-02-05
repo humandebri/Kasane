@@ -1,11 +1,11 @@
 //! どこで: chain_data のReceipt / 何を: 最小結果 + logs の保存 / なぜ: 互換性と観測のため
 
+use crate::chain_data::codec::{encode_guarded, mark_decode_failure};
 use crate::chain_data::constants::{
     HASH_LEN, MAX_LOGS_PER_TX, MAX_LOG_DATA, MAX_LOG_TOPICS, MAX_RETURN_DATA,
     RECEIPT_CONTRACT_ADDR_LEN, RECEIPT_MAX_SIZE_U32,
 };
 use crate::chain_data::tx::TxId;
-use crate::corrupt_log::record_corrupt;
 use crate::decode::{read_array, read_u32, read_u64, read_u8, read_vec};
 use alloy_primitives::{Address, Bytes, Log, LogData, B256};
 use ic_stable_structures::storable::Bound;
@@ -92,7 +92,7 @@ impl Storable for ReceiptLike {
             out.extend_from_slice(&data_len.to_be_bytes());
             out.extend_from_slice(data);
         }
-        Cow::Owned(out)
+        encode_guarded(b"receipt_encode", out, RECEIPT_MAX_SIZE_U32)
     }
 
     fn into_bytes(self) -> Vec<u8> {
@@ -266,7 +266,7 @@ impl Storable for ReceiptLike {
 }
 
 fn corrupt_receipt() -> ReceiptLike {
-    record_corrupt(b"receipt");
+    mark_decode_failure(b"receipt", true);
     ReceiptLike {
         tx_id: TxId([0u8; 32]),
         block_number: 0,

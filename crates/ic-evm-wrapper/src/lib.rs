@@ -6,20 +6,24 @@ use evm_db::chain_data::constants::CHAIN_ID;
 use evm_db::chain_data::constants::{MAX_QUEUE_SNAPSHOT_LIMIT, MAX_RETURN_DATA, MAX_TX_SIZE};
 use evm_db::chain_data::{
     BlockData, CallerKey, MigrationPhase, OpsConfigV1, OpsMode, ReceiptLike, StoredTx,
-    StoredTxBytes, TxId, TxKind, TxLoc, TxLocKind,
+    StoredTxBytes, TxId, TxKind, TxLoc, TxLocKind, LOG_CONFIG_FILTER_MAX,
 };
 use evm_db::meta::{
     current_schema_version, ensure_meta_initialized, get_meta, mark_migration_applied,
+    schema_migration_state, set_needs_migration, set_schema_migration_state, SchemaMigrationPhase,
+    SchemaMigrationState,
 };
 use evm_db::stable_state::{init_stable_state, with_state};
 use evm_db::upgrade;
 use ic_cdk::api::{
-    accept_message, canister_cycle_balance, is_controller, msg_caller, msg_method_name, time,
+    accept_message, canister_cycle_balance, env_var_name_exists, env_var_value, is_controller,
+    msg_caller, msg_method_name, time,
 };
 use serde::Deserialize;
 use std::io::{self, Write};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, OnceLock};
-use tracing::{error, info, warn};
+use tracing::{error, warn};
 use tracing_subscriber::fmt::MakeWriter;
 use tracing_subscriber::EnvFilter;
 
@@ -97,6 +101,9 @@ pub struct OpsStatusView {
     pub safe_stop_latched: bool,
     pub needs_migration: bool,
     pub schema_version: u32,
+    pub log_filter_override: Option<String>,
+    pub log_truncated_count: u64,
+    pub critical_corrupt: bool,
 }
 
 #[derive(Clone, Debug, CandidType, Deserialize)]
@@ -362,9 +369,9 @@ impl InitArgs {
 
 #[ic_cdk::init]
 fn init(args: Option<InitArgs>) {
-    init_tracing();
-    let _ = ensure_meta_initialized();
     init_stable_state();
+    let _ = ensure_meta_initialized();
+    init_tracing();
     let args = args.unwrap_or_else(|| {
         ic_cdk::trap("InitArgsRequired: InitArgs is required; pass (opt record {...})")
     });
@@ -384,10 +391,10 @@ fn init(args: Option<InitArgs>) {
 
 #[ic_cdk::post_upgrade]
 fn post_upgrade() {
-    init_tracing();
     upgrade::post_upgrade();
-    let _ = ensure_meta_initialized();
     init_stable_state();
+    let _ = ensure_meta_initialized();
+    init_tracing();
     apply_post_upgrade_migrations();
     observe_cycles();
     schedule_cycle_observer();
@@ -428,6 +435,7 @@ fn inspect_method_allowed(method: &str) -> bool {
             | "set_prune_policy"
             | "set_pruning_enabled"
             | "set_ops_config"
+            | "set_log_filter"
             | "set_miner_allowlist"
             | "prune_blocks"
             | "produce_block"
@@ -876,6 +884,11 @@ fn rpc_eth_send_raw_transaction(raw_tx: Vec<u8>) -> Result<Vec<u8>, SubmitTxErro
     if let Some(reason) = reject_anonymous_update() {
         return Err(SubmitTxError::Rejected(reason));
     }
+    if critical_corrupt_state() {
+        return Err(SubmitTxError::Rejected(
+            "rpc.state_unavailable.corrupt_or_migrating".to_string(),
+        ));
+    }
     if let Some(reason) = reject_write_reason() {
         return Err(SubmitTxError::Rejected(reason));
     }
@@ -981,6 +994,9 @@ fn get_ops_status() -> OpsStatusView {
             safe_stop_latched: ops.safe_stop_latched,
             needs_migration: meta.needs_migration,
             schema_version: meta.schema_version,
+            log_filter_override: state.log_config.get().filter().map(str::to_string),
+            log_truncated_count: LOG_TRUNCATED_COUNT.load(Ordering::Relaxed),
+            critical_corrupt: critical_corrupt_state(),
         }
     })
 }
@@ -1005,6 +1021,29 @@ fn set_ops_config(config: OpsConfigView) -> Result<(), String> {
         });
     });
     observe_cycles();
+    Ok(())
+}
+
+#[ic_cdk::update]
+fn set_log_filter(filter: Option<String>) -> Result<(), String> {
+    if let Some(reason) = reject_anonymous_update() {
+        return Err(reason);
+    }
+    require_manage_write()?;
+    let normalized = filter
+        .map(|raw| raw.trim().to_string())
+        .filter(|v| !v.is_empty());
+    if let Some(value) = normalized.as_ref() {
+        if value.len() > LOG_CONFIG_FILTER_MAX {
+            return Err("input.log_filter.too_long".to_string());
+        }
+    }
+    evm_db::stable_state::with_state_mut(|state| {
+        let _ = state.log_config.set(evm_db::chain_data::LogConfigV1 {
+            has_filter: normalized.is_some(),
+            filter: normalized.unwrap_or_default(),
+        });
+    });
     Ok(())
 }
 
@@ -1420,6 +1459,9 @@ fn caller_key_to_principal(key: CallerKey) -> Option<Principal> {
 }
 
 fn migration_pending() -> bool {
+    if !schema_migration_tick(32) {
+        return true;
+    }
     let meta = get_meta();
     if meta.needs_migration || meta.schema_version < current_schema_version() {
         return true;
@@ -1430,6 +1472,64 @@ fn migration_pending() -> bool {
         return false;
     }
     !chain::state_root_migration_tick(512)
+}
+
+fn critical_corrupt_state() -> bool {
+    let meta = get_meta();
+    if meta.needs_migration {
+        return true;
+    }
+    matches!(schema_migration_state().phase, SchemaMigrationPhase::Error)
+}
+
+fn schema_migration_tick(max_steps: u32) -> bool {
+    let mut steps = 0u32;
+    while steps < max_steps {
+        let mut state = schema_migration_state();
+        match state.phase {
+            SchemaMigrationPhase::Done => return true,
+            SchemaMigrationPhase::Error => return false,
+            SchemaMigrationPhase::Init => {
+                state.phase = SchemaMigrationPhase::Scan;
+                state.cursor = 0;
+                set_schema_migration_state(state);
+            }
+            SchemaMigrationPhase::Scan => {
+                state.phase = SchemaMigrationPhase::Rewrite;
+                state.cursor = 1;
+                set_schema_migration_state(state);
+            }
+            SchemaMigrationPhase::Rewrite => {
+                if state.from_version < 2 {
+                    chain::clear_mempool_on_upgrade();
+                }
+                state.phase = SchemaMigrationPhase::Verify;
+                state.cursor = 2;
+                set_schema_migration_state(state);
+            }
+            SchemaMigrationPhase::Verify => {
+                let mempool_empty = with_state(|s| {
+                    s.ready_queue.is_empty()
+                        && s.pending_by_sender_nonce.is_empty()
+                        && s.pending_current_by_sender.is_empty()
+                });
+                if !mempool_empty {
+                    state.phase = SchemaMigrationPhase::Error;
+                    state.last_error = 1;
+                    set_schema_migration_state(state);
+                    return false;
+                }
+                mark_migration_applied(state.from_version, state.to_version, time());
+                set_needs_migration(false);
+                state.phase = SchemaMigrationPhase::Done;
+                state.cursor = 3;
+                set_schema_migration_state(state);
+                return true;
+            }
+        }
+        steps = steps.saturating_add(1);
+    }
+    false
 }
 
 fn observe_cycles() -> OpsMode {
@@ -1494,8 +1594,7 @@ fn reject_anonymous_principal(caller: Principal) -> Option<String> {
 fn init_tracing() {
     static LOG_INIT: OnceLock<()> = OnceLock::new();
     let _ = LOG_INIT.get_or_init(|| {
-        let env_filter =
-            EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
+        let env_filter = EnvFilter::new(resolve_log_filter().unwrap_or_else(|| "info".to_string()));
         let _ = tracing_subscriber::fmt()
             .json()
             .with_target(true)
@@ -1505,6 +1604,40 @@ fn init_tracing() {
             .with_env_filter(env_filter)
             .try_init();
     });
+}
+
+fn resolve_log_filter() -> Option<String> {
+    if let Some(value) = read_env_var_guarded("LOG_FILTER", LOG_FILTER_MAX_LEN) {
+        let trimmed = value.trim();
+        if !trimmed.is_empty() {
+            return Some(trimmed.to_string());
+        }
+    }
+    with_state(|state| state.log_config.get().filter().map(str::to_string))
+}
+
+const MAX_ENV_VAR_NAME_LEN: usize = 128;
+const LOG_FILTER_MAX_LEN: usize = 256;
+static LOG_TRUNCATED_COUNT: AtomicU64 = AtomicU64::new(0);
+
+fn read_env_var_guarded(name: &str, max_value_len: usize) -> Option<String> {
+    if name.len() > MAX_ENV_VAR_NAME_LEN {
+        return None;
+    }
+    if !env_var_name_exists(name) {
+        return None;
+    }
+    let value = env_var_value(name);
+    if value.len() > max_value_len {
+        warn!(
+            env_var = name,
+            max_value_len,
+            actual_len = value.len(),
+            "env var value too long; ignored"
+        );
+        return None;
+    }
+    Some(value)
 }
 
 #[derive(Clone, Copy)]
@@ -1533,7 +1666,7 @@ impl Write for IcDebugPrintWriter {
 
     fn flush(&mut self) -> io::Result<()> {
         if !self.buffer.trim().is_empty() {
-            ic_cdk::api::debug_print(self.buffer.trim().to_string());
+            emit_bounded_log_line(self.buffer.trim());
             self.buffer.clear();
         }
         Ok(())
@@ -1550,15 +1683,46 @@ fn emit_complete_lines(buffer: &mut String) {
     static REENTRANT_GUARD: OnceLock<Mutex<()>> = OnceLock::new();
     let guard = REENTRANT_GUARD.get_or_init(|| Mutex::new(())).lock();
     if guard.is_err() {
+        if !buffer.is_empty() {
+            ic_cdk::api::debug_print("{\"target\":\"tracing\",\"fallback\":true}".to_string());
+        }
         return;
     }
     while let Some(newline_index) = buffer.find('\n') {
         let line: String = buffer.drain(..=newline_index).collect();
         let trimmed = line.trim();
         if !trimmed.is_empty() {
-            ic_cdk::api::debug_print(trimmed.to_string());
+            emit_bounded_log_line(trimmed);
         }
     }
+}
+
+fn emit_bounded_log_line(line: &str) {
+    const MAX_LOG_LINE_BYTES: usize = 16 * 1024;
+    if line.len() <= MAX_LOG_LINE_BYTES {
+        ic_cdk::api::debug_print(line.to_string());
+        return;
+    }
+    let mut prefix = String::new();
+    for ch in line.chars() {
+        let next_len = prefix.len() + ch.len_utf8();
+        if next_len > 1024 {
+            break;
+        }
+        prefix.push(ch);
+    }
+    let escaped = prefix
+        .replace('\\', "\\\\")
+        .replace('"', "\\\"")
+        .replace('\n', "\\n")
+        .replace('\r', "\\r");
+    let truncated_count = LOG_TRUNCATED_COUNT.fetch_add(1, Ordering::Relaxed) + 1;
+    ic_cdk::api::debug_print(format!(
+        "{{\"truncated\":true,\"truncated_count\":{},\"max_bytes\":{MAX_LOG_LINE_BYTES},\"original_bytes\":{},\"prefix\":\"{}\"}}",
+        truncated_count,
+        line.len(),
+        escaped
+    ));
 }
 
 fn apply_post_upgrade_migrations() {
@@ -1577,13 +1741,15 @@ fn apply_post_upgrade_migrations() {
     }
 
     let from = meta.schema_version;
-    let mut to = from;
-    if from < 2 {
-        chain::clear_mempool_on_upgrade();
-        info!("mempool cleared on upgrade migration");
-        to = 2;
-    }
-    if to != from || meta.needs_migration {
+    if from < current || meta.needs_migration {
+        set_needs_migration(true);
+        set_schema_migration_state(SchemaMigrationState {
+            phase: SchemaMigrationPhase::Init,
+            cursor: 0,
+            from_version: from,
+            to_version: current,
+            last_error: 0,
+        });
         evm_db::stable_state::with_state_mut(|state| {
             let mut migration = *state.state_root_migration.get();
             if migration.phase == MigrationPhase::Done {
@@ -1594,10 +1760,10 @@ fn apply_post_upgrade_migrations() {
                 state.state_root_migration.set(migration);
             }
         });
-        mark_migration_applied(from, to, time());
     }
     if migration_pending() {
         let _ = chain::state_root_migration_tick(1024);
+        let _ = schema_migration_tick(1024);
     }
 }
 

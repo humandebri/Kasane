@@ -1,8 +1,8 @@
 //! どこで: pruningの状態管理 / 何を: pruned_before_block等の保持 / なぜ: None判定を安定させるため
 
 use crate::blob_ptr::BlobPtr;
+use crate::chain_data::codec::{encode_guarded, mark_decode_failure};
 use crate::chain_data::constants::MAX_TXS_PER_BLOCK_U32;
-use crate::corrupt_log::record_corrupt;
 use ic_stable_structures::storable::Bound;
 use ic_stable_structures::Storable;
 use std::borrow::Cow;
@@ -72,7 +72,7 @@ impl Storable for PruneStateV1 {
         out[4..12].copy_from_slice(&self.pruned_before_block.to_be_bytes());
         out[12..20].copy_from_slice(&self.next_prune_block.to_be_bytes());
         out[20..28].copy_from_slice(&self.journal_block_number.to_be_bytes());
-        Cow::Owned(out.to_vec())
+        encode_guarded(b"prune_state", out.to_vec(), PRUNE_STATE_SIZE_U32)
     }
 
     fn into_bytes(self) -> Vec<u8> {
@@ -82,7 +82,7 @@ impl Storable for PruneStateV1 {
     fn from_bytes(bytes: Cow<'_, [u8]>) -> Self {
         let data = bytes.as_ref();
         if data.len() != 32 {
-            record_corrupt(b"prune_state");
+            mark_decode_failure(b"prune_state", false);
             return PruneStateV1::new();
         }
         let mut schema = [0u8; 4];
@@ -125,7 +125,7 @@ impl Storable for PruneJournal {
             let bytes = ptr.to_bytes();
             out.extend_from_slice(&bytes);
         }
-        Cow::Owned(out)
+        encode_guarded(b"prune_journal", out, JOURNAL_MAX_SIZE_U32)
     }
 
     fn into_bytes(self) -> Vec<u8> {
@@ -135,21 +135,21 @@ impl Storable for PruneJournal {
     fn from_bytes(bytes: Cow<'_, [u8]>) -> Self {
         let data = bytes.as_ref();
         if data.len() < 4 {
-            record_corrupt(b"prune_journal");
+            mark_decode_failure(b"prune_journal", false);
             return PruneJournal { ptrs: Vec::new() };
         }
         let mut len_bytes = [0u8; 4];
         len_bytes.copy_from_slice(&data[0..4]);
         let len = u32::from_be_bytes(len_bytes);
         if len > MAX_PTRS_U32 {
-            record_corrupt(b"prune_journal");
+            mark_decode_failure(b"prune_journal", false);
             return PruneJournal { ptrs: Vec::new() };
         }
         let expected = 4usize
             .checked_add((len as usize).saturating_mul(20))
             .unwrap_or(0);
         if data.len() != expected {
-            record_corrupt(b"prune_journal");
+            mark_decode_failure(b"prune_journal", false);
             return PruneJournal { ptrs: Vec::new() };
         }
         let mut ptrs = Vec::with_capacity(len as usize);
@@ -157,7 +157,7 @@ impl Storable for PruneJournal {
         for _ in 0..len {
             let end = offset + 20;
             if end > data.len() {
-                record_corrupt(b"prune_journal");
+                mark_decode_failure(b"prune_journal", false);
                 return PruneJournal { ptrs: Vec::new() };
             }
             let ptr = BlobPtr::from_bytes(Cow::Owned(data[offset..end].to_vec()));

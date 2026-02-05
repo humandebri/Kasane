@@ -1,9 +1,9 @@
 //! どこで: Phase1のTxモデル / 何を: StoredTxBytesとID / なぜ: stableは生bytesを安全に保持するため
 
+use crate::chain_data::codec::{encode_guarded, mark_decode_failure};
 use crate::chain_data::constants::{
     MAX_PRINCIPAL_LEN, MAX_TX_SIZE, MAX_TX_SIZE_U32, TX_ID_LEN, TX_ID_LEN_U32,
 };
-use crate::corrupt_log::record_corrupt;
 use crate::decode::hash_to_array;
 use alloy_primitives::keccak256 as alloy_keccak256;
 use ic_stable_structures::storable::Bound;
@@ -12,13 +12,26 @@ use std::borrow::Cow;
 
 const MAX_STORED_PRINCIPAL_LEN: usize = 64;
 const STORED_TX_VERSION: u8 = 3;
+const STORED_TX_MAX_SIZE_U32: u32 = 1
+    + 1
+    + TX_ID_LEN_U32
+    + 1
+    + 20
+    + 16
+    + 16
+    + 2
+    + MAX_PRINCIPAL_LEN as u32
+    + 2
+    + MAX_PRINCIPAL_LEN as u32
+    + 4
+    + MAX_TX_SIZE_U32;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub struct TxId(pub [u8; TX_ID_LEN]);
 
 impl Storable for TxId {
     fn to_bytes(&self) -> Cow<'_, [u8]> {
-        Cow::Owned(self.0.to_vec())
+        encode_guarded(b"tx_id_encode", self.0.to_vec(), TX_ID_LEN_U32)
     }
 
     fn into_bytes(self) -> Vec<u8> {
@@ -28,7 +41,7 @@ impl Storable for TxId {
     fn from_bytes(bytes: Cow<'_, [u8]>) -> Self {
         let data = bytes.as_ref();
         if data.len() != TX_ID_LEN {
-            record_corrupt(b"tx_id");
+            mark_decode_failure(b"tx_id", true);
             return TxId(hash_to_array(b"tx_id", data));
         }
         let mut buf = [0u8; TX_ID_LEN];
@@ -238,7 +251,7 @@ impl TryFrom<StoredTxBytes> for StoredTx {
 
 impl Storable for StoredTxBytes {
     fn to_bytes(&self) -> Cow<'_, [u8]> {
-        Cow::Owned(encode(self))
+        encode_guarded(b"stored_tx_encode", encode(self), STORED_TX_MAX_SIZE_U32)
     }
 
     fn into_bytes(self) -> Vec<u8> {
@@ -260,19 +273,7 @@ impl Storable for StoredTxBytes {
     }
 
     const BOUND: Bound = Bound::Bounded {
-        max_size: 1
-            + 1
-            + TX_ID_LEN_U32
-            + 1
-            + 20
-            + 16
-            + 16
-            + 2
-            + MAX_PRINCIPAL_LEN as u32
-            + 2
-            + MAX_PRINCIPAL_LEN as u32
-            + 4
-            + MAX_TX_SIZE_U32,
+        max_size: STORED_TX_MAX_SIZE_U32,
         is_fixed_size: false,
     };
 }
@@ -282,6 +283,7 @@ struct DecodeFailure<'a> {
 }
 
 fn invalid_stored_tx(version: u8, raw: &[u8]) -> StoredTxBytes {
+    mark_decode_failure(b"stored_tx_decode", true);
     // 旧形式や外部入力をtrapせず安全にrejectするための無効レコード。
     let tx_id = TxId(placeholder_hash(raw));
     StoredTxBytes {
@@ -493,7 +495,7 @@ impl Storable for TxIndexEntry {
         let mut out = [0u8; 12];
         out[0..8].copy_from_slice(&self.block_number.to_be_bytes());
         out[8..12].copy_from_slice(&self.tx_index.to_be_bytes());
-        Cow::Owned(out.to_vec())
+        encode_guarded(b"tx_index_encode", out.to_vec(), 12)
     }
 
     fn into_bytes(self) -> Vec<u8> {
@@ -506,7 +508,7 @@ impl Storable for TxIndexEntry {
     fn from_bytes(bytes: Cow<'_, [u8]>) -> Self {
         let data = bytes.as_ref();
         if data.len() != 12 {
-            record_corrupt(b"tx_index");
+            mark_decode_failure(b"tx_index", true);
             return TxIndexEntry {
                 block_number: 0,
                 tx_index: 0,
