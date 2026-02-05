@@ -6,8 +6,8 @@ use evm_core::revm_exec::{ExecError, OpHaltReason};
 use evm_db::chain_data::constants::DROP_CODE_EXEC;
 use evm_db::chain_data::{L1BlockInfoParamsV1, L1BlockInfoSnapshotV1, TxLocKind};
 use evm_db::stable_state::{init_stable_state, with_state, with_state_mut};
-use evm_db::types::keys::{make_account_key, make_code_key};
-use evm_db::types::values::{AccountVal, CodeVal};
+use evm_db::types::keys::{make_account_key, make_code_key, make_storage_key};
+use evm_db::types::values::{AccountVal, CodeVal, U256Val};
 use op_revm::constants::L1_BLOCK_CONTRACT;
 
 #[test]
@@ -157,6 +157,41 @@ fn produce_block_halt_failure_keeps_consensus_state_unchanged() {
 
     let after = snapshot_consensus_state(&tx_id);
     assert_eq!(before, after);
+}
+
+#[test]
+fn produce_block_succeeds_without_reference_mismatch_guard() {
+    init_stable_state();
+    configure_l1(101, false);
+
+    // 既存stateに対してキャッシュ破損を注入し、verify経路で mismatch を起こす。
+    let cache_addr = [0x99u8; 20];
+    with_state_mut(|state| {
+        state.accounts.insert(
+            make_account_key(cache_addr),
+            AccountVal::from_parts(1, [0u8; 32], [0u8; 32]),
+        );
+        state.storage.insert(
+            make_storage_key(cache_addr, [0x01u8; 32]),
+            U256Val::new([0x11u8; 32]),
+        );
+        state.state_root_meta.set(evm_db::chain_data::StateRootMetaV1 {
+            schema_version: 1,
+            initialized: true,
+            state_root: [0u8; 32],
+        });
+        state
+            .state_storage_roots
+            .insert(make_account_key(cache_addr), U256Val::new([0x22u8; 32]));
+    });
+
+    let tx_id = chain::submit_ic_tx(vec![0xa1], vec![0xbb], build_ic_tx_bytes([0x51u8; 20]))
+        .expect("submit");
+    let out = chain::produce_block(1).expect("block should succeed");
+    assert_eq!(out.tx_ids.len(), 1);
+    let after = snapshot_consensus_state(&tx_id);
+    assert_eq!(after.head_number, 1);
+    assert_eq!(after.loc_kind, TxLocKind::Included);
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]
