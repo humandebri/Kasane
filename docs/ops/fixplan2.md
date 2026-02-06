@@ -102,4 +102,6 @@
 - [x] env var 読み取りは `exists -> value` と長さガードを共通化（`LOG_FILTER`）
 - [x] fail-closed 時の外部応答を統一（`rpc.state_unavailable.corrupt_or_migrating`）
 - [x] dual-store（新MemoryIdへ copy 後に active store 切替）を `tx_locs` で実装
+- [x] active 切替は Verify 成功後のみ実行（失敗時は旧ストア参照）
+- [x] from_version>=3 はコピーを省略し、Verify 条件を緩和
 - [x] 旧decodeは移行例外として `tx_loc` に限定し、方針コメントを明記

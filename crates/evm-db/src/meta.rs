@@ -19,7 +19,8 @@ const META_SCHEMA_HASH: [u8; 32] = [
     0x6d, 0x56, 0xd9, 0x15, 0xe8, 0x9e, 0x5d, 0x97, 0xd7, 0xbe, 0xc4, 0xe0, 0x52, 0xa0, 0xc7, 0xb1,
     0xc1, 0xd3, 0x38, 0x12, 0x71, 0x77, 0x5e, 0xdd, 0x07, 0xc2, 0xc5, 0xa4, 0x77, 0xd5, 0xa8, 0x1b,
 ];
-const SCHEMA_MIGRATION_SIZE: usize = 32;
+const SCHEMA_MIGRATION_LEGACY_SIZE: usize = 32;
+const SCHEMA_MIGRATION_SIZE: usize = 64;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[repr(u8)]
@@ -53,6 +54,8 @@ pub struct SchemaMigrationState {
     pub from_version: u32,
     pub to_version: u32,
     pub last_error: u32,
+    pub cursor_key_set: bool,
+    pub cursor_key: [u8; 32],
 }
 
 impl SchemaMigrationState {
@@ -63,6 +66,8 @@ impl SchemaMigrationState {
             from_version: CURRENT_SCHEMA_VERSION,
             to_version: CURRENT_SCHEMA_VERSION,
             last_error: 0,
+            cursor_key_set: false,
+            cursor_key: [0u8; 32],
         }
     }
 }
@@ -71,10 +76,12 @@ impl Storable for SchemaMigrationState {
     fn to_bytes(&self) -> Cow<'_, [u8]> {
         let mut out = [0u8; SCHEMA_MIGRATION_SIZE];
         out[0] = self.phase as u8;
+        out[1] = u8::from(self.cursor_key_set);
         out[8..16].copy_from_slice(&self.cursor.to_be_bytes());
         out[16..20].copy_from_slice(&self.from_version.to_be_bytes());
         out[20..24].copy_from_slice(&self.to_version.to_be_bytes());
         out[24..28].copy_from_slice(&self.last_error.to_be_bytes());
+        out[28..60].copy_from_slice(&self.cursor_key);
         Cow::Owned(out.to_vec())
     }
 
@@ -84,7 +91,7 @@ impl Storable for SchemaMigrationState {
 
     fn from_bytes(bytes: Cow<'_, [u8]>) -> Self {
         let data = bytes.as_ref();
-        if data.len() != SCHEMA_MIGRATION_SIZE {
+        if data.len() != SCHEMA_MIGRATION_LEGACY_SIZE && data.len() != SCHEMA_MIGRATION_SIZE {
             record_corrupt(b"schema_migration_state");
             return Self::done();
         }
@@ -96,12 +103,21 @@ impl Storable for SchemaMigrationState {
         to_version.copy_from_slice(&data[20..24]);
         let mut last_error = [0u8; 4];
         last_error.copy_from_slice(&data[24..28]);
+        let mut cursor_key = [0u8; 32];
+        let cursor_key_set = if data.len() == SCHEMA_MIGRATION_SIZE {
+            cursor_key.copy_from_slice(&data[28..60]);
+            data[1] != 0
+        } else {
+            false
+        };
         Self {
             phase: SchemaMigrationPhase::from_u8(data[0]),
             cursor: u64::from_be_bytes(cursor),
             from_version: u32::from_be_bytes(from_version),
             to_version: u32::from_be_bytes(to_version),
             last_error: u32::from_be_bytes(last_error),
+            cursor_key_set,
+            cursor_key,
         }
     }
 

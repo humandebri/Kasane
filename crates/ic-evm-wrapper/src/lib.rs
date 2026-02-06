@@ -11,7 +11,7 @@ use evm_db::chain_data::{
 use evm_db::meta::{
     current_schema_version, ensure_meta_initialized, get_meta, mark_migration_applied,
     schema_migration_state, set_needs_migration, set_schema_migration_state, set_tx_locs_v3_active,
-    tx_locs_v3_active, SchemaMigrationPhase, SchemaMigrationState,
+    SchemaMigrationPhase, SchemaMigrationState,
 };
 use evm_db::stable_state::{init_stable_state, with_state};
 use evm_db::upgrade;
@@ -1490,8 +1490,12 @@ fn schema_migration_tick(max_steps: u32) -> bool {
             SchemaMigrationPhase::Done => return true,
             SchemaMigrationPhase::Error => return false,
             SchemaMigrationPhase::Init => {
-                set_tx_locs_v3_active(false);
-                chain::clear_tx_locs_v3();
+                if state.from_version < 3 {
+                    set_tx_locs_v3_active(false);
+                    chain::clear_tx_locs_v3();
+                    state.cursor_key_set = false;
+                    state.cursor_key = [0u8; 32];
+                }
                 state.phase = SchemaMigrationPhase::Scan;
                 state.cursor = 0;
                 set_schema_migration_state(state);
@@ -1503,23 +1507,39 @@ fn schema_migration_tick(max_steps: u32) -> bool {
             }
             SchemaMigrationPhase::Rewrite => {
                 if state.from_version < 3 {
-                    let (copied, done) = chain::migrate_tx_locs_batch(state.cursor, 512);
+                    let start_key = if state.cursor_key_set {
+                        Some(TxId(state.cursor_key))
+                    } else {
+                        None
+                    };
+                    let (last_key, copied, done) = chain::migrate_tx_locs_batch(start_key, 512);
                     state.cursor = state.cursor.saturating_add(copied);
+                    if let Some(key) = last_key {
+                        state.cursor_key_set = true;
+                        state.cursor_key = key.0;
+                    }
                     set_schema_migration_state(state);
                     if !done {
                         return false;
                     }
-                    set_tx_locs_v3_active(true);
                 }
                 state.phase = SchemaMigrationPhase::Verify;
                 state.cursor = 0;
                 set_schema_migration_state(state);
             }
             SchemaMigrationPhase::Verify => {
-                let tx_locs_migrated = with_state(|s| s.tx_locs.len() == s.tx_locs_v3.len());
-                if !tx_locs_migrated || !tx_locs_v3_active() {
+                if state.from_version < 3 {
+                    let tx_locs_migrated = with_state(|s| s.tx_locs.len() == s.tx_locs_v3.len());
+                    if !tx_locs_migrated {
+                        state.phase = SchemaMigrationPhase::Error;
+                        state.last_error = 1;
+                        set_schema_migration_state(state);
+                        return false;
+                    }
+                    set_tx_locs_v3_active(true);
+                } else if !evm_db::meta::tx_locs_v3_active() {
                     state.phase = SchemaMigrationPhase::Error;
-                    state.last_error = 1;
+                    state.last_error = 2;
                     set_schema_migration_state(state);
                     return false;
                 }
@@ -1756,6 +1776,8 @@ fn apply_post_upgrade_migrations() {
             from_version: from,
             to_version: current,
             last_error: 0,
+            cursor_key_set: false,
+            cursor_key: [0u8; 32],
         });
         evm_db::stable_state::with_state_mut(|state| {
             let mut migration = *state.state_root_migration.get();

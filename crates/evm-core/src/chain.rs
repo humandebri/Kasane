@@ -135,20 +135,36 @@ pub fn clear_tx_locs_v3() {
     });
 }
 
-pub fn migrate_tx_locs_batch(start: u64, max_items: u32) -> (u64, bool) {
+pub fn migrate_tx_locs_batch(start_key: Option<TxId>, max_items: u32) -> (Option<TxId>, u64, bool) {
+    use std::ops::Bound;
     with_state_mut(|state| {
         let mut copied = 0u64;
-        for entry in state
-            .tx_locs
-            .iter()
-            .skip(start as usize)
-            .take(max_items as usize)
-        {
-            state.tx_locs_v3.insert(*entry.key(), entry.value());
-            copied = copied.saturating_add(1);
+        let mut last_key = None;
+        let mut iter = match start_key {
+            Some(key) => state
+                .tx_locs
+                .range((Bound::Excluded(key), Bound::Unbounded)),
+            None => state.tx_locs.range(..),
+        };
+        let mut done = false;
+        for _ in 0..max_items {
+            match iter.next() {
+                Some(entry) => {
+                    let key = *entry.key();
+                    state.tx_locs_v3.insert(key, entry.value());
+                    last_key = Some(key);
+                    copied = copied.saturating_add(1);
+                }
+                None => {
+                    done = true;
+                    break;
+                }
+            }
         }
-        let done = copied < u64::from(max_items);
-        (copied, done)
+        if copied < u64::from(max_items) {
+            done = true;
+        }
+        (last_key, copied, done)
     })
 }
 

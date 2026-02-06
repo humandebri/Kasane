@@ -1,7 +1,7 @@
 //! どこで: Phase0テスト / 何を: Meta互換読込とOps storableの復元確認 / なぜ: upgrade時の退行を防ぐため
 
 use evm_db::chain_data::{OpsConfigV1, OpsMode, OpsStateV1};
-use evm_db::meta::Meta;
+use evm_db::meta::{Meta, SchemaMigrationPhase, SchemaMigrationState};
 use ic_stable_structures::Storable;
 use std::borrow::Cow;
 
@@ -49,4 +49,18 @@ fn ops_config_roundtrip() {
     };
     let decoded = OpsConfigV1::from_bytes(Cow::Owned(config.to_bytes().into_owned()));
     assert_eq!(decoded, config);
+}
+
+#[test]
+fn schema_migration_state_roundtrip_with_cursor_key() {
+    let mut state = SchemaMigrationState::done();
+    state.phase = SchemaMigrationPhase::Rewrite;
+    state.cursor = 12;
+    state.from_version = 1;
+    state.to_version = 3;
+    state.last_error = 9;
+    state.cursor_key_set = true;
+    state.cursor_key = [0xabu8; 32];
+    let decoded = SchemaMigrationState::from_bytes(Cow::Owned(state.to_bytes().into_owned()));
+    assert_eq!(decoded, state);
 }
