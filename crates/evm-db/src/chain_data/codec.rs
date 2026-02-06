@@ -3,20 +3,25 @@
 use crate::corrupt_log::record_corrupt;
 use std::borrow::Cow;
 
-pub fn encode_guarded<'a>(label: &'static [u8], bytes: Vec<u8>, max_size: u32) -> Cow<'a, [u8]> {
-    if ensure_encoded_within_bound(label, bytes.len(), max_size) {
-        Cow::Owned(bytes)
-    } else {
-        Cow::Owned(Vec::new())
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct EncodeOverflow;
+
+pub fn encode_guarded<'a>(
+    label: &'static [u8],
+    bytes: Vec<u8>,
+    max_size: u32,
+) -> Result<Cow<'a, [u8]>, EncodeOverflow> {
+    if !ensure_encoded_within_bound(label, bytes.len(), max_size) {
+        return Err(EncodeOverflow);
     }
+    Ok(Cow::Owned(bytes))
 }
 
 pub fn ensure_encoded_within_bound(label: &'static [u8], encoded_len: usize, max_size: u32) -> bool {
     if encoded_len > max_size as usize {
         record_corrupt(label);
-        return false;
     }
-    true
+    encoded_len <= max_size as usize
 }
 
 pub fn mark_decode_failure(label: &'static [u8], fail_closed: bool) {
