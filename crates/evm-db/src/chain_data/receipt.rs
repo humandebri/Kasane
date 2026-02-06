@@ -6,6 +6,7 @@ use crate::chain_data::constants::{
     RECEIPT_CONTRACT_ADDR_LEN, RECEIPT_MAX_SIZE_U32,
 };
 use crate::chain_data::tx::TxId;
+use crate::corrupt_log::record_corrupt;
 use crate::decode::{read_array, read_u32, read_u64, read_u8, read_vec};
 use alloy_primitives::{Address, Bytes, Log, LogData, B256};
 use ic_stable_structures::storable::Bound;
@@ -33,68 +34,15 @@ pub struct ReceiptLike {
 
 impl Storable for ReceiptLike {
     fn to_bytes(&self) -> Cow<'_, [u8]> {
-        if self.status > 1 {
-            ic_cdk::trap("receipt: status must be 0 or 1");
-        }
-        if self.return_data.len() > MAX_RETURN_DATA {
-            ic_cdk::trap("receipt: return_data too large");
-        }
-        if self.logs.len() > MAX_LOGS_PER_TX {
-            ic_cdk::trap("receipt: too many logs");
-        }
-        let mut out = Vec::with_capacity(96);
-        out.extend_from_slice(&RECEIPT_V2_MAGIC);
-        out.extend_from_slice(&self.tx_id.0);
-        out.extend_from_slice(&self.block_number.to_be_bytes());
-        out.extend_from_slice(&self.tx_index.to_be_bytes());
-        out.push(self.status);
-        out.extend_from_slice(&self.gas_used.to_be_bytes());
-        out.extend_from_slice(&self.effective_gas_price.to_be_bytes());
-        out.extend_from_slice(&self.l1_data_fee.to_be_bytes());
-        out.extend_from_slice(&self.operator_fee.to_be_bytes());
-        out.extend_from_slice(&self.total_fee.to_be_bytes());
-        out.extend_from_slice(&self.return_data_hash);
-        let data_len = u32::try_from(self.return_data.len())
-            .unwrap_or_else(|_| ic_cdk::trap("receipt: return_data len"));
-        out.extend_from_slice(&data_len.to_be_bytes());
-        out.extend_from_slice(&self.return_data);
-        match self.contract_address {
-            Some(addr) => {
-                out.push(1);
-                out.extend_from_slice(&addr);
+        let encoded = match self.encode_checked() {
+            Ok(value) => value,
+            Err(_) => {
+                record_corrupt(b"receipt_encode");
+                return Cow::Owned(Vec::new());
             }
-            None => {
-                out.push(0);
-                out.extend_from_slice(&[0u8; RECEIPT_CONTRACT_ADDR_LEN]);
-            }
-        }
-        let logs_len =
-            u32::try_from(self.logs.len()).unwrap_or_else(|_| ic_cdk::trap("receipt: logs len"));
-        out.extend_from_slice(&logs_len.to_be_bytes());
-        for log in self.logs.iter() {
-            let topics = log.data.topics();
-            if topics.len() > MAX_LOG_TOPICS {
-                ic_cdk::trap("receipt: too many topics");
-            }
-            let data = log.data.data.as_ref();
-            if data.len() > MAX_LOG_DATA {
-                ic_cdk::trap("receipt: log data too large");
-            }
-            out.extend_from_slice(log.address.as_ref());
-            let topics_len =
-                u32::try_from(topics.len()).unwrap_or_else(|_| ic_cdk::trap("receipt: topics len"));
-            out.extend_from_slice(&topics_len.to_be_bytes());
-            for topic in topics.iter() {
-                out.extend_from_slice(topic.as_ref());
-            }
-            let data_len =
-                u32::try_from(data.len()).unwrap_or_else(|_| ic_cdk::trap("receipt: log data len"));
-            out.extend_from_slice(&data_len.to_be_bytes());
-            out.extend_from_slice(data);
-        }
-        encode_guarded(b"receipt_encode", out, RECEIPT_MAX_SIZE_U32)
+        };
+        encode_guarded(b"receipt_encode", encoded, RECEIPT_MAX_SIZE_U32)
     }
-
     fn into_bytes(self) -> Vec<u8> {
         self.to_bytes().into_owned()
     }
@@ -151,49 +99,41 @@ impl Storable for ReceiptLike {
             };
             (l1_data_fee, operator_fee, total_fee)
         } else {
-            (0u128, 0u128, 0u128)
+            (0, 0, 0)
         };
         let return_data_hash = match read_array::<32>(data, &mut offset) {
             Some(value) => value,
             None => return corrupt_receipt(),
         };
-        let return_len = match read_u32(data, &mut offset) {
+        let return_data = match read_vec(data, &mut offset, MAX_RETURN_DATA) {
             Some(value) => value,
             None => return corrupt_receipt(),
         };
-        let return_len_usize = match usize::try_from(return_len) {
-            Ok(value) => value,
-            Err(_) => return corrupt_receipt(),
-        };
-        if return_len_usize > MAX_RETURN_DATA {
-            return corrupt_receipt();
-        }
-        let return_data = match read_vec(data, &mut offset, return_len_usize) {
+        let has_contract = match read_u8(data, &mut offset) {
             Some(value) => value,
             None => return corrupt_receipt(),
         };
-        let has_addr = match read_u8(data, &mut offset) {
-            Some(value) => value,
-            None => return corrupt_receipt(),
+        let contract_address = if has_contract == 0 {
+            if read_array::<RECEIPT_CONTRACT_ADDR_LEN>(data, &mut offset).is_none() {
+                return corrupt_receipt();
+            }
+            None
+        } else {
+            let raw = match read_array::<RECEIPT_CONTRACT_ADDR_LEN>(data, &mut offset) {
+                Some(value) => value,
+                None => return corrupt_receipt(),
+            };
+            Some(raw)
         };
-        let addr = match read_array::<RECEIPT_CONTRACT_ADDR_LEN>(data, &mut offset) {
-            Some(value) => value,
-            None => return corrupt_receipt(),
-        };
-        let contract_address = if has_addr == 1 { Some(addr) } else { None };
         let logs_len = match read_u32(data, &mut offset) {
             Some(value) => value,
             None => return corrupt_receipt(),
         };
-        let logs_len_usize = match usize::try_from(logs_len) {
-            Ok(value) => value,
-            Err(_) => return corrupt_receipt(),
-        };
-        if logs_len_usize > MAX_LOGS_PER_TX {
+        if logs_len as usize > MAX_LOGS_PER_TX {
             return corrupt_receipt();
         }
-        let mut logs = Vec::with_capacity(logs_len_usize);
-        for _ in 0..logs_len_usize {
+        let mut logs = Vec::with_capacity(logs_len as usize);
+        for _ in 0..logs_len {
             let address = match read_array::<20>(data, &mut offset) {
                 Some(value) => value,
                 None => return corrupt_receipt(),
@@ -202,47 +142,32 @@ impl Storable for ReceiptLike {
                 Some(value) => value,
                 None => return corrupt_receipt(),
             };
-            let topics_len_usize = match usize::try_from(topics_len) {
-                Ok(value) => value,
-                Err(_) => return corrupt_receipt(),
-            };
-            if topics_len_usize > MAX_LOG_TOPICS {
+            if topics_len as usize > MAX_LOG_TOPICS {
                 return corrupt_receipt();
             }
-            let mut topics: Vec<B256> = Vec::with_capacity(topics_len_usize);
-            for _ in 0..topics_len_usize {
+            let mut topics = Vec::with_capacity(topics_len as usize);
+            for _ in 0..topics_len {
                 let topic = match read_array::<32>(data, &mut offset) {
                     Some(value) => value,
                     None => return corrupt_receipt(),
                 };
                 topics.push(B256::from(topic));
             }
-            let data_len = match read_u32(data, &mut offset) {
+            let data = match read_vec(data, &mut offset, MAX_LOG_DATA) {
                 Some(value) => value,
                 None => return corrupt_receipt(),
             };
-            let data_len_usize = match usize::try_from(data_len) {
-                Ok(value) => value,
-                Err(_) => return corrupt_receipt(),
-            };
-            if data_len_usize > MAX_LOG_DATA {
-                return corrupt_receipt();
-            }
-            let data = match read_vec(data, &mut offset, data_len_usize) {
+            let log_data = match LogData::new(topics, Bytes::from(data)) {
                 Some(value) => value,
                 None => return corrupt_receipt(),
             };
-            let log_data = LogData::new(topics, Bytes::from(data));
-            let log_data = match log_data {
-                Some(value) => value,
-                None => return corrupt_receipt(),
-            };
-            logs.push(LogEntry {
+            let log = Log {
                 address: Address::from(address),
                 data: log_data,
-            });
+            };
+            logs.push(log);
         }
-        Self {
+        ReceiptLike {
             tx_id: TxId(tx_id),
             block_number,
             tx_index,
@@ -263,6 +188,80 @@ impl Storable for ReceiptLike {
         max_size: RECEIPT_MAX_SIZE_U32,
         is_fixed_size: false,
     };
+}
+
+impl ReceiptLike {
+    fn encode_checked(&self) -> Result<Vec<u8>, ReceiptEncodeError> {
+        if self.status > 1 {
+            return Err(ReceiptEncodeError::InvalidStatus);
+        }
+        if self.return_data.len() > MAX_RETURN_DATA {
+            return Err(ReceiptEncodeError::ReturnDataTooLarge);
+        }
+        if self.logs.len() > MAX_LOGS_PER_TX {
+            return Err(ReceiptEncodeError::TooManyLogs);
+        }
+        let mut out = Vec::with_capacity(96);
+        out.extend_from_slice(&RECEIPT_V2_MAGIC);
+        out.extend_from_slice(&self.tx_id.0);
+        out.extend_from_slice(&self.block_number.to_be_bytes());
+        out.extend_from_slice(&self.tx_index.to_be_bytes());
+        out.push(self.status);
+        out.extend_from_slice(&self.gas_used.to_be_bytes());
+        out.extend_from_slice(&self.effective_gas_price.to_be_bytes());
+        out.extend_from_slice(&self.l1_data_fee.to_be_bytes());
+        out.extend_from_slice(&self.operator_fee.to_be_bytes());
+        out.extend_from_slice(&self.total_fee.to_be_bytes());
+        out.extend_from_slice(&self.return_data_hash);
+        let data_len = u32::try_from(self.return_data.len())
+            .map_err(|_| ReceiptEncodeError::LengthOverflow)?;
+        out.extend_from_slice(&data_len.to_be_bytes());
+        out.extend_from_slice(&self.return_data);
+        match self.contract_address {
+            Some(addr) => {
+                out.push(1);
+                out.extend_from_slice(&addr);
+            }
+            None => {
+                out.push(0);
+                out.extend_from_slice(&[0u8; RECEIPT_CONTRACT_ADDR_LEN]);
+            }
+        }
+        let logs_len = u32::try_from(self.logs.len()).map_err(|_| ReceiptEncodeError::LengthOverflow)?;
+        out.extend_from_slice(&logs_len.to_be_bytes());
+        for log in self.logs.iter() {
+            let topics = log.data.topics();
+            if topics.len() > MAX_LOG_TOPICS {
+                return Err(ReceiptEncodeError::TooManyTopics);
+            }
+            let data = log.data.data.as_ref();
+            if data.len() > MAX_LOG_DATA {
+                return Err(ReceiptEncodeError::LogDataTooLarge);
+            }
+            out.extend_from_slice(log.address.as_ref());
+            let topics_len =
+                u32::try_from(topics.len()).map_err(|_| ReceiptEncodeError::LengthOverflow)?;
+            out.extend_from_slice(&topics_len.to_be_bytes());
+            for topic in topics.iter() {
+                out.extend_from_slice(topic.as_ref());
+            }
+            let data_len =
+                u32::try_from(data.len()).map_err(|_| ReceiptEncodeError::LengthOverflow)?;
+            out.extend_from_slice(&data_len.to_be_bytes());
+            out.extend_from_slice(data);
+        }
+        Ok(out)
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ReceiptEncodeError {
+    InvalidStatus,
+    ReturnDataTooLarge,
+    TooManyLogs,
+    TooManyTopics,
+    LogDataTooLarge,
+    LengthOverflow,
 }
 
 fn corrupt_receipt() -> ReceiptLike {

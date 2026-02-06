@@ -1272,6 +1272,7 @@ fn exec_error_to_code(err: Option<&evm_core::revm_exec::ExecError>) -> &'static 
         Some(ExecError::EvmHalt(OpHaltReason::PrecompileError)) => "exec.halt.precompile_error",
         Some(ExecError::EvmHalt(OpHaltReason::Unknown)) => "exec.halt.unknown",
         Some(ExecError::InvalidGasFee) => "exec.gas_fee.invalid",
+        Some(ExecError::ResultTooLarge) => "exec.result.too_large",
         Some(ExecError::ExecutionFailed) => "exec.execution.failed",
     }
 }
@@ -1857,7 +1858,7 @@ fn mining_backoff_interval_ms(base_interval_ms: u64, failures: u32) -> u64 {
         return base_interval_ms;
     }
     let shift = failures.min(16);
-    let multiplier = 1u64.saturating_shl(shift);
+    let multiplier = 1u64.checked_shl(shift).unwrap_or(u64::MAX);
     let interval = base_interval_ms.saturating_mul(multiplier);
     interval.min(MAX_MINING_BACKOFF_MS).max(base_interval_ms)
 }
@@ -1988,13 +1989,15 @@ pub fn export_did() -> String {
 mod tests {
     use super::{
         clamp_return_data, exec_error_to_code, inspect_method_allowed, map_execute_chain_result,
-        reject_anonymous_principal, tx_id_from_bytes, ExecuteTxError,
+        reject_anonymous_principal, reject_write_reason, tx_id_from_bytes, ExecuteTxError,
     };
     use candid::Principal;
     use evm_core::chain::{ChainError, ExecResult};
     use evm_core::revm_exec::{ExecError, OpHaltReason, OpTransactionError};
     use evm_db::chain_data::constants::MAX_RETURN_DATA;
     use evm_db::chain_data::TxId;
+    use evm_db::meta::{set_needs_migration, set_schema_migration_state, SchemaMigrationState};
+    use evm_db::stable_state::init_stable_state;
 
     #[test]
     fn clamp_return_data_rejects_oversize() {
@@ -2044,6 +2047,7 @@ mod tests {
             Some(ExecError::EvmHalt(OpHaltReason::PrecompileError)),
             Some(ExecError::EvmHalt(OpHaltReason::Unknown)),
             Some(ExecError::InvalidGasFee),
+            Some(ExecError::ResultTooLarge),
             Some(ExecError::ExecutionFailed),
             None,
         ];
@@ -2065,6 +2069,8 @@ mod tests {
         assert_eq!(code, "exec.halt.unknown");
         let code = exec_error_to_code(Some(&ExecError::TxError(OpTransactionError::TxBuildFailed)));
         assert_eq!(code, "exec.tx.build_failed");
+        let code = exec_error_to_code(Some(&ExecError::ResultTooLarge));
+        assert_eq!(code, "exec.result.too_large");
     }
 
     #[test]
@@ -2115,6 +2121,15 @@ mod tests {
         let principal = Principal::self_authenticating(b"wrapper-test-caller");
         let out = reject_anonymous_principal(principal);
         assert_eq!(out, None);
+    }
+
+    #[test]
+    fn reject_write_reason_stops_on_needs_migration() {
+        init_stable_state();
+        set_schema_migration_state(SchemaMigrationState::done());
+        set_needs_migration(true);
+        let reason = reject_write_reason().expect("needs_migration should block writes");
+        assert_eq!(reason, "ops.write.needs_migration");
     }
 
     #[cfg(feature = "dev-faucet")]

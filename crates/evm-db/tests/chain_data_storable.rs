@@ -1,6 +1,7 @@
 //! どこで: Phase1テスト / 何を: Tx/Block/ReceiptのStorable / なぜ: 互換性のため
 
 use evm_db::chain_data::receipt::LogEntry;
+use evm_db::chain_data::constants::MAX_RETURN_DATA;
 use evm_db::chain_data::{
     BlockData, CallerKey, ChainStateV1, Head, OpsMetricsV1, QueueMeta, ReceiptLike, StoredTx,
     StoredTxBytes, TxId, TxIndexEntry, TxKind, TxLoc,
@@ -93,6 +94,27 @@ fn receipt_roundtrip() {
     let bytes = receipt.to_bytes();
     let decoded = ReceiptLike::from_bytes(bytes);
     assert_eq!(receipt, decoded);
+}
+
+#[test]
+fn receipt_encode_rejects_oversized_return_data() {
+    let receipt = ReceiptLike {
+        tx_id: TxId([0x44u8; 32]),
+        block_number: 2,
+        tx_index: 0,
+        status: 1,
+        gas_used: 21000,
+        effective_gas_price: 0,
+        l1_data_fee: 11,
+        operator_fee: 22,
+        total_fee: 33,
+        return_data_hash: [0x55u8; 32],
+        return_data: vec![1u8; MAX_RETURN_DATA + 1],
+        contract_address: None,
+        logs: Vec::new(),
+    };
+    let bytes = receipt.to_bytes().into_owned();
+    assert!(bytes.is_empty());
 }
 
 #[test]

@@ -4,26 +4,24 @@ use crate::corrupt_log::record_corrupt;
 use std::borrow::Cow;
 
 pub fn encode_guarded<'a>(label: &'static [u8], bytes: Vec<u8>, max_size: u32) -> Cow<'a, [u8]> {
-    ensure_encoded_within_bound(label, bytes.len(), max_size);
-    Cow::Owned(bytes)
+    if ensure_encoded_within_bound(label, bytes.len(), max_size) {
+        Cow::Owned(bytes)
+    } else {
+        Cow::Owned(Vec::new())
+    }
 }
 
-pub fn ensure_encoded_within_bound(label: &'static [u8], encoded_len: usize, max_size: u32) {
+pub fn ensure_encoded_within_bound(label: &'static [u8], encoded_len: usize, max_size: u32) -> bool {
     if encoded_len > max_size as usize {
         record_corrupt(label);
-        ic_cdk::trap("storable.encode.bound_exceeded");
+        return false;
     }
+    true
 }
 
 pub fn mark_decode_failure(label: &'static [u8], fail_closed: bool) {
     record_corrupt(label);
     if fail_closed {
         crate::meta::set_needs_migration(true);
-        #[cfg(target_arch = "wasm32")]
-        {
-            if ic_cdk::api::in_replicated_execution() {
-                ic_cdk::trap("decode_fail_closed");
-            }
-        }
     }
 }

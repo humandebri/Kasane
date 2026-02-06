@@ -13,6 +13,7 @@ use crate::tx_submit;
 use evm_db::chain_data::constants::{
     DEFAULT_BLOCK_GAS_LIMIT, DROPPED_RING_CAPACITY, DROP_CODE_CALLER_MISSING, DROP_CODE_DECODE,
     DROP_CODE_EXEC, DROP_CODE_INVALID_FEE, DROP_CODE_MISSING, DROP_CODE_REPLACED,
+    DROP_CODE_RESULT_TOO_LARGE,
     MAX_PENDING_GLOBAL, MAX_PENDING_PER_SENDER, MAX_TX_SIZE, READY_CANDIDATE_LIMIT,
 };
 use evm_db::chain_data::{
@@ -768,6 +769,20 @@ pub fn produce_block(max_txs: usize) -> Result<BlockData, ChainError> {
                         &mut dropped_total,
                         &mut dropped_by_code,
                         DROP_CODE_INVALID_FEE,
+                    );
+                    continue;
+                }
+                if err == ExecError::ResultTooLarge {
+                    staged_drops.push(QueuedDrop {
+                        tx_id,
+                        drop_code: DROP_CODE_RESULT_TOO_LARGE,
+                        sender_override: Some(prepared_tx.sender_bytes),
+                        nonce_override: Some(prepared_tx.sender_nonce),
+                    });
+                    track_drop(
+                        &mut dropped_total,
+                        &mut dropped_by_code,
+                        DROP_CODE_RESULT_TOO_LARGE,
                     );
                     continue;
                 }

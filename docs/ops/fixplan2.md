@@ -105,3 +105,32 @@
 - [x] active 切替は Verify 成功後のみ実行（失敗時は旧ストア参照）
 - [x] from_version>=3 はコピーを省略し、Verify 条件を緩和
 - [x] 旧decodeは移行例外として `tx_loc` に限定し、方針コメントを明記
+
+## 北極星設計（trap排除・状態機械化・安全停止）
+
+### 原則（拘束条件）
+- `ic_cdk::trap` は「到達不能なプログラマバグ」専用にする
+- 外部入力・EVM実行結果・デコード失敗・サイズ超過・容量超過は `Result::Err` で返す
+- `produce_block` は `Err` を見て `Dropped(reason)` に遷移させ、前進を保証する
+
+### Txライフサイクル（状態機械）
+- `Queued -> Prepared (任意) -> Included | Dropped(reason)` を固定
+- ブロックが 0 件でも `Dropped` は必ず永続化する（キュー修復）
+- `Dropped` は本文削除 + 墓標 + インデックス掃除 + 観測用リングをワンセットで適用
+
+### fail-closed の理想形
+- `mark_decode_failure(..., true)` で `needs_migration` を sticky に設定
+- 以降の write は `reject_write_reason` で `NeedsMigration` を返し安全停止
+- 「そのメッセージ内の停止」は trap ではなく write ガードの連鎖で担保する
+
+### auto-mine の理想形（永続スケジューラ）
+- `mining_next_at / mining_failures / mining_backoff_ms / last_error_code` を stable に保持
+- 成功: failures=0, 通常間隔
+- drop-only/NoExecutableTx: failures += 1, 短いバックオフ
+- その他 Err: failures += 1, 指数バックオフ + 上限
+- NeedsMigration: auto-mine 停止（運用復旧モード）
+- 失敗理由/連続回数/バックオフ値をメトリクスで可視化
+
+### 段階移行のスコープ（P0/P1）
+- 設計は全域に適用
+- 実装はまず **EVM実行結果のサイズ超過** を Err 化し、`Dropped(reason)` に寄せる
