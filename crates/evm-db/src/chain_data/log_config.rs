@@ -57,7 +57,10 @@ impl Storable for LogConfigV1 {
         out[0] = u8::from(self.has_filter);
         out[2..4].copy_from_slice(&len.to_be_bytes());
         out[4..4 + usize::from(len)].copy_from_slice(filter_bytes);
-        encode_guarded(b"log_config", out.to_vec(), LOG_CONFIG_SIZE_U32)
+        match encode_guarded(b"log_config", out.to_vec(), LOG_CONFIG_SIZE_U32) {
+            Ok(value) => value,
+            Err(_) => Cow::Owned(vec![0u8; LOG_CONFIG_SIZE_U32 as usize]),
+        }
     }
 
     fn into_bytes(self) -> Vec<u8> {
@@ -100,5 +103,8 @@ fn encode_empty_config() -> Cow<'static, [u8]> {
     let mut out = [0u8; LOG_CONFIG_SIZE_U32 as usize];
     out[0] = 0u8;
     out[2..4].copy_from_slice(&0u16.to_be_bytes());
-    encode_guarded(b"log_config", out.to_vec(), LOG_CONFIG_SIZE_U32)
+    match encode_guarded(b"log_config", out.to_vec(), LOG_CONFIG_SIZE_U32) {
+        Ok(value) => value,
+        Err(_) => Cow::Owned(vec![0u8; LOG_CONFIG_SIZE_U32 as usize]),
+    }
 }

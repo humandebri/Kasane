@@ -36,11 +36,14 @@ impl Storable for DroppedRingStateV1 {
         out[0..4].copy_from_slice(&self.schema_version.to_be_bytes());
         out[4..12].copy_from_slice(&self.next_seq.to_be_bytes());
         out[12..16].copy_from_slice(&self.len.to_be_bytes());
-        encode_guarded(
+        match encode_guarded(
             b"dropped_ring_state",
             out.to_vec(),
             DROPPED_RING_STATE_SIZE_U32,
-        )
+        ) {
+            Ok(value) => value,
+            Err(_) => Cow::Owned(vec![0u8; DROPPED_RING_STATE_SIZE_U32 as usize]),
+        }
     }
 
     fn into_bytes(self) -> Vec<u8> {

@@ -48,7 +48,10 @@ impl Storable for QueueMeta {
         let mut out = [0u8; 16];
         out[0..8].copy_from_slice(&self.head.to_be_bytes());
         out[8..16].copy_from_slice(&self.tail.to_be_bytes());
-        encode_guarded(b"queue_meta", out.to_vec(), 16)
+        match encode_guarded(b"queue_meta", out.to_vec(), 16) {
+            Ok(value) => value,
+            Err(_) => Cow::Owned(vec![0u8; 16]),
+        }
     }
 
     fn into_bytes(self) -> Vec<u8> {

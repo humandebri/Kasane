@@ -63,11 +63,13 @@ impl Storable for TxLoc {
             Ok(value) => value,
             Err(_) => {
                 record_corrupt(b"tx_loc_encode");
-                wincode::config::serialize(&TxLoc::queued(0), tx_loc_wincode_config())
-                    .unwrap_or_default()
+                return encode_fallback_tx_loc();
             }
         };
-        encode_guarded(b"tx_loc_encode", encoded, TX_LOC_SIZE_U32)
+        match encode_guarded(b"tx_loc_encode", encoded, TX_LOC_SIZE_U32) {
+            Ok(value) => value,
+            Err(_) => Cow::Owned(vec![0u8; TX_LOC_SIZE_U32 as usize]),
+        }
     }
 
     fn into_bytes(self) -> Vec<u8> {
@@ -93,6 +95,16 @@ fn tx_loc_wincode_config() -> impl wincode::config::Config {
         .with_big_endian()
         .with_fixint_encoding()
         .with_preallocation_size_limit::<{ TX_LOC_SIZE_U32 as usize }>()
+}
+
+fn encode_fallback_tx_loc() -> Cow<'static, [u8]> {
+    let fallback = TxLoc::queued(0);
+    let encoded = wincode::config::serialize(&fallback, tx_loc_wincode_config())
+        .unwrap_or_else(|_| vec![0u8; TX_LOC_SIZE_U32 as usize]);
+    match encode_guarded(b"tx_loc_encode", encoded, TX_LOC_SIZE_U32) {
+        Ok(value) => value,
+        Err(_) => Cow::Owned(vec![0u8; TX_LOC_SIZE_U32 as usize]),
+    }
 }
 
 // NOTE: 旧形式デコードは移行ウィンドウのための例外経路。

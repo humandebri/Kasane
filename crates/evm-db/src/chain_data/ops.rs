@@ -65,7 +65,10 @@ impl Storable for OpsConfigV1 {
         out[0..16].copy_from_slice(&self.low_watermark.to_be_bytes());
         out[16..32].copy_from_slice(&self.critical.to_be_bytes());
         out[32] = u8::from(self.freeze_on_critical);
-        encode_guarded(b"ops_config", out.to_vec(), OPS_CONFIG_SIZE_U32)
+        match encode_guarded(b"ops_config", out.to_vec(), OPS_CONFIG_SIZE_U32) {
+            Ok(value) => value,
+            Err(_) => Cow::Owned(vec![0u8; OPS_CONFIG_SIZE_U32 as usize]),
+        }
     }
 
     fn into_bytes(self) -> Vec<u8> {
@@ -128,7 +131,10 @@ impl Storable for OpsStateV1 {
         out[16..24].copy_from_slice(&self.last_check_ts.to_be_bytes());
         out[24] = self.mode.as_u8();
         out[25] = u8::from(self.safe_stop_latched);
-        encode_guarded(b"ops_state", out.to_vec(), OPS_STATE_SIZE_U32)
+        match encode_guarded(b"ops_state", out.to_vec(), OPS_STATE_SIZE_U32) {
+            Ok(value) => value,
+            Err(_) => Cow::Owned(vec![0u8; OPS_STATE_SIZE_U32 as usize]),
+        }
     }
 
     fn into_bytes(self) -> Vec<u8> {

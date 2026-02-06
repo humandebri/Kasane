@@ -36,11 +36,14 @@ impl Storable for StateRootMetaV1 {
         out[0..4].copy_from_slice(&self.schema_version.to_be_bytes());
         out[4] = if self.initialized { 1 } else { 0 };
         out[8..40].copy_from_slice(&self.state_root);
-        encode_guarded(
+        match encode_guarded(
             b"state_root_meta_encode",
             out.to_vec(),
             STATE_ROOT_META_SIZE_U32,
-        )
+        ) {
+            Ok(value) => value,
+            Err(_) => Cow::Owned(vec![0u8; STATE_ROOT_META_SIZE_U32 as usize]),
+        }
     }
 
     fn into_bytes(self) -> Vec<u8> {
