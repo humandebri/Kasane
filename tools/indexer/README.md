@@ -15,7 +15,7 @@ npm run dev
 - `.env.local` はローカル用のテンプレート
 - `.env.example` は配布用のひな型
 
-- `INDEXER_CANISTER_ID` (必須)
+- `EVM_CANISTER_ID` (必須)
 - `INDEXER_IC_HOST` (任意, 既定: https://icp-api.io)
 - `INDEXER_DB_PATH` (任意, 既定: ./indexer.sqlite)
 - `INDEXER_MAX_BYTES` (任意, 既定: 1200000)

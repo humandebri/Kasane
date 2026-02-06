@@ -29,9 +29,9 @@ const DEFAULT_ZSTD_LEVEL = 3;
 const DEFAULT_PRUNE_STATUS_POLL_MS = 30_000;
 
 export function loadConfig(env: NodeJS.ProcessEnv): Config {
-  const canisterId = env.INDEXER_CANISTER_ID;
+  const canisterId = env.EVM_CANISTER_ID;
   if (!canisterId) {
-    throw new Error("INDEXER_CANISTER_ID is required");
+    throw new Error("EVM_CANISTER_ID is required");
   }
   const icHost = env.INDEXER_IC_HOST ?? DEFAULT_IC_HOST;
   const dbPath = env.INDEXER_DB_PATH ?? DEFAULT_DB_PATH;

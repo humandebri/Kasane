@@ -143,7 +143,7 @@ export class IndexerDb {
     const rows = this.listArchiveStmt.all();
     const out = new Set<string>();
     for (const row of rows) {
-      if (typeof row.path === "string") {
+      if (isRecord(row) && typeof row.path === "string") {
         out.add(row.path);
       }
     }
@@ -151,8 +151,8 @@ export class IndexerDb {
   }
 
   getArchiveBytesSum(): number {
-    const row = this.sumArchiveStmt.get() as { total: number } | undefined;
-    if (!row || typeof row.total !== "number") {
+    const row = this.sumArchiveStmt.get();
+    if (!isRecord(row) || typeof row.total !== "number") {
       return 0;
     }
     return row.total;

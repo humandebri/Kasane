@@ -2,7 +2,7 @@
 
 import type { IDL } from "@dfinity/candid";
 
-export const idlFactory = ({ IDL }: { IDL: typeof import("@dfinity/candid").IDL }): IDL.ServiceClass => {
+export const idlFactory: IDL.InterfaceFactory = ({ IDL }) => {
   const Cursor = IDL.Record({
     block_number: IDL.Nat64,
     segment: IDL.Nat8,

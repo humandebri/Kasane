@@ -106,7 +106,7 @@ start_indexer() {
   mkdir -p "${INDEXER_ARCHIVE_DIR}"
   (
     cd tools/indexer
-    INDEXER_CANISTER_ID="${canister_id}" \
+    EVM_CANISTER_ID="${canister_id}" \
     INDEXER_IC_HOST="${ic_host}" \
     INDEXER_DB_PATH="${INDEXER_DB_PATH}" \
     INDEXER_ARCHIVE_DIR="${INDEXER_ARCHIVE_DIR}" \

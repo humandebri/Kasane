@@ -13,7 +13,7 @@ import { runArchiveGc } from "../src/archive_gc";
 import { IndexerDb } from "../src/db";
 import { applyMigrations, MIGRATIONS } from "../src/migrations";
 import { _test, runWorkerWithDeps } from "../src/worker";
-import { Chunk, Cursor, ExportError, ExportResponse, Result } from "../src/types";
+import { Chunk, Cursor, ExportError, ExportResponse, PruneStatusView, Result } from "../src/types";
 
 type TestFn = () => void | Promise<void>;
 type TestCase = { name: string; fn: TestFn };
@@ -22,6 +22,30 @@ const tests: TestCase[] = [];
 
 function test(name: string, fn: TestFn): void {
   tests.push({ name, fn });
+}
+
+function defaultPruneStatusView(): PruneStatusView {
+  return {
+    pruning_enabled: false,
+    prune_running: false,
+    estimated_kept_bytes: 0n,
+    high_water_bytes: 0n,
+    low_water_bytes: 0n,
+    hard_emergency_bytes: 0n,
+    last_prune_at: 0n,
+    pruned_before_block: null,
+    oldest_kept_block: null,
+    oldest_kept_timestamp: null,
+    need_prune: false,
+  };
+}
+
+function okResult<T, E>(value: T): Result<T, E> {
+  return { Ok: value };
+}
+
+function errResult<T, E>(err: E): Result<T, E> {
+  return { Err: err };
 }
 
 test("cursor json roundtrip", () => {
@@ -178,7 +202,8 @@ test("max_bytes over limit triggers fatal exit", async () => {
     const response: ExportResponse = { chunks, next_cursor: cursor };
     const client = {
       getHeadNumber: async () => 1n,
-      exportBlocks: async () => ({ Ok: response } as Result<ExportResponse, ExportError>),
+      exportBlocks: async () => okResult<ExportResponse, ExportError>(response),
+      getPruneStatus: async () => defaultPruneStatusView(),
     };
     const config = {
       canisterId: "x",
@@ -208,7 +233,8 @@ test("Pruned error triggers fatal exit", async () => {
     const err: ExportError = { Pruned: { pruned_before_block: 1n } };
     const client = {
       getHeadNumber: async () => 1n,
-      exportBlocks: async () => ({ Err: err } as Result<ExportResponse, ExportError>),
+      exportBlocks: async () => errResult<ExportResponse, ExportError>(err),
+      getPruneStatus: async () => defaultPruneStatusView(),
     };
     const config = {
       canisterId: "x",
@@ -240,7 +266,7 @@ test("prune_status is persisted as JSON with string fields", async () => {
     const err: ExportError = { Pruned: { pruned_before_block: 1n } };
     const client = {
       getHeadNumber: async () => 1n,
-      exportBlocks: async () => ({ Err: err } as Result<ExportResponse, ExportError>),
+      exportBlocks: async () => errResult<ExportResponse, ExportError>(err),
       getPruneStatus: async () => ({
         pruning_enabled: true,
         prune_running: false,
@@ -276,7 +302,10 @@ test("prune_status is persisted as JSON with string fields", async () => {
     db.close();
     const raw = readMetaValue(dbPath, "prune_status");
     assert.ok(raw, "prune_status is missing");
-    const parsed = JSON.parse(raw as string);
+    if (typeof raw !== "string") {
+      throw new Error("prune_status is not a string");
+    }
+    const parsed = JSON.parse(raw);
     assert.equal(parsed.v, 1);
     assert.equal(parsed.status.estimated_kept_bytes, "123");
     assert.equal(parsed.status.high_water_bytes, "456");
@@ -304,9 +333,9 @@ test("sqlite_bytes and archive_bytes are updated once per day", async () => {
         if (idx < responses.length) {
           const value = responses[idx];
           idx += 1;
-          return { Ok: value } as Result<ExportResponse, ExportError>;
+          return okResult<ExportResponse, ExportError>(value);
         }
-        return { Err: { Pruned: { pruned_before_block: 0n } } } as Result<ExportResponse, ExportError>;
+        return errResult<ExportResponse, ExportError>({ Pruned: { pruned_before_block: 0n } });
       },
       getPruneStatus: async () => ({
         pruning_enabled: false,
@@ -481,41 +510,38 @@ async function expectExit(fn: () => Promise<void>): Promise<void> {
 
 function readMetaValue(dbPath: string, key: string): string | null {
   const db = new Database(dbPath);
-  const row = db.prepare("select value from meta where key = ?").get(key) as
-    | { value: string | Buffer }
-    | undefined;
+  const row = db.prepare("select value from meta where key = ?").get(key);
   db.close();
-  if (!row) {
+  if (!isRecord(row)) {
     return null;
   }
-  if (typeof row.value === "string") {
-    return row.value;
+  const value = row.value;
+  if (typeof value === "string") {
+    return value;
   }
-  if (row.value instanceof Buffer) {
-    return row.value.toString("utf8");
+  if (value instanceof Buffer) {
+    return value.toString("utf8");
   }
   return null;
 }
 
 function readMetricsRow(dbPath: string): { sqlite_bytes: number | null; archive_bytes: number | null } {
   const db = new Database(dbPath);
-  const row = db.prepare("select sqlite_bytes, archive_bytes from metrics_daily limit 1").get() as
-    | { sqlite_bytes: number | null; archive_bytes: number | null }
-    | undefined;
+  const row = db.prepare("select sqlite_bytes, archive_bytes from metrics_daily limit 1").get();
   db.close();
-  if (!row) {
+  if (!isRecord(row)) {
     throw new Error("metrics row missing");
   }
-  return row;
+  const sqliteBytes = typeof row.sqlite_bytes === "number" ? row.sqlite_bytes : null;
+  const archiveBytes = typeof row.archive_bytes === "number" ? row.archive_bytes : null;
+  return { sqlite_bytes: sqliteBytes, archive_bytes: archiveBytes };
 }
 
 function readArchiveSum(dbPath: string): number {
   const db = new Database(dbPath);
-  const row = db.prepare("select coalesce(sum(size_bytes), 0) as total from archive_parts").get() as
-    | { total: number }
-    | undefined;
+  const row = db.prepare("select coalesce(sum(size_bytes), 0) as total from archive_parts").get();
   db.close();
-  if (!row || typeof row.total !== "number") {
+  if (!isRecord(row) || typeof row.total !== "number") {
     return 0;
   }
   return row.total;
