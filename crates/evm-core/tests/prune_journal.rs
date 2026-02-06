@@ -2,7 +2,7 @@
 
 use evm_core::chain;
 use evm_db::chain_data::{BlockData, ReceiptLike, TxId, TxIndexEntry, TxLoc};
-use evm_db::stable_state::{init_stable_state, with_state_mut};
+use evm_db::stable_state::{init_stable_state, with_state, with_state_mut};
 use ic_stable_structures::Storable;
 
 #[test]
@@ -26,6 +26,54 @@ fn prune_journal_recovery_frees_quarantine() {
 
     let second = chain::prune_blocks(1, 100).expect("prune should succeed");
     assert!(second.did_work || !second.did_work);
+}
+
+#[test]
+fn prune_journal_recovery_removes_seen_tx() {
+    init_stable_state();
+    let tx = TxId([0x47; 32]);
+    let block = make_block(40, tx);
+
+    with_state_mut(|state| {
+        insert_block(state, 40, &block);
+        insert_receipt(state, tx, 40);
+        insert_tx_index(state, tx, 40);
+        state.tx_locs.insert(tx, TxLoc::included(40, 0));
+        state.seen_tx.insert(tx, 1);
+        let mut head = *state.head.get();
+        head.number = 40;
+        state.head.set(head);
+
+        let mut ptrs = Vec::new();
+        if let Some(ptr) = state.blocks.get(&40) {
+            ptrs.push(ptr);
+        }
+        if let Some(ptr) = state.receipts.get(&tx) {
+            ptrs.push(ptr);
+        }
+        if let Some(ptr) = state.tx_index.get(&tx) {
+            ptrs.push(ptr);
+        }
+        for ptr in ptrs.iter() {
+            state
+                .blob_store
+                .mark_quarantine(ptr)
+                .expect("quarantine ptr");
+        }
+        state
+            .prune_journal
+            .insert(40, evm_db::chain_data::PruneJournal { ptrs });
+        let mut prune_state = *state.prune_state.get();
+        prune_state.set_journal_block(40);
+        state.prune_state.set(prune_state);
+    });
+
+    let result = chain::prune_blocks(1, 100).expect("prune should succeed");
+    assert!(result.did_work || !result.did_work);
+
+    with_state(|state| {
+        assert!(state.seen_tx.get(&tx).is_none());
+    });
 }
 
 #[test]

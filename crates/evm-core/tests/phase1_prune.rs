@@ -27,6 +27,9 @@ fn prune_blocks_removes_old_data() {
         insert_receipt(state, tx1, 1);
         insert_receipt(state, tx2, 2);
         insert_receipt(state, tx3, 3);
+        state.seen_tx.insert(tx1, 1);
+        state.seen_tx.insert(tx2, 1);
+        state.seen_tx.insert(tx3, 1);
         state.tx_locs.insert(tx1, TxLoc::included(1, 0));
         state.tx_locs.insert(tx2, TxLoc::included(2, 0));
         state.tx_locs.insert(tx3, TxLoc::included(3, 0));
@@ -49,6 +52,9 @@ fn prune_blocks_removes_old_data() {
         assert!(state.tx_locs.get(&tx1).is_none());
         assert!(state.tx_locs.get(&tx2).is_none());
         assert!(state.tx_locs.get(&tx3).is_some());
+        assert!(state.seen_tx.get(&tx1).is_none());
+        assert!(state.seen_tx.get(&tx2).is_none());
+        assert!(state.seen_tx.get(&tx3).is_some());
     });
 }
 
@@ -74,6 +80,9 @@ fn prune_blocks_respects_max_ops() {
         insert_receipt(state, tx1, 1);
         insert_receipt(state, tx2, 2);
         insert_receipt(state, tx3, 3);
+        state.seen_tx.insert(tx1, 1);
+        state.seen_tx.insert(tx2, 1);
+        state.seen_tx.insert(tx3, 1);
         state.tx_locs.insert(tx1, TxLoc::included(1, 0));
         state.tx_locs.insert(tx2, TxLoc::included(2, 0));
         state.tx_locs.insert(tx3, TxLoc::included(3, 0));
@@ -82,7 +91,7 @@ fn prune_blocks_respects_max_ops() {
         state.head.set(head);
     });
 
-    let result = chain::prune_blocks(1, 5).expect("prune should succeed");
+    let result = chain::prune_blocks(1, 6).expect("prune should succeed");
     assert!(result.did_work);
     assert_eq!(result.pruned_before_block, Some(1));
     assert_eq!(result.remaining, 1);

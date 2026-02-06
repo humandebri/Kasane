@@ -1,6 +1,7 @@
 //! どこで: Phase1のチェーン操作 / 何を: submit/produce/execute / なぜ: 同期Tx体験の基盤のため
 
 use crate::base_fee::compute_next_base_fee;
+use crate::bytes::address_to_bytes;
 use crate::hash;
 use crate::revm_exec::{
     commit_state_diff_to_db, compute_effective_gas_price, execute_tx_on, BlockExecContext,
@@ -18,7 +19,7 @@ use evm_db::chain_data::constants::{
 };
 use evm_db::chain_data::{
     BlockData, Head, PruneJournal, PrunePolicy, ReadyKey, ReceiptLike, SenderKey, SenderNonceKey,
-    StoredTx, StoredTxBytes, TxId, TxIndexEntry, TxKind, TxLoc, TxLocKind,
+    StoredTx, StoredTxBytes, StoredTxError, TxId, TxIndexEntry, TxKind, TxLoc, TxLocKind,
 };
 use evm_db::memory::VMem;
 use evm_db::meta::tx_locs_v3_active;
@@ -576,7 +577,7 @@ pub fn produce_block(max_txs: usize) -> Result<BlockData, ChainError> {
     }
     let head = with_state(|state| *state.head.get());
     let number = head.number.saturating_add(1);
-    let timestamp = head.timestamp.saturating_add(1);
+    let timestamp = std::cmp::max(head.timestamp.saturating_add(1), crate::time::now_sec());
     let parent_hash = head.block_hash;
     let exec_ctx = with_state(|state| BlockExecContext {
         block_number: number,
@@ -622,10 +623,14 @@ pub fn produce_block(max_txs: usize) -> Result<BlockData, ChainError> {
         };
         let stored = match StoredTx::try_from(envelope) {
             Ok(value) => value,
-            Err(_) => {
+            Err(err) => {
+                let drop_code = match err {
+                    StoredTxError::MissingCaller => DROP_CODE_CALLER_MISSING,
+                    _ => DROP_CODE_DECODE,
+                };
                 prepared.push(PreparedItem::Drop(QueuedDrop {
                     tx_id,
-                    drop_code: DROP_CODE_DECODE,
+                    drop_code,
                     sender_override: None,
                     nonce_override: None,
                 }));
@@ -1269,7 +1274,7 @@ pub fn prune_blocks(retain: u64, max_ops: u32) -> Result<PruneResult, ChainError
                     continue;
                 }
             };
-            let needed = 1u64 + (block.tx_ids.len() as u64).saturating_mul(4);
+            let needed = 1u64 + (block.tx_ids.len() as u64).saturating_mul(5);
             if ops_used.saturating_add(needed) > max_ops {
                 break;
             }
@@ -1291,6 +1296,7 @@ pub fn prune_blocks(retain: u64, max_ops: u32) -> Result<PruneResult, ChainError
                 state.tx_index.remove(tx_id);
                 tx_locs_remove(state, tx_id);
                 state.tx_store.remove(tx_id);
+                state.seen_tx.remove(tx_id);
             }
             ops_used = ops_used.saturating_add(needed);
             prune_state.set_pruned_before(next);
@@ -1337,6 +1343,7 @@ fn recover_prune_journal(state: &mut evm_db::stable_state::StableState) -> Resul
                 state.tx_index.remove(tx_id);
                 tx_locs_remove(state, tx_id);
                 state.tx_store.remove(tx_id);
+                state.seen_tx.remove(tx_id);
             }
             if let Some(pruned) = prune_state.pruned_before() {
                 if pruned < journal_block {
@@ -1792,12 +1799,6 @@ fn load_fee_fields_and_seq(
         is_dynamic_fee,
         seq,
     )))
-}
-
-fn address_to_bytes(address: Address) -> [u8; 20] {
-    let mut out = [0u8; 20];
-    out.copy_from_slice(address.as_ref());
-    out
 }
 
 fn apply_nonce_and_replacement(
