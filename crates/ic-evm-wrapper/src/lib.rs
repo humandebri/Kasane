@@ -111,6 +111,8 @@ pub struct OpsStatusView {
     pub log_filter_override: Option<String>,
     pub log_truncated_count: u64,
     pub critical_corrupt: bool,
+    pub mining_error_count: u64,
+    pub prune_error_count: u64,
 }
 
 #[derive(Clone, Debug, CandidType, Deserialize)]
@@ -271,6 +273,21 @@ pub struct EthReceiptView {
     pub total_fee: u128,
     pub contract_address: Option<Vec<u8>>,
     pub logs: Vec<LogView>,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize)]
+pub enum RpcBlockLookupView {
+    Found(EthBlockView),
+    Pruned { pruned_before_block: u64 },
+    NotFound,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize)]
+pub enum RpcReceiptLookupView {
+    Found(EthReceiptView),
+    Pruned { pruned_before_block: u64 },
+    PossiblyPruned { pruned_before_block: u64 },
+    NotFound,
 }
 
 #[derive(Clone, Debug, CandidType, Deserialize)]
@@ -851,26 +868,10 @@ fn get_prune_status() -> PruneStatusView {
 
 #[ic_cdk::query]
 fn rpc_eth_get_block_by_number(number: u64, full_tx: bool) -> Option<EthBlockView> {
-    let block = chain::get_block(number)?;
-    let txs = if full_tx {
-        let mut list = Vec::with_capacity(block.tx_ids.len());
-        for tx_id in block.tx_ids.iter() {
-            if let Some(view) = tx_to_view(*tx_id) {
-                list.push(view);
-            }
-        }
-        EthTxListView::Full(list)
-    } else {
-        EthTxListView::Hashes(block.tx_ids.iter().map(|id| id.0.to_vec()).collect())
-    };
-    Some(EthBlockView {
-        number: block.number,
-        parent_hash: block.parent_hash.to_vec(),
-        block_hash: block.block_hash.to_vec(),
-        timestamp: block.timestamp,
-        txs,
-        state_root: block.state_root.to_vec(),
-    })
+    match rpc_eth_get_block_by_number_with_status(number, full_tx) {
+        RpcBlockLookupView::Found(block) => Some(block),
+        RpcBlockLookupView::Pruned { .. } | RpcBlockLookupView::NotFound => None,
+    }
 }
 
 #[ic_cdk::query]
@@ -881,9 +882,33 @@ fn rpc_eth_get_transaction_by_hash(tx_hash: Vec<u8>) -> Option<EthTxView> {
 
 #[ic_cdk::query]
 fn rpc_eth_get_transaction_receipt(tx_hash: Vec<u8>) -> Option<EthReceiptView> {
-    let tx_id = tx_id_from_bytes(tx_hash)?;
-    let receipt = chain::get_receipt(&tx_id)?;
-    Some(receipt_to_eth_view(receipt))
+    match rpc_eth_get_transaction_receipt_with_status(tx_hash) {
+        RpcReceiptLookupView::Found(receipt) => Some(receipt),
+        RpcReceiptLookupView::Pruned { .. }
+        | RpcReceiptLookupView::PossiblyPruned { .. }
+        | RpcReceiptLookupView::NotFound => None,
+    }
+}
+
+#[ic_cdk::query]
+fn rpc_eth_get_block_by_number_with_status(number: u64, full_tx: bool) -> RpcBlockLookupView {
+    if let Some(pruned) = prune_boundary_for_number(number) {
+        return RpcBlockLookupView::Pruned {
+            pruned_before_block: pruned,
+        };
+    }
+    let Some(block) = chain::get_block(number) else {
+        return RpcBlockLookupView::NotFound;
+    };
+    RpcBlockLookupView::Found(block_to_eth_view(block, full_tx))
+}
+
+#[ic_cdk::query]
+fn rpc_eth_get_transaction_receipt_with_status(tx_hash: Vec<u8>) -> RpcReceiptLookupView {
+    let Some(tx_id) = tx_id_from_bytes(tx_hash) else {
+        return RpcReceiptLookupView::NotFound;
+    };
+    receipt_lookup_status(tx_id)
 }
 
 #[ic_cdk::update]
@@ -1004,6 +1029,8 @@ fn get_ops_status() -> OpsStatusView {
             log_filter_override: state.log_config.get().filter().map(str::to_string),
             log_truncated_count: LOG_TRUNCATED_COUNT.load(Ordering::Relaxed),
             critical_corrupt: critical_corrupt_state(),
+            mining_error_count: MINING_ERROR_COUNT.load(Ordering::Relaxed),
+            prune_error_count: PRUNE_ERROR_COUNT.load(Ordering::Relaxed),
         }
     })
 }
@@ -1414,6 +1441,62 @@ fn receipt_to_eth_view(receipt: ReceiptLike) -> EthReceiptView {
     }
 }
 
+fn block_to_eth_view(block: BlockData, full_tx: bool) -> EthBlockView {
+    let txs = if full_tx {
+        let mut list = Vec::with_capacity(block.tx_ids.len());
+        for tx_id in block.tx_ids.iter() {
+            if let Some(view) = tx_to_view(*tx_id) {
+                list.push(view);
+            }
+        }
+        EthTxListView::Full(list)
+    } else {
+        EthTxListView::Hashes(block.tx_ids.iter().map(|id| id.0.to_vec()).collect())
+    };
+    EthBlockView {
+        number: block.number,
+        parent_hash: block.parent_hash.to_vec(),
+        block_hash: block.block_hash.to_vec(),
+        timestamp: block.timestamp,
+        txs,
+        state_root: block.state_root.to_vec(),
+    }
+}
+
+fn prune_boundary_for_number(number: u64) -> Option<u64> {
+    let pruned_before = with_state(|state| state.prune_state.get().pruned_before());
+    match pruned_before {
+        Some(pruned) if number <= pruned => Some(pruned),
+        _ => None,
+    }
+}
+
+fn receipt_lookup_status(tx_id: TxId) -> RpcReceiptLookupView {
+    if let Some(receipt) = chain::get_receipt(&tx_id) {
+        return RpcReceiptLookupView::Found(receipt_to_eth_view(receipt));
+    }
+    let pruned_before = with_state(|state| state.prune_state.get().pruned_before());
+    let loc = chain::get_tx_loc(&tx_id);
+    if let Some(loc) = loc {
+        if loc.kind == TxLocKind::Included {
+            if let Some(pruned) = pruned_before {
+                if loc.block_number <= pruned {
+                    return RpcReceiptLookupView::Pruned {
+                        pruned_before_block: pruned,
+                    };
+                }
+            }
+        }
+        return RpcReceiptLookupView::NotFound;
+    }
+    if let Some(pruned) = pruned_before {
+        return RpcReceiptLookupView::PossiblyPruned {
+            pruned_before_block: pruned,
+        };
+    }
+    RpcReceiptLookupView::NotFound
+}
+
 fn mode_to_view(mode: OpsMode) -> OpsModeView {
     match mode {
         OpsMode::Normal => OpsModeView::Normal,
@@ -1654,6 +1737,8 @@ fn resolve_log_filter() -> Option<String> {
 const MAX_ENV_VAR_NAME_LEN: usize = 128;
 const LOG_FILTER_MAX_LEN: usize = 256;
 static LOG_TRUNCATED_COUNT: AtomicU64 = AtomicU64::new(0);
+static MINING_ERROR_COUNT: AtomicU64 = AtomicU64::new(0);
+static PRUNE_ERROR_COUNT: AtomicU64 = AtomicU64::new(0);
 
 fn read_env_var_guarded(name: &str, max_value_len: usize) -> Option<String> {
     if name.len() > MAX_ENV_VAR_NAME_LEN {
@@ -1893,7 +1978,10 @@ fn pruning_tick() {
         enabled
     });
     if should_run {
-        let _ = chain::prune_tick();
+        if let Err(err) = chain::prune_tick() {
+            PRUNE_ERROR_COUNT.fetch_add(1, Ordering::Relaxed);
+            error!(error = ?err, "prune_tick failed");
+        }
     }
     schedule_prune();
 }
@@ -1947,7 +2035,9 @@ fn mining_tick() {
                 let failures = bump_mining_fail_streak();
                 mining_backoff_interval_ms(base_interval_ms, failures)
             }
-            Err(_) => {
+            Err(err) => {
+                MINING_ERROR_COUNT.fetch_add(1, Ordering::Relaxed);
+                error!(error = ?err, "mining_tick produce_block failed");
                 let failures = bump_mining_fail_streak();
                 mining_backoff_interval_ms(base_interval_ms, failures)
             }
@@ -1989,13 +2079,15 @@ pub fn export_did() -> String {
 mod tests {
     use super::{
         clamp_return_data, exec_error_to_code, inspect_method_allowed, map_execute_chain_result,
-        reject_anonymous_principal, reject_write_reason, tx_id_from_bytes, ExecuteTxError,
+        prune_boundary_for_number, receipt_lookup_status, reject_anonymous_principal,
+        reject_write_reason, tx_id_from_bytes, ExecuteTxError, MINING_ERROR_COUNT,
+        PRUNE_ERROR_COUNT,
     };
     use candid::Principal;
     use evm_core::chain::{ChainError, ExecResult};
     use evm_core::revm_exec::{ExecError, OpHaltReason, OpTransactionError};
     use evm_db::chain_data::constants::MAX_RETURN_DATA;
-    use evm_db::chain_data::TxId;
+    use evm_db::chain_data::{TxId, TxLoc};
     use evm_db::meta::{set_needs_migration, set_schema_migration_state, SchemaMigrationState};
     use evm_db::stable_state::init_stable_state;
 
@@ -2130,6 +2222,71 @@ mod tests {
         set_needs_migration(true);
         let reason = reject_write_reason().expect("needs_migration should block writes");
         assert_eq!(reason, "ops.write.needs_migration");
+    }
+
+    #[test]
+    fn prune_boundary_for_number_returns_boundary_only_for_pruned_range() {
+        init_stable_state();
+        evm_db::stable_state::with_state_mut(|state| {
+            let mut prune_state = *state.prune_state.get();
+            prune_state.set_pruned_before(10);
+            state.prune_state.set(prune_state);
+        });
+        assert_eq!(prune_boundary_for_number(10), Some(10));
+        assert_eq!(prune_boundary_for_number(11), None);
+    }
+
+    #[test]
+    fn receipt_lookup_status_returns_possibly_pruned_when_loc_is_gone() {
+        init_stable_state();
+        let tx_id = TxId([0x44; 32]);
+        evm_db::stable_state::with_state_mut(|state| {
+            let mut prune_state = *state.prune_state.get();
+            prune_state.set_pruned_before(7);
+            state.prune_state.set(prune_state);
+        });
+        let out = receipt_lookup_status(tx_id);
+        match out {
+            super::RpcReceiptLookupView::PossiblyPruned {
+                pruned_before_block,
+            } => {
+                assert_eq!(pruned_before_block, 7);
+            }
+            other => panic!("unexpected status: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn receipt_lookup_status_returns_pruned_when_loc_indicates_included_before_boundary() {
+        init_stable_state();
+        let tx_id = TxId([0x55; 32]);
+        evm_db::stable_state::with_state_mut(|state| {
+            state.tx_locs.insert(tx_id, TxLoc::included(5, 0));
+            let mut prune_state = *state.prune_state.get();
+            prune_state.set_pruned_before(8);
+            state.prune_state.set(prune_state);
+        });
+        let out = receipt_lookup_status(tx_id);
+        match out {
+            super::RpcReceiptLookupView::Pruned {
+                pruned_before_block,
+            } => {
+                assert_eq!(pruned_before_block, 8);
+            }
+            other => panic!("unexpected status: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn get_ops_status_reports_error_counters() {
+        init_stable_state();
+        let before_mining = MINING_ERROR_COUNT.load(std::sync::atomic::Ordering::Relaxed);
+        let before_prune = PRUNE_ERROR_COUNT.load(std::sync::atomic::Ordering::Relaxed);
+        MINING_ERROR_COUNT.fetch_add(2, std::sync::atomic::Ordering::Relaxed);
+        PRUNE_ERROR_COUNT.fetch_add(3, std::sync::atomic::Ordering::Relaxed);
+        let view = super::get_ops_status();
+        assert!(view.mining_error_count >= before_mining.saturating_add(2));
+        assert!(view.prune_error_count >= before_prune.saturating_add(3));
     }
 
     #[cfg(feature = "dev-faucet")]

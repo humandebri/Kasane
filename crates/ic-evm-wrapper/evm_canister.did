@@ -120,6 +120,11 @@ type OpsStatusView = record {
   schema_version : nat32;
   safe_stop_latched : bool;
   config : OpsConfigView;
+  log_filter_override : opt text;
+  log_truncated_count : nat64;
+  critical_corrupt : bool;
+  mining_error_count : nat64;
+  prune_error_count : nat64;
 };
 type PendingStatusView = variant {
   Queued : record { seq : nat64 };
@@ -169,6 +174,17 @@ type QueueSnapshotView = record {
   next_cursor : opt nat64;
   items : vec QueueItemView;
 };
+type RpcBlockLookupView = variant {
+  NotFound;
+  Found : EthBlockView;
+  Pruned : record { pruned_before_block : nat64 };
+};
+type RpcReceiptLookupView = variant {
+  NotFound;
+  Found : EthReceiptView;
+  Pruned : record { pruned_before_block : nat64 };
+  PossiblyPruned : record { pruned_before_block : nat64 };
+};
 type ReceiptView = record {
   effective_gas_price : nat64;
   status : nat8;
@@ -216,8 +232,14 @@ service : (opt InitArgs) -> {
   rpc_eth_block_number : () -> (nat64) query;
   rpc_eth_chain_id : () -> (nat64) query;
   rpc_eth_get_block_by_number : (nat64, bool) -> (opt EthBlockView) query;
+  rpc_eth_get_block_by_number_with_status : (nat64, bool) -> (
+      RpcBlockLookupView
+    ) query;
   rpc_eth_get_transaction_by_hash : (blob) -> (opt EthTxView) query;
   rpc_eth_get_transaction_receipt : (blob) -> (opt EthReceiptView) query;
+  rpc_eth_get_transaction_receipt_with_status : (blob) -> (
+      RpcReceiptLookupView
+    ) query;
   rpc_eth_send_raw_transaction : (blob) -> (Result_6);
   set_auto_mine : (bool) -> (Result_7);
   set_miner_allowlist : (vec principal) -> (Result_7);

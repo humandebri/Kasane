@@ -87,6 +87,8 @@
 - [x] ハッシュ実装を `tiny-keccak` 直接呼び出しから `alloy-primitives::keccak256` へ統一
 - [x] `tx_loc` の `Storable` を bincode v2（fixed-int + big-endian）へ移行し、旧24byte形式の後方互換デコードを追加
 - [x] `debug_print` 中心のログを `tracing` イベントへ移行し、wrapper で JSON 出力サブスクライバを初期化
+- [x] `pruning_tick` / `mining_tick` の失敗をサイレントにせず、`error!` ログと失敗カウンタ（`get_ops_status`）で可視化
+- [x] prune境界の曖昧さを避けるため、既存RPC互換は維持しつつ `rpc_eth_get_*_with_status` APIを追加（receiptは `PossiblyPruned` を返す経路を追加）
 
 ## 安全強化（2026-02-05, Guard/Migration/Log）
 
