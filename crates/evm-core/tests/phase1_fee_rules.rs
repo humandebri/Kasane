@@ -44,7 +44,8 @@ fn base_fee_rekey_drops_unaffordable_tx() {
     assert_eq!(err, ChainError::NoExecutableTx);
 
     let loc = chain::get_tx_loc(&tx_id).expect("tx_loc");
-    assert_eq!(loc.kind, evm_db::chain_data::TxLocKind::Queued);
+    assert_eq!(loc.kind, evm_db::chain_data::TxLocKind::Dropped);
+    assert_eq!(loc.drop_code, evm_db::chain_data::constants::DROP_CODE_INVALID_FEE);
 }
 
 #[test]

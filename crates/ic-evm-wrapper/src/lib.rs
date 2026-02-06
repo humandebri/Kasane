@@ -20,6 +20,7 @@ use ic_cdk::api::{
     msg_caller, msg_method_name, time,
 };
 use serde::Deserialize;
+use std::cell::Cell;
 use std::io::{self, Write};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, OnceLock};
@@ -33,6 +34,12 @@ getrandom::register_custom_getrandom!(always_fail_getrandom);
 #[cfg(target_arch = "wasm32")]
 fn always_fail_getrandom(_buf: &mut [u8]) -> Result<(), getrandom::Error> {
     Err(getrandom::Error::UNSUPPORTED)
+}
+
+const MAX_MINING_BACKOFF_MS: u64 = 300_000;
+
+thread_local! {
+    static MINING_FAIL_STREAK: Cell<u32> = Cell::new(0);
 }
 
 #[derive(Clone, Debug, CandidType, Deserialize)]
@@ -1806,6 +1813,10 @@ fn schedule_cycle_observer() {
 }
 
 fn schedule_mining() {
+    schedule_mining_with_interval(None);
+}
+
+fn schedule_mining_with_interval(override_interval_ms: Option<u64>) {
     if reject_write_reason().is_some() {
         return;
     }
@@ -1818,7 +1829,7 @@ fn schedule_mining() {
             return None;
         }
         chain_state.mining_scheduled = true;
-        let interval_ms = chain_state.mining_interval_ms;
+        let interval_ms = override_interval_ms.unwrap_or(chain_state.mining_interval_ms);
         state.chain_state.set(chain_state);
         Some(interval_ms)
     });
@@ -1827,6 +1838,28 @@ fn schedule_mining() {
             mining_tick();
         });
     }
+}
+
+fn bump_mining_fail_streak() -> u32 {
+    MINING_FAIL_STREAK.with(|cell| {
+        let next = cell.get().saturating_add(1);
+        cell.set(next);
+        next
+    })
+}
+
+fn reset_mining_fail_streak() {
+    MINING_FAIL_STREAK.with(|cell| cell.set(0));
+}
+
+fn mining_backoff_interval_ms(base_interval_ms: u64, failures: u32) -> u64 {
+    if failures == 0 {
+        return base_interval_ms;
+    }
+    let shift = failures.min(16);
+    let multiplier = 1u64.saturating_shl(shift);
+    let interval = base_interval_ms.saturating_mul(multiplier);
+    interval.min(MAX_MINING_BACKOFF_MS).max(base_interval_ms)
 }
 
 fn schedule_prune() {
@@ -1895,13 +1928,31 @@ fn mining_tick() {
     });
 
     if should_produce {
-        let _ = chain::produce_block(evm_db::chain_data::MAX_TXS_PER_BLOCK);
+        let base_interval_ms =
+            evm_db::stable_state::with_state(|state| state.chain_state.get().mining_interval_ms);
+        let result = chain::produce_block(evm_db::chain_data::MAX_TXS_PER_BLOCK);
 
         evm_db::stable_state::with_state_mut(|state| {
             let mut chain_state = *state.chain_state.get();
             chain_state.is_producing = false;
             state.chain_state.set(chain_state);
         });
+        let next_interval_ms = match result {
+            Ok(_) => {
+                reset_mining_fail_streak();
+                base_interval_ms
+            }
+            Err(chain::ChainError::NoExecutableTx) | Err(chain::ChainError::QueueEmpty) => {
+                let failures = bump_mining_fail_streak();
+                mining_backoff_interval_ms(base_interval_ms, failures)
+            }
+            Err(_) => {
+                let failures = bump_mining_fail_streak();
+                mining_backoff_interval_ms(base_interval_ms, failures)
+            }
+        };
+        schedule_mining_with_interval(Some(next_interval_ms));
+        return;
     }
     schedule_mining();
 }

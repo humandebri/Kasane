@@ -19,5 +19,11 @@ pub fn mark_decode_failure(label: &'static [u8], fail_closed: bool) {
     record_corrupt(label);
     if fail_closed {
         crate::meta::set_needs_migration(true);
+        #[cfg(target_arch = "wasm32")]
+        {
+            if ic_cdk::api::in_replicated_execution() {
+                ic_cdk::trap("decode_fail_closed");
+            }
+        }
     }
 }

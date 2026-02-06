@@ -1,11 +1,13 @@
 //! どこで: Phase1テスト / 何を: produce_block の drop_code / なぜ: 失敗理由の可視化を固定するため
 
 use evm_core::chain::{self, ChainError};
-use evm_db::chain_data::constants::{DROP_CODE_DECODE, DROP_CODE_INVALID_FEE};
+use evm_db::chain_data::constants::{
+    DROP_CODE_CALLER_MISSING, DROP_CODE_DECODE, DROP_CODE_MISSING,
+};
 use evm_db::chain_data::{
     ReadyKey, SenderKey, SenderNonceKey, StoredTxBytes, TxId, TxKind, TxLoc, TxLocKind,
 };
-use evm_db::stable_state::{init_stable_state, with_state_mut};
+use evm_db::stable_state::{init_stable_state, with_state, with_state_mut};
 
 #[test]
 fn produce_block_marks_decode_drop() {
@@ -40,8 +42,14 @@ fn produce_block_marks_decode_drop() {
     assert_eq!(err, ChainError::NoExecutableTx);
 
     let loc = chain::get_tx_loc(&tx_id).expect("tx_loc");
-    assert_eq!(loc.kind, TxLocKind::Queued);
-    assert_ne!(loc.drop_code, DROP_CODE_DECODE);
+    assert_eq!(loc.kind, TxLocKind::Dropped);
+    assert_eq!(loc.drop_code, DROP_CODE_DECODE);
+
+    with_state(|state| {
+        assert!(state.tx_store.get(&tx_id).is_none());
+        assert!(state.ready_key_by_tx_id.get(&tx_id).is_none());
+        assert!(state.pending_by_sender_nonce.get(&pending_key).is_none());
+    });
 }
 
 #[test]
@@ -65,8 +73,8 @@ fn produce_block_marks_missing_envelope() {
     assert_eq!(err, ChainError::NoExecutableTx);
 
     let loc = chain::get_tx_loc(&tx_id).expect("tx_loc");
-    assert_eq!(loc.kind, TxLocKind::Queued);
-    assert_ne!(loc.drop_code, DROP_CODE_INVALID_FEE);
+    assert_eq!(loc.kind, TxLocKind::Dropped);
+    assert_eq!(loc.drop_code, DROP_CODE_MISSING);
 }
 
 #[test]
@@ -103,8 +111,8 @@ fn produce_block_marks_caller_missing() {
     assert_eq!(err, ChainError::NoExecutableTx);
 
     let loc = chain::get_tx_loc(&tx_id).expect("tx_loc");
-    assert_eq!(loc.kind, TxLocKind::Queued);
-    assert_ne!(loc.drop_code, DROP_CODE_DECODE);
+    assert_eq!(loc.kind, TxLocKind::Dropped);
+    assert_eq!(loc.drop_code, DROP_CODE_CALLER_MISSING);
 }
 
 #[test]
@@ -118,6 +126,38 @@ fn produce_block_marks_exec_drop() {
 
     let loc = chain::get_tx_loc(&tx_id).expect("tx_loc");
     assert_eq!(loc.kind, TxLocKind::Included);
+}
+
+#[test]
+fn produce_block_drop_only_purges_queue() {
+    init_stable_state();
+
+    let tx_id = TxId([0x55u8; 32]);
+    let sender = [0x66u8; 20];
+    let pending_key = SenderNonceKey::new(sender, 0);
+    with_state_mut(|state| {
+        state.tx_locs.insert(tx_id, TxLoc::queued(0));
+        state.pending_by_sender_nonce.insert(pending_key, tx_id);
+        state.pending_meta_by_tx_id.insert(tx_id, pending_key);
+        state.pending_min_nonce.insert(SenderKey::new(sender), 0);
+        let key = ReadyKey::new(1, 0, 0, tx_id.0);
+        state.ready_queue.insert(key, tx_id);
+        state.ready_key_by_tx_id.insert(tx_id, key);
+    });
+
+    let err = chain::produce_block(1).expect_err("produce_block should fail");
+    assert_eq!(err, ChainError::NoExecutableTx);
+
+    let loc = chain::get_tx_loc(&tx_id).expect("tx_loc");
+    assert_eq!(loc.kind, TxLocKind::Dropped);
+    assert_eq!(loc.drop_code, DROP_CODE_MISSING);
+
+    with_state(|state| {
+        assert!(state.tx_store.get(&tx_id).is_none());
+        assert!(state.ready_key_by_tx_id.get(&tx_id).is_none());
+        assert_eq!(state.ready_queue.len(), 0);
+        assert!(state.pending_by_sender_nonce.get(&pending_key).is_none());
+    });
 }
 
 fn build_ic_tx_bytes_with_fee(max_fee: u128, max_priority: u128) -> Vec<u8> {
