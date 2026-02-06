@@ -4,6 +4,7 @@ use crate::chain_data::codec::{encode_guarded, mark_decode_failure};
 use crate::chain_data::constants::{
     MAX_PRINCIPAL_LEN, MAX_TX_SIZE, MAX_TX_SIZE_U32, TX_ID_LEN, TX_ID_LEN_U32,
 };
+use crate::corrupt_log::record_corrupt;
 use crate::decode::hash_to_array;
 use alloy_primitives::keccak256 as alloy_keccak256;
 use ic_stable_structures::storable::Bound;
@@ -345,15 +346,28 @@ fn encode(inner: &StoredTxBytes) -> Vec<u8> {
     out.extend_from_slice(&caller);
     out.extend_from_slice(&inner.max_fee_per_gas.to_be_bytes());
     out.extend_from_slice(&inner.max_priority_fee_per_gas.to_be_bytes());
-    let canister_len = u16::try_from(inner.canister_id.len())
-        .unwrap_or_else(|_| ic_cdk::trap("tx_envelope: canister_id len overflow"));
+    let canister_len = match u16::try_from(inner.canister_id.len()) {
+        Ok(value) => value,
+        Err(_) => {
+            record_corrupt(b"tx_envelope_canister_len");
+            return Vec::new();
+        }
+    };
     out.extend_from_slice(&canister_len.to_be_bytes());
     out.extend_from_slice(&inner.canister_id);
-    let principal_len = u16::try_from(inner.caller_principal.len())
-        .unwrap_or_else(|_| ic_cdk::trap("tx_envelope: caller_principal len overflow"));
+    let principal_len = match u16::try_from(inner.caller_principal.len()) {
+        Ok(value) => value,
+        Err(_) => {
+            record_corrupt(b"tx_envelope_principal_len");
+            return Vec::new();
+        }
+    };
     out.extend_from_slice(&principal_len.to_be_bytes());
     out.extend_from_slice(&inner.caller_principal);
-    let len = len_to_u32(inner.raw.len(), "tx_envelope: len overflow");
+    let len = match len_to_u32(inner.raw.len()) {
+        Some(value) => value,
+        None => return Vec::new(),
+    };
     out.extend_from_slice(&len.to_be_bytes());
     out.extend_from_slice(&inner.raw);
     out
@@ -530,6 +544,12 @@ impl Storable for TxIndexEntry {
     };
 }
 
-fn len_to_u32(len: usize, msg: &str) -> u32 {
-    u32::try_from(len).unwrap_or_else(|_| ic_cdk::trap(msg))
+fn len_to_u32(len: usize) -> Option<u32> {
+    match u32::try_from(len) {
+        Ok(value) => Some(value),
+        Err(_) => {
+            record_corrupt(b"tx_envelope_len");
+            None
+        }
+    }
 }

@@ -1,6 +1,7 @@
 //! どこで: Phase1テスト / 何を: Tx/Block/ReceiptのStorable / なぜ: 互換性のため
 
 use evm_db::chain_data::receipt::LogEntry;
+use evm_db::chain_data::{LogConfigV1, LOG_CONFIG_FILTER_MAX};
 use evm_db::chain_data::constants::MAX_RETURN_DATA;
 use evm_db::chain_data::{
     BlockData, CallerKey, ChainStateV1, Head, OpsMetricsV1, QueueMeta, ReceiptLike, StoredTx,
@@ -115,6 +116,17 @@ fn receipt_encode_rejects_oversized_return_data() {
     };
     let bytes = receipt.to_bytes().into_owned();
     assert!(bytes.is_empty());
+}
+
+#[test]
+fn log_config_encode_clamps_oversize_without_trap() {
+    let mut config = LogConfigV1::new();
+    config.has_filter = true;
+    config.filter = "a".repeat(LOG_CONFIG_FILTER_MAX + 1);
+    let bytes = config.to_bytes().into_owned();
+    let decoded = LogConfigV1::from_bytes(bytes.into());
+    assert!(!decoded.has_filter);
+    assert_eq!(decoded.filter, "");
 }
 
 #[test]

@@ -2,6 +2,7 @@
 
 use crate::chain_data::codec::{encode_guarded, mark_decode_failure};
 use crate::chain_data::constants::TX_LOC_SIZE_U32;
+use crate::corrupt_log::record_corrupt;
 use ic_stable_structures::storable::Bound;
 use ic_stable_structures::Storable;
 use std::borrow::Cow;
@@ -58,8 +59,14 @@ impl TxLoc {
 
 impl Storable for TxLoc {
     fn to_bytes(&self) -> Cow<'_, [u8]> {
-        let encoded = wincode::config::serialize(self, tx_loc_wincode_config())
-            .unwrap_or_else(|_| ic_cdk::trap("tx_loc: encode failed"));
+        let encoded = match wincode::config::serialize(self, tx_loc_wincode_config()) {
+            Ok(value) => value,
+            Err(_) => {
+                record_corrupt(b"tx_loc_encode");
+                wincode::config::serialize(&TxLoc::queued(0), tx_loc_wincode_config())
+                    .unwrap_or_default()
+            }
+        };
         encode_guarded(b"tx_loc_encode", encoded, TX_LOC_SIZE_U32)
     }
 

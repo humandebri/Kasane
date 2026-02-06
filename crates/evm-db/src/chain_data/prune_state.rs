@@ -2,6 +2,7 @@
 
 use crate::blob_ptr::BlobPtr;
 use crate::chain_data::codec::{encode_guarded, mark_decode_failure};
+use crate::corrupt_log::record_corrupt;
 use crate::chain_data::constants::MAX_TXS_PER_BLOCK_U32;
 use ic_stable_structures::storable::Bound;
 use ic_stable_structures::Storable;
@@ -114,10 +115,16 @@ pub struct PruneJournal {
 
 impl Storable for PruneJournal {
     fn to_bytes(&self) -> Cow<'_, [u8]> {
-        let len = u32::try_from(self.ptrs.len())
-            .unwrap_or_else(|_| ic_cdk::trap("prune_journal: len overflow"));
+        let len = match u32::try_from(self.ptrs.len()) {
+            Ok(value) => value,
+            Err(_) => {
+                record_corrupt(b"prune_journal_len");
+                return encode_guarded(b"prune_journal", Vec::new(), JOURNAL_MAX_SIZE_U32);
+            }
+        };
         if len > MAX_PTRS_U32 {
-            ic_cdk::trap("prune_journal: too many ptrs");
+            record_corrupt(b"prune_journal_len");
+            return encode_guarded(b"prune_journal", Vec::new(), JOURNAL_MAX_SIZE_U32);
         }
         let mut out = Vec::with_capacity(4 + (self.ptrs.len() * 20));
         out.extend_from_slice(&len.to_be_bytes());

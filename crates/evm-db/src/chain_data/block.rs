@@ -1,6 +1,7 @@
 //! どこで: Phase1のブロックモデル / 何を: BlockDataとHead / なぜ: 決定的なブロック保存のため
 
 use crate::chain_data::codec::{encode_guarded, mark_decode_failure};
+use crate::corrupt_log::record_corrupt;
 use crate::chain_data::constants::{
     HASH_LEN, HASH_LEN_U32, MAX_BLOCK_DATA_SIZE_U32, MAX_TXS_PER_BLOCK,
 };
@@ -51,7 +52,10 @@ impl Storable for BlockData {
         out.extend_from_slice(&self.timestamp.to_be_bytes());
         out.extend_from_slice(&self.tx_list_hash);
         out.extend_from_slice(&self.state_root);
-        let len = len_to_u32(self.tx_ids.len(), "block: tx_ids overflow");
+        let len = match len_to_u32(self.tx_ids.len()) {
+            Some(value) => value,
+            None => return encode_guarded(b"block_data", Vec::new(), MAX_BLOCK_DATA_SIZE_U32),
+        };
         out.extend_from_slice(&len.to_be_bytes());
         for tx_id in self.tx_ids.iter() {
             out.extend_from_slice(&tx_id.0);
@@ -67,7 +71,10 @@ impl Storable for BlockData {
         out.extend_from_slice(&self.timestamp.to_be_bytes());
         out.extend_from_slice(&self.tx_list_hash);
         out.extend_from_slice(&self.state_root);
-        let len = len_to_u32(self.tx_ids.len(), "block: tx_ids overflow");
+        let len = match len_to_u32(self.tx_ids.len()) {
+            Some(value) => value,
+            None => return Vec::new(),
+        };
         out.extend_from_slice(&len.to_be_bytes());
         for tx_id in self.tx_ids.iter() {
             out.extend_from_slice(&tx_id.0);
@@ -229,6 +236,12 @@ impl Storable for Head {
     };
 }
 
-fn len_to_u32(len: usize, msg: &str) -> u32 {
-    u32::try_from(len).unwrap_or_else(|_| ic_cdk::trap(msg))
+fn len_to_u32(len: usize) -> Option<u32> {
+    match u32::try_from(len) {
+        Ok(value) => Some(value),
+        Err(_) => {
+            record_corrupt(b"block_len");
+            None
+        }
+    }
 }

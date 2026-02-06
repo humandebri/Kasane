@@ -134,3 +134,11 @@
 ### 段階移行のスコープ（P0/P1）
 - 設計は全域に適用
 - 実装はまず **EVM実行結果のサイズ超過** を Err 化し、`Dropped(reason)` に寄せる
+
+### drop-only 永続化の要件（P0の補強）
+- `staged_drops` は最低限 `{ tx_id, sender(Option), nonce(Option), drop_code }` を保持する  
+  - `advance_sender_after_tx` と `pending_by_sender_nonce` の掃除には **nonce が必須**
+- `apply_drops_only` は **キュー修復のみ**を行う  
+  - 対象: `tx_store / tx_locs / ready_queue / pending_* / dropped_ring / metrics`  
+  - **禁止**: `block / receipt / tx_index / trie_commit / head` の更新
+- `included_tx_ids.is_empty()` 分岐に入る前に **receipt/to_bytes/store が走っていない**ことをコード確認項目にする

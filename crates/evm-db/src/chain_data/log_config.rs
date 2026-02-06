@@ -1,6 +1,7 @@
 //! どこで: wrapperログ設定の永続層 / 何を: LOG_FILTERの安定保存 / なぜ: env未設定時にも運用上書きを可能にするため
 
 use crate::chain_data::codec::{encode_guarded, mark_decode_failure};
+use crate::corrupt_log::record_corrupt;
 use ic_stable_structures::storable::Bound;
 use ic_stable_structures::Storable;
 use std::borrow::Cow;
@@ -40,10 +41,16 @@ impl Default for LogConfigV1 {
 impl Storable for LogConfigV1 {
     fn to_bytes(&self) -> Cow<'_, [u8]> {
         let filter_bytes = self.filter.as_bytes();
-        let len = u16::try_from(filter_bytes.len())
-            .unwrap_or_else(|_| ic_cdk::trap("log_config: filter length overflow"));
+        let len = match u16::try_from(filter_bytes.len()) {
+            Ok(value) => value,
+            Err(_) => {
+                record_corrupt(b"log_config");
+                return encode_empty_config();
+            }
+        };
         if usize::from(len) > LOG_CONFIG_FILTER_MAX {
-            ic_cdk::trap("log_config: filter too long");
+            record_corrupt(b"log_config");
+            return encode_empty_config();
         }
 
         let mut out = [0u8; LOG_CONFIG_SIZE_U32 as usize];
@@ -87,4 +94,11 @@ impl Storable for LogConfigV1 {
         max_size: LOG_CONFIG_SIZE_U32,
         is_fixed_size: true,
     };
+}
+
+fn encode_empty_config() -> Cow<'static, [u8]> {
+    let mut out = [0u8; LOG_CONFIG_SIZE_U32 as usize];
+    out[0] = 0u8;
+    out[2..4].copy_from_slice(&0u16.to_be_bytes());
+    encode_guarded(b"log_config", out.to_vec(), LOG_CONFIG_SIZE_U32)
 }
