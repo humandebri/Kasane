@@ -147,7 +147,10 @@ impl Storable for PruneConfigV1 {
         out[88..96].copy_from_slice(&self.oldest_kept_block.to_be_bytes());
         out[96..104].copy_from_slice(&self.oldest_kept_timestamp.to_be_bytes());
         out[104..112].copy_from_slice(&self.last_prune_at.to_be_bytes());
-        encode_guarded(b"prune_config", out.to_vec(), PRUNE_CONFIG_SIZE_U32)
+        match encode_guarded(b"prune_config", out.to_vec(), PRUNE_CONFIG_SIZE_U32) {
+            Ok(value) => value,
+            Err(_) => Cow::Owned(vec![0u8; PRUNE_CONFIG_SIZE_U32 as usize]),
+        }
     }
 
     fn into_bytes(self) -> Vec<u8> {

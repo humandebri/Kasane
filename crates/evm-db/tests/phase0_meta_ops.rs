@@ -1,7 +1,8 @@
 //! どこで: Phase0テスト / 何を: Meta互換読込とOps storableの復元確認 / なぜ: upgrade時の退行を防ぐため
 
-use evm_db::chain_data::{OpsConfigV1, OpsMode, OpsStateV1};
-use evm_db::meta::{Meta, SchemaMigrationPhase, SchemaMigrationState};
+use evm_db::chain_data::{OpsConfigV1, OpsMode, OpsStateV1, TxLoc};
+use evm_db::meta::{needs_migration, Meta, SchemaMigrationPhase, SchemaMigrationState};
+use evm_db::stable_state::init_stable_state;
 use ic_stable_structures::Storable;
 use std::borrow::Cow;
 
@@ -26,6 +27,14 @@ fn meta_roundtrip_keeps_new_fields() {
     assert_eq!(encoded.len(), 64);
     let decoded = Meta::from_bytes(Cow::Owned(encoded));
     assert_eq!(decoded, meta);
+}
+
+#[test]
+fn fail_closed_decode_sets_needs_migration() {
+    init_stable_state();
+    assert!(!needs_migration());
+    let _ = TxLoc::from_bytes(Cow::Borrowed(&[0u8; 1]));
+    assert!(needs_migration());
 }
 
 #[test]

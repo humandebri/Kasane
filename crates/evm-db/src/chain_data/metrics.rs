@@ -204,7 +204,10 @@ impl Storable for MetricsStateV1 {
             out.extend_from_slice(&bucket.txs.to_be_bytes());
             out.extend_from_slice(&bucket.drops.to_be_bytes());
         }
-        encode_guarded(b"metrics_state", out, METRICS_STATE_SIZE)
+        match encode_guarded(b"metrics_state", out, METRICS_STATE_SIZE) {
+            Ok(value) => value,
+            Err(_) => Cow::Owned(vec![0u8; METRICS_STATE_SIZE as usize]),
+        }
     }
 
     fn into_bytes(self) -> Vec<u8> {

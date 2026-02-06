@@ -1,6 +1,7 @@
 //! どこで: Phase1のブロックモデル / 何を: BlockDataとHead / なぜ: 決定的なブロック保存のため
 
 use crate::chain_data::codec::{encode_guarded, mark_decode_failure};
+use crate::corrupt_log::record_corrupt;
 use crate::chain_data::constants::{
     HASH_LEN, HASH_LEN_U32, MAX_BLOCK_DATA_SIZE_U32, MAX_TXS_PER_BLOCK,
 };
@@ -51,12 +52,18 @@ impl Storable for BlockData {
         out.extend_from_slice(&self.timestamp.to_be_bytes());
         out.extend_from_slice(&self.tx_list_hash);
         out.extend_from_slice(&self.state_root);
-        let len = len_to_u32(self.tx_ids.len(), "block: tx_ids overflow");
+        let len = match len_to_u32(self.tx_ids.len()) {
+            Some(value) => value,
+            None => return encode_fallback_block(),
+        };
         out.extend_from_slice(&len.to_be_bytes());
         for tx_id in self.tx_ids.iter() {
             out.extend_from_slice(&tx_id.0);
         }
-        encode_guarded(b"block_data_encode", out, MAX_BLOCK_DATA_SIZE_U32)
+        match encode_guarded(b"block_data_encode", out, MAX_BLOCK_DATA_SIZE_U32) {
+            Ok(value) => value,
+            Err(_) => encode_fallback_block(),
+        }
     }
 
     fn into_bytes(self) -> Vec<u8> {
@@ -67,7 +74,10 @@ impl Storable for BlockData {
         out.extend_from_slice(&self.timestamp.to_be_bytes());
         out.extend_from_slice(&self.tx_list_hash);
         out.extend_from_slice(&self.state_root);
-        let len = len_to_u32(self.tx_ids.len(), "block: tx_ids overflow");
+        let len = match len_to_u32(self.tx_ids.len()) {
+            Some(value) => value,
+            None => return encode_fallback_block().into_owned(),
+        };
         out.extend_from_slice(&len.to_be_bytes());
         for tx_id in self.tx_ids.iter() {
             out.extend_from_slice(&tx_id.0);
@@ -189,7 +199,10 @@ impl Storable for Head {
         out[0..8].copy_from_slice(&self.number.to_be_bytes());
         out[8..8 + HASH_LEN].copy_from_slice(&self.block_hash);
         out[8 + HASH_LEN..8 + HASH_LEN + 8].copy_from_slice(&self.timestamp.to_be_bytes());
-        encode_guarded(b"head_encode", out.to_vec(), 8 + HASH_LEN_U32 + 8)
+        match encode_guarded(b"head_encode", out.to_vec(), 8 + HASH_LEN_U32 + 8) {
+            Ok(value) => value,
+            Err(_) => Cow::Owned(vec![0u8; (8 + HASH_LEN_U32 + 8) as usize]),
+        }
     }
 
     fn into_bytes(self) -> Vec<u8> {
@@ -229,6 +242,29 @@ impl Storable for Head {
     };
 }
 
-fn len_to_u32(len: usize, msg: &str) -> u32 {
-    u32::try_from(len).unwrap_or_else(|_| ic_cdk::trap(msg))
+fn len_to_u32(len: usize) -> Option<u32> {
+    match u32::try_from(len) {
+        Ok(value) => Some(value),
+        Err(_) => {
+            record_corrupt(b"block_len");
+            None
+        }
+    }
+}
+
+fn encode_fallback_block() -> Cow<'static, [u8]> {
+    let mut out = Vec::with_capacity(
+        8 + HASH_LEN + HASH_LEN + 8 + HASH_LEN + HASH_LEN + 4,
+    );
+    out.extend_from_slice(&0u64.to_be_bytes());
+    out.extend_from_slice(&[0u8; HASH_LEN]);
+    out.extend_from_slice(&[0u8; HASH_LEN]);
+    out.extend_from_slice(&0u64.to_be_bytes());
+    out.extend_from_slice(&[0u8; HASH_LEN]);
+    out.extend_from_slice(&[0u8; HASH_LEN]);
+    out.extend_from_slice(&0u32.to_be_bytes());
+    match encode_guarded(b"block_data_encode", out, MAX_BLOCK_DATA_SIZE_U32) {
+        Ok(value) => value,
+        Err(_) => Cow::Owned(vec![0u8; MAX_BLOCK_DATA_SIZE_U32 as usize]),
+    }
 }

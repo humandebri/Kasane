@@ -77,7 +77,10 @@ impl Storable for ChainStateV1 {
         out[48..56].copy_from_slice(&self.base_fee.to_be_bytes());
         out[56..64].copy_from_slice(&self.min_gas_price.to_be_bytes());
         out[64..72].copy_from_slice(&self.min_priority_fee.to_be_bytes());
-        encode_guarded(b"chain_state", out.to_vec(), CHAIN_STATE_SIZE_U32)
+        match encode_guarded(b"chain_state", out.to_vec(), CHAIN_STATE_SIZE_U32) {
+            Ok(value) => value,
+            Err(_) => Cow::Owned(vec![0u8; CHAIN_STATE_SIZE_U32 as usize]),
+        }
     }
 
     fn into_bytes(self) -> Vec<u8> {

@@ -36,7 +36,10 @@ impl Storable for OpsMetricsV1 {
         out[0] = self.schema_version;
         out[8..16].copy_from_slice(&self.exec_halt_unknown_count.to_be_bytes());
         out[16..24].copy_from_slice(&self.last_exec_halt_unknown_warn_ts.to_be_bytes());
-        encode_guarded(b"ops_metrics", out.to_vec(), OPS_METRICS_SIZE_U32)
+        match encode_guarded(b"ops_metrics", out.to_vec(), OPS_METRICS_SIZE_U32) {
+            Ok(value) => value,
+            Err(_) => Cow::Owned(vec![0u8; OPS_METRICS_SIZE_U32 as usize]),
+        }
     }
 
     fn into_bytes(self) -> Vec<u8> {

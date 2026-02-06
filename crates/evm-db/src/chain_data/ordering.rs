@@ -42,7 +42,10 @@ impl ReadyKey {
 
 impl Storable for ReadyKey {
     fn to_bytes(&self) -> Cow<'_, [u8]> {
-        encode_guarded(b"ready_key", self.0.to_vec(), READY_KEY_LEN_U32)
+        match encode_guarded(b"ready_key", self.0.to_vec(), READY_KEY_LEN_U32) {
+            Ok(value) => value,
+            Err(_) => Cow::Owned(vec![0u8; READY_KEY_LEN]),
+        }
     }
 
     fn into_bytes(self) -> Vec<u8> {
@@ -81,7 +84,10 @@ impl SenderKey {
 
 impl Storable for SenderKey {
     fn to_bytes(&self) -> Cow<'_, [u8]> {
-        encode_guarded(b"sender_key", self.0.to_vec(), SENDER_KEY_LEN_U32)
+        match encode_guarded(b"sender_key", self.0.to_vec(), SENDER_KEY_LEN_U32) {
+            Ok(value) => value,
+            Err(_) => Cow::Owned(vec![0u8; SENDER_KEY_LEN]),
+        }
     }
 
     fn into_bytes(self) -> Vec<u8> {
@@ -125,7 +131,10 @@ impl Storable for SenderNonceKey {
         let mut out = [0u8; SENDER_NONCE_KEY_LEN];
         out[0..20].copy_from_slice(&self.sender.0);
         out[20..28].copy_from_slice(&self.nonce.to_be_bytes());
-        encode_guarded(b"sender_nonce_key", out.to_vec(), SENDER_NONCE_KEY_LEN_U32)
+        match encode_guarded(b"sender_nonce_key", out.to_vec(), SENDER_NONCE_KEY_LEN_U32) {
+            Ok(value) => value,
+            Err(_) => Cow::Owned(vec![0u8; SENDER_NONCE_KEY_LEN]),
+        }
     }
 
     fn into_bytes(self) -> Vec<u8> {

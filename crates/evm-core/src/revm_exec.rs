@@ -3,7 +3,10 @@
 use crate::hash::keccak256;
 use crate::revm_db::RevmStableDb;
 use crate::tx_decode::DecodeError;
-use evm_db::chain_data::constants::{CHAIN_ID, DEFAULT_BLOCK_GAS_LIMIT};
+use evm_db::chain_data::constants::{
+    CHAIN_ID, DEFAULT_BLOCK_GAS_LIMIT, MAX_LOGS_PER_TX, MAX_LOG_DATA, MAX_LOG_TOPICS,
+    MAX_RETURN_DATA,
+};
 use evm_db::chain_data::receipt::LogEntry;
 use evm_db::chain_data::{ReceiptLike, TxId, TxIndexEntry, TxKind};
 use evm_db::stable_state::with_state_mut;
@@ -24,6 +27,7 @@ pub enum ExecError {
     EvmHalt(OpHaltReason),
     ExecutionFailed,
     InvalidGasFee,
+    ResultTooLarge,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -189,6 +193,8 @@ where
             }
         };
 
+    validate_execution_result_sizes(&output, &logs)?;
+
     let fee_breakdown = FeeBreakdown {
         l1_data_fee: 0,
         operator_fee: 0,
@@ -224,6 +230,26 @@ where
         halt_reason,
     };
     Ok((outcome, state_diff))
+}
+
+fn validate_execution_result_sizes(output: &[u8], logs: &[LogEntry]) -> Result<(), ExecError> {
+    if output.len() > MAX_RETURN_DATA {
+        return Err(ExecError::ResultTooLarge);
+    }
+    if logs.len() > MAX_LOGS_PER_TX {
+        return Err(ExecError::ResultTooLarge);
+    }
+    for log in logs.iter() {
+        let topics = log.data.topics();
+        if topics.len() > MAX_LOG_TOPICS {
+            return Err(ExecError::ResultTooLarge);
+        }
+        let data = log.data.data.as_ref();
+        if data.len() > MAX_LOG_DATA {
+            return Err(ExecError::ResultTooLarge);
+        }
+    }
+    Ok(())
 }
 
 pub(crate) fn commit_state_diff_to_db(state: StateDiff) {
@@ -324,7 +350,10 @@ fn revm_log_to_receipt_log(log: revm::primitives::Log) -> LogEntry {
 
 #[cfg(test)]
 mod tests {
-    use super::{compute_effective_gas_price, map_halt_reason, OpHaltReason};
+    use super::{
+        compute_effective_gas_price, map_halt_reason, validate_execution_result_sizes, ExecError,
+        LogEntry, OpHaltReason, MAX_RETURN_DATA,
+    };
     use revm::context_interface::result::{HaltReason, OutOfGasError};
 
     #[test]
@@ -359,5 +388,13 @@ mod tests {
             map_halt_reason(HaltReason::InvalidJump),
             OpHaltReason::InvalidJump
         );
+    }
+
+    #[test]
+    fn validate_execution_result_sizes_rejects_large_return_data() {
+        let output = vec![0u8; MAX_RETURN_DATA.saturating_add(1)];
+        let logs: Vec<LogEntry> = Vec::new();
+        let err = validate_execution_result_sizes(&output, &logs).expect_err("should fail");
+        assert_eq!(err, ExecError::ResultTooLarge);
     }
 }

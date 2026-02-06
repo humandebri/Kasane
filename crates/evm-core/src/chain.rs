@@ -13,6 +13,7 @@ use crate::tx_submit;
 use evm_db::chain_data::constants::{
     DEFAULT_BLOCK_GAS_LIMIT, DROPPED_RING_CAPACITY, DROP_CODE_CALLER_MISSING, DROP_CODE_DECODE,
     DROP_CODE_EXEC, DROP_CODE_INVALID_FEE, DROP_CODE_MISSING, DROP_CODE_REPLACED,
+    DROP_CODE_RESULT_TOO_LARGE,
     MAX_PENDING_GLOBAL, MAX_PENDING_PER_SENDER, MAX_TX_SIZE, READY_CANDIDATE_LIMIT,
 };
 use evm_db::chain_data::{
@@ -597,6 +598,7 @@ pub fn produce_block(max_txs: usize) -> Result<BlockData, ChainError> {
     let mut staged_state_diffs: Vec<StateDiff> = Vec::new();
     let mut staged_drops: Vec<QueuedDrop> = Vec::new();
     let mut staged_included: Vec<StagedIncludedTx> = Vec::new();
+    let mut staged_txs: Vec<PreparedTx> = Vec::new();
     with_state(|state| {
         tx_ids = select_ready_candidates(state, state.chain_state.get().base_fee, max_txs);
     });
@@ -693,22 +695,41 @@ pub fn produce_block(max_txs: usize) -> Result<BlockData, ChainError> {
         }));
     }
 
-    if !prepared
-        .iter()
-        .any(|item| matches!(item, PreparedItem::Tx(_)))
-    {
-        return Err(ChainError::NoExecutableTx);
-    }
-
     for item in prepared {
-        let prepared_tx = match item {
+        match item {
             PreparedItem::Drop(drop) => {
                 staged_drops.push(drop);
                 track_drop(&mut dropped_total, &mut dropped_by_code, drop.drop_code);
-                continue;
             }
-            PreparedItem::Tx(value) => value,
-        };
+            PreparedItem::Tx(value) => staged_txs.push(value),
+        }
+    }
+
+    fn apply_drops_only(
+        drops: &[QueuedDrop],
+        dropped_by_code: &[u64; evm_db::chain_data::metrics::DROP_CODE_SLOTS],
+    ) {
+        with_state_mut(|state| {
+            for drop in drops.iter() {
+                mark_dropped_and_purge_payload(state, drop.tx_id, drop.drop_code);
+                advance_sender_after_tx(state, drop.tx_id, drop.sender_override, drop.nonce_override);
+            }
+            let mut metrics = *state.metrics_state.get();
+            for (idx, count) in dropped_by_code.iter().enumerate() {
+                if *count > 0 {
+                    metrics.record_drop(idx as u16, *count);
+                }
+            }
+            state.metrics_state.set(metrics);
+        });
+    }
+
+    if staged_txs.is_empty() {
+        apply_drops_only(&staged_drops, &dropped_by_code);
+        return Err(ChainError::NoExecutableTx);
+    }
+
+    for prepared_tx in staged_txs {
         let tx_index = u32::try_from(included_tx_ids.len()).unwrap_or(u32::MAX);
         let tx_id = prepared_tx.tx_id;
         let mut exec_db = CacheDB::new(crate::revm_db::RevmStableDb);
@@ -748,6 +769,20 @@ pub fn produce_block(max_txs: usize) -> Result<BlockData, ChainError> {
                         &mut dropped_total,
                         &mut dropped_by_code,
                         DROP_CODE_INVALID_FEE,
+                    );
+                    continue;
+                }
+                if err == ExecError::ResultTooLarge {
+                    staged_drops.push(QueuedDrop {
+                        tx_id,
+                        drop_code: DROP_CODE_RESULT_TOO_LARGE,
+                        sender_override: Some(prepared_tx.sender_bytes),
+                        nonce_override: Some(prepared_tx.sender_nonce),
+                    });
+                    track_drop(
+                        &mut dropped_total,
+                        &mut dropped_by_code,
+                        DROP_CODE_RESULT_TOO_LARGE,
                     );
                     continue;
                 }
@@ -791,6 +826,7 @@ pub fn produce_block(max_txs: usize) -> Result<BlockData, ChainError> {
     }
 
     if included_tx_ids.is_empty() {
+        apply_drops_only(&staged_drops, &dropped_by_code);
         return Err(ChainError::NoExecutableTx);
     }
 

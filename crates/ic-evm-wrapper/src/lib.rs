@@ -20,6 +20,7 @@ use ic_cdk::api::{
     msg_caller, msg_method_name, time,
 };
 use serde::Deserialize;
+use std::cell::Cell;
 use std::io::{self, Write};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, OnceLock};
@@ -33,6 +34,12 @@ getrandom::register_custom_getrandom!(always_fail_getrandom);
 #[cfg(target_arch = "wasm32")]
 fn always_fail_getrandom(_buf: &mut [u8]) -> Result<(), getrandom::Error> {
     Err(getrandom::Error::UNSUPPORTED)
+}
+
+const MAX_MINING_BACKOFF_MS: u64 = 300_000;
+
+thread_local! {
+    static MINING_FAIL_STREAK: Cell<u32> = Cell::new(0);
 }
 
 #[derive(Clone, Debug, CandidType, Deserialize)]
@@ -1265,6 +1272,7 @@ fn exec_error_to_code(err: Option<&evm_core::revm_exec::ExecError>) -> &'static 
         Some(ExecError::EvmHalt(OpHaltReason::PrecompileError)) => "exec.halt.precompile_error",
         Some(ExecError::EvmHalt(OpHaltReason::Unknown)) => "exec.halt.unknown",
         Some(ExecError::InvalidGasFee) => "exec.gas_fee.invalid",
+        Some(ExecError::ResultTooLarge) => "exec.result.too_large",
         Some(ExecError::ExecutionFailed) => "exec.execution.failed",
     }
 }
@@ -1806,6 +1814,10 @@ fn schedule_cycle_observer() {
 }
 
 fn schedule_mining() {
+    schedule_mining_with_interval(None);
+}
+
+fn schedule_mining_with_interval(override_interval_ms: Option<u64>) {
     if reject_write_reason().is_some() {
         return;
     }
@@ -1818,7 +1830,7 @@ fn schedule_mining() {
             return None;
         }
         chain_state.mining_scheduled = true;
-        let interval_ms = chain_state.mining_interval_ms;
+        let interval_ms = override_interval_ms.unwrap_or(chain_state.mining_interval_ms);
         state.chain_state.set(chain_state);
         Some(interval_ms)
     });
@@ -1827,6 +1839,28 @@ fn schedule_mining() {
             mining_tick();
         });
     }
+}
+
+fn bump_mining_fail_streak() -> u32 {
+    MINING_FAIL_STREAK.with(|cell| {
+        let next = cell.get().saturating_add(1);
+        cell.set(next);
+        next
+    })
+}
+
+fn reset_mining_fail_streak() {
+    MINING_FAIL_STREAK.with(|cell| cell.set(0));
+}
+
+fn mining_backoff_interval_ms(base_interval_ms: u64, failures: u32) -> u64 {
+    if failures == 0 {
+        return base_interval_ms;
+    }
+    let shift = failures.min(16);
+    let multiplier = 1u64.checked_shl(shift).unwrap_or(u64::MAX);
+    let interval = base_interval_ms.saturating_mul(multiplier);
+    interval.min(MAX_MINING_BACKOFF_MS).max(base_interval_ms)
 }
 
 fn schedule_prune() {
@@ -1895,13 +1929,31 @@ fn mining_tick() {
     });
 
     if should_produce {
-        let _ = chain::produce_block(evm_db::chain_data::MAX_TXS_PER_BLOCK);
+        let base_interval_ms =
+            evm_db::stable_state::with_state(|state| state.chain_state.get().mining_interval_ms);
+        let result = chain::produce_block(evm_db::chain_data::MAX_TXS_PER_BLOCK);
 
         evm_db::stable_state::with_state_mut(|state| {
             let mut chain_state = *state.chain_state.get();
             chain_state.is_producing = false;
             state.chain_state.set(chain_state);
         });
+        let next_interval_ms = match result {
+            Ok(_) => {
+                reset_mining_fail_streak();
+                base_interval_ms
+            }
+            Err(chain::ChainError::NoExecutableTx) | Err(chain::ChainError::QueueEmpty) => {
+                let failures = bump_mining_fail_streak();
+                mining_backoff_interval_ms(base_interval_ms, failures)
+            }
+            Err(_) => {
+                let failures = bump_mining_fail_streak();
+                mining_backoff_interval_ms(base_interval_ms, failures)
+            }
+        };
+        schedule_mining_with_interval(Some(next_interval_ms));
+        return;
     }
     schedule_mining();
 }
@@ -1937,13 +1989,15 @@ pub fn export_did() -> String {
 mod tests {
     use super::{
         clamp_return_data, exec_error_to_code, inspect_method_allowed, map_execute_chain_result,
-        reject_anonymous_principal, tx_id_from_bytes, ExecuteTxError,
+        reject_anonymous_principal, reject_write_reason, tx_id_from_bytes, ExecuteTxError,
     };
     use candid::Principal;
     use evm_core::chain::{ChainError, ExecResult};
     use evm_core::revm_exec::{ExecError, OpHaltReason, OpTransactionError};
     use evm_db::chain_data::constants::MAX_RETURN_DATA;
     use evm_db::chain_data::TxId;
+    use evm_db::meta::{set_needs_migration, set_schema_migration_state, SchemaMigrationState};
+    use evm_db::stable_state::init_stable_state;
 
     #[test]
     fn clamp_return_data_rejects_oversize() {
@@ -1993,6 +2047,7 @@ mod tests {
             Some(ExecError::EvmHalt(OpHaltReason::PrecompileError)),
             Some(ExecError::EvmHalt(OpHaltReason::Unknown)),
             Some(ExecError::InvalidGasFee),
+            Some(ExecError::ResultTooLarge),
             Some(ExecError::ExecutionFailed),
             None,
         ];
@@ -2014,6 +2069,8 @@ mod tests {
         assert_eq!(code, "exec.halt.unknown");
         let code = exec_error_to_code(Some(&ExecError::TxError(OpTransactionError::TxBuildFailed)));
         assert_eq!(code, "exec.tx.build_failed");
+        let code = exec_error_to_code(Some(&ExecError::ResultTooLarge));
+        assert_eq!(code, "exec.result.too_large");
     }
 
     #[test]
@@ -2064,6 +2121,15 @@ mod tests {
         let principal = Principal::self_authenticating(b"wrapper-test-caller");
         let out = reject_anonymous_principal(principal);
         assert_eq!(out, None);
+    }
+
+    #[test]
+    fn reject_write_reason_stops_on_needs_migration() {
+        init_stable_state();
+        set_schema_migration_state(SchemaMigrationState::done());
+        set_needs_migration(true);
+        let reason = reject_write_reason().expect("needs_migration should block writes");
+        assert_eq!(reason, "ops.write.needs_migration");
     }
 
     #[cfg(feature = "dev-faucet")]

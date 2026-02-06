@@ -2,6 +2,7 @@
 
 use crate::chain_data::codec::{encode_guarded, mark_decode_failure};
 use crate::chain_data::constants::{CALLER_KEY_LEN, MAX_PRINCIPAL_LEN};
+use crate::corrupt_log::record_corrupt;
 use crate::decode::hash_to_array;
 use ic_stable_structures::storable::Bound;
 use ic_stable_structures::Storable;
@@ -13,10 +14,11 @@ pub struct CallerKey(pub [u8; CALLER_KEY_LEN]);
 impl CallerKey {
     pub fn from_principal_bytes(bytes: &[u8]) -> Self {
         if bytes.len() > MAX_PRINCIPAL_LEN {
-            ic_cdk::trap("caller_key: principal too long");
+            record_corrupt(b"caller_key_len");
+            return CallerKey(hash_to_array(b"caller_key", bytes));
         }
         let mut out = [0u8; CALLER_KEY_LEN];
-        let len = u8::try_from(bytes.len()).unwrap_or_else(|_| ic_cdk::trap("caller_key: len"));
+        let len = bytes.len() as u8;
         out[0] = len;
         out[1..1 + bytes.len()].copy_from_slice(bytes);
         Self(out)
@@ -25,7 +27,10 @@ impl CallerKey {
 
 impl Storable for CallerKey {
     fn to_bytes(&self) -> Cow<'_, [u8]> {
-        encode_guarded(b"caller_key", self.0.to_vec(), CALLER_KEY_LEN as u32)
+        match encode_guarded(b"caller_key", self.0.to_vec(), CALLER_KEY_LEN as u32) {
+            Ok(value) => value,
+            Err(_) => Cow::Owned(vec![0u8; CALLER_KEY_LEN]),
+        }
     }
 
     fn into_bytes(self) -> Vec<u8> {

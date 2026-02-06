@@ -49,6 +49,7 @@ pub const DROP_CODE_MISSING: u16 = 3;
 pub const DROP_CODE_CALLER_MISSING: u16 = 4;
 pub const DROP_CODE_INVALID_FEE: u16 = 5;
 pub const DROP_CODE_REPLACED: u16 = 6;
+pub const DROP_CODE_RESULT_TOO_LARGE: u16 = 7;
 pub const DROPPED_RING_CAPACITY: u64 = 1_000;
 
 // logs/receiptの上限

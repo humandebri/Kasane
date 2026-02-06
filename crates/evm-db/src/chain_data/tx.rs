@@ -4,6 +4,7 @@ use crate::chain_data::codec::{encode_guarded, mark_decode_failure};
 use crate::chain_data::constants::{
     MAX_PRINCIPAL_LEN, MAX_TX_SIZE, MAX_TX_SIZE_U32, TX_ID_LEN, TX_ID_LEN_U32,
 };
+use crate::corrupt_log::record_corrupt;
 use crate::decode::hash_to_array;
 use alloy_primitives::keccak256 as alloy_keccak256;
 use ic_stable_structures::storable::Bound;
@@ -31,7 +32,10 @@ pub struct TxId(pub [u8; TX_ID_LEN]);
 
 impl Storable for TxId {
     fn to_bytes(&self) -> Cow<'_, [u8]> {
-        encode_guarded(b"tx_id_encode", self.0.to_vec(), TX_ID_LEN_U32)
+        match encode_guarded(b"tx_id_encode", self.0.to_vec(), TX_ID_LEN_U32) {
+            Ok(value) => value,
+            Err(_) => Cow::Owned(vec![0u8; TX_ID_LEN_U32 as usize]),
+        }
     }
 
     fn into_bytes(self) -> Vec<u8> {
@@ -251,7 +255,10 @@ impl TryFrom<StoredTxBytes> for StoredTx {
 
 impl Storable for StoredTxBytes {
     fn to_bytes(&self) -> Cow<'_, [u8]> {
-        encode_guarded(b"stored_tx_encode", encode(self), STORED_TX_MAX_SIZE_U32)
+        match encode_guarded(b"stored_tx_encode", encode(self), STORED_TX_MAX_SIZE_U32) {
+            Ok(value) => value,
+            Err(_) => Cow::Owned(encode_fallback_stored_tx()),
+        }
     }
 
     fn into_bytes(self) -> Vec<u8> {
@@ -345,15 +352,82 @@ fn encode(inner: &StoredTxBytes) -> Vec<u8> {
     out.extend_from_slice(&caller);
     out.extend_from_slice(&inner.max_fee_per_gas.to_be_bytes());
     out.extend_from_slice(&inner.max_priority_fee_per_gas.to_be_bytes());
-    let canister_len = u16::try_from(inner.canister_id.len())
-        .unwrap_or_else(|_| ic_cdk::trap("tx_envelope: canister_id len overflow"));
+    let canister_len = match u16::try_from(inner.canister_id.len()) {
+        Ok(value) => value,
+        Err(_) => {
+            record_corrupt(b"tx_envelope_canister_len");
+            return encode_fallback_stored_tx();
+        }
+    };
     out.extend_from_slice(&canister_len.to_be_bytes());
     out.extend_from_slice(&inner.canister_id);
-    let principal_len = u16::try_from(inner.caller_principal.len())
-        .unwrap_or_else(|_| ic_cdk::trap("tx_envelope: caller_principal len overflow"));
+    let principal_len = match u16::try_from(inner.caller_principal.len()) {
+        Ok(value) => value,
+        Err(_) => {
+            record_corrupt(b"tx_envelope_principal_len");
+            return encode_fallback_stored_tx();
+        }
+    };
     out.extend_from_slice(&principal_len.to_be_bytes());
     out.extend_from_slice(&inner.caller_principal);
-    let len = len_to_u32(inner.raw.len(), "tx_envelope: len overflow");
+    let len = match len_to_u32(inner.raw.len()) {
+        Some(value) => value,
+        None => {
+            return encode_fallback_stored_tx();
+        }
+    };
+    out.extend_from_slice(&len.to_be_bytes());
+    out.extend_from_slice(&inner.raw);
+    out
+}
+
+fn encode_fallback_stored_tx() -> Vec<u8> {
+    let invalid = invalid_stored_tx(0, &[]);
+    let encoded = encode_minimal_stored_tx(&invalid);
+    match encode_guarded(b"stored_tx_encode", encoded, STORED_TX_MAX_SIZE_U32) {
+        Ok(value) => value.into_owned(),
+        // Fallback is intentionally invalid; empty bytes are forbidden.
+        Err(_) => vec![STORED_TX_VERSION],
+    }
+}
+
+fn encode_minimal_stored_tx(inner: &StoredTxBytes) -> Vec<u8> {
+    let mut out = Vec::with_capacity(
+        1 + 1
+            + TX_ID_LEN
+            + 1
+            + 20
+            + 16
+            + 16
+            + 2
+            + inner.canister_id.len()
+            + 2
+            + inner.caller_principal.len()
+            + 4
+            + inner.raw.len(),
+    );
+    out.push(inner.version);
+    out.push(inner.kind.to_u8());
+    out.extend_from_slice(&inner.tx_id.0);
+    let mut flags = 0u8;
+    if inner.caller_evm.is_some() {
+        flags |= 1 << 0;
+    }
+    if inner.is_dynamic_fee {
+        flags |= 1 << 1;
+    }
+    out.push(flags);
+    let caller = inner.caller_evm.unwrap_or([0u8; 20]);
+    out.extend_from_slice(&caller);
+    out.extend_from_slice(&inner.max_fee_per_gas.to_be_bytes());
+    out.extend_from_slice(&inner.max_priority_fee_per_gas.to_be_bytes());
+    let canister_len = inner.canister_id.len() as u16;
+    out.extend_from_slice(&canister_len.to_be_bytes());
+    out.extend_from_slice(&inner.canister_id);
+    let principal_len = inner.caller_principal.len() as u16;
+    out.extend_from_slice(&principal_len.to_be_bytes());
+    out.extend_from_slice(&inner.caller_principal);
+    let len = inner.raw.len() as u32;
     out.extend_from_slice(&len.to_be_bytes());
     out.extend_from_slice(&inner.raw);
     out
@@ -495,7 +569,10 @@ impl Storable for TxIndexEntry {
         let mut out = [0u8; 12];
         out[0..8].copy_from_slice(&self.block_number.to_be_bytes());
         out[8..12].copy_from_slice(&self.tx_index.to_be_bytes());
-        encode_guarded(b"tx_index_encode", out.to_vec(), 12)
+        match encode_guarded(b"tx_index_encode", out.to_vec(), 12) {
+            Ok(value) => value,
+            Err(_) => Cow::Owned(vec![0u8; 12]),
+        }
     }
 
     fn into_bytes(self) -> Vec<u8> {
@@ -530,6 +607,12 @@ impl Storable for TxIndexEntry {
     };
 }
 
-fn len_to_u32(len: usize, msg: &str) -> u32 {
-    u32::try_from(len).unwrap_or_else(|_| ic_cdk::trap(msg))
+fn len_to_u32(len: usize) -> Option<u32> {
+    match u32::try_from(len) {
+        Ok(value) => Some(value),
+        Err(_) => {
+            record_corrupt(b"tx_envelope_len");
+            None
+        }
+    }
 }
