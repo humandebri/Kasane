@@ -4,46 +4,52 @@ use crate::corrupt_log::record_corrupt;
 use ic_stable_structures::storable::Bound;
 use ic_stable_structures::Storable;
 use std::borrow::Cow;
-use zerocopy::byteorder::big_endian::{U32, U64};
-use zerocopy::{FromBytes, Immutable, IntoBytes, KnownLayout, Unaligned};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct BlobPtr {
-    pub offset: u64,
-    pub len: u32,
-    pub class: u32,
-    pub gen: u32,
-}
+pub struct BlobPtr([u8; 20]);
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, FromBytes, IntoBytes, KnownLayout, Immutable, Unaligned)]
-#[repr(C)]
-struct BlobPtrWire {
-    offset: U64,
-    len: U32,
-    class: U32,
-    gen: U32,
-}
+impl BlobPtr {
+    pub fn new(offset: u64, len: u32, class: u32, gen: u32) -> Self {
+        let mut out = [0u8; 20];
+        out[0..8].copy_from_slice(&offset.to_be_bytes());
+        out[8..12].copy_from_slice(&len.to_be_bytes());
+        out[12..16].copy_from_slice(&class.to_be_bytes());
+        out[16..20].copy_from_slice(&gen.to_be_bytes());
+        Self(out)
+    }
 
-impl BlobPtrWire {
-    fn new(ptr: &BlobPtr) -> Self {
-        Self {
-            offset: U64::new(ptr.offset),
-            len: U32::new(ptr.len),
-            class: U32::new(ptr.class),
-            gen: U32::new(ptr.gen),
-        }
+    pub fn offset(&self) -> u64 {
+        let mut buf = [0u8; 8];
+        buf.copy_from_slice(&self.0[0..8]);
+        u64::from_be_bytes(buf)
+    }
+
+    pub fn len(&self) -> u32 {
+        let mut buf = [0u8; 4];
+        buf.copy_from_slice(&self.0[8..12]);
+        u32::from_be_bytes(buf)
+    }
+
+    pub fn class(&self) -> u32 {
+        let mut buf = [0u8; 4];
+        buf.copy_from_slice(&self.0[12..16]);
+        u32::from_be_bytes(buf)
+    }
+
+    pub fn gen(&self) -> u32 {
+        let mut buf = [0u8; 4];
+        buf.copy_from_slice(&self.0[16..20]);
+        u32::from_be_bytes(buf)
     }
 }
 
 impl Storable for BlobPtr {
     fn to_bytes(&self) -> Cow<'_, [u8]> {
-        let wire = BlobPtrWire::new(self);
-        Cow::Owned(wire.as_bytes().to_vec())
+        Cow::Borrowed(&self.0)
     }
 
     fn into_bytes(self) -> Vec<u8> {
-        let wire = BlobPtrWire::new(&self);
-        wire.as_bytes().to_vec()
+        self.0.to_vec()
     }
 
     fn from_bytes(bytes: Cow<'_, [u8]>) -> Self {
@@ -51,30 +57,12 @@ impl Storable for BlobPtr {
         if data.len() != 20 {
             record_corrupt(b"blob_ptr");
             return Self {
-                offset: 0,
-                len: 0,
-                class: 0,
-                gen: 0,
+                0: [0u8; 20],
             };
         }
-        let wire = match BlobPtrWire::read_from_bytes(data) {
-            Ok(value) => value,
-            Err(_) => {
-                record_corrupt(b"blob_ptr");
-                return Self {
-                    offset: 0,
-                    len: 0,
-                    class: 0,
-                    gen: 0,
-                };
-            }
-        };
-        Self {
-            offset: wire.offset.get(),
-            len: wire.len.get(),
-            class: wire.class.get(),
-            gen: wire.gen.get(),
-        }
+        let mut out = [0u8; 20];
+        out.copy_from_slice(data);
+        Self(out)
     }
 
     const BOUND: Bound = Bound::Bounded {

@@ -189,12 +189,7 @@ fn prune_journal_overflow_returns_fallback_bytes() {
     let max_ptrs = 1u32.saturating_add(2u32.saturating_mul(MAX_TXS_PER_BLOCK_U32));
     let mut ptrs = Vec::with_capacity((max_ptrs + 1) as usize);
     for _ in 0..(max_ptrs + 1) {
-        ptrs.push(BlobPtr {
-            offset: 0,
-            len: 0,
-            class: 0,
-            gen: 0,
-        });
+        ptrs.push(BlobPtr::new(0, 0, 0, 0));
     }
     let journal = PruneJournal { ptrs };
     let bytes = journal.to_bytes().into_owned();

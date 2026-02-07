@@ -1,8 +1,9 @@
 //! どこで: evm-db のユニットテスト / 何を: BlobStoreの往復と再利用 / なぜ: Step0の保存基盤を固定するため
 
-use evm_db::blob_store::BlobStore;
+use evm_db::blob_store::{AllocKey, BlobStore};
 use ic_stable_structures::memory_manager::{MemoryId, MemoryManager, VirtualMemory};
-use ic_stable_structures::{DefaultMemoryImpl, StableBTreeMap, StableCell};
+use ic_stable_structures::{DefaultMemoryImpl, StableBTreeMap, StableCell, Storable};
+use std::borrow::Cow;
 
 type VMem = VirtualMemory<DefaultMemoryImpl>;
 
@@ -35,8 +36,8 @@ fn blob_store_reuse_increments_generation() {
         .expect("quarantine should succeed");
     store.mark_free(&ptr).expect("free should succeed");
     let ptr2 = store.store_bytes(&data).expect("store should succeed");
-    assert_eq!(ptr.offset, ptr2.offset);
-    assert!(ptr2.gen > ptr.gen);
+    assert_eq!(ptr.offset(), ptr2.offset());
+    assert!(ptr2.gen() > ptr.gen());
 }
 
 #[test]
@@ -48,5 +49,13 @@ fn quarantine_is_not_reused() {
         .mark_quarantine(&ptr)
         .expect("quarantine should succeed");
     let ptr2 = store.store_bytes(&data).expect("store should succeed");
-    assert_ne!(ptr.offset, ptr2.offset);
+    assert_ne!(ptr.offset(), ptr2.offset());
+}
+
+#[test]
+fn blob_ptr_and_allockey_to_bytes_are_borrowed() {
+    let ptr = evm_db::blob_ptr::BlobPtr::new(1, 2, 3, 4);
+    let key = AllocKey::new(7, 9);
+    assert!(matches!(ptr.to_bytes(), Cow::Borrowed(_)));
+    assert!(matches!(key.to_bytes(), Cow::Borrowed(_)));
 }

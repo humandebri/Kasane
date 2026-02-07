@@ -37,24 +37,36 @@ impl BlobState {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd)]
-pub struct AllocKey {
-    pub class: u32,
-    pub offset: u64,
+pub struct AllocKey([u8; 12]);
+
+impl AllocKey {
+    pub fn new(class: u32, offset: u64) -> Self {
+        let mut out = [0u8; 12];
+        out[0..4].copy_from_slice(&class.to_be_bytes());
+        out[4..12].copy_from_slice(&offset.to_be_bytes());
+        Self(out)
+    }
+
+    pub fn class(&self) -> u32 {
+        let mut buf = [0u8; 4];
+        buf.copy_from_slice(&self.0[0..4]);
+        u32::from_be_bytes(buf)
+    }
+
+    pub fn offset(&self) -> u64 {
+        let mut buf = [0u8; 8];
+        buf.copy_from_slice(&self.0[4..12]);
+        u64::from_be_bytes(buf)
+    }
 }
 
 impl Storable for AllocKey {
     fn to_bytes(&self) -> Cow<'_, [u8]> {
-        let mut out = [0u8; 12];
-        out[0..4].copy_from_slice(&self.class.to_be_bytes());
-        out[4..12].copy_from_slice(&self.offset.to_be_bytes());
-        Cow::Owned(out.to_vec())
+        Cow::Borrowed(&self.0)
     }
 
     fn into_bytes(self) -> Vec<u8> {
-        let mut out = [0u8; 12];
-        out[0..4].copy_from_slice(&self.class.to_be_bytes());
-        out[4..12].copy_from_slice(&self.offset.to_be_bytes());
-        out.to_vec()
+        self.0.to_vec()
     }
 
     fn from_bytes(bytes: Cow<'_, [u8]>) -> Self {
@@ -62,18 +74,12 @@ impl Storable for AllocKey {
         if data.len() != 12 {
             record_corrupt(b"alloc_key");
             return Self {
-                class: 0,
-                offset: 0,
+                0: [0u8; 12],
             };
         }
-        let mut class = [0u8; 4];
-        class.copy_from_slice(&data[0..4]);
-        let mut offset = [0u8; 8];
-        offset.copy_from_slice(&data[4..12]);
-        Self {
-            class: u32::from_be_bytes(class),
-            offset: u64::from_be_bytes(offset),
-        }
+        let mut out = [0u8; 12];
+        out.copy_from_slice(data);
+        Self(out)
     }
 
     const BOUND: Bound = Bound::Bounded {
@@ -173,10 +179,7 @@ impl BlobStore {
         let len_u32 = u32::try_from(len).map_err(|_| BlobError::LengthTooLarge)?;
         let offset = match self.pop_free(class) {
             Some(value) => {
-                let key = AllocKey {
-                    class,
-                    offset: value,
-                };
+                let key = AllocKey::new(class, value);
                 let mut entry = self
                     .alloc_table
                     .get(&key)
@@ -195,10 +198,7 @@ impl BlobStore {
                 let end = current.checked_add(class_u64).ok_or(BlobError::Overflow)?;
                 self.ensure_capacity(end)?;
                 self.arena_end.set(end);
-                let key = AllocKey {
-                    class,
-                    offset: current,
-                };
+                let key = AllocKey::new(class, current);
                 let entry = AllocEntry {
                     gen: 1,
                     state: BlobState::Used,
@@ -207,12 +207,12 @@ impl BlobStore {
                 current
             }
         };
-        Ok(BlobPtr {
+        Ok(BlobPtr::new(
             offset,
-            len: len_u32,
+            len_u32,
             class,
-            gen: self.current_gen(class, offset)?,
-        })
+            self.current_gen(class, offset)?,
+        ))
     }
 
     pub fn store_bytes(&mut self, data: &[u8]) -> Result<BlobPtr, BlobError> {
@@ -224,60 +224,52 @@ impl BlobStore {
     pub fn read(&self, ptr: &BlobPtr) -> Result<Vec<u8>, BlobError> {
         let entry = self
             .alloc_table
-            .get(&AllocKey {
-                class: ptr.class,
-                offset: ptr.offset,
-            })
+            .get(&AllocKey::new(ptr.class(), ptr.offset()))
             .ok_or(BlobError::MissingAllocEntry)?;
-        if entry.gen != ptr.gen {
+        if entry.gen != ptr.gen() {
             return Err(BlobError::InvalidPointer);
         }
         if entry.state == BlobState::Free {
             return Err(BlobError::InvalidState);
         }
-        let len_u64 = u64::from(ptr.len);
-        let end = ptr.offset.checked_add(len_u64).ok_or(BlobError::Overflow)?;
+        let len_u64 = u64::from(ptr.len());
+        let end = ptr.offset().checked_add(len_u64).ok_or(BlobError::Overflow)?;
         if end > *self.arena_end.get() {
             return Err(BlobError::InvalidPointer);
         }
-        let mut out = vec![0u8; usize::try_from(ptr.len).map_err(|_| BlobError::LengthTooLarge)?];
-        self.arena.read(ptr.offset, &mut out);
+        let mut out =
+            vec![0u8; usize::try_from(ptr.len()).map_err(|_| BlobError::LengthTooLarge)?];
+        self.arena.read(ptr.offset(), &mut out);
         Ok(out)
     }
 
     pub fn write(&mut self, ptr: &BlobPtr, data: &[u8]) -> Result<(), BlobError> {
-        if data.len() != usize::try_from(ptr.len).map_err(|_| BlobError::LengthTooLarge)? {
+        if data.len() != usize::try_from(ptr.len()).map_err(|_| BlobError::LengthTooLarge)? {
             return Err(BlobError::LengthMismatch);
         }
         let entry = self
             .alloc_table
-            .get(&AllocKey {
-                class: ptr.class,
-                offset: ptr.offset,
-            })
+            .get(&AllocKey::new(ptr.class(), ptr.offset()))
             .ok_or(BlobError::MissingAllocEntry)?;
-        if entry.gen != ptr.gen || entry.state != BlobState::Used {
+        if entry.gen != ptr.gen() || entry.state != BlobState::Used {
             return Err(BlobError::InvalidState);
         }
         let end = ptr
-            .offset
-            .checked_add(u64::from(ptr.class))
+            .offset()
+            .checked_add(u64::from(ptr.class()))
             .ok_or(BlobError::Overflow)?;
         self.ensure_capacity(end)?;
-        self.arena.write(ptr.offset, data);
+        self.arena.write(ptr.offset(), data);
         Ok(())
     }
 
     pub fn mark_quarantine(&mut self, ptr: &BlobPtr) -> Result<(), BlobError> {
-        let key = AllocKey {
-            class: ptr.class,
-            offset: ptr.offset,
-        };
+        let key = AllocKey::new(ptr.class(), ptr.offset());
         let mut entry = self
             .alloc_table
             .get(&key)
             .ok_or(BlobError::MissingAllocEntry)?;
-        if entry.gen != ptr.gen {
+        if entry.gen != ptr.gen() {
             return Err(BlobError::InvalidPointer);
         }
         if entry.state == BlobState::Quarantine {
@@ -292,15 +284,12 @@ impl BlobStore {
     }
 
     pub fn mark_free(&mut self, ptr: &BlobPtr) -> Result<(), BlobError> {
-        let key = AllocKey {
-            class: ptr.class,
-            offset: ptr.offset,
-        };
+        let key = AllocKey::new(ptr.class(), ptr.offset());
         let mut entry = self
             .alloc_table
             .get(&key)
             .ok_or(BlobError::MissingAllocEntry)?;
-        if entry.gen != ptr.gen {
+        if entry.gen != ptr.gen() {
             return Err(BlobError::InvalidPointer);
         }
         if entry.state == BlobState::Free {
@@ -319,22 +308,19 @@ impl BlobStore {
     }
 
     fn pop_free(&mut self, class: u32) -> Option<u64> {
-        let start = AllocKey { class, offset: 0 };
-        let end = AllocKey {
-            class,
-            offset: u64::MAX,
-        };
+        let start = AllocKey::new(class, 0);
+        let end = AllocKey::new(class, u64::MAX);
         let mut iter = self.free_list_by_class.range(start..=end);
         let entry = iter.next()?;
         let key = entry.key().clone();
         self.free_list_by_class.remove(&key);
-        Some(key.offset)
+        Some(key.offset())
     }
 
     fn current_gen(&self, class: u32, offset: u64) -> Result<u32, BlobError> {
         let entry = self
             .alloc_table
-            .get(&AllocKey { class, offset })
+            .get(&AllocKey::new(class, offset))
             .ok_or(BlobError::MissingAllocEntry)?;
         Ok(entry.gen)
     }

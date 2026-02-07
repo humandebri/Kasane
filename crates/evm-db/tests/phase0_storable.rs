@@ -3,6 +3,7 @@
 use evm_db::types::keys::{make_account_key, make_code_key, make_storage_key};
 use evm_db::types::values::{AccountVal, CodeVal, U256Val};
 use ic_stable_structures::Storable;
+use std::borrow::Cow;
 use std::panic::catch_unwind;
 
 #[test]
@@ -66,4 +67,22 @@ fn storable_rejects_wrong_length() {
     assert!(result.is_ok());
     let value = result.expect("no panic");
     assert_eq!(value, AccountVal([0u8; 72]));
+}
+
+#[test]
+fn fixed_array_to_bytes_is_borrowed() {
+    let addr = [0x11u8; 20];
+    let slot = [0x22u8; 32];
+    let code_hash = [0x33u8; 32];
+    let account_key = make_account_key(addr);
+    let storage_key = make_storage_key(addr, slot);
+    let code_key = make_code_key(code_hash);
+    let account_val = AccountVal([0x44u8; 72]);
+    let u256_val = U256Val([0x55u8; 32]);
+
+    assert!(matches!(account_key.to_bytes(), Cow::Borrowed(_)));
+    assert!(matches!(storage_key.to_bytes(), Cow::Borrowed(_)));
+    assert!(matches!(code_key.to_bytes(), Cow::Borrowed(_)));
+    assert!(matches!(account_val.to_bytes(), Cow::Borrowed(_)));
+    assert!(matches!(u256_val.to_bytes(), Cow::Borrowed(_)));
 }

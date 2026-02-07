@@ -1040,7 +1040,7 @@ fn store_block(state: &mut StableState, block: &BlockData) -> evm_db::blob_ptr::
         .blob_store
         .store_bytes(&bytes)
         .unwrap_or_else(|_| panic!("blob_store: store_block failed"));
-    increment_estimated_kept_bytes(state, ptr.class);
+    increment_estimated_kept_bytes(state, ptr.class());
     let mut config = *state.prune_config.get();
     if config.oldest_block().is_none() {
         config.set_oldest(block.number, block.timestamp);
@@ -1055,7 +1055,7 @@ fn store_receipt(state: &mut StableState, receipt: &ReceiptLike) -> evm_db::blob
         .blob_store
         .store_bytes(&bytes)
         .unwrap_or_else(|_| panic!("blob_store: store_receipt failed"));
-    increment_estimated_kept_bytes(state, ptr.class);
+    increment_estimated_kept_bytes(state, ptr.class());
     ptr
 }
 
@@ -1065,7 +1065,7 @@ fn store_tx_index_entry(state: &mut StableState, entry: TxIndexEntry) -> evm_db:
         .blob_store
         .store_bytes(&bytes)
         .unwrap_or_else(|_| panic!("blob_store: store_tx_index failed"));
-    increment_estimated_kept_bytes(state, ptr.class);
+    increment_estimated_kept_bytes(state, ptr.class());
     ptr
 }
 
@@ -1308,7 +1308,7 @@ pub fn prune_blocks(retain: u64, max_ops: u32) -> Result<PruneResult, ChainError
                     .blob_store
                     .mark_free(&ptr)
                     .map_err(|_| ChainError::ExecFailed(None))?;
-                decrement_estimated_kept_bytes(state, ptr.class);
+                decrement_estimated_kept_bytes(state, ptr.class());
             }
             state.prune_journal.remove(&next.saturating_sub(1));
             prune_state.clear_journal();
@@ -1358,7 +1358,7 @@ fn recover_prune_journal(state: &mut evm_db::stable_state::StableState) -> Resul
                 .blob_store
                 .mark_free(ptr)
                 .map_err(|_| ChainError::ExecFailed(None))?;
-            decrement_estimated_kept_bytes(state, ptr.class);
+            decrement_estimated_kept_bytes(state, ptr.class());
         }
         state.prune_journal.remove(&journal_block);
     }
