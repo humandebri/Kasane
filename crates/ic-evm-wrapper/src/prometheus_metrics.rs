@@ -141,7 +141,10 @@ pub fn encode_prometheus(now_nanos: u64, snapshot: &PrometheusSnapshot) -> Resul
         .map_err(map_io)?;
 
     let mut drop_builder = encoder
-        .counter_vec("ic_evm_drop_count_total", "Dropped transaction counts by drop code.")
+        .counter_vec(
+            "ic_evm_drop_count_total",
+            "Dropped transaction counts by drop code.",
+        )
         .map_err(map_io)?;
     for sample in snapshot.drop_counts.iter() {
         let code_text = sample.code.to_string();
@@ -165,7 +168,11 @@ fn to_f64_u64(value: u64) -> f64 {
 }
 
 fn bool_to_gauge(value: bool) -> f64 {
-    if value { 1.0 } else { 0.0 }
+    if value {
+        1.0
+    } else {
+        0.0
+    }
 }
 
 fn map_io(err: std::io::Error) -> String {
