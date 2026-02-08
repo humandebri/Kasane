@@ -120,6 +120,8 @@ pub struct OpsStatusView {
     pub decode_failure_count: u64,
     pub decode_failure_last_ts: u64,
     pub decode_failure_last_label: Option<String>,
+    pub block_gas_limit: u64,
+    pub instruction_soft_limit: u64,
 }
 
 #[derive(Clone, Debug, CandidType, Deserialize)]
@@ -212,6 +214,8 @@ pub struct HealthView {
     pub auto_mine_enabled: bool,
     pub is_producing: bool,
     pub mining_scheduled: bool,
+    pub block_gas_limit: u64,
+    pub instruction_soft_limit: u64,
 }
 
 #[derive(Clone, Debug, CandidType, Deserialize)]
@@ -499,7 +503,7 @@ struct InspectMethodPolicy {
     payload_limit: usize,
 }
 
-const INSPECT_METHOD_POLICIES: [InspectMethodPolicy; 12] = [
+const INSPECT_METHOD_POLICIES: [InspectMethodPolicy; 14] = [
     InspectMethodPolicy {
         method: "submit_eth_tx",
         payload_limit: INSPECT_TX_PAYLOAD_LIMIT,
@@ -518,6 +522,14 @@ const INSPECT_METHOD_POLICIES: [InspectMethodPolicy; 12] = [
     },
     InspectMethodPolicy {
         method: "set_mining_interval_ms",
+        payload_limit: INSPECT_MANAGE_PAYLOAD_LIMIT,
+    },
+    InspectMethodPolicy {
+        method: "set_block_gas_limit",
+        payload_limit: INSPECT_MANAGE_PAYLOAD_LIMIT,
+    },
+    InspectMethodPolicy {
+        method: "set_instruction_soft_limit",
         payload_limit: INSPECT_MANAGE_PAYLOAD_LIMIT,
     },
     InspectMethodPolicy {
@@ -1053,6 +1065,8 @@ fn get_ops_status() -> OpsStatusView {
             decode_failure_count: evm_db::corrupt_log::read_corrupt_count(),
             decode_failure_last_ts: evm_db::corrupt_log::read_last_corrupt_ts(),
             decode_failure_last_label,
+            block_gas_limit: state.chain_state.get().block_gas_limit,
+            instruction_soft_limit: state.chain_state.get().instruction_soft_limit,
         }
     })
 }
@@ -1145,6 +1159,8 @@ fn health() -> HealthView {
             auto_mine_enabled: chain_state.auto_mine_enabled,
             is_producing: chain_state.is_producing,
             mining_scheduled: chain_state.mining_scheduled,
+            block_gas_limit: chain_state.block_gas_limit,
+            instruction_soft_limit: chain_state.instruction_soft_limit,
         }
     })
 }
@@ -1260,6 +1276,37 @@ fn set_mining_interval_ms(interval_ms: u64) -> Result<(), String> {
         state.chain_state.set(chain_state);
     });
     schedule_mining();
+    Ok(())
+}
+
+#[ic_cdk::update]
+fn set_block_gas_limit(limit: u64) -> Result<(), String> {
+    if let Some(reason) = reject_anonymous_update() {
+        return Err(reason);
+    }
+    require_manage_write()?;
+    if limit == 0 {
+        return Err("input.block_gas_limit.non_positive".to_string());
+    }
+    evm_db::stable_state::with_state_mut(|state| {
+        let mut chain_state = *state.chain_state.get();
+        chain_state.block_gas_limit = limit;
+        state.chain_state.set(chain_state);
+    });
+    Ok(())
+}
+
+#[ic_cdk::update]
+fn set_instruction_soft_limit(limit: u64) -> Result<(), String> {
+    if let Some(reason) = reject_anonymous_update() {
+        return Err(reason);
+    }
+    require_manage_write()?;
+    evm_db::stable_state::with_state_mut(|state| {
+        let mut chain_state = *state.chain_state.get();
+        chain_state.instruction_soft_limit = limit;
+        state.chain_state.set(chain_state);
+    });
     Ok(())
 }
 
@@ -1739,7 +1786,8 @@ fn schema_migration_tick(max_steps: u32) -> bool {
                         let ready_seq_len = s.ready_by_seq.len();
                         let mut principal_total = 0u64;
                         for entry in s.principal_pending_count.iter() {
-                            principal_total = principal_total.saturating_add(u64::from(entry.value()));
+                            principal_total =
+                                principal_total.saturating_add(u64::from(entry.value()));
                         }
                         pending_len == fee_idx_len
                             && ready_len == ready_seq_len
@@ -1830,7 +1878,7 @@ fn reject_anonymous_principal(caller: Principal) -> Option<String> {
 fn init_tracing() {
     static LOG_INIT: OnceLock<()> = OnceLock::new();
     let _ = LOG_INIT.get_or_init(|| {
-        let env_filter = EnvFilter::new(resolve_log_filter().unwrap_or_else(|| "info".to_string()));
+        let env_filter = EnvFilter::new(resolve_log_filter().unwrap_or_else(|| "warn".to_string()));
         let _ = tracing_subscriber::fmt()
             .json()
             .with_target(true)
@@ -1929,7 +1977,7 @@ fn emit_complete_lines(buffer: &mut String) {
     let guard = REENTRANT_GUARD.get_or_init(|| Mutex::new(())).lock();
     if guard.is_err() {
         if !buffer.is_empty() {
-            ic_cdk::api::debug_print("{\"target\":\"tracing\",\"fallback\":true}".to_string());
+            emit_debug_print("{\"target\":\"tracing\",\"fallback\":true}".to_string());
         }
         return;
     }
@@ -1942,10 +1990,18 @@ fn emit_complete_lines(buffer: &mut String) {
     }
 }
 
+#[cfg(feature = "ic-debug-print")]
+fn emit_debug_print(line: String) {
+    ic_cdk::api::debug_print(line);
+}
+
+#[cfg(not(feature = "ic-debug-print"))]
+fn emit_debug_print(_line: String) {}
+
 fn emit_bounded_log_line(line: &str) {
     const MAX_LOG_LINE_BYTES: usize = 16 * 1024;
     if line.len() <= MAX_LOG_LINE_BYTES {
-        ic_cdk::api::debug_print(line.to_string());
+        emit_debug_print(line.to_string());
         return;
     }
     let mut prefix = String::new();
@@ -1962,7 +2018,7 @@ fn emit_bounded_log_line(line: &str) {
         .replace('\n', "\\n")
         .replace('\r', "\\r");
     let truncated_count = LOG_TRUNCATED_COUNT.fetch_add(1, Ordering::Relaxed) + 1;
-    ic_cdk::api::debug_print(format!(
+    emit_debug_print(format!(
         "{{\"truncated\":true,\"truncated_count\":{},\"max_bytes\":{MAX_LOG_LINE_BYTES},\"original_bytes\":{},\"prefix\":\"{}\"}}",
         truncated_count,
         line.len(),
@@ -2029,6 +2085,7 @@ fn schedule_mining_with_interval(override_interval_ms: Option<u64>) {
     if reject_write_reason().is_some() {
         return;
     }
+    // RefCell再入防止: with_state_mut内は状態更新のみ。タイマー副作用は借用解放後に実行する。
     let interval_ms = evm_db::stable_state::with_state_mut(|state| {
         let mut chain_state = *state.chain_state.get();
         if !chain_state.auto_mine_enabled {
@@ -2072,6 +2129,7 @@ fn mining_backoff_interval_ms(base_interval_ms: u64, failures: u32) -> u64 {
 }
 
 fn schedule_prune() {
+    // RefCell再入防止: with_state_mut内はフラグ更新のみ。タイマー副作用は外で実行する。
     let interval_ms = evm_db::stable_state::with_state_mut(|state| {
         let mut config = *state.prune_config.get();
         if !config.pruning_enabled {
@@ -2203,10 +2261,9 @@ mod tests {
     use super::{
         chain_submit_error_to_code, clamp_return_data, exec_error_to_code,
         inspect_payload_limit_for_method, inspect_policy_for_method, map_execute_chain_result,
-        map_submit_chain_error, migration_pending, INSPECT_METHOD_POLICIES,
-        prune_boundary_for_number, receipt_lookup_status, reject_anonymous_principal,
-        reject_write_reason, tx_id_from_bytes, ExecuteTxError, MINING_ERROR_COUNT,
-        PRUNE_ERROR_COUNT,
+        map_submit_chain_error, migration_pending, prune_boundary_for_number,
+        receipt_lookup_status, reject_anonymous_principal, reject_write_reason, tx_id_from_bytes,
+        ExecuteTxError, INSPECT_METHOD_POLICIES, MINING_ERROR_COUNT, PRUNE_ERROR_COUNT,
     };
     use candid::Principal;
     use evm_core::chain::{ChainError, ExecResult};
@@ -2391,6 +2448,8 @@ mod tests {
         assert!(inspect_payload_limit_for_method("submit_ic_tx").is_some());
         assert!(inspect_payload_limit_for_method("set_pruning_enabled").is_some());
         assert!(inspect_payload_limit_for_method("set_miner_allowlist").is_some());
+        assert!(inspect_payload_limit_for_method("set_block_gas_limit").is_some());
+        assert!(inspect_payload_limit_for_method("set_instruction_soft_limit").is_some());
     }
 
     #[test]
@@ -2492,7 +2551,11 @@ mod tests {
         let mut methods = BTreeSet::new();
         for policy in INSPECT_METHOD_POLICIES {
             let inserted = methods.insert(policy.method);
-            assert!(inserted, "duplicate inspect policy method: {}", policy.method);
+            assert!(
+                inserted,
+                "duplicate inspect policy method: {}",
+                policy.method
+            );
         }
     }
 
@@ -2571,6 +2634,23 @@ mod tests {
         let view = super::get_ops_status();
         assert!(view.mining_error_count >= before_mining.saturating_add(2));
         assert!(view.prune_error_count >= before_prune.saturating_add(3));
+    }
+
+    #[test]
+    fn health_and_ops_status_expose_block_gas_limit() {
+        init_stable_state();
+        evm_db::stable_state::with_state_mut(|state| {
+            let mut chain_state = *state.chain_state.get();
+            chain_state.block_gas_limit = 9_000_000;
+            chain_state.instruction_soft_limit = 123_456;
+            state.chain_state.set(chain_state);
+        });
+        let health = super::health();
+        assert_eq!(health.block_gas_limit, 9_000_000);
+        assert_eq!(health.instruction_soft_limit, 123_456);
+        let ops = super::get_ops_status();
+        assert_eq!(ops.block_gas_limit, 9_000_000);
+        assert_eq!(ops.instruction_soft_limit, 123_456);
     }
 
     #[test]
@@ -2660,5 +2740,30 @@ mod tests {
             stmt.clear();
         }
         out
+    }
+
+    #[test]
+    fn with_state_mut_blocks_avoid_async_and_timer_side_effects() {
+        let source = include_str!("lib.rs");
+        for (start, _) in source.match_indices("with_state_mut(|") {
+            let tail = &source[start..];
+            let Some(rel_end) = tail.find("});") else {
+                continue;
+            };
+            let end = start + rel_end + 3;
+            let segment = &source[start..end];
+            assert!(
+                !segment.contains("ic_cdk_timers::set_timer("),
+                "set_timer must be outside with_state_mut block"
+            );
+            assert!(
+                !segment.contains("ic_cdk_timers::set_timer_interval("),
+                "set_timer_interval must be outside with_state_mut block"
+            );
+            assert!(
+                !segment.contains(".await"),
+                "await must not appear inside with_state_mut block"
+            );
+        }
     }
 }

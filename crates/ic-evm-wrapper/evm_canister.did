@@ -75,6 +75,8 @@ type GenesisBalanceView = record { address : blob; amount : nat };
 type HealthView = record {
   is_producing : bool;
   mining_scheduled : bool;
+  block_gas_limit : nat64;
+  instruction_soft_limit : nat64;
   tip_hash : blob;
   tip_number : nat64;
   last_block_time : nat64;
@@ -113,6 +115,8 @@ type OpsConfigView = record {
 };
 type OpsModeView = variant { Low; Normal; Critical };
 type OpsStatusView = record {
+  block_gas_limit : nat64;
+  instruction_soft_limit : nat64;
   needs_migration : bool;
   critical_corrupt : bool;
   decode_failure_last_ts : nat64;
@@ -247,6 +251,8 @@ service : (opt InitArgs) -> {
     ) query;
   rpc_eth_send_raw_transaction : (blob) -> (Result_7);
   set_auto_mine : (bool) -> (Result_8);
+  set_block_gas_limit : (nat64) -> (Result_8);
+  set_instruction_soft_limit : (nat64) -> (Result_8);
   set_log_filter : (opt text) -> (Result_8);
   set_miner_allowlist : (vec principal) -> (Result_8);
   set_mining_interval_ms : (nat64) -> (Result_8);
