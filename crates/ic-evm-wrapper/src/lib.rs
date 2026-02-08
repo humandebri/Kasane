@@ -149,6 +149,7 @@ const CODE_SUBMIT_NONCE_GAP: &str = "submit.nonce_gap";
 const CODE_SUBMIT_NONCE_CONFLICT: &str = "submit.nonce_conflict";
 const CODE_SUBMIT_QUEUE_FULL: &str = "submit.queue_full";
 const CODE_SUBMIT_SENDER_QUEUE_FULL: &str = "submit.sender_queue_full";
+const CODE_SUBMIT_PRINCIPAL_QUEUE_FULL: &str = "submit.principal_queue_full";
 const CODE_INTERNAL_UNEXPECTED: &str = "internal.unexpected";
 
 #[derive(Clone, Debug, CandidType, Deserialize)]
@@ -521,6 +522,7 @@ fn submit_reject_code(err: &chain::ChainError) -> Option<&'static str> {
         chain::ChainError::NonceConflict => Some(CODE_SUBMIT_NONCE_CONFLICT),
         chain::ChainError::QueueFull => Some(CODE_SUBMIT_QUEUE_FULL),
         chain::ChainError::SenderQueueFull => Some(CODE_SUBMIT_SENDER_QUEUE_FULL),
+        chain::ChainError::PrincipalQueueFull => Some(CODE_SUBMIT_PRINCIPAL_QUEUE_FULL),
         _ => None,
     }
 }
@@ -606,7 +608,14 @@ fn submit_eth_tx(raw_tx: Vec<u8>) -> Result<Vec<u8>, SubmitTxError> {
     if let Some(reason) = reject_write_reason() {
         return Err(SubmitTxError::Rejected(reason));
     }
-    submit_tx_in_with_code(chain::TxIn::EthSigned(raw_tx), "submit_eth_tx")
+    let caller_principal = ic_cdk::api::msg_caller().as_slice().to_vec();
+    submit_tx_in_with_code(
+        chain::TxIn::EthSigned {
+            tx_bytes: raw_tx,
+            caller_principal,
+        },
+        "submit_eth_tx",
+    )
 }
 
 #[ic_cdk::update]
@@ -923,7 +932,10 @@ fn rpc_eth_send_raw_transaction(raw_tx: Vec<u8>) -> Result<Vec<u8>, SubmitTxErro
         return Err(SubmitTxError::Rejected(reason));
     }
     submit_tx_in_with_code(
-        chain::TxIn::EthSigned(raw_tx),
+        chain::TxIn::EthSigned {
+            tx_bytes: raw_tx,
+            caller_principal: ic_cdk::api::msg_caller().as_slice().to_vec(),
+        },
         "rpc_eth_send_raw_transaction",
     )
 }
@@ -2194,6 +2206,10 @@ mod tests {
             (
                 ChainError::SenderQueueFull,
                 ("submit.sender_queue_full", false),
+            ),
+            (
+                ChainError::PrincipalQueueFull,
+                ("submit.principal_queue_full", false),
             ),
         ];
         for (input, (expected_code, expected_invalid_arg)) in table {
