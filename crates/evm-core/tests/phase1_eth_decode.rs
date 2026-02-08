@@ -64,6 +64,7 @@ fn decode_accepts_legacy_2930_1559_4844_7702() {
 
 #[test]
 fn chain_id_none_is_rejected_before_signature() {
+    // PR8境界仕様: chain_id検証は署名検証より前に評価する。
     let signer = test_signer();
     let tx = tx_legacy(None, 10);
     let bytes = sign_encoded(tx, &signer);
@@ -73,6 +74,7 @@ fn chain_id_none_is_rejected_before_signature() {
 
 #[test]
 fn wrong_chain_id_wins_even_with_invalid_signature() {
+    // PR8境界仕様: chain_id不整合は署名不正より優先して拒否する。
     let tx = tx_1559(CHAIN_ID + 1, 11);
     let bytes = encode_with_signature(tx, bad_signature());
     let err = decode_eth_raw_tx(&bytes).err();

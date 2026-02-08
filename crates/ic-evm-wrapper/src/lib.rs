@@ -16,8 +16,7 @@ use evm_db::meta::{
 use evm_db::stable_state::{init_stable_state, with_state};
 use evm_db::upgrade;
 use ic_cdk::api::{
-    accept_message, canister_cycle_balance, env_var_name_exists, env_var_value, is_controller,
-    msg_caller, msg_method_name, time,
+    accept_message, canister_cycle_balance, is_controller, msg_caller, msg_method_name, time,
 };
 use serde::Deserialize;
 use std::cell::Cell;
@@ -27,6 +26,11 @@ use std::sync::{Mutex, OnceLock};
 use tracing::{error, warn};
 use tracing_subscriber::fmt::MakeWriter;
 use tracing_subscriber::EnvFilter;
+
+mod prometheus_metrics;
+
+#[cfg(feature = "canbench-rs")]
+mod canbench_benches;
 
 #[cfg(target_arch = "wasm32")]
 getrandom::register_custom_getrandom!(always_fail_getrandom);
@@ -128,6 +132,24 @@ pub enum ExecuteTxError {
     Rejected(String),
     Internal(String),
 }
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum TxApiErrorKind {
+    InvalidArgument,
+    Rejected,
+}
+
+const CODE_ARG_TX_TOO_LARGE: &str = "arg.tx_too_large";
+const CODE_ARG_DECODE_FAILED: &str = "arg.decode_failed";
+const CODE_ARG_UNSUPPORTED_TX_KIND: &str = "arg.unsupported_tx_kind";
+const CODE_SUBMIT_TX_ALREADY_SEEN: &str = "submit.tx_already_seen";
+const CODE_SUBMIT_INVALID_FEE: &str = "submit.invalid_fee";
+const CODE_SUBMIT_NONCE_TOO_LOW: &str = "submit.nonce_too_low";
+const CODE_SUBMIT_NONCE_GAP: &str = "submit.nonce_gap";
+const CODE_SUBMIT_NONCE_CONFLICT: &str = "submit.nonce_conflict";
+const CODE_SUBMIT_QUEUE_FULL: &str = "submit.queue_full";
+const CODE_SUBMIT_SENDER_QUEUE_FULL: &str = "submit.sender_queue_full";
+const CODE_INTERNAL_UNEXPECTED: &str = "internal.unexpected";
 
 #[derive(Clone, Debug, CandidType, Deserialize)]
 pub struct BlockView {
@@ -391,22 +413,41 @@ impl InitArgs {
     }
 }
 
+#[cfg(not(feature = "canbench-rs"))]
 #[ic_cdk::init]
 fn init(args: Option<InitArgs>) {
+    init_inner(args, true);
+}
+
+#[cfg(feature = "canbench-rs")]
+#[ic_cdk::init]
+fn init() {
+    init_inner(None, false);
+}
+
+fn init_inner(args: Option<InitArgs>, require_args: bool) {
     init_stable_state();
     let _ = ensure_meta_initialized();
     init_tracing();
-    let args = args.unwrap_or_else(|| {
-        ic_cdk::trap("InitArgsRequired: InitArgs is required; pass (opt record {...})")
-    });
-    if let Err(reason) = args.validate() {
-        ic_cdk::trap(&format!("InvalidInitArgs: {reason}"));
-    }
-    for alloc in args.genesis_balances.iter() {
-        let mut addr = [0u8; 20];
-        addr.copy_from_slice(&alloc.address);
-        chain::dev_mint(addr, alloc.amount)
-            .unwrap_or_else(|_| ic_cdk::trap("init: genesis mint failed"));
+    let args = if require_args {
+        args.unwrap_or_else(|| {
+            ic_cdk::trap("InitArgsRequired: InitArgs is required; pass (opt record {...})")
+        })
+    } else {
+        args.unwrap_or(InitArgs {
+            genesis_balances: Vec::new(),
+        })
+    };
+    if !args.genesis_balances.is_empty() {
+        if let Err(reason) = args.validate() {
+            ic_cdk::trap(&format!("InvalidInitArgs: {reason}"));
+        }
+        for alloc in args.genesis_balances.iter() {
+            let mut addr = [0u8; 20];
+            addr.copy_from_slice(&alloc.address);
+            chain::dev_mint(addr, alloc.amount)
+                .unwrap_or_else(|_| ic_cdk::trap("init: genesis mint failed"));
+        }
     }
     observe_cycles();
     schedule_cycle_observer();
@@ -471,47 +512,79 @@ fn inspect_payload_len() -> usize {
     ic_cdk::api::call::arg_data_raw_size()
 }
 
+fn submit_reject_code(err: &chain::ChainError) -> Option<&'static str> {
+    match err {
+        chain::ChainError::TxAlreadySeen => Some(CODE_SUBMIT_TX_ALREADY_SEEN),
+        chain::ChainError::InvalidFee => Some(CODE_SUBMIT_INVALID_FEE),
+        chain::ChainError::NonceTooLow => Some(CODE_SUBMIT_NONCE_TOO_LOW),
+        chain::ChainError::NonceGap => Some(CODE_SUBMIT_NONCE_GAP),
+        chain::ChainError::NonceConflict => Some(CODE_SUBMIT_NONCE_CONFLICT),
+        chain::ChainError::QueueFull => Some(CODE_SUBMIT_QUEUE_FULL),
+        chain::ChainError::SenderQueueFull => Some(CODE_SUBMIT_SENDER_QUEUE_FULL),
+        _ => None,
+    }
+}
+
+fn chain_submit_error_to_code(err: &chain::ChainError) -> Option<(TxApiErrorKind, &'static str)> {
+    match err {
+        chain::ChainError::TxTooLarge => Some((TxApiErrorKind::InvalidArgument, CODE_ARG_TX_TOO_LARGE)),
+        chain::ChainError::DecodeFailed => {
+            Some((TxApiErrorKind::InvalidArgument, CODE_ARG_DECODE_FAILED))
+        }
+        chain::ChainError::UnsupportedTxKind => Some((
+            TxApiErrorKind::InvalidArgument,
+            CODE_ARG_UNSUPPORTED_TX_KIND,
+        )),
+        _ => submit_reject_code(err).map(|code| (TxApiErrorKind::Rejected, code)),
+    }
+}
+
+fn map_submit_chain_error(err: chain::ChainError, op_name: &str) -> SubmitTxError {
+    if let Some((kind, code)) = chain_submit_error_to_code(&err) {
+        return match kind {
+            TxApiErrorKind::InvalidArgument => SubmitTxError::InvalidArgument(code.to_string()),
+            TxApiErrorKind::Rejected => SubmitTxError::Rejected(code.to_string()),
+        };
+    }
+    error!(error = ?err, operation = op_name, "submit transaction failed");
+    SubmitTxError::Internal(CODE_INTERNAL_UNEXPECTED.to_string())
+}
+
+fn submit_tx_in_with_code(tx_in: chain::TxIn, op_name: &str) -> Result<Vec<u8>, SubmitTxError> {
+    let tx_id = chain::submit_tx_in(tx_in).map_err(|err| map_submit_chain_error(err, op_name))?;
+    schedule_mining();
+    Ok(tx_id.0.to_vec())
+}
+
+#[cfg(test)]
+fn chain_execute_error_to_code(err: &chain::ChainError) -> Option<(TxApiErrorKind, &'static str)> {
+    match err {
+        chain::ChainError::ExecFailed(exec) => {
+            Some((TxApiErrorKind::Rejected, exec_error_to_code(exec.as_ref())))
+        }
+        _ => chain_submit_error_to_code(err),
+    }
+}
+
+#[cfg(test)]
+fn map_execute_chain_error(err: chain::ChainError) -> ExecuteTxError {
+    if let Some((kind, code)) = chain_execute_error_to_code(&err) {
+        return match kind {
+            TxApiErrorKind::InvalidArgument => ExecuteTxError::InvalidArgument(code.to_string()),
+            TxApiErrorKind::Rejected => ExecuteTxError::Rejected(code.to_string()),
+        };
+    }
+    error!(error = ?err, "execute transaction failed");
+    ExecuteTxError::Internal(CODE_INTERNAL_UNEXPECTED.to_string())
+}
+
 #[cfg(test)]
 fn map_execute_chain_result(
     result: Result<chain::ExecResult, chain::ChainError>,
 ) -> Result<ExecResultDto, ExecuteTxError> {
     let result = match result {
         Ok(value) => value,
-        Err(chain::ChainError::DecodeFailed) => {
-            return Err(ExecuteTxError::InvalidArgument("decode failed".to_string()));
-        }
-        Err(chain::ChainError::TxTooLarge) => {
-            return Err(ExecuteTxError::InvalidArgument("tx too large".to_string()));
-        }
-        Err(chain::ChainError::TxAlreadySeen) => {
-            return Err(ExecuteTxError::Rejected("tx already seen".to_string()));
-        }
-        Err(chain::ChainError::InvalidFee) => {
-            return Err(ExecuteTxError::Rejected("invalid fee".to_string()));
-        }
-        Err(chain::ChainError::NonceTooLow) => {
-            return Err(ExecuteTxError::Rejected("nonce too low".to_string()));
-        }
-        Err(chain::ChainError::NonceGap) => {
-            return Err(ExecuteTxError::Rejected("nonce gap".to_string()));
-        }
-        Err(chain::ChainError::NonceConflict) => {
-            return Err(ExecuteTxError::Rejected("nonce conflict".to_string()));
-        }
-        Err(chain::ChainError::QueueFull) => {
-            return Err(ExecuteTxError::Rejected("queue full".to_string()));
-        }
-        Err(chain::ChainError::SenderQueueFull) => {
-            return Err(ExecuteTxError::Rejected("sender queue full".to_string()));
-        }
-        Err(chain::ChainError::ExecFailed(err)) => {
-            let code = exec_error_to_code(err.as_ref());
-            return Err(ExecuteTxError::Rejected(code.to_string()));
-        }
-        Err(err) => {
-            error!(error = ?err, "execute_tx failed");
-            return Err(ExecuteTxError::Internal("internal error".to_string()));
-        }
+        Err(err) => return Err(map_execute_chain_error(err)),
     };
     Ok(ExecResultDto {
         tx_id: result.tx_id.0.to_vec(),
@@ -531,47 +604,7 @@ fn submit_eth_tx(raw_tx: Vec<u8>) -> Result<Vec<u8>, SubmitTxError> {
     if let Some(reason) = reject_write_reason() {
         return Err(SubmitTxError::Rejected(reason));
     }
-    let tx_id = match chain::submit_tx_in(chain::TxIn::EthSigned(raw_tx)) {
-        Ok(value) => value,
-        Err(chain::ChainError::TxTooLarge) => {
-            return Err(SubmitTxError::InvalidArgument("tx too large".to_string()));
-        }
-        Err(chain::ChainError::DecodeFailed) => {
-            return Err(SubmitTxError::InvalidArgument("decode failed".to_string()));
-        }
-        Err(chain::ChainError::UnsupportedTxKind) => {
-            return Err(SubmitTxError::InvalidArgument(
-                "unsupported tx kind".to_string(),
-            ));
-        }
-        Err(chain::ChainError::TxAlreadySeen) => {
-            return Err(SubmitTxError::Rejected("tx already seen".to_string()));
-        }
-        Err(chain::ChainError::InvalidFee) => {
-            return Err(SubmitTxError::Rejected("invalid fee".to_string()));
-        }
-        Err(chain::ChainError::NonceTooLow) => {
-            return Err(SubmitTxError::Rejected("nonce too low".to_string()));
-        }
-        Err(chain::ChainError::NonceGap) => {
-            return Err(SubmitTxError::Rejected("nonce gap".to_string()));
-        }
-        Err(chain::ChainError::NonceConflict) => {
-            return Err(SubmitTxError::Rejected("nonce conflict".to_string()));
-        }
-        Err(chain::ChainError::QueueFull) => {
-            return Err(SubmitTxError::Rejected("queue full".to_string()));
-        }
-        Err(chain::ChainError::SenderQueueFull) => {
-            return Err(SubmitTxError::Rejected("sender queue full".to_string()));
-        }
-        Err(err) => {
-            error!(error = ?err, "submit_eth_tx failed");
-            return Err(SubmitTxError::Internal("internal error".to_string()));
-        }
-    };
-    schedule_mining();
-    Ok(tx_id.0.to_vec())
+    submit_tx_in_with_code(chain::TxIn::EthSigned(raw_tx), "submit_eth_tx")
 }
 
 #[ic_cdk::update]
@@ -584,51 +617,14 @@ fn submit_ic_tx(tx_bytes: Vec<u8>) -> Result<Vec<u8>, SubmitTxError> {
     }
     let caller_principal = ic_cdk::api::msg_caller().as_slice().to_vec();
     let canister_id = ic_cdk::api::canister_self().as_slice().to_vec();
-    let tx_id = match chain::submit_tx_in(chain::TxIn::IcSynthetic {
-        caller_principal,
-        canister_id,
-        tx_bytes,
-    }) {
-        Ok(value) => value,
-        Err(chain::ChainError::TxTooLarge) => {
-            return Err(SubmitTxError::InvalidArgument("tx too large".to_string()));
-        }
-        Err(chain::ChainError::DecodeFailed) => {
-            return Err(SubmitTxError::InvalidArgument("decode failed".to_string()));
-        }
-        Err(chain::ChainError::UnsupportedTxKind) => {
-            return Err(SubmitTxError::InvalidArgument(
-                "unsupported tx kind".to_string(),
-            ));
-        }
-        Err(chain::ChainError::TxAlreadySeen) => {
-            return Err(SubmitTxError::Rejected("tx already seen".to_string()));
-        }
-        Err(chain::ChainError::InvalidFee) => {
-            return Err(SubmitTxError::Rejected("invalid fee".to_string()));
-        }
-        Err(chain::ChainError::NonceTooLow) => {
-            return Err(SubmitTxError::Rejected("nonce too low".to_string()));
-        }
-        Err(chain::ChainError::NonceGap) => {
-            return Err(SubmitTxError::Rejected("nonce gap".to_string()));
-        }
-        Err(chain::ChainError::NonceConflict) => {
-            return Err(SubmitTxError::Rejected("nonce conflict".to_string()));
-        }
-        Err(chain::ChainError::QueueFull) => {
-            return Err(SubmitTxError::Rejected("queue full".to_string()));
-        }
-        Err(chain::ChainError::SenderQueueFull) => {
-            return Err(SubmitTxError::Rejected("sender queue full".to_string()));
-        }
-        Err(err) => {
-            error!(error = ?err, "submit_ic_tx failed");
-            return Err(SubmitTxError::Internal("internal error".to_string()));
-        }
-    };
-    schedule_mining();
-    Ok(tx_id.0.to_vec())
+    submit_tx_in_with_code(
+        chain::TxIn::IcSynthetic {
+            caller_principal,
+            canister_id,
+            tx_bytes,
+        },
+        "submit_ic_tx",
+    )
 }
 
 #[cfg(feature = "dev-faucet")]
@@ -924,47 +920,7 @@ fn rpc_eth_send_raw_transaction(raw_tx: Vec<u8>) -> Result<Vec<u8>, SubmitTxErro
     if let Some(reason) = reject_write_reason() {
         return Err(SubmitTxError::Rejected(reason));
     }
-    let tx_id = match chain::submit_tx_in(chain::TxIn::EthSigned(raw_tx)) {
-        Ok(value) => value,
-        Err(chain::ChainError::TxTooLarge) => {
-            return Err(SubmitTxError::InvalidArgument("tx too large".to_string()));
-        }
-        Err(chain::ChainError::DecodeFailed) => {
-            return Err(SubmitTxError::InvalidArgument("decode failed".to_string()));
-        }
-        Err(chain::ChainError::UnsupportedTxKind) => {
-            return Err(SubmitTxError::InvalidArgument(
-                "unsupported tx kind".to_string(),
-            ));
-        }
-        Err(chain::ChainError::TxAlreadySeen) => {
-            return Err(SubmitTxError::Rejected("tx already seen".to_string()));
-        }
-        Err(chain::ChainError::InvalidFee) => {
-            return Err(SubmitTxError::Rejected("invalid fee".to_string()));
-        }
-        Err(chain::ChainError::NonceTooLow) => {
-            return Err(SubmitTxError::Rejected("nonce too low".to_string()));
-        }
-        Err(chain::ChainError::NonceGap) => {
-            return Err(SubmitTxError::Rejected("nonce gap".to_string()));
-        }
-        Err(chain::ChainError::NonceConflict) => {
-            return Err(SubmitTxError::Rejected("nonce conflict".to_string()));
-        }
-        Err(chain::ChainError::QueueFull) => {
-            return Err(SubmitTxError::Rejected("queue full".to_string()));
-        }
-        Err(chain::ChainError::SenderQueueFull) => {
-            return Err(SubmitTxError::Rejected("sender queue full".to_string()));
-        }
-        Err(err) => {
-            error!(error = ?err, "rpc_eth_send_raw_transaction failed");
-            return Err(SubmitTxError::Internal("internal error".to_string()));
-        }
-    };
-    schedule_mining();
-    Ok(tx_id.0.to_vec())
+    submit_tx_in_with_code(chain::TxIn::EthSigned(raw_tx), "rpc_eth_send_raw_transaction")
 }
 
 #[ic_cdk::query]
@@ -1142,6 +1098,50 @@ fn metrics(window: u64) -> MetricsView {
             dev_faucet_enabled: cfg!(feature = "dev-faucet"),
         }
     })
+}
+
+#[ic_cdk::query]
+fn metrics_prometheus() -> Result<String, String> {
+    let cycles = canister_cycle_balance();
+    let stable_memory_pages = ic_cdk::stable::stable_size();
+    let heap_memory_pages = current_heap_memory_pages();
+    let now_nanos = time();
+    let snapshot = with_state(|state| {
+        let head = *state.head.get();
+        let chain_state = *state.chain_state.get();
+        let metrics = *state.metrics_state.get();
+        let pruned_before_block = state.prune_state.get().pruned_before();
+        let mut drop_counts = Vec::new();
+        for (idx, count) in metrics.drop_counts.iter().enumerate() {
+            if *count == 0 {
+                continue;
+            }
+            if let Ok(code) = u16::try_from(idx) {
+                drop_counts.push(prometheus_metrics::DropCountSample {
+                    code,
+                    count: *count,
+                });
+            }
+        }
+        prometheus_metrics::PrometheusSnapshot {
+            cycles_balance: cycles,
+            stable_memory_pages,
+            heap_memory_pages,
+            tip_block_number: head.number,
+            queue_len: state.pending_by_sender_nonce.len(),
+            total_submitted: metrics.total_submitted,
+            total_included: metrics.total_included,
+            total_dropped: metrics.total_dropped,
+            auto_mine_enabled: chain_state.auto_mine_enabled,
+            is_producing: chain_state.is_producing,
+            mining_scheduled: chain_state.mining_scheduled,
+            mining_interval_ms: chain_state.mining_interval_ms,
+            last_block_time: chain_state.last_block_time,
+            pruned_before_block,
+            drop_counts,
+        }
+    });
+    prometheus_metrics::encode_prometheus(now_nanos, &snapshot)
 }
 
 #[ic_cdk::update]
@@ -1357,6 +1357,16 @@ fn collect_drop_counts(metrics: &evm_db::chain_data::MetricsStateV1) -> Vec<Drop
             }
         })
         .collect()
+}
+
+#[cfg(target_arch = "wasm32")]
+fn current_heap_memory_pages() -> u64 {
+    u64::try_from(core::arch::wasm32::memory_size(0)).unwrap_or(u64::MAX)
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn current_heap_memory_pages() -> u64 {
+    0
 }
 
 fn tx_id_from_bytes(tx_id: Vec<u8>) -> Option<TxId> {
@@ -1734,20 +1744,22 @@ fn resolve_log_filter() -> Option<String> {
     with_state(|state| state.log_config.get().filter().map(str::to_string))
 }
 
+#[cfg(not(feature = "canbench-rs"))]
 const MAX_ENV_VAR_NAME_LEN: usize = 128;
 const LOG_FILTER_MAX_LEN: usize = 256;
 static LOG_TRUNCATED_COUNT: AtomicU64 = AtomicU64::new(0);
 static MINING_ERROR_COUNT: AtomicU64 = AtomicU64::new(0);
 static PRUNE_ERROR_COUNT: AtomicU64 = AtomicU64::new(0);
 
+#[cfg(not(feature = "canbench-rs"))]
 fn read_env_var_guarded(name: &str, max_value_len: usize) -> Option<String> {
     if name.len() > MAX_ENV_VAR_NAME_LEN {
         return None;
     }
-    if !env_var_name_exists(name) {
+    if !ic_cdk::api::env_var_name_exists(name) {
         return None;
     }
-    let value = env_var_value(name);
+    let value = ic_cdk::api::env_var_value(name);
     if value.len() > max_value_len {
         warn!(
             env_var = name,
@@ -1758,6 +1770,11 @@ fn read_env_var_guarded(name: &str, max_value_len: usize) -> Option<String> {
         return None;
     }
     Some(value)
+}
+
+#[cfg(feature = "canbench-rs")]
+fn read_env_var_guarded(_name: &str, _max_value_len: usize) -> Option<String> {
+    None
 }
 
 #[derive(Clone, Copy)]
@@ -2078,10 +2095,10 @@ pub fn export_did() -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        clamp_return_data, exec_error_to_code, inspect_method_allowed, map_execute_chain_result,
-        prune_boundary_for_number, receipt_lookup_status, reject_anonymous_principal,
-        reject_write_reason, tx_id_from_bytes, ExecuteTxError, MINING_ERROR_COUNT,
-        PRUNE_ERROR_COUNT,
+        chain_submit_error_to_code, clamp_return_data, exec_error_to_code, inspect_method_allowed,
+        map_execute_chain_result, map_submit_chain_error, prune_boundary_for_number,
+        receipt_lookup_status, reject_anonymous_principal, reject_write_reason, tx_id_from_bytes,
+        ExecuteTxError, MINING_ERROR_COUNT, PRUNE_ERROR_COUNT,
     };
     use candid::Principal;
     use evm_core::chain::{ChainError, ExecResult};
@@ -2146,10 +2163,42 @@ mod tests {
 
         for err in inputs.iter() {
             let code = exec_error_to_code(err.as_ref());
-            assert!(is_exec_code(code), "unexpected code: {code}");
+            assert!(code.starts_with("exec."));
+            assert!(is_machine_code(code), "unexpected code: {code}");
             assert!(!code.contains('{'));
             assert!(!code.contains('}'));
             assert!(!code.contains(':'));
+        }
+    }
+
+    #[test]
+    fn pr8_submit_error_code_mapping_matches_expected_set() {
+        let table = [
+            (ChainError::TxTooLarge, ("arg.tx_too_large", true)),
+            (ChainError::DecodeFailed, ("arg.decode_failed", true)),
+            (
+                ChainError::UnsupportedTxKind,
+                ("arg.unsupported_tx_kind", true),
+            ),
+            (ChainError::TxAlreadySeen, ("submit.tx_already_seen", false)),
+            (ChainError::InvalidFee, ("submit.invalid_fee", false)),
+            (ChainError::NonceTooLow, ("submit.nonce_too_low", false)),
+            (ChainError::NonceGap, ("submit.nonce_gap", false)),
+            (ChainError::NonceConflict, ("submit.nonce_conflict", false)),
+            (ChainError::QueueFull, ("submit.queue_full", false)),
+            (
+                ChainError::SenderQueueFull,
+                ("submit.sender_queue_full", false),
+            ),
+        ];
+        for (input, (expected_code, expected_invalid_arg)) in table {
+            let (kind, code) = chain_submit_error_to_code(&input).expect("code mapping");
+            assert_eq!(code, expected_code);
+            assert!(is_machine_code(code));
+            match kind {
+                super::TxApiErrorKind::InvalidArgument => assert!(expected_invalid_arg),
+                super::TxApiErrorKind::Rejected => assert!(!expected_invalid_arg),
+            }
         }
     }
 
@@ -2186,6 +2235,37 @@ mod tests {
             .expect_err("exec failed should be rejected");
         match err {
             ExecuteTxError::Rejected(code) => assert_eq!(code, "exec.revert"),
+            other => panic!("unexpected error: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn pr8_execute_decode_failed_maps_to_arg_code() {
+        let err =
+            map_execute_chain_result(Err(ChainError::DecodeFailed)).expect_err("must reject decode");
+        match err {
+            ExecuteTxError::InvalidArgument(code) => assert_eq!(code, "arg.decode_failed"),
+            other => panic!("unexpected error: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn pr8_execute_precompile_error_maps_to_exec_code() {
+        let err = map_execute_chain_result(Err(ChainError::ExecFailed(Some(
+            ExecError::EvmHalt(OpHaltReason::PrecompileError),
+        ))))
+        .expect_err("must map to precompile code");
+        match err {
+            ExecuteTxError::Rejected(code) => assert_eq!(code, "exec.halt.precompile_error"),
+            other => panic!("unexpected error: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn pr8_unexpected_chain_error_maps_to_internal_unexpected() {
+        let err = map_submit_chain_error(ChainError::QueueEmpty, "test_submit");
+        match err {
+            super::SubmitTxError::Internal(code) => assert_eq!(code, "internal.unexpected"),
             other => panic!("unexpected error: {other:?}"),
         }
     }
@@ -2295,10 +2375,7 @@ mod tests {
         assert!(inspect_method_allowed("dev_mint"));
     }
 
-    fn is_exec_code(value: &str) -> bool {
-        if !value.starts_with("exec.") {
-            return false;
-        }
+    fn is_machine_code(value: &str) -> bool {
         value
             .chars()
             .all(|ch| ch == '.' || ch == '_' || ch.is_ascii_lowercase() || ch.is_ascii_digit())

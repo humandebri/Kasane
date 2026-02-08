@@ -13,7 +13,7 @@ candid = "0.10"
 ic-cdk = "0.19.0"
 ic-cdk-timers = "1.0.0" # Keep in sync with ic-evm-wrapper to avoid links conflicts
 ic-stable-structures = "0.7.2"
-alloy-primitives = { version = "1.5.2", default-features = false, features = ["std"] }
+alloy-primitives = { version = "=1.5.3", default-features = false, features = ["std"] }
 wincode = { version = "0.3.1", features = ["derive"] }
 tracing = "0.1.41"
 zerocopy = { version = "0.8", features = ["derive"] }

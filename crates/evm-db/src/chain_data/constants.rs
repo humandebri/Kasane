@@ -34,6 +34,8 @@ pub const CHAIN_STATE_SIZE_U32: u32 = 72;
 pub const DEFAULT_MINING_INTERVAL_MS: u64 = 5_000;
 
 // ガス関連の既定値（Phase1の足場）
+// block gas limit は固定運用。更新時は docs/ops/ic-wasm-workflow.md の
+// staging計測手順（失敗ゼロ最大候補 + 20% headroom）で根拠を取ってから変更する。
 pub const DEFAULT_BASE_FEE: u64 = 1_000_000_000;
 pub const DEFAULT_MIN_GAS_PRICE: u64 = 0;
 pub const DEFAULT_MIN_PRIORITY_FEE: u64 = 1_000_000_000;
