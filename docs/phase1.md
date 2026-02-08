@@ -40,6 +40,11 @@ produce_block(max_txs) -> block_number
 
 どのみちPhase2以降で “SDKから叩ける” が必要になるので、個人的にはA案で良い。
 
+1.1.1 submit系APIのエラーコード（PR8同期）
+
+返却コード仕様の正本は `docs/specs/pr8-signature-boundary.md`。
+この文書では API 導線のみを扱い、コード表は重複掲載しない。
+
 1.2 query
 
 get_block(n) -> BlockView

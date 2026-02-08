@@ -11,6 +11,9 @@
   | submit_ic_tx | 後続ブロックで実行するためのキュー投入 | 非同期 | tx_id |
   | submit_eth_tx | 後続ブロックで実行するためのキュー投入 | 非同期 | tx_id |
 
+- submit系APIの返却コード（PR8）は `docs/specs/pr8-signature-boundary.md` を正本とする。
+  - `README.md` は概要のみ記載し、返却コード表は重複掲載しない。
+
 ## 1.0 序論：プロジェクトのビジョンと全体戦略
 
 本プロジェクトは、Internet Computer Protocol (ICP) の独自のアーキテクチャを最大限に活用し、高性能かつユニークなEVM（Ethereum Virtual Machine）互換環境をcanister上に構築することをビジョンとして掲げます。従来のLayer 2（L2）ソリューションが主にスケーラビリティに焦点を当てる中、我々はICPの特性である同期的な関数呼び出しやcanister間のシームレスな連携能力を活かし、「ICPから呼び出して嬉しいEVM」という新たな価値を提供することを目指します。このアプローチは、単なるEthereumの拡張ではなく、ICPエコシステムとEVMエコシステムの双方に新たな可能性をもたらす戦略的選択です。

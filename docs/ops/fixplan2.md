@@ -65,9 +65,31 @@
 
 ## PR8: 署名検証の責務分離
 
-- [ ] Ingress側検証（Eth/IcSynthetic）とEVM内部precompile責務を分離
-- [ ] `ecrecover` 等の二重実装を排除
-- [ ] 境界仕様（どこで何を検証するか）を文書化
+- [x] Ingress側検証（Eth/IcSynthetic）とEVM内部precompile責務を分離
+- [x] `ecrecover` 等の二重実装を排除
+- [x] 境界仕様（どこで何を検証するか）を文書化
+
+### PR8 境界仕様（2026-02-08 / 規範化）
+
+- Ingress検証の拘束条件:
+  - EthSigned は `decode_2718_exact -> chain_id 検証 -> recover_signer` の順で **必ず（MUST）** 検証する。
+  - IcSynthetic は payload長・version・fee/nonce等の形式検証を Ingress で **完結しなければならない（MUST）**。
+  - submit/queue は `decode_tx` に成功した入力のみ受理し、失敗は `DecodeFailed` または `drop_code=decode` へ **分類しなければならない（MUST）**。
+- precompile責務の拘束条件:
+  - `ecrecover` を含む precompile は EVM実行責務であり、Ingress送信者検証に **使用してはならない（MUST NOT）**。
+  - precompile失敗は `PrecompileError` として **分類しなければならない（MUST）**。
+- 二重実装禁止:
+  - 送信者署名検証は alloy (`SignerRecoverable::recover_signer`) のみを利用し、自前 `ecrecover` 実装を **追加してはならない（MUST NOT）**。
+- 根拠コード:
+  - `crates/evm-core/src/tx_decode.rs`
+  - `crates/evm-core/src/chain.rs`
+  - `crates/evm-core/src/revm_exec.rs`
+  - `crates/evm-core/tests/phase1_eth_decode.rs`
+
+### PR8 境界エラー写像（正本参照）
+
+- 返却コード表の正本は `docs/specs/pr8-signature-boundary.md` に固定する。
+- 本ファイル（fixplan2）は進捗管理のみを担い、コード表を重複掲載しない。
 
 ### 運用ルール（2026-02-05 追加）
 

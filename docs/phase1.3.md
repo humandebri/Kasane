@@ -73,6 +73,8 @@ max_fee_per_gas >= base_fee + min_priority_fee_per_gas を要求（重要）
 
 ## 3) submit / reject と produce / drop の境界（Phase1.2と揃える）
 
+PR8の署名検証責務境界は `docs/specs/pr8-signature-boundary.md` を正本とする。
+
 **reject = submit 時点で判定できるためキューに入れない**  
 **drop = キュー投入後、produce_block 時点で判定される失敗**
 
