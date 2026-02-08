@@ -1,7 +1,7 @@
 //! どこで: Phase1テスト / 何を: ハッシュ決定性 / なぜ: 再現性を保証するため
 
 use evm_core::chain;
-use evm_core::hash::{block_hash, keccak256, stored_tx_id, tx_list_hash};
+use evm_core::hash::{block_hash, keccak256, keccak256_concat_chunks, stored_tx_id, tx_list_hash};
 use evm_core::state_root::{
     commit_state_root_with, compute_state_root_incremental_with, TouchedSummary,
 };
@@ -34,6 +34,16 @@ fn block_hash_is_deterministic() {
     let h1 = block_hash(parent, 1, 1, tx_list, state_root);
     let h2 = block_hash(parent, 1, 1, tx_list, state_root);
     assert_eq!(h1, h2);
+}
+
+#[test]
+fn keccak256_concat_chunks_matches_concatenated_buffer_hash() {
+    let chunks = [[0x11u8; 32], [0x22u8; 32], [0x33u8; 32]];
+    let mut concatenated = Vec::new();
+    for chunk in chunks.iter() {
+        concatenated.extend_from_slice(chunk);
+    }
+    assert_eq!(keccak256_concat_chunks(&chunks), keccak256(&concatenated));
 }
 
 #[test]

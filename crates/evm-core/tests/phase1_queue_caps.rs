@@ -10,8 +10,10 @@ use evm_core::hash;
 use evm_db::chain_data::constants::{
     CHAIN_ID, DROP_CODE_REPLACED, MAX_PENDING_GLOBAL, MAX_PENDING_PER_PRINCIPAL,
 };
-use evm_db::chain_data::{SenderNonceKey, StoredTxBytes, TxId, TxKind, TxLocKind};
+use evm_db::chain_data::{CallerKey, SenderNonceKey, StoredTxBytes, TxId, TxKind, TxLocKind};
 use evm_db::stable_state::{init_stable_state, with_state, with_state_mut};
+
+mod common;
 
 #[test]
 fn submit_ic_tx_rejects_when_global_pending_cap_is_reached() {
@@ -34,7 +36,7 @@ fn submit_ic_tx_rejects_when_global_pending_cap_is_reached() {
     let err = chain::submit_ic_tx(
         vec![0x01],
         vec![0x02],
-        build_ic_tx_bytes(0, 2_000_000_000, 1_000_000_000),
+        common::build_default_ic_tx_bytes(0),
     )
     .expect_err("global cap should reject submit");
     assert_eq!(err, ChainError::QueueFull);
@@ -45,7 +47,7 @@ fn replacement_is_allowed_even_when_global_pending_cap_is_reached() {
     init_stable_state();
     let caller = vec![0x42];
     let canister = vec![0x77];
-    let first_tx = build_ic_tx_bytes(0, 2_000_000_000, 1_000_000_000);
+    let first_tx = common::build_default_ic_tx_bytes(0);
     let first_tx_id =
         chain::submit_ic_tx(caller.clone(), canister.clone(), first_tx).expect("first submit");
 
@@ -65,7 +67,7 @@ fn replacement_is_allowed_even_when_global_pending_cap_is_reached() {
         }
     });
 
-    let replacement_tx = build_ic_tx_bytes(0, 3_000_000_000, 2_000_000_000);
+    let replacement_tx = common::build_ic_tx_bytes([0x10u8; 20], 0, 3_000_000_000, 2_000_000_000);
     let replacement_tx_id = chain::submit_ic_tx(caller, canister, replacement_tx)
         .expect("replacement should be accepted");
     assert_ne!(replacement_tx_id, first_tx_id);
@@ -80,7 +82,7 @@ fn higher_fee_tx_evicts_lowest_fee_when_global_pending_cap_is_reached() {
     let caller_low = vec![0x42];
     let caller_high = vec![0x43];
     let canister = vec![0x77];
-    let low_fee_tx = build_ic_tx_bytes(0, 2_000_000_000, 1_000_000_000);
+    let low_fee_tx = common::build_default_ic_tx_bytes(0);
     let low_fee_tx_id =
         chain::submit_ic_tx(caller_low, canister.clone(), low_fee_tx).expect("seed low fee tx");
 
@@ -102,7 +104,7 @@ fn higher_fee_tx_evicts_lowest_fee_when_global_pending_cap_is_reached() {
     let accepted = chain::submit_ic_tx(
         caller_high,
         canister,
-        build_ic_tx_bytes(0, 10_000_000_000, 5_000_000_000),
+        common::build_ic_tx_bytes([0x10u8; 20], 0, 10_000_000_000, 5_000_000_000),
     )
     .expect("higher fee tx should evict and be accepted");
     assert_ne!(accepted, low_fee_tx_id);
@@ -120,7 +122,7 @@ fn lower_or_equal_fee_tx_is_rejected_when_global_pending_cap_is_reached() {
     let _ = chain::submit_ic_tx(
         caller_low,
         canister.clone(),
-        build_ic_tx_bytes(0, 2_000_000_000, 1_000_000_000),
+        common::build_default_ic_tx_bytes(0),
     )
     .expect("seed low fee tx");
 
@@ -142,7 +144,7 @@ fn lower_or_equal_fee_tx_is_rejected_when_global_pending_cap_is_reached() {
     let err = chain::submit_ic_tx(
         caller_same,
         canister,
-        build_ic_tx_bytes(0, 2_000_000_000, 1_000_000_000),
+        common::build_default_ic_tx_bytes(0),
     )
     .expect_err("same fee should be rejected under full global cap");
     assert_eq!(err, ChainError::QueueFull);
@@ -188,6 +190,10 @@ fn submit_ic_tx_rejects_when_principal_pending_cap_is_reached() {
             state.pending_by_sender_nonce.insert(pending_key, tx_id);
             state.tx_store.insert(tx_id, envelope);
         }
+        let principal_key = CallerKey::from_principal_bytes(&caller);
+        state
+            .principal_pending_count
+            .insert(principal_key, MAX_PENDING_PER_PRINCIPAL as u32);
     });
 
     let err = chain::submit_tx(TxKind::EthSigned, build_eth_signed_tx(0), caller)
@@ -224,26 +230,4 @@ where
     let signature = signer.sign_hash_sync(&hash).expect("sign");
     let signed = tx.into_signed(signature);
     signed.encoded_2718()
-}
-
-fn build_ic_tx_bytes(nonce: u64, max_fee_per_gas: u128, max_priority_fee_per_gas: u128) -> Vec<u8> {
-    let to = [0x10u8; 20];
-    let value = [0u8; 32];
-    let gas_limit = 50_000u64.to_be_bytes();
-    let nonce = nonce.to_be_bytes();
-    let max_fee = max_fee_per_gas.to_be_bytes();
-    let max_priority = max_priority_fee_per_gas.to_be_bytes();
-    let data: Vec<u8> = Vec::new();
-    let data_len = 0u32.to_be_bytes();
-    let mut out = Vec::new();
-    out.push(2u8);
-    out.extend_from_slice(&to);
-    out.extend_from_slice(&value);
-    out.extend_from_slice(&gas_limit);
-    out.extend_from_slice(&nonce);
-    out.extend_from_slice(&max_fee);
-    out.extend_from_slice(&max_priority);
-    out.extend_from_slice(&data_len);
-    out.extend_from_slice(&data);
-    out
 }

@@ -5,6 +5,8 @@ use evm_core::base_fee::compute_next_base_fee;
 use evm_core::chain::{self, ChainError};
 use evm_db::stable_state::{init_stable_state, with_state_mut};
 
+mod common;
+
 #[test]
 fn min_priority_fee_rejects_low_tip() {
     init_stable_state();
@@ -15,7 +17,7 @@ fn min_priority_fee_rejects_low_tip() {
         state.chain_state.set(chain_state);
     });
 
-    let tx_bytes = build_ic_tx_bytes(3_000_000_000, 1_000_000_000, 0);
+    let tx_bytes = common::build_zero_to_ic_tx_bytes(0, 3_000_000_000, 1_000_000_000);
     let err =
         chain::submit_ic_tx(vec![0x11], vec![0x01], tx_bytes).expect_err("submit should fail");
     assert_eq!(err, ChainError::InvalidFee);
@@ -31,7 +33,7 @@ fn base_fee_rekey_drops_unaffordable_tx() {
         state.chain_state.set(chain_state);
     });
 
-    let tx_bytes = build_ic_tx_bytes(2_000_000_000, 1_000_000_000, 0);
+    let tx_bytes = common::build_zero_to_ic_tx_bytes(0, 2_000_000_000, 1_000_000_000);
     let tx_id = chain::submit_ic_tx(vec![0x22], vec![0x02], tx_bytes).expect("submit");
 
     with_state_mut(|state| {
@@ -61,8 +63,8 @@ fn base_fee_rekey_reorders_by_effective_fee() {
         state.chain_state.set(chain_state);
     });
 
-    let tx_a = build_ic_tx_bytes(6_000_000_000, 3_000_000_000, 0);
-    let tx_b = build_ic_tx_bytes(10_000_000_000, 2_000_000_000, 0);
+    let tx_a = common::build_zero_to_ic_tx_bytes(0, 6_000_000_000, 3_000_000_000);
+    let tx_b = common::build_zero_to_ic_tx_bytes(0, 10_000_000_000, 2_000_000_000);
 
     let a_id = chain::submit_ic_tx(vec![0x33], vec![0x03], tx_a).expect("submit a");
     let b_id = chain::submit_ic_tx(vec![0x44], vec![0x04], tx_b).expect("submit b");
@@ -73,7 +75,8 @@ fn base_fee_rekey_reorders_by_effective_fee() {
         state.chain_state.set(chain_state);
     });
 
-    let block = chain::produce_block(2).expect("produce");
+    let outcome = chain::produce_block(2).expect("produce");
+    let block = outcome.block;
     assert_eq!(block.tx_ids.len(), 2);
     assert_eq!(block.tx_ids[0], b_id);
     assert_eq!(block.tx_ids[1], a_id);
@@ -89,13 +92,14 @@ fn equal_fee_uses_seq_order() {
         state.chain_state.set(chain_state);
     });
 
-    let tx_a = build_ic_tx_bytes(2_000_000_000, 1_000_000_000, 0);
-    let tx_b = build_ic_tx_bytes(2_000_000_000, 1_000_000_000, 0);
+    let tx_a = common::build_zero_to_ic_tx_bytes(0, 2_000_000_000, 1_000_000_000);
+    let tx_b = common::build_zero_to_ic_tx_bytes(0, 2_000_000_000, 1_000_000_000);
 
     let a_id = chain::submit_ic_tx(vec![0x55], vec![0x05], tx_a).expect("submit a");
     let b_id = chain::submit_ic_tx(vec![0x66], vec![0x06], tx_b).expect("submit b");
 
-    let block = chain::produce_block(2).expect("produce");
+    let outcome = chain::produce_block(2).expect("produce");
+    let block = outcome.block;
     assert_eq!(block.tx_ids.len(), 2);
     assert_eq!(block.tx_ids[0], a_id);
     assert_eq!(block.tx_ids[1], b_id);
@@ -144,26 +148,4 @@ fn base_fee_keeps_value_when_gas_target_is_zero() {
     let current = 1_000_000_000u64;
     let next = compute_next_base_fee(current, 1, 1);
     assert_eq!(next, current);
-}
-
-fn build_ic_tx_bytes(max_fee: u128, max_priority: u128, nonce: u64) -> Vec<u8> {
-    let to = [0u8; 20];
-    let value = [0u8; 32];
-    let gas_limit = 50_000u64.to_be_bytes();
-    let nonce = nonce.to_be_bytes();
-    let max_fee = max_fee.to_be_bytes();
-    let max_priority = max_priority.to_be_bytes();
-    let data: Vec<u8> = Vec::new();
-    let data_len = u32::try_from(data.len()).unwrap_or(0).to_be_bytes();
-    let mut out = Vec::with_capacity(1 + 20 + 32 + 8 + 8 + 16 + 16 + 4 + data.len());
-    out.push(2u8);
-    out.extend_from_slice(&to);
-    out.extend_from_slice(&value);
-    out.extend_from_slice(&gas_limit);
-    out.extend_from_slice(&nonce);
-    out.extend_from_slice(&max_fee);
-    out.extend_from_slice(&max_priority);
-    out.extend_from_slice(&data_len);
-    out.extend_from_slice(&data);
-    out
 }

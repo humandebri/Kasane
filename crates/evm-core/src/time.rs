@@ -22,6 +22,7 @@ pub(crate) fn now_sec() -> u64 {
 }
 
 #[cfg(test)]
+#[allow(dead_code)]
 pub(crate) fn set_test_now_sec(value: u64) {
     TEST_NOW_SEC.store(value, Ordering::Relaxed);
 }
