@@ -119,6 +119,28 @@ fn prune_is_idempotent() {
     assert!(second.did_work || !second.did_work);
 }
 
+#[test]
+fn recover_without_journal_advances_next_prune_block_to_boundary() {
+    init_stable_state();
+    with_state_mut(|state| {
+        let mut head = *state.head.get();
+        head.number = 50;
+        state.head.set(head);
+        let mut prune_state = *state.prune_state.get();
+        prune_state.set_pruned_before(20);
+        prune_state.next_prune_block = 1;
+        prune_state.clear_journal();
+        state.prune_state.set(prune_state);
+    });
+
+    let _ = chain::prune_blocks(40, 10).expect("recover path should succeed");
+    with_state(|state| {
+        let prune_state = *state.prune_state.get();
+        assert!(prune_state.next_prune_block >= 21);
+        assert!(prune_state.journal_block().is_none());
+    });
+}
+
 fn make_block(number: u64, tx_id: TxId) -> BlockData {
     let parent_hash = [0u8; 32];
     let number_u8 = u8::try_from(number).unwrap_or(0);

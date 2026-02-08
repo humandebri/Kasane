@@ -1303,6 +1303,8 @@ pub fn prune_blocks(retain: u64, max_ops: u32) -> Result<PruneResult, ChainError
                 .prune_journal
                 .insert(next, PruneJournal { ptrs: ptrs.clone() });
             prune_state.set_journal_block(next);
+            // WAL: persist recovery cursor before destructive deletes.
+            state.prune_state.set(prune_state);
 
             let _ = state.blocks.remove(&next);
             for tx_id in block.tx_ids.iter() {
@@ -1326,6 +1328,7 @@ pub fn prune_blocks(retain: u64, max_ops: u32) -> Result<PruneResult, ChainError
             }
             state.prune_journal.remove(&next.saturating_sub(1));
             prune_state.clear_journal();
+            state.prune_state.set(prune_state);
         }
         prune_state.next_prune_block = next;
         state.prune_state.set(prune_state);
@@ -1347,7 +1350,16 @@ fn recover_prune_journal(state: &mut evm_db::stable_state::StableState) -> Resul
     let mut prune_state = *state.prune_state.get();
     let journal_block = match prune_state.journal_block() {
         Some(value) => value,
-        None => return Ok(()),
+        None => {
+            if let Some(pruned) = prune_state.pruned_before() {
+                let min_next = pruned.saturating_add(1);
+                if prune_state.next_prune_block < min_next {
+                    prune_state.next_prune_block = min_next;
+                    state.prune_state.set(prune_state);
+                }
+            }
+            return Ok(());
+        }
     };
     if let Some(journal) = state.prune_journal.get(&journal_block) {
         if let Some(block) = load_block(state, journal_block) {
@@ -1377,6 +1389,12 @@ fn recover_prune_journal(state: &mut evm_db::stable_state::StableState) -> Resul
         state.prune_journal.remove(&journal_block);
     }
     prune_state.clear_journal();
+    if let Some(pruned) = prune_state.pruned_before() {
+        let min_next = pruned.saturating_add(1);
+        if prune_state.next_prune_block < min_next {
+            prune_state.next_prune_block = min_next;
+        }
+    }
     state.prune_state.set(prune_state);
     refresh_oldest(state);
     Ok(())
