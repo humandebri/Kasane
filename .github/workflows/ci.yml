@@ -53,8 +53,8 @@ jobs:
             --exclude-dir=target \
             --exclude-dir=vendor \
             --exclude-dir=node_modules \
-            --exclude='scripts/ci-local.sh' \
-            --exclude='docs/ops/pr0-differential-runbook.md' \
+            --exclude='ci-local.sh' \
+            --exclude='pr0-differential-runbook.md' \
             crates docs scripts README.md Cargo.toml; then
             echo "[guard] forbidden OP stack reference found"
             exit 1
