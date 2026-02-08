@@ -1,12 +1,21 @@
 //! どこで: Phase1のハッシュ規則 / 何を: tx_id/tx_list_hash/block_hash / なぜ: 決定性を保証するため
 
 use alloy_primitives::keccak256 as alloy_keccak256;
+use alloy_primitives::Keccak256;
 use evm_db::chain_data::TxKind;
 
 pub const HASH_LEN: usize = 32;
 
 pub fn keccak256(data: &[u8]) -> [u8; HASH_LEN] {
     alloy_keccak256(data).0
+}
+
+pub fn keccak256_concat_chunks(chunks: &[[u8; HASH_LEN]]) -> [u8; HASH_LEN] {
+    let mut hasher = Keccak256::new();
+    for chunk in chunks.iter() {
+        hasher.update(chunk);
+    }
+    hasher.finalize().0
 }
 
 pub fn stored_tx_id(

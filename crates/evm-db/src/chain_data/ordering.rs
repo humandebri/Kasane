@@ -8,6 +8,10 @@ use std::borrow::Cow;
 
 pub const READY_KEY_LEN: usize = 72;
 pub const READY_KEY_LEN_U32: u32 = 72;
+pub const READY_SEQ_KEY_LEN: usize = 40;
+pub const READY_SEQ_KEY_LEN_U32: u32 = 40;
+pub const PENDING_FEE_KEY_LEN: usize = 40;
+pub const PENDING_FEE_KEY_LEN_U32: u32 = 40;
 pub const SENDER_KEY_LEN: usize = 20;
 pub const SENDER_KEY_LEN_U32: u32 = 20;
 pub const SENDER_NONCE_KEY_LEN: usize = 28;
@@ -69,6 +73,98 @@ impl Storable for ReadyKey {
 
     const BOUND: Bound = Bound::Bounded {
         max_size: READY_KEY_LEN_U32,
+        is_fixed_size: true,
+    };
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
+pub struct ReadySeqKey(pub [u8; READY_SEQ_KEY_LEN]);
+
+impl ReadySeqKey {
+    pub fn new(seq: u64, tx_hash: [u8; 32]) -> Self {
+        let mut buf = [0u8; READY_SEQ_KEY_LEN];
+        buf[0..8].copy_from_slice(&seq.to_be_bytes());
+        buf[8..40].copy_from_slice(&tx_hash);
+        Self(buf)
+    }
+}
+
+impl Storable for ReadySeqKey {
+    fn to_bytes(&self) -> Cow<'_, [u8]> {
+        match encode_guarded(b"ready_seq_key", Cow::Borrowed(&self.0), READY_SEQ_KEY_LEN_U32) {
+            Ok(value) => value,
+            Err(_) => Cow::Owned(vec![0u8; READY_SEQ_KEY_LEN]),
+        }
+    }
+
+    fn into_bytes(self) -> Vec<u8> {
+        self.0.to_vec()
+    }
+
+    fn from_bytes(bytes: Cow<'_, [u8]>) -> Self {
+        let data = bytes.as_ref();
+        if data.len() != READY_SEQ_KEY_LEN {
+            mark_decode_failure(b"ready_seq_key", false);
+            return ReadySeqKey(hash_to_array(b"ready_seq_key", data));
+        }
+        let mut buf = [0u8; READY_SEQ_KEY_LEN];
+        buf.copy_from_slice(data);
+        Self(buf)
+    }
+
+    const BOUND: Bound = Bound::Bounded {
+        max_size: READY_SEQ_KEY_LEN_U32,
+        is_fixed_size: true,
+    };
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
+pub struct PendingFeeKey(pub [u8; PENDING_FEE_KEY_LEN]);
+
+impl PendingFeeKey {
+    pub fn new(effective_gas_price: u64, tx_hash: [u8; 32]) -> Self {
+        let mut buf = [0u8; PENDING_FEE_KEY_LEN];
+        buf[0..8].copy_from_slice(&effective_gas_price.to_be_bytes());
+        buf[8..40].copy_from_slice(&tx_hash);
+        Self(buf)
+    }
+
+    pub fn tx_id(self) -> [u8; 32] {
+        let mut tx = [0u8; 32];
+        tx.copy_from_slice(&self.0[8..40]);
+        tx
+    }
+}
+
+impl Storable for PendingFeeKey {
+    fn to_bytes(&self) -> Cow<'_, [u8]> {
+        match encode_guarded(
+            b"pending_fee_key",
+            Cow::Borrowed(&self.0),
+            PENDING_FEE_KEY_LEN_U32,
+        ) {
+            Ok(value) => value,
+            Err(_) => Cow::Owned(vec![0u8; PENDING_FEE_KEY_LEN]),
+        }
+    }
+
+    fn into_bytes(self) -> Vec<u8> {
+        self.0.to_vec()
+    }
+
+    fn from_bytes(bytes: Cow<'_, [u8]>) -> Self {
+        let data = bytes.as_ref();
+        if data.len() != PENDING_FEE_KEY_LEN {
+            mark_decode_failure(b"pending_fee_key", false);
+            return PendingFeeKey(hash_to_array(b"pending_fee_key", data));
+        }
+        let mut buf = [0u8; PENDING_FEE_KEY_LEN];
+        buf.copy_from_slice(data);
+        Self(buf)
+    }
+
+    const BOUND: Bound = Bound::Bounded {
+        max_size: PENDING_FEE_KEY_LEN_U32,
         is_fixed_size: true,
     };
 }

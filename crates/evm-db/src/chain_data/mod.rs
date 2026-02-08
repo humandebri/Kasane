@@ -33,7 +33,7 @@ pub use log_config::{LogConfigV1, LOG_CONFIG_FILTER_MAX};
 pub use metrics::{MetricsStateV1, MetricsWindowSummary, METRICS_BUCKETS};
 pub use ops::{OpsConfigV1, OpsMode, OpsStateV1};
 pub use ops_metrics::{OpsMetricsV1, OPS_METRICS_SIZE_U32};
-pub use ordering::{ReadyKey, SenderKey, SenderNonceKey};
+pub use ordering::{PendingFeeKey, ReadyKey, ReadySeqKey, SenderKey, SenderNonceKey};
 pub use prune_config::{PruneConfigV1, PrunePolicy};
 pub use prune_state::{PruneJournal, PruneStateV1};
 pub use queue::QueueMeta;

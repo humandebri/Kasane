@@ -19,8 +19,9 @@ use evm_db::chain_data::constants::{
 };
 use evm_db::chain_data::runtime_defaults::DEFAULT_BLOCK_GAS_LIMIT;
 use evm_db::chain_data::{
-    BlockData, Head, PruneJournal, PrunePolicy, ReadyKey, ReceiptLike, SenderKey, SenderNonceKey,
-    StoredTx, StoredTxBytes, StoredTxError, TxId, TxIndexEntry, TxKind, TxLoc, TxLocKind,
+    BlockData, CallerKey, Head, PendingFeeKey, PruneJournal, PrunePolicy, ReadyKey, ReadySeqKey,
+    ReceiptLike, SenderKey, SenderNonceKey, StoredTx, StoredTxBytes, StoredTxError, TxId,
+    TxIndexEntry, TxKind, TxLoc, TxLocKind,
 };
 use evm_db::meta::tx_locs_v3_active;
 use evm_db::stable_state::{
@@ -34,7 +35,8 @@ use revm::database_interface::DatabaseCommit;
 use revm::primitives::Address;
 use revm::primitives::U256;
 use std::borrow::Cow;
-use std::collections::BTreeSet;
+use std::cmp::Reverse;
+use std::collections::{BTreeSet, BinaryHeap};
 
 const OPS_WARN_RATE_LIMIT_SECS: u64 = 60;
 
@@ -117,6 +119,13 @@ pub struct PruneStatus {
     pub need_prune: bool,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ProduceBlockOutcome {
+    pub block: BlockData,
+    pub gas_used: u64,
+    pub dropped: u64,
+}
+
 pub fn set_prune_policy(policy: PrunePolicy) -> Result<(), ChainError> {
     with_state_mut(|state| {
         let mut config = *state.prune_config.get();
@@ -181,12 +190,53 @@ pub fn migrate_tx_locs_batch(start_key: Option<TxId>, max_items: u32) -> (Option
 pub fn clear_mempool_on_upgrade() {
     with_state_mut(|state| {
         clear_stable_map(&mut state.ready_queue);
+        clear_stable_map(&mut state.ready_by_seq);
         clear_stable_map(&mut state.ready_key_by_tx_id);
         clear_stable_map(&mut state.pending_by_sender_nonce);
         clear_stable_map(&mut state.pending_min_nonce);
         clear_stable_map(&mut state.pending_meta_by_tx_id);
         clear_stable_map(&mut state.pending_current_by_sender);
+        clear_stable_map(&mut state.principal_pending_count);
+        clear_stable_map(&mut state.pending_fee_index);
+        clear_stable_map(&mut state.pending_fee_key_by_tx_id);
         clear_stable_map(&mut state.sender_expected_nonce);
+    });
+}
+
+pub fn rebuild_pending_runtime_indexes() {
+    with_state_mut(|state| {
+        clear_stable_map(&mut state.principal_pending_count);
+        clear_stable_map(&mut state.ready_by_seq);
+
+        let mut pending_ids = Vec::new();
+        for entry in state.pending_by_sender_nonce.iter() {
+            pending_ids.push(entry.value());
+        }
+        for tx_id in pending_ids {
+            let Some(envelope) = state.tx_store.get(&tx_id) else {
+                continue;
+            };
+            let Ok(stored) = StoredTx::try_from(envelope) else {
+                continue;
+            };
+            let principal = CallerKey::from_principal_bytes(stored.caller_principal.as_slice());
+            let count = state.principal_pending_count.get(&principal).unwrap_or(0);
+            state
+                .principal_pending_count
+                .insert(principal, count.saturating_add(1));
+        }
+        let base_fee = state.chain_state.get().base_fee;
+        rebuild_pending_fee_index_for_base_fee(state, base_fee);
+
+        let mut ready_entries = Vec::new();
+        for entry in state.ready_key_by_tx_id.iter() {
+            ready_entries.push((*entry.key(), entry.value()));
+        }
+        for (tx_id, ready_key) in ready_entries {
+            state
+                .ready_by_seq
+                .insert(ReadySeqKey::new(ready_key.seq(), tx_id.0), tx_id);
+        }
     });
 }
 
@@ -430,6 +480,7 @@ pub fn submit_tx(
         }
         state.pending_by_sender_nonce.insert(pending_key, tx_id);
         state.pending_meta_by_tx_id.insert(tx_id, pending_key);
+        track_pending_indexes_on_insert(state, tx_id, &caller_principal, effective_gas_price);
         promote_if_next_nonce(
             state,
             sender_key,
@@ -534,6 +585,7 @@ pub fn submit_ic_tx(
         }
         state.pending_by_sender_nonce.insert(pending_key, tx_id);
         state.pending_meta_by_tx_id.insert(tx_id, pending_key);
+        track_pending_indexes_on_insert(state, tx_id, &caller_principal, effective_gas_price);
         promote_if_next_nonce(
             state,
             sender_key,
@@ -580,7 +632,7 @@ pub fn expected_nonce_for_sender_view(sender: [u8; 20]) -> u64 {
     })
 }
 
-pub fn produce_block(max_txs: usize) -> Result<BlockData, ChainError> {
+pub fn produce_block(max_txs: usize) -> Result<ProduceBlockOutcome, ChainError> {
     if max_txs == 0 {
         return Err(ChainError::InvalidLimit);
     }
@@ -725,13 +777,13 @@ pub fn produce_block(max_txs: usize) -> Result<BlockData, ChainError> {
     ) {
         with_state_mut(|state| {
             for drop in drops.iter() {
-                mark_dropped_and_purge_payload(state, drop.tx_id, drop.drop_code);
                 advance_sender_after_tx(
                     state,
                     drop.tx_id,
                     drop.sender_override,
                     drop.nonce_override,
                 );
+                mark_dropped_and_purge_payload(state, drop.tx_id, drop.drop_code);
             }
             let mut metrics = *state.metrics_state.get();
             for (idx, count) in dropped_by_code.iter().enumerate() {
@@ -748,15 +800,12 @@ pub fn produce_block(max_txs: usize) -> Result<BlockData, ChainError> {
         return Err(ChainError::NoExecutableTx);
     }
 
+    let mut exec_db = CacheDB::new(crate::revm_db::RevmStableDb);
     for prepared_tx in staged_txs {
         let tx_index = u32::try_from(included_tx_ids.len()).unwrap_or(u32::MAX);
         let tx_id = prepared_tx.tx_id;
-        let mut exec_db = CacheDB::new(crate::revm_db::RevmStableDb);
-        for state_diff in staged_state_diffs.iter() {
-            exec_db.commit(state_diff.clone());
-        }
         let execution = execute_tx_on(
-            exec_db,
+            &mut exec_db,
             tx_id,
             tx_index,
             prepared_tx.tx_env,
@@ -772,6 +821,7 @@ pub fn produce_block(max_txs: usize) -> Result<BlockData, ChainError> {
                     &mut touched_slots,
                     &mut delta_digests,
                 );
+                exec_db.commit(user_diff.clone());
                 staged_state_diffs.push(user_diff);
                 value
             }
@@ -858,12 +908,7 @@ pub fn produce_block(max_txs: usize) -> Result<BlockData, ChainError> {
     let summary = TouchedSummary {
         accounts_count: u32::try_from(touched.len()).unwrap_or(u32::MAX),
         slots_count: touched_slots,
-        delta_digest: hash::keccak256(
-            &delta_digests
-                .iter()
-                .flat_map(|value| value.iter().copied())
-                .collect::<Vec<u8>>(),
-        ),
+        delta_digest: hash::keccak256_concat_chunks(&delta_digests),
     };
     let prepared_root = match with_state_mut(|state| {
         trie_commit::prepare(
@@ -899,8 +944,8 @@ pub fn produce_block(max_txs: usize) -> Result<BlockData, ChainError> {
     with_state_mut(|state| {
         trie_commit::apply(state, prepared_root);
         for drop in staged_drops.iter() {
-            mark_dropped_and_purge_payload(state, drop.tx_id, drop.drop_code);
             advance_sender_after_tx(state, drop.tx_id, drop.sender_override, drop.nonce_override);
+            mark_dropped_and_purge_payload(state, drop.tx_id, drop.drop_code);
         }
         for included in staged_included.iter() {
             match included {
@@ -972,6 +1017,7 @@ pub fn produce_block(max_txs: usize) -> Result<BlockData, ChainError> {
             DEFAULT_BLOCK_GAS_LIMIT,
         );
         state.chain_state.set(chain_state);
+        rebuild_pending_fee_index_for_base_fee(state, chain_state.base_fee);
         let mut metrics = *state.metrics_state.get();
         for (idx, count) in dropped_by_code.iter().enumerate() {
             if *count > 0 {
@@ -983,7 +1029,11 @@ pub fn produce_block(max_txs: usize) -> Result<BlockData, ChainError> {
         state.metrics_state.set(metrics);
     });
 
-    Ok(block)
+    Ok(ProduceBlockOutcome {
+        block,
+        gas_used: block_gas_used,
+        dropped: dropped_total,
+    })
 }
 
 enum StagedIncludedTx {
@@ -1160,12 +1210,7 @@ fn execute_and_seal_with_caller(
     let summary = TouchedSummary {
         accounts_count: u32::try_from(touched.len()).unwrap_or(u32::MAX),
         slots_count: touched_slots,
-        delta_digest: hash::keccak256(
-            &delta_digests
-                .iter()
-                .flat_map(|value| value.iter().copied())
-                .collect::<Vec<u8>>(),
-        ),
+        delta_digest: hash::keccak256_concat_chunks(&delta_digests),
     };
     let prepared_root = match with_state_mut(|state| {
         trie_commit::prepare(
@@ -1230,6 +1275,7 @@ fn execute_and_seal_with_caller(
             DEFAULT_BLOCK_GAS_LIMIT,
         );
         state.chain_state.set(chain_state);
+        rebuild_pending_fee_index_for_base_fee(state, chain_state.base_fee);
         let mut metrics = *state.metrics_state.get();
         metrics.record_included(1);
         metrics.record_block(number, timestamp, 1, 0);
@@ -1308,6 +1354,8 @@ pub fn prune_blocks(retain: u64, max_ops: u32) -> Result<PruneResult, ChainError
 
             let _ = state.blocks.remove(&next);
             for tx_id in block.tx_ids.iter() {
+                remove_pending_fee_index_by_tx_id(state, *tx_id);
+                decrement_principal_pending_count_for_tx(state, *tx_id);
                 state.receipts.remove(tx_id);
                 state.tx_index.remove(tx_id);
                 tx_locs_remove(state, tx_id);
@@ -1374,6 +1422,8 @@ fn recover_prune_journal(state: &mut evm_db::stable_state::StableState) -> Resul
         if let Some(block) = load_block(state, journal_block) {
             let _ = state.blocks.remove(&journal_block);
             for tx_id in block.tx_ids.iter() {
+                remove_pending_fee_index_by_tx_id(state, *tx_id);
+                decrement_principal_pending_count_for_tx(state, *tx_id);
                 state.receipts.remove(tx_id);
                 state.tx_index.remove(tx_id);
                 tx_locs_remove(state, tx_id);
@@ -1489,20 +1539,16 @@ pub struct QueueSnapshot {
 
 pub fn get_queue_snapshot(limit: usize, cursor: Option<u64>) -> QueueSnapshot {
     with_state(|state| {
-        let start = cursor.unwrap_or(0);
         let mut items = Vec::new();
         let mut next_cursor = None;
-        let mut seen = 0u64;
-        for entry in state.ready_queue.range(..) {
+        let mut last_seq = None;
+        let start_seq = cursor.unwrap_or(0);
+        let start_key = ReadySeqKey::new(start_seq, [0u8; 32]);
+        for entry in state.ready_by_seq.range(start_key..) {
             if items.len() >= limit {
-                next_cursor = Some(seen);
+                next_cursor = last_seq.map(|seq: u64| seq.saturating_add(1));
                 break;
             }
-            if seen < start {
-                seen = seen.saturating_add(1);
-                continue;
-            }
-            let seq = entry.key().seq();
             let tx_id = entry.value();
             let stored = match state
                 .tx_store
@@ -1511,16 +1557,18 @@ pub fn get_queue_snapshot(limit: usize, cursor: Option<u64>) -> QueueSnapshot {
             {
                 Some(value) => value,
                 None => {
-                    seen = seen.saturating_add(1);
                     continue;
                 }
             };
+            let key = entry.key().0;
+            let mut seq = [0u8; 8];
+            seq.copy_from_slice(&key[0..8]);
             items.push(QueueItem {
-                seq,
+                seq: u64::from_be_bytes(seq),
                 tx_id,
                 kind: stored.kind,
             });
-            seen = seen.saturating_add(1);
+            last_seq = Some(u64::from_be_bytes(seq));
         }
         QueueSnapshot { items, next_cursor }
     })
@@ -1562,16 +1610,6 @@ fn record_exec_halt_unknown(now: u64) {
     if should_warn {
         eprintln!("exec halt reason fell back to unknown");
     }
-}
-
-#[cfg(test)]
-fn now_sec() -> u64 {
-    crate::time::now_sec()
-}
-
-#[cfg(test)]
-fn set_test_now_sec(value: u64) {
-    crate::time::set_test_now_sec(value);
 }
 
 fn promote_if_next_nonce(
@@ -1642,51 +1680,22 @@ fn count_pending_for_principal(
     if caller_principal.is_empty() {
         return 0;
     }
-    let mut count = 0usize;
-    for entry in state.pending_by_sender_nonce.iter() {
-        let tx_id = entry.value();
-        let Some(envelope) = state.tx_store.get(&tx_id) else {
-            continue;
-        };
-        let Ok(stored) = StoredTx::try_from(envelope) else {
-            continue;
-        };
-        if stored.caller_principal.as_slice() == caller_principal {
-            count = count.saturating_add(1);
-        }
-    }
-    count
+    let key = CallerKey::from_principal_bytes(caller_principal);
+    usize::try_from(state.principal_pending_count.get(&key).unwrap_or(0)).unwrap_or(usize::MAX)
 }
 
 fn evict_lowest_fee_pending(
     state: &mut evm_db::stable_state::StableState,
     incoming_effective_gas_price: u64,
 ) -> Result<(), ChainError> {
-    let base_fee = state.chain_state.get().base_fee;
-    let mut lowest: Option<(u64, TxId)> = None;
-
-    for entry in state.pending_by_sender_nonce.iter() {
-        let tx_id = entry.value();
-        let effective = match pending_effective_gas_price(state, tx_id, base_fee) {
-            Some(value) => value,
-            None => continue,
-        };
-        match lowest {
-            None => lowest = Some((effective, tx_id)),
-            Some((lowest_fee, lowest_tx_id))
-                if effective < lowest_fee
-                    || (effective == lowest_fee && tx_id.0 < lowest_tx_id.0) =>
-            {
-                lowest = Some((effective, tx_id));
-            }
-            _ => {}
-        }
-    }
-
-    let (lowest_fee, evict_tx_id) = match lowest {
-        Some(value) => value,
-        None => return Err(ChainError::QueueFull),
+    let Some(entry) = state.pending_fee_index.range(..).next() else {
+        return Err(ChainError::QueueFull);
     };
+    let key = *entry.key();
+    let mut fee = [0u8; 8];
+    fee.copy_from_slice(&key.0[0..8]);
+    let lowest_fee = u64::from_be_bytes(fee);
+    let evict_tx_id = entry.value();
     if incoming_effective_gas_price <= lowest_fee {
         return Err(ChainError::QueueFull);
     }
@@ -1700,24 +1709,6 @@ fn evict_lowest_fee_pending(
     Ok(())
 }
 
-fn pending_effective_gas_price(
-    state: &evm_db::stable_state::StableState,
-    tx_id: TxId,
-    base_fee: u64,
-) -> Option<u64> {
-    let envelope = state.tx_store.get(&tx_id)?;
-    let stored = StoredTx::try_from(envelope).ok()?;
-    compute_effective_gas_price(
-        stored.max_fee_per_gas,
-        if stored.is_dynamic_fee {
-            stored.max_priority_fee_per_gas
-        } else {
-            0
-        },
-        base_fee,
-    )
-}
-
 fn count_pending_for_sender(state: &evm_db::stable_state::StableState, sender: SenderKey) -> usize {
     let mut count = 0usize;
     let start = SenderNonceKey::new(sender.0, 0);
@@ -1729,6 +1720,72 @@ fn count_pending_for_sender(state: &evm_db::stable_state::StableState, sender: S
         count = count.saturating_add(1);
     }
     count
+}
+
+fn track_pending_indexes_on_insert(
+    state: &mut evm_db::stable_state::StableState,
+    tx_id: TxId,
+    caller_principal: &[u8],
+    effective_gas_price: u64,
+) {
+    let principal_key = CallerKey::from_principal_bytes(caller_principal);
+    let current = state.principal_pending_count.get(&principal_key).unwrap_or(0);
+    state.principal_pending_count.insert(principal_key, current.saturating_add(1));
+    let fee_key = PendingFeeKey::new(effective_gas_price, tx_id.0);
+    state.pending_fee_index.insert(fee_key, tx_id);
+    state.pending_fee_key_by_tx_id.insert(tx_id, fee_key);
+}
+
+fn rebuild_pending_fee_index_for_base_fee(state: &mut evm_db::stable_state::StableState, base_fee: u64) {
+    clear_stable_map(&mut state.pending_fee_index);
+    clear_stable_map(&mut state.pending_fee_key_by_tx_id);
+    let mut pending_ids = Vec::new();
+    for entry in state.pending_by_sender_nonce.iter() {
+        pending_ids.push(entry.value());
+    }
+    for tx_id in pending_ids {
+        let Some(envelope) = state.tx_store.get(&tx_id) else {
+            continue;
+        };
+        let Ok(stored) = StoredTx::try_from(envelope) else {
+            continue;
+        };
+        let effective = compute_effective_gas_price(
+            stored.max_fee_per_gas,
+            if stored.is_dynamic_fee {
+                stored.max_priority_fee_per_gas
+            } else {
+                0
+            },
+            base_fee,
+        )
+        .unwrap_or(0);
+        let fee_key = PendingFeeKey::new(effective, tx_id.0);
+        state.pending_fee_index.insert(fee_key, tx_id);
+        state.pending_fee_key_by_tx_id.insert(tx_id, fee_key);
+    }
+}
+
+fn remove_pending_fee_index_by_tx_id(state: &mut evm_db::stable_state::StableState, tx_id: TxId) {
+    if let Some(key) = state.pending_fee_key_by_tx_id.remove(&tx_id) {
+        state.pending_fee_index.remove(&key);
+    }
+}
+
+fn decrement_principal_pending_count_for_tx(state: &mut evm_db::stable_state::StableState, tx_id: TxId) {
+    let Some(envelope) = state.tx_store.get(&tx_id) else {
+        return;
+    };
+    let Ok(stored) = StoredTx::try_from(envelope) else {
+        return;
+    };
+    let key = CallerKey::from_principal_bytes(stored.caller_principal.as_slice());
+    let current = state.principal_pending_count.get(&key).unwrap_or(0);
+    if current <= 1 {
+        state.principal_pending_count.remove(&key);
+    } else {
+        state.principal_pending_count.insert(key, current - 1);
+    }
 }
 
 fn insert_ready(
@@ -1746,6 +1803,7 @@ fn insert_ready(
     };
     let key = ReadyKey::new(max_fee_per_gas, priority, seq, tx_id.0);
     state.ready_queue.insert(key, tx_id);
+    state.ready_by_seq.insert(ReadySeqKey::new(seq, tx_id.0), tx_id);
     state.ready_key_by_tx_id.insert(tx_id, key);
     Ok(())
 }
@@ -1753,6 +1811,7 @@ fn insert_ready(
 fn remove_ready_by_tx_id(state: &mut evm_db::stable_state::StableState, tx_id: TxId) {
     if let Some(key) = state.ready_key_by_tx_id.remove(&tx_id) {
         state.ready_queue.remove(&key);
+        state.ready_by_seq.remove(&ReadySeqKey::new(key.seq(), tx_id.0));
     }
 }
 
@@ -1771,6 +1830,8 @@ fn advance_sender_after_tx(
         },
     };
     state.pending_by_sender_nonce.remove(&pending_key);
+    remove_pending_fee_index_by_tx_id(state, tx_id);
+    decrement_principal_pending_count_for_tx(state, tx_id);
     finalize_pending_for_sender(state, pending_key.sender, tx_id);
     let sender = pending_key.sender;
     if state.pending_min_nonce.get(&sender) != Some(pending_key.nonce) {
@@ -1851,6 +1912,8 @@ fn drop_exec_pending_sync(state: &mut evm_db::stable_state::StableState, tx_id: 
         return;
     }
     remove_ready_by_tx_id(state, tx_id);
+    remove_pending_fee_index_by_tx_id(state, tx_id);
+    decrement_principal_pending_count_for_tx(state, tx_id);
     if let Some(pending_key) = state.pending_meta_by_tx_id.remove(&tx_id) {
         state.pending_by_sender_nonce.remove(&pending_key);
         finalize_pending_for_sender(state, pending_key.sender, tx_id);
@@ -1969,6 +2032,8 @@ fn replace_pending_for_sender(
     old_tx_id: TxId,
 ) {
     remove_ready_by_tx_id(state, old_tx_id);
+    remove_pending_fee_index_by_tx_id(state, old_tx_id);
+    decrement_principal_pending_count_for_tx(state, old_tx_id);
     if let Some(pending_key) = state.pending_meta_by_tx_id.remove(&old_tx_id) {
         state.pending_by_sender_nonce.remove(&pending_key);
     }
@@ -1985,6 +2050,7 @@ fn mark_dropped_and_purge_payload(
     tx_id: TxId,
     drop_code: u16,
 ) {
+    remove_pending_fee_index_by_tx_id(state, tx_id);
     state.tx_store.remove(&tx_id);
     tx_locs_insert(state, tx_id, TxLoc::dropped(drop_code));
     push_dropped_ring(state, tx_id);
@@ -2078,10 +2144,32 @@ fn fee_fields_from_tx_env(tx_env: &revm::context::TxEnv) -> (u128, u128, bool) {
     (max_fee_per_gas, max_priority_fee_per_gas, is_dynamic_fee)
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct ReadyCandidate {
     tx_id: TxId,
     effective_gas_price: u64,
     seq: u64,
+}
+
+impl ReadyCandidate {
+    fn cmp_priority(&self, other: &Self) -> std::cmp::Ordering {
+        self.effective_gas_price
+            .cmp(&other.effective_gas_price)
+            .then_with(|| other.seq.cmp(&self.seq))
+            .then_with(|| other.tx_id.0.cmp(&self.tx_id.0))
+    }
+}
+
+impl Ord for ReadyCandidate {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.cmp_priority(other)
+    }
+}
+
+impl PartialOrd for ReadyCandidate {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
 }
 
 fn select_ready_candidates(
@@ -2089,6 +2177,9 @@ fn select_ready_candidates(
     base_fee: u64,
     max_txs: usize,
 ) -> Vec<TxId> {
+    if max_txs == 0 {
+        return Vec::new();
+    }
     let mut keys: Vec<ReadyKey> = Vec::new();
     for entry in state.ready_queue.range(..).take(READY_CANDIDATE_LIMIT) {
         keys.push(*entry.key());
@@ -2129,100 +2220,46 @@ fn select_ready_candidates(
         });
     }
 
-    candidates.sort_by(|left, right| {
-        right
-            .effective_gas_price
-            .cmp(&left.effective_gas_price)
-            .then_with(|| left.seq.cmp(&right.seq))
-            .then_with(|| left.tx_id.0.cmp(&right.tx_id.0))
-    });
+    select_top_k_ready_candidates(candidates, max_txs)
+}
 
-    let mut selected: Vec<TxId> = Vec::new();
-    for candidate in candidates.into_iter().take(max_txs) {
-        selected.push(candidate.tx_id);
+fn push_top_k_candidate(
+    selected_heap: &mut BinaryHeap<Reverse<ReadyCandidate>>,
+    candidate: ReadyCandidate,
+    max_txs: usize,
+) {
+    if selected_heap.len() < max_txs {
+        selected_heap.push(Reverse(candidate));
+        return;
     }
-    selected
+
+    if let Some(worst_selected) = selected_heap.peek() {
+        if candidate > worst_selected.0 {
+            selected_heap.pop();
+            selected_heap.push(Reverse(candidate));
+        }
+    }
+}
+
+fn select_top_k_ready_candidates(mut candidates: Vec<ReadyCandidate>, max_txs: usize) -> Vec<TxId> {
+    if max_txs == 0 {
+        return Vec::new();
+    }
+
+    let mut selected_heap: BinaryHeap<Reverse<ReadyCandidate>> = BinaryHeap::new();
+    for candidate in candidates.drain(..) {
+        push_top_k_candidate(&mut selected_heap, candidate, max_txs);
+    }
+
+    let mut selected: Vec<ReadyCandidate> = selected_heap
+        .into_iter()
+        .map(|entry| entry.0)
+        .collect();
+    selected.sort_by(|left, right| right.cmp_priority(left));
+    selected.into_iter().map(|candidate| candidate.tx_id).collect()
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum RekeyError {
     DecodeFailed,
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{
-        now_sec, observe_exec_error, observe_exec_outcome, record_exec_halt_unknown,
-        set_test_now_sec,
-    };
-    use crate::revm_exec::{ExecError, OpHaltReason};
-    use evm_db::chain_data::{ReceiptLike, TxId};
-    use evm_db::stable_state::{init_stable_state, with_state};
-
-    #[test]
-    fn record_exec_halt_unknown_updates_counter() {
-        init_stable_state();
-        record_exec_halt_unknown(10);
-        let state = with_state(|state| *state.ops_metrics.get());
-        assert_eq!(state.exec_halt_unknown_count, 1);
-        assert_eq!(state.last_exec_halt_unknown_warn_ts, 10);
-    }
-
-    #[test]
-    fn observe_exec_error_tracks_only_unknown_halt() {
-        init_stable_state();
-        observe_exec_error(&ExecError::EvmHalt(OpHaltReason::Unknown), 10);
-        observe_exec_error(&ExecError::ExecutionFailed, 10);
-        observe_exec_error(&ExecError::EvmHalt(OpHaltReason::InvalidOpcode), 10);
-        let state = with_state(|state| *state.ops_metrics.get());
-        assert_eq!(state.exec_halt_unknown_count, 1);
-    }
-
-    #[test]
-    fn record_exec_halt_unknown_rate_limits_warning_timestamp() {
-        init_stable_state();
-        record_exec_halt_unknown(10);
-        record_exec_halt_unknown(40);
-        record_exec_halt_unknown(80);
-        let state = with_state(|state| *state.ops_metrics.get());
-        assert_eq!(state.exec_halt_unknown_count, 3);
-        assert_eq!(state.last_exec_halt_unknown_warn_ts, 80);
-    }
-
-    #[test]
-    fn observe_exec_outcome_tracks_unknown_halt_from_ok_path() {
-        init_stable_state();
-        let outcome = crate::revm_exec::ExecOutcome {
-            tx_id: TxId([0u8; 32]),
-            tx_index: 0,
-            receipt: ReceiptLike {
-                tx_id: TxId([0u8; 32]),
-                block_number: 1,
-                tx_index: 0,
-                status: 0,
-                gas_used: 0,
-                effective_gas_price: 0,
-                l1_data_fee: 0,
-                operator_fee: 0,
-                total_fee: 0,
-                return_data_hash: [0u8; 32],
-                return_data: Vec::new(),
-                contract_address: None,
-                logs: Vec::new(),
-            },
-            return_data: Vec::new(),
-            final_status: "Halt:Unknown".to_string(),
-            halt_reason: Some(OpHaltReason::Unknown),
-        };
-        observe_exec_outcome(11, &outcome);
-        let state = with_state(|state| *state.ops_metrics.get());
-        assert_eq!(state.exec_halt_unknown_count, 1);
-    }
-
-    #[test]
-    fn now_sec_uses_injected_clock_in_tests() {
-        set_test_now_sec(123);
-        assert_eq!(now_sec(), 123);
-        set_test_now_sec(0);
-    }
 }

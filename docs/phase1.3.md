@@ -1,5 +1,13 @@
 A) 最低ガス代要求（inclusion policy）
 
+## 追補（任意最適化の実装メモ）
+
+- `tools/indexer/src/archiver.ts` の原子的書き込みは `write-file-atomic` に統一。
+  既存の「既存ファイル再利用」分岐は維持し、重複投入時の挙動互換を保つ。
+- `crates/evm-core/src/chain.rs` の `select_ready_candidates` は
+  全件 `sort` から `BinaryHeap` による上位K抽出へ変更。
+  返却前に従来と同一ルール（fee desc / seq asc / tx_id asc）で確定整列する。
+
 ## 1) 単位・型・算術（最初に固定）
 
 単位は **wei 固定**（gwei は UI/運用表示だけ）。
@@ -357,7 +365,7 @@ sender A の nonce 0/2 があっても nonce 2 は ready に上がらない（no
 
 base_fee/min_tip を満たさない 1559 が確実に drop（コード一致）
 
-queue_snapshot の cursor は **seq ではなく offset**（ready_queue の先頭からの件数）で扱う。
+queue_snapshot の cursor は **offset ではなく seq**（exclusive）で扱う。
 
 legacy の gas_price < min は submit で reject
 
