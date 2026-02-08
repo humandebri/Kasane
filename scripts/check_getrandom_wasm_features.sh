@@ -6,7 +6,11 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT_DIR"
 
-TREE_OUTPUT="$(cargo tree -p ic-evm-wrapper -i getrandom@0.2.17 --target wasm32-unknown-unknown -e features || true)"
+if ! TREE_OUTPUT="$(cargo tree -p ic-evm-wrapper -i getrandom@0.2.17 --target wasm32-unknown-unknown -e features 2>&1)"; then
+  echo "ERROR: failed to resolve wasm dependency graph for getrandom check."
+  echo "$TREE_OUTPUT"
+  exit 1
+fi
 
 if [[ -z "$TREE_OUTPUT" ]]; then
   echo "ERROR: getrandom@0.2.17 is not present in wasm dependency graph."
