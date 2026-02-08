@@ -49,8 +49,6 @@ export async function runWorkerWithDeps(
   let stopRequested = false;
   let lastPruneStatusAt = 0;
   let lastSizeDay: number | null = null;
-  let lastSqliteBytes = 0;
-  let lastArchiveBytes = 0;
 
   setupSignalHandlers(config.chainId, () => {
     stopRequested = true;
