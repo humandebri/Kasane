@@ -28,6 +28,7 @@ alloy-consensus = { version = "1.5.2", default-features = false, features = ["st
 alloy-trie = { version = "0.9.3", default-features = false, features = ["std", "ethereum"] }
 alloy-signer = { version = "1.5.2", default-features = false, optional = true }
 alloy-signer-local = { version = "1.5.2", default-features = false, optional = true }
+byteorder = "1"
 
 [dependencies.evm_db]
 package = "evm-db"

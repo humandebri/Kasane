@@ -1769,6 +1769,7 @@ dependencies = [
  "alloy-signer",
  "alloy-signer-local",
  "alloy-trie",
+ "byteorder",
  "candid",
  "evm-db",
  "hex",

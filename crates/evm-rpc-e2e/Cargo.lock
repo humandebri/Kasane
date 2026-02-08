@@ -1802,6 +1802,7 @@ dependencies = [
  "alloy-primitives",
  "alloy-rlp",
  "alloy-trie",
+ "byteorder",
  "candid",
  "evm-db",
  "hex",
