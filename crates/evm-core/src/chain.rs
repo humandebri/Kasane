@@ -9,7 +9,7 @@ use crate::revm_exec::{
 };
 use crate::state_root::TouchedSummary;
 use crate::trie_commit;
-use crate::tx_decode::decode_tx;
+use crate::tx_decode::{decode_ic_synthetic_header_trusted_size, decode_tx};
 use crate::tx_submit;
 use evm_db::chain_data::constants::{
     DEFAULT_BLOCK_GAS_LIMIT, DROPPED_RING_CAPACITY, DROP_CODE_CALLER_MISSING, DROP_CODE_DECODE,
@@ -443,8 +443,6 @@ pub fn submit_ic_tx(
         }
         let caller_evm = hash::caller_evm_from_principal(&caller_principal);
         let sender_key = SenderKey::new(caller_evm);
-        let tx_env = decode_tx(TxKind::IcSynthetic, Address::from(caller_evm), &tx_bytes)
-            .map_err(|_| ChainError::DecodeFailed)?;
         let tx_id = TxId(hash::stored_tx_id(
             TxKind::IcSynthetic,
             &tx_bytes,
@@ -455,8 +453,12 @@ pub fn submit_ic_tx(
         if state.seen_tx.get(&tx_id).is_some() {
             return Err(ChainError::TxAlreadySeen);
         }
-        let (max_fee_per_gas, max_priority_fee_per_gas, is_dynamic_fee) =
-            fee_fields_from_tx_env(&tx_env);
+        let header = decode_ic_synthetic_header_trusted_size(&tx_bytes)
+            .map_err(|_| ChainError::DecodeFailed)?;
+        let nonce = header.nonce;
+        let max_fee_per_gas = header.max_fee;
+        let max_priority_fee_per_gas = header.max_priority;
+        let is_dynamic_fee = true;
         let envelope = StoredTxBytes::new_with_fees(
             tx_id,
             TxKind::IcSynthetic,
@@ -472,7 +474,13 @@ pub fn submit_ic_tx(
         let base_fee = chain_state.base_fee;
         let min_gas_price = chain_state.min_gas_price;
         let min_priority_fee = chain_state.min_priority_fee;
-        if !min_fee_satisfied(&tx_env, base_fee, min_priority_fee, min_gas_price) {
+        if !min_fee_satisfied_fields(
+            max_fee_per_gas,
+            Some(max_priority_fee_per_gas),
+            base_fee,
+            min_priority_fee,
+            min_gas_price,
+        ) {
             return Err(ChainError::InvalidFee);
         }
         let effective_gas_price = compute_effective_gas_price(
@@ -485,13 +493,8 @@ pub fn submit_ic_tx(
             base_fee,
         )
         .ok_or(ChainError::InvalidFee)?;
-        let replaced = apply_nonce_and_replacement(
-            state,
-            sender_key,
-            tx_env.nonce,
-            effective_gas_price,
-            base_fee,
-        )?;
+        let replaced =
+            apply_nonce_and_replacement(state, sender_key, nonce, effective_gas_price, base_fee)?;
         if replaced.is_none() {
             enforce_pending_caps(state, sender_key)?;
         }
@@ -508,8 +511,7 @@ pub fn submit_ic_tx(
         let mut chain_state = *state.chain_state.get();
         chain_state.next_queue_seq = meta.tail;
         state.chain_state.set(chain_state);
-        let sender_key = SenderKey::new(address_to_bytes(tx_env.caller));
-        let pending_key = SenderNonceKey::new(sender_key.0, tx_env.nonce);
+        let pending_key = SenderNonceKey::new(sender_key.0, nonce);
         if state.pending_by_sender_nonce.get(&pending_key).is_some() {
             return Err(ChainError::NonceConflict);
         }
@@ -519,7 +521,7 @@ pub fn submit_ic_tx(
             state,
             sender_key,
             tx_id,
-            tx_env.nonce,
+            nonce,
             max_fee_per_gas,
             max_priority_fee_per_gas,
             is_dynamic_fee,
@@ -1907,17 +1909,32 @@ fn min_fee_satisfied(
     min_priority_fee: u64,
     min_gas_price: u64,
 ) -> bool {
-    if let Some(priority) = tx_env.gas_priority_fee {
+    min_fee_satisfied_fields(
+        tx_env.gas_price,
+        tx_env.gas_priority_fee,
+        base_fee,
+        min_priority_fee,
+        min_gas_price,
+    )
+}
+
+fn min_fee_satisfied_fields(
+    gas_price: u128,
+    gas_priority_fee: Option<u128>,
+    base_fee: u64,
+    min_priority_fee: u64,
+    min_gas_price: u64,
+) -> bool {
+    if let Some(priority) = gas_priority_fee {
         let min_priority_fee = u128::from(min_priority_fee);
         if priority < min_priority_fee {
             return false;
         }
         let base_fee = u128::from(base_fee);
         let base_plus_min = base_fee.saturating_add(min_priority_fee);
-        let max_fee = tx_env.gas_price;
-        max_fee >= base_fee && max_fee >= base_plus_min
+        gas_price >= base_fee && gas_price >= base_plus_min
     } else {
-        tx_env.gas_price >= u128::from(min_gas_price)
+        gas_price >= u128::from(min_gas_price)
     }
 }
 
