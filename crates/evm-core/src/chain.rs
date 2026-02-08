@@ -14,7 +14,8 @@ use crate::tx_submit;
 use evm_db::chain_data::constants::{
     DROPPED_RING_CAPACITY, DROP_CODE_CALLER_MISSING, DROP_CODE_DECODE, DROP_CODE_EXEC,
     DROP_CODE_INVALID_FEE, DROP_CODE_MISSING, DROP_CODE_REPLACED, DROP_CODE_RESULT_TOO_LARGE,
-    MAX_PENDING_GLOBAL, MAX_PENDING_PER_SENDER, MAX_TX_SIZE, READY_CANDIDATE_LIMIT,
+    MAX_PENDING_GLOBAL, MAX_PENDING_PER_PRINCIPAL, MAX_PENDING_PER_SENDER, MAX_TX_SIZE,
+    READY_CANDIDATE_LIMIT,
 };
 use evm_db::chain_data::runtime_defaults::DEFAULT_BLOCK_GAS_LIMIT;
 use evm_db::chain_data::{
@@ -51,6 +52,7 @@ pub enum ChainError {
     NonceConflict,
     QueueFull,
     SenderQueueFull,
+    PrincipalQueueFull,
     ExecFailed(Option<ExecError>),
     InvariantViolation(String),
     NoExecutableTx,
@@ -70,7 +72,10 @@ pub struct ExecResult {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum TxIn {
-    EthSigned(Vec<u8>),
+    EthSigned {
+        tx_bytes: Vec<u8>,
+        caller_principal: Vec<u8>,
+    },
     IcSynthetic {
         caller_principal: Vec<u8>,
         canister_id: Vec<u8>,
@@ -80,7 +85,10 @@ pub enum TxIn {
 
 pub fn submit_tx_in(tx_in: TxIn) -> Result<TxId, ChainError> {
     match tx_in {
-        TxIn::EthSigned(raw) => submit_tx(TxKind::EthSigned, raw),
+        TxIn::EthSigned {
+            tx_bytes,
+            caller_principal,
+        } => submit_tx(TxKind::EthSigned, tx_bytes, caller_principal),
         TxIn::IcSynthetic {
             caller_principal,
             canister_id,
@@ -346,7 +354,11 @@ fn find_block_at_timestamp(state: &StableState, cutoff_ts: u64) -> Option<(u64, 
     best
 }
 
-pub fn submit_tx(kind: TxKind, tx_bytes: Vec<u8>) -> Result<TxId, ChainError> {
+pub fn submit_tx(
+    kind: TxKind,
+    tx_bytes: Vec<u8>,
+    caller_principal: Vec<u8>,
+) -> Result<TxId, ChainError> {
     let tx_id = TxId(hash::stored_tx_id(kind, &tx_bytes, None, None, None));
     with_state_mut(|state| {
         if tx_bytes.len() > MAX_TX_SIZE {
@@ -366,7 +378,7 @@ pub fn submit_tx(kind: TxKind, tx_bytes: Vec<u8>) -> Result<TxId, ChainError> {
             tx_bytes,
             caller_evm,
             Vec::new(),
-            Vec::new(),
+            caller_principal.clone(),
             max_fee_per_gas,
             max_priority_fee_per_gas,
             is_dynamic_fee,
@@ -397,7 +409,7 @@ pub fn submit_tx(kind: TxKind, tx_bytes: Vec<u8>) -> Result<TxId, ChainError> {
             base_fee,
         )?;
         if replaced.is_none() {
-            enforce_pending_caps(state, sender_key)?;
+            enforce_pending_caps(state, sender_key, &caller_principal, effective_gas_price)?;
         }
         state.seen_tx.insert(tx_id, 1);
         state.tx_store.insert(tx_id, envelope);
@@ -465,7 +477,7 @@ pub fn submit_ic_tx(
             tx_bytes,
             Some(caller_evm),
             canister_id,
-            caller_principal,
+            caller_principal.clone(),
             max_fee_per_gas,
             max_priority_fee_per_gas,
             is_dynamic_fee,
@@ -496,7 +508,12 @@ pub fn submit_ic_tx(
         let replaced =
             apply_nonce_and_replacement(state, sender_key, nonce, effective_gas_price, base_fee)?;
         if replaced.is_none() {
-            enforce_pending_caps(state, sender_key)?;
+            enforce_pending_caps(
+                state,
+                sender_key,
+                caller_principal.as_slice(),
+                effective_gas_price,
+            )?;
         }
         state.seen_tx.insert(tx_id, 1);
         state.tx_store.insert(tx_id, envelope);
@@ -1286,6 +1303,8 @@ pub fn prune_blocks(retain: u64, max_ops: u32) -> Result<PruneResult, ChainError
                 .prune_journal
                 .insert(next, PruneJournal { ptrs: ptrs.clone() });
             prune_state.set_journal_block(next);
+            // WAL: persist recovery cursor before destructive deletes.
+            state.prune_state.set(prune_state);
 
             let _ = state.blocks.remove(&next);
             for tx_id in block.tx_ids.iter() {
@@ -1309,6 +1328,7 @@ pub fn prune_blocks(retain: u64, max_ops: u32) -> Result<PruneResult, ChainError
             }
             state.prune_journal.remove(&next.saturating_sub(1));
             prune_state.clear_journal();
+            state.prune_state.set(prune_state);
         }
         prune_state.next_prune_block = next;
         state.prune_state.set(prune_state);
@@ -1330,7 +1350,16 @@ fn recover_prune_journal(state: &mut evm_db::stable_state::StableState) -> Resul
     let mut prune_state = *state.prune_state.get();
     let journal_block = match prune_state.journal_block() {
         Some(value) => value,
-        None => return Ok(()),
+        None => {
+            if let Some(pruned) = prune_state.pruned_before() {
+                let min_next = pruned.saturating_add(1);
+                if prune_state.next_prune_block < min_next {
+                    prune_state.next_prune_block = min_next;
+                    state.prune_state.set(prune_state);
+                }
+            }
+            return Ok(());
+        }
     };
     if let Some(journal) = state.prune_journal.get(&journal_block) {
         if let Some(block) = load_block(state, journal_block) {
@@ -1360,6 +1389,12 @@ fn recover_prune_journal(state: &mut evm_db::stable_state::StableState) -> Resul
         state.prune_journal.remove(&journal_block);
     }
     prune_state.clear_journal();
+    if let Some(pruned) = prune_state.pruned_before() {
+        let min_next = pruned.saturating_add(1);
+        if prune_state.next_prune_block < min_next {
+            prune_state.next_prune_block = min_next;
+        }
+    }
     state.prune_state.set(prune_state);
     refresh_oldest(state);
     Ok(())
@@ -1574,16 +1609,104 @@ fn promote_if_next_nonce(
 }
 
 fn enforce_pending_caps(
-    state: &evm_db::stable_state::StableState,
+    state: &mut evm_db::stable_state::StableState,
     sender: SenderKey,
+    caller_principal: &[u8],
+    incoming_effective_gas_price: u64,
 ) -> Result<(), ChainError> {
-    if state.pending_by_sender_nonce.len() >= MAX_PENDING_GLOBAL as u64 {
-        return Err(ChainError::QueueFull);
-    }
     if count_pending_for_sender(state, sender) >= MAX_PENDING_PER_SENDER {
         return Err(ChainError::SenderQueueFull);
     }
+    if count_pending_for_principal(state, caller_principal) >= MAX_PENDING_PER_PRINCIPAL {
+        return Err(ChainError::PrincipalQueueFull);
+    }
+    if state.pending_by_sender_nonce.len() >= MAX_PENDING_GLOBAL as u64 {
+        evict_lowest_fee_pending(state, incoming_effective_gas_price)?;
+    }
     Ok(())
+}
+
+fn count_pending_for_principal(
+    state: &evm_db::stable_state::StableState,
+    caller_principal: &[u8],
+) -> usize {
+    if caller_principal.is_empty() {
+        return 0;
+    }
+    let mut count = 0usize;
+    for entry in state.pending_by_sender_nonce.iter() {
+        let tx_id = entry.value();
+        let Some(envelope) = state.tx_store.get(&tx_id) else {
+            continue;
+        };
+        let Ok(stored) = StoredTx::try_from(envelope) else {
+            continue;
+        };
+        if stored.caller_principal.as_slice() == caller_principal {
+            count = count.saturating_add(1);
+        }
+    }
+    count
+}
+
+fn evict_lowest_fee_pending(
+    state: &mut evm_db::stable_state::StableState,
+    incoming_effective_gas_price: u64,
+) -> Result<(), ChainError> {
+    let base_fee = state.chain_state.get().base_fee;
+    let mut lowest: Option<(u64, TxId)> = None;
+
+    for entry in state.pending_by_sender_nonce.iter() {
+        let tx_id = entry.value();
+        let effective = match pending_effective_gas_price(state, tx_id, base_fee) {
+            Some(value) => value,
+            None => continue,
+        };
+        match lowest {
+            None => lowest = Some((effective, tx_id)),
+            Some((lowest_fee, lowest_tx_id))
+                if effective < lowest_fee
+                    || (effective == lowest_fee && tx_id.0 < lowest_tx_id.0) =>
+            {
+                lowest = Some((effective, tx_id));
+            }
+            _ => {}
+        }
+    }
+
+    let (lowest_fee, evict_tx_id) = match lowest {
+        Some(value) => value,
+        None => return Err(ChainError::QueueFull),
+    };
+    if incoming_effective_gas_price <= lowest_fee {
+        return Err(ChainError::QueueFull);
+    }
+
+    // Queue pressure eviction is modeled as a replacement-style drop for telemetry consistency.
+    advance_sender_after_tx(state, evict_tx_id, None, None);
+    mark_dropped_and_purge_payload(state, evict_tx_id, DROP_CODE_REPLACED);
+    let mut metrics = *state.metrics_state.get();
+    metrics.record_drop(DROP_CODE_REPLACED, 1);
+    state.metrics_state.set(metrics);
+    Ok(())
+}
+
+fn pending_effective_gas_price(
+    state: &evm_db::stable_state::StableState,
+    tx_id: TxId,
+    base_fee: u64,
+) -> Option<u64> {
+    let envelope = state.tx_store.get(&tx_id)?;
+    let stored = StoredTx::try_from(envelope).ok()?;
+    compute_effective_gas_price(
+        stored.max_fee_per_gas,
+        if stored.is_dynamic_fee {
+            stored.max_priority_fee_per_gas
+        } else {
+            0
+        },
+        base_fee,
+    )
 }
 
 fn count_pending_for_sender(state: &evm_db::stable_state::StableState, sender: SenderKey) -> usize {

@@ -70,6 +70,8 @@ scripts/pr0_capture_local_snapshot.sh "$PR0_DIFF_LOCAL_FILE"
 scripts/pr0_differential_compare.sh "$PR0_DIFF_LOCAL_FILE" "$PR0_DIFF_REFERENCE_FILE"
 
 dfx canister create evm_canister
+echo "[guard] release wasm endpoint guard (no dev-faucet)"
+scripts/release_wasm_guard.sh
 echo "[build] ic-evm-wrapper with dev-faucet"
 cargo build --target wasm32-unknown-unknown --release -p ic-evm-wrapper --features dev-faucet --locked
 if ! command -v ic-wasm >/dev/null 2>&1; then

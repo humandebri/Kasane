@@ -1,0 +1,90 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+      - "codex/**"
+  workflow_dispatch:
+
+permissions: read-all
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  checks:
+    name: Rust checks and tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: recursive
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Cache Rust artifacts
+        uses: Swatinem/rust-cache@v2
+
+      - name: RNG callsite guard
+        run: scripts/check_rng_paths.sh
+
+      - name: getrandom wasm feature guard
+        run: scripts/check_getrandom_wasm_features.sh
+
+      - name: DID sync guard
+        run: scripts/check_did_sync.sh
+
+      - name: Deny OP stack references
+        shell: bash
+        run: |
+          set -euo pipefail
+          DENY_PATTERN='op-revm|op_revm|op-node|op-geth|optimism|superchain|OpDeposit|L1BlockInfo'
+          if grep -RInE "$DENY_PATTERN" \
+            --exclude-dir=.git \
+            --exclude-dir=target \
+            --exclude-dir=vendor \
+            --exclude-dir=node_modules \
+            --exclude='ci-local.sh' \
+            --exclude='pr0-differential-runbook.md' \
+            crates docs scripts README.md Cargo.toml; then
+            echo "[guard] forbidden OP stack reference found"
+            exit 1
+          fi
+
+      - name: Run workspace tests
+        run: cargo test -p evm-db -p ic-evm-core -p ic-evm-wrapper --locked
+
+      - name: Check evm-rpc-e2e manifest builds
+        run: cargo test --manifest-path crates/evm-rpc-e2e/Cargo.toml --no-run --locked
+
+  release_guard:
+    name: Release wasm guard
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    needs: checks
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: recursive
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Cache Rust artifacts
+        uses: Swatinem/rust-cache@v2
+
+      - name: Enforce no dev-faucet endpoint in release wasm
+        run: scripts/release_wasm_guard.sh

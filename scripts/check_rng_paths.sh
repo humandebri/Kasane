@@ -10,12 +10,22 @@ PATTERN='OsRng|thread_rng|getrandom::|rand::rngs'
 TMP_FILE="$(mktemp)"
 trap 'rm -f "$TMP_FILE"' EXIT
 
-rg -n "$PATTERN" . \
-  --glob '!target/**' \
-  --glob '!docs/**' \
-  --glob '!scripts/**' \
-  --glob '!vendor/**/CHANGELOG.md' \
-  > "$TMP_FILE" || true
+if command -v rg >/dev/null 2>&1; then
+  rg -n "$PATTERN" . \
+    --glob '!target/**' \
+    --glob '!docs/**' \
+    --glob '!scripts/**' \
+    --glob '!vendor/**/CHANGELOG.md' \
+    > "$TMP_FILE" || true
+else
+  grep -RInE "$PATTERN" . \
+    --exclude-dir=.git \
+    --exclude-dir=target \
+    --exclude-dir=docs \
+    --exclude-dir=scripts \
+    --exclude='CHANGELOG.md' \
+    > "$TMP_FILE" || true
+fi
 
 if [[ -s "$TMP_FILE" ]]; then
   # 許可: wasmでcustom backendを登録する箇所のみ

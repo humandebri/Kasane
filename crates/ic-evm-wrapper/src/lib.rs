@@ -117,6 +117,9 @@ pub struct OpsStatusView {
     pub critical_corrupt: bool,
     pub mining_error_count: u64,
     pub prune_error_count: u64,
+    pub decode_failure_count: u64,
+    pub decode_failure_last_ts: u64,
+    pub decode_failure_last_label: Option<String>,
 }
 
 #[derive(Clone, Debug, CandidType, Deserialize)]
@@ -149,6 +152,7 @@ const CODE_SUBMIT_NONCE_GAP: &str = "submit.nonce_gap";
 const CODE_SUBMIT_NONCE_CONFLICT: &str = "submit.nonce_conflict";
 const CODE_SUBMIT_QUEUE_FULL: &str = "submit.queue_full";
 const CODE_SUBMIT_SENDER_QUEUE_FULL: &str = "submit.sender_queue_full";
+const CODE_SUBMIT_PRINCIPAL_QUEUE_FULL: &str = "submit.principal_queue_full";
 const CODE_INTERNAL_UNEXPECTED: &str = "internal.unexpected";
 
 #[derive(Clone, Debug, CandidType, Deserialize)]
@@ -521,6 +525,7 @@ fn submit_reject_code(err: &chain::ChainError) -> Option<&'static str> {
         chain::ChainError::NonceConflict => Some(CODE_SUBMIT_NONCE_CONFLICT),
         chain::ChainError::QueueFull => Some(CODE_SUBMIT_QUEUE_FULL),
         chain::ChainError::SenderQueueFull => Some(CODE_SUBMIT_SENDER_QUEUE_FULL),
+        chain::ChainError::PrincipalQueueFull => Some(CODE_SUBMIT_PRINCIPAL_QUEUE_FULL),
         _ => None,
     }
 }
@@ -606,7 +611,14 @@ fn submit_eth_tx(raw_tx: Vec<u8>) -> Result<Vec<u8>, SubmitTxError> {
     if let Some(reason) = reject_write_reason() {
         return Err(SubmitTxError::Rejected(reason));
     }
-    submit_tx_in_with_code(chain::TxIn::EthSigned(raw_tx), "submit_eth_tx")
+    let caller_principal = ic_cdk::api::msg_caller().as_slice().to_vec();
+    submit_tx_in_with_code(
+        chain::TxIn::EthSigned {
+            tx_bytes: raw_tx,
+            caller_principal,
+        },
+        "submit_eth_tx",
+    )
 }
 
 #[ic_cdk::update]
@@ -923,7 +935,10 @@ fn rpc_eth_send_raw_transaction(raw_tx: Vec<u8>) -> Result<Vec<u8>, SubmitTxErro
         return Err(SubmitTxError::Rejected(reason));
     }
     submit_tx_in_with_code(
-        chain::TxIn::EthSigned(raw_tx),
+        chain::TxIn::EthSigned {
+            tx_bytes: raw_tx,
+            caller_principal: ic_cdk::api::msg_caller().as_slice().to_vec(),
+        },
         "rpc_eth_send_raw_transaction",
     )
 }
@@ -975,6 +990,8 @@ fn get_ops_status() -> OpsStatusView {
         let config = *state.ops_config.get();
         let ops = *state.ops_state.get();
         let meta = get_meta();
+        let decode_failure_last_label =
+            decode_failure_label_view(evm_db::corrupt_log::read_last_corrupt_tag());
         OpsStatusView {
             config: OpsConfigView {
                 low_watermark: config.low_watermark,
@@ -992,8 +1009,29 @@ fn get_ops_status() -> OpsStatusView {
             critical_corrupt: critical_corrupt_state(),
             mining_error_count: MINING_ERROR_COUNT.load(Ordering::Relaxed),
             prune_error_count: PRUNE_ERROR_COUNT.load(Ordering::Relaxed),
+            decode_failure_count: evm_db::corrupt_log::read_corrupt_count(),
+            decode_failure_last_ts: evm_db::corrupt_log::read_last_corrupt_ts(),
+            decode_failure_last_label,
         }
     })
+}
+
+fn decode_failure_label_view(raw: [u8; 32]) -> Option<String> {
+    let end = raw.iter().position(|b| *b == 0).unwrap_or(raw.len());
+    if end == 0 {
+        return None;
+    }
+    let bytes = &raw[..end];
+    if bytes.iter().all(|b| {
+        b.is_ascii_lowercase() || b.is_ascii_digit() || *b == b'.' || *b == b'_' || *b == b'-'
+    }) {
+        return Some(String::from_utf8_lossy(bytes).to_string());
+    }
+    let mut out = String::from("hex:");
+    for b in bytes {
+        out.push_str(&format!("{b:02x}"));
+    }
+    Some(out)
 }
 
 #[ic_cdk::update]
@@ -1565,19 +1603,19 @@ fn caller_key_to_principal(key: CallerKey) -> Option<Principal> {
 }
 
 fn migration_pending() -> bool {
-    if !schema_migration_tick(32) {
-        return true;
-    }
     let meta = get_meta();
     if meta.needs_migration || meta.schema_version < current_schema_version() {
         return true;
     }
-    let pending =
-        with_state(|state| state.state_root_migration.get().phase != MigrationPhase::Done);
-    if !pending {
-        return false;
-    }
-    !chain::state_root_migration_tick(512)
+    with_state(|state| {
+        !state.state_root_meta.get().initialized
+            || state.state_root_migration.get().phase != MigrationPhase::Done
+    })
+}
+
+fn drive_migrations_tick(schema_max_steps: u32, state_root_max_steps: u32) {
+    let _ = schema_migration_tick(schema_max_steps);
+    let _ = chain::state_root_migration_tick(state_root_max_steps);
 }
 
 fn critical_corrupt_state() -> bool {
@@ -1905,14 +1943,12 @@ fn apply_post_upgrade_migrations() {
             }
         });
     }
-    if migration_pending() {
-        let _ = chain::state_root_migration_tick(1024);
-        let _ = schema_migration_tick(1024);
-    }
+    drive_migrations_tick(1024, 1024);
 }
 
 fn schedule_cycle_observer() {
     ic_cdk_timers::set_timer_interval(std::time::Duration::from_secs(60), || async {
+        drive_migrations_tick(256, 512);
         let mode = observe_cycles();
         if mode != OpsMode::Critical && !migration_pending() {
             schedule_mining();
@@ -2101,16 +2137,20 @@ pub fn export_did() -> String {
 mod tests {
     use super::{
         chain_submit_error_to_code, clamp_return_data, exec_error_to_code, inspect_method_allowed,
-        map_execute_chain_result, map_submit_chain_error, prune_boundary_for_number,
-        receipt_lookup_status, reject_anonymous_principal, reject_write_reason, tx_id_from_bytes,
-        ExecuteTxError, MINING_ERROR_COUNT, PRUNE_ERROR_COUNT,
+        map_execute_chain_result, map_submit_chain_error, migration_pending,
+        prune_boundary_for_number, receipt_lookup_status, reject_anonymous_principal,
+        reject_write_reason, tx_id_from_bytes, ExecuteTxError, MINING_ERROR_COUNT,
+        PRUNE_ERROR_COUNT,
     };
     use candid::Principal;
     use evm_core::chain::{ChainError, ExecResult};
     use evm_core::revm_exec::{ExecError, OpHaltReason, OpTransactionError};
     use evm_db::chain_data::constants::MAX_RETURN_DATA;
-    use evm_db::chain_data::{TxId, TxLoc};
-    use evm_db::meta::{set_needs_migration, set_schema_migration_state, SchemaMigrationState};
+    use evm_db::chain_data::{MigrationPhase, TxId, TxLoc};
+    use evm_db::meta::{
+        current_schema_version, schema_migration_state, set_needs_migration,
+        set_schema_migration_state, SchemaMigrationPhase, SchemaMigrationState,
+    };
     use evm_db::stable_state::init_stable_state;
 
     #[test]
@@ -2194,6 +2234,10 @@ mod tests {
             (
                 ChainError::SenderQueueFull,
                 ("submit.sender_queue_full", false),
+            ),
+            (
+                ChainError::PrincipalQueueFull,
+                ("submit.principal_queue_full", false),
             ),
         ];
         for (input, (expected_code, expected_invalid_arg)) in table {
@@ -2310,6 +2354,39 @@ mod tests {
     }
 
     #[test]
+    fn migration_pending_does_not_advance_schema_migration_state() {
+        init_stable_state();
+        set_needs_migration(false);
+        set_schema_migration_state(SchemaMigrationState {
+            phase: SchemaMigrationPhase::Init,
+            cursor: 0,
+            from_version: current_schema_version(),
+            to_version: current_schema_version(),
+            last_error: 0,
+            cursor_key_set: false,
+            cursor_key: [0u8; 32],
+        });
+        evm_db::stable_state::with_state_mut(|state| {
+            let mut meta = *state.state_root_meta.get();
+            meta.initialized = true;
+            state.state_root_meta.set(meta);
+            let mut migration = *state.state_root_migration.get();
+            migration.phase = MigrationPhase::Done;
+            migration.cursor = 0;
+            migration.last_error = 0;
+            state.state_root_migration.set(migration);
+        });
+
+        let before = schema_migration_state();
+        assert_eq!(before.phase, SchemaMigrationPhase::Init);
+        let pending = migration_pending();
+        assert!(!pending);
+        let after = schema_migration_state();
+        assert_eq!(after.phase, SchemaMigrationPhase::Init);
+        assert_eq!(after.cursor, before.cursor);
+    }
+
+    #[test]
     fn prune_boundary_for_number_returns_boundary_only_for_pruned_range() {
         init_stable_state();
         evm_db::stable_state::with_state_mut(|state| {
@@ -2372,6 +2449,23 @@ mod tests {
         let view = super::get_ops_status();
         assert!(view.mining_error_count >= before_mining.saturating_add(2));
         assert!(view.prune_error_count >= before_prune.saturating_add(3));
+    }
+
+    #[test]
+    fn decode_failure_label_view_prefers_ascii_machine_code() {
+        let mut raw = [0u8; 32];
+        raw[..12].copy_from_slice(b"block_data_1");
+        let out = super::decode_failure_label_view(raw);
+        assert_eq!(out, Some("block_data_1".to_string()));
+    }
+
+    #[test]
+    fn decode_failure_label_view_falls_back_to_hex() {
+        let mut raw = [0u8; 32];
+        raw[0] = 0xff;
+        raw[1] = 0x01;
+        let out = super::decode_failure_label_view(raw).expect("hex label");
+        assert!(out.starts_with("hex:"));
     }
 
     #[cfg(feature = "dev-faucet")]
