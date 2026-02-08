@@ -35,6 +35,8 @@ dfx canister start <canister_id>
 ## 異常時復旧
 - 移行が `Error` で停止、または検証不整合が出た場合は復旧を優先する。
 - canister停止後、取得済みsnapshotへ戻し、旧WASMを再インストールして起動する。
+- `meta` 破損検知時（`decode_failure_last_label` が `meta*`、または `needs_migration=true` 固定）は write 拒否が正しい挙動であり、通常運転を継続しない。
+- 上記状態では `ops.write.needs_migration` を確認し、snapshot/upgrade の復旧手順へ移行する。
 
 ```bash
 dfx canister stop <canister_id>
