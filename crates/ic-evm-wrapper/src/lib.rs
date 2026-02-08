@@ -117,6 +117,9 @@ pub struct OpsStatusView {
     pub critical_corrupt: bool,
     pub mining_error_count: u64,
     pub prune_error_count: u64,
+    pub decode_failure_count: u64,
+    pub decode_failure_last_ts: u64,
+    pub decode_failure_last_label: Option<String>,
 }
 
 #[derive(Clone, Debug, CandidType, Deserialize)]
@@ -987,6 +990,8 @@ fn get_ops_status() -> OpsStatusView {
         let config = *state.ops_config.get();
         let ops = *state.ops_state.get();
         let meta = get_meta();
+        let decode_failure_last_label =
+            decode_failure_label_view(evm_db::corrupt_log::read_last_corrupt_tag());
         OpsStatusView {
             config: OpsConfigView {
                 low_watermark: config.low_watermark,
@@ -1004,8 +1009,29 @@ fn get_ops_status() -> OpsStatusView {
             critical_corrupt: critical_corrupt_state(),
             mining_error_count: MINING_ERROR_COUNT.load(Ordering::Relaxed),
             prune_error_count: PRUNE_ERROR_COUNT.load(Ordering::Relaxed),
+            decode_failure_count: evm_db::corrupt_log::read_corrupt_count(),
+            decode_failure_last_ts: evm_db::corrupt_log::read_last_corrupt_ts(),
+            decode_failure_last_label,
         }
     })
+}
+
+fn decode_failure_label_view(raw: [u8; 32]) -> Option<String> {
+    let end = raw.iter().position(|b| *b == 0).unwrap_or(raw.len());
+    if end == 0 {
+        return None;
+    }
+    let bytes = &raw[..end];
+    if bytes.iter().all(|b| {
+        b.is_ascii_lowercase() || b.is_ascii_digit() || *b == b'.' || *b == b'_' || *b == b'-'
+    }) {
+        return Some(String::from_utf8_lossy(bytes).to_string());
+    }
+    let mut out = String::from("hex:");
+    for b in bytes {
+        out.push_str(&format!("{b:02x}"));
+    }
+    Some(out)
 }
 
 #[ic_cdk::update]
@@ -2388,6 +2414,23 @@ mod tests {
         let view = super::get_ops_status();
         assert!(view.mining_error_count >= before_mining.saturating_add(2));
         assert!(view.prune_error_count >= before_prune.saturating_add(3));
+    }
+
+    #[test]
+    fn decode_failure_label_view_prefers_ascii_machine_code() {
+        let mut raw = [0u8; 32];
+        raw[..12].copy_from_slice(b"block_data_1");
+        let out = super::decode_failure_label_view(raw);
+        assert_eq!(out, Some("block_data_1".to_string()));
+    }
+
+    #[test]
+    fn decode_failure_label_view_falls_back_to_hex() {
+        let mut raw = [0u8; 32];
+        raw[0] = 0xff;
+        raw[1] = 0x01;
+        let out = super::decode_failure_label_view(raw).expect("hex label");
+        assert!(out.starts_with("hex:"));
     }
 
     #[cfg(feature = "dev-faucet")]

@@ -115,6 +115,7 @@ type OpsModeView = variant { Low; Normal; Critical };
 type OpsStatusView = record {
   needs_migration : bool;
   critical_corrupt : bool;
+  decode_failure_last_ts : nat64;
   log_filter_override : opt text;
   last_cycle_balance : nat;
   mode : OpsModeView;
@@ -123,8 +124,10 @@ type OpsStatusView = record {
   log_truncated_count : nat64;
   schema_version : nat32;
   safe_stop_latched : bool;
+  decode_failure_last_label : opt text;
   prune_error_count : nat64;
   config : OpsConfigView;
+  decode_failure_count : nat64;
 };
 type PendingStatusView = variant {
   Queued : record { seq : nat64 };
