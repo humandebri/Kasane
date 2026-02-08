@@ -77,8 +77,8 @@ if ! command -v ic-wasm >/dev/null 2>&1; then
   cargo install ic-wasm --locked
 fi
 WASM_IN=target/wasm32-unknown-unknown/release/ic_evm_wrapper.wasm
-WASM_OUT=target/wasm32-unknown-unknown/release/ic_evm_wrapper.candid.wasm
-ic-wasm "$WASM_IN" -o "$WASM_OUT" metadata candid:service -f crates/ic-evm-wrapper/evm_canister.did
+WASM_OUT=target/wasm32-unknown-unknown/release/ic_evm_wrapper.final.wasm
+scripts/build_wasm_postprocess.sh "$WASM_IN" "$WASM_OUT"
 INIT_ARGS="$(build_init_args_for_current_identity 1000000000000000000)"
 dfx canister install evm_canister --wasm "$WASM_OUT" --argument "$INIT_ARGS"
 

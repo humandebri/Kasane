@@ -36,12 +36,8 @@ install_wasm() {
     exit 1
   fi
   log "wasm size: $(ls -lh "${wasm_path}" | awk '{print $5}')"
-  local wasm_out="target/wasm32-unknown-unknown/release/ic_evm_wrapper.candid.wasm"
-  if ! command -v ic-wasm >/dev/null 2>&1; then
-    log "installing ic-wasm"
-    cargo install ic-wasm --locked
-  fi
-  ic-wasm "${wasm_path}" -o "${wasm_out}" metadata candid:service -f crates/ic-evm-wrapper/evm_canister.did
+  local wasm_out="target/wasm32-unknown-unknown/release/ic_evm_wrapper.final.wasm"
+  scripts/build_wasm_postprocess.sh "${wasm_path}" "${wasm_out}"
 
   if [[ "${NETWORK}" == "playground" || "${NETWORK}" == "ic" ]]; then
     if [[ -z "${CANISTER_ID}" ]]; then
