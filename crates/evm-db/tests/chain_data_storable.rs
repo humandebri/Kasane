@@ -10,6 +10,7 @@ use evm_db::chain_data::{
     StoredTx, StoredTxBytes, TxId, TxIndexEntry, TxKind, TxLoc,
 };
 use evm_db::chain_data::{LogConfigV1, LOG_CONFIG_FILTER_MAX};
+use evm_db::chain_data::{DEFAULT_MIN_GAS_PRICE, DEFAULT_MIN_PRIORITY_FEE};
 use ic_stable_structures::Storable;
 
 #[test]
@@ -397,6 +398,13 @@ fn chain_state_roundtrip() {
     let bytes = state.to_bytes();
     let decoded = ChainStateV1::from_bytes(bytes);
     assert_eq!(state, decoded);
+}
+
+#[test]
+fn chain_state_default_fees_follow_runtime_defaults() {
+    let state = ChainStateV1::new(4_801_360);
+    assert_eq!(state.min_gas_price, DEFAULT_MIN_GAS_PRICE);
+    assert_eq!(state.min_priority_fee, DEFAULT_MIN_PRIORITY_FEE);
 }
 
 #[test]

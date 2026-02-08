@@ -5,9 +5,9 @@ use crate::hash::keccak256;
 use crate::revm_db::RevmStableDb;
 use crate::tx_decode::DecodeError;
 use evm_db::chain_data::constants::{
-    CHAIN_ID, DEFAULT_BLOCK_GAS_LIMIT, MAX_LOGS_PER_TX, MAX_LOG_DATA, MAX_LOG_TOPICS,
-    MAX_RETURN_DATA,
+    CHAIN_ID, MAX_LOGS_PER_TX, MAX_LOG_DATA, MAX_LOG_TOPICS, MAX_RETURN_DATA,
 };
+use evm_db::chain_data::runtime_defaults::DEFAULT_BLOCK_GAS_LIMIT;
 use evm_db::chain_data::receipt::{log_entry_from_parts, LogEntry};
 use evm_db::chain_data::{ReceiptLike, TxId, TxIndexEntry, TxKind};
 use evm_db::stable_state::with_state_mut;

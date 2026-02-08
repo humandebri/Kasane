@@ -90,7 +90,7 @@ START_PAGE=131072 SKIP_DEPLOY=1 scripts/profile_heap_trace.sh
 - 安全余裕として 20% ヘッドルームを持たせる。
 
 反映先:
-- `crates/evm-db/src/chain_data/constants.rs` の `DEFAULT_BLOCK_GAS_LIMIT`
+- `crates/evm-db/src/chain_data/runtime_defaults.rs` の `DEFAULT_BLOCK_GAS_LIMIT`
 
 回帰確認:
 - `crates/evm-core/src/revm_exec.rs`（block header gas_limit）
@@ -101,6 +101,21 @@ START_PAGE=131072 SKIP_DEPLOY=1 scripts/profile_heap_trace.sh
 bash -n scripts/build_wasm_postprocess.sh
 bash -n scripts/profile_heap_trace.sh
 scripts/build_wasm_postprocess.sh target/wasm32-unknown-unknown/release/ic_evm_wrapper.wasm /tmp/ic_evm_wrapper.final.wasm
+```
+
+## worktree 初期化手順（vendor/revm）
+背景:
+- `vendor/revm` が欠落した worktree では `cargo test` が依存解決で失敗する。
+
+推奨:
+1. 新規 worktree に移動する。
+2. `scripts/sync_vendor_revm.sh` を実行する（引数省略可）。
+3. `cargo test -p evm-db -p ic-evm-core` で確認する。
+
+実行例:
+```bash
+scripts/sync_vendor_revm.sh
+scripts/sync_vendor_revm.sh /Users/you/path/to/main/repo
 ```
 
 ## 監視とベンチマーク追加（2026-02）

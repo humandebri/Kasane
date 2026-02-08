@@ -16,6 +16,10 @@ A) 最低ガス代要求（inclusion policy）
 
 ChainConfig を stable に持つ：
 
+実装上の既定値（`initial_base_fee_per_gas` や `min_gas_price_legacy` など）は
+`crates/evm-db/src/chain_data/runtime_defaults.rs` に集約する。
+現行の `min_gas_price_legacy` 既定値は `1_000_000_000` wei（1 gwei）。
+
 block_gas_limit: u64
 
 min_priority_fee_per_gas: u128（EIP-1559用、tip下限）
