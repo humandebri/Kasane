@@ -2,7 +2,10 @@
 
 use crate::corrupt_log::record_corrupt;
 use crate::decode::hash_to_array;
-use crate::types::keys::{AccountKey, CodeKey, StorageKey};
+use crate::types::keys::{
+    AccountKey, CodeKey, StorageKey, ACCOUNT_KEY_LEN, ACCOUNT_KEY_LEN_U32, STORAGE_KEY_LEN,
+    STORAGE_KEY_LEN_U32,
+};
 use crate::types::values::{
     AccountVal, CodeVal, U256Val, ACCOUNT_VAL_LEN, ACCOUNT_VAL_LEN_U32, MAX_CODE_SIZE_U32,
     U256_LEN, U256_LEN_U32,
@@ -22,17 +25,17 @@ impl Storable for AccountKey {
 
     fn from_bytes(bytes: Cow<'_, [u8]>) -> Self {
         let data = bytes.as_ref();
-        if data.len() != 21 {
+        if data.len() != ACCOUNT_KEY_LEN {
             record_corrupt(b"account_key");
             return AccountKey(hash_to_array(b"account_key", data));
         }
-        let mut buf = [0u8; 21];
+        let mut buf = [0u8; ACCOUNT_KEY_LEN];
         buf.copy_from_slice(data);
         AccountKey(buf)
     }
 
     const BOUND: Bound = Bound::Bounded {
-        max_size: 21,
+        max_size: ACCOUNT_KEY_LEN_U32,
         is_fixed_size: true,
     };
 }
@@ -48,17 +51,17 @@ impl Storable for StorageKey {
 
     fn from_bytes(bytes: Cow<'_, [u8]>) -> Self {
         let data = bytes.as_ref();
-        if data.len() != 53 {
+        if data.len() != STORAGE_KEY_LEN {
             record_corrupt(b"storage_key");
             return StorageKey(hash_to_array(b"storage_key", data));
         }
-        let mut buf = [0u8; 53];
+        let mut buf = [0u8; STORAGE_KEY_LEN];
         buf.copy_from_slice(data);
         StorageKey(buf)
     }
 
     const BOUND: Bound = Bound::Bounded {
-        max_size: 53,
+        max_size: STORAGE_KEY_LEN_U32,
         is_fixed_size: true,
     };
 }

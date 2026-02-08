@@ -12,7 +12,11 @@ use alloy_trie::nodes::{BranchNode, ExtensionNode, LeafNode, RlpNode, TrieNode};
 use alloy_trie::{Nibbles, TrieAccount, TrieMask, EMPTY_ROOT_HASH, KECCAK_EMPTY};
 use evm_db::chain_data::HashKey;
 use evm_db::stable_state::StableState;
-use evm_db::types::keys::{make_account_key, make_storage_key, AccountKey};
+use evm_db::types::keys::{
+    make_account_key, make_storage_key, parse_account_key_bytes, parse_storage_key_bytes,
+    AccountKey,
+};
+use smallvec::SmallVec;
 use std::collections::{BTreeMap, BTreeSet};
 
 pub type NodeDeltaCounts = BTreeMap<HashKey, i64>;
@@ -31,7 +35,7 @@ pub struct TrieUpdateJournal {
 #[derive(Clone, Debug)]
 struct KvOp {
     key: Nibbles,
-    value: Option<Vec<u8>>,
+    value: Option<SmallVec<[u8; 40]>>,
 }
 
 struct JournalBuilder<'a> {
@@ -144,11 +148,7 @@ pub fn build_state_update_journal(
                 for (slot, value) in account_delta.storage.iter() {
                     let key_hash = keccak256(slot);
                     let key = Nibbles::unpack(key_hash);
-                    let encoded = value.map(|bytes| {
-                        let mut out = Vec::with_capacity(33);
-                        U256::from_be_bytes(bytes).encode(&mut out);
-                        out
-                    });
+                    let encoded = value.map(encode_u256_rlp);
                     ops.push(KvOp {
                         key,
                         value: encoded,
@@ -215,7 +215,7 @@ pub fn build_state_update_journal(
         if let Some(account) = after {
             let mut out = Vec::with_capacity(128);
             account.encode(&mut out);
-            value = Some(out);
+            value = Some(SmallVec::from_vec(out));
         }
         account_ops.push(KvOp {
             key: Nibbles::unpack(keccak256(Address::from(addr).as_slice())),
@@ -277,13 +277,13 @@ fn collect_storage_ops_from_state(state: &StableState, addr: [u8; 20]) -> Vec<Kv
     let mut ops = Vec::new();
     for entry in state.storage.range(lower..=upper) {
         let key = entry.key().0;
-        if key[1..21] != addr {
+        let Some((key_addr, slot)) = parse_storage_key_bytes(&key) else {
+            break;
+        };
+        if key_addr != addr {
             break;
         }
-        let mut slot = [0u8; 32];
-        slot.copy_from_slice(&key[21..53]);
-        let mut out = Vec::with_capacity(33);
-        U256::from_be_bytes(entry.value().0).encode(&mut out);
+        let out = encode_u256_rlp(entry.value().0);
         ops.push(KvOp {
             key: Nibbles::unpack(keccak256(&slot)),
             value: Some(out),
@@ -625,10 +625,160 @@ fn collapse_children(
     }
 }
 
+fn encode_u256_rlp(value: [u8; 32]) -> SmallVec<[u8; 40]> {
+    let mut out = Vec::with_capacity(33);
+    U256::from_be_bytes(value).encode(&mut out);
+    SmallVec::from_vec(out)
+}
+
+fn rlp_node_hash(ptr: &RlpNode) -> HashKey {
+    if let Some(hash) = ptr.as_hash() {
+        HashKey(b256_to_bytes(hash))
+    } else {
+        HashKey(keccak256(ptr.as_ref()))
+    }
+}
+
+fn branch_child(branch: &BranchNode, nibble: u8) -> Option<RlpNode> {
+    if !branch.state_mask.is_bit_set(nibble) {
+        return None;
+    }
+    let mut pos = 0usize;
+    for idx in 0..16u8 {
+        if idx == nibble {
+            return branch.stack.get(pos).cloned();
+        }
+        if branch.state_mask.is_bit_set(idx) {
+            pos = pos.saturating_add(1);
+        }
+    }
+    None
+}
+
+fn resolve_leaf_hash_for_key(
+    builder: &JournalBuilder<'_>,
+    root_ptr: &RlpNode,
+    key: &Nibbles,
+) -> Option<HashKey> {
+    let mut depth = 0usize;
+    let mut current = root_ptr.clone();
+    loop {
+        let node = builder.resolve_ptr(&current)?;
+        match node {
+            TrieNode::Leaf(leaf) => {
+                if leaf.key == key.slice(depth..) {
+                    return Some(rlp_node_hash(&current));
+                }
+                return None;
+            }
+            TrieNode::Extension(ext) => {
+                let rest = key.slice(depth..);
+                let common = ext.key.common_prefix_length(&rest);
+                if common != ext.key.len() {
+                    return None;
+                }
+                depth = depth.saturating_add(common);
+                current = ext.child;
+            }
+            TrieNode::Branch(branch) => {
+                if depth >= key.len() {
+                    return None;
+                }
+                let nibble = key.get(depth)?;
+                let child = branch_child(&branch, nibble)?;
+                depth = depth.saturating_add(1);
+                current = child;
+            }
+            TrieNode::EmptyRoot => return None,
+        }
+    }
+}
+
 pub fn build_state_update_journal_full(
     state: &StableState,
-    delta: &TrieDelta,
-    storage_updates: Vec<StorageRootUpdate>,
+    _delta: &TrieDelta,
+    _storage_updates: Vec<StorageRootUpdate>,
 ) -> TrieUpdateJournal {
-    super::build_state_update_journal_overlay(state, delta, storage_updates)
+    let mut builder = JournalBuilder::new(state);
+
+    let mut storage_addrs = BTreeSet::new();
+    for entry in state.storage.iter() {
+        if let Some((addr, _)) = parse_storage_key_bytes(&entry.key().0) {
+            storage_addrs.insert(addr);
+        }
+    }
+
+    let mut storage_root_after: BTreeMap<[u8; 20], B256> = BTreeMap::new();
+    let mut storage_root_ptr_after: BTreeMap<[u8; 20], Option<RlpNode>> = BTreeMap::new();
+    for addr in storage_addrs {
+        let ops = collect_storage_ops_from_state(state, addr);
+        let next_ptr = apply_ops(&mut builder, None, &ops);
+        let root = ptr_to_root(next_ptr.as_ref());
+        storage_root_after.insert(addr, root);
+        storage_root_ptr_after.insert(addr, next_ptr);
+    }
+
+    let mut target_account_addrs: BTreeSet<[u8; 20]> = BTreeSet::new();
+    for entry in state.accounts.iter() {
+        if let Some(addr) = parse_account_key_bytes(&entry.key().0) {
+            target_account_addrs.insert(addr);
+        }
+    }
+    for entry in state.state_storage_roots.iter() {
+        if let Some(addr) = parse_account_key_bytes(&entry.key().0) {
+            target_account_addrs.insert(addr);
+        }
+    }
+    for addr in storage_root_after.keys().copied() {
+        target_account_addrs.insert(addr);
+    }
+
+    let mut account_ops = Vec::with_capacity(target_account_addrs.len());
+    let mut account_key_nibbles = Vec::with_capacity(target_account_addrs.len());
+    for addr in target_account_addrs {
+        let account_key = make_account_key(addr);
+        let storage_root = storage_root_after.get(&addr).copied().unwrap_or_else(|| {
+            state
+                .state_storage_roots
+                .get(&account_key)
+                .map(|v| B256::from(v.0))
+                .unwrap_or(EMPTY_ROOT_HASH)
+        });
+        let mut value = None;
+        if let Some(account) = account_from_state(state, addr, storage_root) {
+            let mut out = Vec::with_capacity(128);
+            account.encode(&mut out);
+            value = Some(SmallVec::from_vec(out));
+        }
+        let key = Nibbles::unpack(keccak256(Address::from(addr).as_slice()));
+        account_key_nibbles.push((addr, key.clone()));
+        account_ops.push(KvOp { key, value });
+    }
+    account_ops.sort_by(|a, b| a.key.cmp(&b.key));
+
+    let state_root_ptr = apply_ops(&mut builder, None, &account_ops);
+    let state_root = ptr_to_root(state_root_ptr.as_ref());
+    force_root_record(&mut builder, state_root, state_root_ptr.as_ref());
+    for (addr, root) in storage_root_after.iter() {
+        let ptr = storage_root_ptr_after.get(addr).and_then(|v| v.as_ref());
+        force_root_record(&mut builder, *root, ptr);
+    }
+
+    let mut updated_account_leaf_hashes = BTreeMap::new();
+    if let Some(root_ptr) = state_root_ptr.as_ref() {
+        for (addr, key) in account_key_nibbles {
+            if let Some(hash) = resolve_leaf_hash_for_key(&builder, root_ptr, &key) {
+                updated_account_leaf_hashes.insert(make_account_key(addr), hash);
+            }
+        }
+    }
+
+    TrieUpdateJournal {
+        state_root: b256_to_bytes(state_root),
+        storage_updates: Vec::new(),
+        node_delta_counts: builder.node_delta_counts,
+        new_node_records: builder.new_node_records,
+        updated_account_leaf_hashes,
+        anchor_delta: AnchorDelta::default(),
+    }
 }

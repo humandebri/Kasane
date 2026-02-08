@@ -8,15 +8,16 @@ use crate::bytes::b256_to_bytes;
 use crate::hash::keccak256;
 use crate::revm_exec::StateDiff;
 use alloy_primitives::{Address, B256, U256};
-use alloy_rlp::Encodable;
-use alloy_trie::nodes::{BranchNode, ExtensionNode, LeafNode, RlpNode};
 use alloy_trie::root::{state_root_unhashed, storage_root_unhashed};
-use alloy_trie::{Nibbles, TrieMask};
 use alloy_trie::{TrieAccount, EMPTY_ROOT_HASH, KECCAK_EMPTY};
-use evm_db::chain_data::{HashKey, MigrationPhase, NodeRecord};
+#[cfg(test)]
+use evm_db::chain_data::NodeRecord;
+use evm_db::chain_data::{HashKey, MigrationPhase};
 use evm_db::stable_state::{clear_map as clear_stable_map, StableState};
-use evm_db::types::keys::{make_account_key, make_storage_key, AccountKey};
-use node_codec::rlp_node_to_root;
+use evm_db::types::keys::{
+    make_account_key, make_storage_key, parse_account_key_bytes, parse_storage_key_bytes,
+    AccountKey,
+};
 use node_store::{apply_journal, AnchorDelta, JournalUpdate};
 use std::collections::BTreeMap;
 use trie_update::{
@@ -258,11 +259,9 @@ pub fn run_migration_tick(state: &mut StableState, max_steps: u32) -> bool {
             for entry in state.storage.iter().skip(start).take(limit) {
                 scanned = scanned.saturating_add(1);
                 let key = entry.key().0;
-                if key[0] != 0x02 {
+                let Some((addr, _slot)) = parse_storage_key_bytes(&key) else {
                     continue;
-                }
-                let mut addr = [0u8; 20];
-                addr.copy_from_slice(&key[1..21]);
+                };
                 if last_addr == Some(addr) {
                     continue;
                 }
@@ -369,522 +368,6 @@ fn build_trie_delta(state_diffs: &[StateDiff]) -> TrieDelta {
         }
     }
     delta
-}
-
-#[allow(dead_code)]
-fn compute_state_root_fullscan_overlay(state: &StableState, delta: &TrieDelta) -> [u8; 32] {
-    let mut storage_by_addr: BTreeMap<[u8; 20], BTreeMap<[u8; 32], [u8; 32]>> = BTreeMap::new();
-    for addr in delta.accounts.keys() {
-        let lower = make_storage_key(*addr, [0u8; 32]);
-        let upper = make_storage_key(*addr, [0xffu8; 32]);
-        let mut slots: BTreeMap<[u8; 32], [u8; 32]> = BTreeMap::new();
-        for entry in state.storage.range(lower..=upper) {
-            let key = entry.key().0;
-            if key[0] != 0x02 || key[1..21] != addr[..] {
-                break;
-            }
-            let mut slot = [0u8; 32];
-            slot.copy_from_slice(&key[21..53]);
-            slots.insert(slot, entry.value().0);
-        }
-        if !slots.is_empty() {
-            storage_by_addr.insert(*addr, slots);
-        }
-    }
-    for (addr, account_delta) in delta.accounts.iter() {
-        let slots = storage_by_addr.entry(*addr).or_default();
-        if account_delta.deleted {
-            slots.clear();
-            continue;
-        }
-        for (slot, value) in account_delta.storage.iter() {
-            if let Some(value_bytes) = value {
-                slots.insert(*slot, *value_bytes);
-            } else {
-                slots.remove(slot);
-            }
-        }
-    }
-
-    let mut trie_accounts: BTreeMap<[u8; 20], TrieAccount> = BTreeMap::new();
-    for entry in state.accounts.iter() {
-        let key = entry.key().0;
-        if key[0] != 0x01 {
-            continue;
-        }
-        let mut addr = [0u8; 20];
-        addr.copy_from_slice(&key[1..21]);
-        let mut nonce = entry.value().nonce();
-        let mut balance = U256::from_be_bytes(entry.value().balance());
-        let mut code_hash = normalize_code_hash(B256::from(entry.value().code_hash()));
-        let mut deleted = false;
-        if let Some(account_delta) = delta.accounts.get(&addr) {
-            deleted = account_delta.deleted;
-            nonce = account_delta.nonce;
-            balance = U256::from_be_bytes(account_delta.balance);
-            code_hash = normalize_code_hash(B256::from(account_delta.code_hash));
-        }
-        if deleted {
-            continue;
-        }
-        let storage_root = if delta.accounts.contains_key(&addr) {
-            storage_by_addr
-                .get(&addr)
-                .map(|slots| {
-                    storage_root_unhashed(
-                        slots
-                            .iter()
-                            .map(|(slot, value)| (B256::from(*slot), U256::from_be_bytes(*value))),
-                    )
-                })
-                .unwrap_or(EMPTY_ROOT_HASH)
-        } else {
-            state
-                .state_storage_roots
-                .get(&make_account_key(addr))
-                .map(|value| B256::from(value.0))
-                .unwrap_or_else(|| compute_storage_root_for_address(state, addr))
-        };
-        let trie_account = TrieAccount {
-            nonce,
-            balance,
-            storage_root,
-            code_hash,
-        };
-        if !is_empty_trie_account(&trie_account) {
-            trie_accounts.insert(addr, trie_account);
-        }
-    }
-    for (addr, account_delta) in delta.accounts.iter() {
-        if trie_accounts.contains_key(addr) || account_delta.deleted {
-            continue;
-        }
-        let storage_root = storage_by_addr
-            .get(addr)
-            .map(|slots| {
-                storage_root_unhashed(
-                    slots
-                        .iter()
-                        .map(|(slot, value)| (B256::from(*slot), U256::from_be_bytes(*value))),
-                )
-            })
-            .unwrap_or(EMPTY_ROOT_HASH);
-        let trie_account = TrieAccount {
-            nonce: account_delta.nonce,
-            balance: U256::from_be_bytes(account_delta.balance),
-            storage_root,
-            code_hash: normalize_code_hash(B256::from(account_delta.code_hash)),
-        };
-        if !is_empty_trie_account(&trie_account) {
-            trie_accounts.insert(*addr, trie_account);
-        }
-    }
-    for (addr, slots) in storage_by_addr {
-        if trie_accounts.contains_key(&addr) {
-            continue;
-        }
-        let storage_root = storage_root_unhashed(
-            slots
-                .into_iter()
-                .map(|(slot, value)| (B256::from(slot), U256::from_be_bytes(value))),
-        );
-        let trie_account = TrieAccount {
-            nonce: 0,
-            balance: U256::ZERO,
-            storage_root,
-            code_hash: KECCAK_EMPTY,
-        };
-        if !is_empty_trie_account(&trie_account) {
-            trie_accounts.insert(addr, trie_account);
-        }
-    }
-    b256_to_bytes(state_root_unhashed(
-        trie_accounts
-            .into_iter()
-            .map(|(addr, account)| (Address::from(addr), account)),
-    ))
-}
-
-#[derive(Clone)]
-struct TrieEntry {
-    key_nibbles: [u8; 64],
-    value: Vec<u8>,
-    account_addr: Option<[u8; 20]>,
-}
-
-#[derive(Clone)]
-struct BuiltNode {
-    ptr: RlpNode,
-    raw_rlp: Vec<u8>,
-}
-
-fn build_state_update_journal_overlay(
-    state: &StableState,
-    delta: &TrieDelta,
-    storage_updates: Vec<StorageRootUpdate>,
-) -> trie_update::TrieUpdateJournal {
-    let (accounts, storage_by_addr) = collect_overlay_accounts_and_storage(state, delta);
-    let mut node_map: BTreeMap<HashKey, NodeRecord> = BTreeMap::new();
-    let mut account_leaf_hashes: BTreeMap<AccountKey, HashKey> = BTreeMap::new();
-    let mut forced_roots: BTreeMap<HashKey, Vec<u8>> = BTreeMap::new();
-
-    for slots in storage_by_addr.values() {
-        if slots.is_empty() {
-            continue;
-        }
-        let mut storage_entries = Vec::with_capacity(slots.len());
-        for (slot, value) in slots {
-            let mut value_rlp = Vec::with_capacity(33);
-            U256::from_be_bytes(*value).encode(&mut value_rlp);
-            storage_entries.push(TrieEntry {
-                key_nibbles: bytes_to_nibbles(keccak256(slot)),
-                value: value_rlp,
-                account_addr: None,
-            });
-        }
-        storage_entries.sort_by_key(|entry| entry.key_nibbles);
-        if let Some(storage_root_node) =
-            build_trie_nodes(&storage_entries, 0, &mut node_map, &mut account_leaf_hashes)
-        {
-            let storage_root = HashKey(b256_to_bytes(rlp_node_to_root(storage_root_node.ptr)));
-            if storage_root_node.raw_rlp.len() < 32 {
-                forced_roots.insert(storage_root, storage_root_node.raw_rlp);
-            }
-        }
-    }
-
-    let mut account_entries = Vec::with_capacity(accounts.len());
-    for (addr, account) in accounts {
-        let mut value_rlp = Vec::with_capacity(128);
-        account.encode(&mut value_rlp);
-        account_entries.push(TrieEntry {
-            key_nibbles: bytes_to_nibbles(keccak256(&addr)),
-            value: value_rlp,
-            account_addr: Some(addr),
-        });
-    }
-    account_entries.sort_by_key(|entry| entry.key_nibbles);
-    let root_node = build_trie_nodes(&account_entries, 0, &mut node_map, &mut account_leaf_hashes);
-    let root = root_node
-        .as_ref()
-        .map(|node| rlp_node_to_root(node.ptr.clone()))
-        .unwrap_or(EMPTY_ROOT_HASH);
-    if let Some(node) = root_node {
-        if node.raw_rlp.len() < 32 {
-            forced_roots.insert(HashKey(b256_to_bytes(root)), node.raw_rlp);
-        }
-    }
-
-    let mut new_node_records: BTreeMap<HashKey, Vec<u8>> = forced_roots;
-
-    let mut node_delta_counts: NodeDeltaCounts = BTreeMap::new();
-    let mut before_iter = state.state_root_node_db.iter();
-    let mut after_iter = node_map.iter();
-    let mut new_iter = new_node_records.iter();
-    let mut before = before_iter.next();
-    let mut after = after_iter.next();
-    let mut new_only = new_iter.next();
-    while before.is_some() || after.is_some() || new_only.is_some() {
-        let mut next_key = None;
-        if let Some(entry) = before.as_ref() {
-            next_key = Some(*entry.key());
-        }
-        if let Some((key, _)) = after {
-            let key = *key;
-            next_key = Some(match next_key {
-                Some(current) if current <= key => current,
-                _ => key,
-            });
-        }
-        if let Some((key, _)) = new_only {
-            let key = *key;
-            next_key = Some(match next_key {
-                Some(current) if current <= key => current,
-                _ => key,
-            });
-        }
-        let key = match next_key {
-            Some(value) => value,
-            None => break,
-        };
-        let before_count = match before.as_ref() {
-            Some(entry) if *entry.key() == key => i64::from(entry.value().refcnt),
-            _ => 0,
-        };
-        let after_count = match after {
-            Some((entry_key, entry_value)) if *entry_key == key => i64::from(entry_value.refcnt),
-            _ => 0,
-        };
-        let diff = after_count - before_count;
-        if diff != 0 {
-            node_delta_counts.insert(key, diff);
-        }
-        if let Some(entry) = before.as_ref() {
-            if *entry.key() == key {
-                before = before_iter.next();
-            }
-        }
-        if let Some((entry_key, _)) = after {
-            if *entry_key == key {
-                after = after_iter.next();
-            }
-        }
-        if let Some((entry_key, _)) = new_only {
-            if *entry_key == key {
-                new_only = new_iter.next();
-            }
-        }
-    }
-    for (hash, record) in node_map.into_iter() {
-        new_node_records.insert(hash, record.rlp);
-    }
-
-    let anchor_delta = build_anchor_delta(state, &storage_updates, b256_to_bytes(root));
-
-    trie_update::TrieUpdateJournal {
-        state_root: b256_to_bytes(root),
-        storage_updates,
-        node_delta_counts,
-        new_node_records,
-        updated_account_leaf_hashes: account_leaf_hashes,
-        anchor_delta,
-    }
-}
-
-fn collect_overlay_accounts_and_storage(
-    state: &StableState,
-    delta: &TrieDelta,
-) -> (
-    BTreeMap<[u8; 20], TrieAccount>,
-    BTreeMap<[u8; 20], BTreeMap<[u8; 32], [u8; 32]>>,
-) {
-    let target_addrs = collect_overlay_target_addrs(state, delta);
-
-    let mut storage_by_addr: BTreeMap<[u8; 20], BTreeMap<[u8; 32], [u8; 32]>> = BTreeMap::new();
-    for addr in target_addrs.iter().copied() {
-        let lower = make_storage_key(addr, [0u8; 32]);
-        let upper = make_storage_key(addr, [0xffu8; 32]);
-        let mut slots = BTreeMap::new();
-        for entry in state.storage.range(lower..=upper) {
-            let key = entry.key().0;
-            if key[1..21] != addr {
-                break;
-            }
-            let mut slot = [0u8; 32];
-            slot.copy_from_slice(&key[21..53]);
-            slots.insert(slot, entry.value().0);
-        }
-        if slots.is_empty() {
-            continue;
-        }
-        storage_by_addr.insert(addr, slots);
-    }
-    for (addr, account_delta) in &delta.accounts {
-        let slots = storage_by_addr.entry(*addr).or_default();
-        if account_delta.deleted {
-            slots.clear();
-            continue;
-        }
-        for (slot, value) in &account_delta.storage {
-            if let Some(value_bytes) = value {
-                slots.insert(*slot, *value_bytes);
-            } else {
-                slots.remove(slot);
-            }
-        }
-    }
-    storage_by_addr.retain(|_, slots| !slots.is_empty());
-
-    let mut trie_accounts: BTreeMap<[u8; 20], TrieAccount> = BTreeMap::new();
-    for addr in target_addrs {
-        let account_key = make_account_key(addr);
-        let mut has_account = false;
-        let mut nonce = 0u64;
-        let mut balance = U256::ZERO;
-        let mut code_hash = KECCAK_EMPTY;
-
-        if let Some(account) = state.accounts.get(&account_key) {
-            has_account = true;
-            nonce = account.nonce();
-            balance = U256::from_be_bytes(account.balance());
-            code_hash = normalize_code_hash(B256::from(account.code_hash()));
-        }
-        if let Some(account_delta) = delta.accounts.get(&addr) {
-            if account_delta.deleted {
-                continue;
-            }
-            has_account = true;
-            nonce = account_delta.nonce;
-            balance = U256::from_be_bytes(account_delta.balance);
-            code_hash = normalize_code_hash(B256::from(account_delta.code_hash));
-        }
-
-        if !has_account {
-            if let Some(root) = state.state_storage_roots.get(&account_key) {
-                let trie_account = TrieAccount {
-                    nonce: 0,
-                    balance: U256::ZERO,
-                    storage_root: B256::from(root.0),
-                    code_hash: KECCAK_EMPTY,
-                };
-                if !is_empty_trie_account(&trie_account) {
-                    trie_accounts.insert(addr, trie_account);
-                }
-            }
-            continue;
-        }
-
-        let storage_root = storage_by_addr
-            .get(&addr)
-            .map(|slots| {
-                storage_root_unhashed(
-                    slots
-                        .iter()
-                        .map(|(slot, value)| (B256::from(*slot), U256::from_be_bytes(*value))),
-                )
-            })
-            .or_else(|| {
-                state
-                    .state_storage_roots
-                    .get(&account_key)
-                    .map(|entry| B256::from(entry.0))
-            })
-            .unwrap_or(EMPTY_ROOT_HASH);
-
-        let trie_account = TrieAccount {
-            nonce,
-            balance,
-            storage_root,
-            code_hash,
-        };
-        if !is_empty_trie_account(&trie_account) {
-            trie_accounts.insert(addr, trie_account);
-        }
-    }
-    (trie_accounts, storage_by_addr)
-}
-
-fn collect_overlay_target_addrs(
-    state: &StableState,
-    delta: &TrieDelta,
-) -> std::collections::BTreeSet<[u8; 20]> {
-    let mut addrs = std::collections::BTreeSet::new();
-
-    for entry in state.accounts.iter() {
-        let key = entry.key().0;
-        if key[0] != 0x01 {
-            continue;
-        }
-        let mut addr = [0u8; 20];
-        addr.copy_from_slice(&key[1..21]);
-        addrs.insert(addr);
-    }
-    for entry in state.state_storage_roots.iter() {
-        let key = entry.key().0;
-        if key[0] != 0x01 {
-            continue;
-        }
-        let mut addr = [0u8; 20];
-        addr.copy_from_slice(&key[1..21]);
-        addrs.insert(addr);
-    }
-    for addr in delta.accounts.keys().copied() {
-        addrs.insert(addr);
-    }
-
-    addrs
-}
-
-fn build_trie_nodes(
-    entries: &[TrieEntry],
-    depth: usize,
-    node_map: &mut BTreeMap<HashKey, NodeRecord>,
-    account_leaf_hashes: &mut BTreeMap<AccountKey, HashKey>,
-) -> Option<BuiltNode> {
-    if entries.is_empty() {
-        return None;
-    }
-    if entries.len() == 1 {
-        let key = Nibbles::from_nibbles_unchecked(&entries[0].key_nibbles[depth..]);
-        let leaf = LeafNode::new(key, entries[0].value.clone());
-        let mut rlp = Vec::with_capacity(96);
-        let ptr = leaf.as_ref().rlp(&mut rlp);
-        let hash = record_hashed_node(node_map, &rlp);
-        if let Some(addr) = entries[0].account_addr {
-            account_leaf_hashes.insert(make_account_key(addr), hash);
-        }
-        return Some(BuiltNode { ptr, raw_rlp: rlp });
-    }
-
-    let mut common_end = depth;
-    while common_end < 64 {
-        let nib = entries[0].key_nibbles[common_end];
-        if entries
-            .iter()
-            .all(|entry| entry.key_nibbles[common_end] == nib)
-        {
-            common_end = common_end.saturating_add(1);
-        } else {
-            break;
-        }
-    }
-    if common_end > depth {
-        let child = build_trie_nodes(entries, common_end, node_map, account_leaf_hashes)?;
-        let key = Nibbles::from_nibbles_unchecked(&entries[0].key_nibbles[depth..common_end]);
-        let extension = ExtensionNode::new(key, child.ptr);
-        let mut rlp = Vec::with_capacity(96);
-        let ptr = extension.as_ref().rlp(&mut rlp);
-        record_hashed_node(node_map, &rlp);
-        return Some(BuiltNode { ptr, raw_rlp: rlp });
-    }
-
-    let mut stack = Vec::with_capacity(16);
-    let mut mask = TrieMask::default();
-    let mut cursor = 0usize;
-    while cursor < entries.len() {
-        let nib = entries[cursor].key_nibbles[depth];
-        let start = cursor;
-        cursor = cursor.saturating_add(1);
-        while cursor < entries.len() && entries[cursor].key_nibbles[depth] == nib {
-            cursor = cursor.saturating_add(1);
-        }
-        if let Some(child) = build_trie_nodes(
-            &entries[start..cursor],
-            depth.saturating_add(1),
-            node_map,
-            account_leaf_hashes,
-        ) {
-            stack.push(child.ptr);
-            mask.set_bit(nib);
-        }
-    }
-    let branch = BranchNode::new(stack, mask);
-    let mut rlp = Vec::with_capacity(96);
-    let ptr = branch.as_ref().rlp(&mut rlp);
-    record_hashed_node(node_map, &rlp);
-    Some(BuiltNode { ptr, raw_rlp: rlp })
-}
-
-fn record_hashed_node(node_map: &mut BTreeMap<HashKey, NodeRecord>, rlp: &[u8]) -> HashKey {
-    let key = HashKey(keccak256(rlp));
-    if rlp.len() < 32 {
-        return key;
-    }
-    if let Some(existing) = node_map.get_mut(&key) {
-        existing.refcnt = existing.refcnt.saturating_add(1);
-        return key;
-    }
-    node_map.insert(key, NodeRecord::new(1, rlp.to_vec()));
-    key
-}
-
-fn bytes_to_nibbles(bytes: [u8; 32]) -> [u8; 64] {
-    let mut nibbles = [0u8; 64];
-    for (i, byte) in bytes.iter().enumerate() {
-        nibbles[i * 2] = byte >> 4;
-        nibbles[i * 2 + 1] = byte & 0x0f;
-    }
-    nibbles
 }
 
 fn build_anchor_delta(
@@ -1010,11 +493,12 @@ fn compute_storage_root_for_address(state: &StableState, addr: [u8; 20]) -> B256
     let mut slots = Vec::new();
     for entry in state.storage.range(lower..=upper) {
         let key = entry.key().0;
-        if key[1..21] != addr[..] {
+        let Some((key_addr, slot)) = parse_storage_key_bytes(&key) else {
+            break;
+        };
+        if key_addr != addr {
             break;
         }
-        let mut slot = [0u8; 32];
-        slot.copy_from_slice(&key[21..53]);
         slots.push((B256::from(slot), U256::from_be_bytes(entry.value().0)));
     }
     if slots.is_empty() {
@@ -1027,11 +511,9 @@ fn compute_state_root_from_cache(state: &StableState) -> [u8; 32] {
     let mut trie_accounts: BTreeMap<[u8; 20], TrieAccount> = BTreeMap::new();
     for entry in state.accounts.iter() {
         let key = entry.key().0;
-        if key[0] != 0x01 {
+        let Some(addr) = parse_account_key_bytes(&key) else {
             continue;
-        }
-        let mut addr = [0u8; 20];
-        addr.copy_from_slice(&key[1..21]);
+        };
         let account = entry.value();
         let storage_root = state
             .state_storage_roots
@@ -1050,8 +532,9 @@ fn compute_state_root_from_cache(state: &StableState) -> [u8; 32] {
     }
     for entry in state.state_storage_roots.iter() {
         let key = entry.key().0;
-        let mut addr = [0u8; 20];
-        addr.copy_from_slice(&key[1..21]);
+        let Some(addr) = parse_account_key_bytes(&key) else {
+            continue;
+        };
         if trie_accounts.contains_key(&addr) {
             continue;
         }

@@ -1,5 +1,6 @@
 //! どこで: Phase1テスト / 何を: ハッシュ決定性 / なぜ: 再現性を保証するため
 
+use evm_core::chain;
 use evm_core::hash::{block_hash, keccak256, stored_tx_id, tx_list_hash};
 use evm_core::state_root::{
     commit_state_root_with, compute_state_root_incremental_with, TouchedSummary,
@@ -322,6 +323,36 @@ fn commit_state_root_noop_fast_path_uses_current_root() {
             before.state_root_verify_skipped_count.saturating_add(1)
         );
     });
+}
+
+#[test]
+fn state_root_stays_identical_after_refcnt_rebuild() {
+    init_stable_state();
+    let addr = [0x99u8; 20];
+    with_state_mut(|state| {
+        state.accounts.insert(
+            make_account_key(addr),
+            AccountVal::from_parts(1, [0x0au8; 32], [0u8; 32]),
+        );
+        state.storage.insert(
+            make_storage_key(addr, [0x03u8; 32]),
+            U256Val::new([0x44u8; 32]),
+        );
+    });
+
+    let baseline = with_state_mut(|state| compute_state_root_incremental_with(state, &[addr]));
+    with_state_mut(|state| {
+        let mut migration = *state.state_root_migration.get();
+        migration.phase = evm_db::chain_data::MigrationPhase::BuildRefcnt;
+        migration.cursor = 0;
+        state.state_root_migration.set(migration);
+    });
+    let _ = chain::state_root_migration_tick(512);
+    let done = chain::state_root_migration_tick(512);
+    assert!(done);
+
+    let rebuilt = with_state_mut(|state| compute_state_root_incremental_with(state, &[addr]));
+    assert_eq!(baseline, rebuilt);
 }
 
 fn hex32(value: [u8; 32]) -> String {

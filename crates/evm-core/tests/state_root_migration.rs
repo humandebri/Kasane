@@ -121,3 +121,37 @@ fn migration_build_trie_progresses_with_small_steps() {
         "migration cursor/phase must progress with max_steps=1"
     );
 }
+
+#[test]
+fn migration_build_refcnt_keeps_state_root_stable() {
+    init_stable_state();
+    let addr = [0x42u8; 20];
+    with_state_mut(|state| {
+        state.accounts.insert(
+            make_account_key(addr),
+            AccountVal::from_parts(1, [0x01u8; 32], [0u8; 32]),
+        );
+        state.storage.insert(
+            make_storage_key(addr, [0x01u8; 32]),
+            U256Val::new([0x11u8; 32]),
+        );
+    });
+
+    let before = with_state_mut(|state| {
+        evm_core::state_root::compute_state_root_incremental_with(state, &[addr])
+    });
+    with_state_mut(|state| {
+        let mut m = *state.state_root_migration.get();
+        m.phase = MigrationPhase::BuildRefcnt;
+        m.cursor = 0;
+        state.state_root_migration.set(m);
+    });
+    let done = chain::state_root_migration_tick(512);
+    assert!(!done);
+    let done = chain::state_root_migration_tick(512);
+    assert!(done);
+    let after = with_state_mut(|state| evm_core::state_root::current_state_root_with(state));
+    assert_eq!(before, after);
+    let unreachable = with_state(|state| state.state_root_metrics.get().node_db_unreachable);
+    assert_eq!(unreachable, 0);
+}

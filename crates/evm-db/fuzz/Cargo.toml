@@ -1,0 +1,36 @@
+[package]
+name = "evm-db-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[workspace]
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+evm-db = { path = ".." }
+ic-stable-structures = "0.7.2"
+
+[[bin]]
+name = "tx_loc_from_bytes"
+path = "fuzz_targets/tx_loc_from_bytes.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "key_wire_decode"
+path = "fuzz_targets/key_wire_decode.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "state_root_from_bytes"
+path = "fuzz_targets/state_root_from_bytes.rs"
+test = false
+doc = false
+bench = false

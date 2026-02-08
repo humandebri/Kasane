@@ -11,6 +11,9 @@ use evm_db::chain_data::{
 };
 use evm_db::chain_data::{LogConfigV1, LOG_CONFIG_FILTER_MAX};
 use evm_db::chain_data::{DEFAULT_MIN_GAS_PRICE, DEFAULT_MIN_PRIORITY_FEE};
+use evm_db::types::keys::{
+    make_account_key, make_storage_key, parse_account_key_bytes, parse_storage_key_bytes,
+};
 use ic_stable_structures::Storable;
 
 #[test]
@@ -413,6 +416,39 @@ fn caller_key_roundtrip() {
     let bytes = key.to_bytes();
     let decoded = CallerKey::from_bytes(bytes);
     assert_eq!(key, decoded);
+}
+
+#[test]
+fn account_key_wire_decode_roundtrip() {
+    let addr = [0xabu8; 20];
+    let key = make_account_key(addr);
+    let decoded = parse_account_key_bytes(&key.0).expect("valid account key");
+    assert_eq!(decoded, addr);
+}
+
+#[test]
+fn account_key_wire_decode_rejects_bad_prefix_or_len() {
+    let mut bad_prefix = [0u8; 21];
+    bad_prefix[0] = 0xff;
+    assert!(parse_account_key_bytes(&bad_prefix).is_none());
+    assert!(parse_account_key_bytes(&bad_prefix[..20]).is_none());
+}
+
+#[test]
+fn storage_key_wire_decode_roundtrip() {
+    let addr = [0x11u8; 20];
+    let slot = [0x22u8; 32];
+    let key = make_storage_key(addr, slot);
+    let decoded = parse_storage_key_bytes(&key.0).expect("valid storage key");
+    assert_eq!(decoded, (addr, slot));
+}
+
+#[test]
+fn storage_key_wire_decode_rejects_bad_prefix_or_len() {
+    let mut bad_prefix = [0u8; 53];
+    bad_prefix[0] = 0xff;
+    assert!(parse_storage_key_bytes(&bad_prefix).is_none());
+    assert!(parse_storage_key_bytes(&bad_prefix[..52]).is_none());
 }
 
 fn test_log(address: [u8; 20], topics: Vec<[u8; 32]>, data: Vec<u8>) -> LogEntry {
