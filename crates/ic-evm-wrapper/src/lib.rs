@@ -1603,19 +1603,19 @@ fn caller_key_to_principal(key: CallerKey) -> Option<Principal> {
 }
 
 fn migration_pending() -> bool {
-    if !schema_migration_tick(32) {
-        return true;
-    }
     let meta = get_meta();
     if meta.needs_migration || meta.schema_version < current_schema_version() {
         return true;
     }
-    let pending =
-        with_state(|state| state.state_root_migration.get().phase != MigrationPhase::Done);
-    if !pending {
-        return false;
-    }
-    !chain::state_root_migration_tick(512)
+    with_state(|state| {
+        !state.state_root_meta.get().initialized
+            || state.state_root_migration.get().phase != MigrationPhase::Done
+    })
+}
+
+fn drive_migrations_tick(schema_max_steps: u32, state_root_max_steps: u32) {
+    let _ = schema_migration_tick(schema_max_steps);
+    let _ = chain::state_root_migration_tick(state_root_max_steps);
 }
 
 fn critical_corrupt_state() -> bool {
@@ -1943,14 +1943,12 @@ fn apply_post_upgrade_migrations() {
             }
         });
     }
-    if migration_pending() {
-        let _ = chain::state_root_migration_tick(1024);
-        let _ = schema_migration_tick(1024);
-    }
+    drive_migrations_tick(1024, 1024);
 }
 
 fn schedule_cycle_observer() {
     ic_cdk_timers::set_timer_interval(std::time::Duration::from_secs(60), || async {
+        drive_migrations_tick(256, 512);
         let mode = observe_cycles();
         if mode != OpsMode::Critical && !migration_pending() {
             schedule_mining();
@@ -2139,16 +2137,20 @@ pub fn export_did() -> String {
 mod tests {
     use super::{
         chain_submit_error_to_code, clamp_return_data, exec_error_to_code, inspect_method_allowed,
-        map_execute_chain_result, map_submit_chain_error, prune_boundary_for_number,
-        receipt_lookup_status, reject_anonymous_principal, reject_write_reason, tx_id_from_bytes,
-        ExecuteTxError, MINING_ERROR_COUNT, PRUNE_ERROR_COUNT,
+        map_execute_chain_result, map_submit_chain_error, migration_pending,
+        prune_boundary_for_number, receipt_lookup_status, reject_anonymous_principal,
+        reject_write_reason, tx_id_from_bytes, ExecuteTxError, MINING_ERROR_COUNT,
+        PRUNE_ERROR_COUNT,
     };
     use candid::Principal;
     use evm_core::chain::{ChainError, ExecResult};
     use evm_core::revm_exec::{ExecError, OpHaltReason, OpTransactionError};
     use evm_db::chain_data::constants::MAX_RETURN_DATA;
-    use evm_db::chain_data::{TxId, TxLoc};
-    use evm_db::meta::{set_needs_migration, set_schema_migration_state, SchemaMigrationState};
+    use evm_db::chain_data::{MigrationPhase, TxId, TxLoc};
+    use evm_db::meta::{
+        current_schema_version, schema_migration_state, set_needs_migration,
+        set_schema_migration_state, SchemaMigrationPhase, SchemaMigrationState,
+    };
     use evm_db::stable_state::init_stable_state;
 
     #[test]
@@ -2349,6 +2351,39 @@ mod tests {
         set_needs_migration(true);
         let reason = reject_write_reason().expect("needs_migration should block writes");
         assert_eq!(reason, "ops.write.needs_migration");
+    }
+
+    #[test]
+    fn migration_pending_does_not_advance_schema_migration_state() {
+        init_stable_state();
+        set_needs_migration(false);
+        set_schema_migration_state(SchemaMigrationState {
+            phase: SchemaMigrationPhase::Init,
+            cursor: 0,
+            from_version: current_schema_version(),
+            to_version: current_schema_version(),
+            last_error: 0,
+            cursor_key_set: false,
+            cursor_key: [0u8; 32],
+        });
+        evm_db::stable_state::with_state_mut(|state| {
+            let mut meta = *state.state_root_meta.get();
+            meta.initialized = true;
+            state.state_root_meta.set(meta);
+            let mut migration = *state.state_root_migration.get();
+            migration.phase = MigrationPhase::Done;
+            migration.cursor = 0;
+            migration.last_error = 0;
+            state.state_root_migration.set(migration);
+        });
+
+        let before = schema_migration_state();
+        assert_eq!(before.phase, SchemaMigrationPhase::Init);
+        let pending = migration_pending();
+        assert!(!pending);
+        let after = schema_migration_state();
+        assert_eq!(after.phase, SchemaMigrationPhase::Init);
+        assert_eq!(after.cursor, before.cursor);
     }
 
     #[test]
