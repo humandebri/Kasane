@@ -141,6 +141,55 @@ fn recover_without_journal_advances_next_prune_block_to_boundary() {
     });
 }
 
+#[test]
+fn recover_prune_journal_handles_orphan_entry_without_cursor() {
+    init_stable_state();
+    let tx = TxId([0x77; 32]);
+    let block = make_block(20, tx);
+
+    with_state_mut(|state| {
+        insert_block(state, 20, &block);
+        insert_receipt(state, tx, 20);
+        insert_tx_index(state, tx, 20);
+        state.tx_locs.insert(tx, TxLoc::included(20, 0));
+        state.seen_tx.insert(tx, 1);
+        let mut head = *state.head.get();
+        head.number = 40;
+        state.head.set(head);
+
+        let mut ptrs = Vec::new();
+        if let Some(ptr) = state.blocks.get(&20) {
+            ptrs.push(ptr);
+        }
+        if let Some(ptr) = state.receipts.get(&tx) {
+            ptrs.push(ptr);
+        }
+        if let Some(ptr) = state.tx_index.get(&tx) {
+            ptrs.push(ptr);
+        }
+        for ptr in ptrs.iter() {
+            state
+                .blob_store
+                .mark_quarantine(ptr)
+                .expect("quarantine ptr");
+        }
+        state
+            .prune_journal
+            .insert(20, evm_db::chain_data::PruneJournal { ptrs });
+        let mut prune_state = *state.prune_state.get();
+        prune_state.clear_journal();
+        state.prune_state.set(prune_state);
+    });
+
+    let _ = chain::prune_blocks(10, 100).expect("recover path should succeed");
+    with_state(|state| {
+        assert!(state.prune_journal.get(&20).is_none());
+        assert!(state.blocks.get(&20).is_none());
+        assert!(state.seen_tx.get(&tx).is_none());
+        assert!(state.prune_state.get().journal_block().is_none());
+    });
+}
+
 fn make_block(number: u64, tx_id: TxId) -> BlockData {
     let parent_hash = [0u8; 32];
     let number_u8 = u8::try_from(number).unwrap_or(0);

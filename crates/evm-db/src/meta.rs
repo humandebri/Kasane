@@ -255,7 +255,7 @@ impl Storable for Meta {
         let data = bytes.as_ref();
         if data.len() != META_LEGACY_SIZE && data.len() != META_SIZE {
             record_corrupt(b"meta");
-            return Meta::new();
+            return fail_closed_meta();
         }
         let mut magic = [0u8; 4];
         let mut schema_hash = [0u8; 32];
@@ -279,7 +279,7 @@ impl Storable for Meta {
             Ok(value) => value,
             Err(_) => {
                 record_corrupt(b"meta");
-                return Meta::new();
+                return fail_closed_meta();
             }
         };
         Self {
@@ -299,6 +299,14 @@ impl Storable for Meta {
         max_size: META_SIZE as u32,
         is_fixed_size: true,
     };
+}
+
+fn fail_closed_meta() -> Meta {
+    Meta {
+        schema_version: 0,
+        needs_migration: true,
+        ..Meta::new()
+    }
 }
 
 fn init_meta_cell() -> StableCell<Meta, VMem> {

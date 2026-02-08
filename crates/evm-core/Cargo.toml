@@ -2,6 +2,7 @@
 name = "ic-evm-core"
 version = "0.1.0"
 edition = "2021"
+license = "MIT OR Apache-2.0"
 
 [lib]
 name = "evm_core"
@@ -29,6 +30,7 @@ alloy-trie = { version = "0.9.3", default-features = false, features = ["std", "
 alloy-signer = { version = "1.5.2", default-features = false, optional = true }
 alloy-signer-local = { version = "1.5.2", default-features = false, optional = true }
 byteorder = "1"
+smallvec = "1.13"
 
 [dependencies.evm_db]
 package = "evm-db"

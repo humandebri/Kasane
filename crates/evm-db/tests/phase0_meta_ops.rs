@@ -38,6 +38,15 @@ fn fail_closed_decode_sets_needs_migration() {
 }
 
 #[test]
+fn meta_invalid_length_is_fail_closed_for_non_legacy_sizes() {
+    for len in [1usize, 63usize] {
+        let meta = Meta::from_bytes(Cow::Owned(vec![0u8; len]));
+        assert!(meta.needs_migration);
+        assert_eq!(meta.schema_version, 0);
+    }
+}
+
+#[test]
 fn ops_state_roundtrip() {
     let state = OpsStateV1 {
         last_cycle_balance: 7,

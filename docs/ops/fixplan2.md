@@ -130,6 +130,10 @@
 - [x] active 切替は Verify 成功後のみ実行（失敗時は旧ストア参照）
 - [x] from_version>=3 はコピーを省略し、Verify 条件を緩和
 - [x] 旧decodeは移行例外として `tx_loc` に限定し、方針コメントを明記
+- [x] `Meta::from_bytes` の異常系フォールバックを fail-closed 化（`needs_migration=true`/`schema_version=0`）
+- [x] prune復旧で `prune_state.journal_block` 欠落時も最小の孤児 `prune_journal` を回収可能にした
+- [x] `inspect_message` の payload 上限をメソッド別に分離（Tx系厳格・管理系緩和）
+- [x] inspect allowlist と `.did` update メソッドの整合テストを追加
 
 ## 北極星設計（trap排除・状態機械化・安全停止）
 
