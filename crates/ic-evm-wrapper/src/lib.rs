@@ -478,37 +478,97 @@ fn pre_upgrade() {
 #[ic_cdk::inspect_message]
 fn inspect_message() {
     let method = msg_method_name();
-    if !inspect_method_allowed(method.as_str()) {
+    let Some(limit) = inspect_payload_limit_for_method(method.as_str()) else {
         return;
-    }
+    };
     if reject_anonymous_update().is_some() {
         return;
     }
     let payload_len = inspect_payload_len();
-    if payload_len <= MAX_TX_SIZE.saturating_mul(2) {
+    if payload_len <= limit {
         accept_message();
     }
 }
 
-fn inspect_method_allowed(method: &str) -> bool {
-    if cfg!(feature = "dev-faucet") && method == "dev_mint" {
-        return true;
+const INSPECT_TX_PAYLOAD_LIMIT: usize = MAX_TX_SIZE.saturating_mul(2);
+const INSPECT_MANAGE_PAYLOAD_LIMIT: usize = MAX_TX_SIZE.saturating_mul(8);
+
+#[derive(Clone, Copy)]
+struct InspectMethodPolicy {
+    method: &'static str,
+    payload_limit: usize,
+}
+
+const INSPECT_METHOD_POLICIES: [InspectMethodPolicy; 12] = [
+    InspectMethodPolicy {
+        method: "submit_eth_tx",
+        payload_limit: INSPECT_TX_PAYLOAD_LIMIT,
+    },
+    InspectMethodPolicy {
+        method: "submit_ic_tx",
+        payload_limit: INSPECT_TX_PAYLOAD_LIMIT,
+    },
+    InspectMethodPolicy {
+        method: "rpc_eth_send_raw_transaction",
+        payload_limit: INSPECT_TX_PAYLOAD_LIMIT,
+    },
+    InspectMethodPolicy {
+        method: "set_auto_mine",
+        payload_limit: INSPECT_MANAGE_PAYLOAD_LIMIT,
+    },
+    InspectMethodPolicy {
+        method: "set_mining_interval_ms",
+        payload_limit: INSPECT_MANAGE_PAYLOAD_LIMIT,
+    },
+    InspectMethodPolicy {
+        method: "set_prune_policy",
+        payload_limit: INSPECT_MANAGE_PAYLOAD_LIMIT,
+    },
+    InspectMethodPolicy {
+        method: "set_pruning_enabled",
+        payload_limit: INSPECT_MANAGE_PAYLOAD_LIMIT,
+    },
+    InspectMethodPolicy {
+        method: "set_ops_config",
+        payload_limit: INSPECT_MANAGE_PAYLOAD_LIMIT,
+    },
+    InspectMethodPolicy {
+        method: "set_log_filter",
+        payload_limit: INSPECT_MANAGE_PAYLOAD_LIMIT,
+    },
+    InspectMethodPolicy {
+        method: "set_miner_allowlist",
+        payload_limit: INSPECT_MANAGE_PAYLOAD_LIMIT,
+    },
+    InspectMethodPolicy {
+        method: "prune_blocks",
+        payload_limit: INSPECT_MANAGE_PAYLOAD_LIMIT,
+    },
+    InspectMethodPolicy {
+        method: "produce_block",
+        payload_limit: INSPECT_MANAGE_PAYLOAD_LIMIT,
+    },
+];
+
+fn inspect_payload_limit_for_method(method: &str) -> Option<usize> {
+    inspect_policy_for_method(method).map(|policy| policy.payload_limit)
+}
+
+fn inspect_policy_for_method(method: &str) -> Option<InspectMethodPolicy> {
+    if let Some(policy) = INSPECT_METHOD_POLICIES
+        .iter()
+        .copied()
+        .find(|policy| policy.method == method)
+    {
+        return Some(policy);
     }
-    matches!(
-        method,
-        "submit_eth_tx"
-            | "submit_ic_tx"
-            | "rpc_eth_send_raw_transaction"
-            | "set_auto_mine"
-            | "set_mining_interval_ms"
-            | "set_prune_policy"
-            | "set_pruning_enabled"
-            | "set_ops_config"
-            | "set_log_filter"
-            | "set_miner_allowlist"
-            | "prune_blocks"
-            | "produce_block"
-    )
+    if cfg!(feature = "dev-faucet") && method == "dev_mint" {
+        return Some(InspectMethodPolicy {
+            method: "dev_mint",
+            payload_limit: INSPECT_MANAGE_PAYLOAD_LIMIT,
+        });
+    }
+    None
 }
 
 #[allow(deprecated)]
@@ -2136,8 +2196,9 @@ pub fn export_did() -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        chain_submit_error_to_code, clamp_return_data, exec_error_to_code, inspect_method_allowed,
-        map_execute_chain_result, map_submit_chain_error, migration_pending,
+        chain_submit_error_to_code, clamp_return_data, exec_error_to_code,
+        inspect_payload_limit_for_method, inspect_policy_for_method, map_execute_chain_result,
+        map_submit_chain_error, migration_pending, INSPECT_METHOD_POLICIES,
         prune_boundary_for_number, receipt_lookup_status, reject_anonymous_principal,
         reject_write_reason, tx_id_from_bytes, ExecuteTxError, MINING_ERROR_COUNT,
         PRUNE_ERROR_COUNT,
@@ -2148,10 +2209,11 @@ mod tests {
     use evm_db::chain_data::constants::MAX_RETURN_DATA;
     use evm_db::chain_data::{MigrationPhase, TxId, TxLoc};
     use evm_db::meta::{
-        current_schema_version, schema_migration_state, set_needs_migration,
+        current_schema_version, schema_migration_state, set_meta, set_needs_migration,
         set_schema_migration_state, SchemaMigrationPhase, SchemaMigrationState,
     };
     use evm_db::stable_state::init_stable_state;
+    use std::collections::BTreeSet;
 
     #[test]
     fn clamp_return_data_rejects_oversize() {
@@ -2321,14 +2383,31 @@ mod tests {
 
     #[test]
     fn inspect_allowlist_accepts_known_methods() {
-        assert!(inspect_method_allowed("submit_ic_tx"));
-        assert!(inspect_method_allowed("set_pruning_enabled"));
-        assert!(inspect_method_allowed("set_miner_allowlist"));
+        assert!(inspect_payload_limit_for_method("submit_ic_tx").is_some());
+        assert!(inspect_payload_limit_for_method("set_pruning_enabled").is_some());
+        assert!(inspect_payload_limit_for_method("set_miner_allowlist").is_some());
     }
 
     #[test]
     fn inspect_allowlist_rejects_unknown_methods() {
-        assert!(!inspect_method_allowed("unknown_method"));
+        assert!(inspect_payload_limit_for_method("unknown_method").is_none());
+    }
+
+    #[test]
+    fn inspect_allowlist_matches_did_updates() {
+        let did_methods = did_update_methods();
+        for method in did_methods.iter() {
+            assert!(
+                inspect_payload_limit_for_method(method).is_some(),
+                "did update method is missing in inspect allowlist: {method}"
+            );
+        }
+        for method in inspect_allowlist_methods().iter() {
+            assert!(
+                did_methods.contains(*method),
+                "inspect allowlist method is missing in did: {method}"
+            );
+        }
     }
 
     #[test]
@@ -2384,6 +2463,44 @@ mod tests {
         let after = schema_migration_state();
         assert_eq!(after.phase, SchemaMigrationPhase::Init);
         assert_eq!(after.cursor, before.cursor);
+    }
+
+    #[test]
+    fn inspect_payload_limit_applies_per_method() {
+        let tx_limit = inspect_payload_limit_for_method("submit_ic_tx").expect("tx limit");
+        let manage_limit = inspect_payload_limit_for_method("set_miner_allowlist")
+            .expect("manage limit should be configured");
+        assert!(manage_limit > tx_limit);
+        assert_eq!(
+            inspect_payload_limit_for_method("rpc_eth_send_raw_transaction"),
+            Some(tx_limit)
+        );
+        assert_eq!(
+            inspect_payload_limit_for_method("produce_block"),
+            Some(manage_limit)
+        );
+        assert_eq!(inspect_payload_limit_for_method("unknown_method"), None);
+    }
+
+    #[test]
+    fn inspect_policy_table_has_unique_methods() {
+        let mut methods = BTreeSet::new();
+        for policy in INSPECT_METHOD_POLICIES {
+            let inserted = methods.insert(policy.method);
+            assert!(inserted, "duplicate inspect policy method: {}", policy.method);
+        }
+    }
+
+    #[test]
+    fn inspect_policy_allowed_and_limit_are_consistent() {
+        for method in inspect_allowlist_methods() {
+            assert!(
+                inspect_payload_limit_for_method(method).is_some(),
+                "payload limit missing for method: {method}"
+            );
+            assert!(inspect_policy_for_method(method).is_some());
+        }
+        assert!(inspect_payload_limit_for_method("unknown_method").is_none());
     }
 
     #[test]
@@ -2452,6 +2569,20 @@ mod tests {
     }
 
     #[test]
+    fn meta_corruption_reflects_in_write_blocking_status() {
+        init_stable_state();
+        let mut meta = evm_db::meta::Meta::new();
+        meta.needs_migration = true;
+        set_meta(meta);
+        let view = super::get_ops_status();
+        assert!(view.needs_migration);
+        assert_eq!(view.decode_failure_count, 0);
+        assert_eq!(view.decode_failure_last_label, None);
+        let reason = reject_write_reason().expect("write should be blocked");
+        assert_eq!(reason, "ops.write.needs_migration");
+    }
+
+    #[test]
     fn decode_failure_label_view_prefers_ascii_machine_code() {
         let mut raw = [0u8; 32];
         raw[..12].copy_from_slice(b"block_data_1");
@@ -2471,12 +2602,58 @@ mod tests {
     #[cfg(feature = "dev-faucet")]
     #[test]
     fn inspect_allowlist_accepts_dev_mint_with_feature() {
-        assert!(inspect_method_allowed("dev_mint"));
+        assert!(inspect_payload_limit_for_method("dev_mint").is_some());
     }
 
     fn is_machine_code(value: &str) -> bool {
         value
             .chars()
             .all(|ch| ch == '.' || ch == '_' || ch.is_ascii_lowercase() || ch.is_ascii_digit())
+    }
+
+    fn inspect_allowlist_methods() -> BTreeSet<&'static str> {
+        let mut out = BTreeSet::new();
+        for policy in INSPECT_METHOD_POLICIES {
+            out.insert(policy.method);
+        }
+        #[cfg(feature = "dev-faucet")]
+        out.insert("dev_mint");
+        out
+    }
+
+    fn did_update_methods() -> BTreeSet<String> {
+        let did = include_str!("../evm_canister.did");
+        let mut out = BTreeSet::new();
+        let mut in_service = false;
+        let mut stmt = String::new();
+        for line in did.lines() {
+            let trimmed = line.trim();
+            if !in_service {
+                if trimmed.starts_with("service ") || trimmed.starts_with("service:") {
+                    in_service = true;
+                }
+                continue;
+            }
+            if trimmed == "}" {
+                break;
+            }
+            if trimmed.is_empty() {
+                continue;
+            }
+            if !stmt.is_empty() {
+                stmt.push(' ');
+            }
+            stmt.push_str(trimmed);
+            if !trimmed.ends_with(';') {
+                continue;
+            }
+            if stmt.contains(" : (") && stmt.contains("-> (") && !stmt.contains(" query") {
+                if let Some((name, _)) = stmt.split_once(" : (") {
+                    out.insert(name.trim().to_string());
+                }
+            }
+            stmt.clear();
+        }
+        out
     }
 }
