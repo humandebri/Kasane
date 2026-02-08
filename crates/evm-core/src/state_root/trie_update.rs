@@ -69,7 +69,7 @@ impl<'a> JournalBuilder<'a> {
     }
 
     fn emit_node(&mut self, node: TrieNode) -> RlpNode {
-        let mut raw = Vec::new();
+        let mut raw = Vec::with_capacity(96);
         let ptr = node.rlp(&mut raw);
         if let Some(hash) = ptr.as_hash() {
             self.new_node_records
@@ -145,7 +145,7 @@ pub fn build_state_update_journal(
                     let key_hash = keccak256(slot);
                     let key = Nibbles::unpack(key_hash);
                     let encoded = value.map(|bytes| {
-                        let mut out = Vec::new();
+                        let mut out = Vec::with_capacity(33);
                         U256::from_be_bytes(bytes).encode(&mut out);
                         out
                     });
@@ -213,7 +213,7 @@ pub fn build_state_update_journal(
         };
         let mut value = None;
         if let Some(account) = after {
-            let mut out = Vec::new();
+            let mut out = Vec::with_capacity(128);
             account.encode(&mut out);
             value = Some(out);
         }
@@ -240,13 +240,15 @@ pub fn build_state_update_journal(
         force_root_record(&mut builder, root, ptr);
     }
 
+    let anchor_delta = build_anchor_delta(state, &storage_updates, b256_to_bytes(new_state_root));
+
     TrieUpdateJournal {
         state_root: b256_to_bytes(new_state_root),
-        storage_updates: storage_updates.clone(),
+        storage_updates,
         node_delta_counts: builder.node_delta_counts,
         new_node_records: builder.new_node_records,
         updated_account_leaf_hashes: BTreeMap::new(),
-        anchor_delta: build_anchor_delta(state, &storage_updates, b256_to_bytes(new_state_root)),
+        anchor_delta,
     }
 }
 
@@ -280,7 +282,7 @@ fn collect_storage_ops_from_state(state: &StableState, addr: [u8; 20]) -> Vec<Kv
         }
         let mut slot = [0u8; 32];
         slot.copy_from_slice(&key[21..53]);
-        let mut out = Vec::new();
+        let mut out = Vec::with_capacity(33);
         U256::from_be_bytes(entry.value().0).encode(&mut out);
         ops.push(KvOp {
             key: Nibbles::unpack(keccak256(&slot)),
@@ -626,7 +628,7 @@ fn collapse_children(
 pub fn build_state_update_journal_full(
     state: &StableState,
     delta: &TrieDelta,
-    storage_updates: &[StorageRootUpdate],
+    storage_updates: Vec<StorageRootUpdate>,
 ) -> TrieUpdateJournal {
     super::build_state_update_journal_overlay(state, delta, storage_updates)
 }

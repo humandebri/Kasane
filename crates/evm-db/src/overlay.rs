@@ -33,6 +33,16 @@ impl<K: Ord, V> OverlayMap<K, V> {
             apply(key, value);
         }
     }
+
+    pub fn drain_to<M>(&mut self, mut apply: M)
+    where
+        M: FnMut(K, Option<V>),
+    {
+        let writes = std::mem::take(&mut self.writes);
+        for (key, value) in writes {
+            apply(key, value);
+        }
+    }
 }
 
 impl<K: Ord, V> Default for OverlayMap<K, V> {

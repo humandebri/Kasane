@@ -38,3 +38,20 @@ fn overlay_commit_keeps_tombstone() {
 
     assert_eq!(applied, vec![(1u8, true), (2u8, false)]);
 }
+
+#[test]
+fn overlay_drain_is_sorted_and_clears_entries() {
+    let mut overlay = OverlayMap::new();
+    overlay.set(3u8, "c");
+    overlay.set(1u8, "a");
+    overlay.delete(2u8);
+
+    let mut applied = Vec::new();
+    overlay.drain_to(|key, value| applied.push((key, value.is_some())));
+
+    assert_eq!(applied, vec![(1u8, true), (2u8, false), (3u8, true)]);
+
+    let mut after = Vec::new();
+    overlay.commit_to(|key, value| after.push((*key, value.is_some())));
+    assert!(after.is_empty());
+}
