@@ -64,14 +64,46 @@ echo "[postprocess] check-endpoints"
 CHECK_DID_FILE="${DID_FILE}"
 if [[ -n "${CHECK_ENDPOINTS_EXCLUDE}" ]]; then
   CHECK_DID_FILE="$(mktemp -t ic_evm_wrapper.check.XXXXXX.did)"
-  cp "${DID_FILE}" "${CHECK_DID_FILE}"
-  IFS=',' read -r -a exclude_methods <<<"${CHECK_ENDPOINTS_EXCLUDE}"
-  for method in "${exclude_methods[@]}"; do
-    trimmed="${method//[[:space:]]/}"
-    if [[ -n "${trimmed}" ]]; then
-      perl -0pi -e "s/^\\s*${trimmed}\\s*:.*\\n//mg" "${CHECK_DID_FILE}"
-    fi
-  done
+  awk -v EXCLUDE_METHODS="${CHECK_ENDPOINTS_EXCLUDE}" '
+    function trim(value) {
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "", value)
+      return value
+    }
+    BEGIN {
+      n = split(EXCLUDE_METHODS, parts, ",")
+      for (i = 1; i <= n; i++) {
+        method = trim(parts[i])
+        if (method != "") {
+          excluded[method] = 1
+        }
+      }
+      skipping = 0
+    }
+    {
+      if (!skipping) {
+        line = $0
+        if (line ~ /^[[:space:]]*[[:alnum:]_]+[[:space:]]*:/) {
+          sub(/^[[:space:]]*/, "", line)
+          split(line, pieces, ":")
+          method_name = trim(pieces[1])
+        } else {
+          method_name = ""
+        }
+        if ((method_name in excluded)) {
+          if (index($0, ";") == 0) {
+            skipping = 1
+          }
+          next
+        }
+        print
+        next
+      }
+
+      if (index($0, ";") > 0) {
+        skipping = 0
+      }
+    }
+  ' "${DID_FILE}" > "${CHECK_DID_FILE}"
 fi
 
 check_cmd=("ic-wasm" "${OUTPUT_WASM}" "check-endpoints" "--candid" "${CHECK_DID_FILE}")
