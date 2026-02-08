@@ -980,6 +980,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "canbench-rs"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0dfe0fee0135b3face2ff259fddc28fff3c28e7acd84ae7746e25972f11230f9"
+dependencies = [
+ "canbench-rs-macros",
+ "candid",
+ "ic-cdk",
+ "serde",
+]
+
+[[package]]
+name = "canbench-rs-macros"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "237e2e5d914039918eee4bdf141e976ff34cf4130c6760808a047c081710e0a8"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 1.0.109",
+]
+
+[[package]]
 name = "candid"
 version = "0.10.20"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1757,12 +1780,14 @@ dependencies = [
 name = "ic-evm-wrapper"
 version = "0.1.0"
 dependencies = [
+ "canbench-rs",
  "candid",
  "evm-db",
  "getrandom 0.2.17",
  "ic-cdk",
  "ic-cdk-timers",
  "ic-evm-core",
+ "ic-metrics-encoder",
  "serde",
  "tracing",
  "tracing-subscriber",
@@ -1778,6 +1803,12 @@ dependencies = [
  "serde",
  "serde_bytes",
 ]
+
+[[package]]
+name = "ic-metrics-encoder"
+version = "1.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8b5c7628eac357aecda461130f8074468be5aa4d258a002032d82d817f79f1f8"
 
 [[package]]
 name = "ic-stable-structures"
