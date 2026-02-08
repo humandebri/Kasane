@@ -91,7 +91,11 @@ impl ReadySeqKey {
 
 impl Storable for ReadySeqKey {
     fn to_bytes(&self) -> Cow<'_, [u8]> {
-        match encode_guarded(b"ready_seq_key", Cow::Borrowed(&self.0), READY_SEQ_KEY_LEN_U32) {
+        match encode_guarded(
+            b"ready_seq_key",
+            Cow::Borrowed(&self.0),
+            READY_SEQ_KEY_LEN_U32,
+        ) {
             Ok(value) => value,
             Err(_) => Cow::Owned(vec![0u8; READY_SEQ_KEY_LEN]),
         }

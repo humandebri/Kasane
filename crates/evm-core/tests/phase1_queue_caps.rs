@@ -33,12 +33,8 @@ fn submit_ic_tx_rejects_when_global_pending_cap_is_reached() {
         }
     });
 
-    let err = chain::submit_ic_tx(
-        vec![0x01],
-        vec![0x02],
-        common::build_default_ic_tx_bytes(0),
-    )
-    .expect_err("global cap should reject submit");
+    let err = chain::submit_ic_tx(vec![0x01], vec![0x02], common::build_default_ic_tx_bytes(0))
+        .expect_err("global cap should reject submit");
     assert_eq!(err, ChainError::QueueFull);
 }
 
@@ -141,12 +137,8 @@ fn lower_or_equal_fee_tx_is_rejected_when_global_pending_cap_is_reached() {
         }
     });
 
-    let err = chain::submit_ic_tx(
-        caller_same,
-        canister,
-        common::build_default_ic_tx_bytes(0),
-    )
-    .expect_err("same fee should be rejected under full global cap");
+    let err = chain::submit_ic_tx(caller_same, canister, common::build_default_ic_tx_bytes(0))
+        .expect_err("same fee should be rejected under full global cap");
     assert_eq!(err, ChainError::QueueFull);
     with_state(|state| {
         assert_eq!(

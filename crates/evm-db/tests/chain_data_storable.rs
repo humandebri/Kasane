@@ -10,7 +10,10 @@ use evm_db::chain_data::{
     StoredTx, StoredTxBytes, TxId, TxIndexEntry, TxKind, TxLoc,
 };
 use evm_db::chain_data::{LogConfigV1, LOG_CONFIG_FILTER_MAX};
-use evm_db::chain_data::{DEFAULT_MIN_GAS_PRICE, DEFAULT_MIN_PRIORITY_FEE};
+use evm_db::chain_data::{
+    DEFAULT_BLOCK_GAS_LIMIT, DEFAULT_INSTRUCTION_SOFT_LIMIT, DEFAULT_MIN_GAS_PRICE,
+    DEFAULT_MIN_PRIORITY_FEE,
+};
 use evm_db::types::keys::{
     make_account_key, make_storage_key, parse_account_key_bytes, parse_storage_key_bytes,
 };
@@ -398,6 +401,8 @@ fn chain_state_roundtrip() {
     state.base_fee = 1;
     state.min_gas_price = 2;
     state.min_priority_fee = 3;
+    state.block_gas_limit = 4_500_000;
+    state.instruction_soft_limit = 123_456;
     let bytes = state.to_bytes();
     let decoded = ChainStateV1::from_bytes(bytes);
     assert_eq!(state, decoded);
@@ -408,6 +413,16 @@ fn chain_state_default_fees_follow_runtime_defaults() {
     let state = ChainStateV1::new(4_801_360);
     assert_eq!(state.min_gas_price, DEFAULT_MIN_GAS_PRICE);
     assert_eq!(state.min_priority_fee, DEFAULT_MIN_PRIORITY_FEE);
+    assert_eq!(state.block_gas_limit, DEFAULT_BLOCK_GAS_LIMIT);
+    assert_eq!(state.instruction_soft_limit, DEFAULT_INSTRUCTION_SOFT_LIMIT);
+}
+
+#[test]
+fn chain_state_invalid_len_falls_back_to_default() {
+    let legacy = [0u8; 72];
+    let decoded = ChainStateV1::from_bytes(std::borrow::Cow::Owned(legacy.to_vec()));
+    let expected = ChainStateV1::new(4_801_360);
+    assert_eq!(decoded, expected);
 }
 
 #[test]

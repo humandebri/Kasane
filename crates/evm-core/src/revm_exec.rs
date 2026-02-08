@@ -7,7 +7,6 @@ use crate::tx_decode::DecodeError;
 use evm_db::chain_data::constants::{
     CHAIN_ID, MAX_LOGS_PER_TX, MAX_LOG_DATA, MAX_LOG_TOPICS, MAX_RETURN_DATA,
 };
-use evm_db::chain_data::runtime_defaults::DEFAULT_BLOCK_GAS_LIMIT;
 use evm_db::chain_data::receipt::{log_entry_from_parts, LogEntry};
 use evm_db::chain_data::{ReceiptLike, TxId, TxIndexEntry, TxKind};
 use evm_db::stable_state::with_state_mut;
@@ -71,6 +70,7 @@ pub struct BlockExecContext {
     pub block_number: u64,
     pub timestamp: u64,
     pub base_fee: u64,
+    pub block_gas_limit: u64,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -139,7 +139,7 @@ where
         .modify_block_chained(|block| {
             block.number = U256::from(exec_ctx.block_number);
             block.timestamp = U256::from(exec_ctx.timestamp);
-            block.gas_limit = DEFAULT_BLOCK_GAS_LIMIT;
+            block.gas_limit = exec_ctx.block_gas_limit;
             block.basefee = exec_ctx.base_fee;
         })
         .build_mainnet();

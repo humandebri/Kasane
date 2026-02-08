@@ -39,8 +39,8 @@ pub use prune_state::{PruneJournal, PruneStateV1};
 pub use queue::QueueMeta;
 pub use receipt::ReceiptLike;
 pub use runtime_defaults::{
-    DEFAULT_BASE_FEE, DEFAULT_BLOCK_GAS_LIMIT, DEFAULT_MIN_GAS_PRICE, DEFAULT_MINING_INTERVAL_MS,
-    DEFAULT_MIN_PRIORITY_FEE,
+    DEFAULT_BASE_FEE, DEFAULT_BLOCK_GAS_LIMIT, DEFAULT_INSTRUCTION_SOFT_LIMIT,
+    DEFAULT_MINING_INTERVAL_MS, DEFAULT_MIN_GAS_PRICE, DEFAULT_MIN_PRIORITY_FEE,
 };
 pub use state_root_meta::{StateRootMetaV1, STATE_ROOT_META_SIZE_U32};
 pub use state_root_ops::{

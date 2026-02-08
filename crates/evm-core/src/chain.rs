@@ -17,7 +17,6 @@ use evm_db::chain_data::constants::{
     MAX_PENDING_GLOBAL, MAX_PENDING_PER_PRINCIPAL, MAX_PENDING_PER_SENDER, MAX_TX_SIZE,
     READY_CANDIDATE_LIMIT,
 };
-use evm_db::chain_data::runtime_defaults::DEFAULT_BLOCK_GAS_LIMIT;
 use evm_db::chain_data::{
     BlockData, CallerKey, Head, PendingFeeKey, PruneJournal, PrunePolicy, ReadyKey, ReadySeqKey,
     ReceiptLike, SenderKey, SenderNonceKey, StoredTx, StoredTxBytes, StoredTxError, TxId,
@@ -39,6 +38,35 @@ use std::cmp::Reverse;
 use std::collections::{BTreeSet, BinaryHeap};
 
 const OPS_WARN_RATE_LIMIT_SECS: u64 = 60;
+
+fn current_instruction_counter() -> u64 {
+    #[cfg(target_arch = "wasm32")]
+    {
+        return ic_cdk::api::performance_counter(
+            ic_cdk::api::PerformanceCounterType::InstructionCounter,
+        );
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        0
+    }
+}
+
+fn should_stop_block_execution(
+    block_gas_used: u64,
+    block_gas_limit: u64,
+    instruction_soft_limit: u64,
+    instruction_start: u64,
+    instruction_current: u64,
+) -> bool {
+    if block_gas_limit > 0 && block_gas_used >= block_gas_limit {
+        return true;
+    }
+    if instruction_soft_limit == 0 {
+        return false;
+    }
+    instruction_current.saturating_sub(instruction_start) >= instruction_soft_limit
+}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ChainError {
@@ -644,13 +672,18 @@ pub fn produce_block(max_txs: usize) -> Result<ProduceBlockOutcome, ChainError> 
         block_number: number,
         timestamp,
         base_fee: state.chain_state.get().base_fee,
+        block_gas_limit: state.chain_state.get().block_gas_limit,
     });
     let mut included_tx_ids: Vec<TxId> = Vec::new();
     let mut dropped_total = 0u64;
     let mut dropped_by_code = [0u64; evm_db::chain_data::metrics::DROP_CODE_SLOTS];
-    let (min_priority_fee, min_gas_price) = with_state(|state| {
+    let (min_priority_fee, min_gas_price, instruction_soft_limit) = with_state(|state| {
         let chain_state = state.chain_state.get();
-        (chain_state.min_priority_fee, chain_state.min_gas_price)
+        (
+            chain_state.min_priority_fee,
+            chain_state.min_gas_price,
+            chain_state.instruction_soft_limit,
+        )
     });
     let mut tx_ids = Vec::new();
     let mut prepared = Vec::new();
@@ -668,7 +701,17 @@ pub fn produce_block(max_txs: usize) -> Result<ProduceBlockOutcome, ChainError> 
         return Err(ChainError::QueueEmpty);
     }
     let mut block_gas_used = 0u64;
+    let instruction_start = current_instruction_counter();
     for tx_id in tx_ids {
+        if should_stop_block_execution(
+            block_gas_used,
+            exec_ctx.block_gas_limit,
+            instruction_soft_limit,
+            instruction_start,
+            current_instruction_counter(),
+        ) {
+            break;
+        }
         let envelope = with_state(|state| state.tx_store.get(&tx_id));
         let envelope = match envelope {
             Some(value) => value,
@@ -759,6 +802,15 @@ pub fn produce_block(max_txs: usize) -> Result<ProduceBlockOutcome, ChainError> 
             sender_bytes,
             sender_nonce,
         }));
+        if should_stop_block_execution(
+            block_gas_used,
+            exec_ctx.block_gas_limit,
+            instruction_soft_limit,
+            instruction_start,
+            current_instruction_counter(),
+        ) {
+            break;
+        }
     }
 
     for item in prepared {
@@ -802,6 +854,15 @@ pub fn produce_block(max_txs: usize) -> Result<ProduceBlockOutcome, ChainError> 
 
     let mut exec_db = CacheDB::new(crate::revm_db::RevmStableDb);
     for prepared_tx in staged_txs {
+        if should_stop_block_execution(
+            block_gas_used,
+            exec_ctx.block_gas_limit,
+            instruction_soft_limit,
+            instruction_start,
+            current_instruction_counter(),
+        ) {
+            break;
+        }
         let tx_index = u32::try_from(included_tx_ids.len()).unwrap_or(u32::MAX);
         let tx_id = prepared_tx.tx_id;
         let execution = execute_tx_on(
@@ -892,6 +953,15 @@ pub fn produce_block(max_txs: usize) -> Result<ProduceBlockOutcome, ChainError> 
             sender_nonce: prepared_tx.sender_nonce,
         });
         included_tx_ids.push(tx_id);
+        if should_stop_block_execution(
+            block_gas_used,
+            exec_ctx.block_gas_limit,
+            instruction_soft_limit,
+            instruction_start,
+            current_instruction_counter(),
+        ) {
+            break;
+        }
     }
 
     if included_tx_ids.is_empty() {
@@ -1014,7 +1084,7 @@ pub fn produce_block(max_txs: usize) -> Result<ProduceBlockOutcome, ChainError> 
         chain_state.base_fee = compute_next_base_fee(
             chain_state.base_fee,
             block_gas_used,
-            DEFAULT_BLOCK_GAS_LIMIT,
+            chain_state.block_gas_limit,
         );
         state.chain_state.set(chain_state);
         rebuild_pending_fee_index_for_base_fee(state, chain_state.base_fee);
@@ -1171,6 +1241,7 @@ fn execute_and_seal_with_caller(
         block_number: number,
         timestamp,
         base_fee: state.chain_state.get().base_fee,
+        block_gas_limit: state.chain_state.get().block_gas_limit,
     });
     let tx_env = decode_tx(kind, Address::from(caller), &stored.raw)
         .map_err(|_| ChainError::DecodeFailed)?;
@@ -1272,7 +1343,7 @@ fn execute_and_seal_with_caller(
         chain_state.base_fee = compute_next_base_fee(
             chain_state.base_fee,
             outcome.receipt.gas_used,
-            DEFAULT_BLOCK_GAS_LIMIT,
+            chain_state.block_gas_limit,
         );
         state.chain_state.set(chain_state);
         rebuild_pending_fee_index_for_base_fee(state, chain_state.base_fee);
@@ -1729,14 +1800,22 @@ fn track_pending_indexes_on_insert(
     effective_gas_price: u64,
 ) {
     let principal_key = CallerKey::from_principal_bytes(caller_principal);
-    let current = state.principal_pending_count.get(&principal_key).unwrap_or(0);
-    state.principal_pending_count.insert(principal_key, current.saturating_add(1));
+    let current = state
+        .principal_pending_count
+        .get(&principal_key)
+        .unwrap_or(0);
+    state
+        .principal_pending_count
+        .insert(principal_key, current.saturating_add(1));
     let fee_key = PendingFeeKey::new(effective_gas_price, tx_id.0);
     state.pending_fee_index.insert(fee_key, tx_id);
     state.pending_fee_key_by_tx_id.insert(tx_id, fee_key);
 }
 
-fn rebuild_pending_fee_index_for_base_fee(state: &mut evm_db::stable_state::StableState, base_fee: u64) {
+fn rebuild_pending_fee_index_for_base_fee(
+    state: &mut evm_db::stable_state::StableState,
+    base_fee: u64,
+) {
     clear_stable_map(&mut state.pending_fee_index);
     clear_stable_map(&mut state.pending_fee_key_by_tx_id);
     let mut pending_ids = Vec::new();
@@ -1772,7 +1851,10 @@ fn remove_pending_fee_index_by_tx_id(state: &mut evm_db::stable_state::StableSta
     }
 }
 
-fn decrement_principal_pending_count_for_tx(state: &mut evm_db::stable_state::StableState, tx_id: TxId) {
+fn decrement_principal_pending_count_for_tx(
+    state: &mut evm_db::stable_state::StableState,
+    tx_id: TxId,
+) {
     let Some(envelope) = state.tx_store.get(&tx_id) else {
         return;
     };
@@ -1803,7 +1885,9 @@ fn insert_ready(
     };
     let key = ReadyKey::new(max_fee_per_gas, priority, seq, tx_id.0);
     state.ready_queue.insert(key, tx_id);
-    state.ready_by_seq.insert(ReadySeqKey::new(seq, tx_id.0), tx_id);
+    state
+        .ready_by_seq
+        .insert(ReadySeqKey::new(seq, tx_id.0), tx_id);
     state.ready_key_by_tx_id.insert(tx_id, key);
     Ok(())
 }
@@ -1811,7 +1895,9 @@ fn insert_ready(
 fn remove_ready_by_tx_id(state: &mut evm_db::stable_state::StableState, tx_id: TxId) {
     if let Some(key) = state.ready_key_by_tx_id.remove(&tx_id) {
         state.ready_queue.remove(&key);
-        state.ready_by_seq.remove(&ReadySeqKey::new(key.seq(), tx_id.0));
+        state
+            .ready_by_seq
+            .remove(&ReadySeqKey::new(key.seq(), tx_id.0));
     }
 }
 
@@ -2251,15 +2337,39 @@ fn select_top_k_ready_candidates(mut candidates: Vec<ReadyCandidate>, max_txs: u
         push_top_k_candidate(&mut selected_heap, candidate, max_txs);
     }
 
-    let mut selected: Vec<ReadyCandidate> = selected_heap
-        .into_iter()
-        .map(|entry| entry.0)
-        .collect();
+    let mut selected: Vec<ReadyCandidate> =
+        selected_heap.into_iter().map(|entry| entry.0).collect();
     selected.sort_by(|left, right| right.cmp_priority(left));
-    selected.into_iter().map(|candidate| candidate.tx_id).collect()
+    selected
+        .into_iter()
+        .map(|candidate| candidate.tx_id)
+        .collect()
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum RekeyError {
     DecodeFailed,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::should_stop_block_execution;
+
+    #[test]
+    fn should_stop_block_execution_stops_on_gas_limit() {
+        assert!(should_stop_block_execution(10, 10, 0, 0, 0));
+        assert!(should_stop_block_execution(11, 10, 0, 0, 0));
+    }
+
+    #[test]
+    fn should_stop_block_execution_stops_on_instruction_budget() {
+        assert!(should_stop_block_execution(1, 0, 5, 100, 105));
+        assert!(should_stop_block_execution(1, 0, 5, 100, 120));
+        assert!(!should_stop_block_execution(1, 0, 5, 100, 104));
+    }
+
+    #[test]
+    fn should_stop_block_execution_ignores_instruction_budget_when_disabled() {
+        assert!(!should_stop_block_execution(1, 0, 0, 100, 100_000));
+    }
 }
