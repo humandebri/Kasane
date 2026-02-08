@@ -13,8 +13,9 @@ pub const MAX_TXS_PER_BLOCK_U32: u32 = 1024;
 pub const CHAIN_ID: u64 = 4_801_360;
 pub const READY_CANDIDATE_LIMIT: usize = 256;
 pub const MAX_QUEUE_SNAPSHOT_LIMIT: usize = 1_000;
-pub const MAX_PENDING_GLOBAL: usize = 20_000;
+pub const MAX_PENDING_GLOBAL: usize = 8_192;
 pub const MAX_PENDING_PER_SENDER: usize = 64;
+pub const MAX_PENDING_PER_PRINCIPAL: usize = 32;
 pub const MAX_NONCE_WINDOW: u64 = 64;
 
 pub const RECEIPT_CONTRACT_ADDR_LEN: usize = 20;
@@ -30,6 +31,16 @@ pub const CALLER_KEY_LEN: usize = 30;
 // StableCellの固定長ヘッダ
 pub const CHAIN_STATE_SIZE_U32: u32 = 72;
 
+// 自動ブロック生成の既定間隔（ms）
+pub const DEFAULT_MINING_INTERVAL_MS: u64 = 5_000;
+
+// ガス関連の既定値（Phase1の足場）
+// block gas limit は固定運用。更新時は docs/ops/ic-wasm-workflow.md の
+// staging計測手順（失敗ゼロ最大候補 + 20% headroom）で根拠を取ってから変更する。
+pub const DEFAULT_BASE_FEE: u64 = 1_000_000_000;
+pub const DEFAULT_MIN_GAS_PRICE: u64 = 1_000_000_000;
+pub const DEFAULT_MIN_PRIORITY_FEE: u64 = 1_000_000_000;
+pub const DEFAULT_BLOCK_GAS_LIMIT: u64 = 3_000_000;
 // TxLocの固定長
 pub const TX_LOC_SIZE_U32: u32 = 32;
 
