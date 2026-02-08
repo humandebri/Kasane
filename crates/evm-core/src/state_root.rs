@@ -472,6 +472,14 @@ fn ensure_node_db_bootstrapped(state: &mut StableState) {
     {
         return;
     }
+    // build_state_update_journal_full は空Trie基準の再構築差分を返すため、
+    // 既存NodeDBが部分的に残っていると refcnt を二重加算してしまう。
+    // ルート欠落時はNodeDBを初期化してから再構築する。
+    clear_stable_map(&mut state.state_root_node_db);
+    clear_stable_map(&mut state.state_root_gc_queue);
+    state
+        .state_root_gc_state
+        .set(evm_db::chain_data::GcStateV1::new());
     let built = build_state_update_journal_full(state, &TrieDelta::default(), Vec::new());
     apply_journal(
         state,
