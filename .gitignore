@@ -18,6 +18,7 @@ target/
 
 # pocket-ic binary (local)
 crates/evm-rpc-e2e/pocket-ic
+/.canbench/
 
 # frontend code
 node_modules/
