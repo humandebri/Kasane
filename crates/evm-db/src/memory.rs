@@ -62,6 +62,10 @@ pub enum AppMemoryId {
     StateRootAccountLeafHash = 50,
     StateRootGcQueue = 51,
     StateRootGcState = 52,
+    PrincipalPendingCount = 53,
+    PendingFeeIndex = 54,
+    PendingFeeKeyByTxId = 55,
+    ReadyBySeq = 56,
 }
 
 impl AppMemoryId {
@@ -120,6 +124,10 @@ impl AppMemoryId {
             AppMemoryId::StateRootAccountLeafHash => 50,
             AppMemoryId::StateRootGcQueue => 51,
             AppMemoryId::StateRootGcState => 52,
+            AppMemoryId::PrincipalPendingCount => 53,
+            AppMemoryId::PendingFeeIndex => 54,
+            AppMemoryId::PendingFeeKeyByTxId => 55,
+            AppMemoryId::ReadyBySeq => 56,
         }
     }
 

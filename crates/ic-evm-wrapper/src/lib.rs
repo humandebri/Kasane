@@ -742,32 +742,13 @@ fn produce_block(max_txs: u32) -> Result<ProduceBlockStatus, ProduceBlockError> 
     }
     let limit = usize::try_from(max_txs).unwrap_or(0);
     match chain::produce_block(limit) {
-        Ok(block) => {
-            let gas_used = with_state(|_state| {
-                let mut total = 0u64;
-                for tx_id in block.tx_ids.iter() {
-                    if let Some(receipt) = chain::get_receipt(tx_id) {
-                        total = total.saturating_add(receipt.gas_used);
-                    }
-                }
-                total
-            });
-            let dropped = with_state(|state| {
-                let metrics = *state.metrics_state.get();
-                let mut count = 0u64;
-                for bucket in metrics.buckets.iter() {
-                    if bucket.block_number == block.number {
-                        count = bucket.drops;
-                        break;
-                    }
-                }
-                count
-            });
+        Ok(outcome) => {
+            let block = outcome.block;
             Ok(ProduceBlockStatus::Produced {
                 block_number: block.number,
                 txs: block.tx_ids.len().try_into().unwrap_or(u32::MAX),
-                gas_used,
-                dropped: dropped.try_into().unwrap_or(u32::MAX),
+                gas_used: outcome.gas_used,
+                dropped: outcome.dropped.try_into().unwrap_or(u32::MAX),
             })
         }
         Err(chain::ChainError::NoExecutableTx) | Err(chain::ChainError::QueueEmpty) => {
@@ -1727,6 +1708,9 @@ fn schema_migration_tick(max_steps: u32) -> bool {
                         return false;
                     }
                 }
+                if state.from_version < 4 {
+                    chain::rebuild_pending_runtime_indexes();
+                }
                 state.phase = SchemaMigrationPhase::Verify;
                 state.cursor = 0;
                 set_schema_migration_state(state);
@@ -1746,6 +1730,27 @@ fn schema_migration_tick(max_steps: u32) -> bool {
                     state.last_error = 2;
                     set_schema_migration_state(state);
                     return false;
+                }
+                if state.from_version < 4 {
+                    let indexes_ok = with_state(|s| {
+                        let pending_len = s.pending_by_sender_nonce.len();
+                        let fee_idx_len = s.pending_fee_key_by_tx_id.len();
+                        let ready_len = s.ready_key_by_tx_id.len();
+                        let ready_seq_len = s.ready_by_seq.len();
+                        let mut principal_total = 0u64;
+                        for entry in s.principal_pending_count.iter() {
+                            principal_total = principal_total.saturating_add(u64::from(entry.value()));
+                        }
+                        pending_len == fee_idx_len
+                            && ready_len == ready_seq_len
+                            && principal_total == pending_len
+                    });
+                    if !indexes_ok {
+                        state.phase = SchemaMigrationPhase::Error;
+                        state.last_error = 3;
+                        set_schema_migration_state(state);
+                        return false;
+                    }
                 }
                 if state.from_version < 2 {
                     chain::clear_mempool_on_upgrade();

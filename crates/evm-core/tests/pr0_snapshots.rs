@@ -7,8 +7,8 @@ use evm_db::chain_data::{
     ReadyKey, SenderKey, SenderNonceKey, StoredTxBytes, TxId, TxKind, TxLoc, TxLocKind,
 };
 use evm_db::stable_state::{init_stable_state, with_state_mut};
-use evm_db::types::keys::{make_account_key, make_code_key};
-use evm_db::types::values::{AccountVal, CodeVal};
+
+mod common;
 
 #[test]
 fn snapshot_tx_outcome_matrix_and_block_fields() {
@@ -20,26 +20,26 @@ fn snapshot_tx_outcome_matrix_and_block_fields() {
     let success_target = [0x10u8; 20];
     let revert_target = [0x11u8; 20];
     let halt_target = [0x12u8; 20];
-    install_contract(success_target, &[0x00]); // STOP
-    install_contract(revert_target, &[0x60, 0x00, 0x60, 0x00, 0xfd]); // REVERT(0, 0)
-    install_contract(halt_target, &[0xfe]); // INVALID
+    common::install_contract(success_target, &[0x00]); // STOP
+    common::install_contract(revert_target, &[0x60, 0x00, 0x60, 0x00, 0xfd]); // REVERT(0, 0)
+    common::install_contract(halt_target, &[0xfe]); // INVALID
 
     let success = chain::execute_ic_tx(
         caller_principal.clone(),
         vec![0xaa],
-        build_ic_tx_bytes(success_target, 0),
+        common::build_ic_tx_bytes(success_target, 0, 2_000_000_000, 1_000_000_000),
     )
     .expect("execute success");
     let revert = chain::execute_ic_tx(
         caller_principal.clone(),
         vec![0xbb],
-        build_ic_tx_bytes(revert_target, 1),
+        common::build_ic_tx_bytes(revert_target, 1, 2_000_000_000, 1_000_000_000),
     )
     .expect("execute revert");
     let halt = chain::execute_ic_tx(
         caller_principal,
         vec![0xcc],
-        build_ic_tx_bytes(halt_target, 2),
+        common::build_ic_tx_bytes(halt_target, 2, 2_000_000_000, 1_000_000_000),
     )
     .expect("execute halt");
 
@@ -113,38 +113,6 @@ fn snapshot_decode_drop_tuple() {
     let loc = chain::get_tx_loc(&tx_id).expect("tx_loc");
     assert_eq!(loc.kind, TxLocKind::Dropped);
     assert_eq!(loc.drop_code, DROP_CODE_DECODE);
-}
-
-fn build_ic_tx_bytes(to: [u8; 20], nonce: u64) -> Vec<u8> {
-    let value = [0u8; 32];
-    let gas_limit = 50_000u64.to_be_bytes();
-    let nonce = nonce.to_be_bytes();
-    let max_fee = 2_000_000_000u128.to_be_bytes();
-    let max_priority = 1_000_000_000u128.to_be_bytes();
-    let data: Vec<u8> = Vec::new();
-    let data_len = u32::try_from(data.len()).unwrap_or(0).to_be_bytes();
-    let mut out = Vec::new();
-    out.push(2u8);
-    out.extend_from_slice(&to);
-    out.extend_from_slice(&value);
-    out.extend_from_slice(&gas_limit);
-    out.extend_from_slice(&nonce);
-    out.extend_from_slice(&max_fee);
-    out.extend_from_slice(&max_priority);
-    out.extend_from_slice(&data_len);
-    out.extend_from_slice(&data);
-    out
-}
-
-fn install_contract(address: [u8; 20], code: &[u8]) {
-    let code_hash = hash::keccak256(code);
-    with_state_mut(|state| {
-        let account_key = make_account_key(address);
-        let account = AccountVal::from_parts(0, [0u8; 32], code_hash);
-        let code_key = make_code_key(code_hash);
-        state.accounts.insert(account_key, account);
-        state.codes.insert(code_key, CodeVal(code.to_vec()));
-    });
 }
 
 fn hex32(value: [u8; 32]) -> String {

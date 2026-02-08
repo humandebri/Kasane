@@ -121,7 +121,8 @@ fn produce_block_marks_exec_drop() {
 
     let tx_bytes = build_ic_tx_bytes_with_fee(2_000_000_000, 1_000_000_000);
     let tx_id = chain::submit_ic_tx(vec![0x11], vec![0x22], tx_bytes).expect("submit");
-    let block = chain::produce_block(1).expect("produce_block should succeed");
+    let outcome = chain::produce_block(1).expect("produce_block should succeed");
+    let block = outcome.block;
     assert_eq!(block.tx_ids.len(), 1);
 
     let loc = chain::get_tx_loc(&tx_id).expect("tx_loc");

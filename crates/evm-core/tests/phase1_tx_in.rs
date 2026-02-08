@@ -5,6 +5,8 @@ use evm_core::hash;
 use evm_db::chain_data::{TxId, TxKind, TxLocKind};
 use evm_db::stable_state::{init_stable_state, with_state_mut};
 
+mod common;
+
 #[test]
 fn submit_tx_in_eth_keeps_existing_decode_rules() {
     init_stable_state();
@@ -21,7 +23,7 @@ fn submit_tx_in_ic_synthetic_enqueues_tx() {
     init_stable_state();
     let caller_principal = vec![0x42];
     let canister_id = vec![0x99];
-    let tx_bytes = build_ic_tx_bytes(0);
+    let tx_bytes = common::build_ic_tx_bytes([0x11u8; 20], 0, 2_000_000_000, 1_000_000_000);
     let tx_id = chain::submit_tx_in(TxIn::IcSynthetic {
         caller_principal: caller_principal.clone(),
         canister_id: canister_id.clone(),
@@ -42,7 +44,7 @@ fn submit_ic_tx_duplicate_returns_tx_already_seen() {
     init_stable_state();
     let caller_principal = vec![0x42];
     let canister_id = vec![0x99];
-    let tx_bytes = build_ic_tx_bytes(0);
+    let tx_bytes = common::build_ic_tx_bytes([0x11u8; 20], 0, 2_000_000_000, 1_000_000_000);
 
     let _ = chain::submit_ic_tx(
         caller_principal.clone(),
@@ -59,7 +61,7 @@ fn submit_ic_tx_seen_duplicate_precedes_decode_failure() {
     init_stable_state();
     let caller_principal = vec![0x51];
     let canister_id = vec![0x71];
-    let mut malformed = build_ic_tx_bytes(0);
+    let mut malformed = common::build_ic_tx_bytes([0x11u8; 20], 0, 2_000_000_000, 1_000_000_000);
     malformed[0] = 1;
 
     let caller_evm = hash::caller_evm_from_principal(&caller_principal);
@@ -76,26 +78,4 @@ fn submit_ic_tx_seen_duplicate_precedes_decode_failure() {
 
     let err = chain::submit_ic_tx(caller_principal, canister_id, malformed).expect_err("submit");
     assert_eq!(err, ChainError::TxAlreadySeen);
-}
-
-fn build_ic_tx_bytes(nonce: u64) -> Vec<u8> {
-    let to = [0x11u8; 20];
-    let value = [0u8; 32];
-    let gas_limit = 50_000u64.to_be_bytes();
-    let nonce = nonce.to_be_bytes();
-    let max_fee = 2_000_000_000u128.to_be_bytes();
-    let max_priority = 1_000_000_000u128.to_be_bytes();
-    let data: Vec<u8> = Vec::new();
-    let data_len = u32::try_from(data.len()).unwrap_or(0).to_be_bytes();
-    let mut out = Vec::with_capacity(1 + 20 + 32 + 8 + 8 + 16 + 16 + 4 + data.len());
-    out.push(2u8);
-    out.extend_from_slice(&to);
-    out.extend_from_slice(&value);
-    out.extend_from_slice(&gas_limit);
-    out.extend_from_slice(&nonce);
-    out.extend_from_slice(&max_fee);
-    out.extend_from_slice(&max_priority);
-    out.extend_from_slice(&data_len);
-    out.extend_from_slice(&data);
-    out
 }

@@ -92,14 +92,7 @@ export async function commitPending(params: {
   const blocksIngested = 1;
   const metricsDay = toDayKey();
   const updateSizes = params.lastSizeDay !== metricsDay;
-  let sqliteBytesToday: number | null = null;
-  let archiveBytesToday: number | null = null;
   let lastSizeDay = params.lastSizeDay;
-  if (updateSizes) {
-    sqliteBytesToday = await getFileSize(params.config.dbPath);
-    archiveBytesToday = params.db.getArchiveBytesSum();
-    lastSizeDay = metricsDay;
-  }
   try {
     params.db.transaction(() => {
       params.db.upsertBlock({
@@ -132,9 +125,7 @@ export async function commitPending(params: {
         archive.rawBytes,
         archive.sizeBytes,
         blocksIngested,
-        0,
-        sqliteBytesToday,
-        archiveBytesToday
+        0
       );
       params.db.setMeta("last_head", params.headNumber.toString());
       params.db.setMeta("last_ingest_at", Date.now().toString());
@@ -151,6 +142,26 @@ export async function commitPending(params: {
       err
     );
     process.exit(1);
+  }
+  if (updateSizes) {
+    let sqliteBytesToday: number | null = null;
+    let archiveBytesToday: number | null = null;
+    try {
+      sqliteBytesToday = await getFileSize(params.config.dbPath);
+    } catch {
+      sqliteBytesToday = null;
+    }
+    try {
+      archiveBytesToday = params.db.getArchiveBytesSum();
+    } catch {
+      archiveBytesToday = null;
+    }
+    try {
+      params.db.addMetrics(metricsDay, 0, 0, 0, 0, sqliteBytesToday, archiveBytesToday);
+      lastSizeDay = metricsDay;
+    } catch {
+      // サイズ計測の更新失敗は取り込み成功を壊さない
+    }
   }
   return { lastSizeDay };
 }

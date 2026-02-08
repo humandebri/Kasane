@@ -6,8 +6,9 @@ use crate::chain_data::constants::CHAIN_ID;
 use crate::chain_data::{
     CallerKey, ChainStateV1, DroppedRingStateV1, GcStateV1, HashKey, Head, LogConfigV1,
     MetricsStateV1, MigrationStateV1, MismatchRecordV1, NodeRecord, OpsConfigV1, OpsMetricsV1,
-    OpsStateV1, PruneConfigV1, PruneJournal, PruneStateV1, QueueMeta, ReadyKey, SenderKey,
-    SenderNonceKey, StateRootMetaV1, StateRootMetricsV1, StoredTxBytes, TxId,
+    OpsStateV1, PendingFeeKey, PruneConfigV1, PruneJournal, PruneStateV1, QueueMeta, ReadyKey,
+    ReadySeqKey, SenderKey, SenderNonceKey, StateRootMetaV1, StateRootMetricsV1, StoredTxBytes,
+    TxId,
 };
 use crate::memory::{get_memory, AppMemoryId, VMem};
 use crate::types::keys::{AccountKey, CodeKey, StorageKey};
@@ -33,6 +34,10 @@ pub type PendingMinNonce = StableBTreeMap<SenderKey, u64, VMem>;
 pub type PendingMetaByTxId = StableBTreeMap<TxId, SenderNonceKey, VMem>;
 pub type SenderExpectedNonce = StableBTreeMap<SenderKey, u64, VMem>;
 pub type PendingCurrentBySender = StableBTreeMap<SenderKey, TxId, VMem>;
+pub type PrincipalPendingCount = StableBTreeMap<CallerKey, u32, VMem>;
+pub type PendingFeeIndex = StableBTreeMap<PendingFeeKey, TxId, VMem>;
+pub type PendingFeeKeyByTxId = StableBTreeMap<TxId, PendingFeeKey, VMem>;
+pub type ReadyBySeq = StableBTreeMap<ReadySeqKey, TxId, VMem>;
 pub type PruneJournalMap = StableBTreeMap<u64, PruneJournal, VMem>;
 pub type MinerAllowlist = StableBTreeMap<CallerKey, u8, VMem>;
 pub type DroppedRing = StableBTreeMap<u64, TxId, VMem>;
@@ -74,6 +79,10 @@ pub struct StableState {
     pub pending_meta_by_tx_id: PendingMetaByTxId,
     pub sender_expected_nonce: SenderExpectedNonce,
     pub pending_current_by_sender: PendingCurrentBySender,
+    pub principal_pending_count: PrincipalPendingCount,
+    pub pending_fee_index: PendingFeeIndex,
+    pub pending_fee_key_by_tx_id: PendingFeeKeyByTxId,
+    pub ready_by_seq: ReadyBySeq,
     pub miner_allowlist: MinerAllowlist,
     pub dropped_ring_state: StableCell<DroppedRingStateV1, VMem>,
     pub dropped_ring: DroppedRing,
@@ -154,6 +163,12 @@ pub fn init_stable_state() {
     let sender_expected_nonce = StableBTreeMap::init(get_memory(AppMemoryId::SenderExpectedNonce));
     let pending_current_by_sender =
         StableBTreeMap::init(get_memory(AppMemoryId::PendingCurrentBySender));
+    let principal_pending_count =
+        StableBTreeMap::init(get_memory(AppMemoryId::PrincipalPendingCount));
+    let pending_fee_index = StableBTreeMap::init(get_memory(AppMemoryId::PendingFeeIndex));
+    let pending_fee_key_by_tx_id =
+        StableBTreeMap::init(get_memory(AppMemoryId::PendingFeeKeyByTxId));
+    let ready_by_seq = StableBTreeMap::init(get_memory(AppMemoryId::ReadyBySeq));
     let miner_allowlist = StableBTreeMap::init(get_memory(AppMemoryId::MinerAllowlist));
     let dropped_ring_state = StableCell::init(
         get_memory(AppMemoryId::DroppedRingState),
@@ -213,6 +228,10 @@ pub fn init_stable_state() {
             pending_meta_by_tx_id,
             sender_expected_nonce,
             pending_current_by_sender,
+            principal_pending_count,
+            pending_fee_index,
+            pending_fee_key_by_tx_id,
+            ready_by_seq,
             miner_allowlist,
             dropped_ring_state,
             dropped_ring,

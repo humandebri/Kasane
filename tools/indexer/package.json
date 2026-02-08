@@ -15,11 +15,13 @@
     "@dfinity/agent": "^3.4.3",
     "@dfinity/candid": "^3.4.3",
     "@mongodb-js/zstd": "^7.0.0",
-    "better-sqlite3": "^12.6.2"
+    "better-sqlite3": "^12.6.2",
+    "write-file-atomic": "^7.0.0"
   },
   "devDependencies": {
-    "@types/node": "^22.10.2",
     "@types/better-sqlite3": "^7.6.8",
+    "@types/node": "^22.10.2",
+    "@types/write-file-atomic": "^4.0.3",
     "tsx": "^4.19.2",
     "typescript": "^5.7.3"
   }

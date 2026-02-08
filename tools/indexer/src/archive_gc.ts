@@ -4,6 +4,8 @@ import { promises as fs } from "node:fs";
 import path from "node:path";
 import type { IndexerDb } from "./db";
 
+const ARCHIVE_BUNDLE_SUFFIX = ".bundle.zst";
+
 export async function runArchiveGc(db: IndexerDb, archiveDir: string, chainId: string): Promise<void> {
   const root = path.join(archiveDir, chainId);
   const files = await collectFiles(root);
@@ -11,11 +13,10 @@ export async function runArchiveGc(db: IndexerDb, archiveDir: string, chainId: s
   const referenced = normalizeReferenced(root, referencedRaw);
   const canDeleteOrphans = referenced.size > 0;
   for (const file of files) {
-    if (file.endsWith(".tmp")) {
+    // write-file-atomic の一時ファイル名は固定拡張子ではないため、
+    // archive配下は bundle 本体以外を全て掃除する運用前提にする。
+    if (!file.endsWith(ARCHIVE_BUNDLE_SUFFIX)) {
       await removeFile(file);
-      continue;
-    }
-    if (!file.endsWith(".bundle.zst")) {
       continue;
     }
     if (!canDeleteOrphans) {
