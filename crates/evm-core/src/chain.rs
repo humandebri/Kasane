@@ -1350,16 +1350,25 @@ fn recover_prune_journal(state: &mut evm_db::stable_state::StableState) -> Resul
     let mut prune_state = *state.prune_state.get();
     let journal_block = match prune_state.journal_block() {
         Some(value) => value,
-        None => {
-            if let Some(pruned) = prune_state.pruned_before() {
-                let min_next = pruned.saturating_add(1);
-                if prune_state.next_prune_block < min_next {
-                    prune_state.next_prune_block = min_next;
-                    state.prune_state.set(prune_state);
-                }
+        None => match state.prune_journal.range(..).next() {
+            // Fallback: recover from the oldest orphan journal entry when the cursor is missing.
+            Some(entry) => {
+                let value = *entry.key();
+                prune_state.set_journal_block(value);
+                state.prune_state.set(prune_state);
+                value
             }
-            return Ok(());
-        }
+            None => {
+                if let Some(pruned) = prune_state.pruned_before() {
+                    let min_next = pruned.saturating_add(1);
+                    if prune_state.next_prune_block < min_next {
+                        prune_state.next_prune_block = min_next;
+                        state.prune_state.set(prune_state);
+                    }
+                }
+                return Ok(());
+            }
+        },
     };
     if let Some(journal) = state.prune_journal.get(&journal_block) {
         if let Some(block) = load_block(state, journal_block) {
