@@ -89,7 +89,7 @@ test("archiveBlock reuses existing file", async () => {
   });
 });
 
-test("archive_gc keeps bundle when db is empty and removes tmp", async () => {
+test("archive_gc keeps bundle when db is empty and removes non-bundle temp files", async () => {
   await withTempDir(async (dir) => {
     const dbPath = path.join(dir, "db.sqlite");
     const db = new IndexerDb(dbPath);
@@ -97,11 +97,14 @@ test("archive_gc keeps bundle when db is empty and removes tmp", async () => {
     await fs.mkdir(root, { recursive: true });
     const bundle = path.join(root, "1.bundle.zst");
     const tmp = path.join(root, "2.bundle.zst.tmp");
+    const atomicTmp = path.join(root, "1.bundle.zst.9f8e7d6c");
     await fs.writeFile(bundle, Buffer.from("bundle"));
     await fs.writeFile(tmp, Buffer.from("tmp"));
+    await fs.writeFile(atomicTmp, Buffer.from("tmp2"));
     await runArchiveGc(db, dir, "local");
     assert.equal(await exists(bundle), true);
     assert.equal(await exists(tmp), false);
+    assert.equal(await exists(atomicTmp), false);
     db.close();
   });
 });

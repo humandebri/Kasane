@@ -4,6 +4,7 @@ import { createHash } from "crypto";
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import { compress } from "@mongodb-js/zstd";
+import writeFileAtomic = require("write-file-atomic");
 
 export type ArchiveInput = {
   archiveDir: string;
@@ -38,14 +39,11 @@ export async function archiveBlock(input: ArchiveInput): Promise<ArchiveResult> 
   const sha256 = createHash("sha256").update(compressed).digest();
   const dir = path.dirname(outPath);
   await fs.mkdir(dir, { recursive: true });
-  const tmpPath = `${outPath}.tmp`;
-  await fs.writeFile(tmpPath, compressed);
   try {
-    await fs.rename(tmpPath, outPath);
+    await writeFileAtomic(outPath, compressed, { fsync: true });
   } catch (err) {
     const existingAfter = await readExistingArchive(outPath);
     if (existingAfter) {
-      await removeTmp(tmpPath);
       return {
         path: outPath,
         sha256: existingAfter.sha256,
@@ -115,13 +113,5 @@ async function readExistingArchive(
     return { sha256, sizeBytes: stat.size };
   } catch {
     return null;
-  }
-}
-
-async function removeTmp(tmpPath: string): Promise<void> {
-  try {
-    await fs.unlink(tmpPath);
-  } catch {
-    // ベストエフォート
   }
 }
