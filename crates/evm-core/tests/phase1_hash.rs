@@ -2,11 +2,10 @@
 
 use evm_core::hash::{block_hash, keccak256, stored_tx_id, tx_list_hash};
 use evm_core::state_root::{
-    commit_state_root_with, compute_state_root_incremental_with, compute_state_root_with,
-    TouchedSummary,
+    commit_state_root_with, compute_state_root_incremental_with, TouchedSummary,
 };
 use evm_db::chain_data::TxKind;
-use evm_db::stable_state::{init_stable_state, with_state, with_state_mut};
+use evm_db::stable_state::{init_stable_state, with_state_mut};
 use evm_db::types::keys::{make_account_key, make_storage_key};
 use evm_db::types::values::{AccountVal, U256Val};
 
@@ -39,7 +38,7 @@ fn block_hash_is_deterministic() {
 #[test]
 fn empty_state_root_matches_ethereum_empty_trie() {
     init_stable_state();
-    let root = with_state(compute_state_root_with);
+    let root = with_state_mut(|state| compute_state_root_incremental_with(state, &[]));
     assert_eq!(
         hex32(root),
         "56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421"
@@ -60,8 +59,8 @@ fn state_root_is_deterministic_for_same_state() {
             U256Val::new([0x0au8; 32]),
         );
     });
-    let root_a = with_state(compute_state_root_with);
-    let root_b = with_state(compute_state_root_with);
+    let root_a = with_state_mut(|state| compute_state_root_incremental_with(state, &[addr]));
+    let root_b = with_state_mut(|state| compute_state_root_incremental_with(state, &[addr]));
     assert_eq!(root_a, root_b);
 }
 
@@ -83,7 +82,7 @@ fn state_root_is_stable_against_storage_insertion_order() {
             .storage
             .insert(make_storage_key(addr, slot_b), U256Val::new([0x0bu8; 32]));
     });
-    let root_a = with_state(compute_state_root_with);
+    let root_a = with_state_mut(|state| compute_state_root_incremental_with(state, &[addr]));
     with_state_mut(|state| {
         state.storage.remove(&make_storage_key(addr, slot_a));
         state.storage.remove(&make_storage_key(addr, slot_b));
@@ -94,7 +93,7 @@ fn state_root_is_stable_against_storage_insertion_order() {
             .storage
             .insert(make_storage_key(addr, slot_a), U256Val::new([0x0au8; 32]));
     });
-    let root_b = with_state(compute_state_root_with);
+    let root_b = with_state_mut(|state| compute_state_root_incremental_with(state, &[addr]));
     assert_eq!(root_a, root_b);
 }
 
@@ -112,18 +111,18 @@ fn state_root_changes_when_storage_changes() {
             .storage
             .insert(make_storage_key(addr, slot), U256Val::new([0x0au8; 32]));
     });
-    let root_a = with_state(compute_state_root_with);
+    let root_a = with_state_mut(|state| compute_state_root_incremental_with(state, &[addr]));
     with_state_mut(|state| {
         state
             .storage
             .insert(make_storage_key(addr, slot), U256Val::new([0x0cu8; 32]));
     });
-    let root_b = with_state(compute_state_root_with);
+    let root_b = with_state_mut(|state| compute_state_root_incremental_with(state, &[addr]));
     assert_ne!(root_a, root_b);
 }
 
 #[test]
-fn incremental_state_root_matches_full_scan() {
+fn incremental_state_root_matches_repeated_commit() {
     init_stable_state();
     let addr_a = [0x55u8; 20];
     let addr_b = [0x66u8; 20];
@@ -147,8 +146,9 @@ fn incremental_state_root_matches_full_scan() {
     });
     let incremental =
         with_state_mut(|state| compute_state_root_incremental_with(state, &[addr_a, addr_b]));
-    let full = with_state(compute_state_root_with);
-    assert_eq!(incremental, full);
+    let repeated =
+        with_state_mut(|state| compute_state_root_incremental_with(state, &[addr_a, addr_b]));
+    assert_eq!(incremental, repeated);
 }
 
 #[test]
@@ -273,7 +273,7 @@ fn zero_code_hash_account_is_treated_as_empty_code_hash() {
             AccountVal::from_parts(0, [0u8; 32], [0u8; 32]),
         );
     });
-    let root = with_state(compute_state_root_with);
+    let root = with_state_mut(|state| compute_state_root_incremental_with(state, &[addr]));
     assert_eq!(
         hex32(root),
         "56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421"

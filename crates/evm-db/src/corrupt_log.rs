@@ -1,6 +1,5 @@
 //! どこで: 破損デコード検知 / 何を: 回数と最後のタグをStableに記録 / なぜ: 復旧の検知性を確保するため
 
-use crate::decode::hash_to_array;
 use crate::memory::{get_memory, AppMemoryId, VMem};
 use ic_stable_structures::reader::Reader;
 use ic_stable_structures::writer::Writer;
@@ -38,10 +37,10 @@ pub fn record_corrupt(tag: &'static [u8]) {
     }
     ensure_header(&mut memory);
     let count = read_u64(&memory, OFFSET_COUNT).saturating_add(1);
-    let tag_hash = hash_to_array::<32>(b"corrupt:", tag);
+    let tag_slot = encode_tag_slot(tag);
     write_u64(&mut memory, OFFSET_COUNT, count);
     write_u64(&mut memory, OFFSET_LAST_TS, last_ts);
-    write_bytes(&mut memory, OFFSET_LAST_TAG, &tag_hash);
+    write_bytes(&mut memory, OFFSET_LAST_TAG, &tag_slot);
 }
 
 pub fn read_corrupt_count() -> u64 {
@@ -61,11 +60,22 @@ pub fn read_last_corrupt_ts() -> u64 {
 }
 
 pub fn read_last_corrupt_tag_hash() -> [u8; 32] {
+    read_last_corrupt_tag()
+}
+
+pub fn read_last_corrupt_tag() -> [u8; 32] {
     let memory: VMem = get_memory(AppMemoryId::CorruptLog);
     if !header_matches(&memory) {
         return [0u8; 32];
     }
     read_array_32(&memory, OFFSET_LAST_TAG)
+}
+
+fn encode_tag_slot(tag: &'static [u8]) -> [u8; 32] {
+    let mut out = [0u8; 32];
+    let len = tag.len().min(32);
+    out[..len].copy_from_slice(&tag[..len]);
+    out
 }
 
 fn current_time_nanos() -> u64 {

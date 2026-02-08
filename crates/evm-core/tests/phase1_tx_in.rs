@@ -8,7 +8,11 @@ use evm_db::stable_state::{init_stable_state, with_state_mut};
 #[test]
 fn submit_tx_in_eth_keeps_existing_decode_rules() {
     init_stable_state();
-    let err = chain::submit_tx_in(TxIn::EthSigned(vec![0x02, 0x01, 0x02])).unwrap_err();
+    let err = chain::submit_tx_in(TxIn::EthSigned {
+        tx_bytes: vec![0x02, 0x01, 0x02],
+        caller_principal: vec![0x01],
+    })
+    .unwrap_err();
     assert_eq!(err, ChainError::DecodeFailed);
 }
 

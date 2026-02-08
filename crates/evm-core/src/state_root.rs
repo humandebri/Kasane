@@ -27,6 +27,8 @@ pub const VERIFY_SAMPLE_MOD: u64 = 1024;
 pub const VERIFY_MAX_TOUCHED_ACCOUNTS: u32 = 8;
 pub const VERIFY_MAX_TOUCHED_SLOTS: u32 = 64;
 const NODE_DB_REBUILD_ON_VERIFY_ONLY: bool = false;
+const INIT_MIGRATION_TICKS_PER_CALL: u32 = 8;
+const INIT_MIGRATION_MAX_STEPS: u32 = 512;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct TouchedSummary {
@@ -49,71 +51,6 @@ pub struct PreparedStateRoot {
     pub new_node_records: NewNodeRecords,
     pub updated_account_leaf_hashes: BTreeMap<AccountKey, HashKey>,
     pub anchor_delta: AnchorDelta,
-}
-
-pub fn compute_state_root_with(state: &StableState) -> [u8; 32] {
-    let mut storage_by_addr: BTreeMap<[u8; 20], Vec<(B256, U256)>> = BTreeMap::new();
-    for entry in state.storage.iter() {
-        let key = entry.key().0;
-        if key[0] != 0x02 {
-            continue;
-        }
-        let mut addr = [0u8; 20];
-        addr.copy_from_slice(&key[1..21]);
-        let mut slot = [0u8; 32];
-        slot.copy_from_slice(&key[21..53]);
-        storage_by_addr
-            .entry(addr)
-            .or_default()
-            .push((B256::from(slot), U256::from_be_bytes(entry.value().0)));
-    }
-
-    let mut trie_accounts: BTreeMap<[u8; 20], TrieAccount> = BTreeMap::new();
-    for entry in state.accounts.iter() {
-        let key = entry.key().0;
-        if key[0] != 0x01 {
-            continue;
-        }
-        let mut addr = [0u8; 20];
-        addr.copy_from_slice(&key[1..21]);
-        let account = entry.value();
-        let storage_root = storage_by_addr
-            .get(&addr)
-            .map(|slots| storage_root_unhashed(slots.iter().copied()))
-            .unwrap_or(EMPTY_ROOT_HASH);
-        let code_hash = normalize_code_hash(B256::from(account.code_hash()));
-        let trie_account = TrieAccount {
-            nonce: account.nonce(),
-            balance: U256::from_be_bytes(account.balance()),
-            storage_root,
-            code_hash,
-        };
-        if !is_empty_trie_account(&trie_account) {
-            trie_accounts.insert(addr, trie_account);
-        }
-    }
-
-    for (addr, slots) in storage_by_addr {
-        if trie_accounts.contains_key(&addr) {
-            continue;
-        }
-        let trie_account = TrieAccount {
-            nonce: 0,
-            balance: U256::ZERO,
-            storage_root: storage_root_unhashed(slots),
-            code_hash: KECCAK_EMPTY,
-        };
-        if !is_empty_trie_account(&trie_account) {
-            trie_accounts.insert(addr, trie_account);
-        }
-    }
-
-    let root = state_root_unhashed(
-        trie_accounts
-            .into_iter()
-            .map(|(addr, account)| (Address::from(addr), account)),
-    );
-    b256_to_bytes(root)
 }
 
 pub fn compute_state_root_incremental_with(
@@ -149,10 +86,12 @@ pub fn prepare_state_root_commit(
     _parent_hash: [u8; 32],
     _timestamp: u64,
 ) -> Result<PreparedStateRoot, &'static str> {
-    if state.state_root_migration.get().phase != MigrationPhase::Done {
+    ensure_initialized(state);
+    if !state.state_root_meta.get().initialized
+        || state.state_root_migration.get().phase != MigrationPhase::Done
+    {
         return Err("state_root_migration_pending");
     }
-    ensure_initialized(state);
     let delta = build_trie_delta(state_diffs);
     if delta.accounts.is_empty()
         && touched_addrs.is_empty()
@@ -291,7 +230,16 @@ pub fn run_migration_tick(state: &mut StableState, max_steps: u32) -> bool {
     let max_steps = max_steps.max(1);
     let mut migration = *state.state_root_migration.get();
     match migration.phase {
-        MigrationPhase::Done => return true,
+        MigrationPhase::Done => {
+            if state.state_root_meta.get().initialized {
+                return true;
+            }
+            migration.phase = MigrationPhase::Init;
+            migration.cursor = 0;
+            migration.last_error = 0;
+            state.state_root_migration.set(migration);
+            return false;
+        }
         MigrationPhase::Init => {
             migration.phase = MigrationPhase::BuildTrie;
             migration.cursor = 0;
@@ -1019,13 +967,14 @@ fn ensure_initialized(state: &mut StableState) {
         ensure_node_db_bootstrapped(state);
         return;
     }
-    rebuild_storage_root_cache(state);
-    let root = compute_state_root_from_cache(state);
-    let mut meta = *state.state_root_meta.get();
-    meta.initialized = true;
-    meta.state_root = root;
-    state.state_root_meta.set(meta);
-    ensure_node_db_bootstrapped(state);
+    for _ in 0..INIT_MIGRATION_TICKS_PER_CALL {
+        if run_migration_tick(state, INIT_MIGRATION_MAX_STEPS) {
+            break;
+        }
+    }
+    if state.state_root_meta.get().initialized {
+        ensure_node_db_bootstrapped(state);
+    }
 }
 
 fn ensure_node_db_bootstrapped(state: &mut StableState) {
@@ -1052,41 +1001,6 @@ fn ensure_node_db_bootstrapped(state: &mut StableState) {
     clear_stable_map(&mut state.state_root_account_leaf_hash);
     for (key, hash) in built.updated_account_leaf_hashes {
         state.state_root_account_leaf_hash.insert(key, hash);
-    }
-}
-
-fn rebuild_storage_root_cache(state: &mut StableState) {
-    let mut by_addr: BTreeMap<[u8; 20], Vec<(B256, U256)>> = BTreeMap::new();
-    for entry in state.storage.iter() {
-        let key = entry.key().0;
-        if key[0] != 0x02 {
-            continue;
-        }
-        let mut addr = [0u8; 20];
-        addr.copy_from_slice(&key[1..21]);
-        let mut slot = [0u8; 32];
-        slot.copy_from_slice(&key[21..53]);
-        by_addr
-            .entry(addr)
-            .or_default()
-            .push((B256::from(slot), U256::from_be_bytes(entry.value().0)));
-    }
-    let keys: Vec<_> = state
-        .state_storage_roots
-        .iter()
-        .map(|entry| *entry.key())
-        .collect();
-    for key in keys {
-        state.state_storage_roots.remove(&key);
-    }
-    for (addr, slots) in by_addr {
-        let root = storage_root_unhashed(slots);
-        if root != EMPTY_ROOT_HASH {
-            state.state_storage_roots.insert(
-                make_account_key(addr),
-                evm_db::types::values::U256Val(b256_to_bytes(root)),
-            );
-        }
     }
 }
 
