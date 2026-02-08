@@ -12,11 +12,11 @@ use crate::trie_commit;
 use crate::tx_decode::{decode_ic_synthetic_header_trusted_size, decode_tx};
 use crate::tx_submit;
 use evm_db::chain_data::constants::{
-    DEFAULT_BLOCK_GAS_LIMIT, DROPPED_RING_CAPACITY, DROP_CODE_CALLER_MISSING, DROP_CODE_DECODE,
-    DROP_CODE_EXEC, DROP_CODE_INVALID_FEE, DROP_CODE_MISSING, DROP_CODE_REPLACED,
-    DROP_CODE_RESULT_TOO_LARGE, MAX_PENDING_GLOBAL, MAX_PENDING_PER_SENDER, MAX_TX_SIZE,
-    READY_CANDIDATE_LIMIT,
+    DROPPED_RING_CAPACITY, DROP_CODE_CALLER_MISSING, DROP_CODE_DECODE, DROP_CODE_EXEC,
+    DROP_CODE_INVALID_FEE, DROP_CODE_MISSING, DROP_CODE_REPLACED, DROP_CODE_RESULT_TOO_LARGE,
+    MAX_PENDING_GLOBAL, MAX_PENDING_PER_SENDER, MAX_TX_SIZE, READY_CANDIDATE_LIMIT,
 };
+use evm_db::chain_data::runtime_defaults::DEFAULT_BLOCK_GAS_LIMIT;
 use evm_db::chain_data::{
     BlockData, Head, PruneJournal, PrunePolicy, ReadyKey, ReceiptLike, SenderKey, SenderNonceKey,
     StoredTx, StoredTxBytes, StoredTxError, TxId, TxIndexEntry, TxKind, TxLoc, TxLocKind,

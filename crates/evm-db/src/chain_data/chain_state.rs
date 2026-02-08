@@ -1,9 +1,9 @@
 //! どこで: chain_data のヘッダ状態 / 何を: 固定サイズのStableStateV1 / なぜ: upgrade耐性と最小メタ保持のため
 
 use crate::chain_data::codec::{encode_guarded, mark_decode_failure};
-use crate::chain_data::constants::{
-    CHAIN_ID, CHAIN_STATE_SIZE_U32, DEFAULT_BASE_FEE, DEFAULT_MINING_INTERVAL_MS,
-    DEFAULT_MIN_GAS_PRICE, DEFAULT_MIN_PRIORITY_FEE,
+use crate::chain_data::constants::{CHAIN_ID, CHAIN_STATE_SIZE_U32};
+use crate::chain_data::runtime_defaults::{
+    DEFAULT_BASE_FEE, DEFAULT_MIN_GAS_PRICE, DEFAULT_MINING_INTERVAL_MS, DEFAULT_MIN_PRIORITY_FEE,
 };
 use ic_stable_structures::storable::Bound;
 use ic_stable_structures::Storable;

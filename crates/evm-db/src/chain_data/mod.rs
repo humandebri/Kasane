@@ -15,6 +15,7 @@ pub mod prune_config;
 pub mod prune_state;
 pub mod queue;
 pub mod receipt;
+pub mod runtime_defaults;
 pub mod state_root_meta;
 pub mod state_root_ops;
 pub mod tx;
@@ -37,6 +38,10 @@ pub use prune_config::{PruneConfigV1, PrunePolicy};
 pub use prune_state::{PruneJournal, PruneStateV1};
 pub use queue::QueueMeta;
 pub use receipt::ReceiptLike;
+pub use runtime_defaults::{
+    DEFAULT_BASE_FEE, DEFAULT_BLOCK_GAS_LIMIT, DEFAULT_MIN_GAS_PRICE, DEFAULT_MINING_INTERVAL_MS,
+    DEFAULT_MIN_PRIORITY_FEE,
+};
 pub use state_root_meta::{StateRootMetaV1, STATE_ROOT_META_SIZE_U32};
 pub use state_root_ops::{
     GcStateV1, HashKey, MigrationPhase, MigrationStateV1, MismatchRecordV1, NodeRecord,
