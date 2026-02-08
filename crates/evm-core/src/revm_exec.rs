@@ -8,7 +8,7 @@ use evm_db::chain_data::constants::{
     CHAIN_ID, DEFAULT_BLOCK_GAS_LIMIT, MAX_LOGS_PER_TX, MAX_LOG_DATA, MAX_LOG_TOPICS,
     MAX_RETURN_DATA,
 };
-use evm_db::chain_data::receipt::LogEntry;
+use evm_db::chain_data::receipt::{log_entry_from_parts, LogEntry};
 use evm_db::chain_data::{ReceiptLike, TxId, TxIndexEntry, TxKind};
 use evm_db::stable_state::with_state_mut;
 use evm_db::Storable;
@@ -333,14 +333,10 @@ pub(crate) fn compute_effective_gas_price(
 }
 
 fn revm_log_to_receipt_log(log: revm::primitives::Log) -> LogEntry {
-    let address = alloy_primitives::Address::from(address_to_bytes(log.address));
-    let topics = log
-        .topics()
-        .iter()
-        .map(|topic| alloy_primitives::B256::from(topic.0))
-        .collect::<Vec<_>>();
-    let data = alloy_primitives::Bytes::from(log.data.data.to_vec());
-    LogEntry::new_unchecked(address, topics, data)
+    let address = address_to_bytes(log.address);
+    let topics = log.topics().iter().map(|topic| topic.0).collect::<Vec<_>>();
+    let data = log.data.data.to_vec();
+    log_entry_from_parts(address, topics, data)
 }
 
 #[cfg(test)]

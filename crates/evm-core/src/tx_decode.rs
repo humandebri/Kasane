@@ -5,6 +5,7 @@ use alloy_eips::eip2718::{Decodable2718, Eip2718Error};
 use alloy_eips::eip7702::SignedAuthorization as AlloySignedAuthorization;
 use alloy_eips::Typed2718;
 use alloy_primitives::{Address as AlloyAddress, TxKind as AlloyTxKind, B256, U256 as AlloyU256};
+use byteorder::{BigEndian, ByteOrder};
 use evm_db::chain_data::constants::{CHAIN_ID, MAX_TX_SIZE};
 use evm_db::chain_data::TxKind;
 use revm::context::TxEnv;
@@ -13,6 +14,7 @@ use revm::primitives::{
     Address as RevmAddress, Bytes as RevmBytes, TxKind as RevmTxKind, B256 as RevmB256,
     U256 as RevmU256,
 };
+use std::borrow::Cow;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum DecodeError {
@@ -50,7 +52,31 @@ struct DecodedTx {
 const IC_TX_VERSION: u8 = 2;
 const IC_TX_HEADER_LEN: usize = 1 + 20 + 32 + 8 + 8 + 16 + 16 + 4;
 
-pub fn decode_ic_synthetic(caller: RevmAddress, bytes: &[u8]) -> Result<TxEnv, DecodeError> {
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct IcTxHeader<'a> {
+    pub to: [u8; 20],
+    pub value: [u8; 32],
+    pub gas_limit: u64,
+    pub nonce: u64,
+    pub max_fee: u128,
+    pub max_priority: u128,
+    pub data: &'a [u8],
+}
+
+pub fn decode_ic_synthetic_header(bytes: &[u8]) -> Result<IcTxHeader<'_>, DecodeError> {
+    decode_ic_synthetic_header_impl(bytes, true)
+}
+
+pub(crate) fn decode_ic_synthetic_header_trusted_size(
+    bytes: &[u8],
+) -> Result<IcTxHeader<'_>, DecodeError> {
+    decode_ic_synthetic_header_impl(bytes, false)
+}
+
+fn decode_ic_synthetic_header_impl(
+    bytes: &[u8],
+    enforce_data_size_limit: bool,
+) -> Result<IcTxHeader<'_>, DecodeError> {
     if bytes.len() < IC_TX_HEADER_LEN {
         return Err(DecodeError::InvalidLength);
     }
@@ -64,42 +90,50 @@ pub fn decode_ic_synthetic(caller: RevmAddress, bytes: &[u8]) -> Result<TxEnv, D
     let mut value = [0u8; 32];
     value.copy_from_slice(&bytes[offset..offset + 32]);
     offset += 32;
-    let mut gas = [0u8; 8];
-    gas.copy_from_slice(&bytes[offset..offset + 8]);
+    let gas_limit = BigEndian::read_u64(&bytes[offset..offset + 8]);
     offset += 8;
-    let mut nonce = [0u8; 8];
-    nonce.copy_from_slice(&bytes[offset..offset + 8]);
+    let nonce = BigEndian::read_u64(&bytes[offset..offset + 8]);
     offset += 8;
-    let mut max_fee = [0u8; 16];
-    max_fee.copy_from_slice(&bytes[offset..offset + 16]);
+    let max_fee = BigEndian::read_u128(&bytes[offset..offset + 16]);
     offset += 16;
-    let mut max_priority = [0u8; 16];
-    max_priority.copy_from_slice(&bytes[offset..offset + 16]);
+    let max_priority = BigEndian::read_u128(&bytes[offset..offset + 16]);
     offset += 16;
-    let mut len = [0u8; 4];
-    len.copy_from_slice(&bytes[offset..offset + 4]);
+    let data_len = usize::try_from(BigEndian::read_u32(&bytes[offset..offset + 4]))
+        .map_err(|_| DecodeError::InvalidLength)?;
     offset += 4;
-    let data_len =
-        usize::try_from(u32::from_be_bytes(len)).map_err(|_| DecodeError::InvalidLength)?;
-    let expected = IC_TX_HEADER_LEN + data_len;
+    let expected = IC_TX_HEADER_LEN
+        .checked_add(data_len)
+        .ok_or(DecodeError::InvalidLength)?;
     if expected != bytes.len() {
         return Err(DecodeError::InvalidLength);
     }
-    if data_len > MAX_TX_SIZE {
+    if enforce_data_size_limit && data_len > MAX_TX_SIZE {
         return Err(DecodeError::DataTooLarge);
     }
-    let data = bytes[offset..].to_vec();
+    Ok(IcTxHeader {
+        to,
+        value,
+        gas_limit,
+        nonce,
+        max_fee,
+        max_priority,
+        data: &bytes[offset..],
+    })
+}
+
+pub fn decode_ic_synthetic(caller: RevmAddress, bytes: &[u8]) -> Result<TxEnv, DecodeError> {
+    let header = decode_ic_synthetic_header(bytes)?;
     let tx = TxEnv {
         caller,
-        gas_limit: u64::from_be_bytes(gas),
-        gas_price: u128::from_be_bytes(max_fee),
-        kind: RevmTxKind::Call(RevmAddress::from(to)),
-        value: RevmU256::from_be_bytes(value),
-        data: RevmBytes::from(data),
-        nonce: u64::from_be_bytes(nonce),
+        gas_limit: header.gas_limit,
+        gas_price: header.max_fee,
+        kind: RevmTxKind::Call(RevmAddress::from(header.to)),
+        value: RevmU256::from_be_bytes(header.value),
+        data: RevmBytes::from(header.data.to_vec()),
+        nonce: header.nonce,
         chain_id: Some(CHAIN_ID),
         access_list: Default::default(),
-        gas_priority_fee: Some(u128::from_be_bytes(max_priority)),
+        gas_priority_fee: Some(header.max_priority),
         blob_hashes: Default::default(),
         max_fee_per_blob_gas: 0,
         authorization_list: Default::default(),
@@ -116,43 +150,60 @@ pub fn decode_tx(kind: TxKind, caller: RevmAddress, bytes: &[u8]) -> Result<TxEn
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct DecodedTxView {
+pub struct DecodedTxView<'a> {
     pub from: [u8; 20],
     pub to: Option<[u8; 20]>,
     pub nonce: u64,
     pub value: [u8; 32],
-    pub input: Vec<u8>,
+    pub input: Cow<'a, [u8]>,
     pub gas_limit: u64,
     pub gas_price: u128,
     pub chain_id: Option<u64>,
 }
 
-pub fn decode_tx_view(
+pub fn decode_tx_view<'a>(
     kind: TxKind,
     caller: [u8; 20],
-    bytes: &[u8],
-) -> Result<DecodedTxView, DecodeError> {
-    let tx_env = decode_tx(kind, RevmAddress::from(caller), bytes)?;
-    let to = match tx_env.kind {
-        RevmTxKind::Call(addr) => {
-            let mut out = [0u8; 20];
-            out.copy_from_slice(addr.as_ref());
-            Some(out)
+    bytes: &'a [u8],
+) -> Result<DecodedTxView<'a>, DecodeError> {
+    match kind {
+        TxKind::IcSynthetic => {
+            let header = decode_ic_synthetic_header(bytes)?;
+            Ok(DecodedTxView {
+                from: caller,
+                to: Some(header.to),
+                nonce: header.nonce,
+                value: header.value,
+                input: Cow::Borrowed(header.data),
+                gas_limit: header.gas_limit,
+                gas_price: header.max_fee,
+                chain_id: Some(CHAIN_ID),
+            })
         }
-        RevmTxKind::Create => None,
-    };
-    let mut from = [0u8; 20];
-    from.copy_from_slice(tx_env.caller.as_ref());
-    Ok(DecodedTxView {
-        from,
-        to,
-        nonce: tx_env.nonce,
-        value: tx_env.value.to_be_bytes(),
-        input: tx_env.data.to_vec(),
-        gas_limit: tx_env.gas_limit,
-        gas_price: tx_env.gas_price,
-        chain_id: tx_env.chain_id,
-    })
+        TxKind::EthSigned => {
+            let tx_env = decode_tx(kind, RevmAddress::from(caller), bytes)?;
+            let to = match tx_env.kind {
+                RevmTxKind::Call(addr) => {
+                    let mut out = [0u8; 20];
+                    out.copy_from_slice(addr.as_ref());
+                    Some(out)
+                }
+                RevmTxKind::Create => None,
+            };
+            let mut from = [0u8; 20];
+            from.copy_from_slice(tx_env.caller.as_ref());
+            Ok(DecodedTxView {
+                from,
+                to,
+                nonce: tx_env.nonce,
+                value: tx_env.value.to_be_bytes(),
+                input: Cow::Owned(tx_env.data.to_vec()),
+                gas_limit: tx_env.gas_limit,
+                gas_price: tx_env.gas_price,
+                chain_id: tx_env.chain_id,
+            })
+        }
+    }
 }
 
 pub fn decode_eth_raw_tx(bytes: &[u8]) -> Result<TxEnv, DecodeError> {

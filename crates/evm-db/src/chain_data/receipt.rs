@@ -15,6 +15,11 @@ use std::borrow::Cow;
 
 pub type LogEntry = Log;
 
+pub fn log_entry_from_parts(address: [u8; 20], topics: Vec<[u8; 32]>, data: Vec<u8>) -> LogEntry {
+    let mapped_topics = topics.into_iter().map(B256::from).collect::<Vec<B256>>();
+    LogEntry::new_unchecked(Address::from(address), mapped_topics, Bytes::from(data))
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ReceiptLike {
     pub tx_id: TxId,

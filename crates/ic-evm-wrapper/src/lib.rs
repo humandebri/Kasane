@@ -527,7 +527,9 @@ fn submit_reject_code(err: &chain::ChainError) -> Option<&'static str> {
 
 fn chain_submit_error_to_code(err: &chain::ChainError) -> Option<(TxApiErrorKind, &'static str)> {
     match err {
-        chain::ChainError::TxTooLarge => Some((TxApiErrorKind::InvalidArgument, CODE_ARG_TX_TOO_LARGE)),
+        chain::ChainError::TxTooLarge => {
+            Some((TxApiErrorKind::InvalidArgument, CODE_ARG_TX_TOO_LARGE))
+        }
         chain::ChainError::DecodeFailed => {
             Some((TxApiErrorKind::InvalidArgument, CODE_ARG_DECODE_FAILED))
         }
@@ -920,7 +922,10 @@ fn rpc_eth_send_raw_transaction(raw_tx: Vec<u8>) -> Result<Vec<u8>, SubmitTxErro
     if let Some(reason) = reject_write_reason() {
         return Err(SubmitTxError::Rejected(reason));
     }
-    submit_tx_in_with_code(chain::TxIn::EthSigned(raw_tx), "rpc_eth_send_raw_transaction")
+    submit_tx_in_with_code(
+        chain::TxIn::EthSigned(raw_tx),
+        "rpc_eth_send_raw_transaction",
+    )
 }
 
 #[ic_cdk::query]
@@ -1410,7 +1415,7 @@ fn envelope_to_eth_view(
                 to: decoded.to.map(|addr| addr.to_vec()),
                 nonce: decoded.nonce,
                 value: decoded.value.to_vec(),
-                input: decoded.input,
+                input: decoded.input.into_owned(),
                 gas_limit: decoded.gas_limit,
                 gas_price: decoded.gas_price,
                 chain_id: decoded.chain_id,
@@ -2241,8 +2246,8 @@ mod tests {
 
     #[test]
     fn pr8_execute_decode_failed_maps_to_arg_code() {
-        let err =
-            map_execute_chain_result(Err(ChainError::DecodeFailed)).expect_err("must reject decode");
+        let err = map_execute_chain_result(Err(ChainError::DecodeFailed))
+            .expect_err("must reject decode");
         match err {
             ExecuteTxError::InvalidArgument(code) => assert_eq!(code, "arg.decode_failed"),
             other => panic!("unexpected error: {other:?}"),
@@ -2251,9 +2256,9 @@ mod tests {
 
     #[test]
     fn pr8_execute_precompile_error_maps_to_exec_code() {
-        let err = map_execute_chain_result(Err(ChainError::ExecFailed(Some(
-            ExecError::EvmHalt(OpHaltReason::PrecompileError),
-        ))))
+        let err = map_execute_chain_result(Err(ChainError::ExecFailed(Some(ExecError::EvmHalt(
+            OpHaltReason::PrecompileError,
+        )))))
         .expect_err("must map to precompile code");
         match err {
             ExecuteTxError::Rejected(code) => assert_eq!(code, "exec.halt.precompile_error"),
