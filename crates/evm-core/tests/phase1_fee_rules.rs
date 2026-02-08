@@ -155,7 +155,7 @@ fn build_ic_tx_bytes(max_fee: u128, max_priority: u128, nonce: u64) -> Vec<u8> {
     let max_priority = max_priority.to_be_bytes();
     let data: Vec<u8> = Vec::new();
     let data_len = u32::try_from(data.len()).unwrap_or(0).to_be_bytes();
-    let mut out = Vec::new();
+    let mut out = Vec::with_capacity(1 + 20 + 32 + 8 + 8 + 16 + 16 + 4 + data.len());
     out.push(2u8);
     out.extend_from_slice(&to);
     out.extend_from_slice(&value);
