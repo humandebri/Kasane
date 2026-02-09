@@ -14,19 +14,29 @@ use evm_db::meta::{
     SchemaMigrationPhase, SchemaMigrationState,
 };
 use evm_db::stable_state::{init_stable_state, with_state};
+use evm_db::types::keys::{make_account_key, make_code_key};
 use evm_db::upgrade;
 use ic_cdk::api::{
-    accept_message, canister_cycle_balance, env_var_name_exists, env_var_value, is_controller,
-    msg_caller, msg_method_name, time,
+    accept_message, canister_cycle_balance, is_controller, msg_caller, msg_method_name, time,
 };
 use serde::Deserialize;
 use std::cell::Cell;
-use std::io::{self, Write};
 use std::sync::atomic::{AtomicU64, Ordering};
+use tracing::{error, info, warn};
+
+#[cfg(not(target_arch = "wasm32"))]
+use std::io::{self, Write};
+#[cfg(not(target_arch = "wasm32"))]
 use std::sync::{Mutex, OnceLock};
-use tracing::{error, warn};
+#[cfg(not(target_arch = "wasm32"))]
 use tracing_subscriber::fmt::MakeWriter;
+#[cfg(not(target_arch = "wasm32"))]
 use tracing_subscriber::EnvFilter;
+
+mod prometheus_metrics;
+
+#[cfg(feature = "canbench-rs")]
+mod canbench_benches;
 
 #[cfg(target_arch = "wasm32")]
 getrandom::register_custom_getrandom!(always_fail_getrandom);
@@ -113,6 +123,11 @@ pub struct OpsStatusView {
     pub critical_corrupt: bool,
     pub mining_error_count: u64,
     pub prune_error_count: u64,
+    pub decode_failure_count: u64,
+    pub decode_failure_last_ts: u64,
+    pub decode_failure_last_label: Option<String>,
+    pub block_gas_limit: u64,
+    pub instruction_soft_limit: u64,
 }
 
 #[derive(Clone, Debug, CandidType, Deserialize)]
@@ -128,6 +143,25 @@ pub enum ExecuteTxError {
     Rejected(String),
     Internal(String),
 }
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum TxApiErrorKind {
+    InvalidArgument,
+    Rejected,
+}
+
+const CODE_ARG_TX_TOO_LARGE: &str = "arg.tx_too_large";
+const CODE_ARG_DECODE_FAILED: &str = "arg.decode_failed";
+const CODE_ARG_UNSUPPORTED_TX_KIND: &str = "arg.unsupported_tx_kind";
+const CODE_SUBMIT_TX_ALREADY_SEEN: &str = "submit.tx_already_seen";
+const CODE_SUBMIT_INVALID_FEE: &str = "submit.invalid_fee";
+const CODE_SUBMIT_NONCE_TOO_LOW: &str = "submit.nonce_too_low";
+const CODE_SUBMIT_NONCE_GAP: &str = "submit.nonce_gap";
+const CODE_SUBMIT_NONCE_CONFLICT: &str = "submit.nonce_conflict";
+const CODE_SUBMIT_QUEUE_FULL: &str = "submit.queue_full";
+const CODE_SUBMIT_SENDER_QUEUE_FULL: &str = "submit.sender_queue_full";
+const CODE_SUBMIT_PRINCIPAL_QUEUE_FULL: &str = "submit.principal_queue_full";
+const CODE_INTERNAL_UNEXPECTED: &str = "internal.unexpected";
 
 #[derive(Clone, Debug, CandidType, Deserialize)]
 pub struct BlockView {
@@ -186,6 +220,8 @@ pub struct HealthView {
     pub auto_mine_enabled: bool,
     pub is_producing: bool,
     pub mining_scheduled: bool,
+    pub block_gas_limit: u64,
+    pub instruction_soft_limit: u64,
 }
 
 #[derive(Clone, Debug, CandidType, Deserialize)]
@@ -263,6 +299,7 @@ pub struct DecodedTxView {
 #[derive(Clone, Debug, CandidType, Deserialize)]
 pub struct EthReceiptView {
     pub tx_hash: Vec<u8>,
+    pub eth_tx_hash: Option<Vec<u8>>,
     pub block_number: u64,
     pub tx_index: u32,
     pub status: u8,
@@ -273,6 +310,36 @@ pub struct EthReceiptView {
     pub total_fee: u128,
     pub contract_address: Option<Vec<u8>>,
     pub logs: Vec<LogView>,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize)]
+pub struct EthLogFilterView {
+    pub from_block: Option<u64>,
+    pub to_block: Option<u64>,
+    pub address: Option<Vec<u8>>,
+    pub topic0: Option<Vec<u8>>,
+    pub topic1: Option<Vec<u8>>,
+    pub limit: Option<u32>,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize)]
+pub struct EthLogItemView {
+    pub block_number: u64,
+    pub tx_index: u32,
+    pub log_index: u32,
+    pub tx_hash: Vec<u8>,
+    pub eth_tx_hash: Option<Vec<u8>>,
+    pub address: Vec<u8>,
+    pub topics: Vec<Vec<u8>>,
+    pub data: Vec<u8>,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize, Eq, PartialEq)]
+pub enum GetLogsErrorView {
+    RangeTooLarge,
+    TooManyResults,
+    UnsupportedFilter(String),
+    InvalidArgument(String),
 }
 
 #[derive(Clone, Debug, CandidType, Deserialize)]
@@ -391,22 +458,41 @@ impl InitArgs {
     }
 }
 
+#[cfg(not(feature = "canbench-rs"))]
 #[ic_cdk::init]
 fn init(args: Option<InitArgs>) {
+    init_inner(args, true);
+}
+
+#[cfg(feature = "canbench-rs")]
+#[ic_cdk::init]
+fn init() {
+    init_inner(None, false);
+}
+
+fn init_inner(args: Option<InitArgs>, require_args: bool) {
     init_stable_state();
     let _ = ensure_meta_initialized();
     init_tracing();
-    let args = args.unwrap_or_else(|| {
-        ic_cdk::trap("InitArgsRequired: InitArgs is required; pass (opt record {...})")
-    });
-    if let Err(reason) = args.validate() {
-        ic_cdk::trap(&format!("InvalidInitArgs: {reason}"));
-    }
-    for alloc in args.genesis_balances.iter() {
-        let mut addr = [0u8; 20];
-        addr.copy_from_slice(&alloc.address);
-        chain::dev_mint(addr, alloc.amount)
-            .unwrap_or_else(|_| ic_cdk::trap("init: genesis mint failed"));
+    let args = if require_args {
+        args.unwrap_or_else(|| {
+            ic_cdk::trap("InitArgsRequired: InitArgs is required; pass (opt record {...})")
+        })
+    } else {
+        args.unwrap_or(InitArgs {
+            genesis_balances: Vec::new(),
+        })
+    };
+    if !args.genesis_balances.is_empty() {
+        if let Err(reason) = args.validate() {
+            ic_cdk::trap(&format!("InvalidInitArgs: {reason}"));
+        }
+        for alloc in args.genesis_balances.iter() {
+            let mut addr = [0u8; 20];
+            addr.copy_from_slice(&alloc.address);
+            chain::dev_mint(addr, alloc.amount)
+                .unwrap_or_else(|_| ic_cdk::trap("init: genesis mint failed"));
+        }
     }
     observe_cycles();
     schedule_cycle_observer();
@@ -433,42 +519,180 @@ fn pre_upgrade() {
 #[ic_cdk::inspect_message]
 fn inspect_message() {
     let method = msg_method_name();
-    if !inspect_method_allowed(method.as_str()) {
+    let Some(limit) = inspect_payload_limit_for_method(method.as_str()) else {
         return;
-    }
+    };
     if reject_anonymous_update().is_some() {
         return;
     }
     let payload_len = inspect_payload_len();
-    if payload_len <= MAX_TX_SIZE.saturating_mul(2) {
+    if payload_len <= limit {
         accept_message();
     }
 }
 
-fn inspect_method_allowed(method: &str) -> bool {
-    if cfg!(feature = "dev-faucet") && method == "dev_mint" {
-        return true;
+const INSPECT_TX_PAYLOAD_LIMIT: usize = MAX_TX_SIZE.saturating_mul(2);
+const INSPECT_MANAGE_PAYLOAD_LIMIT: usize = MAX_TX_SIZE.saturating_mul(8);
+
+#[derive(Clone, Copy)]
+struct InspectMethodPolicy {
+    method: &'static str,
+    payload_limit: usize,
+}
+
+const INSPECT_METHOD_POLICIES: [InspectMethodPolicy; 14] = [
+    InspectMethodPolicy {
+        method: "submit_eth_tx",
+        payload_limit: INSPECT_TX_PAYLOAD_LIMIT,
+    },
+    InspectMethodPolicy {
+        method: "submit_ic_tx",
+        payload_limit: INSPECT_TX_PAYLOAD_LIMIT,
+    },
+    InspectMethodPolicy {
+        method: "rpc_eth_send_raw_transaction",
+        payload_limit: INSPECT_TX_PAYLOAD_LIMIT,
+    },
+    InspectMethodPolicy {
+        method: "set_auto_mine",
+        payload_limit: INSPECT_MANAGE_PAYLOAD_LIMIT,
+    },
+    InspectMethodPolicy {
+        method: "set_mining_interval_ms",
+        payload_limit: INSPECT_MANAGE_PAYLOAD_LIMIT,
+    },
+    InspectMethodPolicy {
+        method: "set_block_gas_limit",
+        payload_limit: INSPECT_MANAGE_PAYLOAD_LIMIT,
+    },
+    InspectMethodPolicy {
+        method: "set_instruction_soft_limit",
+        payload_limit: INSPECT_MANAGE_PAYLOAD_LIMIT,
+    },
+    InspectMethodPolicy {
+        method: "set_prune_policy",
+        payload_limit: INSPECT_MANAGE_PAYLOAD_LIMIT,
+    },
+    InspectMethodPolicy {
+        method: "set_pruning_enabled",
+        payload_limit: INSPECT_MANAGE_PAYLOAD_LIMIT,
+    },
+    InspectMethodPolicy {
+        method: "set_ops_config",
+        payload_limit: INSPECT_MANAGE_PAYLOAD_LIMIT,
+    },
+    InspectMethodPolicy {
+        method: "set_log_filter",
+        payload_limit: INSPECT_MANAGE_PAYLOAD_LIMIT,
+    },
+    InspectMethodPolicy {
+        method: "set_miner_allowlist",
+        payload_limit: INSPECT_MANAGE_PAYLOAD_LIMIT,
+    },
+    InspectMethodPolicy {
+        method: "prune_blocks",
+        payload_limit: INSPECT_MANAGE_PAYLOAD_LIMIT,
+    },
+    InspectMethodPolicy {
+        method: "produce_block",
+        payload_limit: INSPECT_MANAGE_PAYLOAD_LIMIT,
+    },
+];
+
+fn inspect_payload_limit_for_method(method: &str) -> Option<usize> {
+    inspect_policy_for_method(method).map(|policy| policy.payload_limit)
+}
+
+fn inspect_policy_for_method(method: &str) -> Option<InspectMethodPolicy> {
+    if let Some(policy) = INSPECT_METHOD_POLICIES
+        .iter()
+        .copied()
+        .find(|policy| policy.method == method)
+    {
+        return Some(policy);
     }
-    matches!(
-        method,
-        "submit_eth_tx"
-            | "submit_ic_tx"
-            | "rpc_eth_send_raw_transaction"
-            | "set_auto_mine"
-            | "set_mining_interval_ms"
-            | "set_prune_policy"
-            | "set_pruning_enabled"
-            | "set_ops_config"
-            | "set_log_filter"
-            | "set_miner_allowlist"
-            | "prune_blocks"
-            | "produce_block"
-    )
+    if cfg!(feature = "dev-faucet") && method == "dev_mint" {
+        return Some(InspectMethodPolicy {
+            method: "dev_mint",
+            payload_limit: INSPECT_MANAGE_PAYLOAD_LIMIT,
+        });
+    }
+    None
 }
 
 #[allow(deprecated)]
 fn inspect_payload_len() -> usize {
     ic_cdk::api::call::arg_data_raw_size()
+}
+
+fn submit_reject_code(err: &chain::ChainError) -> Option<&'static str> {
+    match err {
+        chain::ChainError::TxAlreadySeen => Some(CODE_SUBMIT_TX_ALREADY_SEEN),
+        chain::ChainError::InvalidFee => Some(CODE_SUBMIT_INVALID_FEE),
+        chain::ChainError::NonceTooLow => Some(CODE_SUBMIT_NONCE_TOO_LOW),
+        chain::ChainError::NonceGap => Some(CODE_SUBMIT_NONCE_GAP),
+        chain::ChainError::NonceConflict => Some(CODE_SUBMIT_NONCE_CONFLICT),
+        chain::ChainError::QueueFull => Some(CODE_SUBMIT_QUEUE_FULL),
+        chain::ChainError::SenderQueueFull => Some(CODE_SUBMIT_SENDER_QUEUE_FULL),
+        chain::ChainError::PrincipalQueueFull => Some(CODE_SUBMIT_PRINCIPAL_QUEUE_FULL),
+        _ => None,
+    }
+}
+
+fn chain_submit_error_to_code(err: &chain::ChainError) -> Option<(TxApiErrorKind, &'static str)> {
+    match err {
+        chain::ChainError::TxTooLarge => {
+            Some((TxApiErrorKind::InvalidArgument, CODE_ARG_TX_TOO_LARGE))
+        }
+        chain::ChainError::DecodeFailed => {
+            Some((TxApiErrorKind::InvalidArgument, CODE_ARG_DECODE_FAILED))
+        }
+        chain::ChainError::UnsupportedTxKind => Some((
+            TxApiErrorKind::InvalidArgument,
+            CODE_ARG_UNSUPPORTED_TX_KIND,
+        )),
+        _ => submit_reject_code(err).map(|code| (TxApiErrorKind::Rejected, code)),
+    }
+}
+
+fn map_submit_chain_error(err: chain::ChainError, op_name: &str) -> SubmitTxError {
+    if let Some((kind, code)) = chain_submit_error_to_code(&err) {
+        return match kind {
+            TxApiErrorKind::InvalidArgument => SubmitTxError::InvalidArgument(code.to_string()),
+            TxApiErrorKind::Rejected => SubmitTxError::Rejected(code.to_string()),
+        };
+    }
+    error!(error = ?err, operation = op_name, "submit transaction failed");
+    SubmitTxError::Internal(CODE_INTERNAL_UNEXPECTED.to_string())
+}
+
+fn submit_tx_in_with_code(tx_in: chain::TxIn, op_name: &str) -> Result<Vec<u8>, SubmitTxError> {
+    let tx_id = chain::submit_tx_in(tx_in).map_err(|err| map_submit_chain_error(err, op_name))?;
+    info!(operation = op_name, tx_id = ?tx_id, "submit accepted");
+    schedule_mining();
+    Ok(tx_id.0.to_vec())
+}
+
+#[cfg(test)]
+fn chain_execute_error_to_code(err: &chain::ChainError) -> Option<(TxApiErrorKind, &'static str)> {
+    match err {
+        chain::ChainError::ExecFailed(exec) => {
+            Some((TxApiErrorKind::Rejected, exec_error_to_code(exec.as_ref())))
+        }
+        _ => chain_submit_error_to_code(err),
+    }
+}
+
+#[cfg(test)]
+fn map_execute_chain_error(err: chain::ChainError) -> ExecuteTxError {
+    if let Some((kind, code)) = chain_execute_error_to_code(&err) {
+        return match kind {
+            TxApiErrorKind::InvalidArgument => ExecuteTxError::InvalidArgument(code.to_string()),
+            TxApiErrorKind::Rejected => ExecuteTxError::Rejected(code.to_string()),
+        };
+    }
+    error!(error = ?err, "execute transaction failed");
+    ExecuteTxError::Internal(CODE_INTERNAL_UNEXPECTED.to_string())
 }
 
 #[cfg(test)]
@@ -477,41 +701,7 @@ fn map_execute_chain_result(
 ) -> Result<ExecResultDto, ExecuteTxError> {
     let result = match result {
         Ok(value) => value,
-        Err(chain::ChainError::DecodeFailed) => {
-            return Err(ExecuteTxError::InvalidArgument("decode failed".to_string()));
-        }
-        Err(chain::ChainError::TxTooLarge) => {
-            return Err(ExecuteTxError::InvalidArgument("tx too large".to_string()));
-        }
-        Err(chain::ChainError::TxAlreadySeen) => {
-            return Err(ExecuteTxError::Rejected("tx already seen".to_string()));
-        }
-        Err(chain::ChainError::InvalidFee) => {
-            return Err(ExecuteTxError::Rejected("invalid fee".to_string()));
-        }
-        Err(chain::ChainError::NonceTooLow) => {
-            return Err(ExecuteTxError::Rejected("nonce too low".to_string()));
-        }
-        Err(chain::ChainError::NonceGap) => {
-            return Err(ExecuteTxError::Rejected("nonce gap".to_string()));
-        }
-        Err(chain::ChainError::NonceConflict) => {
-            return Err(ExecuteTxError::Rejected("nonce conflict".to_string()));
-        }
-        Err(chain::ChainError::QueueFull) => {
-            return Err(ExecuteTxError::Rejected("queue full".to_string()));
-        }
-        Err(chain::ChainError::SenderQueueFull) => {
-            return Err(ExecuteTxError::Rejected("sender queue full".to_string()));
-        }
-        Err(chain::ChainError::ExecFailed(err)) => {
-            let code = exec_error_to_code(err.as_ref());
-            return Err(ExecuteTxError::Rejected(code.to_string()));
-        }
-        Err(err) => {
-            error!(error = ?err, "execute_tx failed");
-            return Err(ExecuteTxError::Internal("internal error".to_string()));
-        }
+        Err(err) => return Err(map_execute_chain_error(err)),
     };
     Ok(ExecResultDto {
         tx_id: result.tx_id.0.to_vec(),
@@ -531,47 +721,14 @@ fn submit_eth_tx(raw_tx: Vec<u8>) -> Result<Vec<u8>, SubmitTxError> {
     if let Some(reason) = reject_write_reason() {
         return Err(SubmitTxError::Rejected(reason));
     }
-    let tx_id = match chain::submit_tx_in(chain::TxIn::EthSigned(raw_tx)) {
-        Ok(value) => value,
-        Err(chain::ChainError::TxTooLarge) => {
-            return Err(SubmitTxError::InvalidArgument("tx too large".to_string()));
-        }
-        Err(chain::ChainError::DecodeFailed) => {
-            return Err(SubmitTxError::InvalidArgument("decode failed".to_string()));
-        }
-        Err(chain::ChainError::UnsupportedTxKind) => {
-            return Err(SubmitTxError::InvalidArgument(
-                "unsupported tx kind".to_string(),
-            ));
-        }
-        Err(chain::ChainError::TxAlreadySeen) => {
-            return Err(SubmitTxError::Rejected("tx already seen".to_string()));
-        }
-        Err(chain::ChainError::InvalidFee) => {
-            return Err(SubmitTxError::Rejected("invalid fee".to_string()));
-        }
-        Err(chain::ChainError::NonceTooLow) => {
-            return Err(SubmitTxError::Rejected("nonce too low".to_string()));
-        }
-        Err(chain::ChainError::NonceGap) => {
-            return Err(SubmitTxError::Rejected("nonce gap".to_string()));
-        }
-        Err(chain::ChainError::NonceConflict) => {
-            return Err(SubmitTxError::Rejected("nonce conflict".to_string()));
-        }
-        Err(chain::ChainError::QueueFull) => {
-            return Err(SubmitTxError::Rejected("queue full".to_string()));
-        }
-        Err(chain::ChainError::SenderQueueFull) => {
-            return Err(SubmitTxError::Rejected("sender queue full".to_string()));
-        }
-        Err(err) => {
-            error!(error = ?err, "submit_eth_tx failed");
-            return Err(SubmitTxError::Internal("internal error".to_string()));
-        }
-    };
-    schedule_mining();
-    Ok(tx_id.0.to_vec())
+    let caller_principal = ic_cdk::api::msg_caller().as_slice().to_vec();
+    submit_tx_in_with_code(
+        chain::TxIn::EthSigned {
+            tx_bytes: raw_tx,
+            caller_principal,
+        },
+        "submit_eth_tx",
+    )
 }
 
 #[ic_cdk::update]
@@ -584,51 +741,14 @@ fn submit_ic_tx(tx_bytes: Vec<u8>) -> Result<Vec<u8>, SubmitTxError> {
     }
     let caller_principal = ic_cdk::api::msg_caller().as_slice().to_vec();
     let canister_id = ic_cdk::api::canister_self().as_slice().to_vec();
-    let tx_id = match chain::submit_tx_in(chain::TxIn::IcSynthetic {
-        caller_principal,
-        canister_id,
-        tx_bytes,
-    }) {
-        Ok(value) => value,
-        Err(chain::ChainError::TxTooLarge) => {
-            return Err(SubmitTxError::InvalidArgument("tx too large".to_string()));
-        }
-        Err(chain::ChainError::DecodeFailed) => {
-            return Err(SubmitTxError::InvalidArgument("decode failed".to_string()));
-        }
-        Err(chain::ChainError::UnsupportedTxKind) => {
-            return Err(SubmitTxError::InvalidArgument(
-                "unsupported tx kind".to_string(),
-            ));
-        }
-        Err(chain::ChainError::TxAlreadySeen) => {
-            return Err(SubmitTxError::Rejected("tx already seen".to_string()));
-        }
-        Err(chain::ChainError::InvalidFee) => {
-            return Err(SubmitTxError::Rejected("invalid fee".to_string()));
-        }
-        Err(chain::ChainError::NonceTooLow) => {
-            return Err(SubmitTxError::Rejected("nonce too low".to_string()));
-        }
-        Err(chain::ChainError::NonceGap) => {
-            return Err(SubmitTxError::Rejected("nonce gap".to_string()));
-        }
-        Err(chain::ChainError::NonceConflict) => {
-            return Err(SubmitTxError::Rejected("nonce conflict".to_string()));
-        }
-        Err(chain::ChainError::QueueFull) => {
-            return Err(SubmitTxError::Rejected("queue full".to_string()));
-        }
-        Err(chain::ChainError::SenderQueueFull) => {
-            return Err(SubmitTxError::Rejected("sender queue full".to_string()));
-        }
-        Err(err) => {
-            error!(error = ?err, "submit_ic_tx failed");
-            return Err(SubmitTxError::Internal("internal error".to_string()));
-        }
-    };
-    schedule_mining();
-    Ok(tx_id.0.to_vec())
+    submit_tx_in_with_code(
+        chain::TxIn::IcSynthetic {
+            caller_principal,
+            canister_id,
+            tx_bytes,
+        },
+        "submit_ic_tx",
+    )
 }
 
 #[cfg(feature = "dev-faucet")]
@@ -672,32 +792,19 @@ fn produce_block(max_txs: u32) -> Result<ProduceBlockStatus, ProduceBlockError> 
     }
     let limit = usize::try_from(max_txs).unwrap_or(0);
     match chain::produce_block(limit) {
-        Ok(block) => {
-            let gas_used = with_state(|_state| {
-                let mut total = 0u64;
-                for tx_id in block.tx_ids.iter() {
-                    if let Some(receipt) = chain::get_receipt(tx_id) {
-                        total = total.saturating_add(receipt.gas_used);
-                    }
-                }
-                total
-            });
-            let dropped = with_state(|state| {
-                let metrics = *state.metrics_state.get();
-                let mut count = 0u64;
-                for bucket in metrics.buckets.iter() {
-                    if bucket.block_number == block.number {
-                        count = bucket.drops;
-                        break;
-                    }
-                }
-                count
-            });
+        Ok(outcome) => {
+            let block = outcome.block;
+            info!(
+                block_number = block.number,
+                tx_count = block.tx_ids.len(),
+                dropped = outcome.dropped,
+                "produce_block succeeded"
+            );
             Ok(ProduceBlockStatus::Produced {
                 block_number: block.number,
                 txs: block.tx_ids.len().try_into().unwrap_or(u32::MAX),
-                gas_used,
-                dropped: dropped.try_into().unwrap_or(u32::MAX),
+                gas_used: outcome.gas_used,
+                dropped: outcome.dropped.try_into().unwrap_or(u32::MAX),
             })
         }
         Err(chain::ChainError::NoExecutableTx) | Err(chain::ChainError::QueueEmpty) => {
@@ -875,19 +982,168 @@ fn rpc_eth_get_block_by_number(number: u64, full_tx: bool) -> Option<EthBlockVie
 }
 
 #[ic_cdk::query]
-fn rpc_eth_get_transaction_by_hash(tx_hash: Vec<u8>) -> Option<EthTxView> {
-    let tx_id = tx_id_from_bytes(tx_hash)?;
+fn rpc_eth_get_transaction_by_eth_hash(eth_tx_hash: Vec<u8>) -> Option<EthTxView> {
+    let tx_id = find_eth_tx_id_by_eth_hash_bytes(&eth_tx_hash)?;
     tx_to_view(tx_id)
 }
 
 #[ic_cdk::query]
-fn rpc_eth_get_transaction_receipt(tx_hash: Vec<u8>) -> Option<EthReceiptView> {
-    match rpc_eth_get_transaction_receipt_with_status(tx_hash) {
+fn rpc_eth_get_transaction_receipt_by_eth_hash(eth_tx_hash: Vec<u8>) -> Option<EthReceiptView> {
+    let tx_id = find_eth_tx_id_by_eth_hash_bytes(&eth_tx_hash)?;
+    match receipt_lookup_status(tx_id) {
         RpcReceiptLookupView::Found(receipt) => Some(receipt),
         RpcReceiptLookupView::Pruned { .. }
         | RpcReceiptLookupView::PossiblyPruned { .. }
         | RpcReceiptLookupView::NotFound => None,
     }
+}
+
+#[ic_cdk::query]
+fn rpc_eth_get_balance(address: Vec<u8>) -> Result<Vec<u8>, String> {
+    let addr = parse_address_20(address).ok_or_else(|| "address must be 20 bytes".to_string())?;
+    let key = make_account_key(addr);
+    let balance = with_state(|state| {
+        state
+            .accounts
+            .get(&key)
+            .map(|value| value.balance().to_vec())
+            .unwrap_or_else(|| [0u8; 32].to_vec())
+    });
+    Ok(balance)
+}
+
+#[ic_cdk::query]
+fn rpc_eth_get_code(address: Vec<u8>) -> Result<Vec<u8>, String> {
+    let addr = parse_address_20(address).ok_or_else(|| "address must be 20 bytes".to_string())?;
+    let key = make_account_key(addr);
+    let code = with_state(|state| {
+        let Some(account) = state.accounts.get(&key) else {
+            return Vec::new();
+        };
+        let code_hash = account.code_hash();
+        if code_hash == [0u8; 32] {
+            return Vec::new();
+        }
+        state
+            .codes
+            .get(&make_code_key(code_hash))
+            .map(|value| value.0)
+            .unwrap_or_default()
+    });
+    Ok(code)
+}
+
+#[ic_cdk::query]
+fn rpc_eth_call_rawtx(raw_tx: Vec<u8>) -> Result<Vec<u8>, String> {
+    chain::eth_call(raw_tx).map_err(|err| format!("eth_call failed: {err:?}"))
+}
+
+#[ic_cdk::query]
+fn rpc_eth_get_logs(filter: EthLogFilterView) -> Result<Vec<EthLogItemView>, GetLogsErrorView> {
+    const DEFAULT_LIMIT: usize = 200;
+    const MAX_LIMIT: usize = 2000;
+    const MAX_BLOCK_SPAN: u64 = 5000;
+
+    if filter.topic1.is_some() {
+        return Err(GetLogsErrorView::UnsupportedFilter(
+            "topic1 is not supported".to_string(),
+        ));
+    }
+    let head = chain::get_head_number();
+    let mut from = filter.from_block.unwrap_or(0);
+    let mut to = filter.to_block.unwrap_or(head);
+    if from > to {
+        return Err(GetLogsErrorView::InvalidArgument(
+            "from_block must be <= to_block".to_string(),
+        ));
+    }
+    let requested_span = to.saturating_sub(from);
+    if requested_span > MAX_BLOCK_SPAN {
+        return Err(GetLogsErrorView::RangeTooLarge);
+    }
+    if to > head {
+        to = head;
+    }
+    let requested_limit_u32 = filter
+        .limit
+        .unwrap_or(u32::try_from(DEFAULT_LIMIT).unwrap_or(u32::MAX));
+    let requested_limit = usize::try_from(requested_limit_u32).unwrap_or(usize::MAX);
+    if requested_limit > MAX_LIMIT {
+        return Err(GetLogsErrorView::TooManyResults);
+    }
+    let limit = requested_limit;
+    let address_filter = match filter.address {
+        Some(bytes) => Some(parse_address_20(bytes).ok_or_else(|| {
+            GetLogsErrorView::InvalidArgument("address must be 20 bytes".to_string())
+        })?),
+        None => None,
+    };
+    let topic0_filter = match filter.topic0 {
+        Some(bytes) => Some(parse_hash_32(bytes).ok_or_else(|| {
+            GetLogsErrorView::InvalidArgument("topic0 must be 32 bytes".to_string())
+        })?),
+        None => None,
+    };
+
+    let pruned_before = with_state(|state| state.prune_state.get().pruned_before());
+    if let Some(pruned) = pruned_before {
+        if from <= pruned {
+            from = pruned.saturating_add(1);
+        }
+    }
+    let mut out = Vec::new();
+    for number in from..=to {
+        let Some(block) = chain::get_block(number) else {
+            continue;
+        };
+        for tx_id in block.tx_ids.iter() {
+            let Some(receipt) = chain::get_receipt(tx_id) else {
+                continue;
+            };
+            let eth_tx_hash = chain::get_tx_envelope(tx_id)
+                .and_then(|envelope| StoredTx::try_from(envelope).ok())
+                .and_then(|stored| {
+                    if stored.kind == TxKind::EthSigned {
+                        Some(hash::keccak256(&stored.raw).to_vec())
+                    } else {
+                        None
+                    }
+                });
+            for (log_index, log) in receipt.logs.iter().enumerate() {
+                let address = log.address.as_slice();
+                if let Some(filter_addr) = address_filter {
+                    if address != filter_addr {
+                        continue;
+                    }
+                }
+                if let Some(topic0) = topic0_filter {
+                    let topics = log.data.topics();
+                    if topics.is_empty() || topics[0].as_slice() != topic0 {
+                        continue;
+                    }
+                }
+                if out.len() == limit {
+                    return Err(GetLogsErrorView::TooManyResults);
+                }
+                out.push(EthLogItemView {
+                    block_number: receipt.block_number,
+                    tx_index: receipt.tx_index,
+                    log_index: u32::try_from(log_index).unwrap_or(u32::MAX),
+                    tx_hash: receipt.tx_id.0.to_vec(),
+                    eth_tx_hash: eth_tx_hash.clone(),
+                    address: address.to_vec(),
+                    topics: log
+                        .data
+                        .topics()
+                        .iter()
+                        .map(|topic| topic.as_slice().to_vec())
+                        .collect(),
+                    data: log.data.data.to_vec(),
+                });
+            }
+        }
+    }
+    Ok(out)
 }
 
 #[ic_cdk::query]
@@ -924,47 +1180,13 @@ fn rpc_eth_send_raw_transaction(raw_tx: Vec<u8>) -> Result<Vec<u8>, SubmitTxErro
     if let Some(reason) = reject_write_reason() {
         return Err(SubmitTxError::Rejected(reason));
     }
-    let tx_id = match chain::submit_tx_in(chain::TxIn::EthSigned(raw_tx)) {
-        Ok(value) => value,
-        Err(chain::ChainError::TxTooLarge) => {
-            return Err(SubmitTxError::InvalidArgument("tx too large".to_string()));
-        }
-        Err(chain::ChainError::DecodeFailed) => {
-            return Err(SubmitTxError::InvalidArgument("decode failed".to_string()));
-        }
-        Err(chain::ChainError::UnsupportedTxKind) => {
-            return Err(SubmitTxError::InvalidArgument(
-                "unsupported tx kind".to_string(),
-            ));
-        }
-        Err(chain::ChainError::TxAlreadySeen) => {
-            return Err(SubmitTxError::Rejected("tx already seen".to_string()));
-        }
-        Err(chain::ChainError::InvalidFee) => {
-            return Err(SubmitTxError::Rejected("invalid fee".to_string()));
-        }
-        Err(chain::ChainError::NonceTooLow) => {
-            return Err(SubmitTxError::Rejected("nonce too low".to_string()));
-        }
-        Err(chain::ChainError::NonceGap) => {
-            return Err(SubmitTxError::Rejected("nonce gap".to_string()));
-        }
-        Err(chain::ChainError::NonceConflict) => {
-            return Err(SubmitTxError::Rejected("nonce conflict".to_string()));
-        }
-        Err(chain::ChainError::QueueFull) => {
-            return Err(SubmitTxError::Rejected("queue full".to_string()));
-        }
-        Err(chain::ChainError::SenderQueueFull) => {
-            return Err(SubmitTxError::Rejected("sender queue full".to_string()));
-        }
-        Err(err) => {
-            error!(error = ?err, "rpc_eth_send_raw_transaction failed");
-            return Err(SubmitTxError::Internal("internal error".to_string()));
-        }
-    };
-    schedule_mining();
-    Ok(tx_id.0.to_vec())
+    submit_tx_in_with_code(
+        chain::TxIn::EthSigned {
+            tx_bytes: raw_tx,
+            caller_principal: ic_cdk::api::msg_caller().as_slice().to_vec(),
+        },
+        "rpc_eth_send_raw_transaction",
+    )
 }
 
 #[ic_cdk::query]
@@ -1014,6 +1236,8 @@ fn get_ops_status() -> OpsStatusView {
         let config = *state.ops_config.get();
         let ops = *state.ops_state.get();
         let meta = get_meta();
+        let decode_failure_last_label =
+            decode_failure_label_view(evm_db::corrupt_log::read_last_corrupt_tag());
         OpsStatusView {
             config: OpsConfigView {
                 low_watermark: config.low_watermark,
@@ -1031,8 +1255,31 @@ fn get_ops_status() -> OpsStatusView {
             critical_corrupt: critical_corrupt_state(),
             mining_error_count: MINING_ERROR_COUNT.load(Ordering::Relaxed),
             prune_error_count: PRUNE_ERROR_COUNT.load(Ordering::Relaxed),
+            decode_failure_count: evm_db::corrupt_log::read_corrupt_count(),
+            decode_failure_last_ts: evm_db::corrupt_log::read_last_corrupt_ts(),
+            decode_failure_last_label,
+            block_gas_limit: state.chain_state.get().block_gas_limit,
+            instruction_soft_limit: state.chain_state.get().instruction_soft_limit,
         }
     })
+}
+
+fn decode_failure_label_view(raw: [u8; 32]) -> Option<String> {
+    let end = raw.iter().position(|b| *b == 0).unwrap_or(raw.len());
+    if end == 0 {
+        return None;
+    }
+    let bytes = &raw[..end];
+    if bytes.iter().all(|b| {
+        b.is_ascii_lowercase() || b.is_ascii_digit() || *b == b'.' || *b == b'_' || *b == b'-'
+    }) {
+        return Some(String::from_utf8_lossy(bytes).to_string());
+    }
+    let mut out = String::from("hex:");
+    for b in bytes {
+        out.push_str(&format!("{b:02x}"));
+    }
+    Some(out)
 }
 
 #[ic_cdk::update]
@@ -1105,6 +1352,8 @@ fn health() -> HealthView {
             auto_mine_enabled: chain_state.auto_mine_enabled,
             is_producing: chain_state.is_producing,
             mining_scheduled: chain_state.mining_scheduled,
+            block_gas_limit: chain_state.block_gas_limit,
+            instruction_soft_limit: chain_state.instruction_soft_limit,
         }
     })
 }
@@ -1144,6 +1393,50 @@ fn metrics(window: u64) -> MetricsView {
     })
 }
 
+#[ic_cdk::query]
+fn metrics_prometheus() -> Result<String, String> {
+    let cycles = canister_cycle_balance();
+    let stable_memory_pages = ic_cdk::stable::stable_size();
+    let heap_memory_pages = current_heap_memory_pages();
+    let now_nanos = time();
+    let snapshot = with_state(|state| {
+        let head = *state.head.get();
+        let chain_state = *state.chain_state.get();
+        let metrics = *state.metrics_state.get();
+        let pruned_before_block = state.prune_state.get().pruned_before();
+        let mut drop_counts = Vec::new();
+        for (idx, count) in metrics.drop_counts.iter().enumerate() {
+            if *count == 0 {
+                continue;
+            }
+            if let Ok(code) = u16::try_from(idx) {
+                drop_counts.push(prometheus_metrics::DropCountSample {
+                    code,
+                    count: *count,
+                });
+            }
+        }
+        prometheus_metrics::PrometheusSnapshot {
+            cycles_balance: cycles,
+            stable_memory_pages,
+            heap_memory_pages,
+            tip_block_number: head.number,
+            queue_len: state.pending_by_sender_nonce.len(),
+            total_submitted: metrics.total_submitted,
+            total_included: metrics.total_included,
+            total_dropped: metrics.total_dropped,
+            auto_mine_enabled: chain_state.auto_mine_enabled,
+            is_producing: chain_state.is_producing,
+            mining_scheduled: chain_state.mining_scheduled,
+            mining_interval_ms: chain_state.mining_interval_ms,
+            last_block_time: chain_state.last_block_time,
+            pruned_before_block,
+            drop_counts,
+        }
+    });
+    prometheus_metrics::encode_prometheus(now_nanos, &snapshot)
+}
+
 #[ic_cdk::update]
 fn set_auto_mine(enabled: bool) -> Result<(), String> {
     if let Some(reason) = reject_anonymous_update() {
@@ -1176,6 +1469,37 @@ fn set_mining_interval_ms(interval_ms: u64) -> Result<(), String> {
         state.chain_state.set(chain_state);
     });
     schedule_mining();
+    Ok(())
+}
+
+#[ic_cdk::update]
+fn set_block_gas_limit(limit: u64) -> Result<(), String> {
+    if let Some(reason) = reject_anonymous_update() {
+        return Err(reason);
+    }
+    require_manage_write()?;
+    if limit == 0 {
+        return Err("input.block_gas_limit.non_positive".to_string());
+    }
+    evm_db::stable_state::with_state_mut(|state| {
+        let mut chain_state = *state.chain_state.get();
+        chain_state.block_gas_limit = limit;
+        state.chain_state.set(chain_state);
+    });
+    Ok(())
+}
+
+#[ic_cdk::update]
+fn set_instruction_soft_limit(limit: u64) -> Result<(), String> {
+    if let Some(reason) = reject_anonymous_update() {
+        return Err(reason);
+    }
+    require_manage_write()?;
+    evm_db::stable_state::with_state_mut(|state| {
+        let mut chain_state = *state.chain_state.get();
+        chain_state.instruction_soft_limit = limit;
+        state.chain_state.set(chain_state);
+    });
     Ok(())
 }
 
@@ -1359,6 +1683,16 @@ fn collect_drop_counts(metrics: &evm_db::chain_data::MetricsStateV1) -> Vec<Drop
         .collect()
 }
 
+#[cfg(target_arch = "wasm32")]
+fn current_heap_memory_pages() -> u64 {
+    u64::try_from(core::arch::wasm32::memory_size(0)).unwrap_or(u64::MAX)
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn current_heap_memory_pages() -> u64 {
+    0
+}
+
 fn tx_id_from_bytes(tx_id: Vec<u8>) -> Option<TxId> {
     if tx_id.len() != 32 {
         return None;
@@ -1366,6 +1700,45 @@ fn tx_id_from_bytes(tx_id: Vec<u8>) -> Option<TxId> {
     let mut buf = [0u8; 32];
     buf.copy_from_slice(&tx_id);
     Some(TxId(buf))
+}
+
+fn parse_address_20(bytes: Vec<u8>) -> Option<[u8; 20]> {
+    if bytes.len() != 20 {
+        return None;
+    }
+    let mut out = [0u8; 20];
+    out.copy_from_slice(&bytes);
+    Some(out)
+}
+
+fn parse_hash_32(bytes: Vec<u8>) -> Option<[u8; 32]> {
+    if bytes.len() != 32 {
+        return None;
+    }
+    let mut out = [0u8; 32];
+    out.copy_from_slice(&bytes);
+    Some(out)
+}
+
+fn find_eth_tx_id_by_eth_hash_bytes(eth_tx_hash: &[u8]) -> Option<TxId> {
+    if eth_tx_hash.len() != 32 {
+        return None;
+    }
+    with_state(|state| {
+        for entry in state.tx_store.iter() {
+            let tx_id = *entry.key();
+            let Ok(stored) = StoredTx::try_from(entry.value()) else {
+                continue;
+            };
+            if stored.kind != TxKind::EthSigned {
+                continue;
+            }
+            if hash::keccak256(&stored.raw).as_slice() == eth_tx_hash {
+                return Some(tx_id);
+            }
+        }
+        None
+    })
 }
 
 fn tx_to_view(tx_id: TxId) -> Option<EthTxView> {
@@ -1400,7 +1773,7 @@ fn envelope_to_eth_view(
                 to: decoded.to.map(|addr| addr.to_vec()),
                 nonce: decoded.nonce,
                 value: decoded.value.to_vec(),
-                input: decoded.input,
+                input: decoded.input.into_owned(),
                 gas_limit: decoded.gas_limit,
                 gas_price: decoded.gas_price,
                 chain_id: decoded.chain_id,
@@ -1426,8 +1799,18 @@ fn envelope_to_eth_view(
 }
 
 fn receipt_to_eth_view(receipt: ReceiptLike) -> EthReceiptView {
+    let eth_tx_hash = chain::get_tx_envelope(&receipt.tx_id)
+        .and_then(|envelope| StoredTx::try_from(envelope).ok())
+        .and_then(|stored| {
+            if stored.kind == TxKind::EthSigned {
+                Some(hash::keccak256(&stored.raw).to_vec())
+            } else {
+                None
+            }
+        });
     EthReceiptView {
         tx_hash: receipt.tx_id.0.to_vec(),
+        eth_tx_hash,
         block_number: receipt.block_number,
         tx_index: receipt.tx_index,
         status: receipt.status,
@@ -1550,19 +1933,19 @@ fn caller_key_to_principal(key: CallerKey) -> Option<Principal> {
 }
 
 fn migration_pending() -> bool {
-    if !schema_migration_tick(32) {
-        return true;
-    }
     let meta = get_meta();
     if meta.needs_migration || meta.schema_version < current_schema_version() {
         return true;
     }
-    let pending =
-        with_state(|state| state.state_root_migration.get().phase != MigrationPhase::Done);
-    if !pending {
-        return false;
-    }
-    !chain::state_root_migration_tick(512)
+    with_state(|state| {
+        !state.state_root_meta.get().initialized
+            || state.state_root_migration.get().phase != MigrationPhase::Done
+    })
+}
+
+fn drive_migrations_tick(schema_max_steps: u32, state_root_max_steps: u32) {
+    let _ = schema_migration_tick(schema_max_steps);
+    let _ = chain::state_root_migration_tick(state_root_max_steps);
 }
 
 fn critical_corrupt_state() -> bool {
@@ -1614,6 +1997,9 @@ fn schema_migration_tick(max_steps: u32) -> bool {
                         return false;
                     }
                 }
+                if state.from_version < 4 {
+                    chain::rebuild_pending_runtime_indexes();
+                }
                 state.phase = SchemaMigrationPhase::Verify;
                 state.cursor = 0;
                 set_schema_migration_state(state);
@@ -1633,6 +2019,28 @@ fn schema_migration_tick(max_steps: u32) -> bool {
                     state.last_error = 2;
                     set_schema_migration_state(state);
                     return false;
+                }
+                if state.from_version < 4 {
+                    let indexes_ok = with_state(|s| {
+                        let pending_len = s.pending_by_sender_nonce.len();
+                        let fee_idx_len = s.pending_fee_key_by_tx_id.len();
+                        let ready_len = s.ready_key_by_tx_id.len();
+                        let ready_seq_len = s.ready_by_seq.len();
+                        let mut principal_total = 0u64;
+                        for entry in s.principal_pending_count.iter() {
+                            principal_total =
+                                principal_total.saturating_add(u64::from(entry.value()));
+                        }
+                        pending_len == fee_idx_len
+                            && ready_len == ready_seq_len
+                            && principal_total == pending_len
+                    });
+                    if !indexes_ok {
+                        state.phase = SchemaMigrationPhase::Error;
+                        state.last_error = 3;
+                        set_schema_migration_state(state);
+                        return false;
+                    }
                 }
                 if state.from_version < 2 {
                     chain::clear_mempool_on_upgrade();
@@ -1709,10 +2117,11 @@ fn reject_anonymous_principal(caller: Principal) -> Option<String> {
     None
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn init_tracing() {
     static LOG_INIT: OnceLock<()> = OnceLock::new();
     let _ = LOG_INIT.get_or_init(|| {
-        let env_filter = EnvFilter::new(resolve_log_filter().unwrap_or_else(|| "info".to_string()));
+        let env_filter = EnvFilter::new(resolve_log_filter().unwrap_or_else(|| "warn".to_string()));
         let _ = tracing_subscriber::fmt()
             .json()
             .with_target(true)
@@ -1724,6 +2133,10 @@ fn init_tracing() {
     });
 }
 
+#[cfg(target_arch = "wasm32")]
+fn init_tracing() {}
+
+#[cfg(not(target_arch = "wasm32"))]
 fn resolve_log_filter() -> Option<String> {
     if let Some(value) = read_env_var_guarded("LOG_FILTER", LOG_FILTER_MAX_LEN) {
         let trimmed = value.trim();
@@ -1734,20 +2147,23 @@ fn resolve_log_filter() -> Option<String> {
     with_state(|state| state.log_config.get().filter().map(str::to_string))
 }
 
+#[cfg(all(not(feature = "canbench-rs"), not(target_arch = "wasm32")))]
 const MAX_ENV_VAR_NAME_LEN: usize = 128;
+#[cfg(not(target_arch = "wasm32"))]
 const LOG_FILTER_MAX_LEN: usize = 256;
 static LOG_TRUNCATED_COUNT: AtomicU64 = AtomicU64::new(0);
 static MINING_ERROR_COUNT: AtomicU64 = AtomicU64::new(0);
 static PRUNE_ERROR_COUNT: AtomicU64 = AtomicU64::new(0);
 
+#[cfg(all(not(feature = "canbench-rs"), not(target_arch = "wasm32")))]
 fn read_env_var_guarded(name: &str, max_value_len: usize) -> Option<String> {
     if name.len() > MAX_ENV_VAR_NAME_LEN {
         return None;
     }
-    if !env_var_name_exists(name) {
+    if !ic_cdk::api::env_var_name_exists(name) {
         return None;
     }
-    let value = env_var_value(name);
+    let value = ic_cdk::api::env_var_value(name);
     if value.len() > max_value_len {
         warn!(
             env_var = name,
@@ -1760,9 +2176,17 @@ fn read_env_var_guarded(name: &str, max_value_len: usize) -> Option<String> {
     Some(value)
 }
 
+#[cfg(feature = "canbench-rs")]
+#[allow(dead_code)]
+fn read_env_var_guarded(_name: &str, _max_value_len: usize) -> Option<String> {
+    None
+}
+
+#[cfg(not(target_arch = "wasm32"))]
 #[derive(Clone, Copy)]
 struct IcDebugPrintMakeWriter;
 
+#[cfg(not(target_arch = "wasm32"))]
 impl<'a> MakeWriter<'a> for IcDebugPrintMakeWriter {
     type Writer = IcDebugPrintWriter;
 
@@ -1773,10 +2197,12 @@ impl<'a> MakeWriter<'a> for IcDebugPrintMakeWriter {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 struct IcDebugPrintWriter {
     buffer: String,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl Write for IcDebugPrintWriter {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
         self.buffer.push_str(&String::from_utf8_lossy(buf));
@@ -1793,18 +2219,20 @@ impl Write for IcDebugPrintWriter {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl Drop for IcDebugPrintWriter {
     fn drop(&mut self) {
         let _ = self.flush();
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn emit_complete_lines(buffer: &mut String) {
     static REENTRANT_GUARD: OnceLock<Mutex<()>> = OnceLock::new();
     let guard = REENTRANT_GUARD.get_or_init(|| Mutex::new(())).lock();
     if guard.is_err() {
         if !buffer.is_empty() {
-            ic_cdk::api::debug_print("{\"target\":\"tracing\",\"fallback\":true}".to_string());
+            emit_debug_print("{\"target\":\"tracing\",\"fallback\":true}".to_string());
         }
         return;
     }
@@ -1817,10 +2245,19 @@ fn emit_complete_lines(buffer: &mut String) {
     }
 }
 
+#[cfg(all(not(target_arch = "wasm32"), feature = "ic-debug-print"))]
+fn emit_debug_print(line: String) {
+    ic_cdk::api::debug_print(line);
+}
+
+#[cfg(all(not(target_arch = "wasm32"), not(feature = "ic-debug-print")))]
+fn emit_debug_print(_line: String) {}
+
+#[cfg(not(target_arch = "wasm32"))]
 fn emit_bounded_log_line(line: &str) {
     const MAX_LOG_LINE_BYTES: usize = 16 * 1024;
     if line.len() <= MAX_LOG_LINE_BYTES {
-        ic_cdk::api::debug_print(line.to_string());
+        emit_debug_print(line.to_string());
         return;
     }
     let mut prefix = String::new();
@@ -1837,7 +2274,7 @@ fn emit_bounded_log_line(line: &str) {
         .replace('\n', "\\n")
         .replace('\r', "\\r");
     let truncated_count = LOG_TRUNCATED_COUNT.fetch_add(1, Ordering::Relaxed) + 1;
-    ic_cdk::api::debug_print(format!(
+    emit_debug_print(format!(
         "{{\"truncated\":true,\"truncated_count\":{},\"max_bytes\":{MAX_LOG_LINE_BYTES},\"original_bytes\":{},\"prefix\":\"{}\"}}",
         truncated_count,
         line.len(),
@@ -1883,14 +2320,12 @@ fn apply_post_upgrade_migrations() {
             }
         });
     }
-    if migration_pending() {
-        let _ = chain::state_root_migration_tick(1024);
-        let _ = schema_migration_tick(1024);
-    }
+    drive_migrations_tick(1024, 1024);
 }
 
 fn schedule_cycle_observer() {
     ic_cdk_timers::set_timer_interval(std::time::Duration::from_secs(60), || async {
+        drive_migrations_tick(256, 512);
         let mode = observe_cycles();
         if mode != OpsMode::Critical && !migration_pending() {
             schedule_mining();
@@ -1906,6 +2341,7 @@ fn schedule_mining_with_interval(override_interval_ms: Option<u64>) {
     if reject_write_reason().is_some() {
         return;
     }
+    // RefCell再入防止: with_state_mut内は状態更新のみ。タイマー副作用は借用解放後に実行する。
     let interval_ms = evm_db::stable_state::with_state_mut(|state| {
         let mut chain_state = *state.chain_state.get();
         if !chain_state.auto_mine_enabled {
@@ -1949,6 +2385,7 @@ fn mining_backoff_interval_ms(base_interval_ms: u64, failures: u32) -> u64 {
 }
 
 fn schedule_prune() {
+    // RefCell再入防止: with_state_mut内はフラグ更新のみ。タイマー副作用は外で実行する。
     let interval_ms = evm_db::stable_state::with_state_mut(|state| {
         let mut config = *state.prune_config.get();
         if !config.pruning_enabled {
@@ -2078,18 +2515,24 @@ pub fn export_did() -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        clamp_return_data, exec_error_to_code, inspect_method_allowed, map_execute_chain_result,
-        prune_boundary_for_number, receipt_lookup_status, reject_anonymous_principal,
-        reject_write_reason, tx_id_from_bytes, ExecuteTxError, MINING_ERROR_COUNT,
-        PRUNE_ERROR_COUNT,
+        chain_submit_error_to_code, clamp_return_data, exec_error_to_code,
+        inspect_payload_limit_for_method, inspect_policy_for_method, map_execute_chain_result,
+        map_submit_chain_error, migration_pending, prune_boundary_for_number,
+        receipt_lookup_status, reject_anonymous_principal, reject_write_reason, tx_id_from_bytes,
+        EthLogFilterView, ExecuteTxError, GetLogsErrorView, INSPECT_METHOD_POLICIES,
+        MINING_ERROR_COUNT, PRUNE_ERROR_COUNT,
     };
     use candid::Principal;
     use evm_core::chain::{ChainError, ExecResult};
     use evm_core::revm_exec::{ExecError, OpHaltReason, OpTransactionError};
     use evm_db::chain_data::constants::MAX_RETURN_DATA;
-    use evm_db::chain_data::{TxId, TxLoc};
-    use evm_db::meta::{set_needs_migration, set_schema_migration_state, SchemaMigrationState};
+    use evm_db::chain_data::{MigrationPhase, TxId, TxLoc};
+    use evm_db::meta::{
+        current_schema_version, schema_migration_state, set_meta, set_needs_migration,
+        set_schema_migration_state, SchemaMigrationPhase, SchemaMigrationState,
+    };
     use evm_db::stable_state::init_stable_state;
+    use std::collections::BTreeSet;
 
     #[test]
     fn clamp_return_data_rejects_oversize() {
@@ -2146,10 +2589,46 @@ mod tests {
 
         for err in inputs.iter() {
             let code = exec_error_to_code(err.as_ref());
-            assert!(is_exec_code(code), "unexpected code: {code}");
+            assert!(code.starts_with("exec."));
+            assert!(is_machine_code(code), "unexpected code: {code}");
             assert!(!code.contains('{'));
             assert!(!code.contains('}'));
             assert!(!code.contains(':'));
+        }
+    }
+
+    #[test]
+    fn pr8_submit_error_code_mapping_matches_expected_set() {
+        let table = [
+            (ChainError::TxTooLarge, ("arg.tx_too_large", true)),
+            (ChainError::DecodeFailed, ("arg.decode_failed", true)),
+            (
+                ChainError::UnsupportedTxKind,
+                ("arg.unsupported_tx_kind", true),
+            ),
+            (ChainError::TxAlreadySeen, ("submit.tx_already_seen", false)),
+            (ChainError::InvalidFee, ("submit.invalid_fee", false)),
+            (ChainError::NonceTooLow, ("submit.nonce_too_low", false)),
+            (ChainError::NonceGap, ("submit.nonce_gap", false)),
+            (ChainError::NonceConflict, ("submit.nonce_conflict", false)),
+            (ChainError::QueueFull, ("submit.queue_full", false)),
+            (
+                ChainError::SenderQueueFull,
+                ("submit.sender_queue_full", false),
+            ),
+            (
+                ChainError::PrincipalQueueFull,
+                ("submit.principal_queue_full", false),
+            ),
+        ];
+        for (input, (expected_code, expected_invalid_arg)) in table {
+            let (kind, code) = chain_submit_error_to_code(&input).expect("code mapping");
+            assert_eq!(code, expected_code);
+            assert!(is_machine_code(code));
+            match kind {
+                super::TxApiErrorKind::InvalidArgument => assert!(expected_invalid_arg),
+                super::TxApiErrorKind::Rejected => assert!(!expected_invalid_arg),
+            }
         }
     }
 
@@ -2191,15 +2670,65 @@ mod tests {
     }
 
     #[test]
+    fn pr8_execute_decode_failed_maps_to_arg_code() {
+        let err = map_execute_chain_result(Err(ChainError::DecodeFailed))
+            .expect_err("must reject decode");
+        match err {
+            ExecuteTxError::InvalidArgument(code) => assert_eq!(code, "arg.decode_failed"),
+            other => panic!("unexpected error: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn pr8_execute_precompile_error_maps_to_exec_code() {
+        let err = map_execute_chain_result(Err(ChainError::ExecFailed(Some(ExecError::EvmHalt(
+            OpHaltReason::PrecompileError,
+        )))))
+        .expect_err("must map to precompile code");
+        match err {
+            ExecuteTxError::Rejected(code) => assert_eq!(code, "exec.halt.precompile_error"),
+            other => panic!("unexpected error: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn pr8_unexpected_chain_error_maps_to_internal_unexpected() {
+        let err = map_submit_chain_error(ChainError::QueueEmpty, "test_submit");
+        match err {
+            super::SubmitTxError::Internal(code) => assert_eq!(code, "internal.unexpected"),
+            other => panic!("unexpected error: {other:?}"),
+        }
+    }
+
+    #[test]
     fn inspect_allowlist_accepts_known_methods() {
-        assert!(inspect_method_allowed("submit_ic_tx"));
-        assert!(inspect_method_allowed("set_pruning_enabled"));
-        assert!(inspect_method_allowed("set_miner_allowlist"));
+        assert!(inspect_payload_limit_for_method("submit_ic_tx").is_some());
+        assert!(inspect_payload_limit_for_method("set_pruning_enabled").is_some());
+        assert!(inspect_payload_limit_for_method("set_miner_allowlist").is_some());
+        assert!(inspect_payload_limit_for_method("set_block_gas_limit").is_some());
+        assert!(inspect_payload_limit_for_method("set_instruction_soft_limit").is_some());
     }
 
     #[test]
     fn inspect_allowlist_rejects_unknown_methods() {
-        assert!(!inspect_method_allowed("unknown_method"));
+        assert!(inspect_payload_limit_for_method("unknown_method").is_none());
+    }
+
+    #[test]
+    fn inspect_allowlist_matches_did_updates() {
+        let did_methods = did_update_methods();
+        for method in did_methods.iter() {
+            assert!(
+                inspect_payload_limit_for_method(method).is_some(),
+                "did update method is missing in inspect allowlist: {method}"
+            );
+        }
+        for method in inspect_allowlist_methods().iter() {
+            assert!(
+                did_methods.contains(*method),
+                "inspect allowlist method is missing in did: {method}"
+            );
+        }
     }
 
     #[test]
@@ -2222,6 +2751,81 @@ mod tests {
         set_needs_migration(true);
         let reason = reject_write_reason().expect("needs_migration should block writes");
         assert_eq!(reason, "ops.write.needs_migration");
+    }
+
+    #[test]
+    fn migration_pending_does_not_advance_schema_migration_state() {
+        init_stable_state();
+        set_needs_migration(false);
+        set_schema_migration_state(SchemaMigrationState {
+            phase: SchemaMigrationPhase::Init,
+            cursor: 0,
+            from_version: current_schema_version(),
+            to_version: current_schema_version(),
+            last_error: 0,
+            cursor_key_set: false,
+            cursor_key: [0u8; 32],
+        });
+        evm_db::stable_state::with_state_mut(|state| {
+            let mut meta = *state.state_root_meta.get();
+            meta.initialized = true;
+            state.state_root_meta.set(meta);
+            let mut migration = *state.state_root_migration.get();
+            migration.phase = MigrationPhase::Done;
+            migration.cursor = 0;
+            migration.last_error = 0;
+            state.state_root_migration.set(migration);
+        });
+
+        let before = schema_migration_state();
+        assert_eq!(before.phase, SchemaMigrationPhase::Init);
+        let pending = migration_pending();
+        assert!(!pending);
+        let after = schema_migration_state();
+        assert_eq!(after.phase, SchemaMigrationPhase::Init);
+        assert_eq!(after.cursor, before.cursor);
+    }
+
+    #[test]
+    fn inspect_payload_limit_applies_per_method() {
+        let tx_limit = inspect_payload_limit_for_method("submit_ic_tx").expect("tx limit");
+        let manage_limit = inspect_payload_limit_for_method("set_miner_allowlist")
+            .expect("manage limit should be configured");
+        assert!(manage_limit > tx_limit);
+        assert_eq!(
+            inspect_payload_limit_for_method("rpc_eth_send_raw_transaction"),
+            Some(tx_limit)
+        );
+        assert_eq!(
+            inspect_payload_limit_for_method("produce_block"),
+            Some(manage_limit)
+        );
+        assert_eq!(inspect_payload_limit_for_method("unknown_method"), None);
+    }
+
+    #[test]
+    fn inspect_policy_table_has_unique_methods() {
+        let mut methods = BTreeSet::new();
+        for policy in INSPECT_METHOD_POLICIES {
+            let inserted = methods.insert(policy.method);
+            assert!(
+                inserted,
+                "duplicate inspect policy method: {}",
+                policy.method
+            );
+        }
+    }
+
+    #[test]
+    fn inspect_policy_allowed_and_limit_are_consistent() {
+        for method in inspect_allowlist_methods() {
+            assert!(
+                inspect_payload_limit_for_method(method).is_some(),
+                "payload limit missing for method: {method}"
+            );
+            assert!(inspect_policy_for_method(method).is_some());
+        }
+        assert!(inspect_payload_limit_for_method("unknown_method").is_none());
     }
 
     #[test]
@@ -2289,18 +2893,200 @@ mod tests {
         assert!(view.prune_error_count >= before_prune.saturating_add(3));
     }
 
+    #[test]
+    fn health_and_ops_status_expose_block_gas_limit() {
+        init_stable_state();
+        evm_db::stable_state::with_state_mut(|state| {
+            let mut chain_state = *state.chain_state.get();
+            chain_state.block_gas_limit = 9_000_000;
+            chain_state.instruction_soft_limit = 123_456;
+            state.chain_state.set(chain_state);
+        });
+        let health = super::health();
+        assert_eq!(health.block_gas_limit, 9_000_000);
+        assert_eq!(health.instruction_soft_limit, 123_456);
+        let ops = super::get_ops_status();
+        assert_eq!(ops.block_gas_limit, 9_000_000);
+        assert_eq!(ops.instruction_soft_limit, 123_456);
+    }
+
+    #[test]
+    fn meta_corruption_reflects_in_write_blocking_status() {
+        init_stable_state();
+        let mut meta = evm_db::meta::Meta::new();
+        meta.needs_migration = true;
+        set_meta(meta);
+        let view = super::get_ops_status();
+        assert!(view.needs_migration);
+        assert_eq!(view.decode_failure_count, 0);
+        assert_eq!(view.decode_failure_last_label, None);
+        let reason = reject_write_reason().expect("write should be blocked");
+        assert_eq!(reason, "ops.write.needs_migration");
+    }
+
+    #[test]
+    fn decode_failure_label_view_prefers_ascii_machine_code() {
+        let mut raw = [0u8; 32];
+        raw[..12].copy_from_slice(b"block_data_1");
+        let out = super::decode_failure_label_view(raw);
+        assert_eq!(out, Some("block_data_1".to_string()));
+    }
+
+    #[test]
+    fn decode_failure_label_view_falls_back_to_hex() {
+        let mut raw = [0u8; 32];
+        raw[0] = 0xff;
+        raw[1] = 0x01;
+        let out = super::decode_failure_label_view(raw).expect("hex label");
+        assert!(out.starts_with("hex:"));
+    }
+
+    #[test]
+    fn rpc_eth_get_logs_rejects_reverse_range() {
+        init_stable_state();
+        let err = super::rpc_eth_get_logs(EthLogFilterView {
+            from_block: Some(10),
+            to_block: Some(9),
+            address: None,
+            topic0: None,
+            topic1: None,
+            limit: Some(10),
+        })
+        .expect_err("reverse range should fail");
+        assert_eq!(
+            err,
+            GetLogsErrorView::InvalidArgument("from_block must be <= to_block".to_string())
+        );
+    }
+
+    #[test]
+    fn rpc_eth_get_logs_rejects_range_too_large() {
+        init_stable_state();
+        let err = super::rpc_eth_get_logs(EthLogFilterView {
+            from_block: Some(0),
+            to_block: Some(6_001),
+            address: None,
+            topic0: None,
+            topic1: None,
+            limit: Some(10),
+        })
+        .expect_err("wide range should fail");
+        assert_eq!(err, GetLogsErrorView::RangeTooLarge);
+    }
+
+    #[test]
+    fn rpc_eth_get_logs_rejects_unsupported_topic1_filter() {
+        init_stable_state();
+        let err = super::rpc_eth_get_logs(EthLogFilterView {
+            from_block: Some(0),
+            to_block: Some(0),
+            address: None,
+            topic0: None,
+            topic1: Some(vec![0u8; 32]),
+            limit: Some(10),
+        })
+        .expect_err("topic1 should be unsupported");
+        assert_eq!(
+            err,
+            GetLogsErrorView::UnsupportedFilter("topic1 is not supported".to_string())
+        );
+    }
+
+    #[test]
+    fn rpc_eth_get_logs_rejects_over_limit() {
+        init_stable_state();
+        let err = super::rpc_eth_get_logs(EthLogFilterView {
+            from_block: Some(0),
+            to_block: Some(0),
+            address: None,
+            topic0: None,
+            topic1: None,
+            limit: Some(2_001),
+        })
+        .expect_err("limit should fail");
+        assert_eq!(err, GetLogsErrorView::TooManyResults);
+    }
+
     #[cfg(feature = "dev-faucet")]
     #[test]
     fn inspect_allowlist_accepts_dev_mint_with_feature() {
-        assert!(inspect_method_allowed("dev_mint"));
+        assert!(inspect_payload_limit_for_method("dev_mint").is_some());
     }
 
-    fn is_exec_code(value: &str) -> bool {
-        if !value.starts_with("exec.") {
-            return false;
-        }
+    fn is_machine_code(value: &str) -> bool {
         value
             .chars()
             .all(|ch| ch == '.' || ch == '_' || ch.is_ascii_lowercase() || ch.is_ascii_digit())
+    }
+
+    fn inspect_allowlist_methods() -> BTreeSet<&'static str> {
+        let mut out = BTreeSet::new();
+        for policy in INSPECT_METHOD_POLICIES {
+            out.insert(policy.method);
+        }
+        #[cfg(feature = "dev-faucet")]
+        out.insert("dev_mint");
+        out
+    }
+
+    fn did_update_methods() -> BTreeSet<String> {
+        let did = include_str!("../evm_canister.did");
+        let mut out = BTreeSet::new();
+        let mut in_service = false;
+        let mut stmt = String::new();
+        for line in did.lines() {
+            let trimmed = line.trim();
+            if !in_service {
+                if trimmed.starts_with("service ") || trimmed.starts_with("service:") {
+                    in_service = true;
+                }
+                continue;
+            }
+            if trimmed == "}" {
+                break;
+            }
+            if trimmed.is_empty() {
+                continue;
+            }
+            if !stmt.is_empty() {
+                stmt.push(' ');
+            }
+            stmt.push_str(trimmed);
+            if !trimmed.ends_with(';') {
+                continue;
+            }
+            if stmt.contains(" : (") && stmt.contains("-> (") && !stmt.contains(" query") {
+                if let Some((name, _)) = stmt.split_once(" : (") {
+                    out.insert(name.trim().to_string());
+                }
+            }
+            stmt.clear();
+        }
+        out
+    }
+
+    #[test]
+    fn with_state_mut_blocks_avoid_async_and_timer_side_effects() {
+        let source = include_str!("lib.rs");
+        for (start, _) in source.match_indices("with_state_mut(|") {
+            let tail = &source[start..];
+            let Some(rel_end) = tail.find("});") else {
+                continue;
+            };
+            let end = start + rel_end + 3;
+            let segment = &source[start..end];
+            assert!(
+                !segment.contains("ic_cdk_timers::set_timer("),
+                "set_timer must be outside with_state_mut block"
+            );
+            assert!(
+                !segment.contains("ic_cdk_timers::set_timer_interval("),
+                "set_timer_interval must be outside with_state_mut block"
+            );
+            assert!(
+                !segment.contains(".await"),
+                "await must not appear inside with_state_mut block"
+            );
+        }
     }
 }

@@ -88,7 +88,7 @@ chain_id: 4801360 (0x494350, "ICP") をTxEnv/CHAINIDに固定
 caller は "ic-evm:caller_evm:v1" || principal_bytes の keccak256 末尾20 bytes（Phase1暫定）
 
 注記
-- Eth raw tx のデコードは未実装（Phase1の次段で追加予定）
+- Eth raw tx のデコードは実装済み（legacy/2930/1559/4844/7702 に対応）
 
 3. ブロックモデル（Phase1で固定）
 3.1 BlockData（stable）

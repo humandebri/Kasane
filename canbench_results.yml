@@ -1,0 +1,44 @@
+benches:
+  decode_eth_signature_path:
+    total:
+      calls: 1
+      instructions: 10420
+      heap_increase: 0
+      stable_memory_increase: 0
+    scopes: {}
+  decode_eth_unsupported_typed_reject_path:
+    total:
+      calls: 1
+      instructions: 289
+      heap_increase: 0
+      stable_memory_increase: 0
+    scopes: {}
+  decode_ic_synthetic_header_path:
+    total:
+      calls: 1
+      instructions: 1136
+      heap_increase: 0
+      stable_memory_increase: 0
+    scopes: {}
+  produce_block_path:
+    total:
+      calls: 1
+      instructions: 1649325
+      heap_increase: 5
+      stable_memory_increase: 128
+    scopes: {}
+  state_root_migration_tick_path:
+    total:
+      calls: 1
+      instructions: 4504
+      heap_increase: 0
+      stable_memory_increase: 0
+    scopes: {}
+  submit_ic_tx_path:
+    total:
+      calls: 1
+      instructions: 593232
+      heap_increase: 0
+      stable_memory_increase: 0
+    scopes: {}
+version: 0.4.0

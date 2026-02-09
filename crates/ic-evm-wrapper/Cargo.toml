@@ -2,13 +2,17 @@
 name = "ic-evm-wrapper"
 version = "0.1.0"
 edition = "2021"
+license = "MIT OR Apache-2.0"
 
 [lib]
 crate-type = ["cdylib", "rlib"]
+doctest = false
 
 [features]
 dev-faucet = []
 did-gen = []
+canbench-rs = ["dep:canbench-rs"]
+ic-debug-print = []
 
 [dependencies]
 candid = "0.10"
@@ -16,8 +20,9 @@ ic-cdk = "0.19.0"
 ic-cdk-timers = "1.0.0"
 serde = { version = "1", features = ["derive"] }
 getrandom = { version = "0.2", default-features = false, features = ["custom"] }
-tracing = "0.1.41"
-tracing-subscriber = { version = "0.3.20", features = ["fmt", "json", "env-filter"] }
+tracing = { version = "0.1.41", features = ["max_level_info", "release_max_level_warn"] }
+ic-metrics-encoder = "1.1.1"
+canbench-rs = { version = "0.4.0", optional = true }
 
 [dependencies.evm-core]
 package = "ic-evm-core"
@@ -26,6 +31,9 @@ path = "../evm-core"
 [dependencies.evm_db]
 package = "evm-db"
 path = "../evm-db"
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+tracing-subscriber = { version = "0.3.20", features = ["fmt", "json", "env-filter"] }
 
 [[bin]]
 name = "export_did"
