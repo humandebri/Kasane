@@ -1,6 +1,6 @@
-//! どこで: evm-core の Eth署名復元境界
-//! 何を: alloy-consensus/k256 依存を1箇所に隔離
-//! なぜ: 依存汚染範囲を最小化して将来分離を容易にするため
+//! どこで: ic-evm-tx の Eth署名復元境界
+//! 何を: alloy-consensus/k256 依存を tx 専用crateに隔離
+//! なぜ: 依存汚染範囲を最小化し、core から重い依存を切り離すため
 
 use alloy_consensus::transaction::SignerRecoverable;
 use alloy_consensus::{Transaction, TxEnvelope};
@@ -10,7 +10,7 @@ use alloy_primitives::{Address as AlloyAddress, TxKind as AlloyTxKind, U256 as A
 use evm_db::chain_data::constants::CHAIN_ID;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) enum RecoveryError {
+pub enum RecoveryError {
     UnsupportedType,
     LegacyChainIdMissing,
     WrongChainId,
@@ -20,21 +20,21 @@ pub(crate) enum RecoveryError {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct RecoveredTx {
-    pub(crate) from: AlloyAddress,
-    pub(crate) to: Option<AlloyAddress>,
-    pub(crate) nonce: u64,
-    pub(crate) value: AlloyU256,
-    pub(crate) input: Vec<u8>,
-    pub(crate) gas_limit: u64,
-    pub(crate) gas_price: Option<u128>,
-    pub(crate) max_fee_per_gas: Option<u128>,
-    pub(crate) max_priority_fee_per_gas: Option<u128>,
-    pub(crate) chain_id: Option<u64>,
-    pub(crate) tx_type: u8,
+pub struct RecoveredTx {
+    pub from: AlloyAddress,
+    pub to: Option<AlloyAddress>,
+    pub nonce: u64,
+    pub value: AlloyU256,
+    pub input: Vec<u8>,
+    pub gas_limit: u64,
+    pub gas_price: Option<u128>,
+    pub max_fee_per_gas: Option<u128>,
+    pub max_priority_fee_per_gas: Option<u128>,
+    pub chain_id: Option<u64>,
+    pub tx_type: u8,
 }
 
-pub(crate) fn recover_eth_tx(bytes: &[u8]) -> Result<RecoveredTx, RecoveryError> {
+pub fn recover_eth_tx(bytes: &[u8]) -> Result<RecoveredTx, RecoveryError> {
     let envelope = TxEnvelope::decode_2718_exact(bytes).map_err(map_eip2718_error)?;
 
     match envelope.chain_id() {

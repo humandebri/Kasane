@@ -1775,8 +1775,20 @@ dependencies = [
  "evm-db",
  "hex",
  "ic-cdk",
+ "ic-evm-tx",
  "revm",
  "smallvec",
+]
+
+[[package]]
+name = "ic-evm-tx"
+version = "0.1.0"
+dependencies = [
+ "alloy-consensus",
+ "alloy-eips",
+ "alloy-primitives",
+ "alloy-rlp",
+ "evm-db",
 ]
 
 [[package]]

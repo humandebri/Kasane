@@ -25,7 +25,6 @@ revm = { path = "../../vendor/revm/crates/revm", default-features = false, featu
 alloy-rlp = { version = "0.3", default-features = false }
 alloy-primitives = { version = "=1.5.3", default-features = false, features = ["rlp"] }
 alloy-eips = { version = "1.5.2", default-features = false }
-alloy-consensus = { version = "1.5.2", default-features = false, features = ["k256"] }
 alloy-trie = { version = "0.9.3", default-features = false, features = ["ethereum"] }
 alloy-signer = { version = "1.5.2", default-features = false, optional = true }
 alloy-signer-local = { version = "1.5.2", default-features = false, optional = true }
@@ -36,10 +35,16 @@ smallvec = "1.13"
 package = "evm-db"
 path = "../evm-db"
 
+[dependencies.evm_tx]
+package = "ic-evm-tx"
+path = "../ic-evm-tx"
+
 [features]
 full_state_root = []
 local-signer-bin = ["dep:alloy-signer", "dep:alloy-signer-local"]
 
 [dev-dependencies]
+alloy-consensus = { version = "1.5.2", default-features = false, features = ["k256"] }
+alloy-eips = { version = "1.5.2", default-features = false }
 alloy-signer = { version = "1.5.2", default-features = false }
 alloy-signer-local = { version = "1.5.2", default-features = false }

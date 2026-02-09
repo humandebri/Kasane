@@ -1,0 +1,19 @@
+[package]
+name = "ic-evm-tx"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+
+[lib]
+name = "evm_tx"
+crate-type = ["rlib"]
+
+[dependencies]
+alloy-rlp = { version = "0.3", default-features = false }
+alloy-primitives = { version = "=1.5.3", default-features = false, features = ["rlp"] }
+alloy-eips = { version = "1.5.2", default-features = false }
+alloy-consensus = { version = "1.5.2", default-features = false, features = ["k256"] }
+
+[dependencies.evm_db]
+package = "evm-db"
+path = "../evm-db"

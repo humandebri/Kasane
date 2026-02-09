@@ -8,6 +8,11 @@
 - 公開APIは変えず、内部実装のみ段階的に分割する。
 - 分割後も canbench と既存テストで回帰検知できる状態を維持する。
 
+## 先行実装（完了）
+- `ic-evm-tx` を新設し、`tx_recovery`（Eth署名復元境界）を `ic-evm-core` から移管した。
+- `ic-evm-core` は `ic-evm-tx` へ依存し、`alloy-consensus` への直接依存を解消した。
+- 目的: `k256/alloy-consensus` の影響範囲を tx 専用crate に封じ込め、段階分割の起点を作る。
+
 ## 分割対象（将来）
 1. `ic-evm-rpc-types`
 - 内容: `*View`, `*Error`, DTO群、RPC用の軽量型
