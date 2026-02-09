@@ -130,9 +130,6 @@ fn init_inner(args: Option<InitArgs>, require_args: bool) {
     init_stable_state();
     let _ = ensure_meta_initialized();
     init_tracing();
-    // fresh install でも write path が migration_pending で塞がらないよう、
-    // post-upgrade と同じ migration 初期化を適用する。
-    apply_post_upgrade_migrations();
     let args = if require_args {
         args.unwrap_or_else(|| {
             ic_cdk::trap("InitArgsRequired: InitArgs is required; pass (opt record {...})")
