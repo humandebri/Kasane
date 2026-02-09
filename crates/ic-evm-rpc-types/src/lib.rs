@@ -264,6 +264,42 @@ pub struct EthLogItemView {
     pub data: Vec<u8>,
 }
 
+#[derive(Clone, Debug, CandidType, Deserialize)]
+pub struct RpcAccessListItemView {
+    pub address: Vec<u8>,
+    pub storage_keys: Vec<Vec<u8>>,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize)]
+pub struct RpcCallObjectView {
+    pub to: Option<Vec<u8>>,
+    pub from: Option<Vec<u8>>,
+    pub gas: Option<u64>,
+    pub gas_price: Option<u128>,
+    pub nonce: Option<u64>,
+    pub max_fee_per_gas: Option<u128>,
+    pub max_priority_fee_per_gas: Option<u128>,
+    pub chain_id: Option<u64>,
+    pub tx_type: Option<u64>,
+    pub access_list: Option<Vec<RpcAccessListItemView>>,
+    pub value: Option<Vec<u8>>,
+    pub data: Option<Vec<u8>>,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize)]
+pub struct RpcCallResultView {
+    pub status: u8,
+    pub gas_used: u64,
+    pub return_data: Vec<u8>,
+    pub revert_data: Option<Vec<u8>>,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize, Eq, PartialEq)]
+pub struct RpcErrorView {
+    pub code: u32,
+    pub message: String,
+}
+
 #[derive(Clone, Debug, CandidType, Deserialize, Eq, PartialEq)]
 pub enum GetLogsErrorView {
     RangeTooLarge,

@@ -3,6 +3,34 @@
 import type { IDL } from "@dfinity/candid";
 
 export const idlFactory: IDL.InterfaceFactory = ({ IDL }) => {
+  const RpcAccessListItemView = IDL.Record({
+    address: IDL.Vec(IDL.Nat8),
+    storage_keys: IDL.Vec(IDL.Vec(IDL.Nat8)),
+  });
+  const RpcCallObjectView = IDL.Record({
+    to: IDL.Opt(IDL.Vec(IDL.Nat8)),
+    from: IDL.Opt(IDL.Vec(IDL.Nat8)),
+    gas: IDL.Opt(IDL.Nat64),
+    gas_price: IDL.Opt(IDL.Nat),
+    nonce: IDL.Opt(IDL.Nat64),
+    max_fee_per_gas: IDL.Opt(IDL.Nat),
+    max_priority_fee_per_gas: IDL.Opt(IDL.Nat),
+    chain_id: IDL.Opt(IDL.Nat64),
+    tx_type: IDL.Opt(IDL.Nat64),
+    access_list: IDL.Opt(IDL.Vec(RpcAccessListItemView)),
+    value: IDL.Opt(IDL.Vec(IDL.Nat8)),
+    data: IDL.Opt(IDL.Vec(IDL.Nat8)),
+  });
+  const RpcCallResultView = IDL.Record({
+    status: IDL.Nat8,
+    gas_used: IDL.Nat64,
+    return_data: IDL.Vec(IDL.Nat8),
+    revert_data: IDL.Opt(IDL.Vec(IDL.Nat8)),
+  });
+  const RpcErrorView = IDL.Record({
+    code: IDL.Nat32,
+    message: IDL.Text,
+  });
   const DecodedTxView = IDL.Record({
     to: IDL.Opt(IDL.Vec(IDL.Nat8)),
     value: IDL.Vec(IDL.Nat8),
@@ -65,6 +93,21 @@ export const idlFactory: IDL.InterfaceFactory = ({ IDL }) => {
     rpc_eth_get_transaction_receipt_by_eth_hash: IDL.Func([IDL.Vec(IDL.Nat8)], [IDL.Opt(EthReceiptView)], ["query"]),
     rpc_eth_get_balance: IDL.Func([IDL.Vec(IDL.Nat8)], [IDL.Variant({ Ok: IDL.Vec(IDL.Nat8), Err: IDL.Text })], ["query"]),
     rpc_eth_get_code: IDL.Func([IDL.Vec(IDL.Nat8)], [IDL.Variant({ Ok: IDL.Vec(IDL.Nat8), Err: IDL.Text })], ["query"]),
+    rpc_eth_get_storage_at: IDL.Func(
+      [IDL.Vec(IDL.Nat8), IDL.Vec(IDL.Nat8)],
+      [IDL.Variant({ Ok: IDL.Vec(IDL.Nat8), Err: IDL.Text })],
+      ["query"]
+    ),
+    rpc_eth_call_object: IDL.Func(
+      [RpcCallObjectView],
+      [IDL.Variant({ Ok: RpcCallResultView, Err: RpcErrorView })],
+      ["query"]
+    ),
+    rpc_eth_estimate_gas_object: IDL.Func(
+      [RpcCallObjectView],
+      [IDL.Variant({ Ok: IDL.Nat64, Err: RpcErrorView })],
+      ["query"]
+    ),
     rpc_eth_call_rawtx: IDL.Func([IDL.Vec(IDL.Nat8)], [IDL.Variant({ Ok: IDL.Vec(IDL.Nat8), Err: IDL.Text })], ["query"]),
     rpc_eth_send_raw_transaction: IDL.Func(
       [IDL.Vec(IDL.Nat8)],
