@@ -1,2 +1,2 @@
-SNAPSHOT_TX_MATRIX: tx_statuses=[1, 0, 0] final_statuses=[Success, Revert, Halt:InvalidFEOpcode]
-SNAPSHOT_BLOCK: number=3 block_hash=2a5350cda7cbd4979c99e391ae7303eb606a0ad7b2190d836b80006a527eda35 tx_list_hash=4ad087ec0641a22f03bb82cb8cf391aca8c73cb30fd8eeda10b813d1f2a6c6df state_root=d570ddc14bfde8d46ce2582654c9fb862ad23e0608ee3c3225cdbe66fe7d20c4
+SNAPSHOT_TX_MATRIX: tx_statuses=[1, 0, 0] final_statuses=[Success, Revert, Halt:InvalidOpcode]
+SNAPSHOT_BLOCK: number=3 block_hash=d76f3db742673eeebb3a09007b87a3dd277c54d621db7dc4e2c977d8b1a86d3d tx_list_hash=4ad087ec0641a22f03bb82cb8cf391aca8c73cb30fd8eeda10b813d1f2a6c6df state_root=9ef63abe99c8302e58f3b5afad12ec68ee2d06e80f4ed7b8c68759a75785794c

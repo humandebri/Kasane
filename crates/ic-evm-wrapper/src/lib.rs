@@ -130,6 +130,9 @@ fn init_inner(args: Option<InitArgs>, require_args: bool) {
     init_stable_state();
     let _ = ensure_meta_initialized();
     init_tracing();
+    // fresh install でも write path が migration_pending で塞がらないよう、
+    // post-upgrade と同じ migration 初期化を適用する。
+    apply_post_upgrade_migrations();
     let args = if require_args {
         args.unwrap_or_else(|| {
             ic_cdk::trap("InitArgsRequired: InitArgs is required; pass (opt record {...})")
@@ -1636,7 +1639,14 @@ fn apply_post_upgrade_migrations() {
     }
 
     let from = meta.schema_version;
-    if from < current || meta.needs_migration {
+    if from >= 3 && !evm_db::meta::tx_locs_v3_active() {
+        set_tx_locs_v3_active(true);
+    }
+    let state_root_pending = with_state(|state| {
+        !state.state_root_meta.get().initialized
+            || state.state_root_migration.get().phase != MigrationPhase::Done
+    });
+    if from < current || meta.needs_migration || state_root_pending {
         set_needs_migration(true);
         set_schema_migration_state(SchemaMigrationState {
             phase: SchemaMigrationPhase::Init,

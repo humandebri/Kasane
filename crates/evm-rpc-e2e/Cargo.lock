@@ -1787,7 +1787,6 @@ dependencies = [
 name = "ic-evm-core"
 version = "0.1.0"
 dependencies = [
- "alloy-eips",
  "alloy-primitives",
  "alloy-rlp",
  "alloy-trie",
@@ -1806,7 +1805,6 @@ name = "ic-evm-tx"
 version = "0.1.0"
 dependencies = [
  "alloy-consensus",
- "alloy-eips",
  "alloy-primitives",
  "alloy-rlp",
  "evm-db",
