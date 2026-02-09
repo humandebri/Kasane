@@ -3,7 +3,11 @@ members = [
     "crates/evm-db",
     "crates/ic-evm-tx",
     "crates/evm-core",
-    "crates/ic-evm-wrapper"
+    "crates/ic-evm-wrapper",
+    "crates/ic-evm-rpc-types",
+    "crates/ic-evm-metrics",
+    "crates/ic-evm-ops",
+    "crates/ic-evm-rpc"
 ]
 exclude = [
     "vendor/revm"
@@ -20,3 +24,4 @@ debug = false
 
 [patch.crates-io]
 ark-relations = { path = "vendor/ark-relations" }
+alloy-consensus = { path = "vendor/alloy-consensus" }
