@@ -1,0 +1,32 @@
+/* どこで: Explorer共通スタイル / 何を: Tailwind v4テーマと最小ベースを定義 / なぜ: UIを設計トークンで一元管理するため */
+
+@import "tailwindcss";
+@import "tw-animate-css";
+
+@theme {
+  --color-background: #f4f7fb;
+  --color-foreground: #0f172a;
+  --color-card: #ffffff;
+  --color-card-foreground: #0f172a;
+  --color-muted: #e2e8f0;
+  --color-muted-foreground: #475569;
+  --color-border: #cbd5e1;
+  --color-ring: #0ea5e9;
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground antialiased;
+    font-family: "IBM Plex Sans", "Noto Sans JP", sans-serif;
+    background-image: radial-gradient(circle at top left, #ffffff, #e9f0fa 70%);
+  }
+
+  code,
+  pre {
+    font-family: "IBM Plex Mono", "Noto Sans Mono", monospace;
+  }
+}

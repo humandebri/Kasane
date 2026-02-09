@@ -1,0 +1,75 @@
+// どこで: Gateway Candid定義 / 何を: 必要RPCメソッドをIDL化 / なぜ: Actor境界で型不一致を防ぐため
+
+import type { IDL } from "@dfinity/candid";
+
+export const idlFactory: IDL.InterfaceFactory = ({ IDL }) => {
+  const DecodedTxView = IDL.Record({
+    to: IDL.Opt(IDL.Vec(IDL.Nat8)),
+    value: IDL.Vec(IDL.Nat8),
+    from: IDL.Vec(IDL.Nat8),
+    chain_id: IDL.Opt(IDL.Nat64),
+    nonce: IDL.Nat64,
+    gas_limit: IDL.Nat64,
+    input: IDL.Vec(IDL.Nat8),
+    gas_price: IDL.Nat,
+  });
+  const EthTxView = IDL.Record({
+    raw: IDL.Vec(IDL.Nat8),
+    tx_index: IDL.Opt(IDL.Nat32),
+    decode_ok: IDL.Bool,
+    hash: IDL.Vec(IDL.Nat8),
+    kind: IDL.Variant({ EthSigned: IDL.Null, IcSynthetic: IDL.Null }),
+    block_number: IDL.Opt(IDL.Nat64),
+    eth_tx_hash: IDL.Opt(IDL.Vec(IDL.Nat8)),
+    decoded: IDL.Opt(DecodedTxView),
+  });
+  const EthReceiptView = IDL.Record({
+    effective_gas_price: IDL.Nat64,
+    status: IDL.Nat8,
+    l1_data_fee: IDL.Nat,
+    tx_index: IDL.Nat32,
+    logs: IDL.Vec(
+      IDL.Record({
+        data: IDL.Vec(IDL.Nat8),
+        topics: IDL.Vec(IDL.Vec(IDL.Nat8)),
+        address: IDL.Vec(IDL.Nat8),
+      })
+    ),
+    total_fee: IDL.Nat,
+    block_number: IDL.Nat64,
+    operator_fee: IDL.Nat,
+    eth_tx_hash: IDL.Opt(IDL.Vec(IDL.Nat8)),
+    gas_used: IDL.Nat64,
+    contract_address: IDL.Opt(IDL.Vec(IDL.Nat8)),
+    tx_hash: IDL.Vec(IDL.Nat8),
+  });
+  const EthBlockView = IDL.Record({
+    txs: IDL.Variant({ Full: IDL.Vec(EthTxView), Hashes: IDL.Vec(IDL.Vec(IDL.Nat8)) }),
+    block_hash: IDL.Vec(IDL.Nat8),
+    number: IDL.Nat64,
+    timestamp: IDL.Nat64,
+    state_root: IDL.Vec(IDL.Nat8),
+    parent_hash: IDL.Vec(IDL.Nat8),
+  });
+  const SubmitTxError = IDL.Variant({
+    Internal: IDL.Text,
+    Rejected: IDL.Text,
+    InvalidArgument: IDL.Text,
+  });
+
+  return IDL.Service({
+    rpc_eth_chain_id: IDL.Func([], [IDL.Nat64], ["query"]),
+    rpc_eth_block_number: IDL.Func([], [IDL.Nat64], ["query"]),
+    rpc_eth_get_block_by_number: IDL.Func([IDL.Nat64, IDL.Bool], [IDL.Opt(EthBlockView)], ["query"]),
+    rpc_eth_get_transaction_by_eth_hash: IDL.Func([IDL.Vec(IDL.Nat8)], [IDL.Opt(EthTxView)], ["query"]),
+    rpc_eth_get_transaction_receipt_by_eth_hash: IDL.Func([IDL.Vec(IDL.Nat8)], [IDL.Opt(EthReceiptView)], ["query"]),
+    rpc_eth_get_balance: IDL.Func([IDL.Vec(IDL.Nat8)], [IDL.Variant({ Ok: IDL.Vec(IDL.Nat8), Err: IDL.Text })], ["query"]),
+    rpc_eth_get_code: IDL.Func([IDL.Vec(IDL.Nat8)], [IDL.Variant({ Ok: IDL.Vec(IDL.Nat8), Err: IDL.Text })], ["query"]),
+    rpc_eth_call_rawtx: IDL.Func([IDL.Vec(IDL.Nat8)], [IDL.Variant({ Ok: IDL.Vec(IDL.Nat8), Err: IDL.Text })], ["query"]),
+    rpc_eth_send_raw_transaction: IDL.Func(
+      [IDL.Vec(IDL.Nat8)],
+      [IDL.Variant({ Ok: IDL.Vec(IDL.Nat8), Err: SubmitTxError })],
+      []
+    ),
+  });
+};
