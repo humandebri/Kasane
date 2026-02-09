@@ -4,8 +4,8 @@
 
 use alloy_consensus::transaction::SignerRecoverable;
 use alloy_consensus::{Transaction, TxEnvelope};
-use alloy_eips::eip2718::{Decodable2718, Eip2718Error};
-use alloy_eips::Typed2718;
+use alloy_consensus::private::alloy_eips::eip2718::{Decodable2718, Eip2718Error};
+use alloy_consensus::Typed2718;
 use alloy_primitives::{Address as AlloyAddress, TxKind as AlloyTxKind, U256 as AlloyU256};
 use evm_db::chain_data::constants::CHAIN_ID;
 

@@ -7,6 +7,7 @@ license = "MIT OR Apache-2.0"
 [lib]
 name = "evm_core"
 crate-type = ["rlib"]
+doctest = false
 
 [[bin]]
 name = "caller_evm"
@@ -24,7 +25,6 @@ ic-cdk = "0.19.0"
 revm = { path = "../../vendor/revm/crates/revm", default-features = false, features = ["std"] }
 alloy-rlp = { version = "0.3", default-features = false }
 alloy-primitives = { version = "=1.5.3", default-features = false, features = ["rlp"] }
-alloy-eips = { version = "1.5.2", default-features = false }
 alloy-trie = { version = "0.9.3", default-features = false, features = ["ethereum"] }
 alloy-signer = { version = "1.5.2", default-features = false, optional = true }
 alloy-signer-local = { version = "1.5.2", default-features = false, optional = true }
@@ -44,7 +44,7 @@ full_state_root = []
 local-signer-bin = ["dep:alloy-signer", "dep:alloy-signer-local"]
 
 [dev-dependencies]
-alloy-consensus = { version = "1.5.2", default-features = false, features = ["k256"] }
-alloy-eips = { version = "1.5.2", default-features = false }
+alloy-consensus = { version = "1.5.2", default-features = false, features = ["k256", "eips-kzg-sidecar"] }
+alloy-eips = { version = "1.5.2", default-features = false, features = ["kzg-sidecar"] }
 alloy-signer = { version = "1.5.2", default-features = false }
 alloy-signer-local = { version = "1.5.2", default-features = false }
