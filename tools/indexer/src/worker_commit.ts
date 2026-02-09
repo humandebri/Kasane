@@ -7,7 +7,7 @@ import { IndexerDb } from "./db";
 import { Config } from "./config";
 import { Cursor, ExportResponse } from "./types";
 import { finalizePayloads, Pending } from "./worker_pending";
-import { errMessage, logFatal } from "./worker_log";
+import { errMessage, logFatal, logInfo } from "./worker_log";
 import { getFileSize, toDayKey } from "./worker_utils";
 import type { ArchiveResult } from "./archiver";
 import type { BlockInfo, TxIndexInfo } from "./decode";
@@ -129,6 +129,25 @@ export async function commitPending(params: {
       );
       params.db.setMeta("last_head", params.headNumber.toString());
       params.db.setMeta("last_ingest_at", Date.now().toString());
+    });
+    logInfo(params.config.chainId, "commit_block", {
+      block_number: blockInfo.number.toString(),
+      tx_count: blockInfo.txIds.length,
+      tx_id: blockInfo.txIds.length > 0 ? blockInfo.txIds[0].toString("hex") : null,
+      cursor_prev: params.previousCursor
+        ? {
+            block_number: params.previousCursor.block_number.toString(),
+            segment: params.previousCursor.segment,
+            byte_offset: params.previousCursor.byte_offset,
+          }
+        : null,
+      cursor_next: params.cursor
+        ? {
+            block_number: params.cursor.block_number.toString(),
+            segment: params.cursor.segment,
+            byte_offset: params.cursor.byte_offset,
+          }
+        : null,
     });
   } catch (err) {
     logFatal(
