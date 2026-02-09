@@ -29,7 +29,7 @@ pub const MAX_PRINCIPAL_LEN: usize = 29;
 pub const CALLER_KEY_LEN: usize = 30;
 
 // StableCellの固定長ヘッダ
-pub const CHAIN_STATE_SIZE_U32: u32 = 72;
+pub const CHAIN_STATE_SIZE_U32: u32 = 88;
 
 // 自動ブロック生成の既定間隔（ms）
 pub const DEFAULT_MINING_INTERVAL_MS: u64 = 5_000;

@@ -37,8 +37,12 @@ fn queue_snapshot_cursor_is_seq_exclusive() {
 fn principal_pending_and_fee_indexes_track_lifecycle() {
     init_stable_state();
     let principal = vec![0x44];
-    let tx_id = chain::submit_ic_tx(principal.clone(), vec![0x99], common::build_default_ic_tx_bytes(0))
-        .expect("submit");
+    let tx_id = chain::submit_ic_tx(
+        principal.clone(),
+        vec![0x99],
+        common::build_default_ic_tx_bytes(0),
+    )
+    .expect("submit");
     with_state(|state| {
         let key = CallerKey::from_principal_bytes(&principal);
         assert_eq!(state.principal_pending_count.get(&key), Some(1));
@@ -110,9 +114,8 @@ fn rebuild_fee_index_keeps_entries_even_when_unaffordable() {
 #[test]
 fn produce_block_outcome_reports_dropped_count() {
     init_stable_state();
-    let good_id =
-        chain::submit_ic_tx(vec![0x20], vec![0x30], common::build_default_ic_tx_bytes(0))
-            .expect("submit good");
+    let good_id = chain::submit_ic_tx(vec![0x20], vec![0x30], common::build_default_ic_tx_bytes(0))
+        .expect("submit good");
     let bad_id = TxId([0xabu8; 32]);
     with_state_mut(|state| {
         // caller_evm が None の IcSynthetic は decode 時に drop される。

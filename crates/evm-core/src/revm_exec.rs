@@ -1,13 +1,13 @@
 //! どこで: Phase1のREVM実行 / 何を: TxEnvの実行とcommit / なぜ: 状態更新をEVM経由にするため
 
 use crate::bytes::address_to_bytes;
+use crate::chain::{before_store_write_for_test, trap_store_err};
 use crate::hash::keccak256;
 use crate::revm_db::RevmStableDb;
 use crate::tx_decode::DecodeError;
 use evm_db::chain_data::constants::{
     CHAIN_ID, MAX_LOGS_PER_TX, MAX_LOG_DATA, MAX_LOG_TOPICS, MAX_RETURN_DATA,
 };
-use evm_db::chain_data::runtime_defaults::DEFAULT_BLOCK_GAS_LIMIT;
 use evm_db::chain_data::receipt::{log_entry_from_parts, LogEntry};
 use evm_db::chain_data::{ReceiptLike, TxId, TxIndexEntry, TxKind};
 use evm_db::stable_state::with_state_mut;
@@ -71,6 +71,7 @@ pub struct BlockExecContext {
     pub block_number: u64,
     pub timestamp: u64,
     pub base_fee: u64,
+    pub block_gas_limit: u64,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -139,7 +140,7 @@ where
         .modify_block_chained(|block| {
             block.number = U256::from(exec_ctx.block_number);
             block.timestamp = U256::from(exec_ctx.timestamp);
-            block.gas_limit = DEFAULT_BLOCK_GAS_LIMIT;
+            block.gas_limit = exec_ctx.block_gas_limit;
             block.basefee = exec_ctx.base_fee;
         })
         .build_mainnet();
@@ -266,22 +267,32 @@ fn commit_state_diff(evm: &mut impl ExecuteCommitEvm<State = StateDiff>, state: 
     evm.commit(state);
 }
 
-fn store_receipt_index(tx_id: TxId, block_number: u64, tx_index: u32, receipt: &ReceiptLike) {
+fn store_receipt_index(
+    tx_id: TxId,
+    block_number: u64,
+    tx_index: u32,
+    receipt: &ReceiptLike,
+) {
     with_state_mut(|state| {
         let entry = TxIndexEntry {
             block_number,
             tx_index,
         };
         let entry_bytes = entry.to_bytes().into_owned();
-        let entry_ptr = state
-            .blob_store
-            .store_bytes(&entry_bytes)
-            .unwrap_or_else(|_| panic!("blob_store: store_tx_index failed"));
+        before_store_write_for_test("store_tx_index_entry", Some(block_number), Some(tx_id));
+        let entry_ptr = state.blob_store.store_bytes(&entry_bytes).unwrap_or_else(|_| {
+            trap_store_err(
+                "store_tx_index_entry",
+                Some(block_number),
+                Some(tx_id),
+                "blob_store",
+            );
+        });
         let receipt_bytes = receipt.to_bytes().into_owned();
-        let receipt_ptr = state
-            .blob_store
-            .store_bytes(&receipt_bytes)
-            .unwrap_or_else(|_| panic!("blob_store: store_receipt failed"));
+        before_store_write_for_test("store_receipt", Some(block_number), Some(tx_id));
+        let receipt_ptr = state.blob_store.store_bytes(&receipt_bytes).unwrap_or_else(|_| {
+            trap_store_err("store_receipt", Some(block_number), Some(tx_id), "blob_store");
+        });
         state.tx_index.insert(tx_id, entry_ptr);
         state.receipts.insert(tx_id, receipt_ptr);
     });

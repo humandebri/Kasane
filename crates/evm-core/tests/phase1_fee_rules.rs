@@ -3,7 +3,7 @@
 use alloy_eips::eip1559::{calc_next_block_base_fee, BaseFeeParams};
 use evm_core::base_fee::compute_next_base_fee;
 use evm_core::chain::{self, ChainError};
-use evm_db::stable_state::{init_stable_state, with_state_mut};
+use evm_db::stable_state::{init_stable_state, with_state, with_state_mut};
 
 mod common;
 
@@ -148,4 +148,23 @@ fn base_fee_keeps_value_when_gas_target_is_zero() {
     let current = 1_000_000_000u64;
     let next = compute_next_base_fee(current, 1, 1);
     assert_eq!(next, current);
+}
+
+#[test]
+fn produce_block_base_fee_uses_configured_block_gas_limit() {
+    init_stable_state();
+    with_state_mut(|state| {
+        let mut chain_state = *state.chain_state.get();
+        chain_state.base_fee = 1_000_000_000;
+        chain_state.min_priority_fee = 1_000_000_000;
+        chain_state.block_gas_limit = 8_000_000;
+        state.chain_state.set(chain_state);
+    });
+
+    let tx = common::build_zero_to_ic_tx_bytes(0, 2_000_000_000, 1_000_000_000);
+    let _ = chain::submit_ic_tx(vec![0x77], vec![0x07], tx).expect("submit");
+    let outcome = chain::produce_block(1).expect("produce");
+    let next_base_fee = with_state(|state| state.chain_state.get().base_fee);
+    let expected = compute_next_base_fee(1_000_000_000, outcome.gas_used, 8_000_000);
+    assert_eq!(next_base_fee, expected);
 }

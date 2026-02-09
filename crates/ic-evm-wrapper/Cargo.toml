@@ -6,11 +6,13 @@ license = "MIT OR Apache-2.0"
 
 [lib]
 crate-type = ["cdylib", "rlib"]
+doctest = false
 
 [features]
 dev-faucet = []
 did-gen = []
 canbench-rs = ["dep:canbench-rs"]
+ic-debug-print = []
 
 [dependencies]
 candid = "0.10"

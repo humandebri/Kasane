@@ -37,7 +37,11 @@ pub fn build_default_ic_tx_bytes(nonce: u64) -> Vec<u8> {
     build_ic_tx_bytes([0x10u8; 20], nonce, 2_000_000_000, 1_000_000_000)
 }
 
-pub fn build_zero_to_ic_tx_bytes(nonce: u64, max_fee_per_gas: u128, max_priority_fee_per_gas: u128) -> Vec<u8> {
+pub fn build_zero_to_ic_tx_bytes(
+    nonce: u64,
+    max_fee_per_gas: u128,
+    max_priority_fee_per_gas: u128,
+) -> Vec<u8> {
     build_ic_tx_bytes([0u8; 20], nonce, max_fee_per_gas, max_priority_fee_per_gas)
 }
 

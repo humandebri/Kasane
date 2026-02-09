@@ -17,7 +17,6 @@ use evm_db::chain_data::constants::{
     MAX_PENDING_GLOBAL, MAX_PENDING_PER_PRINCIPAL, MAX_PENDING_PER_SENDER, MAX_TX_SIZE,
     READY_CANDIDATE_LIMIT,
 };
-use evm_db::chain_data::runtime_defaults::DEFAULT_BLOCK_GAS_LIMIT;
 use evm_db::chain_data::{
     BlockData, CallerKey, Head, PendingFeeKey, PruneJournal, PrunePolicy, ReadyKey, ReadySeqKey,
     ReceiptLike, SenderKey, SenderNonceKey, StoredTx, StoredTxBytes, StoredTxError, TxId,
@@ -34,11 +33,101 @@ use revm::database::CacheDB;
 use revm::database_interface::DatabaseCommit;
 use revm::primitives::Address;
 use revm::primitives::U256;
+#[cfg(not(target_arch = "wasm32"))]
+use std::cell::Cell;
 use std::borrow::Cow;
 use std::cmp::Reverse;
 use std::collections::{BTreeSet, BinaryHeap};
 
 const OPS_WARN_RATE_LIMIT_SECS: u64 = 60;
+#[cfg(not(target_arch = "wasm32"))]
+thread_local! {
+    static STORE_FAIL_AT_OP: Cell<u64> = const { Cell::new(0) };
+    static STORE_OP_COUNTER: Cell<u64> = const { Cell::new(0) };
+}
+
+fn current_instruction_counter() -> u64 {
+    #[cfg(target_arch = "wasm32")]
+    {
+        return ic_cdk::api::performance_counter(
+            ic_cdk::api::PerformanceCounterType::InstructionCounter,
+        );
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        0
+    }
+}
+
+fn format_tx_id_hex(tx_id: Option<TxId>) -> String {
+    match tx_id {
+        Some(value) => hex::encode(value.0),
+        None => "-".to_string(),
+    }
+}
+
+pub(crate) fn trap_store_err(
+    ctx: &'static str,
+    block_number: Option<u64>,
+    tx_id: Option<TxId>,
+    err_label: &'static str,
+) -> ! {
+    let block_value = block_number.unwrap_or(0);
+    let tx_id_hex = format_tx_id_hex(tx_id);
+    ic_cdk::println!(
+        "level=error event=storage_write_failed ctx={} block_number={} tx_id={} err={}",
+        ctx,
+        block_value,
+        tx_id_hex,
+        err_label
+    );
+    ic_cdk::trap(&format!(
+        "storage.write_failed ctx={} block_number={} tx_id={} err={}",
+        ctx, block_value, tx_id_hex, err_label
+    ));
+}
+
+pub(crate) fn before_store_write_for_test(
+    ctx: &'static str,
+    block_number: Option<u64>,
+    tx_id: Option<TxId>,
+) {
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let op = STORE_OP_COUNTER.with(|counter| {
+            let next = counter.get().saturating_add(1);
+            counter.set(next);
+            next
+        });
+        let fail_at = STORE_FAIL_AT_OP.with(|value| value.get());
+        if fail_at != 0 && op == fail_at {
+            trap_store_err(ctx, block_number, tx_id, "injected");
+        }
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub fn configure_store_failpoint_for_test(fail_at_op: Option<u64>) {
+    let configured = fail_at_op.unwrap_or(0);
+    STORE_FAIL_AT_OP.with(|value| value.set(configured));
+    STORE_OP_COUNTER.with(|counter| counter.set(0));
+}
+
+fn should_stop_block_execution(
+    block_gas_used: u64,
+    block_gas_limit: u64,
+    instruction_soft_limit: u64,
+    instruction_start: u64,
+    instruction_current: u64,
+) -> bool {
+    if block_gas_limit > 0 && block_gas_used >= block_gas_limit {
+        return true;
+    }
+    if instruction_soft_limit == 0 {
+        return false;
+    }
+    instruction_current.saturating_sub(instruction_start) >= instruction_soft_limit
+}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ChainError {
@@ -644,13 +733,18 @@ pub fn produce_block(max_txs: usize) -> Result<ProduceBlockOutcome, ChainError> 
         block_number: number,
         timestamp,
         base_fee: state.chain_state.get().base_fee,
+        block_gas_limit: state.chain_state.get().block_gas_limit,
     });
     let mut included_tx_ids: Vec<TxId> = Vec::new();
     let mut dropped_total = 0u64;
     let mut dropped_by_code = [0u64; evm_db::chain_data::metrics::DROP_CODE_SLOTS];
-    let (min_priority_fee, min_gas_price) = with_state(|state| {
+    let (min_priority_fee, min_gas_price, instruction_soft_limit) = with_state(|state| {
         let chain_state = state.chain_state.get();
-        (chain_state.min_priority_fee, chain_state.min_gas_price)
+        (
+            chain_state.min_priority_fee,
+            chain_state.min_gas_price,
+            chain_state.instruction_soft_limit,
+        )
     });
     let mut tx_ids = Vec::new();
     let mut prepared = Vec::new();
@@ -668,7 +762,17 @@ pub fn produce_block(max_txs: usize) -> Result<ProduceBlockOutcome, ChainError> 
         return Err(ChainError::QueueEmpty);
     }
     let mut block_gas_used = 0u64;
+    let instruction_start = current_instruction_counter();
     for tx_id in tx_ids {
+        if should_stop_block_execution(
+            block_gas_used,
+            exec_ctx.block_gas_limit,
+            instruction_soft_limit,
+            instruction_start,
+            current_instruction_counter(),
+        ) {
+            break;
+        }
         let envelope = with_state(|state| state.tx_store.get(&tx_id));
         let envelope = match envelope {
             Some(value) => value,
@@ -759,6 +863,15 @@ pub fn produce_block(max_txs: usize) -> Result<ProduceBlockOutcome, ChainError> 
             sender_bytes,
             sender_nonce,
         }));
+        if should_stop_block_execution(
+            block_gas_used,
+            exec_ctx.block_gas_limit,
+            instruction_soft_limit,
+            instruction_start,
+            current_instruction_counter(),
+        ) {
+            break;
+        }
     }
 
     for item in prepared {
@@ -802,6 +915,15 @@ pub fn produce_block(max_txs: usize) -> Result<ProduceBlockOutcome, ChainError> 
 
     let mut exec_db = CacheDB::new(crate::revm_db::RevmStableDb);
     for prepared_tx in staged_txs {
+        if should_stop_block_execution(
+            block_gas_used,
+            exec_ctx.block_gas_limit,
+            instruction_soft_limit,
+            instruction_start,
+            current_instruction_counter(),
+        ) {
+            break;
+        }
         let tx_index = u32::try_from(included_tx_ids.len()).unwrap_or(u32::MAX);
         let tx_id = prepared_tx.tx_id;
         let execution = execute_tx_on(
@@ -892,6 +1014,15 @@ pub fn produce_block(max_txs: usize) -> Result<ProduceBlockOutcome, ChainError> 
             sender_nonce: prepared_tx.sender_nonce,
         });
         included_tx_ids.push(tx_id);
+        if should_stop_block_execution(
+            block_gas_used,
+            exec_ctx.block_gas_limit,
+            instruction_soft_limit,
+            instruction_start,
+            current_instruction_counter(),
+        ) {
+            break;
+        }
     }
 
     if included_tx_ids.is_empty() {
@@ -942,11 +1073,21 @@ pub fn produce_block(max_txs: usize) -> Result<ProduceBlockOutcome, ChainError> 
     );
 
     with_state_mut(|state| {
+        struct StagedPersist {
+            tx_id: TxId,
+            tx_index: u32,
+            tx_index_ptr: evm_db::blob_ptr::BlobPtr,
+            receipt_ptr: evm_db::blob_ptr::BlobPtr,
+            sender_bytes: [u8; 20],
+            sender_nonce: u64,
+        }
+
         trie_commit::apply(state, prepared_root);
         for drop in staged_drops.iter() {
             advance_sender_after_tx(state, drop.tx_id, drop.sender_override, drop.nonce_override);
             mark_dropped_and_purge_payload(state, drop.tx_id, drop.drop_code);
         }
+        let mut staged_persisted = Vec::with_capacity(staged_included.len());
         for included in staged_included.iter() {
             match included {
                 StagedIncludedTx::Success {
@@ -963,15 +1104,14 @@ pub fn produce_block(max_txs: usize) -> Result<ProduceBlockOutcome, ChainError> 
                         },
                     );
                     let receipt_ptr = store_receipt(state, &outcome.receipt);
-                    state.tx_index.insert(*tx_id, tx_index_ptr);
-                    state.receipts.insert(*tx_id, receipt_ptr);
-                    tx_locs_insert(state, *tx_id, TxLoc::included(number, outcome.tx_index));
-                    advance_sender_after_tx(
-                        state,
-                        *tx_id,
-                        Some(*sender_bytes),
-                        Some(*sender_nonce),
-                    );
+                    staged_persisted.push(StagedPersist {
+                        tx_id: *tx_id,
+                        tx_index: outcome.tx_index,
+                        tx_index_ptr,
+                        receipt_ptr,
+                        sender_bytes: *sender_bytes,
+                        sender_nonce: *sender_nonce,
+                    });
                 }
                 StagedIncludedTx::Failed {
                     tx_id,
@@ -988,20 +1128,34 @@ pub fn produce_block(max_txs: usize) -> Result<ProduceBlockOutcome, ChainError> 
                         },
                     );
                     let receipt_ptr = store_receipt(state, receipt);
-                    state.tx_index.insert(*tx_id, tx_index_ptr);
-                    state.receipts.insert(*tx_id, receipt_ptr);
-                    tx_locs_insert(state, *tx_id, TxLoc::included(number, *tx_index));
-                    advance_sender_after_tx(
-                        state,
-                        *tx_id,
-                        Some(*sender_bytes),
-                        Some(*sender_nonce),
-                    );
+                    staged_persisted.push(StagedPersist {
+                        tx_id: *tx_id,
+                        tx_index: *tx_index,
+                        tx_index_ptr,
+                        receipt_ptr,
+                        sender_bytes: *sender_bytes,
+                        sender_nonce: *sender_nonce,
+                    });
                 }
             }
         }
 
         let block_ptr = store_block(state, &block);
+        for persisted in staged_persisted {
+            state.tx_index.insert(persisted.tx_id, persisted.tx_index_ptr);
+            state.receipts.insert(persisted.tx_id, persisted.receipt_ptr);
+            tx_locs_insert(
+                state,
+                persisted.tx_id,
+                TxLoc::included(number, persisted.tx_index),
+            );
+            advance_sender_after_tx(
+                state,
+                persisted.tx_id,
+                Some(persisted.sender_bytes),
+                Some(persisted.sender_nonce),
+            );
+        }
         state.blocks.insert(number, block_ptr);
         state.head.set(Head {
             number,
@@ -1014,7 +1168,7 @@ pub fn produce_block(max_txs: usize) -> Result<ProduceBlockOutcome, ChainError> 
         chain_state.base_fee = compute_next_base_fee(
             chain_state.base_fee,
             block_gas_used,
-            DEFAULT_BLOCK_GAS_LIMIT,
+            chain_state.block_gas_limit,
         );
         state.chain_state.set(chain_state);
         rebuild_pending_fee_index_for_base_fee(state, chain_state.base_fee);
@@ -1086,6 +1240,42 @@ pub fn execute_ic_tx(
     execute_and_seal_with_caller(tx_id, TxKind::IcSynthetic, caller_evm)
 }
 
+#[cfg(not(target_arch = "wasm32"))]
+pub fn execute_submitted_ic_tx_for_test(
+    tx_id: TxId,
+    caller: [u8; 20],
+) -> Result<ExecResult, ChainError> {
+    execute_and_seal_with_caller(tx_id, TxKind::IcSynthetic, caller)
+}
+
+pub fn eth_call(raw_tx: Vec<u8>) -> Result<Vec<u8>, ChainError> {
+    if raw_tx.len() > MAX_TX_SIZE {
+        return Err(ChainError::TxTooLarge);
+    }
+    let tx_env =
+        decode_tx(TxKind::EthSigned, Address::ZERO, &raw_tx).map_err(|_| ChainError::DecodeFailed)?;
+    let head = with_state(|state| *state.head.get());
+    let number = head.number.saturating_add(1);
+    let timestamp = std::cmp::max(head.timestamp.saturating_add(1), crate::time::now_sec());
+    let exec_ctx = with_state(|state| BlockExecContext {
+        block_number: number,
+        timestamp,
+        base_fee: state.chain_state.get().base_fee,
+        block_gas_limit: state.chain_state.get().block_gas_limit,
+    });
+    let tx_id = TxId(hash::stored_tx_id(
+        TxKind::EthSigned,
+        &raw_tx,
+        None,
+        None,
+        None,
+    ));
+    let db = CacheDB::new(crate::revm_db::RevmStableDb);
+    let (outcome, _) = execute_tx_on(db, tx_id, 0, tx_env, &exec_ctx, ExecPath::UserTx, false)
+        .map_err(|err| ChainError::ExecFailed(Some(err)))?;
+    Ok(outcome.return_data)
+}
+
 pub fn get_block(number: u64) -> Option<BlockData> {
     with_state(|state| load_block(state, number))
 }
@@ -1098,12 +1288,15 @@ pub fn get_receipt(tx_id: &TxId) -> Option<ReceiptLike> {
     with_state(|state| load_receipt(state, tx_id))
 }
 
-fn store_block(state: &mut StableState, block: &BlockData) -> evm_db::blob_ptr::BlobPtr {
+fn store_block(
+    state: &mut StableState,
+    block: &BlockData,
+) -> evm_db::blob_ptr::BlobPtr {
+    before_store_write_for_test("store_block", Some(block.number), None);
     let bytes = block.to_bytes().into_owned();
-    let ptr = state
-        .blob_store
-        .store_bytes(&bytes)
-        .unwrap_or_else(|_| panic!("blob_store: store_block failed"));
+    let ptr = state.blob_store.store_bytes(&bytes).unwrap_or_else(|_| {
+        trap_store_err("store_block", Some(block.number), None, "blob_store");
+    });
     increment_estimated_kept_bytes(state, ptr.class());
     let mut config = *state.prune_config.get();
     if config.oldest_block().is_none() {
@@ -1113,22 +1306,38 @@ fn store_block(state: &mut StableState, block: &BlockData) -> evm_db::blob_ptr::
     ptr
 }
 
-fn store_receipt(state: &mut StableState, receipt: &ReceiptLike) -> evm_db::blob_ptr::BlobPtr {
+fn store_receipt(
+    state: &mut StableState,
+    receipt: &ReceiptLike,
+) -> evm_db::blob_ptr::BlobPtr {
+    before_store_write_for_test("store_receipt", Some(receipt.block_number), Some(receipt.tx_id));
     let bytes = receipt.to_bytes().into_owned();
-    let ptr = state
-        .blob_store
-        .store_bytes(&bytes)
-        .unwrap_or_else(|_| panic!("blob_store: store_receipt failed"));
+    let ptr = state.blob_store.store_bytes(&bytes).unwrap_or_else(|_| {
+        trap_store_err(
+            "store_receipt",
+            Some(receipt.block_number),
+            Some(receipt.tx_id),
+            "blob_store",
+        );
+    });
     increment_estimated_kept_bytes(state, ptr.class());
     ptr
 }
 
-fn store_tx_index_entry(state: &mut StableState, entry: TxIndexEntry) -> evm_db::blob_ptr::BlobPtr {
+fn store_tx_index_entry(
+    state: &mut StableState,
+    entry: TxIndexEntry,
+) -> evm_db::blob_ptr::BlobPtr {
+    before_store_write_for_test("store_tx_index_entry", Some(entry.block_number), None);
     let bytes = entry.to_bytes().into_owned();
-    let ptr = state
-        .blob_store
-        .store_bytes(&bytes)
-        .unwrap_or_else(|_| panic!("blob_store: store_tx_index failed"));
+    let ptr = state.blob_store.store_bytes(&bytes).unwrap_or_else(|_| {
+        trap_store_err(
+            "store_tx_index_entry",
+            Some(entry.block_number),
+            None,
+            "blob_store",
+        );
+    });
     increment_estimated_kept_bytes(state, ptr.class());
     ptr
 }
@@ -1171,6 +1380,7 @@ fn execute_and_seal_with_caller(
         block_number: number,
         timestamp,
         base_fee: state.chain_state.get().base_fee,
+        block_gas_limit: state.chain_state.get().block_gas_limit,
     });
     let tx_env = decode_tx(kind, Address::from(caller), &stored.raw)
         .map_err(|_| ChainError::DecodeFailed)?;
@@ -1246,25 +1456,33 @@ fn execute_and_seal_with_caller(
     );
 
     with_state_mut(|state| {
+        struct StagedSinglePersist {
+            block_ptr: evm_db::blob_ptr::BlobPtr,
+            tx_index_ptr: evm_db::blob_ptr::BlobPtr,
+            receipt_ptr: evm_db::blob_ptr::BlobPtr,
+        }
+
         trie_commit::apply(state, prepared_root);
-        let block_ptr = store_block(state, &block);
-        state.blocks.insert(number, block_ptr);
+        let staged = StagedSinglePersist {
+            block_ptr: store_block(state, &block),
+            tx_index_ptr: store_tx_index_entry(
+                state,
+                TxIndexEntry {
+                    block_number: number,
+                    tx_index: outcome.tx_index,
+                },
+            ),
+            receipt_ptr: store_receipt(state, &outcome.receipt),
+        };
+        state.blocks.insert(number, staged.block_ptr);
+        state.tx_index.insert(tx_id, staged.tx_index_ptr);
+        state.receipts.insert(tx_id, staged.receipt_ptr);
+        tx_locs_insert(state, tx_id, TxLoc::included(number, outcome.tx_index));
         state.head.set(Head {
             number,
             block_hash,
             timestamp,
         });
-        let tx_index_ptr = store_tx_index_entry(
-            state,
-            TxIndexEntry {
-                block_number: number,
-                tx_index: outcome.tx_index,
-            },
-        );
-        state.tx_index.insert(tx_id, tx_index_ptr);
-        let receipt_ptr = store_receipt(state, &outcome.receipt);
-        state.receipts.insert(tx_id, receipt_ptr);
-        tx_locs_insert(state, tx_id, TxLoc::included(number, outcome.tx_index));
         advance_sender_after_tx(state, tx_id, Some(sender_bytes), Some(sender_nonce));
         let mut chain_state = *state.chain_state.get();
         chain_state.last_block_number = number;
@@ -1272,7 +1490,7 @@ fn execute_and_seal_with_caller(
         chain_state.base_fee = compute_next_base_fee(
             chain_state.base_fee,
             outcome.receipt.gas_used,
-            DEFAULT_BLOCK_GAS_LIMIT,
+            chain_state.block_gas_limit,
         );
         state.chain_state.set(chain_state);
         rebuild_pending_fee_index_for_base_fee(state, chain_state.base_fee);
@@ -1729,14 +1947,22 @@ fn track_pending_indexes_on_insert(
     effective_gas_price: u64,
 ) {
     let principal_key = CallerKey::from_principal_bytes(caller_principal);
-    let current = state.principal_pending_count.get(&principal_key).unwrap_or(0);
-    state.principal_pending_count.insert(principal_key, current.saturating_add(1));
+    let current = state
+        .principal_pending_count
+        .get(&principal_key)
+        .unwrap_or(0);
+    state
+        .principal_pending_count
+        .insert(principal_key, current.saturating_add(1));
     let fee_key = PendingFeeKey::new(effective_gas_price, tx_id.0);
     state.pending_fee_index.insert(fee_key, tx_id);
     state.pending_fee_key_by_tx_id.insert(tx_id, fee_key);
 }
 
-fn rebuild_pending_fee_index_for_base_fee(state: &mut evm_db::stable_state::StableState, base_fee: u64) {
+fn rebuild_pending_fee_index_for_base_fee(
+    state: &mut evm_db::stable_state::StableState,
+    base_fee: u64,
+) {
     clear_stable_map(&mut state.pending_fee_index);
     clear_stable_map(&mut state.pending_fee_key_by_tx_id);
     let mut pending_ids = Vec::new();
@@ -1772,7 +1998,10 @@ fn remove_pending_fee_index_by_tx_id(state: &mut evm_db::stable_state::StableSta
     }
 }
 
-fn decrement_principal_pending_count_for_tx(state: &mut evm_db::stable_state::StableState, tx_id: TxId) {
+fn decrement_principal_pending_count_for_tx(
+    state: &mut evm_db::stable_state::StableState,
+    tx_id: TxId,
+) {
     let Some(envelope) = state.tx_store.get(&tx_id) else {
         return;
     };
@@ -1803,7 +2032,9 @@ fn insert_ready(
     };
     let key = ReadyKey::new(max_fee_per_gas, priority, seq, tx_id.0);
     state.ready_queue.insert(key, tx_id);
-    state.ready_by_seq.insert(ReadySeqKey::new(seq, tx_id.0), tx_id);
+    state
+        .ready_by_seq
+        .insert(ReadySeqKey::new(seq, tx_id.0), tx_id);
     state.ready_key_by_tx_id.insert(tx_id, key);
     Ok(())
 }
@@ -1811,7 +2042,9 @@ fn insert_ready(
 fn remove_ready_by_tx_id(state: &mut evm_db::stable_state::StableState, tx_id: TxId) {
     if let Some(key) = state.ready_key_by_tx_id.remove(&tx_id) {
         state.ready_queue.remove(&key);
-        state.ready_by_seq.remove(&ReadySeqKey::new(key.seq(), tx_id.0));
+        state
+            .ready_by_seq
+            .remove(&ReadySeqKey::new(key.seq(), tx_id.0));
     }
 }
 
@@ -2251,15 +2484,39 @@ fn select_top_k_ready_candidates(mut candidates: Vec<ReadyCandidate>, max_txs: u
         push_top_k_candidate(&mut selected_heap, candidate, max_txs);
     }
 
-    let mut selected: Vec<ReadyCandidate> = selected_heap
-        .into_iter()
-        .map(|entry| entry.0)
-        .collect();
+    let mut selected: Vec<ReadyCandidate> =
+        selected_heap.into_iter().map(|entry| entry.0).collect();
     selected.sort_by(|left, right| right.cmp_priority(left));
-    selected.into_iter().map(|candidate| candidate.tx_id).collect()
+    selected
+        .into_iter()
+        .map(|candidate| candidate.tx_id)
+        .collect()
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum RekeyError {
     DecodeFailed,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::should_stop_block_execution;
+
+    #[test]
+    fn should_stop_block_execution_stops_on_gas_limit() {
+        assert!(should_stop_block_execution(10, 10, 0, 0, 0));
+        assert!(should_stop_block_execution(11, 10, 0, 0, 0));
+    }
+
+    #[test]
+    fn should_stop_block_execution_stops_on_instruction_budget() {
+        assert!(should_stop_block_execution(1, 0, 5, 100, 105));
+        assert!(should_stop_block_execution(1, 0, 5, 100, 120));
+        assert!(!should_stop_block_execution(1, 0, 5, 100, 104));
+    }
+
+    #[test]
+    fn should_stop_block_execution_ignores_instruction_budget_when_disabled() {
+        assert!(!should_stop_block_execution(1, 0, 0, 100, 100_000));
+    }
 }

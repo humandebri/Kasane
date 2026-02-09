@@ -259,6 +259,8 @@ pub fn with_state<R>(f: impl FnOnce(&StableState) -> R) -> R {
 }
 
 pub fn with_state_mut<R>(f: impl FnOnce(&mut StableState) -> R) -> R {
+    // 非同期再入事故を防ぐため、呼び出し側はこのクロージャ内で await につながる
+    // 副作用（timer設定・cross-canister call など）を実行しないこと。
     STABLE_STATE.with(|s| {
         let mut borrowed = s.borrow_mut();
         let state = borrowed

@@ -131,6 +131,11 @@ ABIズレで落ちる場合:
 - `idle`: chunks=[]（追いつき状態、60秒に1回程度）
 - `fatal`: 取り込み継続不可（exit(1)）
 
+canister `trap` 時の扱い:
+- storage write 失敗は canister 側で `trap` され、Result の `Err` ではなく reject として返る
+- `trap` したメッセージ内で更新した canister 内カウンタはロールバックされる
+- 一次監視は indexer/caller 側ログで行う（`block_number`, `tx_id/eth_tx_hash`, `cursor` を相関キーとして保持）
+
 fatal の代表:
 - `Pruned`: 取り込もうとした範囲が canister 側で prune 済み
 - `InvalidCursor`: cursor/chunk整合違反 or max_bytes超過 or カーソル不正
@@ -289,3 +294,31 @@ scripts/local_pruning_stage.sh
 ```bash
 DB_PATH=tools/indexer/indexer.db scripts/indexer_metrics_snapshot.sh
 ```
+
+## 14. デプロイ前チェックリスト（staging/prod）
+
+1) 事前スモークを1コマンドで実行
+
+```bash
+scripts/predeploy_smoke.sh
+```
+
+2) 必須確認
+
+- `cargo check --workspace` が成功
+- `cargo build -p ic-evm-wrapper --target wasm32-unknown-unknown --release` が成功
+- `tools/indexer` の `npm run build` が成功
+- `scripts/rpc_compat_smoke.sh` の各RPC呼び出しが成功
+
+## 15. 障害時ロールバック
+
+1) indexer停止（再開時は cursor 継続）  
+2) canister を直前安定WASMへ reinstall / upgrade（書き込み失敗は trap によりロールバックされる前提）  
+3) `scripts/rpc_compat_smoke.sh` で最低限の read 系復旧確認  
+4) indexer再起動後、`commit_block` ログと `cursor_lag` が減少することを確認
+
+## 16. prune連携の運用ルール
+
+- indexer 側 `meta.prune_status` と `need_prune` を常時監視する
+- `cursor_lag` が閾値超過時は pruning policy を一時緩和する
+- `Pruned` 停止時は `pruned_before_block + 1` へ cursor を進めて復旧する

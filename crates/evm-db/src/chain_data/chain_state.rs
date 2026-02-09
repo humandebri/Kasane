@@ -3,7 +3,8 @@
 use crate::chain_data::codec::{encode_guarded, mark_decode_failure};
 use crate::chain_data::constants::{CHAIN_ID, CHAIN_STATE_SIZE_U32};
 use crate::chain_data::runtime_defaults::{
-    DEFAULT_BASE_FEE, DEFAULT_MIN_GAS_PRICE, DEFAULT_MINING_INTERVAL_MS, DEFAULT_MIN_PRIORITY_FEE,
+    DEFAULT_BASE_FEE, DEFAULT_BLOCK_GAS_LIMIT, DEFAULT_INSTRUCTION_SOFT_LIMIT,
+    DEFAULT_MINING_INTERVAL_MS, DEFAULT_MIN_GAS_PRICE, DEFAULT_MIN_PRIORITY_FEE,
 };
 use ic_stable_structures::storable::Bound;
 use ic_stable_structures::Storable;
@@ -25,13 +26,15 @@ pub struct ChainStateV1 {
     pub base_fee: u64,
     pub min_gas_price: u64,
     pub min_priority_fee: u64,
+    pub block_gas_limit: u64,
+    pub instruction_soft_limit: u64,
 }
 
 #[derive(
     Clone, Copy, Debug, Eq, PartialEq, FromBytes, IntoBytes, KnownLayout, Immutable, Unaligned,
 )]
 #[repr(C)]
-struct ChainStateWire {
+struct ChainStateWireV3 {
     schema_version: U32,
     chain_id: U64,
     last_block_number: U64,
@@ -43,9 +46,11 @@ struct ChainStateWire {
     base_fee: U64,
     min_gas_price: U64,
     min_priority_fee: U64,
+    block_gas_limit: U64,
+    instruction_soft_limit: U64,
 }
 
-impl ChainStateWire {
+impl ChainStateWireV3 {
     fn new(state: &ChainStateV1) -> Self {
         Self {
             schema_version: U32::new(state.schema_version),
@@ -59,6 +64,8 @@ impl ChainStateWire {
             base_fee: U64::new(state.base_fee),
             min_gas_price: U64::new(state.min_gas_price),
             min_priority_fee: U64::new(state.min_priority_fee),
+            block_gas_limit: U64::new(state.block_gas_limit),
+            instruction_soft_limit: U64::new(state.instruction_soft_limit),
         }
     }
 }
@@ -78,6 +85,8 @@ impl ChainStateV1 {
             base_fee: DEFAULT_BASE_FEE,
             min_gas_price: DEFAULT_MIN_GAS_PRICE,
             min_priority_fee: DEFAULT_MIN_PRIORITY_FEE,
+            block_gas_limit: DEFAULT_BLOCK_GAS_LIMIT,
+            instruction_soft_limit: DEFAULT_INSTRUCTION_SOFT_LIMIT,
         }
     }
 
@@ -104,7 +113,7 @@ impl ChainStateV1 {
 
 impl Storable for ChainStateV1 {
     fn to_bytes(&self) -> Cow<'_, [u8]> {
-        let wire = ChainStateWire::new(self);
+        let wire = ChainStateWireV3::new(self);
         match encode_guarded(
             b"chain_state",
             Cow::Owned(wire.as_bytes().to_vec()),
@@ -121,11 +130,13 @@ impl Storable for ChainStateV1 {
 
     fn from_bytes(bytes: Cow<'_, [u8]>) -> Self {
         let data = bytes.as_ref();
-        if data.len() != 72 {
+        // 非互換方針: 旧72バイトwireからの自動移行は行わない。
+        // 想定サイズ外はdecode失敗として既定値にフォールバックし、移行は運用手順で実施する。
+        if data.len() != CHAIN_STATE_SIZE_U32 as usize {
             mark_decode_failure(b"chain_state", false);
             return ChainStateV1::new(CHAIN_ID);
         }
-        let wire = match ChainStateWire::read_from_bytes(data) {
+        let wire = match ChainStateWireV3::read_from_bytes(data) {
             Ok(value) => value,
             Err(_) => {
                 mark_decode_failure(b"chain_state", false);
@@ -145,6 +156,8 @@ impl Storable for ChainStateV1 {
             base_fee: wire.base_fee.get(),
             min_gas_price: wire.min_gas_price.get(),
             min_priority_fee: wire.min_priority_fee.get(),
+            block_gas_limit: wire.block_gas_limit.get(),
+            instruction_soft_limit: wire.instruction_soft_limit.get(),
         };
         state.apply_flags(wire.flags);
         state

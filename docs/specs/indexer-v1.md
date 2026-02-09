@@ -280,6 +280,10 @@ length-prefix 形式は **export API では使わない**。
 **共通:**
 * `tx_id` は **32 bytes 固定**（ハッシュの生bytes）  
 * hex 文字列ではない  
+* `tx_id` は canister 内部識別子であり、`eth_tx_hash`（`keccak256(raw_tx)`）とは別物  
+* `eth_tx_hash` が必要な連携は RPC 側の `*_by_eth_hash` を使う  
+* `tx_id` 前提の参照RPCは廃止済み  
+* `rpc_eth_get_logs` は `Result<vec EthLogItemView, GetLogsErrorView>` を返す（`RangeTooLarge` / `TooManyResults` / `UnsupportedFilter` / `InvalidArgument`）
 * `len` は **u32be**（item の bytes 長）  
 * `len = 0` は許容  
 * `payload_len` も **u32 の範囲**
