@@ -21,11 +21,16 @@ use ic_cdk::api::{
 };
 use serde::Deserialize;
 use std::cell::Cell;
-use std::io::{self, Write};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Mutex, OnceLock};
 use tracing::{error, info, warn};
+
+#[cfg(not(target_arch = "wasm32"))]
+use std::io::{self, Write};
+#[cfg(not(target_arch = "wasm32"))]
+use std::sync::{Mutex, OnceLock};
+#[cfg(not(target_arch = "wasm32"))]
 use tracing_subscriber::fmt::MakeWriter;
+#[cfg(not(target_arch = "wasm32"))]
 use tracing_subscriber::EnvFilter;
 
 mod prometheus_metrics;
@@ -2112,6 +2117,7 @@ fn reject_anonymous_principal(caller: Principal) -> Option<String> {
     None
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn init_tracing() {
     static LOG_INIT: OnceLock<()> = OnceLock::new();
     let _ = LOG_INIT.get_or_init(|| {
@@ -2127,6 +2133,10 @@ fn init_tracing() {
     });
 }
 
+#[cfg(target_arch = "wasm32")]
+fn init_tracing() {}
+
+#[cfg(not(target_arch = "wasm32"))]
 fn resolve_log_filter() -> Option<String> {
     if let Some(value) = read_env_var_guarded("LOG_FILTER", LOG_FILTER_MAX_LEN) {
         let trimmed = value.trim();
@@ -2137,14 +2147,15 @@ fn resolve_log_filter() -> Option<String> {
     with_state(|state| state.log_config.get().filter().map(str::to_string))
 }
 
-#[cfg(not(feature = "canbench-rs"))]
+#[cfg(all(not(feature = "canbench-rs"), not(target_arch = "wasm32")))]
 const MAX_ENV_VAR_NAME_LEN: usize = 128;
+#[cfg(not(target_arch = "wasm32"))]
 const LOG_FILTER_MAX_LEN: usize = 256;
 static LOG_TRUNCATED_COUNT: AtomicU64 = AtomicU64::new(0);
 static MINING_ERROR_COUNT: AtomicU64 = AtomicU64::new(0);
 static PRUNE_ERROR_COUNT: AtomicU64 = AtomicU64::new(0);
 
-#[cfg(not(feature = "canbench-rs"))]
+#[cfg(all(not(feature = "canbench-rs"), not(target_arch = "wasm32")))]
 fn read_env_var_guarded(name: &str, max_value_len: usize) -> Option<String> {
     if name.len() > MAX_ENV_VAR_NAME_LEN {
         return None;
@@ -2166,13 +2177,16 @@ fn read_env_var_guarded(name: &str, max_value_len: usize) -> Option<String> {
 }
 
 #[cfg(feature = "canbench-rs")]
+#[allow(dead_code)]
 fn read_env_var_guarded(_name: &str, _max_value_len: usize) -> Option<String> {
     None
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 #[derive(Clone, Copy)]
 struct IcDebugPrintMakeWriter;
 
+#[cfg(not(target_arch = "wasm32"))]
 impl<'a> MakeWriter<'a> for IcDebugPrintMakeWriter {
     type Writer = IcDebugPrintWriter;
 
@@ -2183,10 +2197,12 @@ impl<'a> MakeWriter<'a> for IcDebugPrintMakeWriter {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 struct IcDebugPrintWriter {
     buffer: String,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl Write for IcDebugPrintWriter {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
         self.buffer.push_str(&String::from_utf8_lossy(buf));
@@ -2203,12 +2219,14 @@ impl Write for IcDebugPrintWriter {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl Drop for IcDebugPrintWriter {
     fn drop(&mut self) {
         let _ = self.flush();
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn emit_complete_lines(buffer: &mut String) {
     static REENTRANT_GUARD: OnceLock<Mutex<()>> = OnceLock::new();
     let guard = REENTRANT_GUARD.get_or_init(|| Mutex::new(())).lock();
@@ -2227,14 +2245,15 @@ fn emit_complete_lines(buffer: &mut String) {
     }
 }
 
-#[cfg(feature = "ic-debug-print")]
+#[cfg(all(not(target_arch = "wasm32"), feature = "ic-debug-print"))]
 fn emit_debug_print(line: String) {
     ic_cdk::api::debug_print(line);
 }
 
-#[cfg(not(feature = "ic-debug-print"))]
+#[cfg(all(not(target_arch = "wasm32"), not(feature = "ic-debug-print")))]
 fn emit_debug_print(_line: String) {}
 
+#[cfg(not(target_arch = "wasm32"))]
 fn emit_bounded_log_line(line: &str) {
     const MAX_LOG_LINE_BYTES: usize = 16 * 1024;
     if line.len() <= MAX_LOG_LINE_BYTES {

@@ -135,6 +135,10 @@ scripts/sync_vendor_revm.sh /Users/you/path/to/main/repo
 - 追加ベンチ:
   - `submit_ic_tx_path`
   - `produce_block_path`
+  - `decode_ic_synthetic_header_path`
+  - `decode_eth_signature_path`
+  - `decode_eth_unsupported_typed_reject_path`
+  - `state_root_migration_tick_path`
 
 実行例:
 ```bash
@@ -142,3 +146,13 @@ cargo install canbench
 canbench
 canbench --persist
 ```
+
+回帰ゲート実行例:
+```bash
+scripts/run_canbench_guard.sh
+```
+
+閾値調整（任意）:
+- `CANBENCH_MAX_REGRESSION_PCT`（既定: `2.0`）
+- `CANBENCH_TARGET_IMPROVEMENT_PCT`（既定: `5.0`）
+- `CANBENCH_TARGET_BENCHES`（カンマ区切り。指定時のみ対象ベンチに改善閾値を適用）

@@ -5,9 +5,18 @@
 use canbench_rs::{bench, bench_fn, BenchResult};
 use candid::Principal;
 use evm_core::chain;
+use evm_core::tx_decode::{decode_eth_raw_tx, decode_ic_synthetic_header};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 static NONCE_SEQ: AtomicU64 = AtomicU64::new(0);
+const UNSUPPORTED_TYPED_4844_PREFIX: [u8; 1] = [0x03];
+const BENCH_LEGACY_RAW_TX: [u8; 104] = [
+    248, 102, 128, 132, 119, 53, 148, 0, 130, 82, 8, 148, 17, 17, 17, 17, 17, 17, 17, 17, 17,
+    17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 128, 128, 131, 10, 214, 118, 160, 231, 214, 114,
+    181, 71, 43, 129, 98, 169, 65, 80, 181, 239, 81, 253, 32, 8, 31, 223, 49, 210, 20, 22, 11,
+    183, 240, 70, 140, 196, 60, 98, 252, 160, 40, 139, 139, 249, 125, 73, 253, 189, 136, 186, 34,
+    57, 236, 35, 85, 199, 169, 87, 219, 98, 212, 200, 90, 202, 74, 48, 54, 28, 31, 109, 114, 122,
+];
 
 #[bench(raw)]
 fn submit_ic_tx_path() -> BenchResult {
@@ -17,10 +26,39 @@ fn submit_ic_tx_path() -> BenchResult {
 }
 
 #[bench(raw)]
+fn decode_ic_synthetic_header_path() -> BenchResult {
+    let tx = build_ic_tx_bytes(0);
+    bench_fn(|| {
+        let _ = decode_ic_synthetic_header(&tx);
+    })
+}
+
+#[bench(raw)]
+fn decode_eth_signature_path() -> BenchResult {
+    bench_fn(|| {
+        let _ = decode_eth_raw_tx(&BENCH_LEGACY_RAW_TX);
+    })
+}
+
+#[bench(raw)]
+fn decode_eth_unsupported_typed_reject_path() -> BenchResult {
+    bench_fn(|| {
+        let _ = decode_eth_raw_tx(&UNSUPPORTED_TYPED_4844_PREFIX);
+    })
+}
+
+#[bench(raw)]
 fn produce_block_path() -> BenchResult {
     let _ = submit_synthetic_tx();
     bench_fn(|| {
         let _ = chain::produce_block(1);
+    })
+}
+
+#[bench(raw)]
+fn state_root_migration_tick_path() -> BenchResult {
+    bench_fn(|| {
+        let _ = chain::state_root_migration_tick(1);
     })
 }
 

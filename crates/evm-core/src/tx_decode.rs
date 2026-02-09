@@ -1,18 +1,12 @@
 //! どこで: Phase1のTxデコード / 何を: IcSynthetic + Eth の安全なデコード / なぜ: 互換性とtrap回避
-use alloy_consensus::transaction::SignerRecoverable;
-use alloy_consensus::{Transaction, TxEnvelope};
-use alloy_eips::eip2718::{Decodable2718, Eip2718Error};
-use alloy_eips::eip7702::SignedAuthorization as AlloySignedAuthorization;
-use alloy_eips::Typed2718;
-use alloy_primitives::{Address as AlloyAddress, TxKind as AlloyTxKind, B256, U256 as AlloyU256};
+use crate::tx_recovery::{recover_eth_tx, RecoveredTx, RecoveryError};
+use alloy_primitives::Address as AlloyAddress;
 use byteorder::{BigEndian, ByteOrder};
 use evm_db::chain_data::constants::{CHAIN_ID, MAX_TX_SIZE};
 use evm_db::chain_data::TxKind;
 use revm::context::TxEnv;
-use revm::context_interface::either::Either;
 use revm::primitives::{
-    Address as RevmAddress, Bytes as RevmBytes, TxKind as RevmTxKind, B256 as RevmB256,
-    U256 as RevmU256,
+    Address as RevmAddress, Bytes as RevmBytes, TxKind as RevmTxKind, U256 as RevmU256,
 };
 use std::borrow::Cow;
 
@@ -29,28 +23,12 @@ pub enum DecodeError {
     TrailingBytes,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
-struct DecodedTx {
-    from: AlloyAddress,
-    to: Option<AlloyAddress>,
-    nonce: u64,
-    value: AlloyU256,
-    input: Vec<u8>,
-    gas_limit: u64,
-    gas_price: Option<u128>,
-    max_fee_per_gas: Option<u128>,
-    max_priority_fee_per_gas: Option<u128>,
-    chain_id: Option<u64>,
-    tx_type: u8,
-    blob_hashes: Vec<B256>,
-    max_fee_per_blob_gas: Option<u128>,
-    authorization_list: Vec<AlloySignedAuthorization>,
-}
-
 // IcSynthetic v2: [version:1][to:20][value:32][gas_limit:8][nonce:8]
 //                [max_fee_per_gas:16][max_priority_fee_per_gas:16][data_len:4][data]
 const IC_TX_VERSION: u8 = 2;
 const IC_TX_HEADER_LEN: usize = 1 + 20 + 32 + 8 + 8 + 16 + 16 + 4;
+const TX_TYPE_EIP4844: u8 = 0x03;
+const TX_TYPE_EIP7702: u8 = 0x04;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct IcTxHeader<'a> {
@@ -207,81 +185,29 @@ pub fn decode_tx_view<'a>(
 }
 
 pub fn decode_eth_raw_tx(bytes: &[u8]) -> Result<TxEnv, DecodeError> {
-    let decoded = decode_eth_raw_tx_to_decoded(bytes)?;
-    Ok(decoded_to_tx_env(&decoded))
+    let recovered = decode_eth_raw_tx_to_recovered(bytes)?;
+    Ok(decoded_to_tx_env(&recovered))
 }
 
-fn decode_eth_raw_tx_to_decoded(bytes: &[u8]) -> Result<DecodedTx, DecodeError> {
+fn decode_eth_raw_tx_to_recovered(bytes: &[u8]) -> Result<RecoveredTx, DecodeError> {
     if bytes.is_empty() {
         return Err(DecodeError::InvalidLength);
     }
     if bytes.len() > MAX_TX_SIZE {
         return Err(DecodeError::DataTooLarge);
     }
-
-    let envelope = TxEnvelope::decode_2718_exact(bytes).map_err(map_eip2718_error)?;
-
-    match envelope.chain_id() {
-        None => return Err(DecodeError::LegacyChainIdMissing),
-        Some(chain_id) if chain_id != CHAIN_ID => return Err(DecodeError::WrongChainId),
-        _ => {}
+    if should_reject_unsupported_typed_tx(bytes[0]) {
+        return Err(DecodeError::UnsupportedType);
     }
 
-    let sender = envelope
-        .recover_signer()
-        .map_err(|_| DecodeError::InvalidSignature)?;
-
-    match envelope {
-        TxEnvelope::Legacy(tx) => Ok(decoded_from_tx(tx.tx(), sender, tx.ty())),
-        TxEnvelope::Eip2930(tx) => Ok(decoded_from_tx(tx.tx(), sender, tx.ty())),
-        TxEnvelope::Eip1559(tx) => Ok(decoded_from_tx(tx.tx(), sender, tx.ty())),
-        TxEnvelope::Eip4844(tx) => Ok(decoded_from_tx(tx.tx(), sender, tx.ty())),
-        TxEnvelope::Eip7702(tx) => Ok(decoded_from_tx(tx.tx(), sender, tx.ty())),
-    }
+    recover_eth_tx(bytes).map_err(map_recovery_error)
 }
 
-fn decoded_from_tx<T: Transaction>(tx: &T, from: AlloyAddress, tx_type: u8) -> DecodedTx {
-    let to = match tx.kind() {
-        AlloyTxKind::Call(addr) => Some(addr),
-        AlloyTxKind::Create => None,
-    };
-    let is_dynamic_fee = tx.is_dynamic_fee();
-    let gas_price = if is_dynamic_fee { None } else { tx.gas_price() };
-    let max_fee_per_gas = if is_dynamic_fee {
-        Some(tx.max_fee_per_gas())
-    } else {
-        None
-    };
-    let max_priority_fee_per_gas = if is_dynamic_fee {
-        tx.max_priority_fee_per_gas()
-    } else {
-        None
-    };
-    DecodedTx {
-        from,
-        to,
-        nonce: tx.nonce(),
-        value: tx.value(),
-        input: tx.input().to_vec(),
-        gas_limit: tx.gas_limit(),
-        gas_price,
-        max_fee_per_gas,
-        max_priority_fee_per_gas,
-        chain_id: tx.chain_id().map(|id| id),
-        tx_type,
-        blob_hashes: tx
-            .blob_versioned_hashes()
-            .map(|hashes| hashes.to_vec())
-            .unwrap_or_default(),
-        max_fee_per_blob_gas: tx.max_fee_per_blob_gas(),
-        authorization_list: tx
-            .authorization_list()
-            .map(|list| list.to_vec())
-            .unwrap_or_default(),
-    }
+fn should_reject_unsupported_typed_tx(first_byte: u8) -> bool {
+    first_byte == TX_TYPE_EIP4844 || first_byte == TX_TYPE_EIP7702
 }
 
-fn decoded_to_tx_env(decoded: &DecodedTx) -> TxEnv {
+fn decoded_to_tx_env(decoded: &RecoveredTx) -> TxEnv {
     let gas_price = decoded.gas_price.or(decoded.max_fee_per_gas).unwrap_or(0);
     let gas_priority_fee = decoded.max_priority_fee_per_gas;
     let kind = match decoded.to {
@@ -299,28 +225,21 @@ fn decoded_to_tx_env(decoded: &DecodedTx) -> TxEnv {
         chain_id: decoded.chain_id,
         access_list: Default::default(),
         gas_priority_fee,
-        blob_hashes: decoded
-            .blob_hashes
-            .iter()
-            .map(|hash| revm_b256_from_alloy(*hash))
-            .collect(),
-        max_fee_per_blob_gas: decoded.max_fee_per_blob_gas.unwrap_or(0),
-        authorization_list: decoded
-            .authorization_list
-            .iter()
-            .cloned()
-            .map(Either::Left)
-            .collect(),
+        blob_hashes: Vec::new(),
+        max_fee_per_blob_gas: 0,
+        authorization_list: Vec::new(),
         tx_type: decoded.tx_type,
     }
 }
 
-fn map_eip2718_error(error: Eip2718Error) -> DecodeError {
+fn map_recovery_error(error: RecoveryError) -> DecodeError {
     match error {
-        Eip2718Error::UnexpectedType(_) => DecodeError::UnsupportedType,
-        Eip2718Error::RlpError(alloy_rlp::Error::UnexpectedLength) => DecodeError::TrailingBytes,
-        Eip2718Error::RlpError(_) => DecodeError::InvalidRlp,
-        _ => DecodeError::InvalidRlp,
+        RecoveryError::UnsupportedType => DecodeError::UnsupportedType,
+        RecoveryError::LegacyChainIdMissing => DecodeError::LegacyChainIdMissing,
+        RecoveryError::WrongChainId => DecodeError::WrongChainId,
+        RecoveryError::InvalidSignature => DecodeError::InvalidSignature,
+        RecoveryError::InvalidRlp => DecodeError::InvalidRlp,
+        RecoveryError::TrailingBytes => DecodeError::TrailingBytes,
     }
 }
 
@@ -328,6 +247,21 @@ fn revm_address_from_alloy(addr: AlloyAddress) -> RevmAddress {
     RevmAddress::from_slice(addr.as_slice())
 }
 
-fn revm_b256_from_alloy(value: B256) -> RevmB256 {
-    RevmB256::from_slice(value.as_slice())
+#[cfg(test)]
+mod tests {
+    use super::{decode_eth_raw_tx, should_reject_unsupported_typed_tx, DecodeError};
+
+    #[test]
+    fn unsupported_typed_tx_prefixes_are_rejected_early() {
+        assert!(should_reject_unsupported_typed_tx(0x03));
+        assert!(should_reject_unsupported_typed_tx(0x04));
+        assert!(!should_reject_unsupported_typed_tx(0x01));
+        assert!(!should_reject_unsupported_typed_tx(0x02));
+    }
+
+    #[test]
+    fn decode_eth_raw_tx_rejects_4844_and_7702_prefix_without_deep_decode() {
+        assert_eq!(decode_eth_raw_tx(&[0x03]).err(), Some(DecodeError::UnsupportedType));
+        assert_eq!(decode_eth_raw_tx(&[0x04]).err(), Some(DecodeError::UnsupportedType));
+    }
 }

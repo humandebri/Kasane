@@ -24,7 +24,6 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          submodules: recursive
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
@@ -78,6 +77,12 @@ jobs:
       - name: Check evm-rpc-e2e manifest builds
         run: cargo test --manifest-path crates/evm-rpc-e2e/Cargo.toml --no-run --locked
 
+      - name: Canbench regression guard
+        env:
+          CANBENCH_MAX_REGRESSION_PCT: "2.0"
+          CANBENCH_TARGET_IMPROVEMENT_PCT: "5.0"
+        run: scripts/run_canbench_guard.sh
+
   release_guard:
     name: Release wasm guard
     runs-on: ubuntu-latest
@@ -88,7 +93,6 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          submodules: recursive
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
