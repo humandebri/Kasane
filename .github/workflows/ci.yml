@@ -41,6 +41,9 @@ jobs:
       - name: Legacy RPC removal guard
         run: scripts/check_legacy_rpc_removed.sh
 
+      - name: Alloy dependency isolation guard
+        run: scripts/check_alloy_isolation.sh
+
       - name: Deny OP stack references
         shell: bash
         run: |
@@ -68,7 +71,7 @@ jobs:
         run: cargo audit --deny warnings --ignore RUSTSEC-2024-0388 --ignore RUSTSEC-2024-0436
 
       - name: Run workspace tests
-        run: cargo test -p evm-db -p ic-evm-core -p ic-evm-wrapper --locked
+        run: cargo test -p evm-db -p ic-evm-core -p ic-evm-wrapper --locked --lib --tests
 
       - name: Check evm-rpc-e2e manifest builds
         run: cargo test --manifest-path crates/evm-rpc-e2e/Cargo.toml --no-run --locked

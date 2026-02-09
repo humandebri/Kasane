@@ -28,6 +28,8 @@ echo "[guard] wasm getrandom feature check"
 scripts/check_getrandom_wasm_features.sh
 echo "[guard] did sync check"
 scripts/check_did_sync.sh
+echo "[guard] alloy dependency isolation check"
+scripts/check_alloy_isolation.sh
 
 echo "[guard] deny OP stack references"
 DENY_PATTERN='op-revm|op_revm|op-node|op-geth|optimism|superchain|OpDeposit|L1BlockInfo'
@@ -43,7 +45,7 @@ if grep -RInE "$DENY_PATTERN" \
   exit 1
 fi
 
-cargo test -p evm-db -p ic-evm-core -p ic-evm-wrapper
+cargo test -p evm-db -p ic-evm-core -p ic-evm-wrapper --lib --tests
 
 echo "[guard] evm-rpc-e2e manifest build check"
 cargo test --manifest-path crates/evm-rpc-e2e/Cargo.toml --no-run
