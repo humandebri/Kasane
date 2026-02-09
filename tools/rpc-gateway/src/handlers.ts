@@ -7,6 +7,7 @@ import {
   ERR_INTERNAL,
   ERR_INVALID_PARAMS,
   ERR_METHOD_NOT_FOUND,
+  ERR_METHOD_NOT_SUPPORTED,
   JsonRpcRequest,
   JsonRpcResponse,
   makeError,
@@ -161,11 +162,8 @@ async function onEthCall(id: string | number | null, params: unknown): Promise<J
 }
 
 async function onEstimateGas(id: string | number | null, params: unknown): Promise<JsonRpcResponse> {
-  const callResponse = await onEthCall(id, params);
-  if ("error" in callResponse) {
-    return callResponse;
-  }
-  return makeSuccess(id, toQuantityHex(0n));
+  void params;
+  return makeError(id, ERR_METHOD_NOT_SUPPORTED, "method not supported");
 }
 
 async function onSendRawTransaction(id: string | number | null, params: unknown): Promise<JsonRpcResponse> {

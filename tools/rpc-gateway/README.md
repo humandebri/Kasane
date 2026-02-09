@@ -33,7 +33,7 @@ npm run dev
 - `eth_getBalance` (`latest` のみ)
 - `eth_getCode` (`latest` のみ)
 - `eth_call`（`raw tx hex` を `params[0]` か `params[0].raw` で受ける最小実装）
-- `eth_estimateGas`（最小実装。現状は `0x0` 固定）
+- `eth_estimateGas`（現状未対応。`-32004 method not supported` を返す）
 - `eth_sendRawTransaction`
 
 ## 未対応

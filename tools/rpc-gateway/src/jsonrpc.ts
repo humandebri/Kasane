@@ -89,6 +89,7 @@ export const ERR_INVALID_REQUEST = -32600;
 export const ERR_METHOD_NOT_FOUND = -32601;
 export const ERR_INVALID_PARAMS = -32602;
 export const ERR_INTERNAL = -32603;
+export const ERR_METHOD_NOT_SUPPORTED = -32004;
 
 export function makeError(id: JsonRpcId, code: number, message: string, data?: unknown): JsonRpcErrorResponse {
   return {
