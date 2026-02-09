@@ -20,8 +20,12 @@ check_direct_parents() {
     return 0
   fi
 
+  local stripped
+  stripped="$(printf '%s\n' "$tree" \
+    | sed -E 's/\x1B\[[0-9;]*[[:alpha:]]//g')"
+
   local parent_lines
-  parent_lines="$(printf '%s\n' "$tree" \
+  parent_lines="$(printf '%s\n' "$stripped" \
     | grep -E '^[├└]── ' \
     | sed -E 's/^[├└]── ([^ ]+).*/\1/' \
     | sort -u || true)"
@@ -32,7 +36,7 @@ check_direct_parents() {
 
   if [[ ${#parents[@]} -eq 0 ]]; then
     echo "[guard] failed: could not parse parents for $crate"
-    echo "$tree"
+    echo "$stripped"
     return 1
   fi
 
@@ -47,7 +51,7 @@ check_direct_parents() {
     if [[ $ok -ne 1 ]]; then
       echo "[guard] failed: unexpected direct parent for $crate: $parent"
       echo "[guard] allowed: ${allowed[*]}"
-      echo "$tree"
+      echo "$stripped"
       return 1
     fi
   done
