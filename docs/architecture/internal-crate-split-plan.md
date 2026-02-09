@@ -1,6 +1,6 @@
 # どこで・何を・なぜ
 - どこで: `ic-evm-wrapper` 周辺の内部構成
-- 何を: 将来の内部crate分割の境界と移行順を定義する
+- 何を: 内部crate分割の境界と完了後の責務分担を定義する
 - なぜ: 依存削減・命令数最適化・責務分離を安全に進めるため
 
 ## 目的
@@ -8,7 +8,12 @@
 - 公開APIは変えず、内部実装のみ段階的に分割する。
 - 分割後も canbench と既存テストで回帰検知できる状態を維持する。
 
-## 分割対象（将来）
+## 先行実装（完了）
+- `ic-evm-tx` を新設し、`tx_recovery`（Eth署名復元境界）を `ic-evm-core` から移管した。
+- `ic-evm-core` は `ic-evm-tx` へ依存し、`alloy-consensus` への直接依存を解消した。
+- 目的: `k256/alloy-consensus` の影響範囲を tx 専用crate に封じ込め、段階分割の起点を作る。
+
+## 分割対象（実装完了）
 1. `ic-evm-rpc-types`
 - 内容: `*View`, `*Error`, DTO群、RPC用の軽量型
 - 依存: `candid`, `serde` のみを原則にする
@@ -30,7 +35,7 @@
 - 非目標: chain状態更新を入れない
 
 ## 境界ルール
-- `ic-evm-wrapper` は canister entrypoint とオーケストレーションだけを担当する。
+- `ic-evm-wrapper` は canister entrypoint / 認可・ガード / state I/O / オーケストレーションを担当する。
 - crate間は「型 -> ロジック」の一方向依存を守る。
 - `ic-evm-rpc-types` は最下層の共有型crateとして循環依存を禁止する。
 
@@ -59,3 +64,24 @@
 
 - リスク: 分割時に import/型名変更で差分が肥大化
 - 対策: 1ステップ1責務で移行し、re-exportで段階互換を維持する。
+
+## 実装進捗（2026-02-09）
+- Phase 1（`ic-evm-rpc-types`）: 実装済み
+  - `*View` / `*Error` / DTO を `ic-evm-rpc-types` へ移管し、`ic-evm-wrapper` で `pub use` 互換を提供。
+- Phase 2（`ic-evm-metrics`）: 実装済み
+  - `prometheus_metrics.rs` を `ic-evm-metrics` に移管。
+  - snapshot整形（drop_counts変換）を `ic-evm-metrics` に移管。
+  - `metrics_prometheus` は state取得 + `ic_evm_metrics` 呼び出しの薄い委譲に変更。
+- Phase 3（`ic-evm-ops`）: 実装済み（優先ロジック）
+  - cycleモード判定・write reject判定・decode failure label整形を `ic-evm-ops` に移管。
+  - write拒否理由分岐は mode provider APIへ集約。
+- Phase 4（`ic-evm-rpc`）: 実装済み（全移管）
+  - 参照系に加えて `rpc_eth_get_balance` / `rpc_eth_get_code` / `rpc_eth_call_rawtx` / `rpc_eth_send_raw_transaction` を `ic-evm-rpc` に移管。
+  - `ic-evm-wrapper` の `rpc_eth_*` はガード + 委譲構成へ統一。
+
+## 互換公開の運用方針（合意）
+- 型定義の実体は `ic-evm-rpc-types` のみとし、二重定義は作らない。
+- `ic-evm-wrapper` の再公開 (`pub use`) は撤去済み。内部参照のみ `use ic_evm_rpc_types::*;` を利用する。
+- 以後の方針:
+  - 型参照の入口は `ic-evm-rpc-types` に統一する
+  - wrapper側で再公開を再導入しない

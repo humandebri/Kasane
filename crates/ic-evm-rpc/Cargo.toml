@@ -1,0 +1,11 @@
+[package]
+name = "ic-evm-rpc"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+ic-evm-rpc-types = { path = "../ic-evm-rpc-types" }
+evm_core = { package = "ic-evm-core", path = "../evm-core" }
+evm-db = { path = "../evm-db" }
+tracing = "0.1"

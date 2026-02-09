@@ -1,20 +1,23 @@
 //! どこで: canister入口 / 何を: Phase1のAPI公開 / なぜ: submit中心の安全な運用導線を提供するため
 
 use candid::{CandidType, Principal};
-use evm_core::{chain, hash};
+use evm_core::chain;
+#[cfg(test)]
+use evm_core::hash;
 use evm_db::chain_data::constants::CHAIN_ID;
 use evm_db::chain_data::constants::{MAX_QUEUE_SNAPSHOT_LIMIT, MAX_RETURN_DATA, MAX_TX_SIZE};
 use evm_db::chain_data::{
-    BlockData, CallerKey, MigrationPhase, OpsConfigV1, OpsMode, ReceiptLike, StoredTx,
-    StoredTxBytes, TxId, TxKind, TxLoc, TxLocKind, LOG_CONFIG_FILTER_MAX,
+    BlockData, CallerKey, MigrationPhase, OpsConfigV1, OpsMode, ReceiptLike, TxId, TxKind, TxLoc,
+    TxLocKind, LOG_CONFIG_FILTER_MAX,
 };
+#[cfg(test)]
+use evm_db::chain_data::StoredTx;
 use evm_db::meta::{
     current_schema_version, ensure_meta_initialized, get_meta, mark_migration_applied,
     schema_migration_state, set_needs_migration, set_schema_migration_state, set_tx_locs_v3_active,
     SchemaMigrationPhase, SchemaMigrationState,
 };
 use evm_db::stable_state::{init_stable_state, with_state};
-use evm_db::types::keys::{make_account_key, make_code_key};
 use evm_db::upgrade;
 use ic_cdk::api::{
     accept_message, canister_cycle_balance, is_controller, msg_caller, msg_method_name, time,
@@ -33,8 +36,6 @@ use tracing_subscriber::fmt::MakeWriter;
 #[cfg(not(target_arch = "wasm32"))]
 use tracing_subscriber::EnvFilter;
 
-mod prometheus_metrics;
-
 #[cfg(feature = "canbench-rs")]
 mod canbench_benches;
 
@@ -52,385 +53,40 @@ thread_local! {
     static MINING_FAIL_STREAK: Cell<u32> = Cell::new(0);
 }
 
-#[derive(Clone, Debug, CandidType, Deserialize)]
-pub struct ExecResultDto {
-    pub tx_id: Vec<u8>,
-    pub block_number: u64,
-    pub tx_index: u32,
-    pub status: u8,
-    pub gas_used: u64,
-    pub return_data: Option<Vec<u8>>,
-}
+use ic_evm_rpc_types::*;
 
-#[derive(Clone, Debug, CandidType, Deserialize)]
-pub enum LookupError {
-    NotFound,
-    Pending,
-    Pruned { pruned_before_block: u64 },
-}
 
-#[derive(Clone, Debug, CandidType, Deserialize)]
-pub enum ProduceBlockStatus {
-    Produced {
-        block_number: u64,
-        txs: u32,
-        gas_used: u64,
-        dropped: u32,
-    },
-    NoOp {
-        reason: NoOpReason,
-    },
-}
-
-#[derive(Clone, Debug, CandidType, Deserialize)]
-pub enum NoOpReason {
-    NoExecutableTx,
-    CycleCritical,
-    NeedsMigration,
-}
-
-#[derive(Clone, Debug, CandidType, Deserialize)]
-pub enum ProduceBlockError {
-    Internal(String),
-    InvalidArgument(String),
-}
-
-#[derive(Clone, Debug, CandidType, Deserialize)]
-pub struct OpsConfigView {
-    pub low_watermark: u128,
-    pub critical: u128,
-    pub freeze_on_critical: bool,
-}
-
-#[derive(Clone, Debug, CandidType, Deserialize)]
-pub enum OpsModeView {
-    Normal,
-    Low,
-    Critical,
-}
-
-#[derive(Clone, Debug, CandidType, Deserialize)]
-pub struct OpsStatusView {
-    pub config: OpsConfigView,
-    pub last_cycle_balance: u128,
-    pub last_check_ts: u64,
-    pub mode: OpsModeView,
-    pub safe_stop_latched: bool,
-    pub needs_migration: bool,
-    pub schema_version: u32,
-    pub log_filter_override: Option<String>,
-    pub log_truncated_count: u64,
-    pub critical_corrupt: bool,
-    pub mining_error_count: u64,
-    pub prune_error_count: u64,
-    pub decode_failure_count: u64,
-    pub decode_failure_last_ts: u64,
-    pub decode_failure_last_label: Option<String>,
-    pub block_gas_limit: u64,
-    pub instruction_soft_limit: u64,
-}
-
-#[derive(Clone, Debug, CandidType, Deserialize)]
-pub enum SubmitTxError {
-    InvalidArgument(String),
-    Rejected(String),
-    Internal(String),
-}
-
-#[derive(Clone, Debug, CandidType, Deserialize)]
-pub enum ExecuteTxError {
-    InvalidArgument(String),
-    Rejected(String),
-    Internal(String),
-}
-
+#[cfg(test)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum TxApiErrorKind {
     InvalidArgument,
     Rejected,
 }
 
+#[cfg(test)]
 const CODE_ARG_TX_TOO_LARGE: &str = "arg.tx_too_large";
+#[cfg(test)]
 const CODE_ARG_DECODE_FAILED: &str = "arg.decode_failed";
+#[cfg(test)]
 const CODE_ARG_UNSUPPORTED_TX_KIND: &str = "arg.unsupported_tx_kind";
+#[cfg(test)]
 const CODE_SUBMIT_TX_ALREADY_SEEN: &str = "submit.tx_already_seen";
+#[cfg(test)]
 const CODE_SUBMIT_INVALID_FEE: &str = "submit.invalid_fee";
+#[cfg(test)]
 const CODE_SUBMIT_NONCE_TOO_LOW: &str = "submit.nonce_too_low";
+#[cfg(test)]
 const CODE_SUBMIT_NONCE_GAP: &str = "submit.nonce_gap";
+#[cfg(test)]
 const CODE_SUBMIT_NONCE_CONFLICT: &str = "submit.nonce_conflict";
+#[cfg(test)]
 const CODE_SUBMIT_QUEUE_FULL: &str = "submit.queue_full";
+#[cfg(test)]
 const CODE_SUBMIT_SENDER_QUEUE_FULL: &str = "submit.sender_queue_full";
+#[cfg(test)]
 const CODE_SUBMIT_PRINCIPAL_QUEUE_FULL: &str = "submit.principal_queue_full";
+#[cfg(test)]
 const CODE_INTERNAL_UNEXPECTED: &str = "internal.unexpected";
-
-#[derive(Clone, Debug, CandidType, Deserialize)]
-pub struct BlockView {
-    pub number: u64,
-    pub parent_hash: Vec<u8>,
-    pub block_hash: Vec<u8>,
-    pub timestamp: u64,
-    pub tx_ids: Vec<Vec<u8>>,
-    pub tx_list_hash: Vec<u8>,
-    pub state_root: Vec<u8>,
-}
-
-#[derive(Clone, Debug, CandidType, Deserialize)]
-pub struct ReceiptView {
-    pub tx_id: Vec<u8>,
-    pub block_number: u64,
-    pub tx_index: u32,
-    pub status: u8,
-    pub gas_used: u64,
-    pub effective_gas_price: u64,
-    pub l1_data_fee: u128,
-    pub operator_fee: u128,
-    pub total_fee: u128,
-    pub return_data_hash: Vec<u8>,
-    pub return_data: Option<Vec<u8>>,
-    pub contract_address: Option<Vec<u8>>,
-    pub logs: Vec<LogView>,
-}
-
-#[derive(Clone, Debug, CandidType, Deserialize)]
-pub struct LogView {
-    pub address: Vec<u8>,
-    pub topics: Vec<Vec<u8>>,
-    pub data: Vec<u8>,
-}
-
-#[derive(Clone, Debug, CandidType, Deserialize)]
-pub struct QueueItemView {
-    pub seq: u64,
-    pub tx_id: Vec<u8>,
-    pub kind: TxKindView,
-}
-
-#[derive(Clone, Debug, CandidType, Deserialize)]
-pub struct QueueSnapshotView {
-    pub items: Vec<QueueItemView>,
-    pub next_cursor: Option<u64>,
-}
-
-#[derive(Clone, Debug, CandidType, Deserialize)]
-pub struct HealthView {
-    pub tip_number: u64,
-    pub tip_hash: Vec<u8>,
-    pub last_block_time: u64,
-    pub queue_len: u64,
-    pub auto_mine_enabled: bool,
-    pub is_producing: bool,
-    pub mining_scheduled: bool,
-    pub block_gas_limit: u64,
-    pub instruction_soft_limit: u64,
-}
-
-#[derive(Clone, Debug, CandidType, Deserialize)]
-pub struct DropCountView {
-    pub code: u16,
-    pub count: u64,
-}
-
-#[derive(Clone, Debug, CandidType, Deserialize)]
-pub struct MetricsView {
-    pub window: u64,
-    pub blocks: u64,
-    pub txs: u64,
-    pub avg_txs_per_block: u64,
-    pub block_rate_per_sec_x1000: Option<u64>,
-    pub ema_block_rate_per_sec_x1000: u64,
-    pub ema_txs_per_block_x1000: u64,
-    pub queue_len: u64,
-    pub drop_counts: Vec<DropCountView>,
-    pub total_submitted: u64,
-    pub total_included: u64,
-    pub total_dropped: u64,
-    pub cycles: u128,
-    pub pruned_before_block: Option<u64>,
-    pub dev_faucet_enabled: bool,
-}
-
-#[derive(Clone, Debug, CandidType, Deserialize)]
-pub struct PruneResultView {
-    pub did_work: bool,
-    pub remaining: u64,
-    pub pruned_before_block: Option<u64>,
-}
-
-#[derive(Clone, Debug, CandidType, Deserialize)]
-pub enum EthTxListView {
-    Hashes(Vec<Vec<u8>>),
-    Full(Vec<EthTxView>),
-}
-
-#[derive(Clone, Debug, CandidType, Deserialize)]
-pub struct EthBlockView {
-    pub number: u64,
-    pub parent_hash: Vec<u8>,
-    pub block_hash: Vec<u8>,
-    pub timestamp: u64,
-    pub txs: EthTxListView,
-    pub state_root: Vec<u8>,
-}
-
-#[derive(Clone, Debug, CandidType, Deserialize)]
-pub struct EthTxView {
-    pub hash: Vec<u8>,
-    pub eth_tx_hash: Option<Vec<u8>>,
-    pub kind: TxKindView,
-    pub raw: Vec<u8>,
-    pub decoded: Option<DecodedTxView>,
-    pub decode_ok: bool,
-    pub block_number: Option<u64>,
-    pub tx_index: Option<u32>,
-}
-
-#[derive(Clone, Debug, CandidType, Deserialize)]
-pub struct DecodedTxView {
-    pub from: Vec<u8>,
-    pub to: Option<Vec<u8>>,
-    pub nonce: u64,
-    pub value: Vec<u8>,
-    pub input: Vec<u8>,
-    pub gas_limit: u64,
-    pub gas_price: u128,
-    pub chain_id: Option<u64>,
-}
-
-#[derive(Clone, Debug, CandidType, Deserialize)]
-pub struct EthReceiptView {
-    pub tx_hash: Vec<u8>,
-    pub eth_tx_hash: Option<Vec<u8>>,
-    pub block_number: u64,
-    pub tx_index: u32,
-    pub status: u8,
-    pub gas_used: u64,
-    pub effective_gas_price: u64,
-    pub l1_data_fee: u128,
-    pub operator_fee: u128,
-    pub total_fee: u128,
-    pub contract_address: Option<Vec<u8>>,
-    pub logs: Vec<LogView>,
-}
-
-#[derive(Clone, Debug, CandidType, Deserialize)]
-pub struct EthLogFilterView {
-    pub from_block: Option<u64>,
-    pub to_block: Option<u64>,
-    pub address: Option<Vec<u8>>,
-    pub topic0: Option<Vec<u8>>,
-    pub topic1: Option<Vec<u8>>,
-    pub limit: Option<u32>,
-}
-
-#[derive(Clone, Debug, CandidType, Deserialize)]
-pub struct EthLogItemView {
-    pub block_number: u64,
-    pub tx_index: u32,
-    pub log_index: u32,
-    pub tx_hash: Vec<u8>,
-    pub eth_tx_hash: Option<Vec<u8>>,
-    pub address: Vec<u8>,
-    pub topics: Vec<Vec<u8>>,
-    pub data: Vec<u8>,
-}
-
-#[derive(Clone, Debug, CandidType, Deserialize, Eq, PartialEq)]
-pub enum GetLogsErrorView {
-    RangeTooLarge,
-    TooManyResults,
-    UnsupportedFilter(String),
-    InvalidArgument(String),
-}
-
-#[derive(Clone, Debug, CandidType, Deserialize)]
-pub enum RpcBlockLookupView {
-    Found(EthBlockView),
-    Pruned { pruned_before_block: u64 },
-    NotFound,
-}
-
-#[derive(Clone, Debug, CandidType, Deserialize)]
-pub enum RpcReceiptLookupView {
-    Found(EthReceiptView),
-    Pruned { pruned_before_block: u64 },
-    PossiblyPruned { pruned_before_block: u64 },
-    NotFound,
-}
-
-#[derive(Clone, Debug, CandidType, Deserialize)]
-pub struct ExportCursorView {
-    pub block_number: u64,
-    pub segment: u8,
-    pub byte_offset: u32,
-}
-
-#[derive(Clone, Debug, CandidType, Deserialize)]
-pub struct ExportChunkView {
-    pub segment: u8,
-    pub start: u32,
-    pub bytes: Vec<u8>,
-    pub payload_len: u32,
-}
-
-#[derive(Clone, Debug, CandidType, Deserialize)]
-pub struct ExportResponseView {
-    pub chunks: Vec<ExportChunkView>,
-    pub next_cursor: Option<ExportCursorView>,
-}
-
-#[derive(Clone, Debug, CandidType, Deserialize)]
-pub enum ExportErrorView {
-    InvalidCursor { message: String },
-    Pruned { pruned_before_block: u64 },
-    MissingData { message: String },
-    Limit,
-}
-
-#[derive(Clone, Debug, CandidType, Deserialize)]
-pub enum PendingStatusView {
-    Queued { seq: u64 },
-    Included { block_number: u64, tx_index: u32 },
-    Dropped { code: u16 },
-    Unknown,
-}
-
-#[derive(Clone, Debug, CandidType, Deserialize)]
-pub enum TxKindView {
-    EthSigned,
-    IcSynthetic,
-}
-
-#[derive(Clone, Debug, CandidType, Deserialize)]
-pub struct PrunePolicyView {
-    pub target_bytes: u64,
-    pub retain_days: u64,
-    pub retain_blocks: u64,
-    pub headroom_ratio_bps: u32,
-    pub hard_emergency_ratio_bps: u32,
-    pub timer_interval_ms: u64,
-    pub max_ops_per_tick: u32,
-}
-
-#[derive(Clone, Debug, CandidType, Deserialize)]
-pub struct PruneStatusView {
-    pub pruning_enabled: bool,
-    pub prune_running: bool,
-    pub estimated_kept_bytes: u64,
-    pub high_water_bytes: u64,
-    pub low_water_bytes: u64,
-    pub hard_emergency_bytes: u64,
-    pub last_prune_at: u64,
-    pub pruned_before_block: Option<u64>,
-    pub oldest_kept_block: Option<u64>,
-    pub oldest_kept_timestamp: Option<u64>,
-    pub need_prune: bool,
-}
-
-#[derive(Clone, Debug, CandidType, Deserialize)]
-pub struct GenesisBalanceView {
-    pub address: Vec<u8>,
-    pub amount: u128,
-}
 
 #[derive(Clone, Debug, CandidType, Deserialize)]
 pub struct InitArgs {
@@ -625,6 +281,7 @@ fn inspect_payload_len() -> usize {
     ic_cdk::api::call::arg_data_raw_size()
 }
 
+#[cfg(test)]
 fn submit_reject_code(err: &chain::ChainError) -> Option<&'static str> {
     match err {
         chain::ChainError::TxAlreadySeen => Some(CODE_SUBMIT_TX_ALREADY_SEEN),
@@ -639,6 +296,7 @@ fn submit_reject_code(err: &chain::ChainError) -> Option<&'static str> {
     }
 }
 
+#[cfg(test)]
 fn chain_submit_error_to_code(err: &chain::ChainError) -> Option<(TxApiErrorKind, &'static str)> {
     match err {
         chain::ChainError::TxTooLarge => {
@@ -655,6 +313,7 @@ fn chain_submit_error_to_code(err: &chain::ChainError) -> Option<(TxApiErrorKind
     }
 }
 
+#[cfg(test)]
 fn map_submit_chain_error(err: chain::ChainError, op_name: &str) -> SubmitTxError {
     if let Some((kind, code)) = chain_submit_error_to_code(&err) {
         return match kind {
@@ -664,13 +323,6 @@ fn map_submit_chain_error(err: chain::ChainError, op_name: &str) -> SubmitTxErro
     }
     error!(error = ?err, operation = op_name, "submit transaction failed");
     SubmitTxError::Internal(CODE_INTERNAL_UNEXPECTED.to_string())
-}
-
-fn submit_tx_in_with_code(tx_in: chain::TxIn, op_name: &str) -> Result<Vec<u8>, SubmitTxError> {
-    let tx_id = chain::submit_tx_in(tx_in).map_err(|err| map_submit_chain_error(err, op_name))?;
-    info!(operation = op_name, tx_id = ?tx_id, "submit accepted");
-    schedule_mining();
-    Ok(tx_id.0.to_vec())
 }
 
 #[cfg(test)]
@@ -721,14 +373,17 @@ fn submit_eth_tx(raw_tx: Vec<u8>) -> Result<Vec<u8>, SubmitTxError> {
     if let Some(reason) = reject_write_reason() {
         return Err(SubmitTxError::Rejected(reason));
     }
-    let caller_principal = ic_cdk::api::msg_caller().as_slice().to_vec();
-    submit_tx_in_with_code(
+    let out = ic_evm_rpc::submit_tx_in_with_code(
         chain::TxIn::EthSigned {
             tx_bytes: raw_tx,
-            caller_principal,
+            caller_principal: ic_cdk::api::msg_caller().as_slice().to_vec(),
         },
         "submit_eth_tx",
-    )
+    );
+    if out.is_ok() {
+        schedule_mining();
+    }
+    out
 }
 
 #[ic_cdk::update]
@@ -739,16 +394,18 @@ fn submit_ic_tx(tx_bytes: Vec<u8>) -> Result<Vec<u8>, SubmitTxError> {
     if let Some(reason) = reject_write_reason() {
         return Err(SubmitTxError::Rejected(reason));
     }
-    let caller_principal = ic_cdk::api::msg_caller().as_slice().to_vec();
-    let canister_id = ic_cdk::api::canister_self().as_slice().to_vec();
-    submit_tx_in_with_code(
+    let out = ic_evm_rpc::submit_tx_in_with_code(
         chain::TxIn::IcSynthetic {
-            caller_principal,
-            canister_id,
+            caller_principal: ic_cdk::api::msg_caller().as_slice().to_vec(),
+            canister_id: ic_cdk::api::canister_self().as_slice().to_vec(),
             tx_bytes,
         },
         "submit_ic_tx",
-    )
+    );
+    if out.is_ok() {
+        schedule_mining();
+    }
+    out
 }
 
 #[cfg(feature = "dev-faucet")]
@@ -983,188 +640,42 @@ fn rpc_eth_get_block_by_number(number: u64, full_tx: bool) -> Option<EthBlockVie
 
 #[ic_cdk::query]
 fn rpc_eth_get_transaction_by_eth_hash(eth_tx_hash: Vec<u8>) -> Option<EthTxView> {
-    let tx_id = find_eth_tx_id_by_eth_hash_bytes(&eth_tx_hash)?;
-    tx_to_view(tx_id)
+    ic_evm_rpc::rpc_eth_get_transaction_by_eth_hash(eth_tx_hash)
 }
 
 #[ic_cdk::query]
 fn rpc_eth_get_transaction_receipt_by_eth_hash(eth_tx_hash: Vec<u8>) -> Option<EthReceiptView> {
-    let tx_id = find_eth_tx_id_by_eth_hash_bytes(&eth_tx_hash)?;
-    match receipt_lookup_status(tx_id) {
-        RpcReceiptLookupView::Found(receipt) => Some(receipt),
-        RpcReceiptLookupView::Pruned { .. }
-        | RpcReceiptLookupView::PossiblyPruned { .. }
-        | RpcReceiptLookupView::NotFound => None,
-    }
+    ic_evm_rpc::rpc_eth_get_transaction_receipt_by_eth_hash(eth_tx_hash)
 }
 
 #[ic_cdk::query]
 fn rpc_eth_get_balance(address: Vec<u8>) -> Result<Vec<u8>, String> {
-    let addr = parse_address_20(address).ok_or_else(|| "address must be 20 bytes".to_string())?;
-    let key = make_account_key(addr);
-    let balance = with_state(|state| {
-        state
-            .accounts
-            .get(&key)
-            .map(|value| value.balance().to_vec())
-            .unwrap_or_else(|| [0u8; 32].to_vec())
-    });
-    Ok(balance)
+    ic_evm_rpc::rpc_eth_get_balance(address)
 }
 
 #[ic_cdk::query]
 fn rpc_eth_get_code(address: Vec<u8>) -> Result<Vec<u8>, String> {
-    let addr = parse_address_20(address).ok_or_else(|| "address must be 20 bytes".to_string())?;
-    let key = make_account_key(addr);
-    let code = with_state(|state| {
-        let Some(account) = state.accounts.get(&key) else {
-            return Vec::new();
-        };
-        let code_hash = account.code_hash();
-        if code_hash == [0u8; 32] {
-            return Vec::new();
-        }
-        state
-            .codes
-            .get(&make_code_key(code_hash))
-            .map(|value| value.0)
-            .unwrap_or_default()
-    });
-    Ok(code)
+    ic_evm_rpc::rpc_eth_get_code(address)
 }
 
 #[ic_cdk::query]
 fn rpc_eth_call_rawtx(raw_tx: Vec<u8>) -> Result<Vec<u8>, String> {
-    chain::eth_call(raw_tx).map_err(|err| format!("eth_call failed: {err:?}"))
+    ic_evm_rpc::rpc_eth_call_rawtx(raw_tx)
 }
 
 #[ic_cdk::query]
 fn rpc_eth_get_logs(filter: EthLogFilterView) -> Result<Vec<EthLogItemView>, GetLogsErrorView> {
-    const DEFAULT_LIMIT: usize = 200;
-    const MAX_LIMIT: usize = 2000;
-    const MAX_BLOCK_SPAN: u64 = 5000;
-
-    if filter.topic1.is_some() {
-        return Err(GetLogsErrorView::UnsupportedFilter(
-            "topic1 is not supported".to_string(),
-        ));
-    }
-    let head = chain::get_head_number();
-    let mut from = filter.from_block.unwrap_or(0);
-    let mut to = filter.to_block.unwrap_or(head);
-    if from > to {
-        return Err(GetLogsErrorView::InvalidArgument(
-            "from_block must be <= to_block".to_string(),
-        ));
-    }
-    let requested_span = to.saturating_sub(from);
-    if requested_span > MAX_BLOCK_SPAN {
-        return Err(GetLogsErrorView::RangeTooLarge);
-    }
-    if to > head {
-        to = head;
-    }
-    let requested_limit_u32 = filter
-        .limit
-        .unwrap_or(u32::try_from(DEFAULT_LIMIT).unwrap_or(u32::MAX));
-    let requested_limit = usize::try_from(requested_limit_u32).unwrap_or(usize::MAX);
-    if requested_limit > MAX_LIMIT {
-        return Err(GetLogsErrorView::TooManyResults);
-    }
-    let limit = requested_limit;
-    let address_filter = match filter.address {
-        Some(bytes) => Some(parse_address_20(bytes).ok_or_else(|| {
-            GetLogsErrorView::InvalidArgument("address must be 20 bytes".to_string())
-        })?),
-        None => None,
-    };
-    let topic0_filter = match filter.topic0 {
-        Some(bytes) => Some(parse_hash_32(bytes).ok_or_else(|| {
-            GetLogsErrorView::InvalidArgument("topic0 must be 32 bytes".to_string())
-        })?),
-        None => None,
-    };
-
-    let pruned_before = with_state(|state| state.prune_state.get().pruned_before());
-    if let Some(pruned) = pruned_before {
-        if from <= pruned {
-            from = pruned.saturating_add(1);
-        }
-    }
-    let mut out = Vec::new();
-    for number in from..=to {
-        let Some(block) = chain::get_block(number) else {
-            continue;
-        };
-        for tx_id in block.tx_ids.iter() {
-            let Some(receipt) = chain::get_receipt(tx_id) else {
-                continue;
-            };
-            let eth_tx_hash = chain::get_tx_envelope(tx_id)
-                .and_then(|envelope| StoredTx::try_from(envelope).ok())
-                .and_then(|stored| {
-                    if stored.kind == TxKind::EthSigned {
-                        Some(hash::keccak256(&stored.raw).to_vec())
-                    } else {
-                        None
-                    }
-                });
-            for (log_index, log) in receipt.logs.iter().enumerate() {
-                let address = log.address.as_slice();
-                if let Some(filter_addr) = address_filter {
-                    if address != filter_addr {
-                        continue;
-                    }
-                }
-                if let Some(topic0) = topic0_filter {
-                    let topics = log.data.topics();
-                    if topics.is_empty() || topics[0].as_slice() != topic0 {
-                        continue;
-                    }
-                }
-                if out.len() == limit {
-                    return Err(GetLogsErrorView::TooManyResults);
-                }
-                out.push(EthLogItemView {
-                    block_number: receipt.block_number,
-                    tx_index: receipt.tx_index,
-                    log_index: u32::try_from(log_index).unwrap_or(u32::MAX),
-                    tx_hash: receipt.tx_id.0.to_vec(),
-                    eth_tx_hash: eth_tx_hash.clone(),
-                    address: address.to_vec(),
-                    topics: log
-                        .data
-                        .topics()
-                        .iter()
-                        .map(|topic| topic.as_slice().to_vec())
-                        .collect(),
-                    data: log.data.data.to_vec(),
-                });
-            }
-        }
-    }
-    Ok(out)
+    ic_evm_rpc::rpc_eth_get_logs(filter)
 }
 
 #[ic_cdk::query]
 fn rpc_eth_get_block_by_number_with_status(number: u64, full_tx: bool) -> RpcBlockLookupView {
-    if let Some(pruned) = prune_boundary_for_number(number) {
-        return RpcBlockLookupView::Pruned {
-            pruned_before_block: pruned,
-        };
-    }
-    let Some(block) = chain::get_block(number) else {
-        return RpcBlockLookupView::NotFound;
-    };
-    RpcBlockLookupView::Found(block_to_eth_view(block, full_tx))
+    ic_evm_rpc::rpc_eth_get_block_by_number_with_status(number, full_tx)
 }
 
 #[ic_cdk::query]
 fn rpc_eth_get_transaction_receipt_with_status(tx_hash: Vec<u8>) -> RpcReceiptLookupView {
-    let Some(tx_id) = tx_id_from_bytes(tx_hash) else {
-        return RpcReceiptLookupView::NotFound;
-    };
-    receipt_lookup_status(tx_id)
+    ic_evm_rpc::rpc_eth_get_transaction_receipt_with_status(tx_hash)
 }
 
 #[ic_cdk::update]
@@ -1180,13 +691,14 @@ fn rpc_eth_send_raw_transaction(raw_tx: Vec<u8>) -> Result<Vec<u8>, SubmitTxErro
     if let Some(reason) = reject_write_reason() {
         return Err(SubmitTxError::Rejected(reason));
     }
-    submit_tx_in_with_code(
-        chain::TxIn::EthSigned {
-            tx_bytes: raw_tx,
-            caller_principal: ic_cdk::api::msg_caller().as_slice().to_vec(),
-        },
-        "rpc_eth_send_raw_transaction",
-    )
+    let out = ic_evm_rpc::rpc_eth_send_raw_transaction(
+        raw_tx,
+        ic_cdk::api::msg_caller().as_slice().to_vec(),
+    );
+    if out.is_ok() {
+        schedule_mining();
+    }
+    out
 }
 
 #[ic_cdk::query]
@@ -1237,7 +749,7 @@ fn get_ops_status() -> OpsStatusView {
         let ops = *state.ops_state.get();
         let meta = get_meta();
         let decode_failure_last_label =
-            decode_failure_label_view(evm_db::corrupt_log::read_last_corrupt_tag());
+            ic_evm_ops::decode_failure_label_view(evm_db::corrupt_log::read_last_corrupt_tag());
         OpsStatusView {
             config: OpsConfigView {
                 low_watermark: config.low_watermark,
@@ -1246,7 +758,7 @@ fn get_ops_status() -> OpsStatusView {
             },
             last_cycle_balance: ops.last_cycle_balance,
             last_check_ts: ops.last_check_ts,
-            mode: mode_to_view(ops.mode),
+            mode: ic_evm_ops::mode_to_view(ops.mode),
             safe_stop_latched: ops.safe_stop_latched,
             needs_migration: meta.needs_migration,
             schema_version: meta.schema_version,
@@ -1264,22 +776,9 @@ fn get_ops_status() -> OpsStatusView {
     })
 }
 
+#[cfg(test)]
 fn decode_failure_label_view(raw: [u8; 32]) -> Option<String> {
-    let end = raw.iter().position(|b| *b == 0).unwrap_or(raw.len());
-    if end == 0 {
-        return None;
-    }
-    let bytes = &raw[..end];
-    if bytes.iter().all(|b| {
-        b.is_ascii_lowercase() || b.is_ascii_digit() || *b == b'.' || *b == b'_' || *b == b'-'
-    }) {
-        return Some(String::from_utf8_lossy(bytes).to_string());
-    }
-    let mut out = String::from("hex:");
-    for b in bytes {
-        out.push_str(&format!("{b:02x}"));
-    }
-    Some(out)
+    ic_evm_ops::decode_failure_label_view(raw)
 }
 
 #[ic_cdk::update]
@@ -1404,19 +903,7 @@ fn metrics_prometheus() -> Result<String, String> {
         let chain_state = *state.chain_state.get();
         let metrics = *state.metrics_state.get();
         let pruned_before_block = state.prune_state.get().pruned_before();
-        let mut drop_counts = Vec::new();
-        for (idx, count) in metrics.drop_counts.iter().enumerate() {
-            if *count == 0 {
-                continue;
-            }
-            if let Ok(code) = u16::try_from(idx) {
-                drop_counts.push(prometheus_metrics::DropCountSample {
-                    code,
-                    count: *count,
-                });
-            }
-        }
-        prometheus_metrics::PrometheusSnapshot {
+        ic_evm_metrics::build_prometheus_snapshot(ic_evm_metrics::PrometheusSnapshotInput {
             cycles_balance: cycles,
             stable_memory_pages,
             heap_memory_pages,
@@ -1431,10 +918,10 @@ fn metrics_prometheus() -> Result<String, String> {
             mining_interval_ms: chain_state.mining_interval_ms,
             last_block_time: chain_state.last_block_time,
             pruned_before_block,
-            drop_counts,
-        }
+            drop_counts_by_code: metrics.drop_counts.to_vec(),
+        })
     });
-    prometheus_metrics::encode_prometheus(now_nanos, &snapshot)
+    ic_evm_metrics::encode_prometheus(now_nanos, &snapshot)
 }
 
 #[ic_cdk::update]
@@ -1693,6 +1180,7 @@ fn current_heap_memory_pages() -> u64 {
     0
 }
 
+#[cfg(test)]
 fn tx_id_from_bytes(tx_id: Vec<u8>) -> Option<TxId> {
     if tx_id.len() != 32 {
         return None;
@@ -1702,102 +1190,7 @@ fn tx_id_from_bytes(tx_id: Vec<u8>) -> Option<TxId> {
     Some(TxId(buf))
 }
 
-fn parse_address_20(bytes: Vec<u8>) -> Option<[u8; 20]> {
-    if bytes.len() != 20 {
-        return None;
-    }
-    let mut out = [0u8; 20];
-    out.copy_from_slice(&bytes);
-    Some(out)
-}
-
-fn parse_hash_32(bytes: Vec<u8>) -> Option<[u8; 32]> {
-    if bytes.len() != 32 {
-        return None;
-    }
-    let mut out = [0u8; 32];
-    out.copy_from_slice(&bytes);
-    Some(out)
-}
-
-fn find_eth_tx_id_by_eth_hash_bytes(eth_tx_hash: &[u8]) -> Option<TxId> {
-    if eth_tx_hash.len() != 32 {
-        return None;
-    }
-    with_state(|state| {
-        for entry in state.tx_store.iter() {
-            let tx_id = *entry.key();
-            let Ok(stored) = StoredTx::try_from(entry.value()) else {
-                continue;
-            };
-            if stored.kind != TxKind::EthSigned {
-                continue;
-            }
-            if hash::keccak256(&stored.raw).as_slice() == eth_tx_hash {
-                return Some(tx_id);
-            }
-        }
-        None
-    })
-}
-
-fn tx_to_view(tx_id: TxId) -> Option<EthTxView> {
-    let envelope = chain::get_tx_envelope(&tx_id)?;
-    let (block_number, tx_index) = match chain::get_tx_loc(&tx_id) {
-        Some(TxLoc {
-            kind: TxLocKind::Included,
-            block_number,
-            tx_index,
-            ..
-        }) => (Some(block_number), Some(tx_index)),
-        _ => (None, None),
-    };
-    envelope_to_eth_view(envelope, block_number, tx_index)
-}
-
-fn envelope_to_eth_view(
-    envelope: StoredTxBytes,
-    block_number: Option<u64>,
-    tx_index: Option<u32>,
-) -> Option<EthTxView> {
-    let stored = StoredTx::try_from(envelope).ok()?;
-    let kind = stored.kind;
-    let caller = match kind {
-        TxKind::IcSynthetic => stored.caller_evm.unwrap_or([0u8; 20]),
-        TxKind::EthSigned => [0u8; 20],
-    };
-    let decoded =
-        if let Ok(decoded) = evm_core::tx_decode::decode_tx_view(kind, caller, &stored.raw) {
-            Some(DecodedTxView {
-                from: decoded.from.to_vec(),
-                to: decoded.to.map(|addr| addr.to_vec()),
-                nonce: decoded.nonce,
-                value: decoded.value.to_vec(),
-                input: decoded.input.into_owned(),
-                gas_limit: decoded.gas_limit,
-                gas_price: decoded.gas_price,
-                chain_id: decoded.chain_id,
-            })
-        } else {
-            None
-        };
-
-    Some(EthTxView {
-        hash: stored.tx_id.0.to_vec(),
-        eth_tx_hash: if kind == TxKind::EthSigned {
-            Some(hash::keccak256(&stored.raw).to_vec())
-        } else {
-            None
-        },
-        kind: tx_kind_to_view(kind),
-        raw: stored.raw.clone(),
-        decode_ok: decoded.is_some(),
-        decoded,
-        block_number,
-        tx_index,
-    })
-}
-
+#[cfg(test)]
 fn receipt_to_eth_view(receipt: ReceiptLike) -> EthReceiptView {
     let eth_tx_hash = chain::get_tx_envelope(&receipt.tx_id)
         .and_then(|envelope| StoredTx::try_from(envelope).ok())
@@ -1824,28 +1217,8 @@ fn receipt_to_eth_view(receipt: ReceiptLike) -> EthReceiptView {
     }
 }
 
-fn block_to_eth_view(block: BlockData, full_tx: bool) -> EthBlockView {
-    let txs = if full_tx {
-        let mut list = Vec::with_capacity(block.tx_ids.len());
-        for tx_id in block.tx_ids.iter() {
-            if let Some(view) = tx_to_view(*tx_id) {
-                list.push(view);
-            }
-        }
-        EthTxListView::Full(list)
-    } else {
-        EthTxListView::Hashes(block.tx_ids.iter().map(|id| id.0.to_vec()).collect())
-    };
-    EthBlockView {
-        number: block.number,
-        parent_hash: block.parent_hash.to_vec(),
-        block_hash: block.block_hash.to_vec(),
-        timestamp: block.timestamp,
-        txs,
-        state_root: block.state_root.to_vec(),
-    }
-}
 
+#[cfg(test)]
 fn prune_boundary_for_number(number: u64) -> Option<u64> {
     let pruned_before = with_state(|state| state.prune_state.get().pruned_before());
     match pruned_before {
@@ -1854,6 +1227,7 @@ fn prune_boundary_for_number(number: u64) -> Option<u64> {
     }
 }
 
+#[cfg(test)]
 fn receipt_lookup_status(tx_id: TxId) -> RpcReceiptLookupView {
     if let Some(receipt) = chain::get_receipt(&tx_id) {
         return RpcReceiptLookupView::Found(receipt_to_eth_view(receipt));
@@ -1878,14 +1252,6 @@ fn receipt_lookup_status(tx_id: TxId) -> RpcReceiptLookupView {
         };
     }
     RpcReceiptLookupView::NotFound
-}
-
-fn mode_to_view(mode: OpsMode) -> OpsModeView {
-    match mode {
-        OpsMode::Normal => OpsModeView::Normal,
-        OpsMode::Low => OpsModeView::Low,
-        OpsMode::Critical => OpsModeView::Critical,
-    }
 }
 
 fn require_controller() -> Result<(), String> {
@@ -2063,30 +1429,8 @@ fn observe_cycles() -> OpsMode {
     let now = time();
     evm_db::stable_state::with_state_mut(|state| {
         let config = *state.ops_config.get();
-        let mut ops = *state.ops_state.get();
-        let next_mode = if balance < config.critical {
-            if config.freeze_on_critical {
-                ops.safe_stop_latched = true;
-            }
-            OpsMode::Critical
-        } else if ops.safe_stop_latched
-            && config.freeze_on_critical
-            && balance < config.low_watermark
-        {
-            OpsMode::Critical
-        } else {
-            if balance >= config.low_watermark {
-                ops.safe_stop_latched = false;
-            }
-            if balance < config.low_watermark {
-                OpsMode::Low
-            } else {
-                OpsMode::Normal
-            }
-        };
-        ops.last_cycle_balance = balance;
-        ops.last_check_ts = now;
-        ops.mode = next_mode;
+        let ops = ic_evm_ops::observe_cycles(balance, now, config, *state.ops_state.get());
+        let next_mode = ops.mode;
         let _ = state.ops_state.set(ops);
         next_mode
     })
@@ -2097,13 +1441,7 @@ fn cycle_mode() -> OpsMode {
 }
 
 fn reject_write_reason() -> Option<String> {
-    if migration_pending() {
-        return Some("ops.write.needs_migration".to_string());
-    }
-    if cycle_mode() == OpsMode::Critical {
-        return Some("ops.write.cycle_critical".to_string());
-    }
-    None
+    ic_evm_ops::reject_write_reason_with_mode_provider(migration_pending(), cycle_mode)
 }
 
 fn reject_anonymous_update() -> Option<String> {
@@ -2298,7 +1636,14 @@ fn apply_post_upgrade_migrations() {
     }
 
     let from = meta.schema_version;
-    if from < current || meta.needs_migration {
+    if from >= 3 && !evm_db::meta::tx_locs_v3_active() {
+        set_tx_locs_v3_active(true);
+    }
+    let state_root_pending = with_state(|state| {
+        !state.state_root_meta.get().initialized
+            || state.state_root_migration.get().phase != MigrationPhase::Done
+    });
+    if from < current || meta.needs_migration || state_root_pending {
         set_needs_migration(true);
         set_schema_migration_state(SchemaMigrationState {
             phase: SchemaMigrationPhase::Init,

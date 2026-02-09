@@ -9,6 +9,17 @@ if ! command -v canbench >/dev/null 2>&1; then
   cargo install --locked canbench
 fi
 
+# Prefer a local PocketIC binary to avoid flaky network downloads during canbench startup.
+if [[ -z "${POCKET_IC_BIN:-}" ]]; then
+  if [[ -x "${ROOT_DIR}/crates/evm-rpc-e2e/pocket-ic" ]]; then
+    export POCKET_IC_BIN="${ROOT_DIR}/crates/evm-rpc-e2e/pocket-ic"
+    echo "[canbench-guard] using local PocketIC binary: ${POCKET_IC_BIN}"
+  elif [[ -x "${ROOT_DIR}/pocket-ic" ]]; then
+    export POCKET_IC_BIN="${ROOT_DIR}/pocket-ic"
+    echo "[canbench-guard] using local PocketIC binary: ${POCKET_IC_BIN}"
+  fi
+fi
+
 BASELINE_FILE="canbench_results.yml"
 if [[ ! -f "$BASELINE_FILE" ]]; then
   echo "[canbench-guard] baseline file not found: $BASELINE_FILE"
@@ -30,7 +41,22 @@ else
 fi
 
 # canbench --persist updates canbench_results.yml with current measurements.
-canbench --persist
+# Retry to reduce transient startup/network flakes from underlying PocketIC bootstrapping.
+attempt=1
+max_attempts=3
+while true; do
+  if canbench --persist; then
+    break
+  fi
+  if [[ "$attempt" -ge "$max_attempts" ]]; then
+    echo "[canbench-guard] ERROR: canbench failed after ${max_attempts} attempts" >&2
+    exit 1
+  fi
+  sleep_sec=$((attempt * 3))
+  echo "[canbench-guard] WARN: canbench attempt ${attempt} failed, retrying in ${sleep_sec}s" >&2
+  sleep "${sleep_sec}"
+  attempt=$((attempt + 1))
+done
 
 scripts/check_canbench_thresholds.sh "$tmp_baseline" "$BASELINE_FILE"
 

@@ -1,7 +1,7 @@
 //! どこで: Phase1のTxデコード / 何を: IcSynthetic + Eth の安全なデコード / なぜ: 互換性とtrap回避
-use crate::tx_recovery::{recover_eth_tx, RecoveredTx, RecoveryError};
 use alloy_primitives::Address as AlloyAddress;
 use byteorder::{BigEndian, ByteOrder};
+use evm_tx::{recover_eth_tx, RecoveredTx, RecoveryError};
 use evm_db::chain_data::constants::{CHAIN_ID, MAX_TX_SIZE};
 use evm_db::chain_data::TxKind;
 use revm::context::TxEnv;
