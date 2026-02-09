@@ -2,14 +2,14 @@ benches:
   decode_eth_signature_path:
     total:
       calls: 1
-      instructions: 10420
+      instructions: 10188
       heap_increase: 0
       stable_memory_increase: 0
     scopes: {}
   decode_eth_unsupported_typed_reject_path:
     total:
       calls: 1
-      instructions: 289
+      instructions: 291
       heap_increase: 0
       stable_memory_increase: 0
     scopes: {}
@@ -23,7 +23,7 @@ benches:
   produce_block_path:
     total:
       calls: 1
-      instructions: 1649325
+      instructions: 1649165
       heap_increase: 5
       stable_memory_increase: 128
     scopes: {}
