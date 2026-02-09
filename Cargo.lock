@@ -32,8 +32,6 @@ checksum = "683d7910e743518b0e34f1186f92494becacb047c7b6bf616c96772180fef923"
 [[package]]
 name = "alloy-consensus"
 version = "1.5.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ed1958f0294ecc05ebe7b3c9a8662a3e221c2523b7f2bcd94c7a651efbd510bf"
 dependencies = [
  "alloy-eips",
  "alloy-primitives",
@@ -1781,11 +1779,44 @@ dependencies = [
 ]
 
 [[package]]
+name = "ic-evm-metrics"
+version = "0.1.0"
+dependencies = [
+ "ic-evm-rpc-types",
+ "ic-metrics-encoder",
+]
+
+[[package]]
+name = "ic-evm-ops"
+version = "0.1.0"
+dependencies = [
+ "evm-db",
+ "ic-evm-rpc-types",
+]
+
+[[package]]
+name = "ic-evm-rpc"
+version = "0.1.0"
+dependencies = [
+ "evm-db",
+ "ic-evm-core",
+ "ic-evm-rpc-types",
+ "tracing",
+]
+
+[[package]]
+name = "ic-evm-rpc-types"
+version = "0.1.0"
+dependencies = [
+ "candid",
+ "serde",
+]
+
+[[package]]
 name = "ic-evm-tx"
 version = "0.1.0"
 dependencies = [
  "alloy-consensus",
- "alloy-eips",
  "alloy-primitives",
  "alloy-rlp",
  "evm-db",
@@ -1802,7 +1833,10 @@ dependencies = [
  "ic-cdk",
  "ic-cdk-timers",
  "ic-evm-core",
- "ic-metrics-encoder",
+ "ic-evm-metrics",
+ "ic-evm-ops",
+ "ic-evm-rpc",
+ "ic-evm-rpc-types",
  "serde",
  "tracing",
  "tracing-subscriber",
