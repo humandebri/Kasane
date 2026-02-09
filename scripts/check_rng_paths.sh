@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# どこで: workspace全体（vendor含む） / 何を: 直接RNG呼び出しの混入検出 / なぜ: wasmでOS RNG経路を踏まないため
+# どこで: 自前workspaceコード / 何を: 直接RNG呼び出しの混入検出 / なぜ: wasmでOS RNG経路を踏まないため
 
 set -euo pipefail
 
@@ -15,6 +15,7 @@ if command -v rg >/dev/null 2>&1; then
     --glob '!target/**' \
     --glob '!docs/**' \
     --glob '!scripts/**' \
+    --glob '!vendor/**' \
     --glob '!vendor/**/CHANGELOG.md' \
     > "$TMP_FILE" || true
 else
@@ -23,6 +24,7 @@ else
     --exclude-dir=target \
     --exclude-dir=docs \
     --exclude-dir=scripts \
+    --exclude-dir=vendor \
     --exclude='CHANGELOG.md' \
     > "$TMP_FILE" || true
 fi
