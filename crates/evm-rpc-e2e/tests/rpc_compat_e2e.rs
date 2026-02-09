@@ -65,21 +65,6 @@ struct EthReceiptView {
 }
 
 #[derive(Clone, Debug, CandidType, Deserialize, Eq, PartialEq)]
-struct EthReceiptViewV2 {
-    tx_hash: Vec<u8>,
-    block_number: u64,
-    tx_index: u32,
-    status: u8,
-    gas_used: u64,
-    effective_gas_price: u64,
-    l1_data_fee: candid::Nat,
-    operator_fee: candid::Nat,
-    total_fee: candid::Nat,
-    contract_address: Option<Vec<u8>>,
-    logs: Vec<LogView>,
-}
-
-#[derive(Clone, Debug, CandidType, Deserialize, Eq, PartialEq)]
 struct GenesisBalanceView {
     address: Vec<u8>,
     amount: u128,
@@ -261,25 +246,30 @@ fn rpc_get_block_by_number_accepts_flags() {
 }
 
 #[test]
-fn rpc_get_transaction_by_hash_and_receipt_return_none() {
+fn rpc_get_transaction_by_eth_hash_and_receipt_return_none() {
     let pic = PocketIc::new();
     let canister_id = install_canister(&pic);
 
     let tx_hash = vec![0u8; 32];
     let arg = Encode!(&tx_hash).expect("encode");
-    let tx_bytes = call_query(&pic, canister_id, "rpc_eth_get_transaction_by_hash", arg);
+    let tx_bytes = call_query(&pic, canister_id, "rpc_eth_get_transaction_by_eth_hash", arg);
     let tx: Option<EthTxView> = Decode!(&tx_bytes, Option<EthTxView>).expect("decode tx");
     assert!(tx.is_none());
 
     let arg = Encode!(&tx_hash).expect("encode");
-    let receipt_bytes = call_query(&pic, canister_id, "rpc_eth_get_transaction_receipt", arg);
+    let receipt_bytes = call_query(
+        &pic,
+        canister_id,
+        "rpc_eth_get_transaction_receipt_by_eth_hash",
+        arg,
+    );
     let receipt: Option<EthReceiptView> =
         Decode!(&receipt_bytes, Option<EthReceiptView>).expect("decode receipt");
     assert!(receipt.is_none());
 }
 
 #[test]
-fn rpc_receipt_decode_is_backward_compatible() {
+fn rpc_get_transaction_receipt_by_eth_hash_returns_none_for_non_eth_tx() {
     let pic = PocketIc::new();
     let canister_id = install_canister(&pic);
     let tx_bytes = build_ic_tx_bytes([0x10u8; 20], 0);
@@ -306,21 +296,12 @@ fn rpc_receipt_decode_is_backward_compatible() {
     let receipt_bytes = call_query(
         &pic,
         canister_id,
-        "rpc_eth_get_transaction_receipt",
+        "rpc_eth_get_transaction_receipt_by_eth_hash",
         Encode!(&tx_id).expect("encode receipt arg"),
     );
-    let legacy: Option<EthReceiptView> =
-        Decode!(&receipt_bytes, Option<EthReceiptView>).expect("decode legacy");
-    let v2: Option<EthReceiptViewV2> =
-        Decode!(&receipt_bytes, Option<EthReceiptViewV2>).expect("decode v2");
-    let legacy = legacy.expect("legacy receipt");
-    let v2 = v2.expect("v2 receipt");
-    assert_eq!(legacy.tx_hash, v2.tx_hash);
-    assert_eq!(legacy.block_number, v2.block_number);
-    assert_eq!(legacy.tx_index, v2.tx_index);
-    assert_eq!(legacy.status, v2.status);
-    assert_eq!(legacy.gas_used, v2.gas_used);
-    assert_eq!(legacy.effective_gas_price, v2.effective_gas_price);
+    let receipt: Option<EthReceiptView> =
+        Decode!(&receipt_bytes, Option<EthReceiptView>).expect("decode receipt");
+    assert!(receipt.is_none(), "ic synthetic tx has no eth_tx_hash");
 }
 
 #[test]

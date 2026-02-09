@@ -14,6 +14,7 @@ use evm_db::meta::{
     SchemaMigrationPhase, SchemaMigrationState,
 };
 use evm_db::stable_state::{init_stable_state, with_state};
+use evm_db::types::keys::{make_account_key, make_code_key};
 use evm_db::upgrade;
 use ic_cdk::api::{
     accept_message, canister_cycle_balance, is_controller, msg_caller, msg_method_name, time,
@@ -23,7 +24,7 @@ use std::cell::Cell;
 use std::io::{self, Write};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, OnceLock};
-use tracing::{error, warn};
+use tracing::{error, info, warn};
 use tracing_subscriber::fmt::MakeWriter;
 use tracing_subscriber::EnvFilter;
 
@@ -293,6 +294,7 @@ pub struct DecodedTxView {
 #[derive(Clone, Debug, CandidType, Deserialize)]
 pub struct EthReceiptView {
     pub tx_hash: Vec<u8>,
+    pub eth_tx_hash: Option<Vec<u8>>,
     pub block_number: u64,
     pub tx_index: u32,
     pub status: u8,
@@ -303,6 +305,36 @@ pub struct EthReceiptView {
     pub total_fee: u128,
     pub contract_address: Option<Vec<u8>>,
     pub logs: Vec<LogView>,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize)]
+pub struct EthLogFilterView {
+    pub from_block: Option<u64>,
+    pub to_block: Option<u64>,
+    pub address: Option<Vec<u8>>,
+    pub topic0: Option<Vec<u8>>,
+    pub topic1: Option<Vec<u8>>,
+    pub limit: Option<u32>,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize)]
+pub struct EthLogItemView {
+    pub block_number: u64,
+    pub tx_index: u32,
+    pub log_index: u32,
+    pub tx_hash: Vec<u8>,
+    pub eth_tx_hash: Option<Vec<u8>>,
+    pub address: Vec<u8>,
+    pub topics: Vec<Vec<u8>>,
+    pub data: Vec<u8>,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize, Eq, PartialEq)]
+pub enum GetLogsErrorView {
+    RangeTooLarge,
+    TooManyResults,
+    UnsupportedFilter(String),
+    InvalidArgument(String),
 }
 
 #[derive(Clone, Debug, CandidType, Deserialize)]
@@ -631,6 +663,7 @@ fn map_submit_chain_error(err: chain::ChainError, op_name: &str) -> SubmitTxErro
 
 fn submit_tx_in_with_code(tx_in: chain::TxIn, op_name: &str) -> Result<Vec<u8>, SubmitTxError> {
     let tx_id = chain::submit_tx_in(tx_in).map_err(|err| map_submit_chain_error(err, op_name))?;
+    info!(operation = op_name, tx_id = ?tx_id, "submit accepted");
     schedule_mining();
     Ok(tx_id.0.to_vec())
 }
@@ -756,6 +789,12 @@ fn produce_block(max_txs: u32) -> Result<ProduceBlockStatus, ProduceBlockError> 
     match chain::produce_block(limit) {
         Ok(outcome) => {
             let block = outcome.block;
+            info!(
+                block_number = block.number,
+                tx_count = block.tx_ids.len(),
+                dropped = outcome.dropped,
+                "produce_block succeeded"
+            );
             Ok(ProduceBlockStatus::Produced {
                 block_number: block.number,
                 txs: block.tx_ids.len().try_into().unwrap_or(u32::MAX),
@@ -938,19 +977,168 @@ fn rpc_eth_get_block_by_number(number: u64, full_tx: bool) -> Option<EthBlockVie
 }
 
 #[ic_cdk::query]
-fn rpc_eth_get_transaction_by_hash(tx_hash: Vec<u8>) -> Option<EthTxView> {
-    let tx_id = tx_id_from_bytes(tx_hash)?;
+fn rpc_eth_get_transaction_by_eth_hash(eth_tx_hash: Vec<u8>) -> Option<EthTxView> {
+    let tx_id = find_eth_tx_id_by_eth_hash_bytes(&eth_tx_hash)?;
     tx_to_view(tx_id)
 }
 
 #[ic_cdk::query]
-fn rpc_eth_get_transaction_receipt(tx_hash: Vec<u8>) -> Option<EthReceiptView> {
-    match rpc_eth_get_transaction_receipt_with_status(tx_hash) {
+fn rpc_eth_get_transaction_receipt_by_eth_hash(eth_tx_hash: Vec<u8>) -> Option<EthReceiptView> {
+    let tx_id = find_eth_tx_id_by_eth_hash_bytes(&eth_tx_hash)?;
+    match receipt_lookup_status(tx_id) {
         RpcReceiptLookupView::Found(receipt) => Some(receipt),
         RpcReceiptLookupView::Pruned { .. }
         | RpcReceiptLookupView::PossiblyPruned { .. }
         | RpcReceiptLookupView::NotFound => None,
     }
+}
+
+#[ic_cdk::query]
+fn rpc_eth_get_balance(address: Vec<u8>) -> Result<Vec<u8>, String> {
+    let addr = parse_address_20(address).ok_or_else(|| "address must be 20 bytes".to_string())?;
+    let key = make_account_key(addr);
+    let balance = with_state(|state| {
+        state
+            .accounts
+            .get(&key)
+            .map(|value| value.balance().to_vec())
+            .unwrap_or_else(|| [0u8; 32].to_vec())
+    });
+    Ok(balance)
+}
+
+#[ic_cdk::query]
+fn rpc_eth_get_code(address: Vec<u8>) -> Result<Vec<u8>, String> {
+    let addr = parse_address_20(address).ok_or_else(|| "address must be 20 bytes".to_string())?;
+    let key = make_account_key(addr);
+    let code = with_state(|state| {
+        let Some(account) = state.accounts.get(&key) else {
+            return Vec::new();
+        };
+        let code_hash = account.code_hash();
+        if code_hash == [0u8; 32] {
+            return Vec::new();
+        }
+        state
+            .codes
+            .get(&make_code_key(code_hash))
+            .map(|value| value.0)
+            .unwrap_or_default()
+    });
+    Ok(code)
+}
+
+#[ic_cdk::query]
+fn rpc_eth_call_rawtx(raw_tx: Vec<u8>) -> Result<Vec<u8>, String> {
+    chain::eth_call(raw_tx).map_err(|err| format!("eth_call failed: {err:?}"))
+}
+
+#[ic_cdk::query]
+fn rpc_eth_get_logs(filter: EthLogFilterView) -> Result<Vec<EthLogItemView>, GetLogsErrorView> {
+    const DEFAULT_LIMIT: usize = 200;
+    const MAX_LIMIT: usize = 2000;
+    const MAX_BLOCK_SPAN: u64 = 5000;
+
+    if filter.topic1.is_some() {
+        return Err(GetLogsErrorView::UnsupportedFilter(
+            "topic1 is not supported".to_string(),
+        ));
+    }
+    let head = chain::get_head_number();
+    let mut from = filter.from_block.unwrap_or(0);
+    let mut to = filter.to_block.unwrap_or(head);
+    if from > to {
+        return Err(GetLogsErrorView::InvalidArgument(
+            "from_block must be <= to_block".to_string(),
+        ));
+    }
+    let requested_span = to.saturating_sub(from);
+    if requested_span > MAX_BLOCK_SPAN {
+        return Err(GetLogsErrorView::RangeTooLarge);
+    }
+    if to > head {
+        to = head;
+    }
+    let requested_limit_u32 = filter
+        .limit
+        .unwrap_or(u32::try_from(DEFAULT_LIMIT).unwrap_or(u32::MAX));
+    let requested_limit = usize::try_from(requested_limit_u32).unwrap_or(usize::MAX);
+    if requested_limit > MAX_LIMIT {
+        return Err(GetLogsErrorView::TooManyResults);
+    }
+    let limit = requested_limit;
+    let address_filter = match filter.address {
+        Some(bytes) => Some(parse_address_20(bytes).ok_or_else(|| {
+            GetLogsErrorView::InvalidArgument("address must be 20 bytes".to_string())
+        })?),
+        None => None,
+    };
+    let topic0_filter = match filter.topic0 {
+        Some(bytes) => Some(parse_hash_32(bytes).ok_or_else(|| {
+            GetLogsErrorView::InvalidArgument("topic0 must be 32 bytes".to_string())
+        })?),
+        None => None,
+    };
+
+    let pruned_before = with_state(|state| state.prune_state.get().pruned_before());
+    if let Some(pruned) = pruned_before {
+        if from <= pruned {
+            from = pruned.saturating_add(1);
+        }
+    }
+    let mut out = Vec::new();
+    for number in from..=to {
+        let Some(block) = chain::get_block(number) else {
+            continue;
+        };
+        for tx_id in block.tx_ids.iter() {
+            let Some(receipt) = chain::get_receipt(tx_id) else {
+                continue;
+            };
+            let eth_tx_hash = chain::get_tx_envelope(tx_id)
+                .and_then(|envelope| StoredTx::try_from(envelope).ok())
+                .and_then(|stored| {
+                    if stored.kind == TxKind::EthSigned {
+                        Some(hash::keccak256(&stored.raw).to_vec())
+                    } else {
+                        None
+                    }
+                });
+            for (log_index, log) in receipt.logs.iter().enumerate() {
+                let address = log.address.as_slice();
+                if let Some(filter_addr) = address_filter {
+                    if address != filter_addr {
+                        continue;
+                    }
+                }
+                if let Some(topic0) = topic0_filter {
+                    let topics = log.data.topics();
+                    if topics.is_empty() || topics[0].as_slice() != topic0 {
+                        continue;
+                    }
+                }
+                if out.len() == limit {
+                    return Err(GetLogsErrorView::TooManyResults);
+                }
+                out.push(EthLogItemView {
+                    block_number: receipt.block_number,
+                    tx_index: receipt.tx_index,
+                    log_index: u32::try_from(log_index).unwrap_or(u32::MAX),
+                    tx_hash: receipt.tx_id.0.to_vec(),
+                    eth_tx_hash: eth_tx_hash.clone(),
+                    address: address.to_vec(),
+                    topics: log
+                        .data
+                        .topics()
+                        .iter()
+                        .map(|topic| topic.as_slice().to_vec())
+                        .collect(),
+                    data: log.data.data.to_vec(),
+                });
+            }
+        }
+    }
+    Ok(out)
 }
 
 #[ic_cdk::query]
@@ -1509,6 +1697,45 @@ fn tx_id_from_bytes(tx_id: Vec<u8>) -> Option<TxId> {
     Some(TxId(buf))
 }
 
+fn parse_address_20(bytes: Vec<u8>) -> Option<[u8; 20]> {
+    if bytes.len() != 20 {
+        return None;
+    }
+    let mut out = [0u8; 20];
+    out.copy_from_slice(&bytes);
+    Some(out)
+}
+
+fn parse_hash_32(bytes: Vec<u8>) -> Option<[u8; 32]> {
+    if bytes.len() != 32 {
+        return None;
+    }
+    let mut out = [0u8; 32];
+    out.copy_from_slice(&bytes);
+    Some(out)
+}
+
+fn find_eth_tx_id_by_eth_hash_bytes(eth_tx_hash: &[u8]) -> Option<TxId> {
+    if eth_tx_hash.len() != 32 {
+        return None;
+    }
+    with_state(|state| {
+        for entry in state.tx_store.iter() {
+            let tx_id = *entry.key();
+            let Ok(stored) = StoredTx::try_from(entry.value()) else {
+                continue;
+            };
+            if stored.kind != TxKind::EthSigned {
+                continue;
+            }
+            if hash::keccak256(&stored.raw).as_slice() == eth_tx_hash {
+                return Some(tx_id);
+            }
+        }
+        None
+    })
+}
+
 fn tx_to_view(tx_id: TxId) -> Option<EthTxView> {
     let envelope = chain::get_tx_envelope(&tx_id)?;
     let (block_number, tx_index) = match chain::get_tx_loc(&tx_id) {
@@ -1567,8 +1794,18 @@ fn envelope_to_eth_view(
 }
 
 fn receipt_to_eth_view(receipt: ReceiptLike) -> EthReceiptView {
+    let eth_tx_hash = chain::get_tx_envelope(&receipt.tx_id)
+        .and_then(|envelope| StoredTx::try_from(envelope).ok())
+        .and_then(|stored| {
+            if stored.kind == TxKind::EthSigned {
+                Some(hash::keccak256(&stored.raw).to_vec())
+            } else {
+                None
+            }
+        });
     EthReceiptView {
         tx_hash: receipt.tx_id.0.to_vec(),
+        eth_tx_hash,
         block_number: receipt.block_number,
         tx_index: receipt.tx_index,
         status: receipt.status,
@@ -2263,7 +2500,8 @@ mod tests {
         inspect_payload_limit_for_method, inspect_policy_for_method, map_execute_chain_result,
         map_submit_chain_error, migration_pending, prune_boundary_for_number,
         receipt_lookup_status, reject_anonymous_principal, reject_write_reason, tx_id_from_bytes,
-        ExecuteTxError, INSPECT_METHOD_POLICIES, MINING_ERROR_COUNT, PRUNE_ERROR_COUNT,
+        EthLogFilterView, ExecuteTxError, GetLogsErrorView, INSPECT_METHOD_POLICIES,
+        MINING_ERROR_COUNT, PRUNE_ERROR_COUNT,
     };
     use candid::Principal;
     use evm_core::chain::{ChainError, ExecResult};
@@ -2682,6 +2920,72 @@ mod tests {
         raw[1] = 0x01;
         let out = super::decode_failure_label_view(raw).expect("hex label");
         assert!(out.starts_with("hex:"));
+    }
+
+    #[test]
+    fn rpc_eth_get_logs_rejects_reverse_range() {
+        init_stable_state();
+        let err = super::rpc_eth_get_logs(EthLogFilterView {
+            from_block: Some(10),
+            to_block: Some(9),
+            address: None,
+            topic0: None,
+            topic1: None,
+            limit: Some(10),
+        })
+        .expect_err("reverse range should fail");
+        assert_eq!(
+            err,
+            GetLogsErrorView::InvalidArgument("from_block must be <= to_block".to_string())
+        );
+    }
+
+    #[test]
+    fn rpc_eth_get_logs_rejects_range_too_large() {
+        init_stable_state();
+        let err = super::rpc_eth_get_logs(EthLogFilterView {
+            from_block: Some(0),
+            to_block: Some(6_001),
+            address: None,
+            topic0: None,
+            topic1: None,
+            limit: Some(10),
+        })
+        .expect_err("wide range should fail");
+        assert_eq!(err, GetLogsErrorView::RangeTooLarge);
+    }
+
+    #[test]
+    fn rpc_eth_get_logs_rejects_unsupported_topic1_filter() {
+        init_stable_state();
+        let err = super::rpc_eth_get_logs(EthLogFilterView {
+            from_block: Some(0),
+            to_block: Some(0),
+            address: None,
+            topic0: None,
+            topic1: Some(vec![0u8; 32]),
+            limit: Some(10),
+        })
+        .expect_err("topic1 should be unsupported");
+        assert_eq!(
+            err,
+            GetLogsErrorView::UnsupportedFilter("topic1 is not supported".to_string())
+        );
+    }
+
+    #[test]
+    fn rpc_eth_get_logs_rejects_over_limit() {
+        init_stable_state();
+        let err = super::rpc_eth_get_logs(EthLogFilterView {
+            from_block: Some(0),
+            to_block: Some(0),
+            address: None,
+            topic0: None,
+            topic1: None,
+            limit: Some(2_001),
+        })
+        .expect_err("limit should fail");
+        assert_eq!(err, GetLogsErrorView::TooManyResults);
     }
 
     #[cfg(feature = "dev-faucet")]

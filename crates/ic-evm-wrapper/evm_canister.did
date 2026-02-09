@@ -26,6 +26,24 @@ type EthBlockView = record {
   state_root : blob;
   parent_hash : blob;
 };
+type EthLogFilterView = record {
+  limit : opt nat32;
+  topic0 : opt blob;
+  topic1 : opt blob;
+  address : opt blob;
+  to_block : opt nat64;
+  from_block : opt nat64;
+};
+type EthLogItemView = record {
+  tx_index : nat32;
+  log_index : nat32;
+  data : blob;
+  block_number : nat64;
+  topics : vec blob;
+  address : blob;
+  eth_tx_hash : opt blob;
+  tx_hash : blob;
+};
 type EthReceiptView = record {
   effective_gas_price : nat64;
   status : nat8;
@@ -35,6 +53,7 @@ type EthReceiptView = record {
   total_fee : nat;
   block_number : nat64;
   operator_fee : nat;
+  eth_tx_hash : opt blob;
   gas_used : nat64;
   contract_address : opt blob;
   tx_hash : blob;
@@ -72,11 +91,17 @@ type ExportResponseView = record {
   chunks : vec ExportChunkView;
 };
 type GenesisBalanceView = record { address : blob; amount : nat };
+type GetLogsErrorView = variant {
+  TooManyResults;
+  RangeTooLarge;
+  InvalidArgument : text;
+  UnsupportedFilter : text;
+};
 type HealthView = record {
+  instruction_soft_limit : nat64;
   is_producing : bool;
   mining_scheduled : bool;
   block_gas_limit : nat64;
-  instruction_soft_limit : nat64;
   tip_hash : blob;
   tip_number : nat64;
   last_block_time : nat64;
@@ -115,14 +140,13 @@ type OpsConfigView = record {
 };
 type OpsModeView = variant { Low; Normal; Critical };
 type OpsStatusView = record {
-  block_gas_limit : nat64;
-  instruction_soft_limit : nat64;
   needs_migration : bool;
   critical_corrupt : bool;
   decode_failure_last_ts : nat64;
   log_filter_override : opt text;
   last_cycle_balance : nat;
   mode : OpsModeView;
+  instruction_soft_limit : nat64;
   last_check_ts : nat64;
   mining_error_count : nat64;
   log_truncated_count : nat64;
@@ -130,6 +154,7 @@ type OpsStatusView = record {
   safe_stop_latched : bool;
   decode_failure_last_label : opt text;
   prune_error_count : nat64;
+  block_gas_limit : nat64;
   config : OpsConfigView;
   decode_failure_count : nat64;
 };
@@ -198,13 +223,15 @@ type ReceiptView = record {
 };
 type Result = variant { Ok : nat64; Err : text };
 type Result_1 = variant { Ok : ExportResponseView; Err : ExportErrorView };
+type Result_10 = variant { Ok; Err : text };
 type Result_2 = variant { Ok : BlockView; Err : LookupError };
 type Result_3 = variant { Ok : ReceiptView; Err : LookupError };
 type Result_4 = variant { Ok : text; Err : text };
 type Result_5 = variant { Ok : ProduceBlockStatus; Err : ProduceBlockError };
 type Result_6 = variant { Ok : PruneResultView; Err : ProduceBlockError };
-type Result_7 = variant { Ok : blob; Err : SubmitTxError };
-type Result_8 = variant { Ok; Err : text };
+type Result_7 = variant { Ok : blob; Err : text };
+type Result_8 = variant { Ok : vec EthLogItemView; Err : GetLogsErrorView };
+type Result_9 = variant { Ok : blob; Err : SubmitTxError };
 type RpcBlockLookupView = variant {
   NotFound;
   Found : EthBlockView;
@@ -239,26 +266,32 @@ service : (opt InitArgs) -> {
   produce_block : (nat32) -> (Result_5);
   prune_blocks : (nat64, nat32) -> (Result_6);
   rpc_eth_block_number : () -> (nat64) query;
+  rpc_eth_call_rawtx : (blob) -> (Result_7) query;
   rpc_eth_chain_id : () -> (nat64) query;
+  rpc_eth_get_balance : (blob) -> (Result_7) query;
   rpc_eth_get_block_by_number : (nat64, bool) -> (opt EthBlockView) query;
   rpc_eth_get_block_by_number_with_status : (nat64, bool) -> (
       RpcBlockLookupView,
     ) query;
-  rpc_eth_get_transaction_by_hash : (blob) -> (opt EthTxView) query;
-  rpc_eth_get_transaction_receipt : (blob) -> (opt EthReceiptView) query;
+  rpc_eth_get_code : (blob) -> (Result_7) query;
+  rpc_eth_get_logs : (EthLogFilterView) -> (Result_8) query;
+  rpc_eth_get_transaction_by_eth_hash : (blob) -> (opt EthTxView) query;
+  rpc_eth_get_transaction_receipt_by_eth_hash : (blob) -> (
+      opt EthReceiptView,
+    ) query;
   rpc_eth_get_transaction_receipt_with_status : (blob) -> (
       RpcReceiptLookupView,
     ) query;
-  rpc_eth_send_raw_transaction : (blob) -> (Result_7);
-  set_auto_mine : (bool) -> (Result_8);
-  set_block_gas_limit : (nat64) -> (Result_8);
-  set_instruction_soft_limit : (nat64) -> (Result_8);
-  set_log_filter : (opt text) -> (Result_8);
-  set_miner_allowlist : (vec principal) -> (Result_8);
-  set_mining_interval_ms : (nat64) -> (Result_8);
-  set_ops_config : (OpsConfigView) -> (Result_8);
-  set_prune_policy : (PrunePolicyView) -> (Result_8);
-  set_pruning_enabled : (bool) -> (Result_8);
-  submit_eth_tx : (blob) -> (Result_7);
-  submit_ic_tx : (blob) -> (Result_7);
+  rpc_eth_send_raw_transaction : (blob) -> (Result_9);
+  set_auto_mine : (bool) -> (Result_10);
+  set_block_gas_limit : (nat64) -> (Result_10);
+  set_instruction_soft_limit : (nat64) -> (Result_10);
+  set_log_filter : (opt text) -> (Result_10);
+  set_miner_allowlist : (vec principal) -> (Result_10);
+  set_mining_interval_ms : (nat64) -> (Result_10);
+  set_ops_config : (OpsConfigView) -> (Result_10);
+  set_prune_policy : (PrunePolicyView) -> (Result_10);
+  set_pruning_enabled : (bool) -> (Result_10);
+  submit_eth_tx : (blob) -> (Result_9);
+  submit_ic_tx : (blob) -> (Result_9);
 }
