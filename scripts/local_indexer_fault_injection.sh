@@ -12,7 +12,7 @@ INDEXER_BACKOFF_MAX_MS="${INDEXER_BACKOFF_MAX_MS:-5000}"
 INDEXER_CHAIN_ID="${INDEXER_CHAIN_ID:-4801360}"
 WORKDIR="${WORKDIR:-$(mktemp -d -t ic-indexer-faults-)}"
 INDEXER_LOG="${INDEXER_LOG:-${WORKDIR}/indexer.log}"
-INDEXER_DB_PATH="${INDEXER_DB_PATH:-${WORKDIR}/indexer.sqlite}"
+INDEXER_DATABASE_URL="${INDEXER_DATABASE_URL:-postgres://postgres:postgres@127.0.0.1:5432/ic_op_faults}"
 INDEXER_ARCHIVE_DIR="${INDEXER_ARCHIVE_DIR:-${WORKDIR}/archive}"
 
 DFX_CANISTER="dfx canister --network ${NETWORK}"
@@ -49,6 +49,34 @@ require_cmd() {
 require_cmd dfx
 require_cmd python
 require_cmd npm
+
+ensure_database_exists() {
+  INDEXER_DATABASE_URL="${INDEXER_DATABASE_URL}" node - <<'NODE'
+const { Client } = require('./tools/indexer/node_modules/pg');
+const target = new URL(process.env.INDEXER_DATABASE_URL);
+const dbName = (target.pathname || '/').replace(/^\//, '') || 'postgres';
+const admin = new URL(target.toString());
+admin.pathname = '/postgres';
+
+const quote = (s) => `"${String(s).replace(/"/g, '""')}"`;
+
+(async () => {
+  const client = new Client({ connectionString: admin.toString() });
+  await client.connect();
+  try {
+    const exists = await client.query('select 1 from pg_database where datname = $1', [dbName]);
+    if (exists.rowCount === 0) {
+      await client.query(`create database ${quote(dbName)}`);
+    }
+  } finally {
+    await client.end();
+  }
+})().catch((err) => {
+  console.error(err);
+  process.exit(1);
+});
+NODE
+}
 
 ensure_canister_ready() {
   if ! ${DFX_CANISTER} call "${CANISTER_NAME}" health --output json >/dev/null 2>&1; then
@@ -108,7 +136,7 @@ start_indexer() {
     cd tools/indexer
     EVM_CANISTER_ID="${canister_id}" \
     INDEXER_IC_HOST="${ic_host}" \
-    INDEXER_DB_PATH="${INDEXER_DB_PATH}" \
+    INDEXER_DATABASE_URL="${INDEXER_DATABASE_URL}" \
     INDEXER_ARCHIVE_DIR="${INDEXER_ARCHIVE_DIR}" \
     INDEXER_MAX_BYTES="${INDEXER_MAX_BYTES}" \
     INDEXER_BACKOFF_MAX_MS="${INDEXER_BACKOFF_MAX_MS}" \
@@ -122,20 +150,26 @@ start_indexer() {
 }
 
 read_cursor_block() {
-  python - <<PY
-import json, sqlite3
-conn = sqlite3.connect("${INDEXER_DB_PATH}")
-row = conn.execute("select value from meta where key = 'cursor'").fetchone()
-conn.close()
-if not row:
-  print("")
-  raise SystemExit(0)
-try:
-  data = json.loads(row[0])
-  print(data.get("block_number", ""))
-except Exception:
-  print("")
-PY
+  INDEXER_DATABASE_URL="${INDEXER_DATABASE_URL}" node - <<'NODE'
+const { Client } = require('./tools/indexer/node_modules/pg');
+(async () => {
+  const client = new Client({ connectionString: process.env.INDEXER_DATABASE_URL });
+  await client.connect();
+  try {
+    const row = await client.query("select value from meta where key = 'cursor'");
+    if (row.rowCount === 0) {
+      process.stdout.write("");
+      return;
+    }
+    const data = JSON.parse(String(row.rows[0].value));
+    process.stdout.write(String(data.block_number ?? ""));
+  } catch {
+    process.stdout.write("");
+  } finally {
+    await client.end();
+  }
+})().catch(() => process.stdout.write(""));
+NODE
 }
 
 wait_for_cursor() {
@@ -183,6 +217,7 @@ PY
 }
 
 log "workdir=${WORKDIR}"
+ensure_database_exists
 ensure_canister_ready
 
 log "start indexer (initial)"

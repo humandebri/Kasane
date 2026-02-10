@@ -12,7 +12,6 @@ NETWORK="${NETWORK:-staging}"
 CANISTER_NAME="${CANISTER_NAME:-evm_canister}"
 CANISTER_ID="${CANISTER_ID:-}"
 MODE="${MODE:-reinstall}"
-ENABLE_DEV_FAUCET="${ENABLE_DEV_FAUCET:-0}"
 TRACE_ONLY="${TRACE_ONLY:-produce_block,execute_tx_on}"
 INPUT_WASM="${REPO_ROOT}/target/wasm32-unknown-unknown/release/ic_evm_wrapper.wasm"
 OPT_WASM="${REPO_ROOT}/target/wasm32-unknown-unknown/release/ic_evm_wrapper.final.wasm"
@@ -26,13 +25,8 @@ log() {
 }
 
 build_release() {
-  local -a args
-  args=("--release" "--target" "wasm32-unknown-unknown" "-p" "ic-evm-wrapper")
-  if [[ "${ENABLE_DEV_FAUCET}" == "1" ]]; then
-    args+=("--features" "dev-faucet")
-  fi
-  log "cargo build ${args[*]}"
-  cargo build "${args[@]}"
+  log "cargo build --release --target wasm32-unknown-unknown -p ic-evm-wrapper"
+  cargo build --release --target wasm32-unknown-unknown -p ic-evm-wrapper
 }
 
 instrument_wasm() {
