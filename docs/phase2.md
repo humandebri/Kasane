@@ -61,6 +61,52 @@
 * -32603 internal error
 * -32000〜 ノード固有（例: queue full / tx too large）
 
+### 2.4 Error Contract（Normative）
+
+この節は実装ではなく**契約**として扱う。実装変更時は本節とテストを同時更新すること。
+
+#### 2.4.1 MUST / SHOULD
+
+* MUST: Gateway は入力不正を `-32602 invalid params` で返す。
+* MUST: Gateway は想定外例外のみ `-32603 internal error` で返す。
+* MUST: `eth_call` の revert は `-32000` かつ `error.data` に `0x...` を返す。
+* MUST: canister `rpc_eth_call_object` / `rpc_eth_estimate_gas_object` の `Err` は `RpcErrorView { code, message }` を返す。
+* MUST: Gateway は `RpcErrorView.code` の帯域で JSON-RPC code を決定する（message 文字列で機械判定しない）。
+* SHOULD: `message` は人間可読向けとし、クライアント互換判定に使わない。
+* SHOULD: 追加コードは予約帯に従い、既存コードの意味を変更しない。
+
+#### 2.4.2 `RpcErrorView.code` と JSON-RPC の対応
+
+| `RpcErrorView.code` | 意味 | GatewayのJSON-RPC `error.code` |
+|---|---|---|
+| `1001` | Invalid params（長さ不正、fee/type/chainId不整合など） | `-32602` |
+| `2001` | Execution failed（EVM実行失敗） | `-32000` |
+| `1000-1999` | 入力不正予約帯 | `-32602` |
+| `2000-2999` | 実行失敗予約帯 | `-32000` |
+
+#### 2.4.3 安定性ポリシー
+
+* `RpcErrorView.code` は**後方互換対象**（意味変更禁止）。
+* `RpcErrorView.message` は**非互換対象**（文言変更可）。
+* クライアントは `message` を分岐条件に使ってはならない。
+
+#### 2.4.4 変更手順（運用ルール）
+
+* 新しい `RpcErrorView.code` を追加する場合:
+  * 予約帯に従う（`1000-1999` 入力不正、`2000-2999` 実行失敗）
+  * 本節の対応表を更新する
+  * Gateway のマッピング実装を更新する
+  * テスト対応表にケースを追加する
+
+#### 2.4.5 テスト対応表
+
+| 契約項目 | テスト/検証箇所 |
+|---|---|
+| `1001` が入力不正に使われる | `crates/ic-evm-rpc/tests/rpc_runtime_paths.rs` |
+| `nonce` 未指定時に sender nonce を使う | `crates/ic-evm-rpc/tests/rpc_runtime_paths.rs` |
+| Gateway が code帯で `-32602/-32000` を分岐 | `tools/rpc-gateway/tests/run.ts` |
+| `eth_call` revert の `error.data` 形式 | `tools/rpc-gateway/tests/run.ts` |
+
 ---
 
 ## 3) Hexエンコード規約（ここを間違えるとクライアントが死ぬ）
@@ -107,6 +153,31 @@ Phase2では **latestのみ厳格対応**。
 * eth_estimateGas(callObject, blockTag)
   * 一度overlayで実行し gas_used を返す
   * revert は error.data に revert_data を入れる（可能なら）
+
+#### 4.4.1 callObject 拡張（Phase2.2）
+
+* 対応フィールド:
+  * `to`, `from`, `gas`, `gasPrice`, `value`, `data`
+  * `nonce`, `maxFeePerGas`, `maxPriorityFeePerGas`, `accessList`, `chainId`, `type`
+* `type` は `0` / `2` のみ対応（`1` は非対応）
+* strict validation:
+  * `gasPrice` と `maxFeePerGas`/`maxPriorityFeePerGas` の併用禁止
+  * `maxPriorityFeePerGas` 指定時は `maxFeePerGas` 必須
+  * `maxPriorityFeePerGas <= maxFeePerGas`
+  * `type=0` のとき `max*` 禁止
+  * `type=2` のとき `gasPrice` 禁止
+  * `chainId` 指定時は canister `CHAIN_ID` 一致必須
+* `nonce` 省略時の既定:
+  * canister 側で `from` アカウントの current nonce を採用（未存在は `0`）
+* エラー方針:
+  * 入力不正は `-32602 invalid params`
+  * 実行失敗/revert は `-32000`（revert は `error.data` に `0x...`）
+  * canister `Err` は `RpcErrorView { code, message }` を返し、gatewayで code帯により分類
+  * `RpcErrorView.code` 固定値（Phase2.2）:
+    * `1001`: Invalid params
+    * `2001`: Execution failed
+    * `1000-1999`: 入力不正予約帯
+    * `2000-2999`: 実行失敗予約帯
 
 ### 4.5 送信系（update）
 
@@ -217,6 +288,8 @@ POCは **モードA** が簡単で強い。
 * viem: publicClient.getBlockNumber 等
 * ethers: provider.getBlockNumber 等
 * foundry: 最低限のcall/send
+* Rust実行コマンド（doctest除外で安定運用）:
+  * `cargo test -p ic-evm-rpc --lib --tests`
 
 ---
 
