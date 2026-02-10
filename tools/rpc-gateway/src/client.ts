@@ -51,8 +51,31 @@ export type EthBlockView = {
 };
 
 type TextResult = { Ok: Uint8Array } | { Err: string };
+export type RpcErrorView = { code: number; message: string };
+type Nat64Result = { Ok: bigint } | { Err: RpcErrorView };
 type SendErr = { Internal: string } | { Rejected: string } | { InvalidArgument: string };
 type SendResult = { Ok: Uint8Array } | { Err: SendErr };
+export type CallObject = {
+  to: [] | [Uint8Array];
+  from: [] | [Uint8Array];
+  gas: [] | [bigint];
+  gas_price: [] | [bigint];
+  nonce: [] | [bigint];
+  max_fee_per_gas: [] | [bigint];
+  max_priority_fee_per_gas: [] | [bigint];
+  chain_id: [] | [bigint];
+  tx_type: [] | [bigint];
+  access_list: [] | [Array<{ address: Uint8Array; storage_keys: Uint8Array[] }>];
+  value: [] | [Uint8Array];
+  data: [] | [Uint8Array];
+};
+export type CallObjectResult = {
+  status: number;
+  gas_used: bigint;
+  return_data: Uint8Array;
+  revert_data: [] | [Uint8Array];
+};
+type CallResult = { Ok: CallObjectResult } | { Err: RpcErrorView };
 
 type Methods = {
   rpc_eth_chain_id: () => Promise<bigint>;
@@ -62,6 +85,9 @@ type Methods = {
   rpc_eth_get_transaction_receipt_by_eth_hash: (ethTxHash: Uint8Array) => Promise<[] | [EthReceiptView]>;
   rpc_eth_get_balance: (address: Uint8Array) => Promise<TextResult>;
   rpc_eth_get_code: (address: Uint8Array) => Promise<TextResult>;
+  rpc_eth_get_storage_at: (address: Uint8Array, slot: Uint8Array) => Promise<TextResult>;
+  rpc_eth_call_object: (call: CallObject) => Promise<CallResult>;
+  rpc_eth_estimate_gas_object: (call: CallObject) => Promise<Nat64Result>;
   rpc_eth_call_rawtx: (rawTx: Uint8Array) => Promise<TextResult>;
   rpc_eth_send_raw_transaction: (rawTx: Uint8Array) => Promise<SendResult>;
 };

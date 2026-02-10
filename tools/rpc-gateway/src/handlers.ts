@@ -1,23 +1,41 @@
 // どこで: JSON-RPCハンドラ / 何を: methodごとの変換とcanister呼び出しを実装 / なぜ: Ethereum風インタフェースをGatewayで提供するため
-
 import { CONFIG } from "./config";
-import { getActor, type EthBlockView, type EthReceiptView, type EthTxView } from "./client";
+import { getActor, type CallObject, type EthBlockView, type EthReceiptView, type EthTxView } from "./client";
 import { bytesToQuantity, ensureLen, parseDataHex, parseQuantityHex, toDataHex, toQuantityHex } from "./hex";
-import {
-  ERR_INTERNAL,
-  ERR_INVALID_PARAMS,
-  ERR_METHOD_NOT_FOUND,
-  ERR_METHOD_NOT_SUPPORTED,
-  JsonRpcRequest,
-  JsonRpcResponse,
-  makeError,
-  makeSuccess,
-} from "./jsonrpc";
-
+import { ERR_INTERNAL, ERR_INVALID_PARAMS, ERR_METHOD_NOT_FOUND, JsonRpcRequest, JsonRpcResponse, makeError, makeSuccess } from "./jsonrpc";
 const ZERO_ADDR = "0x0000000000000000000000000000000000000000";
 const ZERO_32 = `0x${"0".repeat(64)}`;
 const ZERO_8 = `0x${"0".repeat(16)}`;
 const ZERO_256 = `0x${"0".repeat(512)}`;
+const SUPPORTED_CALL_KEYS = new Set([
+  "to",
+  "from",
+  "gas",
+  "gasPrice",
+  "value",
+  "data",
+  "nonce",
+  "maxFeePerGas",
+  "maxPriorityFeePerGas",
+  "accessList",
+  "chainId",
+  "type",
+]);
+type ParsedAccessListItem = { address: string; storageKeys: string[] };
+type ParsedCallObject = {
+  to?: string;
+  from?: string;
+  gas?: string;
+  gasPrice?: string;
+  value?: string;
+  data?: string;
+  nonce?: string;
+  maxFeePerGas?: string;
+  maxPriorityFeePerGas?: string;
+  accessList?: ParsedAccessListItem[];
+  chainId?: string;
+  type?: string;
+};
 
 export async function handleRpc(req: JsonRpcRequest): Promise<JsonRpcResponse | null> {
   const id = req.id ?? null;
@@ -50,7 +68,7 @@ export async function handleRpc(req: JsonRpcRequest): Promise<JsonRpcResponse | 
       case "eth_getCode":
         return await onGetCode(id, req.params);
       case "eth_getStorageAt":
-        return makeError(id, ERR_METHOD_NOT_FOUND, "eth_getStorageAt is not implemented on canister yet");
+        return await onGetStorageAt(id, req.params);
       case "eth_call":
         return await onEthCall(id, req.params);
       case "eth_estimateGas":
@@ -70,12 +88,14 @@ async function onGetBlockByNumber(id: string | number | null, params: unknown): 
   const [blockTagRaw, fullTxRaw] = asParams(params, 2);
   const fullTx = typeof fullTxRaw === "boolean" ? fullTxRaw : false;
   const actor = await getActor();
-  const number = await resolveBlockTag(blockTagRaw, actor.rpc_eth_block_number);
-  const blockOpt = await actor.rpc_eth_get_block_by_number(number, fullTx);
-  if (blockOpt.length === 0) {
-    return makeSuccess(id, null);
+  let number: bigint;
+  try {
+    number = await resolveBlockTag(blockTagRaw, actor.rpc_eth_block_number);
+  } catch (error) {
+    return makeInvalidParams(id, error);
   }
-  return makeSuccess(id, mapBlock(blockOpt[0], fullTx));
+  const blockOpt = await actor.rpc_eth_get_block_by_number(number, fullTx);
+  return makeSuccess(id, blockOpt.length === 0 ? null : mapBlock(blockOpt[0], fullTx));
 }
 
 async function onGetTransactionByHash(id: string | number | null, params: unknown): Promise<JsonRpcResponse> {
@@ -86,10 +106,7 @@ async function onGetTransactionByHash(id: string | number | null, params: unknow
   const txHash = ensureLen(parseDataHex(hashRaw), 32, "tx hash");
   const actor = await getActor();
   const txOpt = await actor.rpc_eth_get_transaction_by_eth_hash(txHash);
-  if (txOpt.length === 0) {
-    return makeSuccess(id, null);
-  }
-  return makeSuccess(id, mapTx(txOpt[0]));
+  return makeSuccess(id, txOpt.length === 0 ? null : mapTx(txOpt[0]));
 }
 
 async function onGetTransactionReceipt(id: string | number | null, params: unknown): Promise<JsonRpcResponse> {
@@ -100,10 +117,7 @@ async function onGetTransactionReceipt(id: string | number | null, params: unkno
   const txHash = ensureLen(parseDataHex(hashRaw), 32, "tx hash");
   const actor = await getActor();
   const receiptOpt = await actor.rpc_eth_get_transaction_receipt_by_eth_hash(txHash);
-  if (receiptOpt.length === 0) {
-    return makeSuccess(id, null);
-  }
-  return makeSuccess(id, mapReceipt(receiptOpt[0], txHash));
+  return makeSuccess(id, receiptOpt.length === 0 ? null : mapReceipt(receiptOpt[0], txHash));
 }
 
 async function onGetBalance(id: string | number | null, params: unknown): Promise<JsonRpcResponse> {
@@ -114,13 +128,17 @@ async function onGetBalance(id: string | number | null, params: unknown): Promis
   if (!isLatestTag(blockTagRaw)) {
     return makeError(id, ERR_INVALID_PARAMS, "only latest blockTag is supported");
   }
-  const address = ensureLen(parseDataHex(addressRaw), 20, "address");
+  let address: Uint8Array;
+  try {
+    address = ensureLen(parseDataHex(addressRaw), 20, "address");
+  } catch (error) {
+    return makeInvalidParams(id, error);
+  }
   const actor = await getActor();
   const out = await actor.rpc_eth_get_balance(address);
-  if ("Err" in out) {
-    return makeError(id, -32000, "state unavailable", { detail: out.Err });
-  }
-  return makeSuccess(id, toQuantityHex(bytesToQuantity(out.Ok)));
+  return "Err" in out
+    ? makeError(id, -32000, "state unavailable", { detail: out.Err })
+    : makeSuccess(id, toQuantityHex(bytesToQuantity(out.Ok)));
 }
 
 async function onGetCode(id: string | number | null, params: unknown): Promise<JsonRpcResponse> {
@@ -131,13 +149,40 @@ async function onGetCode(id: string | number | null, params: unknown): Promise<J
   if (!isLatestTag(blockTagRaw)) {
     return makeError(id, ERR_INVALID_PARAMS, "only latest blockTag is supported");
   }
-  const address = ensureLen(parseDataHex(addressRaw), 20, "address");
+  let address: Uint8Array;
+  try {
+    address = ensureLen(parseDataHex(addressRaw), 20, "address");
+  } catch (error) {
+    return makeInvalidParams(id, error);
+  }
   const actor = await getActor();
   const out = await actor.rpc_eth_get_code(address);
-  if ("Err" in out) {
-    return makeError(id, -32000, "state unavailable", { detail: out.Err });
+  return "Err" in out
+    ? makeError(id, -32000, "state unavailable", { detail: out.Err })
+    : makeSuccess(id, toDataHex(out.Ok));
+}
+
+async function onGetStorageAt(id: string | number | null, params: unknown): Promise<JsonRpcResponse> {
+  const [addressRaw, slotRaw, blockTagRaw] = asParams(params, 3);
+  if (typeof addressRaw !== "string" || typeof slotRaw !== "string") {
+    return makeError(id, ERR_INVALID_PARAMS, "address/slot must be hex string");
   }
-  return makeSuccess(id, toDataHex(out.Ok));
+  if (!isLatestTag(blockTagRaw)) {
+    return makeError(id, ERR_INVALID_PARAMS, "only latest blockTag is supported");
+  }
+  let address: Uint8Array;
+  let slot: Uint8Array;
+  try {
+    address = ensureLen(parseDataHex(addressRaw), 20, "address");
+    slot = normalizeStorageSlot32(slotRaw);
+  } catch (error) {
+    return makeInvalidParams(id, error);
+  }
+  const actor = await getActor();
+  const out = await actor.rpc_eth_get_storage_at(address, slot);
+  return "Err" in out
+    ? makeError(id, -32000, "state unavailable", { detail: out.Err })
+    : makeSuccess(id, toDataHex(out.Ok));
 }
 
 async function onEthCall(id: string | number | null, params: unknown): Promise<JsonRpcResponse> {
@@ -145,25 +190,56 @@ async function onEthCall(id: string | number | null, params: unknown): Promise<J
   if (!isLatestTag(blockTagRaw)) {
     return makeError(id, ERR_INVALID_PARAMS, "only latest blockTag is supported");
   }
-  const rawHex = getRawTxHexFromCallParam(callRaw);
-  if (!rawHex) {
-    return makeError(
-      id,
-      ERR_INVALID_PARAMS,
-      "eth_call currently requires raw tx hex as params[0] or params[0].raw"
-    );
+  const call = parseCallObject(callRaw);
+  if ("error" in call) {
+    return makeError(id, ERR_INVALID_PARAMS, call.error);
+  }
+  let candidCall: CallObject;
+  try {
+    candidCall = toCandidCallObject(call);
+  } catch (error) {
+    return makeInvalidParams(id, error);
   }
   const actor = await getActor();
-  const out = await actor.rpc_eth_call_rawtx(parseDataHex(rawHex));
+  const out = await actor.rpc_eth_call_object(candidCall);
   if ("Err" in out) {
-    return makeError(id, -32000, "execution reverted", { detail: out.Err });
+    const code = classifyCallObjectErrCode(out.Err.code);
+    return code === ERR_INVALID_PARAMS
+      ? makeError(id, code, "invalid params", { detail: out.Err.message, rpc_code: out.Err.code })
+      : makeError(id, code, "execution failed", { detail: out.Err.message, rpc_code: out.Err.code });
   }
-  return makeSuccess(id, toDataHex(out.Ok));
+  if (out.Ok.status === 0) {
+    return makeError(id, -32000, "execution reverted", revertDataToHex(out.Ok.revert_data));
+  }
+  return makeSuccess(id, toDataHex(out.Ok.return_data));
 }
 
 async function onEstimateGas(id: string | number | null, params: unknown): Promise<JsonRpcResponse> {
-  void params;
-  return makeError(id, ERR_METHOD_NOT_SUPPORTED, "method not supported");
+  const [callRaw, blockTagRaw] = asParams(params, 2);
+  if (!isLatestTag(blockTagRaw)) {
+    return makeError(id, ERR_INVALID_PARAMS, "only latest blockTag is supported");
+  }
+  const call = parseCallObject(callRaw);
+  if ("error" in call) {
+    return makeError(id, ERR_INVALID_PARAMS, call.error);
+  }
+  let candidCall: CallObject;
+  try {
+    candidCall = toCandidCallObject(call);
+  } catch (error) {
+    return makeInvalidParams(id, error);
+  }
+  const actor = await getActor();
+  const out = await actor.rpc_eth_estimate_gas_object(candidCall);
+  const errCode = "Err" in out ? classifyCallObjectErrCode(out.Err.code) : -32000;
+  return "Err" in out
+    ? makeError(
+        id,
+        errCode,
+        errCode === ERR_INVALID_PARAMS ? "invalid params" : "estimate failed",
+        { detail: out.Err.message, rpc_code: out.Err.code }
+      )
+    : makeSuccess(id, toQuantityHex(out.Ok));
 }
 
 async function onSendRawTransaction(id: string | number | null, params: unknown): Promise<JsonRpcResponse> {
@@ -171,137 +247,290 @@ async function onSendRawTransaction(id: string | number | null, params: unknown)
   if (typeof rawTxRaw !== "string") {
     return makeError(id, ERR_INVALID_PARAMS, "raw tx must be hex string");
   }
+  let rawTx: Uint8Array;
+  try {
+    rawTx = parseDataHex(rawTxRaw);
+  } catch (error) {
+    return makeInvalidParams(id, error);
+  }
   const actor = await getActor();
-  const out = await actor.rpc_eth_send_raw_transaction(parseDataHex(rawTxRaw));
+  const out = await actor.rpc_eth_send_raw_transaction(rawTx);
   if ("Err" in out) {
-    const [code, detail] = mapSubmitError(out.Err);
-    return makeError(id, code, "submit failed", detail);
+    const mapped = mapSubmitError(out.Err);
+    return makeError(id, mapped.code, "submit failed", mapped.data);
   }
   return makeSuccess(id, toDataHex(out.Ok));
 }
 
-function mapSubmitError(err: { Internal: string } | { Rejected: string } | { InvalidArgument: string }): [number, unknown] {
+function mapSubmitError(err: { Internal: string } | { Rejected: string } | { InvalidArgument: string }): { code: number; data: unknown } {
   if ("InvalidArgument" in err) {
-    return [-32602, { kind: "InvalidArgument", detail: err.InvalidArgument }];
+    return { code: -32602, data: { kind: "InvalidArgument", detail: err.InvalidArgument } };
   }
   if ("Rejected" in err) {
-    return [-32000, { kind: "Rejected", detail: err.Rejected }];
+    return { code: -32000, data: { kind: "Rejected", detail: err.Rejected } };
   }
-  return [-32603, { kind: "Internal", detail: err.Internal }];
+  return { code: -32603, data: { kind: "Internal", detail: err.Internal } };
+}
+
+function makeInvalidParams(id: string | number | null, error: unknown): JsonRpcResponse {
+  return makeError(id, ERR_INVALID_PARAMS, toErrorMessage(error));
+}
+
+function toErrorMessage(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message;
+  }
+  return String(error);
+}
+
+function classifyCallObjectErrCode(code: number): number {
+  if (code >= 1000 && code < 2000) {
+    return ERR_INVALID_PARAMS;
+  }
+  return -32000;
 }
 
 function asParams(params: unknown, minLen: number): unknown[] {
-  if (!Array.isArray(params)) {
-    throw new Error("params must be array");
-  }
-  if (params.length < minLen) {
+  if (!Array.isArray(params) || params.length < minLen) {
     throw new Error(`params must include at least ${minLen} entries`);
   }
   return params;
 }
 
 async function resolveBlockTag(blockTag: unknown, getHead: () => Promise<bigint>): Promise<bigint> {
-  if (typeof blockTag === "string") {
-    if (blockTag === "latest" || blockTag === "pending" || blockTag === "safe" || blockTag === "finalized") {
-      return await getHead();
-    }
-    return parseQuantityHex(blockTag);
+  if (typeof blockTag !== "string") {
+    throw new Error("blockTag must be latest or QUANTITY");
   }
-  throw new Error("blockTag must be latest or QUANTITY");
+  if (isLatestTag(blockTag)) {
+    return await getHead();
+  }
+  return parseQuantityHex(blockTag);
 }
 
 function isLatestTag(blockTag: unknown): boolean {
-  if (blockTag === undefined || blockTag === null) {
-    return true;
-  }
-  return blockTag === "latest" || blockTag === "pending" || blockTag === "safe" || blockTag === "finalized";
+  return blockTag === undefined || blockTag === null || blockTag === "latest" || blockTag === "pending" || blockTag === "safe" || blockTag === "finalized";
 }
 
-function mapBlock(block: EthBlockView, fullTx: boolean): Record<string, unknown> {
+function parseCallObject(value: unknown): ParsedCallObject | { error: string } {
+  if (!isRecord(value)) {
+    return { error: "callObject must be object" };
+  }
+  for (const key of Object.keys(value)) {
+    if (!SUPPORTED_CALL_KEYS.has(key)) {
+      return { error: `${key} is not a supported callObject field` };
+    }
+  }
+  const parsed: ParsedCallObject = {};
+  if ("to" in value && value.to !== undefined && typeof value.to !== "string") {
+    return { error: "to must be hex string" };
+  }
+  if ("from" in value && value.from !== undefined && typeof value.from !== "string") {
+    return { error: "from must be hex string" };
+  }
+  if ("gas" in value && value.gas !== undefined && typeof value.gas !== "string") {
+    return { error: "gas must be QUANTITY hex string" };
+  }
+  if ("gasPrice" in value && value.gasPrice !== undefined && typeof value.gasPrice !== "string") {
+    return { error: "gasPrice must be QUANTITY hex string" };
+  }
+  if ("value" in value && value.value !== undefined && typeof value.value !== "string") {
+    return { error: "value must be QUANTITY hex string" };
+  }
+  if ("data" in value && value.data !== undefined && typeof value.data !== "string") {
+    return { error: "data must be DATA hex string" };
+  }
+  if ("nonce" in value && value.nonce !== undefined && typeof value.nonce !== "string") {
+    return { error: "nonce must be QUANTITY hex string" };
+  }
+  if ("maxFeePerGas" in value && value.maxFeePerGas !== undefined && typeof value.maxFeePerGas !== "string") {
+    return { error: "maxFeePerGas must be QUANTITY hex string" };
+  }
+  if ("maxPriorityFeePerGas" in value && value.maxPriorityFeePerGas !== undefined && typeof value.maxPriorityFeePerGas !== "string") {
+    return { error: "maxPriorityFeePerGas must be QUANTITY hex string" };
+  }
+  if ("chainId" in value && value.chainId !== undefined && typeof value.chainId !== "string") {
+    return { error: "chainId must be QUANTITY hex string" };
+  }
+  if ("type" in value && value.type !== undefined && typeof value.type !== "string") {
+    return { error: "type must be QUANTITY hex string" };
+  }
+  if ("accessList" in value && value.accessList !== undefined) {
+    const parsedAccessList = parseAccessList(value.accessList);
+    if ("error" in parsedAccessList) {
+      return parsedAccessList;
+    }
+    parsed.accessList = parsedAccessList;
+  }
+  if (typeof value.to === "string") parsed.to = value.to;
+  if (typeof value.from === "string") parsed.from = value.from;
+  if (typeof value.gas === "string") parsed.gas = value.gas;
+  if (typeof value.gasPrice === "string") parsed.gasPrice = value.gasPrice;
+  if (typeof value.value === "string") parsed.value = value.value;
+  if (typeof value.data === "string") parsed.data = value.data;
+  if (typeof value.nonce === "string") parsed.nonce = value.nonce;
+  if (typeof value.maxFeePerGas === "string") parsed.maxFeePerGas = value.maxFeePerGas;
+  if (typeof value.maxPriorityFeePerGas === "string") parsed.maxPriorityFeePerGas = value.maxPriorityFeePerGas;
+  if (typeof value.chainId === "string") parsed.chainId = value.chainId;
+  if (typeof value.type === "string") parsed.type = value.type;
+  if (parsed.gasPrice !== undefined && (parsed.maxFeePerGas !== undefined || parsed.maxPriorityFeePerGas !== undefined)) {
+    return { error: "gasPrice and maxFeePerGas/maxPriorityFeePerGas cannot be used together" };
+  }
+  if (parsed.maxPriorityFeePerGas !== undefined && parsed.maxFeePerGas === undefined) {
+    return { error: "maxPriorityFeePerGas requires maxFeePerGas" };
+  }
+  if (parsed.maxPriorityFeePerGas !== undefined && parsed.maxFeePerGas !== undefined) {
+    const maxPriority = parseQuantityHexSafe(parsed.maxPriorityFeePerGas, "maxPriorityFeePerGas");
+    if ("error" in maxPriority) {
+      return maxPriority;
+    }
+    const maxFee = parseQuantityHexSafe(parsed.maxFeePerGas, "maxFeePerGas");
+    if ("error" in maxFee) {
+      return maxFee;
+    }
+    if (maxPriority.value > maxFee.value) {
+      return { error: "maxPriorityFeePerGas must be <= maxFeePerGas" };
+    }
+  }
+  if (parsed.type !== undefined) {
+    const txTypeOut = parseQuantityHexSafe(parsed.type, "type");
+    if ("error" in txTypeOut) {
+      return txTypeOut;
+    }
+    const txType = txTypeOut.value;
+    if (txType !== 0n && txType !== 2n) {
+      return { error: "type must be 0x0 or 0x2" };
+    }
+    if (txType === 0n && (parsed.maxFeePerGas !== undefined || parsed.maxPriorityFeePerGas !== undefined)) {
+      return { error: "type=0 cannot be used with maxFeePerGas/maxPriorityFeePerGas" };
+    }
+    if (txType === 2n && parsed.gasPrice !== undefined) {
+      return { error: "type=2 cannot be used with gasPrice" };
+    }
+  }
+  return parsed;
+}
+
+function toCandidCallObject(call: ParsedCallObject): CallObject {
   return {
-    number: toQuantityHex(block.number),
-    hash: toDataHex(block.block_hash),
-    parentHash: toDataHex(block.parent_hash),
-    nonce: ZERO_8,
-    sha3Uncles: ZERO_32,
-    logsBloom: ZERO_256,
-    transactionsRoot: ZERO_32,
-    stateRoot: toDataHex(block.state_root),
-    receiptsRoot: ZERO_32,
-    miner: ZERO_ADDR,
-    difficulty: "0x0",
-    totalDifficulty: "0x0",
-    extraData: "0x",
-    size: "0x0",
-    gasLimit: "0x0",
-    gasUsed: "0x0",
-    timestamp: toQuantityHex(block.timestamp),
-    transactions: mapBlockTxs(block.txs, fullTx),
-    uncles: [],
-    baseFeePerGas: "0x0",
+    to: call.to === undefined ? [] : [ensureLen(parseDataHex(call.to), 20, "to")],
+    from: call.from === undefined ? [] : [ensureLen(parseDataHex(call.from), 20, "from")],
+    gas: call.gas === undefined ? [] : [parseQuantityHex(call.gas)],
+    gas_price: call.gasPrice === undefined ? [] : [parseQuantityHex(call.gasPrice)],
+    nonce: call.nonce === undefined ? [] : [parseQuantityHex(call.nonce)],
+    max_fee_per_gas: call.maxFeePerGas === undefined ? [] : [parseQuantityHex(call.maxFeePerGas)],
+    max_priority_fee_per_gas:
+      call.maxPriorityFeePerGas === undefined ? [] : [parseQuantityHex(call.maxPriorityFeePerGas)],
+    chain_id: call.chainId === undefined ? [] : [parseQuantityHex(call.chainId)],
+    tx_type: call.type === undefined ? [] : [parseQuantityHex(call.type)],
+    access_list:
+      call.accessList === undefined
+        ? []
+        : [
+            call.accessList.map((item) => ({
+              address: ensureLen(parseDataHex(item.address), 20, "accessList.address"),
+              storage_keys: item.storageKeys.map((key) =>
+                ensureLen(parseDataHex(key), 32, "accessList.storageKeys[]")
+              ),
+            })),
+          ],
+    value: call.value === undefined ? [] : [quantityToWord32(parseQuantityHex(call.value))],
+    data: call.data === undefined ? [] : [parseDataHex(call.data)],
   };
 }
 
-function mapBlockTxs(txs: { Full: EthTxView[] } | { Hashes: Uint8Array[] }, fullTx: boolean): unknown[] {
-  if ("Hashes" in txs) {
-    return txs.Hashes.map((v) => toDataHex(v));
-  }
-  if (!fullTx) {
-    return txs.Full.map((v) => toDataHex(v.eth_tx_hash.length === 0 ? v.hash : v.eth_tx_hash[0]));
-  }
-  return txs.Full.map(mapTx);
+export function __test_parse_call_object(value: unknown): ParsedCallObject | { error: string } {
+  return parseCallObject(value);
 }
 
-function mapTx(tx: EthTxView): Record<string, unknown> {
-  const decoded = tx.decoded.length === 0 ? null : tx.decoded[0];
-  const txHash = tx.eth_tx_hash.length === 0 ? tx.hash : tx.eth_tx_hash[0];
-  return {
-    hash: toDataHex(txHash),
-    nonce: decoded ? toQuantityHex(decoded.nonce) : "0x0",
-    blockHash: null,
-    blockNumber: tx.block_number.length === 0 ? null : toQuantityHex(tx.block_number[0]),
-    transactionIndex: tx.tx_index.length === 0 ? null : toQuantityHex(BigInt(tx.tx_index[0])),
-    from: decoded ? toDataHex(decoded.from) : ZERO_ADDR,
-    to: decoded ? (decoded.to.length === 0 ? null : toDataHex(decoded.to[0])) : null,
-    value: decoded ? toQuantityHex(bytesToQuantity(decoded.value)) : "0x0",
-    gas: decoded ? toQuantityHex(decoded.gas_limit) : "0x0",
-    gasPrice: decoded ? toQuantityHex(decoded.gas_price) : "0x0",
-    input: decoded ? toDataHex(decoded.input) : "0x",
-    type: "0x0",
-    v: "0x0",
-    r: "0x0",
-    s: "0x0",
-  };
+export function __test_to_candid_call_object(call: ParsedCallObject): CallObject {
+  return toCandidCallObject(call);
 }
 
-function mapReceipt(receipt: EthReceiptView, fallbackTxHash: Uint8Array): Record<string, unknown> {
-  const txHash = receipt.eth_tx_hash.length === 0 ? fallbackTxHash : receipt.eth_tx_hash[0];
-  return {
-    transactionHash: toDataHex(txHash),
-    transactionIndex: toQuantityHex(BigInt(receipt.tx_index)),
-    blockHash: null,
-    blockNumber: toQuantityHex(receipt.block_number),
-    from: ZERO_ADDR,
-    to: null,
-    cumulativeGasUsed: toQuantityHex(receipt.gas_used),
-    gasUsed: toQuantityHex(receipt.gas_used),
-    contractAddress: receipt.contract_address.length === 0 ? null : toDataHex(receipt.contract_address[0]),
-    logs: [],
-    logsBloom: ZERO_256,
-    status: toQuantityHex(BigInt(receipt.status)),
-    type: "0x0",
-    effectiveGasPrice: toQuantityHex(receipt.effective_gas_price),
-  };
+export function __test_normalize_storage_slot32(slot: string): Uint8Array {
+  return normalizeStorageSlot32(slot);
 }
 
-function getRawTxHexFromCallParam(value: unknown): string | null {
-  if (typeof value === "string") {
-    return value;
+export function __test_revert_data_hex(revertData: [] | [Uint8Array]): string {
+  return revertDataToHex(revertData);
+}
+
+export function __test_classify_call_object_err_code(code: number): number {
+  return classifyCallObjectErrCode(code);
+}
+
+function normalizeStorageSlot32(slot: string): Uint8Array {
+  if (slot.startsWith("0x") && slot.length === 66) {
+    return ensureLen(parseDataHex(slot), 32, "slot");
   }
+  const quantity = parseQuantityHex(slot);
+  const hex = quantity.toString(16);
+  if (hex.length > 64) {
+    throw new Error("slot must fit in 32 bytes");
+  }
+  return Uint8Array.from(Buffer.from(hex.padStart(64, "0"), "hex"));
+}
+
+function revertDataToHex(revertData: [] | [Uint8Array]): string {
+  if (revertData.length === 0) {
+    return "0x";
+  }
+  return toDataHex(revertData[0]);
+}
+
+function quantityToWord32(value: bigint): Uint8Array {
+  if (value < 0n) {
+    throw new Error("value must be non-negative");
+  }
+  const hex = value.toString(16).padStart(64, "0");
+  if (hex.length > 64) {
+    throw new Error("value must fit in 32 bytes");
+  }
+  return Uint8Array.from(Buffer.from(hex, "hex"));
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
   if (typeof value !== "object" || value === null) {
-    return null;
+    return false;
   }
-  const record = value as Record<string, unknown>;
-  const raw = record.raw;
-  return typeof raw === "string" ? raw : null;
+  return true;
 }
+
+function parseAccessList(value: unknown): ParsedAccessListItem[] | { error: string } {
+  if (!Array.isArray(value)) {
+    return { error: "accessList must be an array" };
+  }
+  const out: ParsedAccessListItem[] = [];
+  for (const item of value) {
+    if (!isRecord(item)) {
+      return { error: "accessList[] must be object" };
+    }
+    if (typeof item.address !== "string") {
+      return { error: "accessList[].address must be hex string" };
+    }
+    if (!Array.isArray(item.storageKeys)) {
+      return { error: "accessList[].storageKeys must be array" };
+    }
+    const storageKeys: string[] = [];
+    for (const key of item.storageKeys) {
+      if (typeof key !== "string") {
+        return { error: "accessList[].storageKeys[] must be hex string" };
+      }
+      storageKeys.push(key);
+    }
+    out.push({ address: item.address, storageKeys });
+  }
+  return out;
+}
+
+function parseQuantityHexSafe(value: string, label: string): { value: bigint } | { error: string } {
+  try {
+    return { value: parseQuantityHex(value) };
+  } catch {
+    return { error: `${label} must be QUANTITY hex string` };
+  }
+}
+
+function mapBlock(block: EthBlockView, fullTx: boolean): Record<string, unknown> { return { number: toQuantityHex(block.number), hash: toDataHex(block.block_hash), parentHash: toDataHex(block.parent_hash), nonce: ZERO_8, sha3Uncles: ZERO_32, logsBloom: ZERO_256, transactionsRoot: ZERO_32, stateRoot: toDataHex(block.state_root), receiptsRoot: ZERO_32, miner: ZERO_ADDR, difficulty: "0x0", totalDifficulty: "0x0", extraData: "0x", size: "0x0", gasLimit: "0x0", gasUsed: "0x0", timestamp: toQuantityHex(block.timestamp), transactions: mapBlockTxs(block.txs, fullTx), uncles: [], baseFeePerGas: "0x0" }; }
+function mapBlockTxs(txs: { Full: EthTxView[] } | { Hashes: Uint8Array[] }, fullTx: boolean): unknown[] { if ("Hashes" in txs) return txs.Hashes.map((v) => toDataHex(v)); return fullTx ? txs.Full.map(mapTx) : txs.Full.map((v) => toDataHex(v.eth_tx_hash.length === 0 ? v.hash : v.eth_tx_hash[0])); }
+function mapTx(tx: EthTxView): Record<string, unknown> { const decoded = tx.decoded.length === 0 ? null : tx.decoded[0]; const txHash = tx.eth_tx_hash.length === 0 ? tx.hash : tx.eth_tx_hash[0]; const toAddr = decoded && decoded.to.length > 0 ? decoded.to[0] : undefined; return { hash: toDataHex(txHash), nonce: decoded ? toQuantityHex(decoded.nonce) : "0x0", blockHash: null, blockNumber: tx.block_number.length === 0 ? null : toQuantityHex(tx.block_number[0]), transactionIndex: tx.tx_index.length === 0 ? null : toQuantityHex(BigInt(tx.tx_index[0])), from: decoded ? toDataHex(decoded.from) : ZERO_ADDR, to: toAddr ? toDataHex(toAddr) : null, value: decoded ? toQuantityHex(bytesToQuantity(decoded.value)) : "0x0", gas: decoded ? toQuantityHex(decoded.gas_limit) : "0x0", gasPrice: decoded ? toQuantityHex(decoded.gas_price) : "0x0", input: decoded ? toDataHex(decoded.input) : "0x", type: "0x0", v: "0x0", r: "0x0", s: "0x0" }; }
+function mapReceipt(receipt: EthReceiptView, fallbackTxHash: Uint8Array): Record<string, unknown> { const txHash = receipt.eth_tx_hash.length === 0 ? fallbackTxHash : receipt.eth_tx_hash[0]; return { transactionHash: toDataHex(txHash), transactionIndex: toQuantityHex(BigInt(receipt.tx_index)), blockHash: null, blockNumber: toQuantityHex(receipt.block_number), from: ZERO_ADDR, to: null, cumulativeGasUsed: toQuantityHex(receipt.gas_used), gasUsed: toQuantityHex(receipt.gas_used), contractAddress: receipt.contract_address.length === 0 ? null : toDataHex(receipt.contract_address[0]), logs: [], logsBloom: ZERO_256, status: toQuantityHex(BigInt(receipt.status)), type: "0x0", effectiveGasPrice: toQuantityHex(receipt.effective_gas_price) }; }

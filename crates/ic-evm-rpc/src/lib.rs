@@ -1,12 +1,14 @@
 //! どこで: wrapperのRPC補助層 / 何を: eth系参照ロジックを分離 / なぜ: canister entrypointの責務を薄くするため
 
 use evm_db::chain_data::{BlockData, ReceiptLike, StoredTx, StoredTxBytes, TxId, TxKind, TxLoc, TxLocKind};
+use evm_db::chain_data::constants::CHAIN_ID;
 use evm_db::stable_state::with_state;
-use evm_db::types::keys::{make_account_key, make_code_key};
+use evm_db::types::keys::{make_account_key, make_code_key, make_storage_key};
 use evm_core::{chain, hash};
 use ic_evm_rpc_types::{
     DecodedTxView, EthBlockView, EthLogFilterView, EthLogItemView, EthReceiptView, EthTxListView,
-    EthTxView, GetLogsErrorView, LogView, RpcBlockLookupView, RpcReceiptLookupView, SubmitTxError,
+    EthTxView, GetLogsErrorView, LogView, RpcAccessListItemView, RpcBlockLookupView,
+    RpcCallObjectView, RpcCallResultView, RpcErrorView, RpcReceiptLookupView, SubmitTxError,
     TxKindView,
 };
 use tracing::{error, warn};
@@ -88,6 +90,51 @@ pub fn rpc_eth_get_code(address: Vec<u8>) -> Result<Vec<u8>, String> {
             .unwrap_or_default()
     });
     Ok(code)
+}
+
+pub fn rpc_eth_get_storage_at(address: Vec<u8>, slot: Vec<u8>) -> Result<Vec<u8>, String> {
+    let addr = parse_address_20(address).ok_or_else(|| "address must be 20 bytes".to_string())?;
+    let slot32 = parse_hash_32(slot).ok_or_else(|| "slot must be 32 bytes".to_string())?;
+    let key = make_storage_key(addr, slot32);
+    let value = with_state(|state| {
+        state
+            .storage
+            .get(&key)
+            .map(|v| v.0.to_vec())
+            .unwrap_or_else(|| [0u8; 32].to_vec())
+    });
+    Ok(value)
+}
+
+const RPC_ERR_INVALID_PARAMS: u32 = 1001;
+const RPC_ERR_EXECUTION_FAILED: u32 = 2001;
+
+pub fn rpc_eth_call_object(call: RpcCallObjectView) -> Result<RpcCallResultView, RpcErrorView> {
+    let input = call_object_to_input(call).map_err(|message| RpcErrorView {
+        code: RPC_ERR_INVALID_PARAMS,
+        message,
+    })?;
+    let out = chain::eth_call_object(input).map_err(|err| RpcErrorView {
+        code: RPC_ERR_EXECUTION_FAILED,
+        message: format!("eth_call_object failed: {err:?}"),
+    })?;
+    Ok(RpcCallResultView {
+        status: out.status,
+        gas_used: out.gas_used,
+        return_data: out.return_data,
+        revert_data: out.revert_data,
+    })
+}
+
+pub fn rpc_eth_estimate_gas_object(call: RpcCallObjectView) -> Result<u64, RpcErrorView> {
+    let input = call_object_to_input(call).map_err(|message| RpcErrorView {
+        code: RPC_ERR_INVALID_PARAMS,
+        message,
+    })?;
+    chain::eth_estimate_gas_object(input).map_err(|err| RpcErrorView {
+        code: RPC_ERR_EXECUTION_FAILED,
+        message: format!("eth_estimate_gas_object failed: {err:?}"),
+    })
 }
 
 pub fn rpc_eth_call_rawtx(raw_tx: Vec<u8>) -> Result<Vec<u8>, String> {
@@ -254,6 +301,88 @@ fn parse_hash_32(bytes: Vec<u8>) -> Option<[u8; 32]> {
     let mut out = [0u8; 32];
     out.copy_from_slice(&bytes);
     Some(out)
+}
+
+fn call_object_to_input(call: RpcCallObjectView) -> Result<chain::CallObjectInput, String> {
+    if call.gas_price.is_some()
+        && (call.max_fee_per_gas.is_some() || call.max_priority_fee_per_gas.is_some())
+    {
+        return Err("gasPrice and maxFeePerGas/maxPriorityFeePerGas cannot be used together".to_string());
+    }
+    if call.max_priority_fee_per_gas.is_some() && call.max_fee_per_gas.is_none() {
+        return Err("maxPriorityFeePerGas requires maxFeePerGas".to_string());
+    }
+    if let (Some(priority), Some(max_fee)) = (call.max_priority_fee_per_gas, call.max_fee_per_gas) {
+        if priority > max_fee {
+            return Err("maxPriorityFeePerGas must be <= maxFeePerGas".to_string());
+        }
+    }
+    let tx_type = match call.tx_type {
+        Some(0) => Some(0u8),
+        Some(2) => Some(2u8),
+        Some(_) => return Err("type must be 0x0 or 0x2".to_string()),
+        None => None,
+    };
+    if matches!(tx_type, Some(0))
+        && (call.max_fee_per_gas.is_some() || call.max_priority_fee_per_gas.is_some())
+    {
+        return Err("type=0 cannot be used with maxFeePerGas/maxPriorityFeePerGas".to_string());
+    }
+    if matches!(tx_type, Some(2)) && call.gas_price.is_some() {
+        return Err("type=2 cannot be used with gasPrice".to_string());
+    }
+    if let Some(chain_id) = call.chain_id {
+        if chain_id != CHAIN_ID {
+            return Err(format!("chainId mismatch: expected {CHAIN_ID}, got {chain_id}"));
+        }
+    }
+    let to = match call.to {
+        Some(bytes) => Some(parse_address_20(bytes).ok_or_else(|| "to must be 20 bytes".to_string())?),
+        None => None,
+    };
+    let from = match call.from {
+        Some(bytes) => parse_address_20(bytes).ok_or_else(|| "from must be 20 bytes".to_string())?,
+        None => [0u8; 20],
+    };
+    let value = match call.value {
+        Some(bytes) => parse_hash_32(bytes).ok_or_else(|| "value must be 32 bytes".to_string())?,
+        None => [0u8; 32],
+    };
+    let access_list = match call.access_list {
+        Some(items) => parse_access_list(items)?,
+        None => Vec::new(),
+    };
+    let data = call.data.unwrap_or_default();
+    Ok(chain::CallObjectInput {
+        to,
+        from,
+        gas_limit: call.gas,
+        gas_price: call.gas_price,
+        nonce: call.nonce,
+        max_fee_per_gas: call.max_fee_per_gas,
+        max_priority_fee_per_gas: call.max_priority_fee_per_gas,
+        chain_id: call.chain_id,
+        tx_type,
+        access_list,
+        value,
+        data,
+    })
+}
+
+fn parse_access_list(items: Vec<RpcAccessListItemView>) -> Result<Vec<([u8; 20], Vec<[u8; 32]>)>, String> {
+    let mut out = Vec::with_capacity(items.len());
+    for item in items {
+        let address =
+            parse_address_20(item.address).ok_or_else(|| "accessList.address must be 20 bytes".to_string())?;
+        let mut storage_keys = Vec::with_capacity(item.storage_keys.len());
+        for key in item.storage_keys {
+            storage_keys.push(
+                parse_hash_32(key).ok_or_else(|| "accessList.storageKeys[] must be 32 bytes".to_string())?,
+            );
+        }
+        out.push((address, storage_keys));
+    }
+    Ok(out)
 }
 
 fn find_eth_tx_id_by_eth_hash_bytes(eth_tx_hash: &[u8]) -> Option<TxId> {

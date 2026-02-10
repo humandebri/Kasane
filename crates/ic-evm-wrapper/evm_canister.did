@@ -223,20 +223,44 @@ type ReceiptView = record {
 };
 type Result = variant { Ok : nat64; Err : text };
 type Result_1 = variant { Ok : ExportResponseView; Err : ExportErrorView };
-type Result_10 = variant { Ok; Err : text };
+type Result_10 = variant { Ok : vec EthLogItemView; Err : GetLogsErrorView };
+type Result_11 = variant { Ok : blob; Err : SubmitTxError };
+type Result_12 = variant { Ok; Err : text };
 type Result_2 = variant { Ok : BlockView; Err : LookupError };
 type Result_3 = variant { Ok : ReceiptView; Err : LookupError };
 type Result_4 = variant { Ok : text; Err : text };
 type Result_5 = variant { Ok : ProduceBlockStatus; Err : ProduceBlockError };
 type Result_6 = variant { Ok : PruneResultView; Err : ProduceBlockError };
-type Result_7 = variant { Ok : blob; Err : text };
-type Result_8 = variant { Ok : vec EthLogItemView; Err : GetLogsErrorView };
-type Result_9 = variant { Ok : blob; Err : SubmitTxError };
+type Result_7 = variant { Ok : RpcCallResultView; Err : RpcErrorView };
+type Result_8 = variant { Ok : blob; Err : text };
+type Result_9 = variant { Ok : nat64; Err : RpcErrorView };
+type RpcAccessListItemView = record { storage_keys : vec blob; address : blob };
 type RpcBlockLookupView = variant {
   NotFound;
   Found : EthBlockView;
   Pruned : record { pruned_before_block : nat64 };
 };
+type RpcCallObjectView = record {
+  to : opt blob;
+  gas : opt nat64;
+  value : opt blob;
+  max_priority_fee_per_gas : opt nat;
+  data : opt blob;
+  from : opt blob;
+  max_fee_per_gas : opt nat;
+  chain_id : opt nat64;
+  nonce : opt nat64;
+  tx_type : opt nat64;
+  access_list : opt vec RpcAccessListItemView;
+  gas_price : opt nat;
+};
+type RpcCallResultView = record {
+  status : nat8;
+  return_data : blob;
+  gas_used : nat64;
+  revert_data : opt blob;
+};
+type RpcErrorView = record { code : nat32; message : text };
 type RpcReceiptLookupView = variant {
   NotFound;
   Found : EthReceiptView;
@@ -266,15 +290,18 @@ service : (opt InitArgs) -> {
   produce_block : (nat32) -> (Result_5);
   prune_blocks : (nat64, nat32) -> (Result_6);
   rpc_eth_block_number : () -> (nat64) query;
-  rpc_eth_call_rawtx : (blob) -> (Result_7) query;
+  rpc_eth_call_object : (RpcCallObjectView) -> (Result_7) query;
+  rpc_eth_call_rawtx : (blob) -> (Result_8) query;
   rpc_eth_chain_id : () -> (nat64) query;
-  rpc_eth_get_balance : (blob) -> (Result_7) query;
+  rpc_eth_estimate_gas_object : (RpcCallObjectView) -> (Result_9) query;
+  rpc_eth_get_balance : (blob) -> (Result_8) query;
   rpc_eth_get_block_by_number : (nat64, bool) -> (opt EthBlockView) query;
   rpc_eth_get_block_by_number_with_status : (nat64, bool) -> (
       RpcBlockLookupView,
     ) query;
-  rpc_eth_get_code : (blob) -> (Result_7) query;
-  rpc_eth_get_logs : (EthLogFilterView) -> (Result_8) query;
+  rpc_eth_get_code : (blob) -> (Result_8) query;
+  rpc_eth_get_logs : (EthLogFilterView) -> (Result_10) query;
+  rpc_eth_get_storage_at : (blob, blob) -> (Result_8) query;
   rpc_eth_get_transaction_by_eth_hash : (blob) -> (opt EthTxView) query;
   rpc_eth_get_transaction_receipt_by_eth_hash : (blob) -> (
       opt EthReceiptView,
@@ -282,16 +309,16 @@ service : (opt InitArgs) -> {
   rpc_eth_get_transaction_receipt_with_status : (blob) -> (
       RpcReceiptLookupView,
     ) query;
-  rpc_eth_send_raw_transaction : (blob) -> (Result_9);
-  set_auto_mine : (bool) -> (Result_10);
-  set_block_gas_limit : (nat64) -> (Result_10);
-  set_instruction_soft_limit : (nat64) -> (Result_10);
-  set_log_filter : (opt text) -> (Result_10);
-  set_miner_allowlist : (vec principal) -> (Result_10);
-  set_mining_interval_ms : (nat64) -> (Result_10);
-  set_ops_config : (OpsConfigView) -> (Result_10);
-  set_prune_policy : (PrunePolicyView) -> (Result_10);
-  set_pruning_enabled : (bool) -> (Result_10);
-  submit_eth_tx : (blob) -> (Result_9);
-  submit_ic_tx : (blob) -> (Result_9);
+  rpc_eth_send_raw_transaction : (blob) -> (Result_11);
+  set_auto_mine : (bool) -> (Result_12);
+  set_block_gas_limit : (nat64) -> (Result_12);
+  set_instruction_soft_limit : (nat64) -> (Result_12);
+  set_log_filter : (opt text) -> (Result_12);
+  set_miner_allowlist : (vec principal) -> (Result_12);
+  set_mining_interval_ms : (nat64) -> (Result_12);
+  set_ops_config : (OpsConfigView) -> (Result_12);
+  set_prune_policy : (PrunePolicyView) -> (Result_12);
+  set_pruning_enabled : (bool) -> (Result_12);
+  submit_eth_tx : (blob) -> (Result_11);
+  submit_ic_tx : (blob) -> (Result_11);
 }

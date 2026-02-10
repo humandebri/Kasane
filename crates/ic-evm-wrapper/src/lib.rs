@@ -659,6 +659,21 @@ fn rpc_eth_get_code(address: Vec<u8>) -> Result<Vec<u8>, String> {
 }
 
 #[ic_cdk::query]
+fn rpc_eth_get_storage_at(address: Vec<u8>, slot: Vec<u8>) -> Result<Vec<u8>, String> {
+    ic_evm_rpc::rpc_eth_get_storage_at(address, slot)
+}
+
+#[ic_cdk::query]
+fn rpc_eth_call_object(call: RpcCallObjectView) -> Result<RpcCallResultView, RpcErrorView> {
+    ic_evm_rpc::rpc_eth_call_object(call)
+}
+
+#[ic_cdk::query]
+fn rpc_eth_estimate_gas_object(call: RpcCallObjectView) -> Result<u64, RpcErrorView> {
+    ic_evm_rpc::rpc_eth_estimate_gas_object(call)
+}
+
+#[ic_cdk::query]
 fn rpc_eth_call_rawtx(raw_tx: Vec<u8>) -> Result<Vec<u8>, String> {
     ic_evm_rpc::rpc_eth_call_rawtx(raw_tx)
 }
@@ -1877,6 +1892,8 @@ mod tests {
         set_schema_migration_state, SchemaMigrationPhase, SchemaMigrationState,
     };
     use evm_db::stable_state::init_stable_state;
+    use evm_db::types::keys::{make_account_key, make_storage_key};
+    use evm_db::types::values::{AccountVal, U256Val};
     use std::collections::BTreeSet;
 
     #[test]
@@ -2350,6 +2367,127 @@ mod tests {
         })
         .expect_err("limit should fail");
         assert_eq!(err, GetLogsErrorView::TooManyResults);
+    }
+
+    #[test]
+    fn rpc_eth_get_storage_at_returns_zero_for_missing_slot() {
+        init_stable_state();
+        let out = super::rpc_eth_get_storage_at(vec![0u8; 20], vec![0u8; 32]).expect("storage");
+        assert_eq!(out, vec![0u8; 32]);
+    }
+
+    #[test]
+    fn rpc_eth_get_storage_at_reads_existing_slot() {
+        init_stable_state();
+        let addr = [0x11u8; 20];
+        let slot = [0x22u8; 32];
+        evm_db::stable_state::with_state_mut(|state| {
+            state.storage.insert(make_storage_key(addr, slot), U256Val([0x33u8; 32]));
+        });
+        let out = super::rpc_eth_get_storage_at(addr.to_vec(), slot.to_vec()).expect("storage");
+        assert_eq!(out, vec![0x33u8; 32]);
+    }
+
+    #[test]
+    fn rpc_eth_get_storage_at_rejects_bad_length() {
+        init_stable_state();
+        let err = super::rpc_eth_get_storage_at(vec![0u8; 19], vec![0u8; 32]).expect_err("bad address");
+        assert_eq!(err, "address must be 20 bytes");
+        let err = super::rpc_eth_get_storage_at(vec![0u8; 20], vec![0u8; 31]).expect_err("bad slot");
+        assert_eq!(err, "slot must be 32 bytes");
+    }
+
+    #[test]
+    fn rpc_eth_call_object_success_and_estimate_gas_work() {
+        init_stable_state();
+        let from = [0x77u8; 20];
+        evm_db::stable_state::with_state_mut(|state| {
+            state.accounts.insert(
+                make_account_key(from),
+                AccountVal::from_parts(0, [0xffu8; 32], [0u8; 32]),
+            );
+        });
+        let call = super::RpcCallObjectView {
+            to: Some(vec![0u8; 20]),
+            from: Some(from.to_vec()),
+            gas: Some(30_000),
+            gas_price: None,
+            nonce: None,
+            max_fee_per_gas: None,
+            max_priority_fee_per_gas: None,
+            chain_id: None,
+            tx_type: None,
+            access_list: None,
+            value: Some(vec![0u8; 32]),
+            data: Some(Vec::new()),
+        };
+        let out = super::rpc_eth_call_object(call.clone()).expect("call object");
+        assert_eq!(out.status, 1);
+        assert!(out.gas_used > 0);
+        assert!(out.revert_data.is_none());
+        let gas = super::rpc_eth_estimate_gas_object(call).expect("estimate");
+        assert!(gas > 0);
+    }
+
+    #[test]
+    fn rpc_eth_call_object_rejects_bad_address_len() {
+        init_stable_state();
+        let err = super::rpc_eth_call_object(super::RpcCallObjectView {
+            to: Some(vec![0u8; 19]),
+            from: None,
+            gas: None,
+            gas_price: None,
+            nonce: None,
+            max_fee_per_gas: None,
+            max_priority_fee_per_gas: None,
+            chain_id: None,
+            tx_type: None,
+            access_list: None,
+            value: None,
+            data: None,
+        })
+        .expect_err("bad to");
+        assert_eq!(err.code, 1001);
+        assert_eq!(err.message, "to must be 20 bytes");
+        let err = super::rpc_eth_call_object(super::RpcCallObjectView {
+            to: Some(vec![0u8; 20]),
+            from: Some(vec![0u8; 19]),
+            gas: None,
+            gas_price: None,
+            nonce: None,
+            max_fee_per_gas: None,
+            max_priority_fee_per_gas: None,
+            chain_id: None,
+            tx_type: None,
+            access_list: None,
+            value: None,
+            data: None,
+        })
+        .expect_err("bad from");
+        assert_eq!(err.code, 1001);
+        assert_eq!(err.message, "from must be 20 bytes");
+    }
+
+    #[test]
+    fn rpc_eth_call_object_rejects_bad_value_len() {
+        init_stable_state();
+        let err = super::rpc_eth_call_object(super::RpcCallObjectView {
+            to: Some(vec![0u8; 20]),
+            from: None,
+            gas: None,
+            gas_price: None,
+            nonce: None,
+            max_fee_per_gas: None,
+            max_priority_fee_per_gas: None,
+            chain_id: None,
+            tx_type: None,
+            access_list: None,
+            value: Some(vec![0u8; 31]),
+            data: None,
+        })
+        .expect_err("bad value");
+        assert_eq!(err.code, 1001);
+        assert_eq!(err.message, "value must be 32 bytes");
     }
 
     #[cfg(feature = "dev-faucet")]
