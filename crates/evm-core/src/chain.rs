@@ -30,8 +30,12 @@ use evm_db::types::keys::make_account_key;
 use evm_db::types::values::AccountVal;
 use evm_db::Storable;
 use revm::database::CacheDB;
+use revm::context_interface::transaction::{AccessList, AccessListItem};
 use revm::database_interface::DatabaseCommit;
 use revm::primitives::Address;
+use revm::primitives::B256;
+use revm::primitives::Bytes as RevmBytes;
+use revm::primitives::TxKind as RevmTxKind;
 use revm::primitives::U256;
 #[cfg(not(target_arch = "wasm32"))]
 use std::cell::Cell;
@@ -192,6 +196,30 @@ pub struct PruneResult {
     pub did_work: bool,
     pub remaining: u64,
     pub pruned_before_block: Option<u64>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CallObjectInput {
+    pub to: Option<[u8; 20]>,
+    pub from: [u8; 20],
+    pub gas_limit: Option<u64>,
+    pub gas_price: Option<u128>,
+    pub nonce: Option<u64>,
+    pub max_fee_per_gas: Option<u128>,
+    pub max_priority_fee_per_gas: Option<u128>,
+    pub chain_id: Option<u64>,
+    pub tx_type: Option<u8>,
+    pub access_list: Vec<([u8; 20], Vec<[u8; 32]>)>,
+    pub value: [u8; 32],
+    pub data: Vec<u8>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CallObjectResult {
+    pub status: u8,
+    pub gas_used: u64,
+    pub return_data: Vec<u8>,
+    pub revert_data: Option<Vec<u8>>,
 }
 
 pub struct PruneStatus {
@@ -1274,6 +1302,139 @@ pub fn eth_call(raw_tx: Vec<u8>) -> Result<Vec<u8>, ChainError> {
     let (outcome, _) = execute_tx_on(db, tx_id, 0, tx_env, &exec_ctx, ExecPath::UserTx, false)
         .map_err(|err| ChainError::ExecFailed(Some(err)))?;
     Ok(outcome.return_data)
+}
+
+pub fn eth_call_object(input: CallObjectInput) -> Result<CallObjectResult, ChainError> {
+    if input.data.len() > MAX_TX_SIZE {
+        return Err(ChainError::TxTooLarge);
+    }
+    let head = with_state(|state| *state.head.get());
+    let number = head.number.saturating_add(1);
+    let timestamp = std::cmp::max(head.timestamp.saturating_add(1), crate::time::now_sec());
+    let (base_fee, block_gas_limit) = with_state(|state| {
+        let chain = *state.chain_state.get();
+        (chain.base_fee, chain.block_gas_limit)
+    });
+    let gas_limit = input.gas_limit.unwrap_or(block_gas_limit);
+    let tx_type = input
+        .tx_type
+        .unwrap_or(if input.max_fee_per_gas.is_some() || input.max_priority_fee_per_gas.is_some() {
+            2
+        } else {
+            0
+        });
+    let (gas_price, gas_priority_fee) = if tx_type == 2 {
+        (
+            input.max_fee_per_gas.unwrap_or(u128::from(base_fee)),
+            Some(input.max_priority_fee_per_gas.unwrap_or(0)),
+        )
+    } else {
+        (input.gas_price.unwrap_or(u128::from(base_fee)), None)
+    };
+    let chain_id = input.chain_id.unwrap_or(evm_db::chain_data::constants::CHAIN_ID);
+    let tx_id = call_object_tx_id(&input);
+    let access_list = AccessList(
+        input
+            .access_list
+            .into_iter()
+            .map(|(address, storage_keys)| AccessListItem {
+                address: Address::from(address),
+                storage_keys: storage_keys.into_iter().map(B256::from).collect(),
+            })
+            .collect(),
+    );
+    let caller = Address::from(input.from);
+    let nonce = input.nonce.unwrap_or_else(|| {
+        with_state(|state| {
+            state
+                .accounts
+                .get(&make_account_key(input.from))
+                .map(|account| account.nonce())
+                .unwrap_or(0)
+        })
+    });
+    let tx_env = revm::context::TxEnv {
+        caller,
+        gas_limit,
+        gas_price,
+        kind: match input.to {
+            Some(to) => RevmTxKind::Call(Address::from(to)),
+            None => RevmTxKind::Create,
+        },
+        value: U256::from_be_bytes(input.value),
+        data: RevmBytes::from(input.data.clone()),
+        nonce,
+        chain_id: Some(chain_id),
+        access_list,
+        gas_priority_fee,
+        blob_hashes: Default::default(),
+        max_fee_per_blob_gas: 0,
+        authorization_list: Default::default(),
+        tx_type,
+    };
+    let exec_ctx = BlockExecContext {
+        block_number: number,
+        timestamp,
+        base_fee,
+        block_gas_limit,
+    };
+    let db = CacheDB::new(crate::revm_db::RevmStableDb);
+    let (outcome, _) = execute_tx_on(db, tx_id, 0, tx_env, &exec_ctx, ExecPath::UserTx, false)
+        .map_err(|err| ChainError::ExecFailed(Some(err)))?;
+    let revert_data = if outcome.receipt.status == 0 && !outcome.return_data.is_empty() {
+        Some(outcome.return_data.clone())
+    } else {
+        None
+    };
+    Ok(CallObjectResult {
+        status: outcome.receipt.status,
+        gas_used: outcome.receipt.gas_used,
+        return_data: outcome.return_data,
+        revert_data,
+    })
+}
+
+pub fn eth_estimate_gas_object(input: CallObjectInput) -> Result<u64, ChainError> {
+    let out = eth_call_object(input)?;
+    Ok(out.gas_used)
+}
+
+fn call_object_tx_id(input: &CallObjectInput) -> TxId {
+    let mut buf = Vec::with_capacity(1 + 20 + 20 + 8 + 16 + 16 + 8 + 1 + 4 + 32 + 4 + input.data.len());
+    buf.extend_from_slice(b"ic-evm:call-object:v1");
+    match input.to {
+        Some(to) => {
+            buf.push(1);
+            buf.extend_from_slice(&to);
+        }
+        None => {
+            buf.push(0);
+            buf.extend_from_slice(&[0u8; 20]);
+        }
+    }
+    buf.extend_from_slice(&input.from);
+    buf.extend_from_slice(&input.gas_limit.unwrap_or(0).to_be_bytes());
+    buf.extend_from_slice(&input.gas_price.unwrap_or(0).to_be_bytes());
+    buf.extend_from_slice(&input.nonce.unwrap_or(0).to_be_bytes());
+    buf.extend_from_slice(&input.max_fee_per_gas.unwrap_or(0).to_be_bytes());
+    buf.extend_from_slice(&input.max_priority_fee_per_gas.unwrap_or(0).to_be_bytes());
+    buf.extend_from_slice(&input.chain_id.unwrap_or(0).to_be_bytes());
+    buf.push(input.tx_type.unwrap_or(0));
+    let access_list_len = u32::try_from(input.access_list.len()).unwrap_or(u32::MAX);
+    buf.extend_from_slice(&access_list_len.to_be_bytes());
+    for (address, storage_keys) in &input.access_list {
+        buf.extend_from_slice(address);
+        let storage_keys_len = u32::try_from(storage_keys.len()).unwrap_or(u32::MAX);
+        buf.extend_from_slice(&storage_keys_len.to_be_bytes());
+        for slot in storage_keys {
+            buf.extend_from_slice(slot);
+        }
+    }
+    buf.extend_from_slice(&input.value);
+    let data_len = u32::try_from(input.data.len()).unwrap_or(u32::MAX);
+    buf.extend_from_slice(&data_len.to_be_bytes());
+    buf.extend_from_slice(&input.data);
+    TxId(hash::keccak256(&buf))
 }
 
 pub fn get_block(number: u64) -> Option<BlockData> {
