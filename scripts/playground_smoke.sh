@@ -200,47 +200,54 @@ log "submit_ic_tx accepted nonce=${SELECTED_NONCE}"
 log "producing block for ic tx"
 assert_command "$DFX call $CANISTER_ID produce_block '(1)'"
 SKIP_ETH=0
-ETH_PRIVKEY=$(random_privkey)
-RAW_TX="$(raw_tx_bytes_with_nonce 0 "$ETH_PRIVKEY")"
 if [[ "$USE_DEV_FAUCET" == "1" ]]; then
+  ETH_PRIVKEY=$(random_privkey)
+  RAW_TX="$(raw_tx_bytes_with_nonce 0 "$ETH_PRIVKEY")"
   log "dev_mint for eth sender"
   SENDER_BLOB=$(raw_tx_sender_blob "$ETH_PRIVKEY")
   assert_command "$DFX call $CANISTER_ID dev_mint \"(blob \\\"$SENDER_BLOB\\\", $DEV_FAUCET_AMOUNT:nat)\""
+else
+  SKIP_ETH=1
+  log "skipping eth raw tx smoke (requires funded sender; enable USE_DEV_FAUCET=1)"
 fi
-log "submitting eth raw tx"
-SUBMIT_ETH_OUT=""
-ETH_TX_ID_BYTES=""
-EXPECTED_ETH_NONCE=$($DFX call $CANISTER_ID expected_nonce_by_address "(blob \"$SENDER_BLOB\")" --output json | tr -d '"_' )
-ETH_NONCE=$(python - <<PY
+if [[ "$SKIP_ETH" == "0" ]]; then
+  log "submitting eth raw tx"
+  SUBMIT_ETH_OUT=""
+  ETH_TX_ID_BYTES=""
+  EXPECTED_ETH_NONCE=$($DFX call $CANISTER_ID expected_nonce_by_address "(blob \"$SENDER_BLOB\")" --output json | tr -d '"_' )
+  ETH_NONCE=$(python - <<PY
 import re
 text = "$EXPECTED_ETH_NONCE"
 m = re.search(r"(\\d+)", text)
 print(m.group(1) if m else "0")
 PY
 )
-for nonce_val in "$ETH_NONCE"; do
-  RAW_TX="$(raw_tx_bytes_with_nonce "$nonce_val" "$ETH_PRIVKEY")"
-  SUBMIT_ETH_OUT=$($DFX call $CANISTER_ID submit_eth_tx "(vec { $RAW_TX })")
-  if echo "$SUBMIT_ETH_OUT" | assert_ok_variant; then
-    ETH_TX_ID_BYTES=$(echo "$SUBMIT_ETH_OUT" | parse_ok_blob_bytes)
-    break
+  for nonce_val in "$ETH_NONCE"; do
+    RAW_TX="$(raw_tx_bytes_with_nonce "$nonce_val" "$ETH_PRIVKEY")"
+    SUBMIT_ETH_OUT=$($DFX call $CANISTER_ID submit_eth_tx "(vec { $RAW_TX })")
+    if echo "$SUBMIT_ETH_OUT" | assert_ok_variant; then
+      ETH_TX_ID_BYTES=$(echo "$SUBMIT_ETH_OUT" | parse_ok_blob_bytes)
+      break
+    fi
+    echo "[playground-smoke] submit_eth_tx failed: $SUBMIT_ETH_OUT"
+    exit 1
+  done
+  if [[ -z "$ETH_TX_ID_BYTES" ]]; then
+    echo "[playground-smoke] submit_eth_tx failed: $SUBMIT_ETH_OUT"
+    exit 1
   fi
-  echo "[playground-smoke] submit_eth_tx failed: $SUBMIT_ETH_OUT"
-  exit 1
-done
-if [[ -z "$ETH_TX_ID_BYTES" ]]; then
-  echo "[playground-smoke] submit_eth_tx failed: $SUBMIT_ETH_OUT"
-  exit 1
+  log "producing block"
+  assert_command "$DFX call $CANISTER_ID produce_block '(1)'"
+  log "fetching receipt for eth tx"
+  $DFX call "$CANISTER_ID" get_receipt "(vec { $ETH_TX_ID_BYTES })"
 fi
-log "producing block"
-assert_command "$DFX call $CANISTER_ID produce_block '(1)'"
-log "fetching receipt for eth tx"
-$DFX call "$CANISTER_ID" get_receipt "(vec { $ETH_TX_ID_BYTES })"
 after=$(cycle_balance "after")
 delta=$((before - after))
 log "cycles consumed delta=$delta"
 log "fetching block1"
 $DFX call "$CANISTER_ID" get_block '(1)'
-log "fetching block2"
-$DFX call "$CANISTER_ID" get_block '(2)'
+if [[ "$SKIP_ETH" == "0" ]]; then
+  log "fetching block2"
+  $DFX call "$CANISTER_ID" get_block '(2)'
+fi
 log "playground smoke finished"

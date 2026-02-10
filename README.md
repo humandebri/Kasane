@@ -25,6 +25,7 @@
 - storage書き込み失敗は `trap` でロールバックするため、canister内カウンタは残らない。一次監視は caller/indexer 側ログで行う。
 - デプロイ前の統合スモークは `scripts/predeploy_smoke.sh` を利用する。
 - 容量対策として、必要時は `cargo clean` を実行して `target/` を都度クリーンする。
+- 運用時の初期資金配布は `InitArgs.genesis_balances` に一本化し、`dev_mint` は運用導線で使用しない。
 
 ## 1.0 序論：プロジェクトのビジョンと全体戦略
 

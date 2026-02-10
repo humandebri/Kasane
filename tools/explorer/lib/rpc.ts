@@ -62,8 +62,12 @@ export async function getReceiptByTxId(txId: Uint8Array): Promise<Result<Receipt
 }
 
 export async function getRpcBlock(number: bigint): Promise<EthBlockView | null> {
+  return getRpcBlockWithTxMode(number, false);
+}
+
+export async function getRpcBlockWithTxMode(number: bigint, fullTx: boolean): Promise<EthBlockView | null> {
   const actor = await getActor();
-  const out = await actor.rpc_eth_get_block_by_number(number, false);
+  const out = await actor.rpc_eth_get_block_by_number(number, fullTx);
   return out.length === 0 ? null : out[0];
 }
 

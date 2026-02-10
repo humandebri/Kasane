@@ -74,8 +74,8 @@ scripts/pr0_differential_compare.sh "$PR0_DIFF_LOCAL_FILE" "$PR0_DIFF_REFERENCE_
 dfx canister create evm_canister
 echo "[guard] release wasm endpoint guard (no dev-faucet)"
 scripts/release_wasm_guard.sh
-echo "[build] ic-evm-wrapper with dev-faucet"
-cargo build --target wasm32-unknown-unknown --release -p ic-evm-wrapper --features dev-faucet --locked
+echo "[build] ic-evm-wrapper (default features)"
+cargo build --target wasm32-unknown-unknown --release -p ic-evm-wrapper --locked
 if ! command -v ic-wasm >/dev/null 2>&1; then
   echo "[build] installing ic-wasm"
   cargo install ic-wasm --locked
@@ -94,7 +94,7 @@ for i in {1..10}; do
   sleep 1
 done
 
-echo "[smoke] dev_mint caller"
+echo "[smoke] verify caller genesis balance"
 CALLER_PRINCIPAL=$(dfx identity get-principal)
 CALLER_HEX=$(cargo run -q -p ic-evm-core --bin caller_evm -- "$CALLER_PRINCIPAL")
 CALLER_BLOB=$(python - <<PY
@@ -102,7 +102,49 @@ data = bytes.fromhex("$CALLER_HEX")
 print(''.join(f'\\\\{b:02x}' for b in data))
 PY
 )
-dfx canister call evm_canister dev_mint "(blob \"$CALLER_BLOB\", 1000000000000000000:nat)" >/dev/null
+BALANCE_OUT=$(dfx canister call evm_canister rpc_eth_get_balance "(blob \"$CALLER_BLOB\")")
+CALLER_BALANCE_WEI=$(BALANCE_TEXT="$BALANCE_OUT" python - <<'PY'
+import os
+import re
+import sys
+
+text = os.environ.get("BALANCE_TEXT", "")
+match = re.search(r'variant\s*\{\s*(?:ok|Ok)\s*=\s*blob\s*"([^"]*)"', text)
+if not match:
+    sys.stderr.write("[smoke] rpc_eth_get_balance did not return ok blob\n")
+    sys.stderr.write(text + "\n")
+    sys.exit(1)
+escaped = match.group(1)
+out = bytearray()
+i = 0
+while i < len(escaped):
+    if escaped[i] == "\\":
+        if i + 2 < len(escaped) and all(c in "0123456789abcdefABCDEF" for c in escaped[i + 1:i + 3]):
+            out.append(int(escaped[i + 1:i + 3], 16))
+            i += 3
+            continue
+        if i + 1 < len(escaped):
+            out.append(ord(escaped[i + 1]))
+            i += 2
+            continue
+    out.append(ord(escaped[i]))
+    i += 1
+print(int.from_bytes(out, "big"))
+PY
+)
+if ! CALLER_BALANCE_WEI="$CALLER_BALANCE_WEI" python - <<'PY'
+import os
+import sys
+value = os.environ.get("CALLER_BALANCE_WEI", "")
+if not value:
+    sys.exit(1)
+sys.exit(0 if int(value) > 0 else 1)
+PY
+then
+  echo "[smoke] caller balance is zero; genesis_balances must fund current identity" >&2
+  exit 1
+fi
+echo "[smoke] caller genesis balance_wei=${CALLER_BALANCE_WEI}"
 
 echo "[smoke] set_auto_mine(false)"
 dfx canister call evm_canister set_auto_mine '(false)' >/dev/null

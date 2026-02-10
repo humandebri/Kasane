@@ -19,7 +19,7 @@ INDEXER_IDLE_POLL_MS="${INDEXER_IDLE_POLL_MS:-1000}"
 INDEXER_MAX_BYTES="${INDEXER_MAX_BYTES:-1200000}"
 INDEXER_BACKOFF_MAX_MS="${INDEXER_BACKOFF_MAX_MS:-5000}"
 INDEXER_CHAIN_ID="${INDEXER_CHAIN_ID:-4801360}"
-ENABLE_DEV_FAUCET="${ENABLE_DEV_FAUCET:-1}"
+ENABLE_DEV_FAUCET="${ENABLE_DEV_FAUCET:-0}"
 
 DFX_CANISTER="dfx canister --network ${NETWORK}"
 
@@ -147,10 +147,52 @@ PY
 }
 
 seed_blocks() {
-  log "dev_mint for caller"
   local caller
   caller=$(caller_blob)
-  ${DFX_CANISTER} call "${CANISTER_NAME}" dev_mint "(blob \"${caller}\", 1000000000000000000:nat)" >/dev/null
+  log "verify genesis-funded caller balance"
+  local balance
+  balance=$(${DFX_CANISTER} call "${CANISTER_NAME}" rpc_eth_get_balance "(blob \"${caller}\")")
+  local balance_wei
+  balance_wei=$(BALANCE_TEXT="${balance}" python - <<'PY'
+import os
+import re
+import sys
+
+text = os.environ.get("BALANCE_TEXT", "")
+match = re.search(r'variant\s*\{\s*(?:ok|Ok)\s*=\s*blob\s*"([^"]*)"', text)
+if not match:
+    sys.exit(1)
+escaped = match.group(1)
+out = bytearray()
+i = 0
+while i < len(escaped):
+    if escaped[i] == "\\":
+        if i + 2 < len(escaped) and all(c in "0123456789abcdefABCDEF" for c in escaped[i + 1:i + 3]):
+            out.append(int(escaped[i + 1:i + 3], 16))
+            i += 3
+            continue
+        if i + 1 < len(escaped):
+            out.append(ord(escaped[i + 1]))
+            i += 2
+            continue
+    out.append(ord(escaped[i]))
+    i += 1
+print(int.from_bytes(out, "big"))
+PY
+)
+  if ! BALANCE_WEI="${balance_wei}" python - <<'PY'
+import os
+import sys
+value = os.environ.get("BALANCE_WEI", "")
+if not value:
+    sys.exit(1)
+sys.exit(0 if int(value) > 0 else 1)
+PY
+  then
+    echo "[local-indexer-smoke] caller balance is zero; ensure genesis_balances includes current identity" >&2
+    exit 1
+  fi
+  log "genesis-funded caller balance_wei=${balance_wei}"
 
   log "set_auto_mine(false)"
   ${DFX_CANISTER} call "${CANISTER_NAME}" set_auto_mine '(false)' >/dev/null
