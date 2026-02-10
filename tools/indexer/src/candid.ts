@@ -24,9 +24,23 @@ export const idlFactory: IDL.InterfaceFactory = ({ IDL }) => {
     MissingData: IDL.Record({ message: IDL.Text }),
     Limit: IDL.Null,
   });
+  const PruneStatusView = IDL.Record({
+    pruning_enabled: IDL.Bool,
+    hard_emergency_bytes: IDL.Nat64,
+    pruned_before_block: IDL.Opt(IDL.Nat64),
+    low_water_bytes: IDL.Nat64,
+    high_water_bytes: IDL.Nat64,
+    oldest_kept_timestamp: IDL.Opt(IDL.Nat64),
+    estimated_kept_bytes: IDL.Nat64,
+    need_prune: IDL.Bool,
+    last_prune_at: IDL.Nat64,
+    prune_running: IDL.Bool,
+    oldest_kept_block: IDL.Opt(IDL.Nat64),
+  });
   const ExportResult = IDL.Variant({ Ok: ExportResponse, Err: ExportError });
   return IDL.Service({
     export_blocks: IDL.Func([IDL.Opt(Cursor), IDL.Nat32], [ExportResult], ["query"]),
+    get_prune_status: IDL.Func([], [PruneStatusView], ["query"]),
     rpc_eth_block_number: IDL.Func([], [IDL.Nat64], ["query"]),
   });
 };
