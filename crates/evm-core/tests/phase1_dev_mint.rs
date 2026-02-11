@@ -1,4 +1,4 @@
-//! どこで: Phase1テスト / 何を: dev_mint の残高加算 / なぜ: 開発用ファセットの安全性を確認するため
+//! どこで: Phase1テスト / 何を: 残高加算ヘルパーの検証 / なぜ: genesis配布で使う加算ロジックの回帰を防ぐため
 
 use evm_core::chain;
 use evm_db::stable_state::{init_stable_state, with_state};
@@ -6,11 +6,11 @@ use evm_db::types::keys::make_account_key;
 use revm::primitives::U256;
 
 #[test]
-fn dev_mint_increases_balance() {
+fn credit_balance_increases_balance() {
     init_stable_state();
 
     let addr = [0x10u8; 20];
-    chain::dev_mint(addr, 5).expect("mint");
+    chain::credit_balance(addr, 5).expect("credit");
 
     let key = make_account_key(addr);
     let account = with_state(|state| state.accounts.get(&key)).expect("account");

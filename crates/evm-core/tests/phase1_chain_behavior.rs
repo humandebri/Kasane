@@ -11,7 +11,7 @@ fn execute_ic_tx_invalid_opcode_does_not_increment_unknown_halt_metrics() {
     init_stable_state();
     let caller_principal = vec![0x42];
     let caller = hash::caller_evm_from_principal(&caller_principal);
-    chain::dev_mint(caller, 1_000_000_000_000_000_000).expect("mint");
+    common::fund_account(caller, 1_000_000_000_000_000_000);
 
     let halt_target = [0x12u8; 20];
     common::install_contract(halt_target, &[0xfe]); // INVALID

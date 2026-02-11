@@ -146,7 +146,7 @@ fn init_inner(args: Option<InitArgs>, require_args: bool) {
         for alloc in args.genesis_balances.iter() {
             let mut addr = [0u8; 20];
             addr.copy_from_slice(&alloc.address);
-            chain::dev_mint(addr, alloc.amount)
+            chain::credit_balance(addr, alloc.amount)
                 .unwrap_or_else(|_| ic_cdk::trap("init: genesis mint failed"));
         }
     }
@@ -266,12 +266,6 @@ fn inspect_policy_for_method(method: &str) -> Option<InspectMethodPolicy> {
         .find(|policy| policy.method == method)
     {
         return Some(policy);
-    }
-    if cfg!(feature = "dev-faucet") && method == "dev_mint" {
-        return Some(InspectMethodPolicy {
-            method: "dev_mint",
-            payload_limit: INSPECT_MANAGE_PAYLOAD_LIMIT,
-        });
     }
     None
 }
@@ -406,27 +400,6 @@ fn submit_ic_tx(tx_bytes: Vec<u8>) -> Result<Vec<u8>, SubmitTxError> {
         schedule_mining();
     }
     out
-}
-
-#[cfg(feature = "dev-faucet")]
-#[ic_cdk::update]
-fn dev_mint(address: Vec<u8>, amount: u128) {
-    if let Some(reason) = reject_anonymous_update() {
-        ic_cdk::trap(&reason);
-    }
-    if reject_write_reason().is_some() {
-        return;
-    }
-    let caller = ic_cdk::api::msg_caller();
-    if !ic_cdk::api::is_controller(&caller) {
-        ic_cdk::trap("dev_mint: caller is not a controller");
-    }
-    if address.len() != 20 {
-        ic_cdk::trap("dev_mint: address must be 20 bytes");
-    }
-    let mut addr = [0u8; 20];
-    addr.copy_from_slice(&address);
-    chain::dev_mint(addr, amount).unwrap_or_else(|_| ic_cdk::trap("dev_mint failed"));
 }
 
 #[ic_cdk::update]
@@ -902,7 +875,6 @@ fn metrics(window: u64) -> MetricsView {
             total_dropped: metrics.total_dropped,
             cycles,
             pruned_before_block,
-            dev_faucet_enabled: cfg!(feature = "dev-faucet"),
         }
     })
 }
@@ -2490,12 +2462,6 @@ mod tests {
         assert_eq!(err.message, "value must be 32 bytes");
     }
 
-    #[cfg(feature = "dev-faucet")]
-    #[test]
-    fn inspect_allowlist_accepts_dev_mint_with_feature() {
-        assert!(inspect_payload_limit_for_method("dev_mint").is_some());
-    }
-
     fn is_machine_code(value: &str) -> bool {
         value
             .chars()
@@ -2507,8 +2473,6 @@ mod tests {
         for policy in INSPECT_METHOD_POLICIES {
             out.insert(policy.method);
         }
-        #[cfg(feature = "dev-faucet")]
-        out.insert("dev_mint");
         out
     }
 

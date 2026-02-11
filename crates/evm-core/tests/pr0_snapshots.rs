@@ -15,7 +15,7 @@ fn snapshot_tx_outcome_matrix_and_block_fields() {
     init_stable_state();
     let caller_principal = vec![0x42];
     let caller = hash::caller_evm_from_principal(&caller_principal);
-    chain::dev_mint(caller, 1_000_000_000_000_000_000).expect("mint");
+    common::fund_account(caller, 1_000_000_000_000_000_000);
 
     let success_target = [0x10u8; 20];
     let revert_target = [0x11u8; 20];

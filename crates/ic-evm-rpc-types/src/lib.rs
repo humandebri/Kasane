@@ -176,7 +176,6 @@ pub struct MetricsView {
     pub total_dropped: u64,
     pub cycles: u128,
     pub pruned_before_block: Option<u64>,
-    pub dev_faucet_enabled: bool,
 }
 
 #[derive(Clone, Debug, CandidType, Deserialize)]

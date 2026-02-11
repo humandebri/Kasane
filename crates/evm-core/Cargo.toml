@@ -28,6 +28,7 @@ alloy-primitives = { version = "=1.5.3", default-features = false, features = ["
 alloy-trie = { version = "0.9.3", default-features = false, features = ["ethereum"] }
 alloy-signer = { version = "1.5.2", default-features = false, optional = true }
 alloy-signer-local = { version = "1.5.2", default-features = false, optional = true }
+alloy-consensus = { version = "1.5.2", default-features = false, features = ["eips-kzg-sidecar"], optional = true }
 byteorder = "1"
 smallvec = "1.13"
 
@@ -41,7 +42,7 @@ path = "../ic-evm-tx"
 
 [features]
 full_state_root = []
-local-signer-bin = ["dep:alloy-signer", "dep:alloy-signer-local"]
+local-signer-bin = ["dep:alloy-signer", "dep:alloy-signer-local", "dep:alloy-consensus"]
 
 [dev-dependencies]
 alloy-consensus = { version = "1.5.2", default-features = false, features = ["k256", "eips-kzg-sidecar"] }
