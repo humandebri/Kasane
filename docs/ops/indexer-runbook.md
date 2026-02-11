@@ -324,12 +324,29 @@ DB_PATH=tools/indexer/indexer.db scripts/indexer_metrics_snapshot.sh
 scripts/predeploy_smoke.sh
 ```
 
-2) 必須確認
+2) `ic` 向け preflight を実行
+
+- `CANISTER_ID` は本番 canister id を指定する（初回作成前は不要）
+
+```bash
+ICP_ENV=ic CANISTER_ID=<canister_id> scripts/ic_mainnet_preflight.sh
+```
+
+3) 必須確認
 
 - `cargo check --workspace` が成功
 - `cargo build -p ic-evm-wrapper --target wasm32-unknown-unknown --release` が成功
 - `tools/indexer` の `npm run build` が成功
 - `scripts/rpc_compat_smoke.sh` の各RPC呼び出しが成功
+
+4) 本番デプロイ（手動確認付き）
+
+```bash
+ICP_ENV=ic \
+CANISTER_ID=<canister_id> \
+MODE=upgrade \
+scripts/ic_mainnet_deploy.sh
+```
 
 ## 15. 障害時ロールバック
 

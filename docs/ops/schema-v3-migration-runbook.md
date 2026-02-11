@@ -9,7 +9,7 @@
 2. スナップショットを取得する。
 
 ```bash
-dfx canister snapshot create <canister_id>
+icp canister snapshot create -e ic <canister_id>
 ```
 
 3. 取得した snapshot ID を運用記録に残す。
@@ -26,10 +26,10 @@ dfx canister snapshot create <canister_id>
 9. from_version>=3 の再実行時はコピーを省略し、active は維持される。
 
 ```bash
-dfx canister stop <canister_id>
-dfx canister snapshot create <canister_id>
-dfx canister install <canister_id> --mode upgrade --wasm target/wasm32-unknown-unknown/release/ic_evm_wrapper.wasm.gz
-dfx canister start <canister_id>
+icp canister stop -e ic <canister_id>
+icp canister snapshot create -e ic <canister_id>
+icp canister install -e ic <canister_id> --mode upgrade --wasm target/wasm32-unknown-unknown/release/ic_evm_wrapper.release.final.wasm
+icp canister start -e ic <canister_id>
 ```
 
 ## 異常時復旧
@@ -39,10 +39,10 @@ dfx canister start <canister_id>
 - 上記状態では `ops.write.needs_migration` を確認し、snapshot/upgrade の復旧手順へ移行する。
 
 ```bash
-dfx canister stop <canister_id>
-dfx canister snapshot load <canister_id> <snapshot_id>
-dfx canister install <canister_id> --mode reinstall --wasm <old_wasm_path>
-dfx canister start <canister_id>
+icp canister stop -e ic <canister_id>
+icp canister snapshot load -e ic <canister_id> <snapshot_id>
+icp canister install -e ic <canister_id> --mode reinstall --wasm <old_wasm_path>
+icp canister start -e ic <canister_id>
 ```
 
 - 復旧後は原因分析を行い、再upgrade前に再検証する。
