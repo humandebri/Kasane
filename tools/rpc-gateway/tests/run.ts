@@ -2,12 +2,16 @@
 
 import assert from "node:assert/strict";
 import { bytesToQuantity, parseDataHex, parseQuantityHex, toDataHex, toQuantityHex } from "../src/hex";
+import { handleRpc } from "../src/handlers";
 import { computeDepth, validateRequest } from "../src/jsonrpc";
 import {
   __test_classify_call_object_err_code,
+  __test_map_receipt,
   __test_normalize_storage_slot32,
   __test_parse_call_object,
   __test_revert_data_hex,
+  __test_resolve_submitted_eth_hash_from_lookup,
+  __test_tx_hash_readiness_error,
   __test_to_candid_call_object,
 } from "../src/handlers";
 
@@ -131,10 +135,165 @@ function testCanisterErrorClassification(): void {
   assert.equal(__test_classify_call_object_err_code(9999), -32000);
 }
 
+function testReceiptLogMapping(): void {
+  const mapped = __test_map_receipt(
+    {
+      effective_gas_price: 1n,
+      status: 1,
+      l1_data_fee: 0n,
+      tx_index: 2,
+      logs: [
+        {
+          log_index: 7,
+          address: Uint8Array.from(Buffer.from("11".repeat(20), "hex")),
+          topics: [Uint8Array.from(Buffer.from("22".repeat(32), "hex"))],
+          data: Uint8Array.from([0xaa, 0xbb]),
+        },
+      ],
+      total_fee: 0n,
+      block_number: 5n,
+      operator_fee: 0n,
+      eth_tx_hash: [Uint8Array.from(Buffer.from("33".repeat(32), "hex"))],
+      gas_used: 21_000n,
+      contract_address: [],
+      tx_hash: Uint8Array.from(Buffer.from("44".repeat(32), "hex")),
+    },
+    Uint8Array.from(Buffer.from("55".repeat(32), "hex"))
+  );
+  const logs = mapped.logs as Array<Record<string, unknown>>;
+  assert.equal(logs.length, 1);
+  const log0 = logs[0];
+  assert.ok(log0);
+  assert.equal(log0.address, `0x${"11".repeat(20)}`);
+  assert.equal(log0.blockNumber, "0x5");
+  assert.equal(log0.transactionIndex, "0x2");
+  assert.equal(log0.logIndex, "0x7");
+}
+
+function testSubmitEthHashResolutionPolicy(): void {
+  const notFound = __test_resolve_submitted_eth_hash_from_lookup([]);
+  assert.equal(notFound.ok, false);
+  if (!notFound.ok) {
+    assert.equal(notFound.reason, "tx_id_not_found");
+  }
+
+  const missingEthHash = __test_resolve_submitted_eth_hash_from_lookup([
+    {
+      raw: Uint8Array.from([]),
+      tx_index: [],
+      decode_ok: false,
+      hash: Uint8Array.from(Buffer.from("44".repeat(32), "hex")),
+      kind: { EthSigned: null },
+      block_number: [],
+      eth_tx_hash: [],
+      decoded: [],
+    },
+  ]);
+  assert.equal(missingEthHash.ok, false);
+  if (!missingEthHash.ok) {
+    assert.equal(missingEthHash.reason, "eth_signed_missing_eth_tx_hash");
+  }
+
+  const resolved = __test_resolve_submitted_eth_hash_from_lookup([
+    {
+      raw: Uint8Array.from([]),
+      tx_index: [],
+      decode_ok: false,
+      hash: Uint8Array.from(Buffer.from("55".repeat(32), "hex")),
+      kind: { EthSigned: null },
+      block_number: [],
+      eth_tx_hash: [Uint8Array.from(Buffer.from("66".repeat(32), "hex"))],
+      decoded: [],
+    },
+  ]);
+  assert.equal(resolved.ok, true);
+  if (resolved.ok) {
+    assert.equal(toDataHex(resolved.hash), `0x${"66".repeat(32)}`);
+  }
+}
+
+function testTxHashReadinessPolicy(): void {
+  const migrating = __test_tx_hash_readiness_error(null, {
+    needs_migration: true,
+    critical_corrupt: false,
+    schema_version: 5,
+  });
+  assert.ok(migrating);
+  if (!migrating || !("error" in migrating)) {
+    throw new Error("migration status should produce json-rpc error");
+  }
+  assert.equal(migrating.error.code, -32000);
+  assert.equal(migrating.error.message, "state unavailable");
+  assert.equal(
+    JSON.stringify(migrating.error.data),
+    JSON.stringify({ reason: "ops.read.needs_migration", schema_version: 5 })
+  );
+
+  const corrupt = __test_tx_hash_readiness_error(1, {
+    needs_migration: false,
+    critical_corrupt: true,
+    schema_version: 5,
+  });
+  assert.ok(corrupt);
+  if (!corrupt || !("error" in corrupt)) {
+    throw new Error("corrupt status should produce json-rpc error");
+  }
+  assert.equal(corrupt.error.code, -32000);
+  assert.equal(
+    JSON.stringify(corrupt.error.data),
+    JSON.stringify({ reason: "ops.read.critical_corrupt", schema_version: 5 })
+  );
+
+  const ready = __test_tx_hash_readiness_error(1, {
+    needs_migration: false,
+    critical_corrupt: false,
+    schema_version: 5,
+  });
+  assert.equal(ready, null);
+}
+
+async function testInvalidTxHashReturnsInvalidParams(): Promise<void> {
+  const txByHashRes = await handleRpc({
+    jsonrpc: "2.0",
+    id: 1,
+    method: "eth_getTransactionByHash",
+    params: ["0x1234"],
+  });
+  assert.ok(txByHashRes);
+  if (!txByHashRes || !("error" in txByHashRes)) {
+    throw new Error("eth_getTransactionByHash invalid hash should return error");
+  }
+  assert.equal(txByHashRes.error.code, -32602);
+
+  const receiptRes = await handleRpc({
+    jsonrpc: "2.0",
+    id: 2,
+    method: "eth_getTransactionReceipt",
+    params: ["0x1234"],
+  });
+  assert.ok(receiptRes);
+  if (!receiptRes || !("error" in receiptRes)) {
+    throw new Error("eth_getTransactionReceipt invalid hash should return error");
+  }
+  assert.equal(receiptRes.error.code, -32602);
+}
+
 testHex();
 testJsonRpc();
 testCallObjectParsing();
 testStorageSlotNormalization();
 testRevertDataFormat();
 testCanisterErrorClassification();
-console.log("ok");
+testReceiptLogMapping();
+testSubmitEthHashResolutionPolicy();
+testTxHashReadinessPolicy();
+
+async function main(): Promise<void> {
+  await testInvalidTxHashReturnsInvalidParams();
+  console.log("ok");
+}
+
+main().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});
