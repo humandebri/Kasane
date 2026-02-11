@@ -511,11 +511,11 @@ indexer：pull型で export を吸い上げるだけ（落ちてもチェーン�
 
 保存：
 
-検索用インデックス → SQLite（薄く）
+検索用インデックス → Postgres（薄く）
 
 生データ（payload） → Contabo Object Storage（zstd圧縮）
 
-成長したら：インデックスを PostgreSQL に移す（rawはObject Storageのまま）
+インデックスは Postgres を継続利用する（rawはObject Storageのまま）
 
 Phase 0: インフラ土台（1日）
 0.1 Contabo VM
@@ -530,7 +530,7 @@ Phase 0: インフラ土台（1日）
 
 “ファイル名規則”を決める（例：chain=<id>/day=YYYY-MM-DD/part=0001.zst）
 
-Phase 1: Indexer v1（SQLite + Archive）（2〜4日）
+Phase 1: Indexer v1（Postgres + Archive）（2〜4日）
 1.1 プロセス構成
 
 indexer（単一プロセスでOK）
@@ -541,49 +541,45 @@ indexer（単一プロセスでOK）
 
 payload をあなたの indexer-v1.md の仕様で decode
 
-SQLite に “薄いインデックス” を upsert
+Postgres に “薄いインデックス” を upsert
 
 raw payload は zstd 圧縮して一旦ローカルに書いて、まとめて Object Storage に upload
 
-1.2 SQLite “最小スキーマ”（容量を抑える）
+1.2 Postgres “最小スキーマ”（容量を抑える）
 
 入れるものだけ決める（最初はこれで十分）：
 
 meta
 
-key TEXT PRIMARY KEY, value BLOB/TEXT
+key TEXT PRIMARY KEY, value TEXT
 
 cursor（最重要）、schema_version、last_head、last_ingest_at
 
 blocks
 
-number INTEGER PRIMARY KEY
+number BIGINT PRIMARY KEY
 
-hash BLOB(32), ts INTEGER, tx_count INTEGER
+hash BYTEA, timestamp BIGINT, tx_count INTEGER
 
 txs
 
-tx_hash BLOB(32) PRIMARY KEY
+tx_hash BYTEA PRIMARY KEY
 
-block_number INTEGER, tx_index INTEGER
-
-from BLOB(20), to BLOB(20) NULL
-
-status INTEGER, gas_used INTEGER（最小）
+block_number BIGINT, tx_index INTEGER, caller_principal BYTEA
 
 archive_parts
 
-block_from INTEGER, block_to INTEGER
+block_number BIGINT PRIMARY KEY
 
-object_key TEXT, codec TEXT, size_bytes INTEGER, sha256 BLOB(32)
+path TEXT, sha256 BYTEA, size_bytes BIGINT, raw_bytes BIGINT, created_at BIGINT
 
 どのrawがどこにあるかの索引
 
 logsは最初入れない（必要になったら “特定address/topic0だけ” のテーブルを追加）。
 
-1.3 SQLite運用設定（最低限）
+1.3 Postgres運用設定（最低限）
 
-WALモード、定期checkpoint
+autovacuum有効、checkpointは既定値を基準に監視
 
 取り込みはトランザクションでまとめる（例：Nブロック単位）
 
@@ -591,7 +587,7 @@ WALモード、定期checkpoint
 
 1.4 再開・冪等
 
-cursor はコミット後に更新（SQLiteトランザクションと同じタイミング）
+cursor はコミット後に更新（Postgresトランザクションと同じタイミング）
 
 同じブロックを再取り込みしても UPSERT で壊れない
 
@@ -603,7 +599,7 @@ ingest_blocks_per_min
 
 cursor_lag = head - cursor.block_number
 
-raw_bytes/day, zstd_bytes/day, sqlite_growth/day
+raw_bytes/day, zstd_bytes/day, archive_bytes/day
 
 エラー分類：Pruned, InvalidCursor, Network, Decode
 
@@ -635,11 +631,11 @@ Phase 4: Explorer/API（必要になったタイミングで）
 
 最初は indexer VM 上で軽いHTTP（読み取り専用）を出す
 
-UIで必要なクエリは SQLite でも余裕で回ることが多い
+UIで必要なクエリは Postgres でも余裕で回ることが多い
 
-Phase 5: Postgresへ昇格（必要条件が揃ったら）
+Phase 5: Postgres運用の拡張（必要条件が揃ったら）
 
-「いつ Postgres にする？」のトリガは性能じゃなく運用要件：
+「いつ運用を拡張する？」のトリガは性能だけでなく運用要件：
 
 Explorerを公開して同時アクセスが増えた
 
@@ -649,13 +645,13 @@ indexer/workerを複数にしたい
 
 バックアップや運用をちゃんとやる覚悟が固まった
 
-昇格手順（破壊しない）
+拡張手順（破壊しない）
 
 rawはObject Storage継続（DBに入れない）
 
-SQLite → Postgres に “インデックスだけ” 移行
+Postgres を継続利用し、必要に応じて read replica / パーティションを検討
 
-indexerの書き込み先を Postgres に切り替え（cursorは同じ）
+indexerの書き込み先は Postgres のまま維持（cursor互換を保つ）
 
 期限感の目安（雑に）
 
@@ -663,7 +659,7 @@ Phase 0〜2：1週間以内に「動く・追いつく・容量が見える」
 
 Phase 3：数日で prune を安全にON（ただし最初は弱く）
 
-Phase 5：必要になったら（最初からやらない）
+Phase 5：必要になったら段階的に拡張する
 
 最初に決め打ちしておくべき“固定値”
 
@@ -673,16 +669,16 @@ max_bytes（export取得上限）：1〜1.5MiB
 
 アーカイブ粒度：まずは 日次（後でブロック範囲にしてもよい）
 
-SQLite保持期間：インデックスは30〜90日、rawはObject Storageで長期
+DB保持期間：インデックスは30〜90日、rawはObject Storageで長期
 ---
 
-# Appendix: Indexer Worker v2 (SQLite-first) 運用仕様（実装ブレ防止）
+# Appendix: Indexer Worker v2 (Postgres-first) 運用仕様（実装ブレ防止）
 
 この章は **取得側（外部ワーカー）**の最小仕様を固定する。canister 側の export API 仕様（Cursor/Chunk/validation）は既存章に従う。
 
 ## v2.1 目的（固定）
 
-* export API を pull して **外部インデックス（SQLite）**を構築する
+* export API を pull して **外部インデックス（Postgres）**を構築する
 * 外部DBは キャッシュ（失っても canister から再構築可能）
 * pruning は外部ACKに依存しない（canister は単独で生存できる）
 
@@ -715,7 +711,7 @@ Cursor {
 
 取得側は以下を 不変条件として守る。
 
-* cursor 更新は SQLiteのトランザクション COMMIT と同じ境界でのみ行う
+* cursor 更新は Postgresのトランザクション COMMIT と同じ境界でのみ行う
 * 取り込み（UPSERT）に失敗した場合は cursor を進めない
 * next_cursor は export 返却のものをそのまま採用（exclusive）
 
@@ -763,7 +759,7 @@ v2 の最小スキーマは「追いつく」「復旧できる」「容量が�
   * last_error（任意）
 * blocks(number PRIMARY KEY, hash?, timestamp, tx_count)
 * txs(tx_hash PRIMARY KEY, block_number, tx_index)
-* metrics_daily(day PRIMARY KEY, raw_bytes, compressed_bytes, sqlite_growth_bytes, blocks_ingested, errors)
+* metrics_daily(day PRIMARY KEY, raw_bytes, compressed_bytes, archive_bytes, blocks_ingested, errors)
 
 ※ metrics_daily は v2.1 でも **最小更新を入れる**（raw_bytes / blocks_ingested / errors）。
 
@@ -771,7 +767,7 @@ v2 の最小スキーマは「追いつく」「復旧できる」「容量が�
 
 ## v2.7 アーカイブ（任意だが推奨）
 
-* v2.1 は SQLite のみで開始してよい
+* v2.1 は Postgres で開始してよい
 * ただし pruning 自動化をONにする前に、少なくともローカル zstd での raw アーカイブを導入することを推奨する
 * 目的: prune 後の調査・再構築・障害対応のための保険
 

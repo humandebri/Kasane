@@ -8,9 +8,7 @@ const MIGRATIONS_DIR = path.join(__dirname, "..", "migrations");
 
 export const MIGRATIONS = [
   "001_init.sql",
-  "002_metrics.sql",
-  "003_archive.sql",
-  "004_retention.sql",
+  "002_backfill.sql",
 ] as const;
 
 export async function applyMigrations(pool: Pool, migrations: readonly string[]): Promise<void> {

@@ -141,7 +141,7 @@ fatal の代表:
 - `InvalidCursor`: cursor/chunk整合違反 or max_bytes超過 or カーソル不正
 - `Decode`: payload decode 失敗
 - `ArchiveIO`: アーカイブ書き込み失敗
-- `Db`: SQLite 失敗
+- `Db`: Postgres 失敗
 
 ## 5. Postgres マイグレーション
 
@@ -240,7 +240,7 @@ canister 側の get_prune_status を indexer 側に定期pullして meta に書�
 cursor_lag（head - cursor）をメトリクス化（日次じゃなくてもいい、ログでもいい）
 
 pruning enable の手順をスクリプト化（set_policy → enabled=true をワンコマンド化）
-### 7.1 prune_status 監視
+### 9.1 prune_status 監視
 
 * `get_prune_status()` を定期ポーリングして `meta.prune_status` に JSON 保存
 * JSON は `estimated_kept_bytes` / `high_water_bytes` / `hard_emergency_bytes` を文字列で保持して追跡
@@ -313,7 +313,7 @@ scripts/local_pruning_stage.sh
 
 補助:
 ```bash
-DB_PATH=tools/indexer/indexer.db scripts/indexer_metrics_snapshot.sh
+INDEXER_DATABASE_URL=postgres://... scripts/indexer_metrics_snapshot.sh
 ```
 
 ## 14. デプロイ前チェックリスト（staging/prod）

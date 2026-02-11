@@ -41,6 +41,34 @@ test("tx_index payload length mismatch throws", () => {
   assert.throws(() => decodeTxIndexPayload(payload), /entry size mismatch/);
 });
 
+test("tx_index payload rejects legacy 12-byte entry", () => {
+  const txHash = Buffer.alloc(32, 0xbb);
+  const len = Buffer.alloc(4);
+  len.writeUInt32BE(12, 0);
+  const body = Buffer.alloc(12);
+  const payload = Buffer.concat([txHash, len, body]);
+  assert.throws(() => decodeTxIndexPayload(payload), /14\+ bytes/);
+});
+
+test("tx_index payload decodes caller principal", () => {
+  const txHash = Buffer.alloc(32, 0xcc);
+  const principal = Buffer.from([1, 2, 3, 4]);
+  const body = Buffer.alloc(12 + 2 + principal.length);
+  body.writeUInt32BE(0, 0);
+  body.writeUInt32BE(7, 4);
+  body.writeUInt32BE(3, 8);
+  body.writeUInt16BE(principal.length, 12);
+  principal.copy(body, 14);
+  const len = Buffer.alloc(4);
+  len.writeUInt32BE(body.length, 0);
+  const payload = Buffer.concat([txHash, len, body]);
+  const out = decodeTxIndexPayload(payload);
+  assert.equal(out.length, 1);
+  assert.equal(out[0]?.blockNumber, 7n);
+  assert.equal(out[0]?.txIndex, 3);
+  assert.equal(out[0]?.callerPrincipal?.toString("hex"), principal.toString("hex"));
+});
+
 test("archiveBlock reuses existing file", async () => {
   await withTempDir(async (dir) => {
     const input = {
@@ -64,7 +92,7 @@ test("db upsert and metrics aggregation", async () => {
   const db = await createTestIndexerDb();
   try {
     await db.upsertBlock({ number: 10n, hash: Buffer.alloc(32, 1), timestamp: 123n, tx_count: 1 });
-    await db.upsertTx({ tx_hash: Buffer.alloc(32, 2), block_number: 10n, tx_index: 0 });
+    await db.upsertTx({ tx_hash: Buffer.alloc(32, 2), block_number: 10n, tx_index: 0, caller_principal: null });
     await db.setCursor({ block_number: 11n, segment: 0, byte_offset: 0 });
     const cursor = await db.getCursor();
     assert.ok(cursor);
@@ -141,8 +169,8 @@ test("retention cleanup dry-run and delete follow 90-day boundary", async () => 
 
     await db.upsertBlock({ number: 1n, hash: Buffer.alloc(32, 1), timestamp: oldSec, tx_count: 1 });
     await db.upsertBlock({ number: 2n, hash: Buffer.alloc(32, 2), timestamp: freshSec, tx_count: 1 });
-    await db.upsertTx({ tx_hash: Buffer.alloc(32, 11), block_number: 1n, tx_index: 0 });
-    await db.upsertTx({ tx_hash: Buffer.alloc(32, 22), block_number: 2n, tx_index: 0 });
+    await db.upsertTx({ tx_hash: Buffer.alloc(32, 11), block_number: 1n, tx_index: 0, caller_principal: null });
+    await db.upsertTx({ tx_hash: Buffer.alloc(32, 22), block_number: 2n, tx_index: 0, caller_principal: null });
     await db.addArchive({ blockNumber: 1n, path: "1.bundle.zst", sha256: Buffer.alloc(32, 3), sizeBytes: 10, rawBytes: 10, createdAt: Number(oldSec) * 1000 });
     await db.addArchive({ blockNumber: 2n, path: "2.bundle.zst", sha256: Buffer.alloc(32, 4), sizeBytes: 10, rawBytes: 10, createdAt: Number(freshSec) * 1000 });
     await db.addMetrics(oldDay, 1, 1, 1, 0, 10);
@@ -189,7 +217,7 @@ async function createTestIndexerDb(): Promise<IndexerDb> {
   const mem = newDb({ noAstCoverageCheck: true });
   const adapter = mem.adapters.createPg();
   const pool = new adapter.Pool();
-  const db = await IndexerDb.fromPool(pool, { migrations: MIGRATIONS.slice(0, 3) });
+  const db = await IndexerDb.fromPool(pool, { migrations: MIGRATIONS.slice(0, 1) });
   await db.queryOne(
     "create table if not exists retention_runs(" +
       "id text primary key, started_at bigint not null, finished_at bigint not null, retention_days integer not null, dry_run boolean not null, deleted_blocks bigint not null, deleted_txs bigint not null, deleted_metrics_daily bigint not null, deleted_archive_parts bigint not null, status text not null, error_message text)"

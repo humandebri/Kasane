@@ -11,6 +11,7 @@ export type TxIndexInfo = {
   txHash: Buffer;
   blockNumber: bigint;
   txIndex: number;
+  callerPrincipal: Buffer | null;
 };
 
 const HASH_LEN = 32;
@@ -69,17 +70,29 @@ export function decodeTxIndexPayload(payload: Uint8Array): TxIndexInfo[] {
     if (data.length - offset < len) {
       throw new Error("tx_index payload length mismatch");
     }
-    if (len !== 12) {
-      throw new Error("tx_index entry size mismatch: expected 12 (u64 + u32)");
+    if (len < 14) {
+      throw new Error("tx_index entry size mismatch: entry must include 14+ bytes (u64 + u32 + principal_len)");
     }
     const blockNumber = readU64BE(data, offset);
     offset += 8;
     const txIndex = readU32BE(data, offset);
     offset += 4;
+    const principalLen = data.readUInt16BE(offset);
+    offset += 2;
+    const expectedLen = 12 + 2 + principalLen;
+    if (len !== expectedLen) {
+      throw new Error("tx_index entry size mismatch: principal length does not match");
+    }
+    let callerPrincipal: Buffer | null = null;
+    if (principalLen > 0) {
+      callerPrincipal = Buffer.from(data.subarray(offset, offset + principalLen));
+      offset += principalLen;
+    }
     out.push({
       txHash: Buffer.from(txHash),
       blockNumber,
       txIndex,
+      callerPrincipal,
     });
   }
   return out;

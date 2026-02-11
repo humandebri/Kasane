@@ -17,6 +17,7 @@ export type TxRow = {
   tx_hash: Buffer;
   block_number: bigint;
   tx_index: number;
+  caller_principal: Buffer | null;
 };
 
 export type RetentionCleanupResult = {
@@ -134,8 +135,8 @@ export class IndexerDb {
 
   async upsertTx(row: TxRow): Promise<void> {
     await this.pool.query(
-      "INSERT INTO txs(tx_hash, block_number, tx_index) VALUES($1, $2, $3) ON CONFLICT(tx_hash) DO UPDATE SET block_number = excluded.block_number, tx_index = excluded.tx_index",
-      [row.tx_hash, row.block_number, row.tx_index]
+      "INSERT INTO txs(tx_hash, block_number, tx_index, caller_principal) VALUES($1, $2, $3, $4) ON CONFLICT(tx_hash) DO UPDATE SET block_number = excluded.block_number, tx_index = excluded.tx_index, caller_principal = excluded.caller_principal",
+      [row.tx_hash, row.block_number, row.tx_index, row.caller_principal]
     );
   }
 
