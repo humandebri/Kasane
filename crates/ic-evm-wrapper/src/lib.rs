@@ -6,8 +6,10 @@ use evm_core::chain;
 use evm_core::hash;
 use evm_db::chain_data::constants::CHAIN_ID;
 use evm_db::chain_data::constants::{MAX_QUEUE_SNAPSHOT_LIMIT, MAX_RETURN_DATA, MAX_TX_SIZE};
+use evm_db::chain_data::DEFAULT_MINING_INTERVAL_MS;
+use evm_db::chain_data::{MIN_PRUNE_MAX_OPS_PER_TICK, MIN_PRUNE_TIMER_INTERVAL_MS};
 use evm_db::chain_data::{
-    BlockData, CallerKey, MigrationPhase, OpsConfigV1, OpsMode, ReceiptLike, TxId, TxKind, TxLoc,
+    BlockData, CallerKey, MigrationPhase, OpsMode, ReceiptLike, TxId, TxKind, TxLoc,
     TxLocKind, LOG_CONFIG_FILTER_MAX,
 };
 #[cfg(test)]
@@ -48,9 +50,11 @@ fn always_fail_getrandom(_buf: &mut [u8]) -> Result<(), getrandom::Error> {
 }
 
 const MAX_MINING_BACKOFF_MS: u64 = 300_000;
+const MAX_PRUNE_BACKOFF_MS: u64 = 300_000;
 
 thread_local! {
     static MINING_FAIL_STREAK: Cell<u32> = Cell::new(0);
+    static PRUNE_FAIL_STREAK: Cell<u32> = Cell::new(0);
 }
 
 use ic_evm_rpc_types::*;
@@ -182,7 +186,7 @@ fn inspect_message() {
         return;
     }
     let payload_len = inspect_payload_len();
-    if payload_len <= limit {
+    if payload_len <= limit && inspect_lightweight_tx_guard(method.as_str()) {
         accept_message();
     }
 }
@@ -196,7 +200,7 @@ struct InspectMethodPolicy {
     payload_limit: usize,
 }
 
-const INSPECT_METHOD_POLICIES: [InspectMethodPolicy; 14] = [
+const INSPECT_METHOD_POLICIES: [InspectMethodPolicy; 12] = [
     InspectMethodPolicy {
         method: "submit_eth_tx",
         payload_limit: INSPECT_TX_PAYLOAD_LIMIT,
@@ -214,10 +218,6 @@ const INSPECT_METHOD_POLICIES: [InspectMethodPolicy; 14] = [
         payload_limit: INSPECT_MANAGE_PAYLOAD_LIMIT,
     },
     InspectMethodPolicy {
-        method: "set_mining_interval_ms",
-        payload_limit: INSPECT_MANAGE_PAYLOAD_LIMIT,
-    },
-    InspectMethodPolicy {
         method: "set_block_gas_limit",
         payload_limit: INSPECT_MANAGE_PAYLOAD_LIMIT,
     },
@@ -231,10 +231,6 @@ const INSPECT_METHOD_POLICIES: [InspectMethodPolicy; 14] = [
     },
     InspectMethodPolicy {
         method: "set_pruning_enabled",
-        payload_limit: INSPECT_MANAGE_PAYLOAD_LIMIT,
-    },
-    InspectMethodPolicy {
-        method: "set_ops_config",
         payload_limit: INSPECT_MANAGE_PAYLOAD_LIMIT,
     },
     InspectMethodPolicy {
@@ -270,9 +266,25 @@ fn inspect_policy_for_method(method: &str) -> Option<InspectMethodPolicy> {
     None
 }
 
-#[allow(deprecated)]
 fn inspect_payload_len() -> usize {
-    ic_cdk::api::call::arg_data_raw_size()
+    ic_cdk::api::msg_arg_data().len()
+}
+
+fn inspect_lightweight_tx_guard(method: &str) -> bool {
+    // inspect_messageでは重い署名検証は行わず、軽量なフォーマット不正のみ早期除外する。
+    if method != "submit_eth_tx" && method != "rpc_eth_send_raw_transaction" {
+        return true;
+    }
+    let raw = ic_cdk::api::msg_arg_data();
+    let tx = match candid::decode_one::<Vec<u8>>(&raw) {
+        Ok(value) => value,
+        Err(_) => return false,
+    };
+    if tx.is_empty() {
+        return false;
+    }
+    let first = tx[0];
+    first != 0x03 && first != 0x04
 }
 
 #[cfg(test)]
@@ -559,6 +571,7 @@ fn set_prune_policy(policy: PrunePolicyView) -> Result<(), String> {
     if let Some(reason) = reject_anonymous_update() {
         return Err(reason);
     }
+    validate_prune_policy_input(&policy)?;
     require_manage_write()?;
     let core_policy = evm_db::chain_data::PrunePolicy {
         target_bytes: policy.target_bytes,
@@ -571,6 +584,16 @@ fn set_prune_policy(policy: PrunePolicyView) -> Result<(), String> {
     };
     chain::set_prune_policy(core_policy).map_err(|_| "set_prune_policy failed".to_string())?;
     schedule_prune();
+    Ok(())
+}
+
+fn validate_prune_policy_input(policy: &PrunePolicyView) -> Result<(), String> {
+    if policy.timer_interval_ms < MIN_PRUNE_TIMER_INTERVAL_MS {
+        return Err("input.prune.timer_interval_too_low".to_string());
+    }
+    if policy.max_ops_per_tick < MIN_PRUNE_MAX_OPS_PER_TICK {
+        return Err("input.prune.max_ops_per_tick.non_positive".to_string());
+    }
     Ok(())
 }
 
@@ -652,8 +675,12 @@ fn rpc_eth_call_rawtx(raw_tx: Vec<u8>) -> Result<Vec<u8>, String> {
 }
 
 #[ic_cdk::query]
-fn rpc_eth_get_logs(filter: EthLogFilterView) -> Result<Vec<EthLogItemView>, GetLogsErrorView> {
-    ic_evm_rpc::rpc_eth_get_logs(filter)
+fn rpc_eth_get_logs_paged(
+    filter: EthLogFilterView,
+    cursor: Option<EthLogsCursorView>,
+    limit: u32,
+) -> Result<EthLogsPageView, GetLogsErrorView> {
+    ic_evm_rpc::rpc_eth_get_logs_paged(filter, cursor, limit)
 }
 
 #[ic_cdk::query]
@@ -770,29 +797,6 @@ fn decode_failure_label_view(raw: [u8; 32]) -> Option<String> {
 }
 
 #[ic_cdk::update]
-fn set_ops_config(config: OpsConfigView) -> Result<(), String> {
-    if let Some(reason) = reject_anonymous_update() {
-        return Err(reason);
-    }
-    require_manage_write()?;
-    if config.critical == 0 {
-        return Err("input.ops_config.critical.non_positive".to_string());
-    }
-    if config.critical >= config.low_watermark {
-        return Err("input.ops_config.critical.gte_low_watermark".to_string());
-    }
-    evm_db::stable_state::with_state_mut(|state| {
-        let _ = state.ops_config.set(OpsConfigV1 {
-            low_watermark: config.low_watermark,
-            critical: config.critical,
-            freeze_on_critical: config.freeze_on_critical,
-        });
-    });
-    observe_cycles();
-    Ok(())
-}
-
-#[ic_cdk::update]
 fn set_log_filter(filter: Option<String>) -> Result<(), String> {
     if let Some(reason) = reject_anonymous_update() {
         return Err(reason);
@@ -902,7 +906,7 @@ fn metrics_prometheus() -> Result<String, String> {
             auto_mine_enabled: chain_state.auto_mine_enabled,
             is_producing: chain_state.is_producing,
             mining_scheduled: chain_state.mining_scheduled,
-            mining_interval_ms: chain_state.mining_interval_ms,
+            mining_interval_ms: DEFAULT_MINING_INTERVAL_MS,
             last_block_time: chain_state.last_block_time,
             pruned_before_block,
             drop_counts_by_code: metrics.drop_counts.to_vec(),
@@ -925,24 +929,6 @@ fn set_auto_mine(enabled: bool) -> Result<(), String> {
     if enabled {
         schedule_mining();
     }
-    Ok(())
-}
-
-#[ic_cdk::update]
-fn set_mining_interval_ms(interval_ms: u64) -> Result<(), String> {
-    if let Some(reason) = reject_anonymous_update() {
-        return Err(reason);
-    }
-    require_manage_write()?;
-    if interval_ms == 0 {
-        return Err("input.mining_interval.non_positive".to_string());
-    }
-    evm_db::stable_state::with_state_mut(|state| {
-        let mut chain_state = *state.chain_state.get();
-        chain_state.mining_interval_ms = interval_ms;
-        state.chain_state.set(chain_state);
-    });
-    schedule_mining();
     Ok(())
 }
 
@@ -1098,6 +1084,7 @@ fn exec_error_to_code(err: Option<&evm_core::revm_exec::ExecError>) -> &'static 
         Some(ExecError::EvmHalt(OpHaltReason::Unknown)) => "exec.halt.unknown",
         Some(ExecError::InvalidGasFee) => "exec.gas_fee.invalid",
         Some(ExecError::ResultTooLarge) => "exec.result.too_large",
+        Some(ExecError::InstructionBudgetExceeded) => "exec.budget.instruction_exceeded",
         Some(ExecError::ExecutionFailed) => "exec.execution.failed",
     }
 }
@@ -1683,7 +1670,7 @@ fn schedule_mining_with_interval(override_interval_ms: Option<u64>) {
             return None;
         }
         chain_state.mining_scheduled = true;
-        let interval_ms = override_interval_ms.unwrap_or(chain_state.mining_interval_ms);
+        let interval_ms = override_interval_ms.unwrap_or(DEFAULT_MINING_INTERVAL_MS);
         state.chain_state.set(chain_state);
         Some(interval_ms)
     });
@@ -1717,6 +1704,10 @@ fn mining_backoff_interval_ms(base_interval_ms: u64, failures: u32) -> u64 {
 }
 
 fn schedule_prune() {
+    schedule_prune_with_interval(None);
+}
+
+fn schedule_prune_with_interval(override_interval_ms: Option<u64>) {
     // RefCell再入防止: with_state_mut内はフラグ更新のみ。タイマー副作用は外で実行する。
     let interval_ms = evm_db::stable_state::with_state_mut(|state| {
         let mut config = *state.prune_config.get();
@@ -1727,7 +1718,9 @@ fn schedule_prune() {
             return None;
         }
         config.prune_scheduled = true;
-        let interval_ms = config.timer_interval_ms;
+        let interval_ms = override_interval_ms
+            .unwrap_or(config.timer_interval_ms)
+            .max(MIN_PRUNE_TIMER_INTERVAL_MS);
         state.prune_config.set(config);
         Some(interval_ms)
     });
@@ -1738,20 +1731,56 @@ fn schedule_prune() {
     }
 }
 
+fn bump_prune_fail_streak() -> u32 {
+    PRUNE_FAIL_STREAK.with(|cell| {
+        let next = cell.get().saturating_add(1);
+        cell.set(next);
+        next
+    })
+}
+
+fn reset_prune_fail_streak() {
+    PRUNE_FAIL_STREAK.with(|cell| cell.set(0));
+}
+
+fn prune_backoff_interval_ms(base_interval_ms: u64, failures: u32) -> u64 {
+    if failures == 0 {
+        return base_interval_ms;
+    }
+    let shift = failures.min(16);
+    let multiplier = 1u64.checked_shl(shift).unwrap_or(u64::MAX);
+    let interval = base_interval_ms.saturating_mul(multiplier);
+    interval.min(MAX_PRUNE_BACKOFF_MS).max(base_interval_ms)
+}
+
 fn pruning_tick() {
-    let should_run = evm_db::stable_state::with_state_mut(|state| {
+    let (should_run, base_interval_ms) = evm_db::stable_state::with_state_mut(|state| {
         let mut config = *state.prune_config.get();
         config.prune_scheduled = false;
         let enabled = config.pruning_enabled;
+        let interval = config.timer_interval_ms.max(MIN_PRUNE_TIMER_INTERVAL_MS);
         state.prune_config.set(config);
-        enabled
+        (enabled, interval)
     });
-    if should_run {
-        if let Err(err) = chain::prune_tick() {
-            PRUNE_ERROR_COUNT.fetch_add(1, Ordering::Relaxed);
-            error!(error = ?err, "prune_tick failed");
-        }
+    if !should_run {
+        reset_prune_fail_streak();
+        schedule_prune();
+        return;
     }
+    if let Err(err) = chain::prune_tick() {
+        PRUNE_ERROR_COUNT.fetch_add(1, Ordering::Relaxed);
+        let failures = bump_prune_fail_streak();
+        let backoff_interval = prune_backoff_interval_ms(base_interval_ms, failures);
+        error!(
+            error = ?err,
+            failures,
+            backoff_interval_ms = backoff_interval,
+            "prune_tick failed"
+        );
+        schedule_prune_with_interval(Some(backoff_interval));
+        return;
+    }
+    reset_prune_fail_streak();
     schedule_prune();
 }
 
@@ -1786,8 +1815,7 @@ fn mining_tick() {
     });
 
     if should_produce {
-        let base_interval_ms =
-            evm_db::stable_state::with_state(|state| state.chain_state.get().mining_interval_ms);
+        let base_interval_ms = DEFAULT_MINING_INTERVAL_MS;
         let result = chain::produce_block(evm_db::chain_data::MAX_TXS_PER_BLOCK);
 
         evm_db::stable_state::with_state_mut(|state| {
@@ -1848,13 +1876,15 @@ pub fn export_did() -> String {
 mod tests {
     use super::{
         chain_submit_error_to_code, clamp_return_data, exec_error_to_code,
-        inspect_payload_limit_for_method, inspect_policy_for_method, map_execute_chain_result,
-        map_submit_chain_error, migration_pending, prune_boundary_for_number,
-        receipt_lookup_status, reject_anonymous_principal, reject_write_reason, tx_id_from_bytes,
-        EthLogFilterView, ExecuteTxError, GetLogsErrorView, INSPECT_METHOD_POLICIES,
-        MINING_ERROR_COUNT, PRUNE_ERROR_COUNT,
+        inspect_lightweight_tx_guard, inspect_payload_limit_for_method, inspect_policy_for_method,
+        map_execute_chain_result, map_submit_chain_error, migration_pending,
+        prune_boundary_for_number, receipt_lookup_status, reject_anonymous_principal,
+        reject_write_reason, tx_id_from_bytes, validate_prune_policy_input, EthLogFilterView,
+        ExecuteTxError, GetLogsErrorView, PrunePolicyView,
+        INSPECT_METHOD_POLICIES, MAX_PRUNE_BACKOFF_MS, MINING_ERROR_COUNT,
+        MIN_PRUNE_TIMER_INTERVAL_MS, PRUNE_ERROR_COUNT,
     };
-    use candid::Principal;
+    use candid::{encode_one, Principal};
     use evm_core::chain::{ChainError, ExecResult};
     use evm_core::revm_exec::{ExecError, OpHaltReason, OpTransactionError};
     use evm_db::chain_data::constants::MAX_RETURN_DATA;
@@ -1917,6 +1947,7 @@ mod tests {
             Some(ExecError::EvmHalt(OpHaltReason::Unknown)),
             Some(ExecError::InvalidGasFee),
             Some(ExecError::ResultTooLarge),
+            Some(ExecError::InstructionBudgetExceeded),
             Some(ExecError::ExecutionFailed),
             None,
         ];
@@ -1976,6 +2007,8 @@ mod tests {
         assert_eq!(code, "exec.tx.build_failed");
         let code = exec_error_to_code(Some(&ExecError::ResultTooLarge));
         assert_eq!(code, "exec.result.too_large");
+        let code = exec_error_to_code(Some(&ExecError::InstructionBudgetExceeded));
+        assert_eq!(code, "exec.budget.instruction_exceeded");
     }
 
     #[test]
@@ -2163,6 +2196,50 @@ mod tests {
     }
 
     #[test]
+    fn inspect_lightweight_tx_guard_rejects_empty_raw_tx() {
+        assert!(!inspect_lightweight_tx_guard_with_payload(
+            "submit_eth_tx",
+            encode_one(Vec::<u8>::new()).expect("encode")
+        ));
+    }
+
+    #[test]
+    fn inspect_lightweight_tx_guard_rejects_unsupported_typed_prefix() {
+        assert!(!inspect_lightweight_tx_guard_with_payload(
+            "submit_eth_tx",
+            encode_one(vec![0x03u8, 0x01]).expect("encode")
+        ));
+        assert!(!inspect_lightweight_tx_guard_with_payload(
+            "rpc_eth_send_raw_transaction",
+            encode_one(vec![0x04u8, 0x01]).expect("encode")
+        ));
+    }
+
+    #[test]
+    fn inspect_lightweight_tx_guard_accepts_supported_payload() {
+        assert!(inspect_lightweight_tx_guard_with_payload(
+            "submit_eth_tx",
+            encode_one(vec![0x02u8, 0x01]).expect("encode")
+        ));
+        assert!(inspect_lightweight_tx_guard("set_auto_mine"));
+    }
+
+    fn inspect_lightweight_tx_guard_with_payload(method: &str, payload: Vec<u8>) -> bool {
+        if method != "submit_eth_tx" && method != "rpc_eth_send_raw_transaction" {
+            return true;
+        }
+        let tx = match candid::decode_one::<Vec<u8>>(&payload) {
+            Ok(value) => value,
+            Err(_) => return false,
+        };
+        if tx.is_empty() {
+            return false;
+        }
+        let first = tx[0];
+        first != 0x03 && first != 0x04
+    }
+
+    #[test]
     fn prune_boundary_for_number_returns_boundary_only_for_pruned_range() {
         init_stable_state();
         evm_db::stable_state::with_state_mut(|state| {
@@ -2245,6 +2322,48 @@ mod tests {
     }
 
     #[test]
+    fn set_prune_policy_rejects_too_small_timer_interval() {
+        init_stable_state();
+        let policy = PrunePolicyView {
+            target_bytes: 1,
+            retain_days: 1,
+            retain_blocks: 1,
+            headroom_ratio_bps: 2000,
+            hard_emergency_ratio_bps: 9500,
+            timer_interval_ms: 0,
+            max_ops_per_tick: 1,
+        };
+        let err = validate_prune_policy_input(&policy).expect_err("timer interval must be validated");
+        assert_eq!(err, "input.prune.timer_interval_too_low");
+    }
+
+    #[test]
+    fn set_prune_policy_rejects_non_positive_max_ops() {
+        init_stable_state();
+        let policy = PrunePolicyView {
+            target_bytes: 1,
+            retain_days: 1,
+            retain_blocks: 1,
+            headroom_ratio_bps: 2000,
+            hard_emergency_ratio_bps: 9500,
+            timer_interval_ms: MIN_PRUNE_TIMER_INTERVAL_MS,
+            max_ops_per_tick: 0,
+        };
+        let err = validate_prune_policy_input(&policy).expect_err("max ops must be positive");
+        assert_eq!(err, "input.prune.max_ops_per_tick.non_positive");
+    }
+
+    #[test]
+    fn prune_backoff_interval_has_floor_and_cap() {
+        let base = MIN_PRUNE_TIMER_INTERVAL_MS;
+        assert_eq!(super::prune_backoff_interval_ms(base, 0), base);
+        let doubled = super::prune_backoff_interval_ms(base, 1);
+        assert!(doubled >= base.saturating_mul(2));
+        let capped = super::prune_backoff_interval_ms(base, 20);
+        assert!(capped <= MAX_PRUNE_BACKOFF_MS);
+    }
+
+    #[test]
     fn meta_corruption_reflects_in_write_blocking_status() {
         init_stable_state();
         let mut meta = evm_db::meta::Meta::new();
@@ -2276,16 +2395,20 @@ mod tests {
     }
 
     #[test]
-    fn rpc_eth_get_logs_rejects_reverse_range() {
+    fn rpc_eth_get_logs_paged_rejects_reverse_range() {
         init_stable_state();
-        let err = super::rpc_eth_get_logs(EthLogFilterView {
-            from_block: Some(10),
-            to_block: Some(9),
-            address: None,
-            topic0: None,
-            topic1: None,
-            limit: Some(10),
-        })
+        let err = super::rpc_eth_get_logs_paged(
+            EthLogFilterView {
+                from_block: Some(10),
+                to_block: Some(9),
+                address: None,
+                topic0: None,
+                topic1: None,
+                limit: Some(10),
+            },
+            None,
+            10,
+        )
         .expect_err("reverse range should fail");
         assert_eq!(
             err,
@@ -2294,31 +2417,39 @@ mod tests {
     }
 
     #[test]
-    fn rpc_eth_get_logs_rejects_range_too_large() {
+    fn rpc_eth_get_logs_paged_rejects_range_too_large_with_filter_limit() {
         init_stable_state();
-        let err = super::rpc_eth_get_logs(EthLogFilterView {
-            from_block: Some(0),
-            to_block: Some(6_001),
-            address: None,
-            topic0: None,
-            topic1: None,
-            limit: Some(10),
-        })
+        let err = super::rpc_eth_get_logs_paged(
+            EthLogFilterView {
+                from_block: Some(0),
+                to_block: Some(6_001),
+                address: None,
+                topic0: None,
+                topic1: None,
+                limit: Some(10),
+            },
+            None,
+            0,
+        )
         .expect_err("wide range should fail");
         assert_eq!(err, GetLogsErrorView::RangeTooLarge);
     }
 
     #[test]
-    fn rpc_eth_get_logs_rejects_unsupported_topic1_filter() {
+    fn rpc_eth_get_logs_paged_rejects_unsupported_topic1_filter() {
         init_stable_state();
-        let err = super::rpc_eth_get_logs(EthLogFilterView {
-            from_block: Some(0),
-            to_block: Some(0),
-            address: None,
-            topic0: None,
-            topic1: Some(vec![0u8; 32]),
-            limit: Some(10),
-        })
+        let err = super::rpc_eth_get_logs_paged(
+            EthLogFilterView {
+                from_block: Some(0),
+                to_block: Some(0),
+                address: None,
+                topic0: None,
+                topic1: Some(vec![0u8; 32]),
+                limit: Some(10),
+            },
+            None,
+            10,
+        )
         .expect_err("topic1 should be unsupported");
         assert_eq!(
             err,
@@ -2327,18 +2458,100 @@ mod tests {
     }
 
     #[test]
-    fn rpc_eth_get_logs_rejects_over_limit() {
+    fn rpc_eth_get_logs_paged_rejects_over_limit_with_filter_limit() {
         init_stable_state();
-        let err = super::rpc_eth_get_logs(EthLogFilterView {
-            from_block: Some(0),
-            to_block: Some(0),
-            address: None,
-            topic0: None,
-            topic1: None,
-            limit: Some(2_001),
-        })
+        let err = super::rpc_eth_get_logs_paged(
+            EthLogFilterView {
+                from_block: Some(0),
+                to_block: Some(0),
+                address: None,
+                topic0: None,
+                topic1: None,
+                limit: Some(2_001),
+            },
+            None,
+            0,
+        )
         .expect_err("limit should fail");
         assert_eq!(err, GetLogsErrorView::TooManyResults);
+    }
+
+    #[test]
+    fn rpc_eth_get_logs_paged_rejects_range_too_large() {
+        init_stable_state();
+        let err = super::rpc_eth_get_logs_paged(
+            EthLogFilterView {
+                from_block: Some(0),
+                to_block: Some(1_500),
+                address: None,
+                topic0: None,
+                topic1: None,
+                limit: None,
+            },
+            None,
+            100,
+        )
+        .expect_err("range too large");
+        assert_eq!(err, GetLogsErrorView::RangeTooLarge);
+    }
+
+    #[test]
+    fn rpc_eth_get_logs_paged_rejects_over_limit() {
+        init_stable_state();
+        let err = super::rpc_eth_get_logs_paged(
+            EthLogFilterView {
+                from_block: Some(0),
+                to_block: Some(1),
+                address: None,
+                topic0: None,
+                topic1: None,
+                limit: None,
+            },
+            None,
+            5_000,
+        )
+        .expect_err("oversized page limit");
+        assert_eq!(err, GetLogsErrorView::TooManyResults);
+    }
+
+    #[test]
+    fn rpc_eth_get_logs_paged_normalizes_zero_limit_argument_to_one() {
+        init_stable_state();
+        let page = super::rpc_eth_get_logs_paged(
+            EthLogFilterView {
+                from_block: Some(0),
+                to_block: Some(0),
+                address: None,
+                topic0: None,
+                topic1: None,
+                limit: None,
+            },
+            None,
+            0,
+        )
+        .expect("zero limit must be normalized");
+        assert!(page.items.is_empty());
+        assert!(page.next_cursor.is_none());
+    }
+
+    #[test]
+    fn rpc_eth_get_logs_paged_normalizes_zero_filter_limit_to_one() {
+        init_stable_state();
+        let page = super::rpc_eth_get_logs_paged(
+            EthLogFilterView {
+                from_block: Some(0),
+                to_block: Some(0),
+                address: None,
+                topic0: None,
+                topic1: None,
+                limit: Some(0),
+            },
+            None,
+            0,
+        )
+        .expect("zero filter limit must be normalized");
+        assert!(page.items.is_empty());
+        assert!(page.next_cursor.is_none());
     }
 
     #[test]
