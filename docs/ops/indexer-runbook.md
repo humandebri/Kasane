@@ -1,8 +1,8 @@
-# Indexer Runbook v2.1（TS + SQLite + local zstd archive）
+# Indexer Runbook v2.1（TS + Postgres + local zstd archive）
 
 ## 0. 目的と前提（壊れないための不変条件）
 
-- Indexer（SQLite/Archive）は **キャッシュ**。チェーン本体は canister 側。
+- Indexer（Postgres/Archive）は **キャッシュ**。チェーン本体は canister 側。
 - 取り込みの整合は「**アーカイブ成功 → DBコミット → cursor更新（同一TX）**」で守る。
 - canister 側 prune は **外部ACKに依存しない**（依存させると外部障害でチェーン死亡する）。
 
@@ -12,7 +12,7 @@
 - indexer:
   - export を poll
   - Chunk を復元して payload decode
-  - SQLite に upsert
+  - Postgres に upsert
   - raw(3seg) を zstd 圧縮して `*.bundle.zst` として保存（任意キャッシュ）
   - 起動時に archive GC（tmp削除 + orphan削除）
 
@@ -98,15 +98,15 @@ RUST_LOG=info ./path/to/indexer 2>&1 | tee /tmp/dfx-logs/indexer_once.log
 ## 2. 起動手順
 
 ### 2.1 依存
-- Node.js（`better-sqlite3` のABIが合うバージョン）
+- Node.js（Postgres接続可能なバージョン）
 - npm install
 
-ABIズレで落ちる場合:
-- `npm rebuild better-sqlite3`
+DB接続で落ちる場合:
+- DATABASE_URL と権限を確認
 
 ### 2.2 設定（環境変数）
 主要:
-- `INDEXER_DB_PATH`（SQLiteファイル）
+- `INDEXER_DATABASE_URL`（Postgres接続文字列）
 - `INDEXER_ARCHIVE_DIR`（アーカイブ保存先）
 - `INDEXER_MAX_BYTES`（export の max_bytes。推奨 1〜1.5MiB）
 - `INDEXER_IDLE_POLL_MS`（追いつき時の固定ポーリング間隔。既定 1000ms）
@@ -143,10 +143,10 @@ fatal の代表:
 - `ArchiveIO`: アーカイブ書き込み失敗
 - `Db`: SQLite 失敗
 
-## 5. SQLite マイグレーション
+## 5. Postgres マイグレーション
 
 - 起動時に `schema_migrations` を見て未適用SQLを適用する
-- 適用は `BEGIN IMMEDIATE` で全体を1トランザクション化
+- 適用は `BEGIN` で全体を1トランザクション化
 - すでに適用済みの migration はスキップされる（idempotent）
 
 運用ルール:
@@ -173,11 +173,24 @@ fatal の代表:
 - `blocks_ingested`（コミット1回につき +1）
 - `raw_bytes`（取り込んだ raw ）
 - `compressed_bytes`（zstd後）
-- `sqlite_bytes`（現状は「SQLiteファイルサイズ（bytes）」を日次で保存。差分は集計側で計算）
 - `archive_bytes`（現状は「アーカイブディレクトリ総サイズ（bytes）」を日次で保存）
 
 注:
 - サイズ計測は「その日の最初のコミット時」に更新（best-effort）
+
+## 7.1 Retention（90日）
+
+- DB行は `run_retention_cleanup(90, false)` で削除する
+- `retention_runs` に実行結果（削除件数、status、error）を保存する
+- `archive_parts` の行は削除しても archive 実ファイルは保持する
+- `INDEXER_ARCHIVE_GC_DELETE_ORPHANS=false` を既定として、孤児bundleを誤削除しない
+
+手動実行:
+
+```bash
+INDEXER_DATABASE_URL=postgres://... scripts/indexer_retention_run.sh
+INDEXER_DATABASE_URL=postgres://... scripts/indexer_retention_report.sh
+```
 
 ## 8. 典型障害と復旧
 
@@ -250,11 +263,19 @@ scripts/local_indexer_smoke.sh
 
 確認されること:
 - pruning は `enabled=false` のまま
-- tx投入 → block生成
+- tx投入 → block生成（`ops.write.needs_migration` を検知したら待機リトライ）
+- seed後に `scripts/query_smoke.sh` を strict モードで実行（`agent.query` 経路、`MissingData` 不許可、head下限チェック）
 - indexer起動 → cursor前進 / archive生成 / metrics_daily埋まる
 - 追いついたら idle（1秒ポーリング + 60秒に1回の idle ログ）
 
-失敗時は `INDEXER_LOG` を確認すること。
+主な環境変数:
+- `SEED_RETRY_MAX`（既定: `8`）
+- `SEED_RETRY_SLEEP_SEC`（既定: `65`）
+- `SEED_TRANSIENT_RETRY_SLEEP_SEC`（既定: `3`）
+- `SEED_REQUIRED_HEAD_MIN`（既定: `2`）
+- `QUERY_SMOKE_ALLOW_EXPORT_MISSING_DATA`（strict時は `false`）
+
+失敗時は `INDEXER_LOG` 末尾と、seed retry 回数・head 実測ログを確認すること。
 
 ## 11. 失敗注入（運用で死ぬところを先に殺す）
 

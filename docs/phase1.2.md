@@ -13,7 +13,6 @@
 * reject率（drop_code別のカウント）
 * cycles残量（get_cycle_balance）
 * pruned_before_block（prune未実施なら None）
-* dev_faucet_enabled（dev-faucetビルド時のみ true。運用では非推奨で検証専用）
 
 ### 1.1.2 metricsの「返す値の定義」を固定する（必須）
 
