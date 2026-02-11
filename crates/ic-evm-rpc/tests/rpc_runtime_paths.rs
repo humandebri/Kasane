@@ -2,15 +2,20 @@
 //! 何を: 実運用で使うRPC経路のエラーマッピングと基本挙動を検証
 //! なぜ: wrapper側テストと実運用実装の乖離を防ぐため
 
+use evm_core::hash;
+use evm_db::chain_data::{BlockData, ReceiptLike, StoredTxBytes, TxId, TxIndexEntry, TxKind};
 use evm_db::chain_data::constants::MAX_TX_SIZE;
-use evm_db::stable_state::init_stable_state;
+use evm_db::chain_data::receipt::log_entry_from_parts;
+use evm_db::stable_state::{init_stable_state, with_state_mut};
 use evm_db::types::keys::{make_account_key, make_storage_key};
 use evm_db::types::values::{AccountVal, U256Val};
+use evm_db::Storable;
 use ic_evm_rpc::{
-    rpc_eth_call_object, rpc_eth_call_rawtx, rpc_eth_estimate_gas_object, rpc_eth_get_balance,
-    rpc_eth_get_code, rpc_eth_get_storage_at, rpc_eth_send_raw_transaction, submit_tx_in_with_code,
+    rpc_eth_call_object, rpc_eth_call_rawtx, rpc_eth_estimate_gas_object, rpc_eth_get_balance, rpc_eth_get_block_by_number_with_status,
+    rpc_eth_get_code, rpc_eth_get_storage_at, rpc_eth_get_transaction_by_eth_hash, rpc_eth_get_transaction_receipt_by_eth_hash,
+    rpc_eth_send_raw_transaction, submit_tx_in_with_code,
 };
-use ic_evm_rpc_types::RpcCallObjectView;
+use ic_evm_rpc_types::{RpcBlockLookupView, RpcCallObjectView};
 use std::sync::{Mutex, OnceLock};
 
 fn test_lock() -> &'static Mutex<()> {
@@ -433,7 +438,7 @@ fn submit_tx_in_with_code_keeps_decode_mapping() {
             tx_bytes: Vec::new(),
             caller_principal: Vec::new(),
         },
-        "submit_eth_tx",
+        "rpc_eth_send_raw_transaction",
     )
     .expect_err("invalid tx bytes should fail");
     match err {
@@ -442,4 +447,187 @@ fn submit_tx_in_with_code_keeps_decode_mapping() {
         }
         other => panic!("unexpected error: {other:?}"),
     }
+}
+
+#[test]
+fn get_block_by_number_hashes_prefers_eth_tx_hash_for_eth_signed() {
+    let _guard = test_lock().lock().expect("lock");
+    init_stable_state();
+
+    let raw = vec![0x02, 0x99, 0xaa, 0xbb];
+    let tx_id = TxId(hash::stored_tx_id(TxKind::EthSigned, &raw, None, None, None));
+    let stored = StoredTxBytes::new_with_fees(
+        tx_id,
+        TxKind::EthSigned,
+        raw.clone(),
+        None,
+        Vec::new(),
+        Vec::new(),
+        0,
+        0,
+        false,
+    );
+    let block = BlockData::new(1, [0u8; 32], [1u8; 32], 1_700_000_000, vec![tx_id], [2u8; 32], [3u8; 32]);
+    with_state_mut(|state| {
+        state.tx_store.insert(tx_id, stored);
+        let ptr = state
+            .blob_store
+            .store_bytes(&block.clone().into_bytes())
+            .expect("store block");
+        state.blocks.insert(1, ptr);
+    });
+
+    let out = rpc_eth_get_block_by_number_with_status(1, false);
+    match out {
+        RpcBlockLookupView::Found(block_view) => match block_view.txs {
+            ic_evm_rpc_types::EthTxListView::Hashes(items) => {
+                assert_eq!(items.len(), 1);
+                assert_eq!(items[0], hash::keccak256(&raw).to_vec());
+            }
+            other => panic!("unexpected tx list shape: {other:?}"),
+        },
+        other => panic!("unexpected block lookup status: {other:?}"),
+    }
+}
+
+#[test]
+fn get_transaction_by_hash_reads_from_eth_hash_index() {
+    let _guard = test_lock().lock().expect("lock");
+    init_stable_state();
+
+    let raw = vec![0x02, 0xaa, 0xbb, 0xcc];
+    let tx_id = TxId(hash::stored_tx_id(TxKind::EthSigned, &raw, None, None, None));
+    let eth_hash = hash::keccak256(&raw);
+    let stored = StoredTxBytes::new_with_fees(
+        tx_id,
+        TxKind::EthSigned,
+        raw,
+        None,
+        Vec::new(),
+        Vec::new(),
+        0,
+        0,
+        false,
+    );
+    with_state_mut(|state| {
+        state.tx_store.insert(tx_id, stored);
+        state.eth_tx_hash_index.insert(TxId(eth_hash), tx_id);
+    });
+
+    let out = rpc_eth_get_transaction_by_eth_hash(eth_hash.to_vec()).expect("tx must exist");
+    assert_eq!(out.hash, tx_id.0.to_vec());
+}
+
+#[test]
+fn get_transaction_by_hash_returns_none_on_index_miss() {
+    let _guard = test_lock().lock().expect("lock");
+    init_stable_state();
+
+    let raw = vec![0x02, 0xdd, 0xee, 0xff];
+    let tx_id = TxId(hash::stored_tx_id(TxKind::EthSigned, &raw, None, None, None));
+    let stored = StoredTxBytes::new_with_fees(
+        tx_id,
+        TxKind::EthSigned,
+        raw.clone(),
+        None,
+        Vec::new(),
+        Vec::new(),
+        0,
+        0,
+        false,
+    );
+    with_state_mut(|state| {
+        state.tx_store.insert(tx_id, stored);
+    });
+
+    let out = rpc_eth_get_transaction_by_eth_hash(hash::keccak256(&raw).to_vec());
+    assert!(out.is_none());
+}
+
+#[test]
+fn get_transaction_receipt_has_block_wide_log_index() {
+    let _guard = test_lock().lock().expect("lock");
+    init_stable_state();
+
+    let raw0 = vec![0x02, 0x10];
+    let raw1 = vec![0x02, 0x11];
+    let tx0 = TxId(hash::stored_tx_id(TxKind::EthSigned, &raw0, None, None, None));
+    let tx1 = TxId(hash::stored_tx_id(TxKind::EthSigned, &raw1, None, None, None));
+    let stored0 = StoredTxBytes::new_with_fees(tx0, TxKind::EthSigned, raw0, None, Vec::new(), Vec::new(), 0, 0, false);
+    let stored1 = StoredTxBytes::new_with_fees(tx1, TxKind::EthSigned, raw1, None, Vec::new(), Vec::new(), 0, 0, false);
+    let block = BlockData::new(7, [0u8; 32], [7u8; 32], 1_700_000_007, vec![tx0, tx1], [8u8; 32], [9u8; 32]);
+    let receipt0 = ReceiptLike {
+        tx_id: tx0,
+        block_number: 7,
+        tx_index: 0,
+        status: 1,
+        gas_used: 21_000,
+        effective_gas_price: 1,
+        l1_data_fee: 0,
+        operator_fee: 0,
+        total_fee: 0,
+        return_data_hash: [0u8; 32],
+        return_data: Vec::new(),
+        contract_address: None,
+        logs: vec![
+            log_entry_from_parts([0x11; 20], vec![[0x22; 32]], vec![0xaa]),
+            log_entry_from_parts([0x11; 20], vec![[0x23; 32]], vec![0xbb]),
+        ],
+    };
+    let receipt1 = ReceiptLike {
+        tx_id: tx1,
+        block_number: 7,
+        tx_index: 1,
+        status: 1,
+        gas_used: 21_000,
+        effective_gas_price: 1,
+        l1_data_fee: 0,
+        operator_fee: 0,
+        total_fee: 0,
+        return_data_hash: [0u8; 32],
+        return_data: Vec::new(),
+        contract_address: None,
+        logs: vec![log_entry_from_parts([0x12; 20], vec![[0x24; 32]], vec![0xcc])],
+    };
+    with_state_mut(|state| {
+        state.tx_store.insert(tx0, stored0);
+        state.tx_store.insert(tx1, stored1);
+        state.eth_tx_hash_index.insert(TxId(hash::keccak256(&[0x02, 0x10])), tx0);
+        state.eth_tx_hash_index.insert(TxId(hash::keccak256(&[0x02, 0x11])), tx1);
+
+        let block_ptr = state
+            .blob_store
+            .store_bytes(&block.clone().into_bytes())
+            .expect("store block");
+        state.blocks.insert(7, block_ptr);
+
+        let receipt0_ptr = state
+            .blob_store
+            .store_bytes(&receipt0.clone().into_bytes())
+            .expect("store receipt0");
+        let receipt1_ptr = state
+            .blob_store
+            .store_bytes(&receipt1.clone().into_bytes())
+            .expect("store receipt1");
+        state.receipts.insert(tx0, receipt0_ptr);
+        state.receipts.insert(tx1, receipt1_ptr);
+
+        let tx_index0 = TxIndexEntry { block_number: 7, tx_index: 0 };
+        let tx_index1 = TxIndexEntry { block_number: 7, tx_index: 1 };
+        let tx_index0_ptr = state
+            .blob_store
+            .store_bytes(&tx_index0.into_bytes())
+            .expect("store tx index0");
+        let tx_index1_ptr = state
+            .blob_store
+            .store_bytes(&tx_index1.into_bytes())
+            .expect("store tx index1");
+        state.tx_index.insert(tx0, tx_index0_ptr);
+        state.tx_index.insert(tx1, tx_index1_ptr);
+    });
+
+    let out = rpc_eth_get_transaction_receipt_by_eth_hash(hash::keccak256(&[0x02, 0x11]).to_vec())
+        .expect("receipt must exist");
+    assert_eq!(out.logs.len(), 1);
+    assert_eq!(out.logs[0].log_index, 2);
 }

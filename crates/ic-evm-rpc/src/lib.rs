@@ -7,9 +7,9 @@ use evm_db::types::keys::{make_account_key, make_code_key, make_storage_key};
 use evm_core::{chain, hash};
 use ic_evm_rpc_types::{
     DecodedTxView, EthBlockView, EthLogFilterView, EthLogItemView, EthLogsCursorView,
-    EthLogsPageView, EthReceiptView, EthTxListView, EthTxView, GetLogsErrorView, LogView,
+    EthLogsPageView, EthReceiptView, EthTxListView, EthTxView, GetLogsErrorView,
     RpcAccessListItemView, RpcBlockLookupView, RpcCallObjectView, RpcCallResultView, RpcErrorView,
-    RpcReceiptLookupView, SubmitTxError, TxKindView,
+    RpcReceiptLookupView, SubmitTxError, TxKindView, EthReceiptLogView,
 };
 use tracing::{error, warn};
 
@@ -44,6 +44,11 @@ pub fn rpc_eth_get_block_by_number_with_status(number: u64, full_tx: bool) -> Rp
 
 pub fn rpc_eth_get_transaction_by_eth_hash(eth_tx_hash: Vec<u8>) -> Option<EthTxView> {
     let tx_id = find_eth_tx_id_by_eth_hash_bytes(&eth_tx_hash)?;
+    tx_to_view(tx_id)
+}
+
+pub fn rpc_eth_get_transaction_by_tx_id(tx_hash: Vec<u8>) -> Option<EthTxView> {
+    let tx_id = tx_id_from_bytes(tx_hash)?;
     tx_to_view(tx_id)
 }
 
@@ -428,21 +433,10 @@ fn find_eth_tx_id_by_eth_hash_bytes(eth_tx_hash: &[u8]) -> Option<TxId> {
     if eth_tx_hash.len() != 32 {
         return None;
     }
-    with_state(|state| {
-        for entry in state.tx_store.iter() {
-            let tx_id = *entry.key();
-            let Ok(stored) = StoredTx::try_from(entry.value()) else {
-                continue;
-            };
-            if stored.kind != TxKind::EthSigned {
-                continue;
-            }
-            if hash::keccak256(&stored.raw).as_slice() == eth_tx_hash {
-                return Some(tx_id);
-            }
-        }
-        None
-    })
+    let mut hash_buf = [0u8; 32];
+    hash_buf.copy_from_slice(eth_tx_hash);
+    let hash_key = TxId(hash_buf);
+    with_state(|state| state.eth_tx_hash_index.get(&hash_key))
 }
 
 fn tx_to_view(tx_id: TxId) -> Option<EthTxView> {
@@ -452,6 +446,19 @@ fn tx_to_view(tx_id: TxId) -> Option<EthTxView> {
         _ => (None, None),
     };
     envelope_to_eth_view(envelope, block_number, tx_index)
+}
+
+fn eth_hash_or_tx_id(tx_id: TxId) -> Vec<u8> {
+    let Some(envelope) = chain::get_tx_envelope(&tx_id) else {
+        return tx_id.0.to_vec();
+    };
+    let Ok(stored) = StoredTx::try_from(envelope) else {
+        return tx_id.0.to_vec();
+    };
+    if stored.kind == TxKind::EthSigned {
+        return hash::keccak256(&stored.raw).to_vec();
+    }
+    tx_id.0.to_vec()
 }
 
 fn envelope_to_eth_view(
@@ -483,6 +490,11 @@ fn envelope_to_eth_view(
     Some(EthTxView {
         hash: stored.tx_id.0.to_vec(),
         eth_tx_hash: if kind == TxKind::EthSigned { Some(hash::keccak256(&stored.raw).to_vec()) } else { None },
+        caller_principal: if stored.caller_principal.is_empty() {
+            None
+        } else {
+            Some(stored.caller_principal.clone())
+        },
         kind: tx_kind_to_view(kind),
         raw: stored.raw.clone(),
         decode_ok: decoded.is_some(),
@@ -496,6 +508,7 @@ fn receipt_to_eth_view(receipt: ReceiptLike) -> EthReceiptView {
     let eth_tx_hash = chain::get_tx_envelope(&receipt.tx_id)
         .and_then(|envelope| StoredTx::try_from(envelope).ok())
         .and_then(|stored| if stored.kind == TxKind::EthSigned { Some(hash::keccak256(&stored.raw).to_vec()) } else { None });
+    let base_log_index = base_log_index_for_receipt(&receipt);
     EthReceiptView {
         tx_hash: receipt.tx_id.0.to_vec(),
         eth_tx_hash,
@@ -508,16 +521,45 @@ fn receipt_to_eth_view(receipt: ReceiptLike) -> EthReceiptView {
         operator_fee: receipt.operator_fee,
         total_fee: receipt.total_fee,
         contract_address: receipt.contract_address.map(|v| v.to_vec()),
-        logs: receipt.logs.into_iter().map(log_to_view).collect(),
+        logs: receipt
+            .logs
+            .into_iter()
+            .enumerate()
+            .map(|(idx, log)| EthReceiptLogView {
+                address: log.address.as_slice().to_vec(),
+                topics: log
+                    .data
+                    .topics()
+                    .iter()
+                    .map(|topic| topic.as_slice().to_vec())
+                    .collect(),
+                data: log.data.data.to_vec(),
+                log_index: base_log_index.saturating_add(u32::try_from(idx).unwrap_or(u32::MAX)),
+            })
+            .collect(),
     }
 }
 
-fn log_to_view(log: evm_db::chain_data::receipt::LogEntry) -> LogView {
-    LogView {
-        address: log.address.as_slice().to_vec(),
-        topics: log.data.topics().iter().map(|topic| topic.as_slice().to_vec()).collect(),
-        data: log.data.data.to_vec(),
+fn base_log_index_for_receipt(receipt: &ReceiptLike) -> u32 {
+    let Some(block) = chain::get_block(receipt.block_number) else {
+        warn!(block_number = receipt.block_number, "missing block for receipt log index");
+        return 0;
+    };
+    let mut offset: u64 = 0;
+    for tx_id in &block.tx_ids {
+        if *tx_id == receipt.tx_id {
+            return u32::try_from(offset).unwrap_or(u32::MAX);
+        }
+        if let Some(prev_receipt) = chain::get_receipt(tx_id) {
+            offset = offset.saturating_add(u64::try_from(prev_receipt.logs.len()).unwrap_or(u64::MAX));
+        }
     }
+    warn!(
+        block_number = receipt.block_number,
+        tx_id = ?receipt.tx_id,
+        "tx not found in block while computing receipt log index"
+    );
+    0
 }
 
 fn tx_kind_to_view(kind: TxKind) -> TxKindView {
@@ -537,7 +579,7 @@ fn block_to_eth_view(block: BlockData, full_tx: bool) -> EthBlockView {
         }
         EthTxListView::Full(list)
     } else {
-        EthTxListView::Hashes(block.tx_ids.iter().map(|id| id.0.to_vec()).collect())
+        EthTxListView::Hashes(block.tx_ids.iter().map(|id| eth_hash_or_tx_id(*id)).collect())
     };
     EthBlockView {
         number: block.number,
