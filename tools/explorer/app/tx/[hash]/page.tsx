@@ -9,7 +9,7 @@ export const dynamic = "force-dynamic";
 
 export default async function TxPage({ params }: { params: Promise<{ hash: string }> }) {
   const { hash } = await params;
-  const tx = getTxView(hash);
+  const tx = await getTxView(hash);
   if (!tx) {
     notFound();
   }
