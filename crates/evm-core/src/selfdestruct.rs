@@ -3,6 +3,8 @@
 use evm_db::stable_state::with_state_mut;
 use evm_db::types::keys::{make_account_key, make_code_key, make_storage_key, StorageKey};
 
+const SELFDESTRUCT_DELETE_BATCH: usize = 256;
+
 pub fn selfdestruct_address(addr20: [u8; 20]) {
     with_state_mut(|state| {
         let account_key = make_account_key(addr20);
@@ -15,15 +17,24 @@ pub fn selfdestruct_address(addr20: [u8; 20]) {
 
         let start = make_storage_key(addr20, [0x00u8; 32]);
         let end = make_storage_key(addr20, [0xFFu8; 32]);
-        let mut keys: Vec<StorageKey> = Vec::new();
-        for entry in state.storage.range((
-            std::ops::Bound::Included(start),
-            std::ops::Bound::Included(end),
-        )) {
-            keys.push(*entry.key());
-        }
-        for key in keys.into_iter() {
-            state.storage.remove(&key);
+        let mut cursor: Option<StorageKey> = None;
+        loop {
+            let range_start = cursor
+                .map(std::ops::Bound::Excluded)
+                .unwrap_or(std::ops::Bound::Included(start));
+            let batch: Vec<StorageKey> = state
+                .storage
+                .range((range_start, std::ops::Bound::Included(end)))
+                .take(SELFDESTRUCT_DELETE_BATCH)
+                .map(|entry| *entry.key())
+                .collect();
+            if batch.is_empty() {
+                break;
+            }
+            cursor = batch.last().copied();
+            for key in batch.into_iter() {
+                state.storage.remove(&key);
+            }
         }
     });
 }

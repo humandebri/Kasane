@@ -1,6 +1,6 @@
 //! どこで: Phase1のREVM DB実装 / 何を: StableStateへ接続 / なぜ: 実行エンジンと永続化を繋ぐため
 
-use crate::bytes::{address_to_bytes, b256_to_bytes, u256_to_bytes};
+use crate::bytes::{b256_to_bytes, try_address_to_bytes, u256_to_bytes};
 use crate::selfdestruct::selfdestruct_address;
 use evm_db::stable_state::with_state_mut;
 use evm_db::types::keys::{make_account_key, make_code_key, make_storage_key};
@@ -18,7 +18,7 @@ impl Database for RevmStableDb {
     type Error = core::convert::Infallible;
 
     fn basic(&mut self, address: Address) -> Result<Option<AccountInfo>, Self::Error> {
-        let addr = address_to_bytes(address);
+        let addr = try_address_to_bytes(address).expect("revm address must be 20 bytes");
         let key = make_account_key(addr);
         let value = evm_db::stable_state::with_state(|state| state.accounts.get(&key));
         let info = match value {
@@ -46,7 +46,7 @@ impl Database for RevmStableDb {
         address: Address,
         index: StorageKey,
     ) -> Result<StorageValue, Self::Error> {
-        let addr = address_to_bytes(address);
+        let addr = try_address_to_bytes(address).expect("revm address must be 20 bytes");
         let slot = u256_to_bytes(index);
         let key = make_storage_key(addr, slot);
         let value = evm_db::stable_state::with_state(|state| state.storage.get(&key));
@@ -70,7 +70,7 @@ impl DatabaseRef for RevmStableDb {
     type Error = core::convert::Infallible;
 
     fn basic_ref(&self, address: Address) -> Result<Option<AccountInfo>, Self::Error> {
-        let addr = address_to_bytes(address);
+        let addr = try_address_to_bytes(address).expect("revm address must be 20 bytes");
         let key = make_account_key(addr);
         let value = evm_db::stable_state::with_state(|state| state.accounts.get(&key));
         let info = match value {
@@ -98,7 +98,7 @@ impl DatabaseRef for RevmStableDb {
         address: Address,
         index: StorageKey,
     ) -> Result<StorageValue, Self::Error> {
-        let addr = address_to_bytes(address);
+        let addr = try_address_to_bytes(address).expect("revm address must be 20 bytes");
         let slot = u256_to_bytes(index);
         let key = make_storage_key(addr, slot);
         let value = evm_db::stable_state::with_state(|state| state.storage.get(&key));
@@ -121,7 +121,7 @@ impl DatabaseRef for RevmStableDb {
 impl DatabaseCommit for RevmStableDb {
     fn commit(&mut self, changes: revm::primitives::HashMap<Address, Account>) {
         for (address, account) in changes.into_iter() {
-            let addr = address_to_bytes(address);
+            let addr = try_address_to_bytes(address).expect("revm address must be 20 bytes");
             if account.is_selfdestructed() || (account.is_empty() && account.is_touched()) {
                 selfdestruct_address(addr);
                 continue;

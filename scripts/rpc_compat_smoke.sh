@@ -35,8 +35,8 @@ ${DFX} canister call "${TARGET}" rpc_eth_get_balance '(blob "\00\00\00\00\00\00\
 echo "[rpc-smoke] get_code(0x0000...)"
 ${DFX} canister call "${TARGET}" rpc_eth_get_code '(blob "\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00")'
 
-echo "[rpc-smoke] get_logs(default filter)"
-${DFX} canister call "${TARGET}" rpc_eth_get_logs '(record { from_block = null; to_block = null; address = null; topic0 = null; topic1 = null; limit = opt 10 })'
+echo "[rpc-smoke] get_logs_paged(default filter)"
+${DFX} canister call "${TARGET}" rpc_eth_get_logs_paged '(record { from_block = null; to_block = null; address = null; topic0 = null; topic1 = null; limit = opt 10 }, null, 10:nat32)'
 
 echo "[rpc-smoke] eth_call_rawtx(empty payload; expect Err)"
 ${DFX} canister call "${TARGET}" rpc_eth_call_rawtx '(blob "")'

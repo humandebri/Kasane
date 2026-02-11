@@ -2,7 +2,7 @@
 
 use evm_core::chain::{self, ChainError};
 use evm_db::chain_data::constants::{
-    DROP_CODE_CALLER_MISSING, DROP_CODE_DECODE, DROP_CODE_MISSING,
+    DROP_CODE_BLOCK_GAS_EXCEEDED, DROP_CODE_CALLER_MISSING, DROP_CODE_DECODE, DROP_CODE_MISSING,
 };
 use evm_db::chain_data::{
     ReadyKey, SenderKey, SenderNonceKey, StoredTxBytes, TxId, TxKind, TxLoc, TxLocKind,
@@ -161,10 +161,41 @@ fn produce_block_drop_only_purges_queue() {
     });
 }
 
+#[test]
+fn produce_block_marks_block_gas_exceeded_drop() {
+    init_stable_state();
+    with_state_mut(|state| {
+        let mut chain_state = *state.chain_state.get();
+        chain_state.block_gas_limit = 10;
+        state.chain_state.set(chain_state);
+    });
+
+    let tx_id = chain::submit_ic_tx(
+        vec![0x77],
+        vec![0x88],
+        build_ic_tx_bytes_with_custom_gas(50_000, 2_000_000_000, 1_000_000_000),
+    )
+    .expect("submit");
+
+    let err = chain::produce_block(1).expect_err("should drop oversized tx");
+    assert_eq!(err, ChainError::NoExecutableTx);
+    let loc = chain::get_tx_loc(&tx_id).expect("tx_loc");
+    assert_eq!(loc.kind, TxLocKind::Dropped);
+    assert_eq!(loc.drop_code, DROP_CODE_BLOCK_GAS_EXCEEDED);
+}
+
 fn build_ic_tx_bytes_with_fee(max_fee: u128, max_priority: u128) -> Vec<u8> {
+    build_ic_tx_bytes_with_custom_gas(50_000, max_fee, max_priority)
+}
+
+fn build_ic_tx_bytes_with_custom_gas(
+    gas_limit: u64,
+    max_fee: u128,
+    max_priority: u128,
+) -> Vec<u8> {
     let to = [0u8; 20];
     let value = [0u8; 32];
-    let gas_limit = 50_000u64.to_be_bytes();
+    let gas_limit = gas_limit.to_be_bytes();
     let nonce = 0u64.to_be_bytes();
     let max_fee = max_fee.to_be_bytes();
     let max_priority = max_priority.to_be_bytes();

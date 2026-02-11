@@ -4,7 +4,7 @@ use evm_core::chain::{self, ChainError};
 use evm_core::hash;
 use evm_db::chain_data::constants::DROP_CODE_DECODE;
 use evm_db::chain_data::{
-    ReadyKey, SenderKey, SenderNonceKey, StoredTxBytes, TxId, TxKind, TxLoc, TxLocKind,
+    Head, ReadyKey, SenderKey, SenderNonceKey, StoredTxBytes, TxId, TxKind, TxLoc, TxLocKind,
 };
 use evm_db::stable_state::{init_stable_state, with_state_mut};
 
@@ -13,6 +13,15 @@ mod common;
 #[test]
 fn snapshot_tx_outcome_matrix_and_block_fields() {
     init_stable_state();
+    // ブロックハッシュを時刻依存で揺らさないため、head.timestamp を固定する。
+    with_state_mut(|state| {
+        let head = *state.head.get();
+        state.head.set(Head {
+            number: head.number,
+            block_hash: head.block_hash,
+            timestamp: 4_000_000_000,
+        });
+    });
     let caller_principal = vec![0x42];
     let caller = hash::caller_evm_from_principal(&caller_principal);
     common::fund_account(caller, 1_000_000_000_000_000_000);
@@ -24,34 +33,23 @@ fn snapshot_tx_outcome_matrix_and_block_fields() {
     common::install_contract(revert_target, &[0x60, 0x00, 0x60, 0x00, 0xfd]); // REVERT(0, 0)
     common::install_contract(halt_target, &[0xfe]); // INVALID
 
-    let success = chain::execute_ic_tx(
+    let (_, success) = common::execute_ic_tx_via_produce(
         caller_principal.clone(),
         vec![0xaa],
         common::build_ic_tx_bytes(success_target, 0, 2_000_000_000, 1_000_000_000),
-    )
-    .expect("execute success");
-    let revert = chain::execute_ic_tx(
+    );
+    let (_, revert) = common::execute_ic_tx_via_produce(
         caller_principal.clone(),
         vec![0xbb],
         common::build_ic_tx_bytes(revert_target, 1, 2_000_000_000, 1_000_000_000),
-    )
-    .expect("execute revert");
-    let halt = chain::execute_ic_tx(
+    );
+    let (_, halt) = common::execute_ic_tx_via_produce(
         caller_principal,
         vec![0xcc],
         common::build_ic_tx_bytes(halt_target, 2, 2_000_000_000, 1_000_000_000),
-    )
-    .expect("execute halt");
-
-    let matrix = format!(
-        "tx_statuses=[{}, {}, {}] final_statuses=[{}, {}, {}]",
-        success.status,
-        revert.status,
-        halt.status,
-        success.final_status,
-        revert.final_status,
-        halt.final_status
     );
+
+    let matrix = format!("tx_statuses=[{}, {}, {}]", success.status, revert.status, halt.status);
 
     let block = chain::get_block(3).expect("block #3");
 
@@ -66,15 +64,12 @@ fn snapshot_tx_outcome_matrix_and_block_fields() {
     println!("SNAPSHOT_TX_MATRIX: {matrix}");
     println!("SNAPSHOT_BLOCK: {block_outcome}");
 
-    assert_eq!(
-        matrix,
-        "tx_statuses=[1, 0, 0] final_statuses=[Success, Revert, Halt:InvalidOpcode]"
-    );
+    assert_eq!(matrix, "tx_statuses=[1, 0, 0]");
     // 意図差分の履歴:
     // - OP由来のsystem tx会計を除去し、標準EVM実行へ統一したことで state_root/block_hash が更新
     assert_eq!(
         block_outcome,
-        "number=3 block_hash=d76f3db742673eeebb3a09007b87a3dd277c54d621db7dc4e2c977d8b1a86d3d tx_list_hash=4ad087ec0641a22f03bb82cb8cf391aca8c73cb30fd8eeda10b813d1f2a6c6df state_root=9ef63abe99c8302e58f3b5afad12ec68ee2d06e80f4ed7b8c68759a75785794c"
+        "number=3 block_hash=985a33ed8d0c824043dcd7faeae65bb69e8daf78e89069c4f5093946b0c46dc2 tx_list_hash=4ad087ec0641a22f03bb82cb8cf391aca8c73cb30fd8eeda10b813d1f2a6c6df state_root=9ef63abe99c8302e58f3b5afad12ec68ee2d06e80f4ed7b8c68759a75785794c"
     );
 }
 

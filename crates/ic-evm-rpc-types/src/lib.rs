@@ -264,6 +264,19 @@ pub struct EthLogItemView {
 }
 
 #[derive(Clone, Debug, CandidType, Deserialize)]
+pub struct EthLogsCursorView {
+    pub block_number: u64,
+    pub tx_index: u32,
+    pub log_index: u32,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize)]
+pub struct EthLogsPageView {
+    pub items: Vec<EthLogItemView>,
+    pub next_cursor: Option<EthLogsCursorView>,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize)]
 pub struct RpcAccessListItemView {
     pub address: Vec<u8>,
     pub storage_keys: Vec<Vec<u8>>,

@@ -3,6 +3,7 @@
 #![allow(dead_code)]
 
 use evm_core::hash;
+use evm_db::chain_data::{ReceiptLike, TxId};
 use evm_db::stable_state::with_state_mut;
 use evm_db::types::keys::{make_account_key, make_code_key};
 use evm_db::types::values::{AccountVal, CodeVal};
@@ -58,4 +59,17 @@ pub fn install_contract(address: [u8; 20], code: &[u8]) {
 
 pub fn fund_account(address: [u8; 20], amount: u128) {
     evm_core::chain::credit_balance(address, amount).expect("fund account");
+}
+
+pub fn execute_ic_tx_via_produce(
+    caller_principal: Vec<u8>,
+    canister_id: Vec<u8>,
+    tx_bytes: Vec<u8>,
+) -> (TxId, ReceiptLike) {
+    let tx_id = evm_core::chain::submit_ic_tx(caller_principal, canister_id, tx_bytes).expect("submit");
+    let outcome = evm_core::chain::produce_block(1).expect("produce");
+    assert_eq!(outcome.block.tx_ids.len(), 1);
+    assert_eq!(outcome.block.tx_ids[0], tx_id);
+    let receipt = evm_core::chain::get_receipt(&tx_id).expect("receipt");
+    (tx_id, receipt)
 }

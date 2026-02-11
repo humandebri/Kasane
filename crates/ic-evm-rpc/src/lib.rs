@@ -6,10 +6,10 @@ use evm_db::stable_state::with_state;
 use evm_db::types::keys::{make_account_key, make_code_key, make_storage_key};
 use evm_core::{chain, hash};
 use ic_evm_rpc_types::{
-    DecodedTxView, EthBlockView, EthLogFilterView, EthLogItemView, EthReceiptView, EthTxListView,
-    EthTxView, GetLogsErrorView, LogView, RpcAccessListItemView, RpcBlockLookupView,
-    RpcCallObjectView, RpcCallResultView, RpcErrorView, RpcReceiptLookupView, SubmitTxError,
-    TxKindView,
+    DecodedTxView, EthBlockView, EthLogFilterView, EthLogItemView, EthLogsCursorView,
+    EthLogsPageView, EthReceiptView, EthTxListView, EthTxView, GetLogsErrorView, LogView,
+    RpcAccessListItemView, RpcBlockLookupView, RpcCallObjectView, RpcCallResultView, RpcErrorView,
+    RpcReceiptLookupView, SubmitTxError, TxKindView,
 };
 use tracing::{error, warn};
 
@@ -161,10 +161,14 @@ pub fn submit_tx_in_with_code(tx_in: chain::TxIn, op_name: &str) -> Result<Vec<u
     }
 }
 
-pub fn rpc_eth_get_logs(filter: EthLogFilterView) -> Result<Vec<EthLogItemView>, GetLogsErrorView> {
+pub fn rpc_eth_get_logs_paged(
+    filter: EthLogFilterView,
+    cursor: Option<EthLogsCursorView>,
+    limit: u32,
+) -> Result<EthLogsPageView, GetLogsErrorView> {
     const DEFAULT_LIMIT: usize = 200;
     const MAX_LIMIT: usize = 2000;
-    const MAX_BLOCK_SPAN: u64 = 5000;
+    const MAX_BLOCK_SPAN: u64 = 1000;
 
     if filter.topic1.is_some() {
         return Err(GetLogsErrorView::UnsupportedFilter("topic1 is not supported".to_string()));
@@ -183,7 +187,14 @@ pub fn rpc_eth_get_logs(filter: EthLogFilterView) -> Result<Vec<EthLogItemView>,
         to = head;
     }
 
-    let requested_limit_u32 = filter.limit.unwrap_or(u32::try_from(DEFAULT_LIMIT).unwrap_or(u32::MAX));
+    let requested_limit_u32 = if limit == 0 {
+        filter
+            .limit
+            .unwrap_or(u32::try_from(DEFAULT_LIMIT).unwrap_or(u32::MAX))
+    } else {
+        limit
+    }
+    .max(1);
     let requested_limit = usize::try_from(requested_limit_u32).unwrap_or(usize::MAX);
     if requested_limit > MAX_LIMIT {
         return Err(GetLogsErrorView::TooManyResults);
@@ -206,14 +217,32 @@ pub fn rpc_eth_get_logs(filter: EthLogFilterView) -> Result<Vec<EthLogItemView>,
     }
 
     let mut out = Vec::new();
-    for number in from..=to {
+    let mut start_block = from;
+    let mut start_tx_index: usize = 0;
+    let mut start_log_index: usize = 0;
+    if let Some(c) = cursor {
+        if c.block_number < from || c.block_number > to {
+            return Err(GetLogsErrorView::InvalidArgument("cursor out of range".to_string()));
+        }
+        start_block = c.block_number;
+        start_tx_index = usize::try_from(c.tx_index).unwrap_or(0);
+        start_log_index = usize::try_from(c.log_index).unwrap_or(0);
+    }
+
+    for number in start_block..=to {
         let Some(block) = chain::get_block(number) else { continue; };
-        for tx_id in &block.tx_ids {
+        let tx_start = if number == start_block { start_tx_index } else { 0 };
+        for (tx_pos, tx_id) in block.tx_ids.iter().enumerate().skip(tx_start) {
             let Some(receipt) = chain::get_receipt(tx_id) else { continue; };
             let eth_tx_hash = chain::get_tx_envelope(tx_id)
                 .and_then(|envelope| StoredTx::try_from(envelope).ok())
                 .and_then(|stored| if stored.kind == TxKind::EthSigned { Some(hash::keccak256(&stored.raw).to_vec()) } else { None });
-            for (log_index, log) in receipt.logs.iter().enumerate() {
+            let log_start = if number == start_block && tx_pos == tx_start {
+                start_log_index
+            } else {
+                0
+            };
+            for (log_index, log) in receipt.logs.iter().enumerate().skip(log_start) {
                 let address = log.address.as_slice();
                 if let Some(filter_addr) = address_filter {
                     if address != filter_addr {
@@ -227,7 +256,14 @@ pub fn rpc_eth_get_logs(filter: EthLogFilterView) -> Result<Vec<EthLogItemView>,
                     }
                 }
                 if out.len() == requested_limit {
-                    return Err(GetLogsErrorView::TooManyResults);
+                    return Ok(EthLogsPageView {
+                        items: out,
+                        next_cursor: Some(EthLogsCursorView {
+                            block_number: number,
+                            tx_index: u32::try_from(tx_pos).unwrap_or(u32::MAX),
+                            log_index: u32::try_from(log_index.saturating_add(1)).unwrap_or(u32::MAX),
+                        }),
+                    });
                 }
                 out.push(EthLogItemView {
                     block_number: receipt.block_number,
@@ -242,7 +278,10 @@ pub fn rpc_eth_get_logs(filter: EthLogFilterView) -> Result<Vec<EthLogItemView>,
             }
         }
     }
-    Ok(out)
+    Ok(EthLogsPageView {
+        items: out,
+        next_cursor: None,
+    })
 }
 
 fn chain_submit_error_to_code(err: &chain::ChainError) -> Option<(TxApiErrorKind, &'static str)> {
