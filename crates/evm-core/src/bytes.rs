@@ -2,11 +2,14 @@
 
 use alloy_primitives::{B256, U256};
 
-pub fn address_to_bytes(address: impl AsRef<[u8]>) -> [u8; 20] {
+pub fn try_address_to_bytes(address: impl AsRef<[u8]>) -> Result<[u8; 20], &'static str> {
     let src = address.as_ref();
+    if src.len() != 20 {
+        return Err("address must be 20 bytes");
+    }
     let mut out = [0u8; 20];
     out.copy_from_slice(src);
-    out
+    Ok(out)
 }
 
 pub fn b256_to_bytes(value: B256) -> [u8; 32] {

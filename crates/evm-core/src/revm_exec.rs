@@ -1,6 +1,6 @@
 //! どこで: Phase1のREVM実行 / 何を: TxEnvの実行とcommit / なぜ: 状態更新をEVM経由にするため
 
-use crate::bytes::address_to_bytes;
+use crate::bytes::try_address_to_bytes;
 use crate::chain::{before_store_write_for_test, trap_store_err};
 use crate::hash::keccak256;
 use crate::revm_db::RevmStableDb;
@@ -15,7 +15,9 @@ use evm_db::Storable;
 use revm::context::{Context, TxEnv};
 use revm::context_interface::result::{EVMError, ExecutionResult, HaltReason, InvalidTransaction};
 use revm::database_interface::DatabaseCommit;
-use revm::handler::{ExecuteCommitEvm, ExecuteEvm, MainBuilder, MainContext};
+use revm::handler::{ExecuteCommitEvm, MainBuilder, MainContext};
+use revm::inspector::InspectEvm;
+use revm::interpreter::{InstructionResult, Interpreter, InterpreterTypes};
 use revm::primitives::{Address, U256};
 
 pub(crate) type StateDiff = revm::primitives::HashMap<Address, revm::state::Account>;
@@ -29,6 +31,7 @@ pub enum ExecError {
     ExecutionFailed,
     InvalidGasFee,
     ResultTooLarge,
+    InstructionBudgetExceeded,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -106,6 +109,7 @@ pub fn execute_tx(
         exec_ctx,
         exec_path,
         true,
+        None,
     )?;
     Ok(outcome)
 }
@@ -118,6 +122,7 @@ pub(crate) fn execute_tx_on<DB>(
     exec_ctx: &BlockExecContext,
     exec_path: ExecPath,
     persist_receipt_index: bool,
+    instruction_soft_limit: Option<u64>,
 ) -> Result<(ExecOutcome, StateDiff), ExecError>
 where
     DB: revm::database_interface::Database<Error = core::convert::Infallible> + DatabaseCommit,
@@ -132,6 +137,8 @@ where
     )
     .ok_or(ExecError::InvalidGasFee)?;
 
+    let inspector_limit = instruction_soft_limit.unwrap_or(0);
+    let inspector = InstructionBudgetInspector::new(inspector_limit);
     let mut evm = Context::mainnet()
         .with_db(db)
         .modify_cfg_chained(|cfg| {
@@ -143,9 +150,12 @@ where
             block.gas_limit = exec_ctx.block_gas_limit;
             block.basefee = exec_ctx.base_fee;
         })
-        .build_mainnet();
+        .build_mainnet_with_inspector(inspector);
 
-    let result = evm.transact(tx_env).map_err(map_tx_error_stage)?;
+    let result = evm.inspect_tx(tx_env).map_err(map_tx_error_stage)?;
+    if evm.inspector.tripped {
+        return Err(ExecError::InstructionBudgetExceeded);
+    }
     let state_diff = collect_state_diff(result.state);
     commit_state_diff(&mut evm, state_diff.clone());
 
@@ -157,7 +167,9 @@ where
                 logs,
                 ..
             } => {
-                let addr = output.address().map(|a| address_to_bytes(*a));
+                let addr = output.address().map(|a| {
+                    try_address_to_bytes(*a).expect("revm create output address must be 20 bytes")
+                });
                 let mapped = logs
                     .into_iter()
                     .map(revm_log_to_receipt_log)
@@ -232,6 +244,48 @@ where
         halt_reason,
     };
     Ok((outcome, state_diff))
+}
+
+struct InstructionBudgetInspector {
+    start: u64,
+    limit: u64,
+    tripped: bool,
+}
+
+impl InstructionBudgetInspector {
+    fn new(limit: u64) -> Self {
+        Self {
+            start: current_instruction_counter(),
+            limit,
+            tripped: false,
+        }
+    }
+}
+
+impl<CTX, INTR: InterpreterTypes> revm::Inspector<CTX, INTR> for InstructionBudgetInspector {
+    fn step(&mut self, interp: &mut Interpreter<INTR>, _context: &mut CTX) {
+        if self.limit == 0 || self.tripped {
+            return;
+        }
+        let now = current_instruction_counter();
+        if now.saturating_sub(self.start) >= self.limit {
+            self.tripped = true;
+            interp.halt(InstructionResult::OutOfGas);
+        }
+    }
+}
+
+fn current_instruction_counter() -> u64 {
+    #[cfg(target_arch = "wasm32")]
+    {
+        return ic_cdk::api::performance_counter(
+            ic_cdk::api::PerformanceCounterType::InstructionCounter,
+        );
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        0
+    }
 }
 
 fn validate_execution_result_sizes(output: &[u8], logs: &[LogEntry]) -> Result<(), ExecError> {
@@ -344,7 +398,8 @@ pub(crate) fn compute_effective_gas_price(
 }
 
 fn revm_log_to_receipt_log(log: revm::primitives::Log) -> LogEntry {
-    let address = address_to_bytes(log.address);
+    let address =
+        try_address_to_bytes(log.address).expect("revm log address must be 20 bytes");
     let topics = log.topics().iter().map(|topic| topic.0).collect::<Vec<_>>();
     let data = log.data.data.to_vec();
     log_entry_from_parts(address, topics, data)

@@ -130,6 +130,14 @@ struct LogView {
     data: Vec<u8>,
 }
 
+#[derive(Clone, Debug, CandidType, Deserialize, Eq, PartialEq)]
+enum PendingStatusView {
+    Queued { seq: u64 },
+    Included { block_number: u64, tx_index: u32 },
+    Dropped { code: u16 },
+    Unknown,
+}
+
 fn wasm_path() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("..")
@@ -413,6 +421,66 @@ fn unprivileged_set_auto_mine_is_rejected() {
                 "unexpected message: {message}"
             );
         }
+    }
+}
+
+#[test]
+#[ignore = "manual_pocket_ic_timing_sensitive"]
+fn instruction_soft_limit_blocks_inclusion_in_pending_status() {
+    let pic = PocketIc::new();
+    let canister_id = install_canister(&pic);
+
+    let set_limit_out = call_update(
+        &pic,
+        canister_id,
+        "set_instruction_soft_limit",
+        Encode!(&1u64).expect("encode limit"),
+    );
+    let set_limit: ManageWriteResult =
+        Decode!(&set_limit_out, ManageWriteResult).expect("decode set_instruction_soft_limit");
+    assert_eq!(set_limit, Ok(()));
+
+    let tx_bytes = build_ic_tx_bytes([0x22u8; 20], 0);
+    let submit_out = call_update(
+        &pic,
+        canister_id,
+        "submit_ic_tx",
+        Encode!(&tx_bytes).expect("encode submit"),
+    );
+    let submit: SubmitTxResult = Decode!(&submit_out, SubmitTxResult).expect("decode submit");
+    let tx_id = match submit {
+        Ok(value) => value,
+        Err(err) => panic!("submit failed: {:?}", err),
+    };
+
+    let produce_out = call_update(
+        &pic,
+        canister_id,
+        "produce_block",
+        Encode!(&1u32).expect("encode produce"),
+    );
+    let produce: ProduceBlockResult = Decode!(&produce_out, ProduceBlockResult).expect("decode produce");
+    match produce.expect("produce result") {
+        ProduceBlockStatus::NoOp {
+            reason: NoOpReason::NoExecutableTx,
+        } => {}
+        other => panic!("unexpected produce status: {:?}", other),
+    }
+
+    let pending_out = call_query(
+        &pic,
+        canister_id,
+        "get_pending",
+        Encode!(&tx_id).expect("encode get_pending"),
+    );
+    let pending: PendingStatusView =
+        Decode!(&pending_out, PendingStatusView).expect("decode get_pending");
+    match pending {
+        PendingStatusView::Queued { .. } | PendingStatusView::Dropped { code: 9 } => {}
+        other => panic!(
+            "expected tx to be non-included under tight instruction limit, got {:?}",
+            other
+        ),
     }
 }
 

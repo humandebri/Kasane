@@ -24,10 +24,18 @@ docker compose up -d
 3. tx hash で `eth_getTransactionByHash` / `eth_getTransactionReceipt` 相当の情報が表示される  
 4. エラー時は `docker compose logs blockscout` と `tools/rpc-gateway` ログで `CHAIN_ID` と RPC到達性を確認する
 
-補助コマンド:
+補助コマンド（手動）:
 
 ```bash
-scripts/blockscout_local_validate.sh
+curl -sS -X POST http://127.0.0.1:8545 \
+  -H 'content-type: application/json' \
+  --data '{"jsonrpc":"2.0","id":1,"method":"eth_blockNumber","params":[]}'
+
+curl -sS -X POST http://127.0.0.1:8545 \
+  -H 'content-type: application/json' \
+  --data '{"jsonrpc":"2.0","id":1,"method":"eth_getBlockByNumber","params":["latest",false]}'
+
+curl -fsS http://127.0.0.1:4000 >/dev/null
 ```
 
 ## 役割分担

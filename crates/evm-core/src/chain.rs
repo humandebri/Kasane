@@ -1,7 +1,7 @@
 //! どこで: Phase1のチェーン操作 / 何を: submit/produce/execute / なぜ: 同期Tx体験の基盤のため
 
 use crate::base_fee::compute_next_base_fee;
-use crate::bytes::address_to_bytes;
+use crate::bytes::try_address_to_bytes;
 use crate::hash;
 use crate::revm_exec::{
     commit_state_diff_to_db, compute_effective_gas_price, execute_tx_on, BlockExecContext,
@@ -12,10 +12,10 @@ use crate::trie_commit;
 use crate::tx_decode::{decode_ic_synthetic_header_trusted_size, decode_tx};
 use crate::tx_submit;
 use evm_db::chain_data::constants::{
-    DROPPED_RING_CAPACITY, DROP_CODE_CALLER_MISSING, DROP_CODE_DECODE, DROP_CODE_EXEC,
-    DROP_CODE_INVALID_FEE, DROP_CODE_MISSING, DROP_CODE_REPLACED, DROP_CODE_RESULT_TOO_LARGE,
-    MAX_PENDING_GLOBAL, MAX_PENDING_PER_PRINCIPAL, MAX_PENDING_PER_SENDER, MAX_TX_SIZE,
-    READY_CANDIDATE_LIMIT,
+    DROPPED_RING_CAPACITY, DROP_CODE_BLOCK_GAS_EXCEEDED, DROP_CODE_CALLER_MISSING,
+    DROP_CODE_DECODE, DROP_CODE_EXEC, DROP_CODE_INSTRUCTION_BUDGET, DROP_CODE_INVALID_FEE,
+    DROP_CODE_MISSING, DROP_CODE_REPLACED, DROP_CODE_RESULT_TOO_LARGE, MAX_PENDING_GLOBAL,
+    MAX_PENDING_PER_PRINCIPAL, MAX_PENDING_PER_SENDER, MAX_TX_SIZE, READY_CANDIDATE_LIMIT,
 };
 use evm_db::chain_data::{
     BlockData, CallerKey, Head, PendingFeeKey, PruneJournal, PrunePolicy, ReadyKey, ReadySeqKey,
@@ -96,6 +96,13 @@ pub(crate) fn before_store_write_for_test(
     block_number: Option<u64>,
     tx_id: Option<TxId>,
 ) {
+    #[cfg(target_arch = "wasm32")]
+    {
+        // wasm32 では failpoint 注入ロジック自体を使わないため、引数を明示的に消費して
+        // 未使用変数警告を抑止する（APIシグネチャは維持）。
+        let _ = (ctx, block_number, tx_id);
+    }
+
     #[cfg(not(target_arch = "wasm32"))]
     {
         let op = STORE_OP_COUNTER.with(|counter| {
@@ -131,6 +138,18 @@ fn should_stop_block_execution(
         return false;
     }
     instruction_current.saturating_sub(instruction_start) >= instruction_soft_limit
+}
+
+fn remaining_instruction_budget(
+    instruction_soft_limit: u64,
+    instruction_start: u64,
+    instruction_current: u64,
+) -> Option<u64> {
+    if instruction_soft_limit == 0 {
+        return None;
+    }
+    let consumed = instruction_current.saturating_sub(instruction_start);
+    Some(instruction_soft_limit.saturating_sub(consumed))
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -567,7 +586,10 @@ pub fn submit_tx(
             base_fee,
         )
         .ok_or(ChainError::InvalidFee)?;
-        let sender_key = SenderKey::new(address_to_bytes(tx_env.caller));
+        let sender_key = SenderKey::new(
+            try_address_to_bytes(tx_env.caller)
+                .map_err(|e| ChainError::InvariantViolation(e.to_string()))?,
+        );
         let replaced = apply_nonce_and_replacement(
             state,
             sender_key,
@@ -859,7 +881,8 @@ pub fn produce_block(max_txs: usize) -> Result<ProduceBlockOutcome, ChainError> 
             }
         };
         if !min_fee_satisfied(&tx_env, exec_ctx.base_fee, min_priority_fee, min_gas_price) {
-            let sender_bytes = address_to_bytes(tx_env.caller);
+            let sender_bytes = try_address_to_bytes(tx_env.caller)
+                .map_err(|e| ChainError::InvariantViolation(e.to_string()))?;
             prepared.push(PreparedItem::Drop(QueuedDrop {
                 tx_id,
                 drop_code: DROP_CODE_INVALID_FEE,
@@ -874,7 +897,8 @@ pub fn produce_block(max_txs: usize) -> Result<ProduceBlockOutcome, ChainError> 
             exec_ctx.base_fee,
         );
         if effective.is_none() {
-            let sender_bytes = address_to_bytes(tx_env.caller);
+            let sender_bytes = try_address_to_bytes(tx_env.caller)
+                .map_err(|e| ChainError::InvariantViolation(e.to_string()))?;
             prepared.push(PreparedItem::Drop(QueuedDrop {
                 tx_id,
                 drop_code: DROP_CODE_INVALID_FEE,
@@ -883,7 +907,8 @@ pub fn produce_block(max_txs: usize) -> Result<ProduceBlockOutcome, ChainError> 
             }));
             continue;
         }
-        let sender_bytes = address_to_bytes(tx_env.caller);
+        let sender_bytes = try_address_to_bytes(tx_env.caller)
+            .map_err(|e| ChainError::InvariantViolation(e.to_string()))?;
         let sender_nonce = tx_env.nonce;
         prepared.push(PreparedItem::Tx(PreparedTx {
             tx_id,
@@ -943,14 +968,40 @@ pub fn produce_block(max_txs: usize) -> Result<ProduceBlockOutcome, ChainError> 
 
     let mut exec_db = CacheDB::new(crate::revm_db::RevmStableDb);
     for prepared_tx in staged_txs {
+        let instruction_now = current_instruction_counter();
         if should_stop_block_execution(
             block_gas_used,
             exec_ctx.block_gas_limit,
             instruction_soft_limit,
             instruction_start,
-            current_instruction_counter(),
+            instruction_now,
         ) {
             break;
+        }
+        let remaining_instruction_budget = remaining_instruction_budget(
+            instruction_soft_limit,
+            instruction_start,
+            instruction_now,
+        );
+        if remaining_instruction_budget == Some(0) {
+            break;
+        }
+        if exec_ctx.block_gas_limit > 0 {
+            let remaining_block_gas = exec_ctx.block_gas_limit.saturating_sub(block_gas_used);
+            if prepared_tx.tx_env.gas_limit > remaining_block_gas {
+                staged_drops.push(QueuedDrop {
+                    tx_id: prepared_tx.tx_id,
+                    drop_code: DROP_CODE_BLOCK_GAS_EXCEEDED,
+                    sender_override: Some(prepared_tx.sender_bytes),
+                    nonce_override: Some(prepared_tx.sender_nonce),
+                });
+                track_drop(
+                    &mut dropped_total,
+                    &mut dropped_by_code,
+                    DROP_CODE_BLOCK_GAS_EXCEEDED,
+                );
+                continue;
+            }
         }
         let tx_index = u32::try_from(included_tx_ids.len()).unwrap_or(u32::MAX);
         let tx_id = prepared_tx.tx_id;
@@ -962,6 +1013,7 @@ pub fn produce_block(max_txs: usize) -> Result<ProduceBlockOutcome, ChainError> 
             &exec_ctx,
             ExecPath::UserTx,
             false,
+            remaining_instruction_budget,
         );
         let outcome = match execution {
             Ok((value, user_diff)) => {
@@ -1002,6 +1054,20 @@ pub fn produce_block(max_txs: usize) -> Result<ProduceBlockOutcome, ChainError> 
                         &mut dropped_total,
                         &mut dropped_by_code,
                         DROP_CODE_RESULT_TOO_LARGE,
+                    );
+                    continue;
+                }
+                if err == ExecError::InstructionBudgetExceeded {
+                    staged_drops.push(QueuedDrop {
+                        tx_id,
+                        drop_code: DROP_CODE_INSTRUCTION_BUDGET,
+                        sender_override: Some(prepared_tx.sender_bytes),
+                        nonce_override: Some(prepared_tx.sender_nonce),
+                    });
+                    track_drop(
+                        &mut dropped_total,
+                        &mut dropped_by_code,
+                        DROP_CODE_INSTRUCTION_BUDGET,
                     );
                     continue;
                 }
@@ -1254,20 +1320,6 @@ struct QueuedDrop {
     nonce_override: Option<u64>,
 }
 
-pub fn execute_ic_tx(
-    caller_principal: Vec<u8>,
-    canister_id: Vec<u8>,
-    tx_bytes: Vec<u8>,
-) -> Result<ExecResult, ChainError> {
-    let caller_evm = hash::caller_evm_from_principal(&caller_principal);
-    let tx_id = submit_tx_in(TxIn::IcSynthetic {
-        caller_principal,
-        canister_id,
-        tx_bytes,
-    })?;
-    execute_and_seal_with_caller(tx_id, TxKind::IcSynthetic, caller_evm)
-}
-
 #[cfg(not(target_arch = "wasm32"))]
 pub fn execute_submitted_ic_tx_for_test(
     tx_id: TxId,
@@ -1299,7 +1351,16 @@ pub fn eth_call(raw_tx: Vec<u8>) -> Result<Vec<u8>, ChainError> {
         None,
     ));
     let db = CacheDB::new(crate::revm_db::RevmStableDb);
-    let (outcome, _) = execute_tx_on(db, tx_id, 0, tx_env, &exec_ctx, ExecPath::UserTx, false)
+    let (outcome, _) = execute_tx_on(
+        db,
+        tx_id,
+        0,
+        tx_env,
+        &exec_ctx,
+        ExecPath::UserTx,
+        false,
+        None,
+    )
         .map_err(|err| ChainError::ExecFailed(Some(err)))?;
     Ok(outcome.return_data)
 }
@@ -1379,7 +1440,16 @@ pub fn eth_call_object(input: CallObjectInput) -> Result<CallObjectResult, Chain
         block_gas_limit,
     };
     let db = CacheDB::new(crate::revm_db::RevmStableDb);
-    let (outcome, _) = execute_tx_on(db, tx_id, 0, tx_env, &exec_ctx, ExecPath::UserTx, false)
+    let (outcome, _) = execute_tx_on(
+        db,
+        tx_id,
+        0,
+        tx_env,
+        &exec_ctx,
+        ExecPath::UserTx,
+        false,
+        None,
+    )
         .map_err(|err| ChainError::ExecFailed(Some(err)))?;
     let revert_data = if outcome.receipt.status == 0 && !outcome.return_data.is_empty() {
         Some(outcome.return_data.clone())
@@ -1545,7 +1615,8 @@ fn execute_and_seal_with_caller(
     });
     let tx_env = decode_tx(kind, Address::from(caller), &stored.raw)
         .map_err(|_| ChainError::DecodeFailed)?;
-    let sender_bytes = address_to_bytes(tx_env.caller);
+    let sender_bytes = try_address_to_bytes(tx_env.caller)
+        .map_err(|e| ChainError::InvariantViolation(e.to_string()))?;
     let sender_nonce = tx_env.nonce;
 
     let sync_db = CacheDB::new(crate::revm_db::RevmStableDb);
@@ -1561,6 +1632,7 @@ fn execute_and_seal_with_caller(
         &exec_ctx,
         ExecPath::UserTx,
         false,
+        None,
     ) {
         Ok(value) => value,
         Err(err) => {
@@ -2661,7 +2733,7 @@ enum RekeyError {
 
 #[cfg(test)]
 mod tests {
-    use super::should_stop_block_execution;
+    use super::{remaining_instruction_budget, should_stop_block_execution};
 
     #[test]
     fn should_stop_block_execution_stops_on_gas_limit() {
@@ -2679,5 +2751,17 @@ mod tests {
     #[test]
     fn should_stop_block_execution_ignores_instruction_budget_when_disabled() {
         assert!(!should_stop_block_execution(1, 0, 0, 100, 100_000));
+    }
+
+    #[test]
+    fn remaining_instruction_budget_returns_none_when_disabled() {
+        assert_eq!(remaining_instruction_budget(0, 100, 1_000), None);
+    }
+
+    #[test]
+    fn remaining_instruction_budget_saturates_to_zero() {
+        assert_eq!(remaining_instruction_budget(5, 100, 103), Some(2));
+        assert_eq!(remaining_instruction_budget(5, 100, 105), Some(0));
+        assert_eq!(remaining_instruction_budget(5, 100, 999), Some(0));
     }
 }

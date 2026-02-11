@@ -18,6 +18,7 @@ use evm_db::types::keys::{
     make_account_key, make_storage_key, parse_account_key_bytes, parse_storage_key_bytes,
 };
 use ic_stable_structures::Storable;
+use std::panic;
 
 #[test]
 fn tx_envelope_roundtrip() {
@@ -411,6 +412,7 @@ fn chain_state_roundtrip() {
 #[test]
 fn chain_state_default_fees_follow_runtime_defaults() {
     let state = ChainStateV1::new(4_801_360);
+    assert!(!state.auto_mine_enabled);
     assert_eq!(state.min_gas_price, DEFAULT_MIN_GAS_PRICE);
     assert_eq!(state.min_priority_fee, DEFAULT_MIN_PRIORITY_FEE);
     assert_eq!(state.block_gas_limit, DEFAULT_BLOCK_GAS_LIMIT);
@@ -418,11 +420,15 @@ fn chain_state_default_fees_follow_runtime_defaults() {
 }
 
 #[test]
-fn chain_state_invalid_len_falls_back_to_default() {
+fn chain_state_invalid_len_traps() {
     let legacy = [0u8; 72];
-    let decoded = ChainStateV1::from_bytes(std::borrow::Cow::Owned(legacy.to_vec()));
-    let expected = ChainStateV1::new(4_801_360);
-    assert_eq!(decoded, expected);
+    let previous_hook = panic::take_hook();
+    panic::set_hook(Box::new(|_| {}));
+    let out = panic::catch_unwind(|| {
+        let _ = ChainStateV1::from_bytes(std::borrow::Cow::Owned(legacy.to_vec()));
+    });
+    panic::set_hook(previous_hook);
+    assert!(out.is_err(), "decode mismatch must trap");
 }
 
 #[test]

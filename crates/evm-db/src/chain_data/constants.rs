@@ -30,17 +30,6 @@ pub const CALLER_KEY_LEN: usize = 30;
 
 // StableCellの固定長ヘッダ
 pub const CHAIN_STATE_SIZE_U32: u32 = 88;
-
-// 自動ブロック生成の既定間隔（ms）
-pub const DEFAULT_MINING_INTERVAL_MS: u64 = 5_000;
-
-// ガス関連の既定値（Phase1の足場）
-// block gas limit は固定運用。更新時は docs/ops/ic-wasm-workflow.md の
-// staging計測手順（失敗ゼロ最大候補 + 20% headroom）で根拠を取ってから変更する。
-pub const DEFAULT_BASE_FEE: u64 = 1_000_000_000;
-pub const DEFAULT_MIN_GAS_PRICE: u64 = 1_000_000_000;
-pub const DEFAULT_MIN_PRIORITY_FEE: u64 = 1_000_000_000;
-pub const DEFAULT_BLOCK_GAS_LIMIT: u64 = 3_000_000;
 // TxLocの固定長
 pub const TX_LOC_SIZE_U32: u32 = 32;
 
@@ -52,6 +41,8 @@ pub const DROP_CODE_CALLER_MISSING: u16 = 4;
 pub const DROP_CODE_INVALID_FEE: u16 = 5;
 pub const DROP_CODE_REPLACED: u16 = 6;
 pub const DROP_CODE_RESULT_TOO_LARGE: u16 = 7;
+pub const DROP_CODE_BLOCK_GAS_EXCEEDED: u16 = 8;
+pub const DROP_CODE_INSTRUCTION_BUDGET: u16 = 9;
 pub const DROPPED_RING_CAPACITY: u64 = 1_000;
 
 // logs/receiptの上限

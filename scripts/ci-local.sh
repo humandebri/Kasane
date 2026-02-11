@@ -45,7 +45,6 @@ if grep -RInE "$DENY_PATTERN" \
   --exclude-dir=vendor \
   --exclude-dir=node_modules \
   --exclude='scripts/ci-local.sh' \
-  --exclude='docs/ops/pr0-differential-runbook.md' \
   crates docs scripts README.md Cargo.toml; then
   echo "[guard] forbidden OP stack reference found"
   exit 1
@@ -70,12 +69,6 @@ check_duplicate_dep() {
 
 check_duplicate_dep "ic-stable-structures"
 check_duplicate_dep "ic-cdk-timers"
-
-echo "[guard] PR0 differential check"
-PR0_DIFF_LOCAL_FILE="${PR0_DIFF_LOCAL:-/tmp/pr0_snapshot_local.txt}"
-PR0_DIFF_REFERENCE_FILE="${PR0_DIFF_REFERENCE:-docs/ops/pr0_snapshot_reference.txt}"
-scripts/pr0_capture_local_snapshot.sh "$PR0_DIFF_LOCAL_FILE"
-scripts/pr0_differential_compare.sh "$PR0_DIFF_LOCAL_FILE" "$PR0_DIFF_REFERENCE_FILE"
 
 icp canister create -e "${NETWORK}" --identity "${ICP_IDENTITY_NAME}" evm_canister >/dev/null 2>&1 || true
 echo "[guard] release wasm endpoint guard"

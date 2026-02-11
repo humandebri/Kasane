@@ -14,3 +14,11 @@ pub const DEFAULT_BLOCK_GAS_LIMIT: u64 = 3_000_000;
 // 0 の場合は命令数ベースの早期打ち切りを無効化する。
 // 既定値は「上限手前で安全に止める」ための保守値。
 pub const DEFAULT_INSTRUCTION_SOFT_LIMIT: u64 = 4_000_000_000;
+
+// prune 実行の既定値
+pub const DEFAULT_PRUNE_TIMER_INTERVAL_MS: u64 = 3_600_000;
+pub const DEFAULT_PRUNE_MAX_OPS_PER_TICK: u32 = 5_000;
+
+// prune 入力の安全ガード
+pub const MIN_PRUNE_TIMER_INTERVAL_MS: u64 = 1_000;
+pub const MIN_PRUNE_MAX_OPS_PER_TICK: u32 = 1;

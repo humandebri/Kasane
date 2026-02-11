@@ -1,5 +1,14 @@
 # PR8 Signature Boundary Specification (Normative)
 
+## Status (2026-02-11)
+
+- This document remains normative for ingress/runtime signature boundary.
+- Current API surface covered by this spec:
+  - `submit_eth_tx`
+  - `submit_ic_tx`
+  - `rpc_eth_send_raw_transaction`
+- Related management APIs (`set_mining_interval_ms`, `set_ops_config`) are removed from current public interface and are out of scope for PR8.
+
 ## 1. Scope
 
 This document fixes the boundary between ingress-time transaction validation and EVM runtime precompile execution.

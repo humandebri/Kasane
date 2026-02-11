@@ -1,9 +1,24 @@
 # EVM互換Canister開発プロジェクト計画書
 
+[![CI](https://github.com/humandebri/IC-OP/actions/workflows/ci.yml/badge.svg)](https://github.com/humandebri/IC-OP/actions/workflows/ci.yml)
+![license](https://img.shields.io/badge/license-All%20Rights%20Reserved-critical)
+![canister](https://img.shields.io/badge/canister-evm__canister-1f6feb)
+![network](https://img.shields.io/badge/network-ic-2ea44f)
+![chain_id](https://img.shields.io/badge/chain--id-4801360-f59e0b)
+
+**Canister 名**: `evm_canister`  
+**Mainnet Canister ID (`ic`)**: `4c52m-aiaaa-aaaam-agwwa-cai`  
+**License**: `All Rights Reserved`
+
 ## 運用上の決定事項（2026-02-04）
 
 - InitArgs: Candidは service : (opt InitArgs) を維持するが、互換性維持目的であり runtime では None を拒否する。
 - 互換ターゲットは Ethereum JSON-RPC + EVM 実行意味論に固定し、OP/Superchain互換は非目標とする。
+- ネイティブ通貨運用（2026-02-11）:
+  - 表示上のネイティブ通貨は `ICP` とする。
+  - 単位は EVM 慣例どおり `10^18` 最小単位（`1 ICP = 10^18`）で扱う。
+  - `base_fee` / `gas_price` / `max_fee_per_gas` は上記単位の `ICP` 建てとして解釈する。
+  - 本方針は「単位・表示」の定義であり、ICP Ledger 残高を各Txで直接参照してガス徴収する仕様ではない。
 - submit系APIの役割:
 
   | API | 用途 | 同期性 | 戻り値 |
@@ -12,7 +27,80 @@
   | submit_eth_tx | 後続ブロックで実行するためのキュー投入 | 非同期 | tx_id |
 
 - submit系APIの返却コード（PR8）は `docs/specs/pr8-signature-boundary.md` を正本とする。
-  - `README.md` は概要のみ記載し、返却コード表は重複掲載しない。
+  - 主要コードは `README.md` にも掲載し、更新時は正本と同時に同期する。
+- submit系APIの返却コード（PR8, 主要一覧）:
+
+  | 種別 | コード |
+  | --- | --- |
+  | Ingress submit (`submit_eth_tx` / `submit_ic_tx` / `rpc_eth_send_raw_transaction`) | `arg.tx_too_large`, `arg.decode_failed`, `arg.unsupported_tx_kind`, `submit.tx_already_seen`, `submit.invalid_fee`, `submit.nonce_too_low`, `submit.nonce_gap`, `submit.nonce_conflict`, `submit.queue_full`, `submit.sender_queue_full`, `internal.unexpected` |
+  | pre-submit guard（共通） | `auth.anonymous_forbidden`, `ops.write.needs_migration`, `ops.write.cycle_critical` |
+  | pre-submit guard（`rpc_eth_send_raw_transaction` のみ） | `rpc.state_unavailable.corrupt_or_migrating` |
+  | execute path（wrapper 側） | `exec.*` |
+- `submit_ic_tx` の入力仕様（README要約）:
+  - 引数: `vec nat8`（以下の固定バイトレイアウト）
+  - レイアウト（Big Endian）:
+    - `[version:1][to:20][value:32][gas_limit:8][nonce:8][max_fee_per_gas:16][max_priority_fee_per_gas:16][data_len:4][data:data_len]`
+  - 必須条件:
+    - `version = 2`
+    - `data_len` と `data` 実長が一致
+  - 戻り値: `tx_id`（32 bytes, internal id）
+- `submit_ic_tx` 実行例（mainnet）:
+
+```bash
+CANISTER_ID=4c52m-aiaaa-aaaam-agwwa-cai
+IDENTITY=ci-local
+
+TX_HEX=$(python - <<'PY'
+version = b'\x02'
+to = bytes.fromhex('0000000000000000000000000000000000000001')
+value = (0).to_bytes(32, 'big')
+gas_limit = (500000).to_bytes(8, 'big')
+nonce = (0).to_bytes(8, 'big')
+max_fee = (2_000_000_000).to_bytes(16, 'big')
+max_priority = (1_000_000_000).to_bytes(16, 'big')
+data = b''
+data_len = len(data).to_bytes(4, 'big')
+print((version + to + value + gas_limit + nonce + max_fee + max_priority + data_len + data).hex())
+PY
+)
+
+icp canister call -e ic --identity "$IDENTITY" "$CANISTER_ID" submit_ic_tx "(vec { $(python - <<PY
+tx = bytes.fromhex('$TX_HEX')
+print('; '.join(str(b) for b in tx))
+PY
+) })"
+```
+- `submit_eth_tx` の入力仕様（README要約）:
+  - 引数: `blob`（署名済み Ethereum raw transaction の生バイト列）
+  - 対応: Legacy(RLP), EIP-2930, EIP-1559
+  - 非対応: EIP-4844(`0x03`), EIP-7702(`0x04`)
+  - 戻り値: `tx_id`（32 bytes, internal id）
+- `submit_eth_tx` 実行例（mainnet）:
+
+```bash
+CANISTER_ID=4c52m-aiaaa-aaaam-agwwa-cai
+IDENTITY=ci-local
+CHAIN_ID=4801360
+PRIVKEY="<YOUR_PRIVKEY_HEX>"
+
+RAW_TX_BYTES=$(cargo run -q -p ic-evm-core --features local-signer-bin --bin eth_raw_tx -- \
+  --mode raw \
+  --privkey "$PRIVKEY" \
+  --to "0000000000000000000000000000000000000001" \
+  --value "0" \
+  --gas-price "1000000000" \
+  --gas-limit "21000" \
+  --nonce "0" \
+  --chain-id "$CHAIN_ID")
+
+SUBMIT_OUT=$(icp canister call -e ic --identity "$IDENTITY" "$CANISTER_ID" submit_eth_tx "(vec { $RAW_TX_BYTES })")
+echo "$SUBMIT_OUT"
+
+# 実行確定（manual mining）
+icp canister call -e ic --identity "$IDENTITY" "$CANISTER_ID" produce_block '(1:nat32)'
+```
+
+- 詳細手順（`tx_id` 抽出と `get_receipt` まで）は `docs/api/submit_eth_tx_payload.md` を参照。
 
 ### RPCハッシュ運用（2026-02-08）
 
@@ -21,7 +109,9 @@
 - 参照APIは `rpc_eth_get_transaction_by_eth_hash` / `rpc_eth_get_transaction_receipt_by_eth_hash` を正とする。
 - 旧 `tx_id` 前提の参照RPCは廃止した。
 - `eth_call` は raw tx 入力の `rpc_eth_call_rawtx` として公開する。
-- `rpc_eth_get_logs` は `GetLogsErrorView` を返し、`RangeTooLarge` / `TooManyResults` / `UnsupportedFilter` / `InvalidArgument` を明示する。
+- `rpc_eth_get_logs_paged` は `GetLogsErrorView` を返し、`RangeTooLarge` / `TooManyResults` / `UnsupportedFilter` / `InvalidArgument` を明示する。
+- `rpc_eth_get_logs_paged` の `limit=0` は `1` に正規化する（空ページ継続を防止）。
+- `ChainStateV1::new()` の `auto_mine_enabled` 既定値は `false`（手動採掘前提）。
 - storage書き込み失敗は `trap` でロールバックするため、canister内カウンタは残らない。一次監視は caller/indexer 側ログで行う。
 - デプロイ前の統合スモークは `scripts/predeploy_smoke.sh` を利用する。
 - 容量対策として、必要時は `cargo clean` を実行して `target/` を都度クリーンする。

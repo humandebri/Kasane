@@ -44,6 +44,15 @@ type EthLogItemView = record {
   eth_tx_hash : opt blob;
   tx_hash : blob;
 };
+type EthLogsCursorView = record {
+  tx_index : nat32;
+  log_index : nat32;
+  block_number : nat64;
+};
+type EthLogsPageView = record {
+  next_cursor : opt EthLogsCursorView;
+  items : vec EthLogItemView;
+};
 type EthReceiptView = record {
   effective_gas_price : nat64;
   status : nat8;
@@ -222,7 +231,7 @@ type ReceiptView = record {
 };
 type Result = variant { Ok : nat64; Err : text };
 type Result_1 = variant { Ok : ExportResponseView; Err : ExportErrorView };
-type Result_10 = variant { Ok : vec EthLogItemView; Err : GetLogsErrorView };
+type Result_10 = variant { Ok : EthLogsPageView; Err : GetLogsErrorView };
 type Result_11 = variant { Ok : blob; Err : SubmitTxError };
 type Result_12 = variant { Ok; Err : text };
 type Result_2 = variant { Ok : BlockView; Err : LookupError };
@@ -299,7 +308,9 @@ service : (opt InitArgs) -> {
       RpcBlockLookupView,
     ) query;
   rpc_eth_get_code : (blob) -> (Result_8) query;
-  rpc_eth_get_logs : (EthLogFilterView) -> (Result_10) query;
+  rpc_eth_get_logs_paged : (EthLogFilterView, opt EthLogsCursorView, nat32) -> (
+      Result_10,
+    ) query;
   rpc_eth_get_storage_at : (blob, blob) -> (Result_8) query;
   rpc_eth_get_transaction_by_eth_hash : (blob) -> (opt EthTxView) query;
   rpc_eth_get_transaction_receipt_by_eth_hash : (blob) -> (
@@ -314,8 +325,6 @@ service : (opt InitArgs) -> {
   set_instruction_soft_limit : (nat64) -> (Result_12);
   set_log_filter : (opt text) -> (Result_12);
   set_miner_allowlist : (vec principal) -> (Result_12);
-  set_mining_interval_ms : (nat64) -> (Result_12);
-  set_ops_config : (OpsConfigView) -> (Result_12);
   set_prune_policy : (PrunePolicyView) -> (Result_12);
   set_pruning_enabled : (bool) -> (Result_12);
   submit_eth_tx : (blob) -> (Result_11);

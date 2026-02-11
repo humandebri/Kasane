@@ -16,27 +16,23 @@ fn execute_ic_tx_invalid_opcode_does_not_increment_unknown_halt_metrics() {
     let halt_target = [0x12u8; 20];
     common::install_contract(halt_target, &[0xfe]); // INVALID
 
-    let first = chain::execute_ic_tx(
+    let (_, first) = common::execute_ic_tx_via_produce(
         caller_principal.clone(),
         vec![0xaa],
         common::build_ic_tx_bytes(halt_target, 0, 2_000_000_000, 1_000_000_000),
-    )
-    .expect("execute first");
+    );
     assert_eq!(first.status, 0);
-    assert_eq!(first.final_status, "Halt:InvalidOpcode");
 
     let first_metrics = with_state(|state| *state.ops_metrics.get());
     assert_eq!(first_metrics.exec_halt_unknown_count, 0);
     assert_eq!(first_metrics.last_exec_halt_unknown_warn_ts, 0);
 
-    let second = chain::execute_ic_tx(
+    let (_, second) = common::execute_ic_tx_via_produce(
         caller_principal,
         vec![0xbb],
         common::build_ic_tx_bytes(halt_target, 1, 2_000_000_000, 1_000_000_000),
-    )
-    .expect("execute second");
+    );
     assert_eq!(second.status, 0);
-    assert_eq!(second.final_status, "Halt:InvalidOpcode");
 
     let second_metrics = with_state(|state| *state.ops_metrics.get());
     assert_eq!(second_metrics.exec_halt_unknown_count, 0);

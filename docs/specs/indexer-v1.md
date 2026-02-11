@@ -1,5 +1,22 @@
 # Indexer 実装Spec v1（pull + Supabase）
 
+## 現行ステータス（2026-02-11）
+
+- 本仕様は現行実装に合わせて運用中。
+- 主要API:
+  - `export_blocks(cursor, max_bytes)`
+  - `rpc_eth_get_logs_paged(filter, cursor, limit)`
+- hash運用:
+  - `tx_id` は canister 内部識別子
+  - `eth_tx_hash` は `keccak256(raw_tx)`（外部互換用）
+- prune既定値（runtime defaults）:
+  - `DEFAULT_PRUNE_TIMER_INTERVAL_MS = 3_600_000`（1h）
+  - `DEFAULT_PRUNE_MAX_OPS_PER_TICK = 5_000`
+  - 入力ガード: `MIN_PRUNE_TIMER_INTERVAL_MS = 1_000`, `MIN_PRUNE_MAX_OPS_PER_TICK = 1`
+- 補足:
+  - pruning は外部ACKに依存しない（canister単独で進行）
+  - `set_mining_interval_ms` / `set_ops_config` は現行公開APIから削除済み
+
 ## 結論：おすすめ構成（現実に回るやつ）
 
 1) 取り込みは **外部ワーカー** が pull  
@@ -20,7 +37,7 @@ Edge Functions だけでも可能だが、EVM logs が増えると **CPU/メモ�
 ## 1) 取り込みフロー（pull）
 
 * `get_head()` で head を確認  
-* `export_blocks(cursor, max_bytes)` を **cursor 기반**で繰り返し取得  
+* `export_blocks(cursor, max_bytes)` を **cursor ベース**で繰り返し取得  
 * 取得した `BlockBundle` を **同一ブロック単位**で DB に保存  
 * `cursor` は DB に保存（再起動で継続可能）
   * 保存形式は **JSON固定**（後述）
@@ -283,7 +300,8 @@ length-prefix 形式は **export API では使わない**。
 * `tx_id` は canister 内部識別子であり、`eth_tx_hash`（`keccak256(raw_tx)`）とは別物  
 * `eth_tx_hash` が必要な連携は RPC 側の `*_by_eth_hash` を使う  
 * `tx_id` 前提の参照RPCは廃止済み  
-* `rpc_eth_get_logs` は `Result<vec EthLogItemView, GetLogsErrorView>` を返す（`RangeTooLarge` / `TooManyResults` / `UnsupportedFilter` / `InvalidArgument`）
+* `rpc_eth_get_logs_paged` は `Result<EthLogsPageView, GetLogsErrorView>` を返す（`RangeTooLarge` / `TooManyResults` / `UnsupportedFilter` / `InvalidArgument`）
+* `rpc_eth_get_logs_paged` の `limit=0` は `1` として扱う
 * `len` は **u32be**（item の bytes 長）  
 * `len = 0` は許容  
 * `payload_len` も **u32 の範囲**

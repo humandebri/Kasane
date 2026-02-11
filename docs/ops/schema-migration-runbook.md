@@ -1,7 +1,7 @@
-# Schema v3 Migration Runbook
+# Schema Migration Runbook
 
 ## 目的
-- schema v3移行を tick で安全に進める。
+- schema 移行を tick で安全に進める。
 - 途中停止時もカーソルから再開できる状態を維持する。
 
 ## 事前準備（必須）
@@ -9,7 +9,7 @@
 2. スナップショットを取得する。
 
 ```bash
-dfx canister snapshot create <canister_id>
+icp canister snapshot create -e ic <canister_id>
 ```
 
 3. 取得した snapshot ID を運用記録に残す。
@@ -22,14 +22,13 @@ dfx canister snapshot create <canister_id>
 5. `get_ops_status` で `needs_migration` を確認する。
 6. write系APIが拒否されること（`ops.write.needs_migration`）を確認する。
 7. 通常トラフィック下で migration tick が進み、`needs_migration=false` になるまで監視する。
-8. 完了後、dual-store の active 先が v3（`tx_locs_v3`）へ切替済みであることを確認する（Verify成功後にのみ切替）。
-9. from_version>=3 の再実行時はコピーを省略し、active は維持される。
+8. 完了後、移行対象ストアの active 先が新スキーマへ切替済みであることを確認する（Verify成功後にのみ切替）。
 
 ```bash
-dfx canister stop <canister_id>
-dfx canister snapshot create <canister_id>
-dfx canister install <canister_id> --mode upgrade --wasm target/wasm32-unknown-unknown/release/ic_evm_wrapper.wasm.gz
-dfx canister start <canister_id>
+icp canister stop -e ic <canister_id>
+icp canister snapshot create -e ic <canister_id>
+icp canister install -e ic <canister_id> --mode upgrade --wasm target/wasm32-unknown-unknown/release/ic_evm_wrapper.release.final.wasm
+icp canister start -e ic <canister_id>
 ```
 
 ## 異常時復旧
@@ -39,10 +38,10 @@ dfx canister start <canister_id>
 - 上記状態では `ops.write.needs_migration` を確認し、snapshot/upgrade の復旧手順へ移行する。
 
 ```bash
-dfx canister stop <canister_id>
-dfx canister snapshot load <canister_id> <snapshot_id>
-dfx canister install <canister_id> --mode reinstall --wasm <old_wasm_path>
-dfx canister start <canister_id>
+icp canister stop -e ic <canister_id>
+icp canister snapshot load -e ic <canister_id> <snapshot_id>
+icp canister install -e ic <canister_id> --mode reinstall --wasm <old_wasm_path>
+icp canister start -e ic <canister_id>
 ```
 
 - 復旧後は原因分析を行い、再upgrade前に再検証する。

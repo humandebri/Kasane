@@ -1,6 +1,11 @@
 # yaml-language-server: $schema=https://github.com/dfinity/icp-cli/raw/refs/tags/v0.1.0/docs/schemas/icp-yaml-schema.json
 canisters:
   - name: evm_canister
+    # 本番向け最低設定:
+    # - freezing_threshold は 30日 (2,592,000秒)
+    # - compute/memory は実測後に必要最小で固定する
+    settings:
+      freezing_threshold: 2592000
     recipe:
       type: "@dfinity/rust@v3.0.0"
       configuration:
