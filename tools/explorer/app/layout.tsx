@@ -8,7 +8,7 @@ import "./globals.css";
 
 export const metadata: Metadata = {
   title: "IC-OP Explorer",
-  description: "SQLite-backed minimal explorer for IC-OP",
+  description: "Postgres-backed operations explorer for IC-OP",
 };
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {

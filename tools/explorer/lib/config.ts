@@ -1,9 +1,8 @@
 // どこで: Explorer設定層 / 何を: 実行時パラメータを集約 / なぜ: 依存値の散在を防ぎ安全に変更するため
 
-import path from "node:path";
-
 export type ExplorerConfig = {
-  dbPath: string;
+  databaseUrl: string;
+  dbPoolMax: number;
   canisterId: string | null;
   icHost: string;
   fetchRootKey: boolean;
@@ -11,12 +10,17 @@ export type ExplorerConfig = {
   latestTxsLimit: number;
 };
 
-const DEFAULT_DB_PATH = path.resolve(process.cwd(), "../indexer/indexer.sqlite");
 const DEFAULT_IC_HOST = "https://icp-api.io";
+const DEFAULT_DB_POOL_MAX = 10;
 
 export function loadConfig(env: NodeJS.ProcessEnv): ExplorerConfig {
+  const databaseUrl = env.EXPLORER_DATABASE_URL ?? env.INDEXER_DATABASE_URL;
+  if (!databaseUrl) {
+    throw new Error("EXPLORER_DATABASE_URL is required");
+  }
   return {
-    dbPath: env.EXPLORER_DB_PATH ?? env.INDEXER_DB_PATH ?? DEFAULT_DB_PATH,
+    databaseUrl,
+    dbPoolMax: parseRangeInt(env.EXPLORER_DB_POOL_MAX ?? env.INDEXER_DB_POOL_MAX, DEFAULT_DB_POOL_MAX, 1, 50),
     canisterId: env.EVM_CANISTER_ID ?? null,
     icHost: env.EXPLORER_IC_HOST ?? env.INDEXER_IC_HOST ?? DEFAULT_IC_HOST,
     fetchRootKey: parseBool(env.EXPLORER_FETCH_ROOT_KEY ?? env.INDEXER_FETCH_ROOT_KEY),
