@@ -2,6 +2,7 @@
 name = "ic-evm-rpc"
 version = "0.1.0"
 edition = "2021"
+publish = false
 
 [dependencies]
 ic-evm-rpc-types = { path = "../ic-evm-rpc-types" }

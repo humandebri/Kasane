@@ -45,13 +45,13 @@ type EthLogItemView = record {
   tx_hash : blob;
 };
 type EthLogsCursorView = record {
-  block_number : nat64;
   tx_index : nat32;
   log_index : nat32;
+  block_number : nat64;
 };
 type EthLogsPageView = record {
-  items : vec EthLogItemView;
   next_cursor : opt EthLogsCursorView;
+  items : vec EthLogItemView;
 };
 type EthReceiptView = record {
   effective_gas_price : nat64;

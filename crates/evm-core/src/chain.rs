@@ -96,6 +96,13 @@ pub(crate) fn before_store_write_for_test(
     block_number: Option<u64>,
     tx_id: Option<TxId>,
 ) {
+    #[cfg(target_arch = "wasm32")]
+    {
+        // wasm32 では failpoint 注入ロジック自体を使わないため、引数を明示的に消費して
+        // 未使用変数警告を抑止する（APIシグネチャは維持）。
+        let _ = (ctx, block_number, tx_id);
+    }
+
     #[cfg(not(target_arch = "wasm32"))]
     {
         let op = STORE_OP_COUNTER.with(|counter| {
