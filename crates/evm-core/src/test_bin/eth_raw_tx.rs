@@ -41,7 +41,7 @@ fn parse_u256(value: &str) -> Result<U256, String> {
 }
 
 fn usage() -> String {
-    "usage: eth_raw_tx --mode raw|sender --privkey HEX --to HEX --value WEI --gas-price WEI --gas-limit GAS --nonce NONCE --chain-id ID"
+    "usage: eth_raw_tx --mode raw|sender|sender-hex|genkey --privkey HEX --to HEX --value WEI --gas-price WEI --gas-limit GAS --nonce NONCE --chain-id ID"
         .to_string()
 }
 
@@ -77,14 +77,14 @@ fn run() -> Result<(), String> {
         }
     }
 
-    let privkey = privkey.ok_or_else(|| usage())?;
-    let signer: PrivateKeySigner = privkey.parse().map_err(|_| "invalid privkey")?;
-
     if mode == "genkey" {
         let signer = PrivateKeySigner::random();
         print_hex(signer.to_bytes());
         return Ok(());
     }
+
+    let privkey = privkey.ok_or_else(|| usage())?;
+    let signer: PrivateKeySigner = privkey.parse().map_err(|_| "invalid privkey")?;
 
     if mode == "sender" || mode == "sender-hex" {
         let sender = signer.address();

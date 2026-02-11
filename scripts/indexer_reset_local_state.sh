@@ -1,11 +1,10 @@
 #!/usr/bin/env bash
 # where: local indexer reset helper
-# what: locate and delete indexer DB/archive paths after canister reinstall
-# why: reinstall後に古いcursor/DBが残ってMissingDataになるのを防ぐため
+# what: locate and delete indexer archive paths after canister reinstall
+# why: reinstall後に古いcursor/archiveが残ってMissingDataになるのを防ぐため
 set -euo pipefail
 
 ALLOW_DELETE="${ALLOW_DELETE:-0}"
-INDEXER_DB_PATH="${INDEXER_DB_PATH:-${DB_PATH:-}}"
 INDEXER_ARCHIVE_DIR="${INDEXER_ARCHIVE_DIR:-${ARCHIVE_DIR:-}}"
 
 log() {
@@ -18,20 +17,8 @@ warn() {
 
 candidate_paths=()
 
-if [[ -n "${INDEXER_DB_PATH}" ]]; then
-  candidate_paths+=("${INDEXER_DB_PATH}")
-fi
-
 if [[ -n "${INDEXER_ARCHIVE_DIR}" ]]; then
   candidate_paths+=("${INDEXER_ARCHIVE_DIR}")
-fi
-
-if [[ -f tools/indexer/indexer.sqlite ]]; then
-  candidate_paths+=("tools/indexer/indexer.sqlite")
-fi
-
-if [[ -f tools/indexer/indexer.db ]]; then
-  candidate_paths+=("tools/indexer/indexer.db")
 fi
 
 if [[ -d tools/indexer/archive ]]; then

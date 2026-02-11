@@ -5,7 +5,12 @@ import path from "path";
 export type Config = {
   canisterId: string;
   icHost: string;
-  dbPath: string;
+  databaseUrl: string;
+  dbPoolMax: number;
+  retentionDays: number;
+  retentionEnabled: boolean;
+  retentionDryRun: boolean;
+  archiveGcDeleteOrphans: boolean;
   maxBytes: number;
   backoffInitialMs: number;
   backoffMaxMs: number;
@@ -18,7 +23,8 @@ export type Config = {
 };
 
 const DEFAULT_IC_HOST = "https://icp-api.io";
-const DEFAULT_DB_PATH = "./indexer.sqlite";
+const DEFAULT_DB_POOL_MAX = 10;
+const DEFAULT_RETENTION_DAYS = 90;
 const DEFAULT_MAX_BYTES = 1_200_000;
 const DEFAULT_BACKOFF_INITIAL_MS = 200;
 const DEFAULT_BACKOFF_MAX_MS = 5_000;
@@ -34,7 +40,15 @@ export function loadConfig(env: NodeJS.ProcessEnv): Config {
     throw new Error("EVM_CANISTER_ID is required");
   }
   const icHost = env.INDEXER_IC_HOST ?? DEFAULT_IC_HOST;
-  const dbPath = env.INDEXER_DB_PATH ?? DEFAULT_DB_PATH;
+  const databaseUrl = env.INDEXER_DATABASE_URL;
+  if (!databaseUrl) {
+    throw new Error("INDEXER_DATABASE_URL is required");
+  }
+  const dbPoolMax = readNumber(env.INDEXER_DB_POOL_MAX, DEFAULT_DB_POOL_MAX, "INDEXER_DB_POOL_MAX");
+  const retentionDays = readNumber(env.INDEXER_RETENTION_DAYS, DEFAULT_RETENTION_DAYS, "INDEXER_RETENTION_DAYS");
+  const retentionEnabled = parseBool(env.INDEXER_RETENTION_ENABLED, true);
+  const retentionDryRun = parseBool(env.INDEXER_RETENTION_DRY_RUN, false);
+  const archiveGcDeleteOrphans = parseBool(env.INDEXER_ARCHIVE_GC_DELETE_ORPHANS, false);
   const maxBytes = readNumber(env.INDEXER_MAX_BYTES, DEFAULT_MAX_BYTES, "INDEXER_MAX_BYTES");
   const backoffInitialMs = readNumber(
     env.INDEXER_BACKOFF_INITIAL_MS,
@@ -60,7 +74,12 @@ export function loadConfig(env: NodeJS.ProcessEnv): Config {
   return {
     canisterId,
     icHost,
-    dbPath,
+    databaseUrl,
+    dbPoolMax,
+    retentionDays,
+    retentionEnabled,
+    retentionDryRun,
+    archiveGcDeleteOrphans,
     maxBytes,
     backoffInitialMs,
     backoffMaxMs,
@@ -82,6 +101,13 @@ function readNumber(value: string | undefined, fallback: number, name: string): 
     throw new Error(`${name} must be a positive number`);
   }
   return Math.floor(parsed);
+}
+
+function parseBool(value: string | undefined, fallback: boolean): boolean {
+  if (value === undefined) {
+    return fallback;
+  }
+  return value === "1" || value.toLowerCase() === "true";
 }
 
 export function sleep(ms: number): Promise<void> {

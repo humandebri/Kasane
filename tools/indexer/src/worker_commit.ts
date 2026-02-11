@@ -2,13 +2,14 @@
 // どこで: indexerコミット / 何を: payload decode→archive→DB保存 / なぜ: 失敗時の記録を一箇所に集約するため
 
 import { archiveBlock } from "./archiver";
+import { cursorToJson } from "./cursor";
 import { decodeBlockPayload, decodeTxIndexPayload } from "./decode";
 import { IndexerDb } from "./db";
 import { Config } from "./config";
 import { Cursor, ExportResponse } from "./types";
 import { finalizePayloads, Pending } from "./worker_pending";
 import { errMessage, logFatal, logInfo } from "./worker_log";
-import { getFileSize, toDayKey } from "./worker_utils";
+import { toDayKey } from "./worker_utils";
 import type { ArchiveResult } from "./archiver";
 import type { BlockInfo, TxIndexInfo } from "./decode";
 
@@ -94,41 +95,42 @@ export async function commitPending(params: {
   const updateSizes = params.lastSizeDay !== metricsDay;
   let lastSizeDay = params.lastSizeDay;
   try {
-    params.db.transaction(() => {
-      params.db.upsertBlock({
-        number: blockInfo.number,
-        hash: blockInfo.blockHash,
-        timestamp: blockInfo.timestamp,
-        tx_count: blockInfo.txIds.length,
-      });
+    await params.db.transaction(async (client) => {
+      await client.query(
+        "INSERT INTO blocks(number, hash, timestamp, tx_count) VALUES($1, $2, $3, $4) ON CONFLICT(number) DO UPDATE SET hash = excluded.hash, timestamp = excluded.timestamp, tx_count = excluded.tx_count",
+        [blockInfo.number, blockInfo.blockHash, blockInfo.timestamp, blockInfo.txIds.length]
+      );
       for (const entry of txIndex) {
-        params.db.upsertTx({
-          tx_hash: entry.txHash,
-          block_number: entry.blockNumber,
-          tx_index: entry.txIndex,
-        });
+        await client.query(
+          "INSERT INTO txs(tx_hash, block_number, tx_index) VALUES($1, $2, $3) ON CONFLICT(tx_hash) DO UPDATE SET block_number = excluded.block_number, tx_index = excluded.tx_index",
+          [entry.txHash, entry.blockNumber, entry.txIndex]
+        );
       }
-      params.db.addArchive({
-        blockNumber: blockInfo.number,
-        path: archive.path,
-        sha256: archive.sha256,
-        sizeBytes: archive.sizeBytes,
-        rawBytes: archive.rawBytes,
-        createdAt: Date.now(),
-      });
+      await client.query(
+        "INSERT INTO archive_parts(block_number, path, sha256, size_bytes, raw_bytes, created_at) VALUES($1, $2, $3, $4, $5, $6) " +
+          "ON CONFLICT(block_number) DO UPDATE SET path = excluded.path, sha256 = excluded.sha256, size_bytes = excluded.size_bytes, raw_bytes = excluded.raw_bytes, created_at = excluded.created_at",
+        [blockInfo.number, archive.path, archive.sha256, archive.sizeBytes, archive.rawBytes, Date.now()]
+      );
       if (!params.cursor) {
         throw new Error("cursor missing on commit");
       }
-      params.db.setCursor(params.cursor);
-      params.db.addMetrics(
-        metricsDay,
-        archive.rawBytes,
-        archive.sizeBytes,
-        blocksIngested,
-        0
+      await client.query(
+        "INSERT INTO meta(key, value) VALUES($1, $2) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+        ["cursor", cursorToJson(params.cursor)]
       );
-      params.db.setMeta("last_head", params.headNumber.toString());
-      params.db.setMeta("last_ingest_at", Date.now().toString());
+      await client.query(
+        "INSERT INTO metrics_daily(day, raw_bytes, compressed_bytes, archive_bytes, blocks_ingested, errors) VALUES($1, $2, $3, $4, $5, $6) " +
+          "ON CONFLICT(day) DO UPDATE SET raw_bytes = metrics_daily.raw_bytes + excluded.raw_bytes, compressed_bytes = metrics_daily.compressed_bytes + excluded.compressed_bytes, archive_bytes = COALESCE(excluded.archive_bytes, metrics_daily.archive_bytes), blocks_ingested = metrics_daily.blocks_ingested + excluded.blocks_ingested, errors = metrics_daily.errors + excluded.errors",
+        [metricsDay, archive.rawBytes, archive.sizeBytes, null, blocksIngested, 0]
+      );
+      await client.query(
+        "INSERT INTO meta(key, value) VALUES($1, $2) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+        ["last_head", params.headNumber.toString()]
+      );
+      await client.query(
+        "INSERT INTO meta(key, value) VALUES($1, $2) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+        ["last_ingest_at", Date.now().toString()]
+      );
     });
     logInfo(params.config.chainId, "commit_block", {
       block_number: blockInfo.number.toString(),
@@ -163,20 +165,14 @@ export async function commitPending(params: {
     process.exit(1);
   }
   if (updateSizes) {
-    let sqliteBytesToday: number | null = null;
     let archiveBytesToday: number | null = null;
     try {
-      sqliteBytesToday = await getFileSize(params.config.dbPath);
-    } catch {
-      sqliteBytesToday = null;
-    }
-    try {
-      archiveBytesToday = params.db.getArchiveBytesSum();
+      archiveBytesToday = await params.db.getArchiveBytesSum();
     } catch {
       archiveBytesToday = null;
     }
     try {
-      params.db.addMetrics(metricsDay, 0, 0, 0, 0, sqliteBytesToday, archiveBytesToday);
+      await params.db.addMetrics(metricsDay, 0, 0, 0, 0, archiveBytesToday);
       lastSizeDay = metricsDay;
     } catch {
       // サイズ計測の更新失敗は取り込み成功を壊さない

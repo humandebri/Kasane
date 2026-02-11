@@ -7,11 +7,20 @@ import type { IndexerDb } from "./db";
 const ARCHIVE_BUNDLE_SUFFIX = ".bundle.zst";
 
 export async function runArchiveGc(db: IndexerDb, archiveDir: string, chainId: string): Promise<void> {
+  return runArchiveGcWithMode(db, archiveDir, chainId, false);
+}
+
+export async function runArchiveGcWithMode(
+  db: IndexerDb,
+  archiveDir: string,
+  chainId: string,
+  deleteOrphans: boolean
+): Promise<void> {
   const root = path.join(archiveDir, chainId);
   const files = await collectFiles(root);
-  const referencedRaw = db.listArchivePaths();
+  const referencedRaw = await db.listArchivePaths();
   const referenced = normalizeReferenced(root, referencedRaw);
-  const canDeleteOrphans = referenced.size > 0;
+  const canDeleteOrphans = deleteOrphans && referenced.size > 0;
   for (const file of files) {
     // write-file-atomic の一時ファイル名は固定拡張子ではないため、
     // archive配下は bundle 本体以外を全て掃除する運用前提にする。

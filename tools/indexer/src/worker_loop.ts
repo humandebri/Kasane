@@ -3,7 +3,7 @@
 
 import { Config, sleep } from "./config";
 import { IndexerDb } from "./db";
-import { runArchiveGc } from "./archive_gc";
+import { runArchiveGcWithMode } from "./archive_gc";
 import { Cursor, ExportError, ExportResponse, PruneStatusView, Result } from "./types";
 import {
   applyChunks,
@@ -35,12 +35,12 @@ export async function runWorkerWithDeps(
 ): Promise<void> {
   if (!options.skipGc) {
     try {
-      await runArchiveGc(db, config.archiveDir, config.chainId);
+      await runArchiveGcWithMode(db, config.archiveDir, config.chainId, config.archiveGcDeleteOrphans);
     } catch (err) {
       logWarn(config.chainId, "archive_gc_failed", { message: errMessage(err) });
     }
   }
-  let cursor: Cursor | null = db.getCursor();
+  let cursor: Cursor | null = await db.getCursor();
   let lastHead: bigint | null = null;
   let backoffMs = config.backoffInitialMs;
   let pending: Pending | null = null;
@@ -81,10 +81,19 @@ export async function runWorkerWithDeps(
       try {
         const status = await client.getPruneStatus();
         const payload = { v: 1, fetched_at_ms: nowMs, status };
-        db.transaction(() => {
-          db.setMeta("prune_status", jsonStringifyBigInt(payload));
-          db.setMeta("prune_status_at", String(nowMs));
-          db.setMeta("need_prune", status.need_prune ? "1" : "0");
+        await db.transaction(async (client) => {
+          await client.query(
+            "INSERT INTO meta(key, value) VALUES($1, $2) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            ["prune_status", jsonStringifyBigInt(payload)]
+          );
+          await client.query(
+            "INSERT INTO meta(key, value) VALUES($1, $2) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            ["prune_status_at", String(nowMs)]
+          );
+          await client.query(
+            "INSERT INTO meta(key, value) VALUES($1, $2) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            ["need_prune", status.need_prune ? "1" : "0"]
+          );
         });
       } catch (err) {
         logWarn(config.chainId, "prune_status_failed", {
@@ -105,7 +114,7 @@ export async function runWorkerWithDeps(
     }
 
     if ("Err" in result) {
-      const classified = classifyExportError(result.Err, db);
+      const classified = await classifyExportError(result.Err, db);
       logFatal(config.chainId, classified.kind, cursor, headNumber, null, null, classified.message);
       process.exit(1);
     } else {
@@ -210,5 +219,5 @@ export async function runWorkerWithDeps(
     }
   }
 
-  db.close();
+  await db.close();
 }

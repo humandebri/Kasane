@@ -2,25 +2,29 @@
 # where: local dev CI entrypoint; what: run tests then deploy canister; why: keep steps deterministic and repeatable
 set -euo pipefail
 
-DFX_LOCAL_DIR="$HOME/Library/Application Support/org.dfinity.dfx/network/local"
 source "$(dirname "$0")/lib_init_args.sh"
+NETWORK="${NETWORK:-local}"
+ICP_IDENTITY_NAME="${ICP_IDENTITY_NAME:-ci-local}"
+SEED_RETRY_MAX="${SEED_RETRY_MAX:-8}"
+SEED_RETRY_SLEEP_SEC="${SEED_RETRY_SLEEP_SEC:-65}"
 
 cleanup() {
-  dfx stop >/dev/null 2>&1 || true
+  icp network stop "${NETWORK}" >/dev/null 2>&1 || true
+}
+
+ensure_icp_identity() {
+  if icp identity principal --identity "${ICP_IDENTITY_NAME}" >/dev/null 2>&1; then
+    return
+  fi
+  echo "[setup] creating icp identity: ${ICP_IDENTITY_NAME}"
+  icp identity new "${ICP_IDENTITY_NAME}" --storage plaintext >/dev/null
 }
 
 trap cleanup EXIT
 
-if [[ -f "$DFX_LOCAL_DIR/pid" ]]; then
-  kill -9 "$(cat "$DFX_LOCAL_DIR/pid")" >/dev/null 2>&1 || true
-  rm -f "$DFX_LOCAL_DIR/pid"
-fi
-if [[ -f "$DFX_LOCAL_DIR/pocket-ic-pid" ]]; then
-  kill -9 "$(cat "$DFX_LOCAL_DIR/pocket-ic-pid")" >/dev/null 2>&1 || true
-  rm -f "$DFX_LOCAL_DIR/pocket-ic-pid"
-fi
-
-dfx start --clean --background
+ensure_icp_identity
+icp network stop "${NETWORK}" >/dev/null 2>&1 || true
+icp network start "${NETWORK}" -d
 
 echo "[guard] rng callsite check"
 scripts/check_rng_paths.sh
@@ -28,6 +32,8 @@ echo "[guard] wasm getrandom feature check"
 scripts/check_getrandom_wasm_features.sh
 echo "[guard] did sync check"
 scripts/check_did_sync.sh
+echo "[guard] legacy rpc symbol check"
+scripts/check_legacy_rpc_removed.sh
 echo "[guard] alloy dependency isolation check"
 scripts/check_alloy_isolation.sh
 
@@ -71,11 +77,11 @@ PR0_DIFF_REFERENCE_FILE="${PR0_DIFF_REFERENCE:-docs/ops/pr0_snapshot_reference.t
 scripts/pr0_capture_local_snapshot.sh "$PR0_DIFF_LOCAL_FILE"
 scripts/pr0_differential_compare.sh "$PR0_DIFF_LOCAL_FILE" "$PR0_DIFF_REFERENCE_FILE"
 
-dfx canister create evm_canister
-echo "[guard] release wasm endpoint guard (no dev-faucet)"
+icp canister create -e "${NETWORK}" --identity "${ICP_IDENTITY_NAME}" evm_canister >/dev/null 2>&1 || true
+echo "[guard] release wasm endpoint guard"
 scripts/release_wasm_guard.sh
-echo "[build] ic-evm-wrapper with dev-faucet"
-cargo build --target wasm32-unknown-unknown --release -p ic-evm-wrapper --features dev-faucet --locked
+echo "[build] ic-evm-wrapper (default features)"
+cargo build --target wasm32-unknown-unknown --release -p ic-evm-wrapper --locked
 if ! command -v ic-wasm >/dev/null 2>&1; then
   echo "[build] installing ic-wasm"
   cargo install ic-wasm --locked
@@ -84,42 +90,18 @@ WASM_IN=target/wasm32-unknown-unknown/release/ic_evm_wrapper.wasm
 WASM_OUT=target/wasm32-unknown-unknown/release/ic_evm_wrapper.final.wasm
 scripts/build_wasm_postprocess.sh "$WASM_IN" "$WASM_OUT"
 INIT_ARGS="$(build_init_args_for_current_identity 1000000000000000000)"
-dfx canister install evm_canister --mode reinstall --yes --wasm "$WASM_OUT" --argument "$INIT_ARGS"
+icp canister install -e "${NETWORK}" --identity "${ICP_IDENTITY_NAME}" evm_canister --mode reinstall --wasm "$WASM_OUT" --args "$INIT_ARGS"
 
 echo "[smoke] wait for replica"
-for i in {1..10}; do
-  if dfx canister call evm_canister health --output json >/dev/null 2>&1; then
-    break
-  fi
-  sleep 1
-done
+sleep 2
 
-echo "[smoke] dev_mint caller"
-CALLER_PRINCIPAL=$(dfx identity get-principal)
-CALLER_HEX=$(cargo run -q -p ic-evm-core --bin caller_evm -- "$CALLER_PRINCIPAL")
-CALLER_BLOB=$(python - <<PY
-data = bytes.fromhex("$CALLER_HEX")
-print(''.join(f'\\\\{b:02x}' for b in data))
-PY
-)
-dfx canister call evm_canister dev_mint "(blob \"$CALLER_BLOB\", 1000000000000000000:nat)" >/dev/null
+echo "[smoke] query path (agent.query)"
+NETWORK="${NETWORK}" CANISTER_NAME="evm_canister" ICP_IDENTITY_NAME="${ICP_IDENTITY_NAME}" scripts/query_smoke.sh
 
 echo "[smoke] set_auto_mine(false)"
-dfx canister call evm_canister set_auto_mine '(false)' >/dev/null
-
-echo "[smoke] get_block(0)"
-dfx canister call evm_canister get_block '(0)' >/dev/null
+icp canister call -e "${NETWORK}" --identity "${ICP_IDENTITY_NAME}" evm_canister set_auto_mine '(false)' >/dev/null
 
 echo "[smoke] submit_ic_tx -> produce_block"
-echo "[smoke] cycles before submit_ic_tx"
-BEFORE_CYCLES=$(dfx canister call evm_canister get_cycle_balance --output json)
-BEFORE_CYCLES_VAL=$(BEFORE_CYCLES="$BEFORE_CYCLES" python - <<'PY'
-import os, re
-text = os.environ.get("BEFORE_CYCLES", "")
-m = re.search(r"(\\d+)", text)
-print(m.group(1) if m else "0")
-PY
-)
 TX_HEX=$(python - <<'PY'
 version = b'\x02'
 to = bytes.fromhex('0000000000000000000000000000000000000010')
@@ -156,12 +138,12 @@ PY
 )
 
 SUBMIT_OUT=""
-for attempt in 1 2 3; do
-  SUBMIT_OUT=$(dfx canister call evm_canister submit_ic_tx "(vec { $TX_ARG_BYTES })")
+for ((attempt=1; attempt<=SEED_RETRY_MAX; attempt++)); do
+  SUBMIT_OUT=$(icp canister call -e "${NETWORK}" --identity "${ICP_IDENTITY_NAME}" evm_canister submit_ic_tx "(vec { $TX_ARG_BYTES })")
   if grep -q 'ops.write.needs_migration' <<<"$SUBMIT_OUT"; then
-    if [[ "$attempt" -lt 3 ]]; then
-      echo "[smoke] submit blocked by migration, waiting for timer tick (attempt ${attempt}/3)"
-      sleep 65
+    if [[ "$attempt" -lt "$SEED_RETRY_MAX" ]]; then
+      echo "[smoke] submit blocked by migration, waiting for timer tick (attempt ${attempt}/${SEED_RETRY_MAX})"
+      sleep "${SEED_RETRY_SLEEP_SEC}"
       continue
     fi
   fi
@@ -208,45 +190,17 @@ if [[ "$EXEC_STATUS" -ne 0 ]]; then
     echo "[smoke] WARN: write path is blocked by migration on local network; skipping tx smoke checks"
     SKIP_TX_SMOKE=1
   else
-    echo "[smoke] submit_ic_tx failed, dumping health/metrics"
-    dfx canister call evm_canister health --output json || true
-    dfx canister call evm_canister metrics '(60)' --output json || true
-    dfx canister call evm_canister get_block '(0)' --output json || true
-    dfx canister call evm_canister get_block '(1)' --output json || true
-    dfx canister call evm_canister get_queue_snapshot '(5, null)' --output json || true
+    echo "[smoke] submit_ic_tx failed: ${SUBMIT_OUT}"
     exit 1
   fi
 fi
 
 if [[ "$SKIP_TX_SMOKE" -eq 0 ]]; then
   echo "[smoke] produce_block(1)"
-  dfx canister call evm_canister produce_block '(1)' >/dev/null
-
-  echo "[smoke] cycles after produce_block"
-  AFTER_CYCLES=$(dfx canister call evm_canister get_cycle_balance --output json)
-  AFTER_CYCLES_VAL=$(AFTER_CYCLES="$AFTER_CYCLES" python - <<'PY'
-import os, re
-text = os.environ.get("AFTER_CYCLES", "")
-m = re.search(r"(\\d+)", text)
-print(m.group(1) if m else "0")
-PY
-)
-  EXEC_COST=$(python - <<PY
-before = int("$BEFORE_CYCLES_VAL")
-after = int("$AFTER_CYCLES_VAL")
-print(before - after if before >= after else 0)
-PY
-)
-  echo "[smoke] submit+produce cycles_used=${EXEC_COST}"
-
-  echo "[smoke] get_receipt(tx_id)"
-  dfx canister call evm_canister get_receipt "(vec { $TX_ID })" >/dev/null
-
-  echo "[smoke] get_block(1)"
-  dfx canister call evm_canister get_block '(1)' >/dev/null
+  icp canister call -e "${NETWORK}" --identity "${ICP_IDENTITY_NAME}" evm_canister produce_block '(1)' >/dev/null
 
   echo "[smoke] submit_ic_tx(nonce=1) -> produce_block"
-  SUBMIT_TX_ID=$(dfx canister call evm_canister submit_ic_tx "(vec { $(python - <<PY
+  SUBMIT_TX_ID=$(icp canister call -e "${NETWORK}" --identity "${ICP_IDENTITY_NAME}" evm_canister submit_ic_tx "(vec { $(python - <<PY
 tx = bytes.fromhex("$TX_HEX_1")
 print('; '.join(str(b) for b in tx))
 PY
@@ -283,26 +237,7 @@ while i < len(s):
 print('; '.join(str(b) for b in out))
 PY
 )
-
-  echo "[smoke] get_pending(tx_id)"
-  dfx canister call evm_canister get_pending "(vec { $SUBMIT_TX_ID_BYTES })" >/dev/null
-
-  echo "[smoke] get_queue_snapshot(1)"
-  QUEUE_OUT=$(dfx canister call evm_canister get_queue_snapshot '(1, null)' --output json)
-  HAS_ITEM=$(QUEUE_OUT="$QUEUE_OUT" python - <<'PY'
-import json, os
-data = json.loads(os.environ.get("QUEUE_OUT", "null"))
-items = data.get("items", [])
-print("1" if isinstance(items, list) and len(items) > 0 else "0")
-PY
-)
-
-  if [[ "$HAS_ITEM" == "1" ]]; then
-    dfx canister call evm_canister produce_block '(1)' >/dev/null
-    dfx canister call evm_canister get_receipt "(vec { $SUBMIT_TX_ID_BYTES })" >/dev/null
-  else
-    echo "[smoke] queue empty, skipping produce_block"
-  fi
+  icp canister call -e "${NETWORK}" --identity "${ICP_IDENTITY_NAME}" evm_canister produce_block '(1)' >/dev/null
 fi
 
 echo "[e2e] rpc_compat_e2e"

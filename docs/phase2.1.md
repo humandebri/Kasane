@@ -106,3 +106,14 @@ Phase2.1の最短には **やや重い**。
 3) RPC互換が育ったら Blockscout に差し替え or 併用
 
 これで Phase2.1 の「pruning後でも履歴追える」を最短で満たせる。
+
+---
+
+## 実装方針（更新）
+
+- `rpc-gateway` をEVM互換の入口として固定する
+- `indexer` は Postgres へ直書きする（SQLiteは廃止）
+- 公開Explorerは Blockscout を採用する
+- `tools/explorer` は Postgres を直接読む内部運用UIとして維持する
+- 保持期間は90日を基本とし、超過データはDBから削除してアーカイブのみ保持する
+- retention 実行は `run_retention_cleanup(90, false)` を日次実行（pg_cron優先、非対応環境はスクリプト代替）

@@ -130,7 +130,6 @@ type MetricsView = record {
   drop_counts : vec DropCountView;
   queue_len : nat64;
   total_included : nat64;
-  dev_faucet_enabled : bool;
 };
 type NoOpReason = variant { CycleCritical; NoExecutableTx; NeedsMigration };
 type OpsConfigView = record {

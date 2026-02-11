@@ -62,7 +62,7 @@ fn execute_and_seal_traps_and_rolls_back_when_tx_index_store_fails_after_block()
     let caller_principal = vec![0x33];
     let canister_id = vec![0x44];
     let caller_evm = hash::caller_evm_from_principal(&caller_principal);
-    chain::dev_mint(caller_evm, 1_000_000_000_000_000_000).expect("mint");
+    common::fund_account(caller_evm, 1_000_000_000_000_000_000);
     let tx_id = chain::submit_ic_tx(
         caller_principal.clone(),
         canister_id.clone(),
@@ -86,7 +86,7 @@ fn execute_and_seal_traps_and_rolls_back_when_receipt_store_fails_after_tx_index
     let caller_principal = vec![0x35];
     let canister_id = vec![0x45];
     let caller_evm = hash::caller_evm_from_principal(&caller_principal);
-    chain::dev_mint(caller_evm, 1_000_000_000_000_000_000).expect("mint");
+    common::fund_account(caller_evm, 1_000_000_000_000_000_000);
     let tx_id = chain::submit_ic_tx(
         caller_principal.clone(),
         canister_id.clone(),

@@ -55,3 +55,7 @@ pub fn install_contract(address: [u8; 20], code: &[u8]) {
         state.codes.insert(code_key, CodeVal(code.to_vec()));
     });
 }
+
+pub fn fund_account(address: [u8; 20], amount: u128) {
+    evm_core::chain::credit_balance(address, amount).expect("fund account");
+}

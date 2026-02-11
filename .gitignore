@@ -9,6 +9,8 @@
 
 # dfx temporary files
 .dfx/
+.icp/
+.cache/
 
 # generated files
 **/declarations/
@@ -24,6 +26,7 @@ crates/evm-rpc-e2e/pocket-ic
 node_modules/
 dist/
 .svelte-kit/
+**/tests/run.js
 
 # environment variables
 .env

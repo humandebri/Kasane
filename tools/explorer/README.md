@@ -1,6 +1,6 @@
 # Explorer (Phase2.1)
 
-`tools/indexer` の SQLite を読み取り、`head / blocks / tx / receipt` を表示する最小 Explorer です。
+`tools/indexer` の Postgres を読み取り、`head / blocks / tx / receipt` と運用向け集計を表示する Explorer です。
 
 現在のUI基盤:
 - Next.js App Router
@@ -15,7 +15,7 @@ npm install
 cp .env.example .env.local
 ```
 
-`.env.local` に最低限 `EVM_CANISTER_ID` を設定してください。
+`.env.local` に最低限 `EXPLORER_DATABASE_URL` と `EVM_CANISTER_ID` を設定してください。
 
 ## 起動
 
@@ -24,6 +24,7 @@ npm run dev
 ```
 
 - Home: `http://localhost:3000/`
+- Search: `/search?q=...`
 - Block: `/blocks/:number`
 - Tx: `/tx/:hash`
 - Receipt: `/receipt/:hash`
@@ -31,7 +32,7 @@ npm run dev
 ## 事前条件
 
 - `tools/indexer` が同じ canister を同期済みであること
-- `EXPLORER_DB_PATH` が indexer の SQLite を指すこと
+- `EXPLORER_DATABASE_URL` が indexer の Postgres を指すこと
 
 ## スクリプト
 

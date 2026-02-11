@@ -316,7 +316,7 @@ max_tx_size / max_gas_per_tx / max_code_size が効く
 - dfx start --clean --background
 - source scripts/lib_init_args.sh && INIT_ARGS="$(build_init_args_for_current_identity 1000000000000000000)"
 - dfx canister install <canister> --mode reinstall --wasm target/wasm32-unknown-unknown/release/ic_evm_wrapper.candid.wasm --argument "$INIT_ARGS"
-- dfx canister call <canister> dev_mint '(vec {0x11: nat8; ...}, 1000000000000:nat)' ※任意（controllerのみ）
+- 運用の資金配布は `InitArgs.genesis_balances` のみを使用する
 - dfx canister call <canister> submit_tx '(blob "<raw_eip2718_tx>")'
 - dfx canister call <canister> produce_block '(1:nat)'
 - dfx canister call <canister> get_block '(0:nat)' / get_receipt

@@ -35,6 +35,39 @@ export default async function HomePage() {
 
       <Card>
         <CardHeader>
+          <CardTitle>Operations</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-3 text-sm">
+          <form action="/search" className="flex flex-col gap-2 md:flex-row">
+            <input
+              name="q"
+              placeholder="block number or tx hash"
+              className="h-9 rounded-md border px-3 font-mono text-sm"
+              required
+            />
+            <button type="submit" className="h-9 rounded-md border px-3 text-sm">
+              Search
+            </button>
+          </form>
+          <dl className="grid grid-cols-1 gap-2 md:grid-cols-[180px_1fr]">
+            <dt className="text-muted-foreground">Total Blocks</dt>
+            <dd>{data.stats.totalBlocks.toString()}</dd>
+            <dt className="text-muted-foreground">Total Txs</dt>
+            <dd>{data.stats.totalTxs.toString()}</dd>
+            <dt className="text-muted-foreground">Latest Metrics Day</dt>
+            <dd>{data.stats.latestDay ?? "-"}</dd>
+            <dt className="text-muted-foreground">Blocks Ingested (Day)</dt>
+            <dd>{data.stats.latestDayBlocks.toString()}</dd>
+            <dt className="text-muted-foreground">Raw Bytes (Day)</dt>
+            <dd>{data.stats.latestDayRawBytes.toString()}</dd>
+            <dt className="text-muted-foreground">Compressed Bytes (Day)</dt>
+            <dd>{data.stats.latestDayCompressedBytes.toString()}</dd>
+          </dl>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
           <CardTitle>Latest Blocks</CardTitle>
         </CardHeader>
         <CardContent>

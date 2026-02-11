@@ -717,7 +717,7 @@ pub fn submit_ic_tx(
     })
 }
 
-pub fn dev_mint(address: [u8; 20], amount: u128) -> Result<(), ChainError> {
+pub fn credit_balance(address: [u8; 20], amount: u128) -> Result<(), ChainError> {
     let key = make_account_key(address);
     with_state_mut(|state| {
         let existing = state.accounts.get(&key);

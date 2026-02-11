@@ -5,26 +5,26 @@ import { IndexerDb } from "./db";
 import { ExportError } from "./types";
 import { toDayKey } from "./worker_utils";
 
-export function classifyExportError(
+export async function classifyExportError(
   error: ExportError,
   db: IndexerDb
-): { kind: "Pruned" | "InvalidCursor" | "Decode" | "ArchiveIO"; message: string } {
+): Promise<{ kind: "Pruned" | "InvalidCursor" | "Decode" | "ArchiveIO"; message: string }> {
   if ("Pruned" in error) {
-    db.setMeta("last_error", "Pruned");
-    db.addMetrics(toDayKey(), 0, 0, 0, 1);
+    await db.setMeta("last_error", "Pruned");
+    await db.addMetrics(toDayKey(), 0, 0, 0, 1);
     return { kind: "Pruned", message: `Pruned before ${error.Pruned.pruned_before_block.toString()}` };
   }
   if ("InvalidCursor" in error) {
-    db.setMeta("last_error", "InvalidCursor");
-    db.addMetrics(toDayKey(), 0, 0, 0, 1);
+    await db.setMeta("last_error", "InvalidCursor");
+    await db.addMetrics(toDayKey(), 0, 0, 0, 1);
     return { kind: "InvalidCursor", message: `InvalidCursor: ${error.InvalidCursor.message}` };
   }
   if ("MissingData" in error) {
-    db.setMeta("last_error", "MissingData");
-    db.addMetrics(toDayKey(), 0, 0, 0, 1);
+    await db.setMeta("last_error", "MissingData");
+    await db.addMetrics(toDayKey(), 0, 0, 0, 1);
     return { kind: "Decode", message: `MissingData: ${error.MissingData.message}` };
   }
-  db.setMeta("last_error", "Limit");
-  db.addMetrics(toDayKey(), 0, 0, 0, 1);
+  await db.setMeta("last_error", "Limit");
+  await db.addMetrics(toDayKey(), 0, 0, 0, 1);
   return { kind: "InvalidCursor", message: "Limit: max_bytes invalid" };
 }

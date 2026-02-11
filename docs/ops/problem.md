@@ -8,7 +8,7 @@ Executive Summary
     ◦ set_auto_mine
     ◦ set_mining_interval_ms
     ◦ set_prune_policy
-    ◦ set_pruning_enabled これに対し、dev_mint では明示的に is_controller チェックが実装されており、他メソッドでの実装漏れであることが明らかです。
+    ◦ set_pruning_enabled これにより、管理者系メソッド間でアクセス制御実装が不統一になっています。
 • Impact: 認証なしで誰でも以下の操作が可能です。
     ◦ マイニング（ブロック生成）の停止 (set_auto_mine(false))。
     ◦ データ削除ポリシーの無効化 (set_pruning_enabled(false)) によるストレージ枯渇の誘発。

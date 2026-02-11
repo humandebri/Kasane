@@ -1,6 +1,6 @@
-# Indexer Worker (SQLite-first)
+# Indexer Worker (Postgres-first)
 
-目的: canister の export API を pull して SQLite に最小インデックスを作る。
+目的: canister の export API を pull して Postgres に最小インデックスを作る。
 
 ## 使い方
 
@@ -16,8 +16,13 @@ npm run dev
 - `.env.example` は配布用のひな型
 
 - `EVM_CANISTER_ID` (必須)
+- `INDEXER_DATABASE_URL` (必須, 例: `postgres://postgres:postgres@127.0.0.1:5432/ic_op`)
+- `INDEXER_DB_POOL_MAX` (任意, 既定: 10)
+- `INDEXER_RETENTION_ENABLED` (任意, 既定: true)
+- `INDEXER_RETENTION_DAYS` (任意, 既定: 90)
+- `INDEXER_RETENTION_DRY_RUN` (任意, 既定: false)
+- `INDEXER_ARCHIVE_GC_DELETE_ORPHANS` (任意, 既定: false)
 - `INDEXER_IC_HOST` (任意, 既定: https://icp-api.io)
-- `INDEXER_DB_PATH` (任意, 既定: ./indexer.sqlite)
 - `INDEXER_MAX_BYTES` (任意, 既定: 1200000)
 - `INDEXER_BACKOFF_INITIAL_MS` (任意, 既定: 200)
 - `INDEXER_BACKOFF_MAX_MS` (任意, 既定: 5000)
@@ -41,14 +46,14 @@ npm run dev
 }
 ```
 
-* block_number は **10進ASCII、先頭0なし**（"0"は許可）
-* segment は **0/1/2**
-* byte_offset は **0..=u32**
+- block_number は **10進ASCII、先頭0なし**（"0"は許可）
+- segment は **0/1/2**
+- byte_offset は **0..=u32**
 
 ## idle / retry（運用）
 
-* 追いつき時は `INDEXER_IDLE_POLL_MS` で **固定間隔**ポーリング  
-* **指数バックオフはネットワーク失敗時のみ**
+- 追いつき時は `INDEXER_IDLE_POLL_MS` で **固定間隔**ポーリング
+- **指数バックオフはネットワーク失敗時のみ**
 
 ## archive_parts
 
@@ -57,11 +62,11 @@ npm run dev
 
 ## metrics_daily
 
-`sqlite_bytes` は日次の実サイズ（差分は集計側で算出）。
+`archive_bytes` は日次の実サイズ（差分は集計側で算出）。
 
-## マイグレーション（SQLite）
+## マイグレーション（Postgres）
 
-起動時に `schema_migrations` を見て **未適用のSQLのみ** 実行します。
+起動時に `schema_migrations` を見て **未適用のSQLのみ** 実行する。
 
 ```
 tools/indexer/migrations/

@@ -15,7 +15,13 @@ import {
 import type { Cursor, ExportError, ExportResponse, PruneStatusView, Result } from "./types";
 
 export async function runWorker(config: Config): Promise<void> {
-  const db = new IndexerDb(config.dbPath);
+  const db = await IndexerDb.connect({ databaseUrl: config.databaseUrl, poolMax: config.dbPoolMax });
+  if (config.retentionEnabled) {
+    await db.ensureRetentionSchedule(config.retentionDays);
+    if (config.retentionDryRun) {
+      await db.runRetentionCleanup(config.retentionDays, true);
+    }
+  }
   const client = await createClient(config);
   await runWorkerWithDepsImpl(config, db, client, { skipGc: false });
 }

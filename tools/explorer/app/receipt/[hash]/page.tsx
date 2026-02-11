@@ -32,7 +32,7 @@ export default async function ReceiptPage({ params }: { params: Promise<{ hash: 
             <dd>{data.tx.txIndex}</dd>
           </dl>
         ) : (
-          <p className="text-sm">tx is not found in SQLite index.</p>
+          <p className="text-sm">tx is not found in Postgres index.</p>
         )}
 
         {data.receipt ? (
