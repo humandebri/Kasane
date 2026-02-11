@@ -200,11 +200,7 @@ struct InspectMethodPolicy {
     payload_limit: usize,
 }
 
-const INSPECT_METHOD_POLICIES: [InspectMethodPolicy; 12] = [
-    InspectMethodPolicy {
-        method: "submit_eth_tx",
-        payload_limit: INSPECT_TX_PAYLOAD_LIMIT,
-    },
+const INSPECT_METHOD_POLICIES: [InspectMethodPolicy; 11] = [
     InspectMethodPolicy {
         method: "submit_ic_tx",
         payload_limit: INSPECT_TX_PAYLOAD_LIMIT,
@@ -272,7 +268,7 @@ fn inspect_payload_len() -> usize {
 
 fn inspect_lightweight_tx_guard(method: &str) -> bool {
     // inspect_messageでは重い署名検証は行わず、軽量なフォーマット不正のみ早期除外する。
-    if method != "submit_eth_tx" && method != "rpc_eth_send_raw_transaction" {
+    if method != "rpc_eth_send_raw_transaction" {
         return true;
     }
     let raw = ic_cdk::api::msg_arg_data();
@@ -369,27 +365,6 @@ fn map_execute_chain_result(
         gas_used: result.gas_used,
         return_data: clamp_return_data(result.return_data),
     })
-}
-
-#[ic_cdk::update]
-fn submit_eth_tx(raw_tx: Vec<u8>) -> Result<Vec<u8>, SubmitTxError> {
-    if let Some(reason) = reject_anonymous_update() {
-        return Err(SubmitTxError::Rejected(reason));
-    }
-    if let Some(reason) = reject_write_reason() {
-        return Err(SubmitTxError::Rejected(reason));
-    }
-    let out = ic_evm_rpc::submit_tx_in_with_code(
-        chain::TxIn::EthSigned {
-            tx_bytes: raw_tx,
-            caller_principal: ic_cdk::api::msg_caller().as_slice().to_vec(),
-        },
-        "submit_eth_tx",
-    );
-    if out.is_ok() {
-        schedule_mining();
-    }
-    out
 }
 
 #[ic_cdk::update]
@@ -637,6 +612,11 @@ fn rpc_eth_get_block_by_number(number: u64, full_tx: bool) -> Option<EthBlockVie
 #[ic_cdk::query]
 fn rpc_eth_get_transaction_by_eth_hash(eth_tx_hash: Vec<u8>) -> Option<EthTxView> {
     ic_evm_rpc::rpc_eth_get_transaction_by_eth_hash(eth_tx_hash)
+}
+
+#[ic_cdk::query]
+fn rpc_eth_get_transaction_by_tx_id(tx_hash: Vec<u8>) -> Option<EthTxView> {
+    ic_evm_rpc::rpc_eth_get_transaction_by_tx_id(tx_hash)
 }
 
 #[ic_cdk::query]
@@ -1187,7 +1167,22 @@ fn receipt_to_eth_view(receipt: ReceiptLike) -> EthReceiptView {
         operator_fee: receipt.operator_fee,
         total_fee: receipt.total_fee,
         contract_address: receipt.contract_address.map(|v| v.to_vec()),
-        logs: receipt.logs.into_iter().map(log_to_view).collect(),
+        logs: receipt
+            .logs
+            .into_iter()
+            .enumerate()
+            .map(|(index, log)| EthReceiptLogView {
+                address: log.address.as_slice().to_vec(),
+                topics: log
+                    .data
+                    .topics()
+                    .iter()
+                    .map(|topic| topic.as_slice().to_vec())
+                    .collect(),
+                data: log.data.data.to_vec(),
+                log_index: u32::try_from(index).unwrap_or(u32::MAX),
+            })
+            .collect(),
     }
 }
 
@@ -1304,9 +1299,8 @@ fn schema_migration_tick(max_steps: u32) -> bool {
             SchemaMigrationPhase::Done => return true,
             SchemaMigrationPhase::Error => return false,
             SchemaMigrationPhase::Init => {
-                if state.from_version < 3 {
-                    set_tx_locs_v3_active(false);
-                    chain::clear_tx_locs_v3();
+                if state.from_version < 5 {
+                    chain::clear_eth_tx_hash_index();
                     state.cursor_key_set = false;
                     state.cursor_key = [0u8; 32];
                 }
@@ -1320,14 +1314,15 @@ fn schema_migration_tick(max_steps: u32) -> bool {
                 set_schema_migration_state(state);
             }
             SchemaMigrationPhase::Rewrite => {
-                if state.from_version < 3 {
+                if state.from_version < 5 {
                     let start_key = if state.cursor_key_set {
                         Some(TxId(state.cursor_key))
                     } else {
                         None
                     };
-                    let (last_key, copied, done) = chain::migrate_tx_locs_batch(start_key, 512);
-                    state.cursor = state.cursor.saturating_add(copied);
+                    let (last_key, rebuilt, done) =
+                        chain::rebuild_eth_tx_hash_index_batch(start_key, 512);
+                    state.cursor = state.cursor.saturating_add(rebuilt);
                     if let Some(key) = last_key {
                         state.cursor_key_set = true;
                         state.cursor_key = key.0;
@@ -1336,54 +1331,34 @@ fn schema_migration_tick(max_steps: u32) -> bool {
                     if !done {
                         return false;
                     }
-                }
-                if state.from_version < 4 {
-                    chain::rebuild_pending_runtime_indexes();
+                    state.cursor_key_set = false;
+                    state.cursor_key = [0u8; 32];
+                    set_schema_migration_state(state);
                 }
                 state.phase = SchemaMigrationPhase::Verify;
                 state.cursor = 0;
                 set_schema_migration_state(state);
             }
             SchemaMigrationPhase::Verify => {
-                if state.from_version < 3 {
-                    let tx_locs_migrated = with_state(|s| s.tx_locs.len() == s.tx_locs_v3.len());
-                    if !tx_locs_migrated {
-                        state.phase = SchemaMigrationPhase::Error;
-                        state.last_error = 1;
-                        set_schema_migration_state(state);
-                        return false;
-                    }
-                    set_tx_locs_v3_active(true);
-                } else if !evm_db::meta::tx_locs_v3_active() {
+                if !evm_db::meta::tx_locs_v3_active() {
                     state.phase = SchemaMigrationPhase::Error;
                     state.last_error = 2;
                     set_schema_migration_state(state);
                     return false;
                 }
-                if state.from_version < 4 {
-                    let indexes_ok = with_state(|s| {
-                        let pending_len = s.pending_by_sender_nonce.len();
-                        let fee_idx_len = s.pending_fee_key_by_tx_id.len();
-                        let ready_len = s.ready_key_by_tx_id.len();
-                        let ready_seq_len = s.ready_by_seq.len();
-                        let mut principal_total = 0u64;
-                        for entry in s.principal_pending_count.iter() {
-                            principal_total =
-                                principal_total.saturating_add(u64::from(entry.value()));
-                        }
-                        pending_len == fee_idx_len
-                            && ready_len == ready_seq_len
-                            && principal_total == pending_len
-                    });
-                    if !indexes_ok {
+                if state.from_version < 5 {
+                    let (index_ok, indexed, expected) = chain::verify_eth_tx_hash_index(256);
+                    if !index_ok {
+                        warn!(
+                            indexed_eth_hashes = indexed,
+                            expected_eth_signed = expected,
+                            "eth_tx_hash index verification failed"
+                        );
                         state.phase = SchemaMigrationPhase::Error;
-                        state.last_error = 3;
+                        state.last_error = 4;
                         set_schema_migration_state(state);
                         return false;
                     }
-                }
-                if state.from_version < 2 {
-                    chain::clear_mempool_on_upgrade();
                 }
                 mark_migration_applied(state.from_version, state.to_version, time());
                 set_needs_migration(false);
@@ -2198,7 +2173,7 @@ mod tests {
     #[test]
     fn inspect_lightweight_tx_guard_rejects_empty_raw_tx() {
         assert!(!inspect_lightweight_tx_guard_with_payload(
-            "submit_eth_tx",
+            "rpc_eth_send_raw_transaction",
             encode_one(Vec::<u8>::new()).expect("encode")
         ));
     }
@@ -2206,7 +2181,7 @@ mod tests {
     #[test]
     fn inspect_lightweight_tx_guard_rejects_unsupported_typed_prefix() {
         assert!(!inspect_lightweight_tx_guard_with_payload(
-            "submit_eth_tx",
+            "rpc_eth_send_raw_transaction",
             encode_one(vec![0x03u8, 0x01]).expect("encode")
         ));
         assert!(!inspect_lightweight_tx_guard_with_payload(
@@ -2218,14 +2193,14 @@ mod tests {
     #[test]
     fn inspect_lightweight_tx_guard_accepts_supported_payload() {
         assert!(inspect_lightweight_tx_guard_with_payload(
-            "submit_eth_tx",
+            "rpc_eth_send_raw_transaction",
             encode_one(vec![0x02u8, 0x01]).expect("encode")
         ));
         assert!(inspect_lightweight_tx_guard("set_auto_mine"));
     }
 
     fn inspect_lightweight_tx_guard_with_payload(method: &str, payload: Vec<u8>) -> bool {
-        if method != "submit_eth_tx" && method != "rpc_eth_send_raw_transaction" {
+        if method != "rpc_eth_send_raw_transaction" {
             return true;
         }
         let tx = match candid::decode_one::<Vec<u8>>(&payload) {
