@@ -264,16 +264,16 @@ PY
 )
   for nonce_val in "$ETH_NONCE"; do
     RAW_TX="$(raw_tx_bytes_with_nonce "$nonce_val" "$ETH_PRIVKEY")"
-    SUBMIT_ETH_OUT=$(icp canister call -n "${NETWORK}" "$CANISTER_ID" submit_eth_tx "(vec { $RAW_TX })")
+    SUBMIT_ETH_OUT=$(icp canister call -n "${NETWORK}" "$CANISTER_ID" rpc_eth_send_raw_transaction "(vec { $RAW_TX })")
     if echo "$SUBMIT_ETH_OUT" | assert_ok_variant; then
       ETH_TX_ID_BYTES=$(echo "$SUBMIT_ETH_OUT" | parse_ok_blob_bytes)
       break
     fi
-    echo "[playground-smoke] submit_eth_tx failed: $SUBMIT_ETH_OUT"
+    echo "[playground-smoke] rpc_eth_send_raw_transaction failed: $SUBMIT_ETH_OUT"
     exit 1
   done
   if [[ -z "$ETH_TX_ID_BYTES" ]]; then
-    echo "[playground-smoke] submit_eth_tx failed: $SUBMIT_ETH_OUT"
+    echo "[playground-smoke] rpc_eth_send_raw_transaction failed: $SUBMIT_ETH_OUT"
     exit 1
   fi
   log "producing block"
