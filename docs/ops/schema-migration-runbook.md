@@ -1,7 +1,7 @@
-# Schema v3 Migration Runbook
+# Schema Migration Runbook
 
 ## 目的
-- schema v3移行を tick で安全に進める。
+- schema 移行を tick で安全に進める。
 - 途中停止時もカーソルから再開できる状態を維持する。
 
 ## 事前準備（必須）
@@ -22,8 +22,7 @@ icp canister snapshot create -e ic <canister_id>
 5. `get_ops_status` で `needs_migration` を確認する。
 6. write系APIが拒否されること（`ops.write.needs_migration`）を確認する。
 7. 通常トラフィック下で migration tick が進み、`needs_migration=false` になるまで監視する。
-8. 完了後、dual-store の active 先が v3（`tx_locs_v3`）へ切替済みであることを確認する（Verify成功後にのみ切替）。
-9. from_version>=3 の再実行時はコピーを省略し、active は維持される。
+8. 完了後、移行対象ストアの active 先が新スキーマへ切替済みであることを確認する（Verify成功後にのみ切替）。
 
 ```bash
 icp canister stop -e ic <canister_id>

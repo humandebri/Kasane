@@ -44,6 +44,10 @@ scripts/ic_mainnet_deploy.sh
 1. `icp canister status -e ic <canister_id>` で module hash / settings / balance を確認する。
 2. `get_ops_status` で `needs_migration=false` を確認する。
 3. read 系 RPC（`rpc_eth_chain_id`, `rpc_eth_block_number`）を確認する。
+4. ネイティブ通貨表示を `ICP` として扱う場合、接続先ウォレット/SDK設定を以下で統一する。
+   - `nativeCurrency.symbol = "ICP"`
+   - `nativeCurrency.decimals = 18`
+   - `1 ICP = 10^18`（EVM最小単位）
 
 ## 4. ロールバック方針
 1. snapshot を事前取得する。
