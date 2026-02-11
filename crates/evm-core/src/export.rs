@@ -1,6 +1,6 @@
 //! どこで: export APIの実体 / 何を: cursor→chunks生成 / なぜ: lib.rsを薄く保つため
 
-use evm_db::chain_data::{BlockData, ReceiptLike, TxId, TxIndexEntry};
+use evm_db::chain_data::{BlockData, ReceiptLike, StoredTx, TxId, TxIndexEntry};
 use evm_db::stable_state::with_state;
 use evm_db::Storable;
 use std::borrow::Cow;
@@ -285,11 +285,25 @@ fn build_tx_index_payload(
             .map_err(|_| ExportError::MissingData("tx_index bytes missing"))?;
         let entry = TxIndexEntry::from_bytes(Cow::Owned(bytes));
         let encoded = entry.to_bytes().into_owned();
-        let len = u32::try_from(encoded.len())
+        let caller_principal = state
+            .tx_store
+            .get(tx_id)
+            .and_then(|envelope| StoredTx::try_from(envelope).ok())
+            .map(|stored| stored.caller_principal)
+            .unwrap_or_default();
+        let caller_principal_len =
+            u16::try_from(caller_principal.len()).map_err(|_| ExportError::InvalidCursor("principal too large"))?;
+        let total_len = encoded
+            .len()
+            .saturating_add(2)
+            .saturating_add(usize::from(caller_principal_len));
+        let len = u32::try_from(total_len)
             .map_err(|_| ExportError::InvalidCursor("tx_index too large"))?;
         out.extend_from_slice(&tx_id.0);
         out.extend_from_slice(&len.to_be_bytes());
         out.extend_from_slice(&encoded);
+        out.extend_from_slice(&caller_principal_len.to_be_bytes());
+        out.extend_from_slice(&caller_principal);
     }
     Ok(out)
 }
