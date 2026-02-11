@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import { Principal } from "@dfinity/principal";
 import { Card, CardContent, CardHeader, CardTitle } from "../../../components/ui/card";
 import { getTxView } from "../../../lib/data";
 
@@ -13,6 +14,7 @@ export default async function TxPage({ params }: { params: Promise<{ hash: strin
   if (!tx) {
     notFound();
   }
+  const callerPrincipal = toCallerPrincipalText(tx.callerPrincipal);
 
   return (
     <Card>
@@ -31,6 +33,8 @@ export default async function TxPage({ params }: { params: Promise<{ hash: strin
           </dd>
           <dt className="text-muted-foreground">Tx Index</dt>
           <dd>{tx.txIndex}</dd>
+          <dt className="text-muted-foreground">Caller Principal</dt>
+          <dd className="font-mono">{callerPrincipal}</dd>
         </dl>
         <div>
           <Link href={`/receipt/${tx.txHashHex}`} className="text-sky-700 hover:underline">
@@ -40,4 +44,11 @@ export default async function TxPage({ params }: { params: Promise<{ hash: strin
       </CardContent>
     </Card>
   );
+}
+
+function toCallerPrincipalText(callerPrincipal: Buffer | null): string {
+  if (!callerPrincipal) {
+    return "-";
+  }
+  return Principal.fromUint8Array(callerPrincipal).toText();
 }

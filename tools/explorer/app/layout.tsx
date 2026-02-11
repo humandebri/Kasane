@@ -7,8 +7,8 @@ import { Badge } from "../components/ui/badge";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "IC-OP Explorer",
-  description: "Postgres-backed operations explorer for IC-OP",
+  title: "Kasane Explorer",
+  description: "Postgres-backed operations explorer for Kasane",
 };
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
@@ -19,7 +19,7 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center gap-2 text-xl">
-                IC-OP Explorer <Badge variant="secondary">Phase2.1</Badge>
+                Kasane Explorer <Badge variant="secondary">Phase2.1</Badge>
               </CardTitle>
             </CardHeader>
             <CardContent className="flex items-center gap-4 text-sm">

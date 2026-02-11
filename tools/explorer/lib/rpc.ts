@@ -30,6 +30,14 @@ export type ReceiptView = {
 
 type Result<T, E> = { Ok: T } | { Err: E };
 
+export type TxKindView = { EthSigned: null } | { IcSynthetic: null };
+
+export type RpcTxView = {
+  kind: TxKindView;
+  caller_principal: [] | [Uint8Array];
+  eth_tx_hash: [] | [Uint8Array];
+};
+
 type EthTxView = {
   eth_tx_hash: [] | [Uint8Array];
 };
@@ -47,6 +55,7 @@ type ExplorerActorMethods = {
   rpc_eth_block_number: () => Promise<bigint>;
   get_receipt: (txId: Uint8Array) => Promise<Result<ReceiptView, LookupError>>;
   rpc_eth_get_block_by_number: (number: bigint, fullTx: boolean) => Promise<[] | [EthBlockView]>;
+  rpc_eth_get_transaction_by_tx_id: (txId: Uint8Array) => Promise<[] | [RpcTxView]>;
 };
 
 let cachedActor: ExplorerActorMethods | null = null;
@@ -68,6 +77,12 @@ export async function getRpcBlock(number: bigint): Promise<EthBlockView | null> 
 export async function getRpcBlockWithTxMode(number: bigint, fullTx: boolean): Promise<EthBlockView | null> {
   const actor = await getActor();
   const out = await actor.rpc_eth_get_block_by_number(number, fullTx);
+  return out.length === 0 ? null : out[0];
+}
+
+export async function getRpcTxByTxId(txId: Uint8Array): Promise<RpcTxView | null> {
+  const actor = await getActor();
+  const out = await actor.rpc_eth_get_transaction_by_tx_id(txId);
   return out.length === 0 ? null : out[0];
 }
 
@@ -125,6 +140,17 @@ const idlFactory: IDL.InterfaceFactory = ({ IDL }) => {
     eth_tx_hash: IDL.Opt(IDL.Vec(IDL.Nat8)),
   });
 
+  const TxKindView = IDL.Variant({
+    EthSigned: IDL.Null,
+    IcSynthetic: IDL.Null,
+  });
+
+  const RpcTxView = IDL.Record({
+    kind: TxKindView,
+    caller_principal: IDL.Opt(IDL.Vec(IDL.Nat8)),
+    eth_tx_hash: IDL.Opt(IDL.Vec(IDL.Nat8)),
+  });
+
   const EthBlockView = IDL.Record({
     txs: IDL.Variant({ Full: IDL.Vec(EthTxView), Hashes: IDL.Vec(IDL.Vec(IDL.Nat8)) }),
     block_hash: IDL.Vec(IDL.Nat8),
@@ -142,5 +168,6 @@ const idlFactory: IDL.InterfaceFactory = ({ IDL }) => {
       ["query"]
     ),
     rpc_eth_get_block_by_number: IDL.Func([IDL.Nat64, IDL.Bool], [IDL.Opt(EthBlockView)], ["query"]),
+    rpc_eth_get_transaction_by_tx_id: IDL.Func([IDL.Vec(IDL.Nat8)], [IDL.Opt(RpcTxView)], ["query"]),
   });
 };
