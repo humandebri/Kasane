@@ -1,7 +1,7 @@
 # IC-EVM Whitepaper (Draft)
 
 ## 1. Abstract
-本書は、ICP上で動作するEVM互換チェーンの現行実装と、運用可能性を優先した設計方針を定義する。主眼は、(a) ブロック生成・状態遷移の再現性、(b) 外部Index/Archive障害時でもチェーン本体が継続する非依存性、(c) pruningとexportを両立するデータ運用である。現時点での実装は `IcSynthetic` 経路と `EthSigned` 経路を持ち、cursor/chunkベースのExport APIとSQLite indexerを備える。一方、PrecompileによるICPトークン相互運用は未実装であり、計画段階として明示する。
+本書は、ICP上で動作するEVM互換チェーンの現行実装と、運用可能性を優先した設計方針を定義する。主眼は、(a) ブロック生成・状態遷移の再現性、(b) 外部Index/Archive障害時でもチェーン本体が継続する非依存性、(c) pruningとexportを両立するデータ運用である。現時点での実装は `IcSynthetic` 経路と `EthSigned` 経路を持ち、cursor/chunkベースのExport APIとPostgres indexerを備える。一方、PrecompileによるICPトークン相互運用は未実装であり、計画段階として明示する。
 
 ### 1.1 Canonical Specs (Source of Truth)
 - 現行の運用仕様（RPC公開面、運用上の決定事項、互換方針）は `README.md` を正本とする。
@@ -17,7 +17,7 @@
 - 外部Indexer/DBを必須依存にすると、外部障害がチェーン停止要因になる。
 
 ### 2.2 既存案の限界
-- 「L2前提の異議申し立て（fraud/challenge）」をそのまま適用すると、現行の単一チェーン運用と責務がズレる。
+- 外部チェーン前提の異議申し立て（fraud/challenge）をそのまま適用すると、現行の単一チェーン運用と責務がズレる。
 - データ提供を1-shot APIに寄せると、追いつき・再開・prune境界処理が壊れやすい。
 
 ## 3. Goals / Non-Goals
@@ -29,7 +29,7 @@
 - 外部DB/Archiveをキャッシュ化し、チェーン本体との信頼境界を明確化する。
 
 ### Non-Goals
-- L2ロールアップ前提のfraud proof/challengeプロトコル実装。
+- ロールアップ前提のfraud proof/challengeプロトコル実装。
 - Precompile経由のICPトークン完全互換（現時点は未実装）。
 - 分散sequencer前提の順序保証（現実装の責務外）。
 
@@ -39,8 +39,8 @@
 |---|---|---|
 | EVM Canister | Tx受付、実行、ブロック生成、状態管理、export/prune提供 | 正本 |
 | ICP Subnet / IC Synthesis | 最終性・複製実行 | 正本の下位前提 |
-| Indexer (TS) | pull、chunk復元、SQLite保存、archive保存 | キャッシュ |
-| SQLite | 検索高速化、cursor永続 | キャッシュ |
+| Indexer (TS) | pull、chunk復元、Postgres保存、archive保存 | キャッシュ |
+| Postgres | 検索高速化、cursor永続 | キャッシュ |
 | Object Archive(.zst) | prune前の補助保全 | キャッシュ |
 
 ## 5. Architecture
@@ -51,7 +51,7 @@ flowchart LR
     C --> S[Stable State]
     C --> E[Export API]
     E --> I[Indexer Worker]
-    I --> Q[SQLite]
+    I --> Q[Postgres]
     I --> A[Archive zstd]
     C --> P[Prune Engine]
     P --> S
@@ -63,7 +63,7 @@ flowchart LR
 
 ### 5.2 データ層
 - 正本はcanisterのstable state（accounts/storage/blocks/receipts/tx_index）。
-- Indexer側のSQLite/Archiveは再構築可能キャッシュ。
+- Indexer側のPostgres/Archiveは再構築可能キャッシュ。
 
 ### 5.3 検証層
 - state rootは永続ノードDB方式へ移行済み（migration phase管理）。
@@ -96,7 +96,7 @@ flowchart LR
 
 ### 6.4 Indexer設計
 - pull loop: head取得 → export呼び出し → chunk検証 → decode → archive → DB commit → cursor更新。
-- DB: SQLite（upsert中心、migration管理）。
+- DB: Postgres（upsert中心、migration管理）。
 - archive: block単位 `.bundle.zst`（atomic rename）。
 - cursor永続: DBトランザクション内で更新。
 
@@ -123,7 +123,7 @@ flowchart LR
 ### 7.2 失敗モード
 | 失敗モード | チェーン本体 | Indexer | 期待挙動 |
 |---|---|---|---|
-| SQLite破損 | 継続 | 停止 | DB再構築で復旧 |
+| Postgres障害 | 継続 | 停止 | DB復旧後に再同期 |
 | Archive書込失敗 | 継続 | 停止 | 空き容量復旧後再開 |
 | export一時失敗 | 継続 | リトライ | backoffで収束 |
 | prune途中クラッシュ | 継続再起動 | 影響なし | journal回復で前進 |
@@ -138,7 +138,7 @@ flowchart LR
 | 項目 | 方針 |
 |---|---|
 | 正本保持 | ICP内部stable state |
-| 外部保持 | SQLite/Archiveは補助キャッシュ |
+| 外部保持 | Postgres/Archiveは補助キャッシュ |
 | 欠損時 | export再取得、cursor再開、必要時archive復元 |
 | prune後 | `Pruned`を返し、境界を明示 |
 
@@ -146,7 +146,7 @@ flowchart LR
 sequenceDiagram
     participant C as Canister
     participant I as Indexer
-    participant D as SQLite
+    participant D as Postgres
     participant A as Archive
     C->>I: export_blocks(cursor,max_bytes)
     I->>I: chunk検証/復元
@@ -176,7 +176,7 @@ stateDiagram-v2
 
 ### 10.1 コスト要素
 - Canister側: 実行・保存・prune処理のcycle。
-- Indexer側: ネットワークI/O、SQLite I/O、zstd圧縮、ディスク。
+- Indexer側: ネットワークI/O、Postgres I/O、zstd圧縮、ディスク。
 
 ### 10.2 見積枠組み（未確定）
 - 1blockあたり raw bytes / compressed bytes / tx数 を日次集計。
@@ -197,7 +197,7 @@ stateDiagram-v2
 
 ### 11.3 監視メトリクス
 - head, cursor_lag, need_prune, pruned_before_block
-- blocks_ingested, raw/compressed/sqlite/archive bytes
+- blocks_ingested, raw/compressed/db/archive bytes
 - fatal種別（Pruned/InvalidCursor/Decode/ArchiveIO/Db）
 
 ## 12. Roadmap
@@ -209,11 +209,6 @@ stateDiagram-v2
 | C | 運用強化（監視・runbook） | 進行中 |
 | D | Precompile I/F設計（ICP token/送信） | 未着手 |
 | E | 互換性・負荷・差分検証拡張 | 進行中 |
-
-次の3タスク:
-1. Precompile仕様（I/F・権限・冪等ID）を固定
-2. differential test（参照実装突合）をCI化
-3. pruning容量パラメータを実測で再調整
 
 ## 13. Risks & Open Questions
 
@@ -274,27 +269,4 @@ function prune_tick():
 ## 矛盾チェック
 - 「2MiB制限」要件と現実装値は一致しない（実装は1.5MiB）。本書では「2MiB未満運用」として整合化。
 - 「IC Synthesis」と「IcSynthetic」は同語ではないため、概念と実装名を分離して記述。
-- L2用語（sequencer/fraud proof）は本文から除外済み。
-
-## 未確定一覧
-1. PrecompileのAPI仕様（関数ID、引数、戻り値、エラーコード）
-2. ICPトークン互換の対象範囲（ICRC-1/2のどこまで）
-3. ICP向け送信の再送戦略と重複排除キー
-4. 経済パラメータ（feeレンジ、運用閾値の本番値）
-
-## 追加で必要な実測
-1. block/txあたりraw・圧縮サイズ分布
-2. cursor_lag分布とPruned発生条件
-3. prune実行時間と`max_ops_per_tick`の相関
-4. state root commit時間（touched件数別）
-5. indexer停止/再開時の追いつき所要時間
-
-## 実装に落とすToDo（上から順）
-1. Precompile仕様ドラフトを`docs/`に固定する
-2. ICRC互換範囲の最小セットを決める
-3. ICP送信の冪等ID設計を決める
-4. Precompile read-only PoCを実装する
-5. write系Precompileに権限制御を追加する
-6. differential testをCIで定期実行する
-7. pruningパラメータを実測ベースで再設定する
-8. runbookに障害別SLOを追加する
+- 外部チェーン前提用語（sequencer/fraud proof）は本文方針に合わせて整理済み。
