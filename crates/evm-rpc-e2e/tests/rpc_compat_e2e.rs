@@ -62,7 +62,15 @@ struct EthReceiptView {
     gas_used: u64,
     effective_gas_price: u64,
     contract_address: Option<Vec<u8>>,
-    logs: Vec<LogView>,
+    logs: Vec<EthReceiptLogView>,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize, Eq, PartialEq)]
+struct EthReceiptLogView {
+    address: Vec<u8>,
+    topics: Vec<Vec<u8>>,
+    data: Vec<u8>,
+    log_index: u32,
 }
 
 #[derive(Clone, Debug, CandidType, Deserialize, Eq, PartialEq)]
@@ -122,13 +130,6 @@ struct PruneResultView {
 
 type PruneBlocksResult = Result<PruneResultView, ProduceBlockError>;
 type ManageWriteResult = Result<(), String>;
-
-#[derive(Clone, Debug, CandidType, Deserialize, Eq, PartialEq)]
-struct LogView {
-    address: Vec<u8>,
-    topics: Vec<Vec<u8>>,
-    data: Vec<u8>,
-}
 
 #[derive(Clone, Debug, CandidType, Deserialize, Eq, PartialEq)]
 enum PendingStatusView {
