@@ -30,8 +30,8 @@ services:
     environment:
       DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}?ssl=false
       ECTO_USE_SSL: "false"
-      NETWORK: IC-OP
-      SUBNETWORK: IC-OP Mainnet
+      NETWORK: Kasane
+      SUBNETWORK: Kasane Mainnet
       COIN: ETH
       CHAIN_ID: ${CHAIN_ID}
       ETHEREUM_JSONRPC_HTTP_URL: ${ETHEREUM_JSONRPC_HTTP_URL}
