@@ -376,12 +376,129 @@ pub fn rebuild_pending_runtime_indexes() {
     });
 }
 
+pub fn clear_eth_tx_hash_index() {
+    with_state_mut(|state| {
+        clear_stable_map(&mut state.eth_tx_hash_index);
+    });
+}
+
+pub fn rebuild_eth_tx_hash_index_batch(
+    start_key: Option<TxId>,
+    max_items: u32,
+) -> (Option<TxId>, u64, bool) {
+    use std::ops::Bound;
+    with_state_mut(|state| {
+        let mut rebuilt = 0u64;
+        let mut last_key = None;
+        let mut iter = match start_key {
+            Some(key) => state.tx_store.range((Bound::Excluded(key), Bound::Unbounded)),
+            None => state.tx_store.range(..),
+        };
+        let mut done = false;
+        for _ in 0..max_items {
+            match iter.next() {
+                Some(entry) => {
+                    let tx_id = *entry.key();
+                    if let Ok(stored) = StoredTx::try_from(entry.value()) {
+                        if stored.kind == TxKind::EthSigned {
+                            state
+                                .eth_tx_hash_index
+                                .insert(TxId(hash::keccak256(&stored.raw)), tx_id);
+                        }
+                    }
+                    last_key = Some(tx_id);
+                    rebuilt = rebuilt.saturating_add(1);
+                }
+                None => {
+                    done = true;
+                    break;
+                }
+            }
+        }
+        if rebuilt < u64::from(max_items) {
+            done = true;
+        }
+        (last_key, rebuilt, done)
+    })
+}
+
+pub fn verify_eth_tx_hash_index(sample_limit: u32) -> (bool, u64, u64) {
+    with_state(|state| {
+        let mut expected_eth_signed = 0u64;
+        for entry in state.tx_store.iter() {
+            let Ok(stored) = StoredTx::try_from(entry.value()) else {
+                continue;
+            };
+            if stored.kind == TxKind::EthSigned {
+                expected_eth_signed = expected_eth_signed.saturating_add(1);
+            }
+        }
+        let indexed = state.eth_tx_hash_index.len();
+        if indexed != expected_eth_signed {
+            return (false, indexed, expected_eth_signed);
+        }
+        let mut checked = 0u32;
+        for entry in state.tx_store.iter() {
+            if checked >= sample_limit {
+                break;
+            }
+            let tx_id = *entry.key();
+            let Ok(stored) = StoredTx::try_from(entry.value()) else {
+                continue;
+            };
+            if stored.kind != TxKind::EthSigned {
+                continue;
+            }
+            checked = checked.saturating_add(1);
+            let key = TxId(hash::keccak256(&stored.raw));
+            if state.eth_tx_hash_index.get(&key) != Some(tx_id) {
+                return (false, indexed, expected_eth_signed);
+            }
+        }
+        (true, indexed, expected_eth_signed)
+    })
+}
+
 fn tx_locs_get(state: &StableState, tx_id: &TxId) -> Option<TxLoc> {
     if tx_locs_v3_active() {
         state.tx_locs_v3.get(tx_id)
     } else {
         state.tx_locs.get(tx_id)
     }
+}
+
+fn insert_eth_tx_hash_index_for_envelope(
+    state: &mut evm_db::stable_state::StableState,
+    tx_id: TxId,
+    envelope: StoredTxBytes,
+) {
+    let Ok(stored) = StoredTx::try_from(envelope) else {
+        return;
+    };
+    if stored.kind != TxKind::EthSigned {
+        return;
+    }
+    state
+        .eth_tx_hash_index
+        .insert(TxId(hash::keccak256(&stored.raw)), tx_id);
+}
+
+fn remove_eth_tx_hash_index_for_tx_id(
+    state: &mut evm_db::stable_state::StableState,
+    tx_id: TxId,
+) {
+    let Some(envelope) = state.tx_store.get(&tx_id) else {
+        return;
+    };
+    let Ok(stored) = StoredTx::try_from(envelope) else {
+        return;
+    };
+    if stored.kind != TxKind::EthSigned {
+        return;
+    }
+    state
+        .eth_tx_hash_index
+        .remove(&TxId(hash::keccak256(&stored.raw)));
 }
 
 fn tx_locs_insert(state: &mut StableState, tx_id: TxId, loc: TxLoc) {
@@ -601,7 +718,8 @@ pub fn submit_tx(
             enforce_pending_caps(state, sender_key, &caller_principal, effective_gas_price)?;
         }
         state.seen_tx.insert(tx_id, 1);
-        state.tx_store.insert(tx_id, envelope);
+        state.tx_store.insert(tx_id, envelope.clone());
+        insert_eth_tx_hash_index_for_envelope(state, tx_id, envelope);
         state.pending_current_by_sender.insert(sender_key, tx_id);
         let mut metrics = *state.metrics_state.get();
         metrics.record_submission(1);
@@ -1810,6 +1928,7 @@ pub fn prune_blocks(retain: u64, max_ops: u32) -> Result<PruneResult, ChainError
                 state.receipts.remove(tx_id);
                 state.tx_index.remove(tx_id);
                 tx_locs_remove(state, tx_id);
+                remove_eth_tx_hash_index_for_tx_id(state, *tx_id);
                 state.tx_store.remove(tx_id);
                 state.seen_tx.remove(tx_id);
             }
@@ -1878,6 +1997,7 @@ fn recover_prune_journal(state: &mut evm_db::stable_state::StableState) -> Resul
                 state.receipts.remove(tx_id);
                 state.tx_index.remove(tx_id);
                 tx_locs_remove(state, tx_id);
+                remove_eth_tx_hash_index_for_tx_id(state, *tx_id);
                 state.tx_store.remove(tx_id);
                 state.seen_tx.remove(tx_id);
             }
@@ -2517,6 +2637,7 @@ fn mark_dropped_and_purge_payload(
     drop_code: u16,
 ) {
     remove_pending_fee_index_by_tx_id(state, tx_id);
+    remove_eth_tx_hash_index_for_tx_id(state, tx_id);
     state.tx_store.remove(&tx_id);
     tx_locs_insert(state, tx_id, TxLoc::dropped(drop_code));
     push_dropped_ring(state, tx_id);
