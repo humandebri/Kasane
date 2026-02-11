@@ -1,6 +1,10 @@
 //! どこで: pruning設定とメトリクス / 何を: policy+状態の固定サイズ / なぜ: upgrade耐性と安全運用のため
 
 use crate::chain_data::codec::{encode_guarded, mark_decode_failure};
+use crate::chain_data::runtime_defaults::{
+    DEFAULT_PRUNE_MAX_OPS_PER_TICK, DEFAULT_PRUNE_TIMER_INTERVAL_MS,
+    MIN_PRUNE_MAX_OPS_PER_TICK, MIN_PRUNE_TIMER_INTERVAL_MS,
+};
 use ic_stable_structures::storable::Bound;
 use ic_stable_structures::Storable;
 use std::borrow::Cow;
@@ -53,8 +57,8 @@ impl PruneConfigV1 {
             retain_blocks: 0,
             headroom_ratio_bps: 2000,
             hard_emergency_ratio_bps: 9500,
-            timer_interval_ms: 60_000,
-            max_ops_per_tick: 5_000,
+            timer_interval_ms: DEFAULT_PRUNE_TIMER_INTERVAL_MS,
+            max_ops_per_tick: DEFAULT_PRUNE_MAX_OPS_PER_TICK,
             high_water_bytes: 0,
             low_water_bytes: 0,
             hard_emergency_bytes: 0,
@@ -83,8 +87,8 @@ impl PruneConfigV1 {
         self.retain_blocks = policy.retain_blocks;
         self.headroom_ratio_bps = policy.headroom_ratio_bps;
         self.hard_emergency_ratio_bps = policy.hard_emergency_ratio_bps;
-        self.timer_interval_ms = policy.timer_interval_ms;
-        self.max_ops_per_tick = policy.max_ops_per_tick;
+        self.timer_interval_ms = policy.timer_interval_ms.max(MIN_PRUNE_TIMER_INTERVAL_MS);
+        self.max_ops_per_tick = policy.max_ops_per_tick.max(MIN_PRUNE_MAX_OPS_PER_TICK);
         self.high_water_bytes = compute_high_water(policy.target_bytes, policy.headroom_ratio_bps);
         self.low_water_bytes = compute_low_water(policy.target_bytes, policy.headroom_ratio_bps);
         self.hard_emergency_bytes =
@@ -274,8 +278,9 @@ fn compute_low_water(target: u64, headroom_bps: u32) -> u64 {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        compute_high_water, compute_low_water, compute_ratio_bytes, PruneConfigV1, PrunePolicy,
+    use super::{compute_high_water, compute_low_water, compute_ratio_bytes, PruneConfigV1, PrunePolicy};
+    use crate::chain_data::runtime_defaults::{
+        MIN_PRUNE_MAX_OPS_PER_TICK, MIN_PRUNE_TIMER_INTERVAL_MS,
     };
 
     #[test]
@@ -309,5 +314,22 @@ mod tests {
         assert!(config.high_water_bytes > 0);
         assert!(config.low_water_bytes > 0);
         assert!(config.hard_emergency_bytes > 0);
+    }
+
+    #[test]
+    fn set_policy_clamps_timer_interval_and_max_ops() {
+        let mut config = PruneConfigV1::new();
+        let policy = PrunePolicy {
+            target_bytes: 1,
+            retain_days: 1,
+            retain_blocks: 1,
+            headroom_ratio_bps: 2000,
+            hard_emergency_ratio_bps: 9500,
+            timer_interval_ms: 0,
+            max_ops_per_tick: 0,
+        };
+        config.set_policy(policy);
+        assert_eq!(config.timer_interval_ms, MIN_PRUNE_TIMER_INTERVAL_MS);
+        assert_eq!(config.max_ops_per_tick, MIN_PRUNE_MAX_OPS_PER_TICK);
     }
 }

@@ -77,9 +77,10 @@ set_prune_policy() {
   local retain_blocks="$2"
   local retain_days="$3"
   local max_ops="$4"
+  local timer_interval_ms="${PRUNE_TIMER_INTERVAL_MS:-3600000}"
   ${DFX_CANISTER} call "${CANISTER_NAME}" set_prune_policy "(record {
     headroom_ratio_bps = 2000;
-    timer_interval_ms = 30000;
+    timer_interval_ms = ${timer_interval_ms}:nat64;
     target_bytes = ${target_bytes}:nat64;
     retain_blocks = ${retain_blocks}:nat64;
     retain_days = ${retain_days}:nat64;
