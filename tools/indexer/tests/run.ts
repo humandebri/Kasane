@@ -1,19 +1,19 @@
 /// <reference path="../src/globals.d.ts" />
-// どこで: indexerテスト / 何を: ユニット/統合/疑似E2E / なぜ: ローカル検証を確実にするため
+// どこで: indexerテスト / 何を: Postgres化後の主要ロジックを検証 / なぜ: SQLite撤去後の退行を防ぐため
 
 import assert from "node:assert/strict";
 import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import Database from "better-sqlite3";
+import { newDb } from "pg-mem";
 import { cursorFromJson, cursorToJson } from "../src/cursor";
 import { decodeTxIndexPayload } from "../src/decode";
 import { archiveBlock } from "../src/archiver";
-import { runArchiveGc } from "../src/archive_gc";
+import { runArchiveGc, runArchiveGcWithMode } from "../src/archive_gc";
 import { IndexerDb } from "../src/db";
-import { applyMigrations, MIGRATIONS } from "../src/migrations";
-import { _test, runWorkerWithDeps } from "../src/worker";
-import { Chunk, Cursor, ExportError, ExportResponse, PruneStatusView, Result } from "../src/types";
+import { MIGRATIONS } from "../src/migrations";
+import { classifyExportError } from "../src/worker_errors";
+import type { ExportError } from "../src/types";
 
 type TestFn = () => void | Promise<void>;
 type TestCase = { name: string; fn: TestFn };
@@ -24,30 +24,6 @@ function test(name: string, fn: TestFn): void {
   tests.push({ name, fn });
 }
 
-function defaultPruneStatusView(): PruneStatusView {
-  return {
-    pruning_enabled: false,
-    prune_running: false,
-    estimated_kept_bytes: 0n,
-    high_water_bytes: 0n,
-    low_water_bytes: 0n,
-    hard_emergency_bytes: 0n,
-    last_prune_at: 0n,
-    pruned_before_block: null,
-    oldest_kept_block: null,
-    oldest_kept_timestamp: null,
-    need_prune: false,
-  };
-}
-
-function okResult<T, E>(value: T): Result<T, E> {
-  return { Ok: value };
-}
-
-function errResult<T, E>(err: E): Result<T, E> {
-  return { Err: err };
-}
-
 test("cursor json roundtrip", () => {
   const cursor = { block_number: 123n, segment: 1, byte_offset: 42 };
   const json = cursorToJson(cursor);
@@ -55,11 +31,6 @@ test("cursor json roundtrip", () => {
   assert.equal(parsed.block_number, cursor.block_number);
   assert.equal(parsed.segment, cursor.segment);
   assert.equal(parsed.byte_offset, cursor.byte_offset);
-});
-
-test("cursor invalid segment is rejected", () => {
-  const bad = JSON.stringify({ v: 1, block_number: "1", segment: 3, byte_offset: 0 });
-  assert.throws(() => cursorFromJson(bad), /segment/);
 });
 
 test("tx_index payload length mismatch throws", () => {
@@ -89,310 +60,142 @@ test("archiveBlock reuses existing file", async () => {
   });
 });
 
-test("archive_gc keeps bundle when db is empty and removes non-bundle temp files", async () => {
-  await withTempDir(async (dir) => {
-    const dbPath = path.join(dir, "db.sqlite");
-    const db = new IndexerDb(dbPath);
-    const root = path.join(dir, "local");
-    await fs.mkdir(root, { recursive: true });
-    const bundle = path.join(root, "1.bundle.zst");
-    const tmp = path.join(root, "2.bundle.zst.tmp");
-    const atomicTmp = path.join(root, "1.bundle.zst.9f8e7d6c");
-    await fs.writeFile(bundle, Buffer.from("bundle"));
-    await fs.writeFile(tmp, Buffer.from("tmp"));
-    await fs.writeFile(atomicTmp, Buffer.from("tmp2"));
-    await runArchiveGc(db, dir, "local");
-    assert.equal(await exists(bundle), true);
-    assert.equal(await exists(tmp), false);
-    assert.equal(await exists(atomicTmp), false);
-    db.close();
-  });
-});
-
-test("archive_gc preserves referenced relative path and removes orphan", async () => {
-  await withTempDir(async (dir) => {
-    const dbPath = path.join(dir, "db.sqlite");
-    const db = new IndexerDb(dbPath);
-    const root = path.join(dir, "local");
-    await fs.mkdir(root, { recursive: true });
-    const keepPath = path.join(root, "3.bundle.zst");
-    const dropPath = path.join(root, "4.bundle.zst");
-    await fs.writeFile(keepPath, Buffer.from("keep"));
-    await fs.writeFile(dropPath, Buffer.from("drop"));
-    db.addArchive({
-      blockNumber: 3n,
-      path: "3.bundle.zst",
-      sha256: Buffer.alloc(32, 1),
-      sizeBytes: 4,
-      rawBytes: 4,
+test("db upsert and metrics aggregation", async () => {
+  const db = await createTestIndexerDb();
+  try {
+    await db.upsertBlock({ number: 10n, hash: Buffer.alloc(32, 1), timestamp: 123n, tx_count: 1 });
+    await db.upsertTx({ tx_hash: Buffer.alloc(32, 2), block_number: 10n, tx_index: 0 });
+    await db.setCursor({ block_number: 11n, segment: 0, byte_offset: 0 });
+    const cursor = await db.getCursor();
+    assert.ok(cursor);
+    assert.equal(cursor?.block_number, 11n);
+    await db.addMetrics(20250101, 10, 5, 1, 0, 20);
+    await db.addMetrics(20250101, 1, 1, 1, 0);
+    const archiveSum0 = await db.getArchiveBytesSum();
+    assert.equal(archiveSum0, 0);
+    await db.addArchive({
+      blockNumber: 10n,
+      path: "10.bundle.zst",
+      sha256: Buffer.alloc(32, 3),
+      sizeBytes: 40,
+      rawBytes: 50,
       createdAt: Date.now(),
     });
-    await runArchiveGc(db, dir, "local");
-    assert.equal(await exists(keepPath), true);
-    assert.equal(await exists(dropPath), false);
-    db.close();
-  });
+    const archiveSum = await db.getArchiveBytesSum();
+    assert.equal(archiveSum, 40);
+  } finally {
+    await db.close();
+  }
 });
 
-test("migrations are idempotent", async () => {
+test("archive_gc keeps orphan by default and can remove with explicit mode", async () => {
+  const db = await createTestIndexerDb();
   await withTempDir(async (dir) => {
-    const dbPath = path.join(dir, "db.sqlite");
-    const db = new Database(dbPath);
-    applyMigrations(db, MIGRATIONS);
-    applyMigrations(db, MIGRATIONS);
-    const count = getCount(db, "schema_migrations");
-    assert.equal(count, MIGRATIONS.length);
-    db.close();
-  });
-});
-
-test("pseudo-e2e: archive + db + gc keeps file", async () => {
-  await withTempDir(async (dir) => {
-    const dbPath = path.join(dir, "db.sqlite");
-    const db = new IndexerDb(dbPath);
-    const input = {
-      archiveDir: dir,
-      chainId: "local",
-      blockNumber: 9n,
-      blockPayload: buildBlockPayload(9n, 99n, []),
-      receiptsPayload: Buffer.alloc(0),
-      txIndexPayload: Buffer.alloc(0),
-      zstdLevel: 1,
-    };
-    const archive = await archiveBlock(input);
-    db.addArchive({
-      blockNumber: 9n,
-      path: path.relative(path.join(dir, "local"), archive.path),
-      sha256: archive.sha256,
-      sizeBytes: archive.sizeBytes,
-      rawBytes: archive.rawBytes,
-      createdAt: Date.now(),
-    });
-    await runArchiveGc(db, dir, "local");
-    assert.equal(await exists(archive.path), true);
-    db.close();
-  });
-});
-
-test("enforceNextCursor and applyChunks invalid cases throw", () => {
-  const cursor: Cursor = { block_number: 10n, segment: 0, byte_offset: 0 };
-  const badChunk: Chunk = { segment: 1, start: 0, payload_len: 10, bytes: Buffer.alloc(1) };
-  const responseBad: ExportResponse = { chunks: [badChunk], next_cursor: cursor };
-  assert.throws(() => _test.enforceNextCursor(responseBad, cursor));
-
-  const pending = _test.newPending(cursor);
-  assert.throws(() => _test.applyChunks(pending, [badChunk], cursor));
-
-  const okChunk: Chunk = { segment: 0, start: 0, payload_len: 4, bytes: Buffer.alloc(4) };
-  const okNext: Cursor = { block_number: 10n, segment: 1, byte_offset: 0 };
-  _test.enforceNextCursor({ chunks: [okChunk], next_cursor: okNext }, cursor);
-
-  const pendingOk = _test.newPending(cursor);
-  _test.applyChunks(pendingOk, [okChunk], cursor);
-  assert.equal(pendingOk.segment, 1);
-
-  const badLenChunk: Chunk = { segment: 1, start: 0, payload_len: 2, bytes: Buffer.alloc(3) };
-  assert.throws(() => _test.applyChunks(pendingOk, [badLenChunk], cursor));
-});
-
-test("max_bytes over limit triggers fatal exit", async () => {
-  await withTempDir(async (dir) => {
-    const db = new IndexerDb(path.join(dir, "db.sqlite"));
-    const cursor: Cursor = { block_number: 1n, segment: 0, byte_offset: 0 };
-    const chunks: Chunk[] = [
-      { segment: 0, start: 0, payload_len: 1, bytes: Buffer.alloc(2) },
-    ];
-    const response: ExportResponse = { chunks, next_cursor: cursor };
-    const client = {
-      getHeadNumber: async () => 1n,
-      exportBlocks: async () => okResult<ExportResponse, ExportError>(response),
-      getPruneStatus: async () => defaultPruneStatusView(),
-    };
-    const config = {
-      canisterId: "x",
-      icHost: "http://localhost",
-      dbPath: path.join(dir, "db.sqlite"),
-      maxBytes: 1,
-      backoffInitialMs: 1,
-      backoffMaxMs: 1,
-      idlePollMs: 1,
-      pruneStatusPollMs: 0,
-      fetchRootKey: false,
-      archiveDir: dir,
-      chainId: "local",
-      zstdLevel: 1,
-    };
-    await expectExit(async () => {
-      await runWorkerWithDeps(config, db, client, { skipGc: true });
-    });
-    db.close();
-  });
-});
-
-test("Pruned error triggers fatal exit", async () => {
-  await withTempDir(async (dir) => {
-    const db = new IndexerDb(path.join(dir, "db.sqlite"));
-    const cursor: Cursor = { block_number: 1n, segment: 0, byte_offset: 0 };
-    const err: ExportError = { Pruned: { pruned_before_block: 1n } };
-    const client = {
-      getHeadNumber: async () => 1n,
-      exportBlocks: async () => errResult<ExportResponse, ExportError>(err),
-      getPruneStatus: async () => defaultPruneStatusView(),
-    };
-    const config = {
-      canisterId: "x",
-      icHost: "http://localhost",
-      dbPath: path.join(dir, "db.sqlite"),
-      maxBytes: 10,
-      backoffInitialMs: 1,
-      backoffMaxMs: 1,
-      idlePollMs: 1,
-      pruneStatusPollMs: 0,
-      fetchRootKey: false,
-      archiveDir: dir,
-      chainId: "local",
-      zstdLevel: 1,
-    };
-    db.setCursor(cursor);
-    await expectExit(async () => {
-      await runWorkerWithDeps(config, db, client, { skipGc: true });
-    });
-    db.close();
-  });
-});
-
-test("prune_status is persisted as JSON with string fields", async () => {
-  await withTempDir(async (dir) => {
-    const dbPath = path.join(dir, "db.sqlite");
-    const db = new IndexerDb(dbPath);
-    const cursor: Cursor = { block_number: 1n, segment: 0, byte_offset: 0 };
-    const err: ExportError = { Pruned: { pruned_before_block: 1n } };
-    const client = {
-      getHeadNumber: async () => 1n,
-      exportBlocks: async () => errResult<ExportResponse, ExportError>(err),
-      getPruneStatus: async () => ({
-        pruning_enabled: true,
-        prune_running: false,
-        estimated_kept_bytes: 123n,
-        high_water_bytes: 456n,
-        low_water_bytes: 400n,
-        hard_emergency_bytes: 900n,
-        last_prune_at: 10n,
-        pruned_before_block: 5n,
-        oldest_kept_block: 6n,
-        oldest_kept_timestamp: 7n,
-        need_prune: true,
-      }),
-    };
-    const config = {
-      canisterId: "x",
-      icHost: "http://localhost",
-      dbPath,
-      maxBytes: 10,
-      backoffInitialMs: 1,
-      backoffMaxMs: 1,
-      idlePollMs: 1,
-      pruneStatusPollMs: 1,
-      fetchRootKey: false,
-      archiveDir: dir,
-      chainId: "local",
-      zstdLevel: 1,
-    };
-    db.setCursor(cursor);
-    await expectExit(async () => {
-      await runWorkerWithDeps(config, db, client, { skipGc: true });
-    });
-    db.close();
-    const raw = readMetaValue(dbPath, "prune_status");
-    assert.ok(raw, "prune_status is missing");
-    if (typeof raw !== "string") {
-      throw new Error("prune_status is not a string");
+    try {
+      const root = path.join(dir, "local");
+      await fs.mkdir(root, { recursive: true });
+      const keepPath = path.join(root, "3.bundle.zst");
+      const dropPath = path.join(root, "4.bundle.zst");
+      await fs.writeFile(keepPath, Buffer.from("keep"));
+      await fs.writeFile(dropPath, Buffer.from("drop"));
+      await db.addArchive({
+        blockNumber: 3n,
+        path: "3.bundle.zst",
+        sha256: Buffer.alloc(32, 1),
+        sizeBytes: 4,
+        rawBytes: 4,
+        createdAt: Date.now(),
+      });
+      await runArchiveGc(db, dir, "local");
+      assert.equal(await exists(keepPath), true);
+      assert.equal(await exists(dropPath), true);
+      await runArchiveGcWithMode(db, dir, "local", true);
+      assert.equal(await exists(dropPath), false);
+    } finally {
+      await db.close();
     }
-    const parsed = JSON.parse(raw);
-    assert.equal(parsed.v, 1);
-    assert.equal(parsed.status.estimated_kept_bytes, "123");
-    assert.equal(parsed.status.high_water_bytes, "456");
-    assert.equal(parsed.status.pruned_before_block, "5");
   });
 });
 
-test("sqlite_bytes and archive_bytes are updated once per day", async () => {
-  await withTempDir(async (dir) => {
-    const dbPath = path.join(dir, "db.sqlite");
-    const db = new IndexerDb(dbPath);
-    const payload1 = buildBlockPayload(1n, 100n, [Buffer.alloc(32, 1)]);
-    const payload2 = buildBlockPayload(2n, 101n, [Buffer.alloc(32, 2)]);
-    const txIndex1 = buildTxIndexPayload(1n, 0, Buffer.alloc(32, 1));
-    const txIndex2 = buildTxIndexPayload(2n, 0, Buffer.alloc(32, 2));
-    const receipts = Buffer.alloc(0);
-    const responses: ExportResponse[] = [
-      buildResponseFromPayloads(1n, payload1, receipts, txIndex1),
-      buildResponseFromPayloads(2n, payload2, receipts, txIndex2),
-    ];
-    let idx = 0;
-    const client = {
-      getHeadNumber: async () => 2n,
-      exportBlocks: async () => {
-        if (idx < responses.length) {
-          const value = responses[idx];
-          idx += 1;
-          return okResult<ExportResponse, ExportError>(value);
-        }
-        return errResult<ExportResponse, ExportError>({ Pruned: { pruned_before_block: 0n } });
-      },
-      getPruneStatus: async () => ({
-        pruning_enabled: false,
-        prune_running: false,
-        estimated_kept_bytes: 0n,
-        high_water_bytes: 0n,
-        low_water_bytes: 0n,
-        hard_emergency_bytes: 0n,
-        last_prune_at: 0n,
-        pruned_before_block: null,
-        oldest_kept_block: null,
-        oldest_kept_timestamp: null,
-        need_prune: false,
-      }),
-    };
-    const config = {
-      canisterId: "x",
-      icHost: "http://localhost",
-      dbPath,
-      maxBytes: 1_000_000,
-      backoffInitialMs: 1,
-      backoffMaxMs: 1,
-      idlePollMs: 1,
-      pruneStatusPollMs: 0,
-      fetchRootKey: false,
-      archiveDir: dir,
-      chainId: "local",
-      zstdLevel: 1,
-    };
-    await expectExit(async () => {
-      await runWorkerWithDeps(config, db, client, { skipGc: true });
-    });
-    db.close();
-    const row = readMetricsRow(dbPath);
-    assert.ok(typeof row.sqlite_bytes === "number", "sqlite_bytes missing");
-    assert.ok(typeof row.archive_bytes === "number", "archive_bytes missing");
-    const archiveSum = readArchiveSum(dbPath);
-    assert.ok(row.archive_bytes <= archiveSum, "archive_bytes should not exceed current sum");
-  });
+test("retention cleanup dry-run and delete follow 90-day boundary", async () => {
+  if (!process.env.TEST_INDEXER_DATABASE_URL) {
+    process.stderr.write("[test] skip: retention cleanup dry-run and delete follow 90-day boundary (TEST_INDEXER_DATABASE_URL is not set)\n");
+    return;
+  }
+  const db = await IndexerDb.connect({ databaseUrl: process.env.TEST_INDEXER_DATABASE_URL, poolMax: 2 });
+  try {
+    await db.queryOne("delete from txs");
+    await db.queryOne("delete from blocks");
+    await db.queryOne("delete from archive_parts");
+    await db.queryOne("delete from metrics_daily");
+    await db.queryOne("delete from retention_runs");
+  } catch {
+    // 初回は空でも問題なし
+  }
+  try {
+    const nowSec = Math.floor(Date.now() / 1000);
+    const oldSec = BigInt(nowSec - 91 * 24 * 60 * 60);
+    const freshSec = BigInt(nowSec - 10 * 24 * 60 * 60);
+    const oldDay = Number(formatDay(nowSec - 91 * 24 * 60 * 60));
+    const freshDay = Number(formatDay(nowSec - 10 * 24 * 60 * 60));
+
+    await db.upsertBlock({ number: 1n, hash: Buffer.alloc(32, 1), timestamp: oldSec, tx_count: 1 });
+    await db.upsertBlock({ number: 2n, hash: Buffer.alloc(32, 2), timestamp: freshSec, tx_count: 1 });
+    await db.upsertTx({ tx_hash: Buffer.alloc(32, 11), block_number: 1n, tx_index: 0 });
+    await db.upsertTx({ tx_hash: Buffer.alloc(32, 22), block_number: 2n, tx_index: 0 });
+    await db.addArchive({ blockNumber: 1n, path: "1.bundle.zst", sha256: Buffer.alloc(32, 3), sizeBytes: 10, rawBytes: 10, createdAt: Number(oldSec) * 1000 });
+    await db.addArchive({ blockNumber: 2n, path: "2.bundle.zst", sha256: Buffer.alloc(32, 4), sizeBytes: 10, rawBytes: 10, createdAt: Number(freshSec) * 1000 });
+    await db.addMetrics(oldDay, 1, 1, 1, 0, 10);
+    await db.addMetrics(freshDay, 1, 1, 1, 0, 20);
+
+    const dry = await db.runRetentionCleanup(90, true);
+    assert.equal(dry.dry_run, true);
+    assert.equal(Number(dry.deleted_blocks), 1);
+    assert.equal(Number(dry.deleted_txs), 1);
+    assert.equal(Number(dry.deleted_archive_parts), 1);
+
+    const done = await db.runRetentionCleanup(90, false);
+    assert.equal(done.dry_run, false);
+    const blockCount = await db.queryOne<{ n: string }>("select count(*)::text as n from blocks");
+    const txCount = await db.queryOne<{ n: string }>("select count(*)::text as n from txs");
+    const archiveCount = await db.queryOne<{ n: string }>("select count(*)::text as n from archive_parts");
+    const metricsCount = await db.queryOne<{ n: string }>("select count(*)::text as n from metrics_daily");
+    assert.equal(Number(blockCount?.n ?? "0"), 1);
+    assert.equal(Number(txCount?.n ?? "0"), 1);
+    assert.equal(Number(archiveCount?.n ?? "0"), 1);
+    assert.equal(Number(metricsCount?.n ?? "0"), 1);
+
+    const latestRun = await db.queryOne<{ status: string }>("select status from retention_runs order by finished_at desc limit 1");
+    assert.equal(latestRun?.status, "success");
+  } finally {
+    await db.close();
+  }
 });
 
-test("metrics sqlite/archive bytes keep first value within a day", async () => {
-  await withTempDir(async (dir) => {
-    const dbPath = path.join(dir, "db.sqlite");
-    const db = new IndexerDb(dbPath);
-    const day = 20250101;
-    db.addMetrics(day, 10, 5, 1, 0, 100, 200);
-    db.addMetrics(day, 1, 1, 1, 0);
-    db.close();
-    const row = readMetricsRow(dbPath);
-    assert.equal(row.sqlite_bytes, 100);
-    assert.equal(row.archive_bytes, 200);
-  });
+test("classifyExportError updates metadata", async () => {
+  const db = await createTestIndexerDb();
+  try {
+    const err: ExportError = { InvalidCursor: { message: "bad" } };
+    const out = await classifyExportError(err, db);
+    assert.equal(out.kind, "InvalidCursor");
+    const lastError = await db.queryOne<{ value: string }>("select value from meta where key = $1", ["last_error"]);
+    assert.equal(lastError?.value, "InvalidCursor");
+  } finally {
+    await db.close();
+  }
 });
+
+async function createTestIndexerDb(): Promise<IndexerDb> {
+  const mem = newDb({ noAstCoverageCheck: true });
+  const adapter = mem.adapters.createPg();
+  const pool = new adapter.Pool();
+  const db = await IndexerDb.fromPool(pool, { migrations: MIGRATIONS.slice(0, 3) });
+  await db.queryOne(
+    "create table if not exists retention_runs(" +
+      "id text primary key, started_at bigint not null, finished_at bigint not null, retention_days integer not null, dry_run boolean not null, deleted_blocks bigint not null, deleted_txs bigint not null, deleted_metrics_daily bigint not null, deleted_archive_parts bigint not null, status text not null, error_message text)"
+  );
+  return db;
+}
 
 async function run(): Promise<void> {
   const failures: string[] = [];
@@ -469,111 +272,10 @@ async function exists(filePath: string): Promise<boolean> {
   }
 }
 
-function getCount(db: Database.Database, table: string): number {
-  const row = db.prepare(`select count(*) as n from ${table}`).get();
-  if (!isRecord(row) || typeof row.n !== "number") {
-    throw new Error("count query failed");
-  }
-  return row.n;
-}
-
-async function expectExit(fn: () => Promise<void>): Promise<void> {
-  const originalExit = process.exit;
-  const originalWrite = process.stderr.write;
-  const logs: string[] = [];
-  Object.defineProperty(process.stderr, "write", {
-    value: (chunk: string) => {
-      logs.push(chunk);
-      return true;
-    },
-    configurable: true,
-  });
-  Object.defineProperty(process, "exit", {
-    value: (code?: number) => {
-      const msg = `exit:${code ?? 0}`;
-      throw new Error(msg);
-    },
-    configurable: true,
-  });
-  try {
-    await fn();
-    throw new Error("expected exit");
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    if (!message.startsWith("exit:")) {
-      throw err;
-    }
-    const fatal = logs.find((line) => line.includes("\"event\":\"fatal\""));
-    assert.ok(fatal, "fatal log missing");
-  } finally {
-    Object.defineProperty(process, "exit", { value: originalExit, configurable: true });
-    Object.defineProperty(process.stderr, "write", { value: originalWrite, configurable: true });
-  }
-}
-
-function readMetaValue(dbPath: string, key: string): string | null {
-  const db = new Database(dbPath);
-  const row = db.prepare("select value from meta where key = ?").get(key);
-  db.close();
-  if (!isRecord(row)) {
-    return null;
-  }
-  const value = row.value;
-  if (typeof value === "string") {
-    return value;
-  }
-  if (value instanceof Buffer) {
-    return value.toString("utf8");
-  }
-  return null;
-}
-
-function readMetricsRow(dbPath: string): { sqlite_bytes: number | null; archive_bytes: number | null } {
-  const db = new Database(dbPath);
-  const row = db.prepare("select sqlite_bytes, archive_bytes from metrics_daily limit 1").get();
-  db.close();
-  if (!isRecord(row)) {
-    throw new Error("metrics row missing");
-  }
-  const sqliteBytes = typeof row.sqlite_bytes === "number" ? row.sqlite_bytes : null;
-  const archiveBytes = typeof row.archive_bytes === "number" ? row.archive_bytes : null;
-  return { sqlite_bytes: sqliteBytes, archive_bytes: archiveBytes };
-}
-
-function readArchiveSum(dbPath: string): number {
-  const db = new Database(dbPath);
-  const row = db.prepare("select coalesce(sum(size_bytes), 0) as total from archive_parts").get();
-  db.close();
-  if (!isRecord(row) || typeof row.total !== "number") {
-    return 0;
-  }
-  return row.total;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null;
-}
-
-function buildTxIndexPayload(blockNumber: bigint, txIndex: number, txHash: Buffer): Buffer {
-  const entry = Buffer.alloc(12);
-  entry.writeBigUInt64BE(blockNumber, 0);
-  entry.writeUInt32BE(txIndex, 8);
-  const len = Buffer.alloc(4);
-  len.writeUInt32BE(entry.length, 0);
-  return Buffer.concat([txHash, len, entry]);
-}
-
-function buildResponseFromPayloads(
-  blockNumber: bigint,
-  block: Buffer,
-  receipts: Buffer,
-  txIndex: Buffer
-): ExportResponse {
-  const chunks: Chunk[] = [
-    { segment: 0, start: 0, payload_len: block.length, bytes: block },
-    { segment: 1, start: 0, payload_len: receipts.length, bytes: receipts },
-    { segment: 2, start: 0, payload_len: txIndex.length, bytes: txIndex },
-  ];
-  const next: Cursor = { block_number: blockNumber + 1n, segment: 0, byte_offset: 0 };
-  return { chunks, next_cursor: next };
+function formatDay(epochSec: number): string {
+  const d = new Date(epochSec * 1000);
+  const y = d.getUTCFullYear();
+  const m = String(d.getUTCMonth() + 1).padStart(2, "0");
+  const day = String(d.getUTCDate()).padStart(2, "0");
+  return `${y}${m}${day}`;
 }

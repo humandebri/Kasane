@@ -4,7 +4,7 @@
     "module": "CommonJS",
     "moduleResolution": "Node",
     "lib": ["ES2022", "DOM"],
-    "types": ["node", "better-sqlite3"],
+    "types": ["node"],
     "outDir": "dist",
     "rootDir": "src",
     "strict": true,
