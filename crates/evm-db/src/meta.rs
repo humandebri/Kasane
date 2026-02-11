@@ -13,7 +13,7 @@ const META_MAGIC: [u8; 4] = *b"EVM0";
 const META_LAYOUT_VERSION: u32 = 2;
 const META_LEGACY_SIZE: usize = 40;
 const META_SIZE: usize = 64;
-pub const CURRENT_SCHEMA_VERSION: u32 = 4;
+pub const CURRENT_SCHEMA_VERSION: u32 = 5;
 #[allow(dead_code)]
 const META_SCHEMA_STRING: &str = "mem:0..4|keys:v2|ic_tx:rlp-fixed|merkle:v1|env:v1";
 // Keccak-256(META_SCHEMA_STRING)
