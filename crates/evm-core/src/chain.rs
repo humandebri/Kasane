@@ -1828,6 +1828,7 @@ pub fn get_tx_envelope(tx_id: &TxId) -> Option<StoredTxBytes> {
     with_state(|state| state.tx_store.get(tx_id))
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn execute_and_seal_with_caller(
     tx_id: TxId,
     kind: TxKind,
@@ -2602,6 +2603,7 @@ fn drop_invalid_fee_pending_decode(
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn drop_exec_pending_sync(state: &mut evm_db::stable_state::StableState, tx_id: TxId) {
     let has_pending = state.pending_meta_by_tx_id.get(&tx_id).is_some();
     let has_ready = state.ready_key_by_tx_id.get(&tx_id).is_some();
@@ -2621,11 +2623,13 @@ fn drop_exec_pending_sync(state: &mut evm_db::stable_state::StableState, tx_id: 
     state.metrics_state.set(metrics);
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 struct SyncFinalizeGuard {
     tx_id: TxId,
     active: bool,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl SyncFinalizeGuard {
     fn new(tx_id: TxId) -> Self {
         Self {
@@ -2639,6 +2643,7 @@ impl SyncFinalizeGuard {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl Drop for SyncFinalizeGuard {
     fn drop(&mut self) {
         if !self.active {

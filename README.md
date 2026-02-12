@@ -41,6 +41,78 @@
     - `version = 2`
     - `data_len` と `data` 実長が一致
   - 戻り値: `tx_id`（32 bytes, internal id）
+- `submit_ic_tx` の全体フロー（実装準拠）:
+  - フロントが `submit_ic_tx(blob)` を update call で呼ぶ。
+  - wrapper が `msg_caller()` と `canister_self()` を付与して core の `TxIn::IcSynthetic` に渡す。
+  - core が `IcSynthetic` としてデコード/fee/nonce を検証し、`tx_store`/queue/index に保存する。
+  - 戻り値は `tx_id` のみ（この時点では未実行）。
+  - `produce_block` がキューから取り出して実行し、`receipt` を永続化する。
+
+```mermaid
+flowchart TD
+  A["Frontend / Wallet"] -->|"update call: submit_ic_tx(blob)"| B["Wrapper (ic-evm-wrapper)"]
+  B -->|"attach: msg_caller + canister_self"| C["Core (evm-core::submit_ic_tx)"]
+  C -->|"decode + fee/nonce validation"| D["Persist: tx_store + queue + indexes"]
+  D -->|"return tx_id"| A
+  A -->|"optional/manual: produce_block(n)"| E["Block Production"]
+  E -->|"dequeue + execute EVM tx"| F["Persist receipt + block + tx_loc"]
+  A -->|"query get_pending/get_receipt"| F
+```
+
+- `submit_ic_tx` blob の詳細（IcSynthetic v2, Big Endian）:
+
+  | Field | Size (bytes) | 説明 |
+  | --- | ---: | --- |
+  | `version` | 1 | 固定 `2` |
+  | `to` | 20 | 宛先EVMアドレス |
+  | `value` | 32 | 送金量 (`uint256`) |
+  | `gas_limit` | 8 | gas上限 (`uint64`) |
+  | `nonce` | 8 | sender nonce (`uint64`) |
+  | `max_fee_per_gas` | 16 | EIP-1559 max fee (`uint128`) |
+  | `max_priority_fee_per_gas` | 16 | EIP-1559 tip (`uint128`) |
+  | `data_len` | 4 | `data` バイト長 (`uint32`) |
+  | `data` | `data_len` | calldata |
+
+- `from`（送信者）決定方法:
+  - `submit_ic_tx` では `from` を payload に含めない。
+  - 実行時の sender は `msg_caller()` の Principal から決定的に導出した `caller_evm`（20 bytes）を使う。
+  - 導出規則は `keccak256("ic-evm:caller_evm:v1" || principal_bytes)` の下位20bytes。
+  - このため同一 Principal なら同一 sender になり、nonce はこの sender 単位で管理される。
+
+```mermaid
+flowchart LR
+  P["Principal bytes (msg_caller)"] --> C["concat with domain: ic-evm:caller_evm:v1"]
+  C --> K["keccak256(32 bytes)"]
+  K --> L["take lower 20 bytes"]
+  L --> F["caller_evm (EVM sender)"]
+```
+
+- `submit_ic_tx` の送信前チェック（推奨）:
+  - `caller_evm` を Principal から導出
+  - `expected_nonce_by_address(caller_evm)` で nonce 取得
+  - `rpc_eth_estimate_gas_object(...)` で gas 見積り
+  - feeにバッファを乗せて `submit_ic_tx` を送信
+
+```mermaid
+sequenceDiagram
+  participant UI as Frontend
+  participant W as Wallet/Identity
+  participant C as EVM Canister
+
+  UI->>W: getPrincipal()
+  UI->>UI: derive caller_evm from principal
+  UI->>C: query expected_nonce_by_address(caller_evm)
+  C-->>UI: nonce
+  UI->>C: query rpc_eth_estimate_gas_object(call)
+  C-->>UI: gas_limit estimate
+  UI->>UI: set max_fee/max_priority (+buffer)
+  UI->>C: update submit_ic_tx(blob)
+  C-->>UI: tx_id
+```
+
+- `tx_id` の意味:
+  - `tx_id` は `raw + caller_evm + canister_id + caller_principal` を入力にした内部識別子。
+  - したがって `submit_ic_tx` の `tx_id` は `eth_tx_hash` とは別物で、追跡は `tx_id` を正とする。
 - `submit_ic_tx` 実行例（mainnet）:
 
 ```bash
