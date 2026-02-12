@@ -1,15 +1,17 @@
 //! どこで: wrapperのRPC補助層 / 何を: eth系参照ロジックを分離 / なぜ: canister entrypointの責務を薄くするため
 
-use evm_db::chain_data::{BlockData, ReceiptLike, StoredTx, StoredTxBytes, TxId, TxKind, TxLoc, TxLocKind};
+use evm_core::{chain, hash};
 use evm_db::chain_data::constants::CHAIN_ID;
+use evm_db::chain_data::{
+    BlockData, ReceiptLike, StoredTx, StoredTxBytes, TxId, TxKind, TxLoc, TxLocKind,
+};
 use evm_db::stable_state::with_state;
 use evm_db::types::keys::{make_account_key, make_code_key, make_storage_key};
-use evm_core::{chain, hash};
 use ic_evm_rpc_types::{
     DecodedTxView, EthBlockView, EthLogFilterView, EthLogItemView, EthLogsCursorView,
-    EthLogsPageView, EthReceiptView, EthTxListView, EthTxView, GetLogsErrorView,
+    EthLogsPageView, EthReceiptLogView, EthReceiptView, EthTxListView, EthTxView, GetLogsErrorView,
     RpcAccessListItemView, RpcBlockLookupView, RpcCallObjectView, RpcCallResultView, RpcErrorView,
-    RpcReceiptLookupView, SubmitTxError, TxKindView, EthReceiptLogView,
+    RpcReceiptLookupView, SubmitTxError, TxKindView,
 };
 use tracing::{error, warn};
 
@@ -34,7 +36,9 @@ const CODE_INTERNAL_UNEXPECTED: &str = "internal.unexpected";
 
 pub fn rpc_eth_get_block_by_number_with_status(number: u64, full_tx: bool) -> RpcBlockLookupView {
     if let Some(pruned) = prune_boundary_for_number(number) {
-        return RpcBlockLookupView::Pruned { pruned_before_block: pruned };
+        return RpcBlockLookupView::Pruned {
+            pruned_before_block: pruned,
+        };
     }
     let Some(block) = chain::get_block(number) else {
         return RpcBlockLookupView::NotFound;
@@ -174,16 +178,21 @@ pub fn rpc_eth_get_logs_paged(
     const DEFAULT_LIMIT: usize = 200;
     const MAX_LIMIT: usize = 2000;
     const MAX_BLOCK_SPAN: u64 = 1000;
+    const MAX_SCANNED_RECEIPTS: usize = 20_000;
 
     if filter.topic1.is_some() {
-        return Err(GetLogsErrorView::UnsupportedFilter("topic1 is not supported".to_string()));
+        return Err(GetLogsErrorView::UnsupportedFilter(
+            "topic1 is not supported".to_string(),
+        ));
     }
 
     let head = chain::get_head_number();
     let mut from = filter.from_block.unwrap_or(0);
     let mut to = filter.to_block.unwrap_or(head);
     if from > to {
-        return Err(GetLogsErrorView::InvalidArgument("from_block must be <= to_block".to_string()));
+        return Err(GetLogsErrorView::InvalidArgument(
+            "from_block must be <= to_block".to_string(),
+        ));
     }
     if to.saturating_sub(from) > MAX_BLOCK_SPAN {
         return Err(GetLogsErrorView::RangeTooLarge);
@@ -206,11 +215,15 @@ pub fn rpc_eth_get_logs_paged(
     }
 
     let address_filter = match filter.address {
-        Some(bytes) => Some(parse_address_20(bytes).ok_or_else(|| GetLogsErrorView::InvalidArgument("address must be 20 bytes".to_string()))?),
+        Some(bytes) => Some(parse_address_20(bytes).ok_or_else(|| {
+            GetLogsErrorView::InvalidArgument("address must be 20 bytes".to_string())
+        })?),
         None => None,
     };
     let topic0_filter = match filter.topic0 {
-        Some(bytes) => Some(parse_hash_32(bytes).ok_or_else(|| GetLogsErrorView::InvalidArgument("topic0 must be 32 bytes".to_string()))?),
+        Some(bytes) => Some(parse_hash_32(bytes).ok_or_else(|| {
+            GetLogsErrorView::InvalidArgument("topic0 must be 32 bytes".to_string())
+        })?),
         None => None,
     };
 
@@ -222,12 +235,15 @@ pub fn rpc_eth_get_logs_paged(
     }
 
     let mut out = Vec::new();
+    let mut scanned_receipts = 0usize;
     let mut start_block = from;
     let mut start_tx_index: usize = 0;
     let mut start_log_index: usize = 0;
     if let Some(c) = cursor {
         if c.block_number < from || c.block_number > to {
-            return Err(GetLogsErrorView::InvalidArgument("cursor out of range".to_string()));
+            return Err(GetLogsErrorView::InvalidArgument(
+                "cursor out of range".to_string(),
+            ));
         }
         start_block = c.block_number;
         start_tx_index = usize::try_from(c.tx_index).unwrap_or(0);
@@ -235,13 +251,34 @@ pub fn rpc_eth_get_logs_paged(
     }
 
     for number in start_block..=to {
-        let Some(block) = chain::get_block(number) else { continue; };
-        let tx_start = if number == start_block { start_tx_index } else { 0 };
+        let Some(block) = chain::get_block(number) else {
+            continue;
+        };
+        let tx_start = if number == start_block {
+            start_tx_index
+        } else {
+            0
+        };
         for (tx_pos, tx_id) in block.tx_ids.iter().enumerate().skip(tx_start) {
-            let Some(receipt) = chain::get_receipt(tx_id) else { continue; };
+            if scanned_receipts >= MAX_SCANNED_RECEIPTS {
+                return Ok(EthLogsPageView {
+                    items: out,
+                    next_cursor: cursor_after_scan_limit(number, tx_pos, block.tx_ids.len(), to),
+                });
+            }
+            let Some(receipt) = chain::get_receipt(tx_id) else {
+                continue;
+            };
+            scanned_receipts = scanned_receipts.saturating_add(1);
             let eth_tx_hash = chain::get_tx_envelope(tx_id)
                 .and_then(|envelope| StoredTx::try_from(envelope).ok())
-                .and_then(|stored| if stored.kind == TxKind::EthSigned { Some(hash::keccak256(&stored.raw).to_vec()) } else { None });
+                .and_then(|stored| {
+                    if stored.kind == TxKind::EthSigned {
+                        Some(hash::keccak256(&stored.raw).to_vec())
+                    } else {
+                        None
+                    }
+                });
             let log_start = if number == start_block && tx_pos == tx_start {
                 start_log_index
             } else {
@@ -266,7 +303,8 @@ pub fn rpc_eth_get_logs_paged(
                         next_cursor: Some(EthLogsCursorView {
                             block_number: number,
                             tx_index: u32::try_from(tx_pos).unwrap_or(u32::MAX),
-                            log_index: u32::try_from(log_index.saturating_add(1)).unwrap_or(u32::MAX),
+                            log_index: u32::try_from(log_index.saturating_add(1))
+                                .unwrap_or(u32::MAX),
                         }),
                     });
                 }
@@ -277,7 +315,12 @@ pub fn rpc_eth_get_logs_paged(
                     tx_hash: receipt.tx_id.0.to_vec(),
                     eth_tx_hash: eth_tx_hash.clone(),
                     address: address.to_vec(),
-                    topics: log.data.topics().iter().map(|topic| topic.as_slice().to_vec()).collect(),
+                    topics: log
+                        .data
+                        .topics()
+                        .iter()
+                        .map(|topic| topic.as_slice().to_vec())
+                        .collect(),
                     data: log.data.data.to_vec(),
                 });
             }
@@ -289,18 +332,58 @@ pub fn rpc_eth_get_logs_paged(
     })
 }
 
+fn cursor_after_scan_limit(
+    block_number: u64,
+    tx_index: usize,
+    tx_len: usize,
+    to_block: u64,
+) -> Option<EthLogsCursorView> {
+    let next_tx = tx_index.saturating_add(1);
+    if next_tx < tx_len {
+        return Some(EthLogsCursorView {
+            block_number,
+            tx_index: u32::try_from(next_tx).unwrap_or(u32::MAX),
+            log_index: 0,
+        });
+    }
+    let next_block = block_number.saturating_add(1);
+    if next_block <= to_block {
+        return Some(EthLogsCursorView {
+            block_number: next_block,
+            tx_index: 0,
+            log_index: 0,
+        });
+    }
+    None
+}
+
 fn chain_submit_error_to_code(err: &chain::ChainError) -> Option<(TxApiErrorKind, &'static str)> {
     match err {
-        chain::ChainError::TxTooLarge => Some((TxApiErrorKind::InvalidArgument, CODE_ARG_TX_TOO_LARGE)),
-        chain::ChainError::DecodeFailed => Some((TxApiErrorKind::InvalidArgument, CODE_ARG_DECODE_FAILED)),
-        chain::ChainError::UnsupportedTxKind => Some((TxApiErrorKind::InvalidArgument, CODE_ARG_UNSUPPORTED_TX_KIND)),
-        chain::ChainError::TxAlreadySeen => Some((TxApiErrorKind::Rejected, CODE_SUBMIT_TX_ALREADY_SEEN)),
+        chain::ChainError::TxTooLarge => {
+            Some((TxApiErrorKind::InvalidArgument, CODE_ARG_TX_TOO_LARGE))
+        }
+        chain::ChainError::DecodeFailed => {
+            Some((TxApiErrorKind::InvalidArgument, CODE_ARG_DECODE_FAILED))
+        }
+        chain::ChainError::UnsupportedTxKind => Some((
+            TxApiErrorKind::InvalidArgument,
+            CODE_ARG_UNSUPPORTED_TX_KIND,
+        )),
+        chain::ChainError::TxAlreadySeen => {
+            Some((TxApiErrorKind::Rejected, CODE_SUBMIT_TX_ALREADY_SEEN))
+        }
         chain::ChainError::InvalidFee => Some((TxApiErrorKind::Rejected, CODE_SUBMIT_INVALID_FEE)),
-        chain::ChainError::NonceTooLow => Some((TxApiErrorKind::Rejected, CODE_SUBMIT_NONCE_TOO_LOW)),
+        chain::ChainError::NonceTooLow => {
+            Some((TxApiErrorKind::Rejected, CODE_SUBMIT_NONCE_TOO_LOW))
+        }
         chain::ChainError::NonceGap => Some((TxApiErrorKind::Rejected, CODE_SUBMIT_NONCE_GAP)),
-        chain::ChainError::NonceConflict => Some((TxApiErrorKind::Rejected, CODE_SUBMIT_NONCE_CONFLICT)),
+        chain::ChainError::NonceConflict => {
+            Some((TxApiErrorKind::Rejected, CODE_SUBMIT_NONCE_CONFLICT))
+        }
         chain::ChainError::QueueFull => Some((TxApiErrorKind::Rejected, CODE_SUBMIT_QUEUE_FULL)),
-        chain::ChainError::SenderQueueFull => Some((TxApiErrorKind::Rejected, CODE_SUBMIT_SENDER_QUEUE_FULL)),
+        chain::ChainError::SenderQueueFull => {
+            Some((TxApiErrorKind::Rejected, CODE_SUBMIT_SENDER_QUEUE_FULL))
+        }
         chain::ChainError::PrincipalQueueFull => {
             Some((TxApiErrorKind::Rejected, CODE_SUBMIT_PRINCIPAL_QUEUE_FULL))
         }
@@ -351,7 +434,9 @@ fn call_object_to_input(call: RpcCallObjectView) -> Result<chain::CallObjectInpu
     if call.gas_price.is_some()
         && (call.max_fee_per_gas.is_some() || call.max_priority_fee_per_gas.is_some())
     {
-        return Err("gasPrice and maxFeePerGas/maxPriorityFeePerGas cannot be used together".to_string());
+        return Err(
+            "gasPrice and maxFeePerGas/maxPriorityFeePerGas cannot be used together".to_string(),
+        );
     }
     if call.max_priority_fee_per_gas.is_some() && call.max_fee_per_gas.is_none() {
         return Err("maxPriorityFeePerGas requires maxFeePerGas".to_string());
@@ -377,15 +462,21 @@ fn call_object_to_input(call: RpcCallObjectView) -> Result<chain::CallObjectInpu
     }
     if let Some(chain_id) = call.chain_id {
         if chain_id != CHAIN_ID {
-            return Err(format!("chainId mismatch: expected {CHAIN_ID}, got {chain_id}"));
+            return Err(format!(
+                "chainId mismatch: expected {CHAIN_ID}, got {chain_id}"
+            ));
         }
     }
     let to = match call.to {
-        Some(bytes) => Some(parse_address_20(bytes).ok_or_else(|| "to must be 20 bytes".to_string())?),
+        Some(bytes) => {
+            Some(parse_address_20(bytes).ok_or_else(|| "to must be 20 bytes".to_string())?)
+        }
         None => None,
     };
     let from = match call.from {
-        Some(bytes) => parse_address_20(bytes).ok_or_else(|| "from must be 20 bytes".to_string())?,
+        Some(bytes) => {
+            parse_address_20(bytes).ok_or_else(|| "from must be 20 bytes".to_string())?
+        }
         None => [0u8; 20],
     };
     let value = match call.value {
@@ -413,15 +504,18 @@ fn call_object_to_input(call: RpcCallObjectView) -> Result<chain::CallObjectInpu
     })
 }
 
-fn parse_access_list(items: Vec<RpcAccessListItemView>) -> Result<Vec<([u8; 20], Vec<[u8; 32]>)>, String> {
+fn parse_access_list(
+    items: Vec<RpcAccessListItemView>,
+) -> Result<Vec<([u8; 20], Vec<[u8; 32]>)>, String> {
     let mut out = Vec::with_capacity(items.len());
     for item in items {
-        let address =
-            parse_address_20(item.address).ok_or_else(|| "accessList.address must be 20 bytes".to_string())?;
+        let address = parse_address_20(item.address)
+            .ok_or_else(|| "accessList.address must be 20 bytes".to_string())?;
         let mut storage_keys = Vec::with_capacity(item.storage_keys.len());
         for key in item.storage_keys {
             storage_keys.push(
-                parse_hash_32(key).ok_or_else(|| "accessList.storageKeys[] must be 32 bytes".to_string())?,
+                parse_hash_32(key)
+                    .ok_or_else(|| "accessList.storageKeys[] must be 32 bytes".to_string())?,
             );
         }
         out.push((address, storage_keys));
@@ -442,7 +536,12 @@ fn find_eth_tx_id_by_eth_hash_bytes(eth_tx_hash: &[u8]) -> Option<TxId> {
 fn tx_to_view(tx_id: TxId) -> Option<EthTxView> {
     let envelope = chain::get_tx_envelope(&tx_id)?;
     let (block_number, tx_index) = match chain::get_tx_loc(&tx_id) {
-        Some(TxLoc { kind: TxLocKind::Included, block_number, tx_index, .. }) => (Some(block_number), Some(tx_index)),
+        Some(TxLoc {
+            kind: TxLocKind::Included,
+            block_number,
+            tx_index,
+            ..
+        }) => (Some(block_number), Some(tx_index)),
         _ => (None, None),
     };
     envelope_to_eth_view(envelope, block_number, tx_index)
@@ -472,24 +571,29 @@ fn envelope_to_eth_view(
         TxKind::IcSynthetic => stored.caller_evm.unwrap_or([0u8; 20]),
         TxKind::EthSigned => [0u8; 20],
     };
-    let decoded = if let Ok(decoded) = evm_core::tx_decode::decode_tx_view(kind, caller, &stored.raw) {
-        Some(DecodedTxView {
-            from: decoded.from.to_vec(),
-            to: decoded.to.map(|addr| addr.to_vec()),
-            nonce: decoded.nonce,
-            value: decoded.value.to_vec(),
-            input: decoded.input.into_owned(),
-            gas_limit: decoded.gas_limit,
-            gas_price: decoded.gas_price,
-            chain_id: decoded.chain_id,
-        })
-    } else {
-        None
-    };
+    let decoded =
+        if let Ok(decoded) = evm_core::tx_decode::decode_tx_view(kind, caller, &stored.raw) {
+            Some(DecodedTxView {
+                from: decoded.from.to_vec(),
+                to: decoded.to.map(|addr| addr.to_vec()),
+                nonce: decoded.nonce,
+                value: decoded.value.to_vec(),
+                input: decoded.input.into_owned(),
+                gas_limit: decoded.gas_limit,
+                gas_price: decoded.gas_price,
+                chain_id: decoded.chain_id,
+            })
+        } else {
+            None
+        };
 
     Some(EthTxView {
         hash: stored.tx_id.0.to_vec(),
-        eth_tx_hash: if kind == TxKind::EthSigned { Some(hash::keccak256(&stored.raw).to_vec()) } else { None },
+        eth_tx_hash: if kind == TxKind::EthSigned {
+            Some(hash::keccak256(&stored.raw).to_vec())
+        } else {
+            None
+        },
         caller_principal: if stored.caller_principal.is_empty() {
             None
         } else {
@@ -507,7 +611,13 @@ fn envelope_to_eth_view(
 fn receipt_to_eth_view(receipt: ReceiptLike) -> EthReceiptView {
     let eth_tx_hash = chain::get_tx_envelope(&receipt.tx_id)
         .and_then(|envelope| StoredTx::try_from(envelope).ok())
-        .and_then(|stored| if stored.kind == TxKind::EthSigned { Some(hash::keccak256(&stored.raw).to_vec()) } else { None });
+        .and_then(|stored| {
+            if stored.kind == TxKind::EthSigned {
+                Some(hash::keccak256(&stored.raw).to_vec())
+            } else {
+                None
+            }
+        });
     let base_log_index = base_log_index_for_receipt(&receipt);
     EthReceiptView {
         tx_hash: receipt.tx_id.0.to_vec(),
@@ -542,7 +652,10 @@ fn receipt_to_eth_view(receipt: ReceiptLike) -> EthReceiptView {
 
 fn base_log_index_for_receipt(receipt: &ReceiptLike) -> u32 {
     let Some(block) = chain::get_block(receipt.block_number) else {
-        warn!(block_number = receipt.block_number, "missing block for receipt log index");
+        warn!(
+            block_number = receipt.block_number,
+            "missing block for receipt log index"
+        );
         return 0;
     };
     let mut offset: u64 = 0;
@@ -551,7 +664,8 @@ fn base_log_index_for_receipt(receipt: &ReceiptLike) -> u32 {
             return u32::try_from(offset).unwrap_or(u32::MAX);
         }
         if let Some(prev_receipt) = chain::get_receipt(tx_id) {
-            offset = offset.saturating_add(u64::try_from(prev_receipt.logs.len()).unwrap_or(u64::MAX));
+            offset =
+                offset.saturating_add(u64::try_from(prev_receipt.logs.len()).unwrap_or(u64::MAX));
         }
     }
     warn!(
@@ -579,7 +693,13 @@ fn block_to_eth_view(block: BlockData, full_tx: bool) -> EthBlockView {
         }
         EthTxListView::Full(list)
     } else {
-        EthTxListView::Hashes(block.tx_ids.iter().map(|id| eth_hash_or_tx_id(*id)).collect())
+        EthTxListView::Hashes(
+            block
+                .tx_ids
+                .iter()
+                .map(|id| eth_hash_or_tx_id(*id))
+                .collect(),
+        )
     };
     EthBlockView {
         number: block.number,
@@ -609,14 +729,45 @@ fn receipt_lookup_status(tx_id: TxId) -> RpcReceiptLookupView {
         if loc.kind == TxLocKind::Included {
             if let Some(pruned) = pruned_before {
                 if loc.block_number <= pruned {
-                    return RpcReceiptLookupView::Pruned { pruned_before_block: pruned };
+                    return RpcReceiptLookupView::Pruned {
+                        pruned_before_block: pruned,
+                    };
                 }
             }
         }
         return RpcReceiptLookupView::NotFound;
     }
     if let Some(pruned) = pruned_before {
-        return RpcReceiptLookupView::PossiblyPruned { pruned_before_block: pruned };
+        return RpcReceiptLookupView::PossiblyPruned {
+            pruned_before_block: pruned,
+        };
     }
     RpcReceiptLookupView::NotFound
+}
+
+#[cfg(test)]
+mod tests {
+    use super::cursor_after_scan_limit;
+
+    #[test]
+    fn cursor_after_scan_limit_stays_in_block_when_txs_remain() {
+        let out = cursor_after_scan_limit(10, 3, 8, 20).expect("cursor");
+        assert_eq!(out.block_number, 10);
+        assert_eq!(out.tx_index, 4);
+        assert_eq!(out.log_index, 0);
+    }
+
+    #[test]
+    fn cursor_after_scan_limit_moves_to_next_block_at_tx_end() {
+        let out = cursor_after_scan_limit(10, 7, 8, 20).expect("cursor");
+        assert_eq!(out.block_number, 11);
+        assert_eq!(out.tx_index, 0);
+        assert_eq!(out.log_index, 0);
+    }
+
+    #[test]
+    fn cursor_after_scan_limit_returns_none_at_query_end() {
+        let out = cursor_after_scan_limit(20, 7, 8, 20);
+        assert!(out.is_none());
+    }
 }
