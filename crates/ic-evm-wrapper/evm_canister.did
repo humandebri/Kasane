@@ -82,6 +82,7 @@ type EthTxView = record {
   kind : TxKindView;
   block_number : opt nat64;
   eth_tx_hash : opt blob;
+  caller_principal : opt blob;
   decoded : opt DecodedTxView;
 };
 type ExportChunkView = record {
