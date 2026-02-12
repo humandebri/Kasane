@@ -89,6 +89,8 @@ const CODE_SUBMIT_SENDER_QUEUE_FULL: &str = "submit.sender_queue_full";
 #[cfg(test)]
 const CODE_SUBMIT_PRINCIPAL_QUEUE_FULL: &str = "submit.principal_queue_full";
 #[cfg(test)]
+const CODE_SUBMIT_DECODE_RATE_LIMITED: &str = "submit.decode_rate_limited";
+#[cfg(test)]
 const CODE_INTERNAL_UNEXPECTED: &str = "internal.unexpected";
 
 #[derive(Clone, Debug, CandidType, Deserialize)]
@@ -293,6 +295,7 @@ fn submit_reject_code(err: &chain::ChainError) -> Option<&'static str> {
         chain::ChainError::QueueFull => Some(CODE_SUBMIT_QUEUE_FULL),
         chain::ChainError::SenderQueueFull => Some(CODE_SUBMIT_SENDER_QUEUE_FULL),
         chain::ChainError::PrincipalQueueFull => Some(CODE_SUBMIT_PRINCIPAL_QUEUE_FULL),
+        chain::ChainError::DecodeRateLimited => Some(CODE_SUBMIT_DECODE_RATE_LIMITED),
         _ => None,
     }
 }
@@ -1956,6 +1959,10 @@ mod tests {
             (
                 ChainError::PrincipalQueueFull,
                 ("submit.principal_queue_full", false),
+            ),
+            (
+                ChainError::DecodeRateLimited,
+                ("submit.decode_rate_limited", false),
             ),
         ];
         for (input, (expected_code, expected_invalid_arg)) in table {

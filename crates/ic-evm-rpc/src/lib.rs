@@ -32,6 +32,7 @@ const CODE_SUBMIT_NONCE_CONFLICT: &str = "submit.nonce_conflict";
 const CODE_SUBMIT_QUEUE_FULL: &str = "submit.queue_full";
 const CODE_SUBMIT_SENDER_QUEUE_FULL: &str = "submit.sender_queue_full";
 const CODE_SUBMIT_PRINCIPAL_QUEUE_FULL: &str = "submit.principal_queue_full";
+const CODE_SUBMIT_DECODE_RATE_LIMITED: &str = "submit.decode_rate_limited";
 const CODE_INTERNAL_UNEXPECTED: &str = "internal.unexpected";
 
 pub fn rpc_eth_get_block_by_number_with_status(number: u64, full_tx: bool) -> RpcBlockLookupView {
@@ -386,6 +387,9 @@ fn chain_submit_error_to_code(err: &chain::ChainError) -> Option<(TxApiErrorKind
         }
         chain::ChainError::PrincipalQueueFull => {
             Some((TxApiErrorKind::Rejected, CODE_SUBMIT_PRINCIPAL_QUEUE_FULL))
+        }
+        chain::ChainError::DecodeRateLimited => {
+            Some((TxApiErrorKind::Rejected, CODE_SUBMIT_DECODE_RATE_LIMITED))
         }
         _ => None,
     }
