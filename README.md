@@ -1,14 +1,11 @@
 # EVM互換Canister開発プロジェクト計画書
 
-[![CI](https://github.com/humandebri/IC-OP/actions/workflows/ci.yml/badge.svg)](https://github.com/humandebri/IC-OP/actions/workflows/ci.yml)
 ![license](https://img.shields.io/badge/license-All%20Rights%20Reserved-critical)
-![canister](https://img.shields.io/badge/canister-evm__canister-1f6feb)
-![network](https://img.shields.io/badge/network-ic-2ea44f)
+[![canister](https://img.shields.io/badge/canister-4c52m--aiaaa--aaaam--agwwa--cai-1f6feb)](https://dashboard.internetcomputer.org/canister/4c52m-aiaaa-aaaam-agwwa-cai)
+[![network](https://img.shields.io/badge/network-ic-2ea44f)](https://dashboard.internetcomputer.org/)
 ![chain_id](https://img.shields.io/badge/chain--id-4801360-f59e0b)
 
-**Canister 名**: `evm_canister`  
 **Mainnet Canister ID (`ic`)**: `4c52m-aiaaa-aaaam-agwwa-cai`  
-**License**: `All Rights Reserved`
 
 ## 運用上の決定事項（2026-02-04）
 
@@ -24,7 +21,7 @@
   | API | 用途 | 同期性 | 戻り値 |
   | --- | --- | --- | --- |
   | submit_ic_tx | 後続ブロックで実行するためのキュー投入 | 非同期 | tx_id |
-  | submit_eth_tx | 後続ブロックで実行するためのキュー投入 | 非同期 | tx_id |
+  | rpc_eth_send_raw_transaction | 後続ブロックで実行するためのキュー投入 | 非同期 | tx_id |
 
 - submit系APIの返却コード（PR8）は `docs/specs/pr8-signature-boundary.md` を正本とする。
   - 主要コードは `README.md` にも掲載し、更新時は正本と同時に同期する。
@@ -32,7 +29,7 @@
 
   | 種別 | コード |
   | --- | --- |
-  | Ingress submit (`submit_eth_tx` / `submit_ic_tx` / `rpc_eth_send_raw_transaction`) | `arg.tx_too_large`, `arg.decode_failed`, `arg.unsupported_tx_kind`, `submit.tx_already_seen`, `submit.invalid_fee`, `submit.nonce_too_low`, `submit.nonce_gap`, `submit.nonce_conflict`, `submit.queue_full`, `submit.sender_queue_full`, `internal.unexpected` |
+  | Ingress submit (`submit_ic_tx` / `rpc_eth_send_raw_transaction`) | `arg.tx_too_large`, `arg.decode_failed`, `arg.unsupported_tx_kind`, `submit.tx_already_seen`, `submit.invalid_fee`, `submit.nonce_too_low`, `submit.nonce_gap`, `submit.nonce_conflict`, `submit.queue_full`, `submit.sender_queue_full`, `internal.unexpected` |
   | pre-submit guard（共通） | `auth.anonymous_forbidden`, `ops.write.needs_migration`, `ops.write.cycle_critical` |
   | pre-submit guard（`rpc_eth_send_raw_transaction` のみ） | `rpc.state_unavailable.corrupt_or_migrating` |
   | execute path（wrapper 側） | `exec.*` |
@@ -44,6 +41,78 @@
     - `version = 2`
     - `data_len` と `data` 実長が一致
   - 戻り値: `tx_id`（32 bytes, internal id）
+- `submit_ic_tx` の全体フロー（実装準拠）:
+  - フロントが `submit_ic_tx(blob)` を update call で呼ぶ。
+  - wrapper が `msg_caller()` と `canister_self()` を付与して core の `TxIn::IcSynthetic` に渡す。
+  - core が `IcSynthetic` としてデコード/fee/nonce を検証し、`tx_store`/queue/index に保存する。
+  - 戻り値は `tx_id` のみ（この時点では未実行）。
+  - `produce_block` がキューから取り出して実行し、`receipt` を永続化する。
+
+```mermaid
+flowchart TD
+  A["Frontend / Wallet"] -->|"update call: submit_ic_tx(blob)"| B["Wrapper (ic-evm-wrapper)"]
+  B -->|"attach: msg_caller + canister_self"| C["Core (evm-core::submit_ic_tx)"]
+  C -->|"decode + fee/nonce validation"| D["Persist: tx_store + queue + indexes"]
+  D -->|"return tx_id"| A
+  A -->|"optional/manual: produce_block(n)"| E["Block Production"]
+  E -->|"dequeue + execute EVM tx"| F["Persist receipt + block + tx_loc"]
+  A -->|"query get_pending/get_receipt"| F
+```
+
+- `submit_ic_tx` blob の詳細（IcSynthetic v2, Big Endian）:
+
+  | Field | Size (bytes) | 説明 |
+  | --- | ---: | --- |
+  | `version` | 1 | 固定 `2` |
+  | `to` | 20 | 宛先EVMアドレス |
+  | `value` | 32 | 送金量 (`uint256`) |
+  | `gas_limit` | 8 | gas上限 (`uint64`) |
+  | `nonce` | 8 | sender nonce (`uint64`) |
+  | `max_fee_per_gas` | 16 | EIP-1559 max fee (`uint128`) |
+  | `max_priority_fee_per_gas` | 16 | EIP-1559 tip (`uint128`) |
+  | `data_len` | 4 | `data` バイト長 (`uint32`) |
+  | `data` | `data_len` | calldata |
+
+- `from`（送信者）決定方法:
+  - `submit_ic_tx` では `from` を payload に含めない。
+  - 実行時の sender は `msg_caller()` の Principal から決定的に導出した `caller_evm`（20 bytes）を使う。
+  - 導出規則は `keccak256("ic-evm:caller_evm:v1" || principal_bytes)` の下位20bytes。
+  - このため同一 Principal なら同一 sender になり、nonce はこの sender 単位で管理される。
+
+```mermaid
+flowchart LR
+  P["Principal bytes (msg_caller)"] --> C["concat with domain: ic-evm:caller_evm:v1"]
+  C --> K["keccak256(32 bytes)"]
+  K --> L["take lower 20 bytes"]
+  L --> F["caller_evm (EVM sender)"]
+```
+
+- `submit_ic_tx` の送信前チェック（推奨）:
+  - `caller_evm` を Principal から導出
+  - `expected_nonce_by_address(caller_evm)` で nonce 取得
+  - `rpc_eth_estimate_gas_object(...)` で gas 見積り
+  - feeにバッファを乗せて `submit_ic_tx` を送信
+
+```mermaid
+sequenceDiagram
+  participant UI as Frontend
+  participant W as Wallet/Identity
+  participant C as EVM Canister
+
+  UI->>W: getPrincipal()
+  UI->>UI: derive caller_evm from principal
+  UI->>C: query expected_nonce_by_address(caller_evm)
+  C-->>UI: nonce
+  UI->>C: query rpc_eth_estimate_gas_object(call)
+  C-->>UI: gas_limit estimate
+  UI->>UI: set max_fee/max_priority (+buffer)
+  UI->>C: update submit_ic_tx(blob)
+  C-->>UI: tx_id
+```
+
+- `tx_id` の意味:
+  - `tx_id` は `raw + caller_evm + canister_id + caller_principal` を入力にした内部識別子。
+  - したがって `submit_ic_tx` の `tx_id` は `eth_tx_hash` とは別物で、追跡は `tx_id` を正とする。
 - `submit_ic_tx` 実行例（mainnet）:
 
 ```bash
@@ -70,12 +139,12 @@ print('; '.join(str(b) for b in tx))
 PY
 ) })"
 ```
-- `submit_eth_tx` の入力仕様（README要約）:
+- `rpc_eth_send_raw_transaction` の入力仕様（README要約）:
   - 引数: `blob`（署名済み Ethereum raw transaction の生バイト列）
   - 対応: Legacy(RLP), EIP-2930, EIP-1559
   - 非対応: EIP-4844(`0x03`), EIP-7702(`0x04`)
   - 戻り値: `tx_id`（32 bytes, internal id）
-- `submit_eth_tx` 実行例（mainnet）:
+- `rpc_eth_send_raw_transaction` 実行例（mainnet）:
 
 ```bash
 CANISTER_ID=4c52m-aiaaa-aaaam-agwwa-cai
@@ -93,14 +162,14 @@ RAW_TX_BYTES=$(cargo run -q -p ic-evm-core --features local-signer-bin --bin eth
   --nonce "0" \
   --chain-id "$CHAIN_ID")
 
-SUBMIT_OUT=$(icp canister call -e ic --identity "$IDENTITY" "$CANISTER_ID" submit_eth_tx "(vec { $RAW_TX_BYTES })")
+SUBMIT_OUT=$(icp canister call -e ic --identity "$IDENTITY" "$CANISTER_ID" rpc_eth_send_raw_transaction "(vec { $RAW_TX_BYTES })")
 echo "$SUBMIT_OUT"
 
 # 実行確定（manual mining）
 icp canister call -e ic --identity "$IDENTITY" "$CANISTER_ID" produce_block '(1:nat32)'
 ```
 
-- 詳細手順（`tx_id` 抽出と `get_receipt` まで）は `docs/api/submit_eth_tx_payload.md` を参照。
+- 詳細手順（`tx_id` 抽出と `get_receipt` まで）は `docs/api/rpc_eth_send_raw_transaction_payload.md` を参照。
 
 ### RPCハッシュ運用（2026-02-08）
 
@@ -119,11 +188,10 @@ icp canister call -e ic --identity "$IDENTITY" "$CANISTER_ID" produce_block '(1:
 
 ## 1.0 序論：プロジェクトのビジョンと全体戦略
 
-本プロジェクトは、Internet Computer Protocol (ICP) の独自のアーキテクチャを最大限に活用し、高性能かつユニークなEVM（Ethereum Virtual Machine）互換環境をcanister上に構築することをビジョンとして掲げます。従来のLayer 2（L2）ソリューションが主にスケーラビリティに焦点を当てる中、我々はICPの特性である同期的な関数呼び出しやcanister間のシームレスな連携能力を活かし、「ICPから呼び出して嬉しいEVM」という新たな価値を提供することを目指します。このアプローチは、単なるEthereumの拡張ではなく、ICPエコシステムとEVMエコシステムの双方に新たな可能性をもたらす戦略的選択です。
+本プロジェクトは、Internet Computer Protocol (ICP) の独自のアーキテクチャを最大限に活用し、高性能かつユニークなEVM（Ethereum Virtual Machine）互換環境をcanister上に構築することをビジョンとして掲げます。我々はICPの特性である同期的な関数呼び出しやcanister間のシームレスな連携能力を活かし、「ICPから呼び出して嬉しいEVM」という新たな価値を提供することを目指します。このアプローチは、単なるEthereumの拡張ではなく、ICPエコシステムとEVMエコシステムの双方に新たな可能性をもたらす戦略的選択です。
 このビジョンを実現するため、プロジェクト全体を導く基本方針として以下の3点を定めます。
-- 同期的なトランザクション体験の提供 プロジェクトの核となる価値は、EVMトランザクションをICP caninsterからの「同期的な関数呼び出し」として扱える点にあります。これにより、開発者はトランザクションを送信した後、その場で即座に実行結果（成功、失敗、返り値）を受け取ることが可能になります。この体験は、従来の非同期的なトランザクションモデルとは一線を画し、ICP上のワークフローや他canisterとの連携にEVMのロジックをシームレスに組み込むことを可能にします。この「その場で結果が分かるEVM」こそが、本プロジェクトが提供する最も強力な差別化要因です。
+- 同期的な開発体験の提供 プロジェクトの核となる価値は、ICP canister からEVM実行結果に到達する導線を明確に保つ点にあります。現行実装では `submit_*` は非同期のキュー投入であり、実行結果（成功、失敗、返り値）は `produce_block` 後に receipt/参照API で確認します。この運用により、従来の非同期モデルに比べて実行フェーズの観測点を明示しやすく、ICP上のワークフローや他canisterとの連携にEVMロジックを組み込みやすくなります。
 - RPCの戦略的ポジショニング 我々はHTTP JSON-RPCインターフェースを、敢えてEthereumノードの完全互換を目指すのではなく、「開発・デバッグ・外部ツール接続のための補助的なインターフェース」と位置づける戦略的判断を下します。このトレードオフにより、mempoolや複雑なフィルター機能といった実装負荷の高い仕様を意図的に後回しにし、開発リソースをプロジェクト独自の価値である同期実行体験の向上に集中させることができます。
-- 段階的なL2化 L1 Ethereumとの接続によるセキュリティ担保は、最終的な目標の一つですが、いきなり完全なOptimistic Rollupを目指すアプローチは取りません。代わりに、リスクと実装コストを管理しながら段階的にセキュリティを強化する現実的なロードマップを採用します。まずL1に状態を投稿する「アンカー」から始め、次に運営主体を信頼する「Trusted Bridge」で資産移動を実現します。そして、市場の要求とプロジェクトの成熟度に応じて、最終的に異議申し立てが可能な「Optimistic Rollup」へと進化させる選択肢を用意します。
 これらの戦略的アプローチは、プロジェクトを現実的かつ持続可能な形で推進するための羅針盤です。以降のセクションでは、この全体戦略に基づき、各開発フェーズにおける具体的な技術的決定と目標を詳述します。
 
 ## 2.0 Phase 0: 仕様凍結 — 将来の互換性を保証する不変の土台
@@ -176,7 +244,7 @@ icp canister call -e ic --identity "$IDENTITY" "$CANISTER_ID" produce_block '(1:
 
 ## 3.0 Phase 1: 実行基盤 — "同期Tx体験"の実現
 
-Phase 0で確立した不変の土台の上に、本プロジェクトの核となる価値「ICPからの同期的な関数呼び出しとしてのEVM実行」を技術的に実現するのがPhase 1です。このフェーズの主目的は、外部ツールとの接続を担うRPCインターフェースよりも先に、「その場で結果が分かるEVM」の実行基盤を構築することにあります。これにより、開発者はEVMコントラクトをあたかも通常のcanister関数のように呼び出すことができ、ユーザー体験を根本的に変える可能性が生まれます。
+Phase 0で確立した不変の土台の上に、submit/produceモデルでEVM実行を安定提供する基盤を技術的に実現するのがPhase 1です。このフェーズの主目的は、外部ツールとの接続を担うRPCインターフェースよりも先に、「投入→実行→参照」の導線を確立することにあります。これにより、開発者は canister ワークフローにEVM実行を組み込み、実行結果をreceipt/参照APIで追跡できるようになります。
 
 ### 3.1 技術アーキテクチャ：REVMとStable Structuresの統合
 
@@ -228,6 +296,51 @@ RPCインターフェースは、Internet Computerのアーキテクチャに準
     - pending/mempool関連: 本システムは即時実行モデルを基本とするため、pending状態の概念は適用しません。
     - eth_getLogs/filter関連: イベントログの効率的な検索には複雑なインデックス機構が必要となり、実装の「沼」に陥りやすいため、このフェーズでは見送ります。
 
+### 4.1.1 Ethereum JSON-RPC互換表（現行実装）
+
+以下は**現行実装時点**の互換状況です。ここは要約版であり、詳細と更新正本は `tools/rpc-gateway/README.md` を参照してください。
+
+| Method | Status | Current behavior | Limitation | Alternative/Note |
+| --- | --- | --- | --- | --- |
+| `eth_chainId` | Supported | チェーンIDを返す | なし | 固定値はヘッダーバッジ参照 |
+| `eth_blockNumber` | Supported | 最新ブロック番号を返す | なし | - |
+| `eth_syncing` | Supported | `false` を返す | 同期進捗オブジェクトは返さない | 即時実行モデル前提 |
+| `eth_getBlockByNumber` | Supported | ブロック参照を返す | 実装仕様に依存するフィールド簡略あり | `fullTx` の有無で返却形を切替 |
+| `eth_getTransactionByHash` | Supported | `eth_tx_hash` ベースで参照する | `tx_id` 直接参照ではない | canister側は `rpc_eth_get_transaction_by_eth_hash` |
+| `eth_getTransactionReceipt` | Supported | receipt を返す | `tx_id` 直接参照ではない | canister側は `rpc_eth_get_transaction_receipt_by_eth_hash` |
+| `eth_getBalance` | Partially supported | 残高取得に対応 | `latest` のみ | canister query でも取得可能 |
+| `eth_getCode` | Partially supported | コード取得に対応 | `latest` のみ | canister query でも取得可能 |
+| `eth_getStorageAt` | Partially supported | ストレージ取得に対応 | `latest` のみ | `slot` は QUANTITY / DATA(32bytes) を受理 |
+| `eth_call` | Partially supported | 読み取り実行に対応 | `latest` のみ、入力制約あり | revert時は `-32000` + `error.data` |
+| `eth_estimateGas` | Partially supported | call相当で見積り | `latest` のみ、入力制約あり | canister側 `rpc_eth_estimate_gas_object` |
+| `eth_sendRawTransaction` | Supported | 署名済みtxを投入し、返却 `tx_id` から `eth_tx_hash` を解決して `0x...` を返す | `eth_tx_hash` 解決不能時は `-32000` エラー返却 | canister側投入実体は `rpc_eth_send_raw_transaction` |
+| `eth_getLogs` | Not supported | `handlers.ts` にJSON-RPCハンドラがないため `method not found` | 完全な filter API は未提供 | canister側代替は `rpc_eth_get_logs_paged` |
+
+pending/mempool/filter WebSocket 系（例: `eth_newFilter`, `eth_getFilterChanges`, `eth_subscribe`）は、現行実装時点では `Not supported` です。理由は Phase 2 のスコープ（沼回避）による意図的な非対応です。
+
+本ドキュメントの互換表は JSON-RPC 層を対象とし、opcode 実行意味論の差分整理は現時点の対象外です。
+
+従来のEVMチェーンと異なる運用上の注意（現行実装時点）:
+- Pruning: 古い履歴は prune される可能性があり、範囲によっては参照RPCが `Pruned` / `PossiblyPruned` を返します。長期保管が必要な履歴は indexer 側で保持してください。
+- Timer駆動: 採掘とpruneは canister timer による定期実行を使います。`auto_mine_enabled=false` の間は `produce_block` の手動実行が必要です。
+- Finalityモデル: 本チェーンは単一シーケンサ前提で、`produce_block` 後のブロックはreorgを前提にしません（Ethereum L1の一般的なfork前提と異なる）。
+- Submit/Execute分離: `eth_sendRawTransaction` は投入（enqueue）であり、実行確定は後続の block production 後に反映されます。
+- `eth_sendRawTransaction` 戻り値: Gateway は canister `rpc_eth_send_raw_transaction` の返却 `tx_id` から `rpc_eth_get_transaction_by_tx_id` で `eth_tx_hash` を解決して返します。解決不能時は `-32000` エラーを返します。
+- `eth_getTransactionReceipt.logs[].logIndex`: ブロック内通番で返します。
+- ハッシュ運用: 内部主キー `tx_id` と外部互換 `eth_tx_hash` は別物です。外部連携は `eth_tx_hash` 系参照を使用してください。
+
+関連定数（現行実装値）:
+- mining 基本間隔: `DEFAULT_MINING_INTERVAL_MS = 5_000`（`crates/evm-db/src/chain_data/runtime_defaults.rs`）
+- cycle observer 間隔: `60s`（`crates/ic-evm-wrapper/src/lib.rs` の `set_timer_interval(Duration::from_secs(60), ...)`）
+- prune 基本間隔: `DEFAULT_PRUNE_TIMER_INTERVAL_MS = 3_600_000`（1時間）
+- prune 間隔の下限: `MIN_PRUNE_TIMER_INTERVAL_MS = 1_000`
+- prune 1tick上限: `DEFAULT_PRUNE_MAX_OPS_PER_TICK = 5_000`
+- prune 1tick最小: `MIN_PRUNE_MAX_OPS_PER_TICK = 1`
+- backoff 上限: `MAX_MINING_BACKOFF_MS = 300_000`, `MAX_PRUNE_BACKOFF_MS = 300_000`
+- 運用ルール: 上記の実値変更時は `crates/evm-db/src/chain_data/runtime_defaults.rs` と本READMEを同一PRで同期更新する。
+
+運用ルール: 互換表の更新正本は `tools/rpc-gateway/README.md` とし、メソッド追加・制約変更時は同一PRで本README要約と同期更新します。
+
 ### 4.2 Phase 2の合格条件
 
 このフェーズの成功は、外部ツールとの具体的な連携が機能するかどうかで判断されます。
@@ -236,109 +349,8 @@ RPCインターフェースは、Internet Computerのアーキテクチャに準
   - 接続したツールから、スマートコントラクトのdeploy、call（読み取り）、sendRawTransaction（書き込み）といった一連の基本操作が正常に完了すること。
 - 応答の決定性:
   - canisterが同一の状態にある限り、読み取り系のRPCリクエストに対して常に同一の応答を返すこと。
-内部的な実行基盤と外部との接続性が確立されたことで、このEVM環境は技術的に独立したチェーンとして機能するようになりました。次のステップでは、このチェーンの価値を外部のブロックチェーンエコシステム、特にL1 Ethereumと接続するためのブリッジ機能の開発に進みます。
+内部的な実行基盤と外部との接続性が確立されたことで、このEVM環境は技術的に独立したチェーンとして機能するようになりました。
 
-## 5.0 Phase 3: L1アンカーとTrusted Bridge — 外部との価値接続
+## 5.0 結論：Phase 0〜2 の到達点
 
-これまでのフェーズで構築してきたスタンドアロンのEVM環境を、L1 Ethereumエコシステムと接続し、具体的な資産移動を可能にする最初のステップがPhase 3です。このフェーズでは、完全なトラストレス性（信頼不要）を追求するのではなく、運営主体（DAOやマルチシグ）を信頼する「Trusted」モデルを意図的に採用します。これにより、技術的な複雑さを抑えつつ、実用性と安全性を両立させた形で、外部との価値の接続を実現します。
-このフェーズのスコープは明確に定義されています。中心となるのは、L2（本EVM canister）の状態を示すstate_root等を定期的にL1へ投稿するアンカー機能と、外部のRelayerを介して資産を移動させるTrusted Bridge機能です。Fault Proof（不正証明）のようなL1担保セキュリティの仕組みは、このフェーズの対象外です。
-
-### 5.1 アーキテクチャ概要
-
-Phase 3のアーキテクチャは、以下の主要コンポーネントで構成されます。
-- EVM canister: L2の実行環境本体。トランザクションを処理し、状態を更新します。
-- 外部Relayer: L1とL2のイベントを監視し、両チェーン間の通信を仲介するオフチェーンプロセス。
-- L1 Contracts: L1 Ethereum上にデプロイされるスマートコントラクト群（OutputOracle, L1BridgeVaultなど）。
-資産の移動プロセスは、入金（Deposit）と出金（Withdraw）で以下のように異なります。
-- Deposit Flow (L1 → L2):
-    1. ユーザーがL1上のL1BridgeVaultコントラクトのdeposit()関数を呼び出し、資産をロックします。
-    2. L1BridgeVaultはDepositInitiatedイベントを発行します。
-    3. Relayerがこのイベントを監視し、情報を取得します。
-    4. RelayerがEVM canisterのapply_deposit()関数を呼び出します。
-    5. EVM canisterはL2上で対応するWrapped Tokenをユーザーにミント（発行）します。
-- Withdraw Flow (L2 → L1):
-    1. ユーザーがL2上のL2Bridgeコントラクトのwithdraw()関数を呼び出し、Wrapped Tokenをバーン（焼却）します。
-    2. L2BridgeはWithdrawalInitiatedイベントを発行します（EVMログとして記録）。
-    3. RelayerがこのL2上のイベントを監視し、情報を取得します。
-    4. RelayerがL1上のL1BridgeVaultコントラクトのfinalizeWithdrawal()関数を呼び出します。
-    5. 検証後、L1BridgeVaultはロックされていた資産をユーザーに解放します。
-
-### 5.2 セキュリティモデルとガードレール
-
-本フェーズのセキュリティは、技術的な証明ではなく、運用体制によって担保される「DAO/マルチシグ運用担保」のTrustedモデルであることを明確に認識する必要があります。具体的には、出金の最終承認権限を持つRelayerやL1コントラクトの管理者（DAOやマルチシグ）の信頼性に依存します。
-この信頼モデルに伴うリスクを軽減するため、以下の必須のガードレール（安全装置）を実装します。
-- pause(): 緊急時にブリッジの機能（入出金）を一時停止させる機能。
-- withdrawal_daily_limit: 一定期間内に出金できる総額に上限を設け、大規模な資金流出リスクを抑制する。
-- token_allowlist: ブリッジが対応するトークンをホワイトリスト形式で管理し、予期せぬ資産の移動を防ぐ。
-- timelock: 管理者権限の変更や上限額の変更といった重要な操作に時間的な遅延を設け、コミュニティが事前に検知・対応する時間的猶予を確保する。
-
-### 5.3 Phase 3の合格条件
-
-このフェーズの完了は、L1との間で価値が実際に移動できるかによって判断されます。
-- 資産移動の実現: L1 Ethereumと本EVMチェーンとの間で、信頼モデル（trust前提）に基づき資産が双方向に移動できること。
-- 監視可能性の確保: L2の状態がL1アンカーコントラクトに定期的に投稿されることで、チェーンの活動が外部から透明性をもって監視可能であること。
-Trustedモデルによる外部エコシステムとの接続が成功した今、プロジェクトは実用的な価値を持つチェーンへと進化しました。次のステップとして、この信頼モデルをより強力なL1担保のセキュリティモデルへと進化させる、技術的に最も挑戦的な選択肢を検討します。
-
-## 6.0 Phase 4: Optimistic Rollup化 — L1担保セキュリティへの道
-
-このフェーズは、プロジェクトを「透明性の高い運営チェーン」から、L1 Ethereumのセキュリティによってその正当性が担保された真の「Optimistic Rollup」へと昇格させる、技術的に最も挑戦的かつ重要なステップです。Phase 4への移行は必須ではありませんが、これを実現すれば、運営主体への信頼を必要としない最高レベルのセキュリティをユーザーに提供できます。
-L1担保とは、以下の条件が満たされている状態を指します。
-1. 全てのトランザクションデータがL1に投稿（Data Availability）され、誰でもそれを基にL2の状態を再実行できる。
-2. L2からL1に投稿された不正な状態（出力）に対して、誰でも異議を申し立て（Challenge）、その確定を阻止できる。
-3. 異議申し立てが発生した場合、その正否はL1上のスマートコントラクトによって機械的に裁定される。
-
-### 6.1 主要コンポーネントと技術仕様
-
-Optimistic Rollupを実現するためには、以下の主要な技術コンポーネントが必要となります。
-- Data Availability (DA): BatchInboxというL1コントラクトを介して、L2のトランザクションデータをバッチとしてL1に投稿する仕組みです。これにより、L2の運営者がデータを隠蔽することが不可能になり、誰でも状態を検証するための入力データが保証されます。
-- Outbox: L2からの出金要求をマークルツリー（Merkle Tree）化し、そのルートハッシュをL1に投稿する仕組みです。ユーザーは、自身の出金要求がマークルツリーに含まれていることを証明（Merkle Proof）することで、L1で資産を引き出すことができます。
-- Fault Proof VM (FPVM): 不正を証明するための検証をL1上で行う仮想マシンです。EVM全体をL1でエミュレートするのはコストが高すぎるため、MIPSやRISC-Vのようなより単純なアーキテクチャのVMをL1上でエミュレートし、状態遷移の「1ステップ（1命令）」だけを検証できるようにします。FPVMには、Cannonフレームワークに類似したMIPS風の命令セットアーキテクチャを採用します。この選択は、より複雑なISAを導入するよりも、実装の現実性と確立された設計パターンの活用を優先するという、現実的なトレードオフに基づいています。
-- Dispute Game: 提案者（Proposer）と挑戦者（Challenger）が、不正な状態遷移が発生した箇所を特定するためのゲームです。両者は二分探索（バイセクション）の手法を用いて、数百万ステップの実行トレースの中から不正が発生した単一のステップを効率的に絞り込み、最終的にその1ステップをFPVMで裁定します。
-このフェーズでは、一度決定すると後方互換性を壊さずに変更することが極めて困難な仕様、いわゆる**「凍結ポイント」**が存在します。L1に投稿するbatchのエンコード形式や、L2の出力を要約するoutput_rootの定義などがこれにあたり、設計には細心の注意が必要です。
-
-### 6.2 Phase 4への移行判断
-
-plan.mdが示す通り、このフェーズへの移行は技術的な必然ではなく、「L1担保を名乗りたいか」という戦略的な判断に依存します。最高レベルのセキュリティとトラストレス性を追求し、主要なL2ソリューションと肩を並べることを目指すのであれば、この道は不可欠です。一方で、移行しない場合はPhase 3のTrustedモデルを維持し、DAOによるガバナンスや運用ガードレールをさらに強化することで、「透明性の高い運営チェーン」としての価値を訴求する代替案も存在します。
-この高難易度のフェーズを乗り越え、チェーンが技術的に完成した後は、その実用性を高め、開発者エコシステムを本格的に拡大するための最終フェーズへと移行します。
-
-## 7.0 Phase 5: プロダクト化 — 実用性とエコシステムの成熟
-
-Phase 4まででチェーンの技術的な完成度とセキュリティは最高レベルに達しましたが、それが直ちに「開発者に選ばれ、実際に使われるチェーン」になるわけではありません。Phase 5の目的は、パフォーマンス、RPC互換性、運用性、接続性といった実用的な側面をプロダクトレベルにまで引き上げ、開発者が定着し、エコシステムが自律的に成長するための土壌を整えることです。このフェーズは、「Phase 4で確立したOptimistic Rollupのセキュリティを損なうことなく、スループット、コスト、運用を現実的なものにする」という重要な役割を担います。
-
-### 7.1 主要な改善項目
-
-このフェーズでは、これまでの実装で意図的に後回しにしてきた課題や、実運用でボトルネックとなりうる箇所に焦点を当てて改善を行います。
-
-#### 7.1.1 パフォーマンス改善
-
-- 課題: Phase 1で導入した「全件走査」によるstate_root計算は、状態が大きくなるにつれてブロック生成の深刻なボトルネックとなります。
-- 施策: 状態の変更があった部分だけを効率的に計算に含める「差分マークルツリー（Incremental Merkle Tree）」を導入します。これにより、ステートルート計算のコストが状態全体のサイズに比例するO(N)から、変更点の数に比例するO(changes * log N)へと改善され、ブロック生成速度が劇的に向上します。
-
-#### 7.1.2 RPC互換性の拡張
-
-- 課題: Phase 2で実装したRPCは「最小セット」であり、多くの高度な開発者ツールやdAppは、より豊富なRPCメソッドを要求します。
-- 施策: eth_getLogs（イベントログのクエリ）やeth_feeHistoryといった、より多くのdAppやインフラツールが必要とするRPCメソッドを段階的に追加実装します。これにより、開発者は既存のEVMエコシステムのツールやライブラリをよりシームレスに利用できるようになります。
-
-#### 7.1.3 ブリッジの拡張
-
-- 課題: Phase 3で実装したブリッジは、単一のERC20トークンの移動を想定したTrusted Bridgeでした。
-- 施策: 複数トークンへの対応（token_allowlistの拡張）や、資産移動にとどまらない汎用的なメッセージをL1とL2間で送受信できる「汎用メッセージパッシング」機能へと拡張します。これにより、L1のコントラクトがL2のコントラクトを呼び出すといった、より高度なクロスチェーン連携が可能になります。
-
-#### 7.1.4 分散運用
-
-- 課題: プロジェクトが成功しトラフィックが増加すると、単一のcanisterがシーケンサーと実行の両方を担う現在のアーキテクチャでは限界を迎える可能性があります。
-- 施策: 将来的なスケーリング戦略として、役割ごとにcanisterを水平分割する構想を立てます。例えば、状態管理を専門とする「State Canister」、トランザクション実行を担う「Execution Canister」、RPCリクエストを処理する「RPC Gateway Canister」に分割することで、システム全体の負荷分散とスループット向上を目指します。
-
-#### 7.1.5 "ICPから呼べる価値"の製品化
-
-- 課題: submit/produceの二段階モデルは、導入初期に実行完了の扱いを誤りやすい場合があります。
-- 施策: submit_ic_tx + produce_block を中心に、SDK、サンプルdApp（会員証、決済、業務承認など）、レート制限や課金モデルのテンプレートを整備します。これにより、「ICPのワークフローとEVMの台帳機能を組み合わせる」といった具体的なユースケースを提示し、本プロジェクトならではの強みを具体的な「製品」として開発者に届けます。
-
-### 7.2 Phase 5の必要性
-
-Phase 4を完了した時点で、技術的には「L1担保のチェーン」として完成しているように見えるかもしれません。しかし、速度、RPC互換性、運用性、そして外部との接続性が弱いままでは、開発者は他の成熟したL2チェーンを選んでしまい、エコシステムは成長しません。したがって、現実に広く使われるチェーンを目指すのであれば、このPhase 5はプロジェクトの長期的な成功に不可欠な、ほぼ必須のフェーズと言えます。
-これまでのフェーズで概説した段階的な開発ロードマップは、技術的な堅牢性と市場での実用性を両立させるための戦略的なアプローチです。
-
-## 8.0 結論：段階的進化による持続可能なEVMエコシステムの構築
-
-本計画書は、Internet Computer Protocol (ICP) の上で独自のEVM互換canisterを構築するための、段階的かつ戦略的なロードマップを提示しました。この計画は、決定性の根幹を固める不変の土台（Phase 0）から始まり、我々の核となる価値である同期的実行体験（Phase 1）を実現し、その後、RPCインターフェース、Trusted Bridge、そしてL1担保のOptimistic Rollupへと、外部エコシステムとの接続性、セキュリティ、実用性を methodical に拡張していく意図的な道筋を描いています。このフェーズ化されたアプローチは、単なるタスクの羅列ではなく、複雑性を管理し、段階的に価値を提供し、最終的にICP上で回復力があり開発者中心のEVM環境を構築するための戦略的フレームワークです。我々が目指すのは、開発者に選ばれ、ユーザーに愛され、持続的に成長していくエコシステムの構築であり、本計画はそのための現実的かつ戦略的な道筋を示すものと確信しています。
+本計画書は、Internet Computer Protocol (ICP) 上で独自のEVM互換canisterを構築するために、Phase 0〜2までの方針と実装要点を整理したものです。決定性の土台（Phase 0）、同期実行体験の中核実装（Phase 1）、外部ツール接続のためのRPC層（Phase 2）を段階的に整備することで、基盤機能と開発者体験の両立を図ります。以降の拡張計画は本READMEのスコープ外とし、必要に応じて別ドキュメントで管理します。

@@ -25,7 +25,7 @@ async function runDbTests(): Promise<void> {
   const mem = newDb({ noAstCoverageCheck: true });
   mem.public.none(`
     CREATE TABLE blocks(number bigint primary key, hash bytea, timestamp bigint not null, tx_count integer not null);
-    CREATE TABLE txs(tx_hash bytea primary key, block_number bigint not null, tx_index integer not null);
+    CREATE TABLE txs(tx_hash bytea primary key, block_number bigint not null, tx_index integer not null, caller_principal bytea);
   `);
 
   const adapter = mem.adapters.createPg();
@@ -33,7 +33,12 @@ async function runDbTests(): Promise<void> {
   setExplorerPool(pool);
   await pool.query("INSERT INTO blocks(number, hash, timestamp, tx_count) VALUES($1, $2, $3, $4)", [12, Buffer.from("aa", "hex"), 1000, 1]);
   await pool.query("INSERT INTO blocks(number, hash, timestamp, tx_count) VALUES($1, $2, $3, $4)", [11, Buffer.from("bb", "hex"), 900, 1]);
-  await pool.query("INSERT INTO txs(tx_hash, block_number, tx_index) VALUES($1, $2, $3)", [Buffer.from("1122", "hex"), 12, 0]);
+  await pool.query("INSERT INTO txs(tx_hash, block_number, tx_index, caller_principal) VALUES($1, $2, $3, $4)", [
+    Buffer.from("1122", "hex"),
+    12,
+    0,
+    null,
+  ]);
 
   const head = await getMaxBlockNumber();
   assert.equal(head, 12n);

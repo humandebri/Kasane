@@ -51,6 +51,14 @@ impl OpsConfigV1 {
             freeze_on_critical: true,
         }
     }
+
+    fn fail_closed() -> Self {
+        Self {
+            low_watermark: u128::MAX,
+            critical: u128::MAX,
+            freeze_on_critical: true,
+        }
+    }
 }
 
 impl Default for OpsConfigV1 {
@@ -67,7 +75,7 @@ impl Storable for OpsConfigV1 {
         out[32] = u8::from(self.freeze_on_critical);
         match encode_guarded(b"ops_config", Cow::Owned(out.to_vec()), OPS_CONFIG_SIZE_U32) {
             Ok(value) => value,
-            Err(_) => Cow::Owned(vec![0u8; OPS_CONFIG_SIZE_U32 as usize]),
+            Err(_) => panic!("ops_config: fixed-size encode failed"),
         }
     }
 
@@ -78,8 +86,8 @@ impl Storable for OpsConfigV1 {
     fn from_bytes(bytes: Cow<'_, [u8]>) -> Self {
         let data = bytes.as_ref();
         if data.len() != OPS_CONFIG_SIZE_U32 as usize {
-            mark_decode_failure(b"ops_config", false);
-            return Self::new();
+            mark_decode_failure(b"ops_config", true);
+            return Self::fail_closed();
         }
         let mut low = [0u8; 16];
         low.copy_from_slice(&data[0..16]);
@@ -116,6 +124,15 @@ impl OpsStateV1 {
             safe_stop_latched: false,
         }
     }
+
+    fn fail_closed() -> Self {
+        Self {
+            last_cycle_balance: 0,
+            last_check_ts: 0,
+            mode: OpsMode::Critical,
+            safe_stop_latched: true,
+        }
+    }
 }
 
 impl Default for OpsStateV1 {
@@ -133,7 +150,7 @@ impl Storable for OpsStateV1 {
         out[25] = u8::from(self.safe_stop_latched);
         match encode_guarded(b"ops_state", Cow::Owned(out.to_vec()), OPS_STATE_SIZE_U32) {
             Ok(value) => value,
-            Err(_) => Cow::Owned(vec![0u8; OPS_STATE_SIZE_U32 as usize]),
+            Err(_) => panic!("ops_state: fixed-size encode failed"),
         }
     }
 
@@ -144,8 +161,8 @@ impl Storable for OpsStateV1 {
     fn from_bytes(bytes: Cow<'_, [u8]>) -> Self {
         let data = bytes.as_ref();
         if data.len() != OPS_STATE_SIZE_U32 as usize {
-            mark_decode_failure(b"ops_state", false);
-            return Self::new();
+            mark_decode_failure(b"ops_state", true);
+            return Self::fail_closed();
         }
         let mut cycle_balance = [0u8; 16];
         cycle_balance.copy_from_slice(&data[0..16]);

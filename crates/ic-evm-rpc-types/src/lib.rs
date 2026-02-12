@@ -205,6 +205,7 @@ pub struct EthBlockView {
 pub struct EthTxView {
     pub hash: Vec<u8>,
     pub eth_tx_hash: Option<Vec<u8>>,
+    pub caller_principal: Option<Vec<u8>>,
     pub kind: TxKindView,
     pub raw: Vec<u8>,
     pub decoded: Option<DecodedTxView>,
@@ -238,7 +239,15 @@ pub struct EthReceiptView {
     pub operator_fee: u128,
     pub total_fee: u128,
     pub contract_address: Option<Vec<u8>>,
-    pub logs: Vec<LogView>,
+    pub logs: Vec<EthReceiptLogView>,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize)]
+pub struct EthReceiptLogView {
+    pub address: Vec<u8>,
+    pub topics: Vec<Vec<u8>>,
+    pub data: Vec<u8>,
+    pub log_index: u32,
 }
 
 #[derive(Clone, Debug, CandidType, Deserialize)]

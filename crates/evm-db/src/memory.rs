@@ -66,6 +66,7 @@ pub enum AppMemoryId {
     PendingFeeIndex = 54,
     PendingFeeKeyByTxId = 55,
     ReadyBySeq = 56,
+    EthTxHashIndex = 57,
 }
 
 impl AppMemoryId {
@@ -128,6 +129,7 @@ impl AppMemoryId {
             AppMemoryId::PendingFeeIndex => 54,
             AppMemoryId::PendingFeeKeyByTxId => 55,
             AppMemoryId::ReadyBySeq => 56,
+            AppMemoryId::EthTxHashIndex => 57,
         }
     }
 

@@ -30,6 +30,25 @@ scripts/build_wasm_postprocess.sh
 
 両方とも最終成果物として `ic_evm_wrapper.final.wasm` を使用する。
 
+## ci-local モード運用（2026-02）
+`scripts/ci-local.sh` は責務分離のため、モードで実行範囲を切り替える。
+
+- `CI_LOCAL_MODE=github`
+  - `.github/workflows/ci.yml` 相当のチェックのみ実行する。
+  - 失敗ログは `[phase=github]` で始まる。
+- `CI_LOCAL_MODE=smoke`
+  - ローカル統合スモーク（deploy/seed/indexer検証）だけ実行する。
+  - 失敗ログは `[phase=smoke]` で始まる。
+- `CI_LOCAL_MODE=all`（既定）
+  - `github` → `smoke` の順で両方実行する。
+- `CI_LOCAL_SKIP_TOOL_INSTALL=1`（任意）
+  - `github` フェーズで `cargo-deny` / `cargo-audit` の自動インストールを行わない。
+  - その場合、ツール未導入なら即失敗する。
+
+使い分け:
+- GitHub CI失敗の再現を優先する場合は `CI_LOCAL_MODE=github`。
+- canister接続やindexer挙動のローカル検証は `CI_LOCAL_MODE=smoke`。
+
 ## WASIスタブ化 (`--stub-wasi`) について
 - スクリプトは `ENABLE_STUB_WASI=1` を受け付ける。
 - ただし `ic-wasm` 側が `--stub-wasi` をサポートしていない場合は失敗させる。

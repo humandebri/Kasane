@@ -4,6 +4,7 @@
 # why: "設計は正しいが実接続で死ぬ"事故を最短で潰すため
 set -euo pipefail
 source "$(dirname "$0")/lib_init_args.sh"
+source "$(dirname "$0")/lib_candid_result.sh"
 
 NETWORK="${NETWORK:-local}"
 CANISTER_NAME="${CANISTER_NAME:-evm_canister}"
@@ -210,7 +211,7 @@ submit_ic_tx_with_retry() {
     rc=$?
     set -e
 
-    if [[ "${rc}" -eq 0 ]] && grep -q "variant { Ok" <<<"${out}"; then
+    if [[ "${rc}" -eq 0 ]] && candid_is_ok "${out}"; then
       log "submit_ic_tx(nonce=${nonce}) accepted"
       return 0
     fi
@@ -249,7 +250,7 @@ produce_seed_block() {
   local nonce="$1"
   local out
   out=$("${ICP_CANISTER_CALL[@]}" "${CANISTER_NAME}" produce_block '(1)' 2>&1)
-  if ! grep -q "variant { Ok" <<<"${out}"; then
+  if ! candid_is_ok "${out}"; then
     echo "[local-indexer-smoke] seed failed: produce_block after nonce=${nonce} did not return Ok" >&2
     echo "[local-indexer-smoke] produce_block output: ${out}" >&2
     return 1

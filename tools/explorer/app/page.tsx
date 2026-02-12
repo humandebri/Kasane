@@ -109,6 +109,7 @@ export default async function HomePage() {
                 <TableHead>Tx Hash</TableHead>
                 <TableHead>Block</TableHead>
                 <TableHead>Index</TableHead>
+                <TableHead>Caller Principal</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -121,6 +122,7 @@ export default async function HomePage() {
                   </TableCell>
                   <TableCell>{tx.blockNumber.toString()}</TableCell>
                   <TableCell>{tx.txIndex}</TableCell>
+                  <TableCell className="font-mono">{tx.callerPrincipalText ?? "-"}</TableCell>
                 </TableRow>
               ))}
             </TableBody>

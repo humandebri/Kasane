@@ -1,13 +1,13 @@
-## submit_eth_tx の `blob` 仕様
+## rpc_eth_send_raw_transaction の `blob` 仕様
 
-このドキュメントは、`submit_eth_tx` に渡す `blob`（Ethereum signed raw transaction）の作り方と、
+このドキュメントは、`rpc_eth_send_raw_transaction` に渡す `blob`（Ethereum signed raw transaction）の作り方と、
 `submit -> produce_block -> get_receipt` までの確認手順を示します。  
-正本実装は `/Users/0xhude/Desktop/ICP/IC-OP/crates/evm-core/src/tx_decode.rs` と
-`/Users/0xhude/Desktop/ICP/IC-OP/crates/ic-evm-wrapper/src/lib.rs` です。
+正本実装は `/Users/0xhude/Desktop/ICP/Kasane/crates/evm-core/src/tx_decode.rs` と
+`/Users/0xhude/Desktop/ICP/Kasane/crates/ic-evm-wrapper/src/lib.rs` です。
 
 ### 1) 入力仕様
 
-`submit_eth_tx(raw_tx: blob)` の `raw_tx` は、署名済み Ethereum transaction の生バイト列です。
+`rpc_eth_send_raw_transaction(raw_tx: blob)` の `raw_tx` は、署名済み Ethereum transaction の生バイト列です。
 
 - 形式: RLP（Legacy）または Typed Tx（EIP-2930 / EIP-1559）
 - 署名: 必須
@@ -18,7 +18,7 @@
 ### 2) 実行例（mainnet）
 
 以下は `icp` での実行例です。  
-`ic-evm-core` の `eth_raw_tx` ヘルパーで raw tx を作り、`submit_eth_tx` に渡します。
+`ic-evm-core` の `eth_raw_tx` ヘルパーで raw tx を作り、`rpc_eth_send_raw_transaction` に渡します。
 
 ```bash
 CANISTER_ID=4c52m-aiaaa-aaaam-agwwa-cai
@@ -39,14 +39,14 @@ RAW_TX_BYTES=$(cargo run -q -p ic-evm-core --features local-signer-bin --bin eth
   --nonce "0" \
   --chain-id "$CHAIN_ID")
 
-# submit_eth_tx 実行（戻り値は tx_id: blob）
-SUBMIT_OUT=$(icp canister call -e ic --identity "$IDENTITY" "$CANISTER_ID" submit_eth_tx "(vec { $RAW_TX_BYTES })")
+# rpc_eth_send_raw_transaction 実行（戻り値は tx_id: blob）
+SUBMIT_OUT=$(icp canister call -e ic --identity "$IDENTITY" "$CANISTER_ID" rpc_eth_send_raw_transaction "(vec { $RAW_TX_BYTES })")
 echo "$SUBMIT_OUT"
 ```
 
 ### 3) tx_id を取り出して receipt を確認
 
-`submit_eth_tx` の戻り値 `Ok : blob` から `tx_id` を抽出し、`get_receipt` に渡します。
+`rpc_eth_send_raw_transaction` の戻り値 `Ok : blob` から `tx_id` を抽出し、`get_receipt` に渡します。
 
 ```bash
 TX_ID_BYTES=$(python - "$SUBMIT_OUT" <<'PY'
@@ -54,7 +54,7 @@ import re, sys
 text = sys.argv[1]
 m = re.search(r'variant\s*\{\s*(?:ok|Ok)\s*=\s*blob\s*\"([^\"]*)\"', text)
 if not m:
-    raise SystemExit("failed to parse tx_id blob from submit_eth_tx output")
+    raise SystemExit("failed to parse tx_id blob from rpc_eth_send_raw_transaction output")
 s = m.group(1)
 out = bytearray()
 i = 0
@@ -83,7 +83,7 @@ icp canister call -e ic --identity "$IDENTITY" "$CANISTER_ID" get_receipt "(vec 
 
 ### 4) 注意点
 
-- `submit_eth_tx` はキュー投入のみで、実行確定は `produce_block`（または auto mine）後です。
+- `rpc_eth_send_raw_transaction` はキュー投入のみで、実行確定は `produce_block`（または auto mine）後です。
 - `nonce` は送信元アドレスごとに整合させてください。  
   必要なら `expected_nonce_by_address(blob_address_20bytes)` で事前確認します。
-- `eth_tx_hash` を即時に取得したい場合は `rpc_eth_send_raw_transaction` の利用を検討してください。
+- `eth_tx_hash` は `rpc_eth_send_raw_transaction` の戻り値ではなく、必要に応じて参照系RPCで取得してください。

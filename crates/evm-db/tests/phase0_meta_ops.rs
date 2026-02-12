@@ -1,6 +1,6 @@
 //! どこで: Phase0テスト / 何を: Meta互換読込とOps storableの復元確認 / なぜ: upgrade時の退行を防ぐため
 
-use evm_db::chain_data::{OpsConfigV1, OpsMode, OpsStateV1, TxLoc};
+use evm_db::chain_data::{CallerKey, OpsConfigV1, OpsMode, OpsStateV1, TxLoc};
 use evm_db::meta::{needs_migration, Meta, SchemaMigrationPhase, SchemaMigrationState};
 use evm_db::stable_state::init_stable_state;
 use ic_stable_structures::Storable;
@@ -67,6 +67,35 @@ fn ops_config_roundtrip() {
     };
     let decoded = OpsConfigV1::from_bytes(Cow::Owned(config.to_bytes().into_owned()));
     assert_eq!(decoded, config);
+}
+
+#[test]
+fn ops_state_invalid_len_sets_needs_migration() {
+    init_stable_state();
+    assert!(!needs_migration());
+    let decoded = OpsStateV1::from_bytes(Cow::Owned(vec![0u8; 1]));
+    assert_eq!(decoded.mode, OpsMode::Critical);
+    assert!(decoded.safe_stop_latched);
+    assert!(needs_migration());
+}
+
+#[test]
+fn ops_config_invalid_len_sets_needs_migration() {
+    init_stable_state();
+    assert!(!needs_migration());
+    let decoded = OpsConfigV1::from_bytes(Cow::Owned(vec![0u8; 1]));
+    assert_eq!(decoded.critical, u128::MAX);
+    assert_eq!(decoded.low_watermark, u128::MAX);
+    assert!(needs_migration());
+}
+
+#[test]
+fn caller_key_invalid_len_sets_needs_migration() {
+    init_stable_state();
+    assert!(!needs_migration());
+    let decoded = CallerKey::from_bytes(Cow::Owned(vec![0u8; 1]));
+    assert_eq!(decoded.0, [0u8; 30]);
+    assert!(needs_migration());
 }
 
 #[test]

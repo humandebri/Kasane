@@ -31,7 +31,7 @@ export type EthReceiptView = {
   status: number;
   l1_data_fee: bigint;
   tx_index: number;
-  logs: Array<{ data: Uint8Array; topics: Uint8Array[]; address: Uint8Array }>;
+  logs: Array<{ data: Uint8Array; topics: Uint8Array[]; address: Uint8Array; log_index: number }>;
   total_fee: bigint;
   block_number: bigint;
   operator_fee: bigint;
@@ -75,6 +75,11 @@ export type CallObjectResult = {
   return_data: Uint8Array;
   revert_data: [] | [Uint8Array];
 };
+export type OpsStatusView = {
+  needs_migration: boolean;
+  critical_corrupt: boolean;
+  schema_version: number;
+};
 type CallResult = { Ok: CallObjectResult } | { Err: RpcErrorView };
 
 type Methods = {
@@ -82,6 +87,7 @@ type Methods = {
   rpc_eth_block_number: () => Promise<bigint>;
   rpc_eth_get_block_by_number: (number: bigint, fullTx: boolean) => Promise<[] | [EthBlockView]>;
   rpc_eth_get_transaction_by_eth_hash: (ethTxHash: Uint8Array) => Promise<[] | [EthTxView]>;
+  rpc_eth_get_transaction_by_tx_id: (txId: Uint8Array) => Promise<[] | [EthTxView]>;
   rpc_eth_get_transaction_receipt_by_eth_hash: (ethTxHash: Uint8Array) => Promise<[] | [EthReceiptView]>;
   rpc_eth_get_balance: (address: Uint8Array) => Promise<TextResult>;
   rpc_eth_get_code: (address: Uint8Array) => Promise<TextResult>;
@@ -90,6 +96,7 @@ type Methods = {
   rpc_eth_estimate_gas_object: (call: CallObject) => Promise<Nat64Result>;
   rpc_eth_call_rawtx: (rawTx: Uint8Array) => Promise<TextResult>;
   rpc_eth_send_raw_transaction: (rawTx: Uint8Array) => Promise<SendResult>;
+  get_ops_status: () => Promise<OpsStatusView>;
 };
 
 let actorPromise: Promise<Methods> | null = null;

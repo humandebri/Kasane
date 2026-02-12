@@ -36,9 +36,8 @@ pub fn mark_decode_failure(label: &'static [u8], fail_closed: bool) {
 }
 
 // fail-closed policy:
-// - true is allowed only for core ledger integrity payloads.
-// - config/ops/prune auxiliary payloads must stay fail-open to avoid whole-write freeze
-//   on minor operational decode issues.
+// - ledger整合性に加えて運用ガード系（ops/caller）も fail-closed に倒す。
+// - needs_migration を立て、制御プレーン介入までデータプレーン更新を停止させる。
 fn is_fail_closed_label(label: &'static [u8]) -> bool {
     label == b"state_root_meta"
         || label == b"receipt"
@@ -49,6 +48,9 @@ fn is_fail_closed_label(label: &'static [u8]) -> bool {
         || label == b"tx_id"
         || label == b"stored_tx_decode"
         || label == b"tx_index"
+        || label == b"ops_config"
+        || label == b"ops_state"
+        || label == b"caller_key"
 }
 
 #[cfg(test)]
@@ -66,10 +68,18 @@ mod tests {
     }
 
     #[test]
-    fn fail_closed_unknown_label_does_not_set_needs_migration() {
+    fn fail_closed_ops_config_sets_needs_migration() {
         init_stable_state();
         assert!(!needs_migration());
         mark_decode_failure(b"ops_config", true);
+        assert!(needs_migration());
+    }
+
+    #[test]
+    fn fail_closed_unknown_label_does_not_set_needs_migration() {
+        init_stable_state();
+        assert!(!needs_migration());
+        mark_decode_failure(b"unknown", true);
         assert!(!needs_migration());
     }
 }

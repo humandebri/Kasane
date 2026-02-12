@@ -6,14 +6,14 @@ use evm_core::chain;
 use evm_core::hash;
 use evm_db::chain_data::constants::CHAIN_ID;
 use evm_db::chain_data::constants::{MAX_QUEUE_SNAPSHOT_LIMIT, MAX_RETURN_DATA, MAX_TX_SIZE};
-use evm_db::chain_data::DEFAULT_MINING_INTERVAL_MS;
-use evm_db::chain_data::{MIN_PRUNE_MAX_OPS_PER_TICK, MIN_PRUNE_TIMER_INTERVAL_MS};
-use evm_db::chain_data::{
-    BlockData, CallerKey, MigrationPhase, OpsMode, ReceiptLike, TxId, TxKind, TxLoc,
-    TxLocKind, LOG_CONFIG_FILTER_MAX,
-};
 #[cfg(test)]
 use evm_db::chain_data::StoredTx;
+use evm_db::chain_data::DEFAULT_MINING_INTERVAL_MS;
+use evm_db::chain_data::{
+    BlockData, CallerKey, MigrationPhase, OpsMode, ReceiptLike, TxId, TxKind, TxLoc, TxLocKind,
+    LOG_CONFIG_FILTER_MAX,
+};
+use evm_db::chain_data::{MIN_PRUNE_MAX_OPS_PER_TICK, MIN_PRUNE_TIMER_INTERVAL_MS};
 use evm_db::meta::{
     current_schema_version, ensure_meta_initialized, get_meta, mark_migration_applied,
     schema_migration_state, set_needs_migration, set_schema_migration_state, set_tx_locs_v3_active,
@@ -59,7 +59,6 @@ thread_local! {
 
 use ic_evm_rpc_types::*;
 
-
 #[cfg(test)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum TxApiErrorKind {
@@ -89,6 +88,8 @@ const CODE_SUBMIT_QUEUE_FULL: &str = "submit.queue_full";
 const CODE_SUBMIT_SENDER_QUEUE_FULL: &str = "submit.sender_queue_full";
 #[cfg(test)]
 const CODE_SUBMIT_PRINCIPAL_QUEUE_FULL: &str = "submit.principal_queue_full";
+#[cfg(test)]
+const CODE_SUBMIT_DECODE_RATE_LIMITED: &str = "submit.decode_rate_limited";
 #[cfg(test)]
 const CODE_INTERNAL_UNEXPECTED: &str = "internal.unexpected";
 
@@ -200,11 +201,7 @@ struct InspectMethodPolicy {
     payload_limit: usize,
 }
 
-const INSPECT_METHOD_POLICIES: [InspectMethodPolicy; 12] = [
-    InspectMethodPolicy {
-        method: "submit_eth_tx",
-        payload_limit: INSPECT_TX_PAYLOAD_LIMIT,
-    },
+const INSPECT_METHOD_POLICIES: [InspectMethodPolicy; 11] = [
     InspectMethodPolicy {
         method: "submit_ic_tx",
         payload_limit: INSPECT_TX_PAYLOAD_LIMIT,
@@ -272,7 +269,7 @@ fn inspect_payload_len() -> usize {
 
 fn inspect_lightweight_tx_guard(method: &str) -> bool {
     // inspect_messageでは重い署名検証は行わず、軽量なフォーマット不正のみ早期除外する。
-    if method != "submit_eth_tx" && method != "rpc_eth_send_raw_transaction" {
+    if method != "rpc_eth_send_raw_transaction" {
         return true;
     }
     let raw = ic_cdk::api::msg_arg_data();
@@ -298,6 +295,7 @@ fn submit_reject_code(err: &chain::ChainError) -> Option<&'static str> {
         chain::ChainError::QueueFull => Some(CODE_SUBMIT_QUEUE_FULL),
         chain::ChainError::SenderQueueFull => Some(CODE_SUBMIT_SENDER_QUEUE_FULL),
         chain::ChainError::PrincipalQueueFull => Some(CODE_SUBMIT_PRINCIPAL_QUEUE_FULL),
+        chain::ChainError::DecodeRateLimited => Some(CODE_SUBMIT_DECODE_RATE_LIMITED),
         _ => None,
     }
 }
@@ -372,27 +370,6 @@ fn map_execute_chain_result(
 }
 
 #[ic_cdk::update]
-fn submit_eth_tx(raw_tx: Vec<u8>) -> Result<Vec<u8>, SubmitTxError> {
-    if let Some(reason) = reject_anonymous_update() {
-        return Err(SubmitTxError::Rejected(reason));
-    }
-    if let Some(reason) = reject_write_reason() {
-        return Err(SubmitTxError::Rejected(reason));
-    }
-    let out = ic_evm_rpc::submit_tx_in_with_code(
-        chain::TxIn::EthSigned {
-            tx_bytes: raw_tx,
-            caller_principal: ic_cdk::api::msg_caller().as_slice().to_vec(),
-        },
-        "submit_eth_tx",
-    );
-    if out.is_ok() {
-        schedule_mining();
-    }
-    out
-}
-
-#[ic_cdk::update]
 fn submit_ic_tx(tx_bytes: Vec<u8>) -> Result<Vec<u8>, SubmitTxError> {
     if let Some(reason) = reject_anonymous_update() {
         return Err(SubmitTxError::Rejected(reason));
@@ -419,7 +396,7 @@ fn produce_block(max_txs: u32) -> Result<ProduceBlockStatus, ProduceBlockError> 
     if let Some(reason) = reject_anonymous_update() {
         return Err(ProduceBlockError::Internal(reason));
     }
-    if let Err(reason) = require_producer_write() {
+    if let Err(reason) = require_data_plane_write_for_producer() {
         return Err(ProduceBlockError::Internal(reason));
     }
     if migration_pending() {
@@ -572,7 +549,7 @@ fn set_prune_policy(policy: PrunePolicyView) -> Result<(), String> {
         return Err(reason);
     }
     validate_prune_policy_input(&policy)?;
-    require_manage_write()?;
+    require_control_plane_write()?;
     let core_policy = evm_db::chain_data::PrunePolicy {
         target_bytes: policy.target_bytes,
         retain_days: policy.retain_days,
@@ -602,7 +579,7 @@ fn set_pruning_enabled(enabled: bool) -> Result<(), String> {
     if let Some(reason) = reject_anonymous_update() {
         return Err(reason);
     }
-    require_manage_write()?;
+    require_control_plane_write()?;
     chain::set_pruning_enabled(enabled).map_err(|_| "set_pruning_enabled failed".to_string())?;
     schedule_prune();
     Ok(())
@@ -637,6 +614,11 @@ fn rpc_eth_get_block_by_number(number: u64, full_tx: bool) -> Option<EthBlockVie
 #[ic_cdk::query]
 fn rpc_eth_get_transaction_by_eth_hash(eth_tx_hash: Vec<u8>) -> Option<EthTxView> {
     ic_evm_rpc::rpc_eth_get_transaction_by_eth_hash(eth_tx_hash)
+}
+
+#[ic_cdk::query]
+fn rpc_eth_get_transaction_by_tx_id(tx_hash: Vec<u8>) -> Option<EthTxView> {
+    ic_evm_rpc::rpc_eth_get_transaction_by_tx_id(tx_hash)
 }
 
 #[ic_cdk::query]
@@ -734,7 +716,7 @@ fn set_miner_allowlist(principals: Vec<Principal>) -> Result<(), String> {
     if let Some(reason) = reject_anonymous_update() {
         return Err(reason);
     }
-    require_manage_write()?;
+    require_control_plane_write()?;
     evm_db::stable_state::with_state_mut(|state| {
         let old_keys: Vec<_> = state
             .miner_allowlist
@@ -801,7 +783,7 @@ fn set_log_filter(filter: Option<String>) -> Result<(), String> {
     if let Some(reason) = reject_anonymous_update() {
         return Err(reason);
     }
-    require_manage_write()?;
+    require_control_plane_write()?;
     let normalized = filter
         .map(|raw| raw.trim().to_string())
         .filter(|v| !v.is_empty());
@@ -920,7 +902,7 @@ fn set_auto_mine(enabled: bool) -> Result<(), String> {
     if let Some(reason) = reject_anonymous_update() {
         return Err(reason);
     }
-    require_manage_write()?;
+    require_control_plane_write()?;
     evm_db::stable_state::with_state_mut(|state| {
         let mut chain_state = *state.chain_state.get();
         chain_state.auto_mine_enabled = enabled;
@@ -937,7 +919,7 @@ fn set_block_gas_limit(limit: u64) -> Result<(), String> {
     if let Some(reason) = reject_anonymous_update() {
         return Err(reason);
     }
-    require_manage_write()?;
+    require_control_plane_write()?;
     if limit == 0 {
         return Err("input.block_gas_limit.non_positive".to_string());
     }
@@ -954,7 +936,7 @@ fn set_instruction_soft_limit(limit: u64) -> Result<(), String> {
     if let Some(reason) = reject_anonymous_update() {
         return Err(reason);
     }
-    require_manage_write()?;
+    require_control_plane_write()?;
     evm_db::stable_state::with_state_mut(|state| {
         let mut chain_state = *state.chain_state.get();
         chain_state.instruction_soft_limit = limit;
@@ -968,7 +950,7 @@ fn prune_blocks(retain: u64, max_ops: u32) -> Result<PruneResultView, ProduceBlo
     if let Some(reason) = reject_anonymous_update() {
         return Err(ProduceBlockError::Internal(reason));
     }
-    if let Err(reason) = require_manage_write() {
+    if let Err(reason) = require_control_plane_write() {
         return Err(ProduceBlockError::Internal(reason));
     }
     match chain::prune_blocks(retain, max_ops) {
@@ -1187,10 +1169,24 @@ fn receipt_to_eth_view(receipt: ReceiptLike) -> EthReceiptView {
         operator_fee: receipt.operator_fee,
         total_fee: receipt.total_fee,
         contract_address: receipt.contract_address.map(|v| v.to_vec()),
-        logs: receipt.logs.into_iter().map(log_to_view).collect(),
+        logs: receipt
+            .logs
+            .into_iter()
+            .enumerate()
+            .map(|(index, log)| EthReceiptLogView {
+                address: log.address.as_slice().to_vec(),
+                topics: log
+                    .data
+                    .topics()
+                    .iter()
+                    .map(|topic| topic.as_slice().to_vec())
+                    .collect(),
+                data: log.data.data.to_vec(),
+                log_index: u32::try_from(index).unwrap_or(u32::MAX),
+            })
+            .collect(),
     }
 }
-
 
 #[cfg(test)]
 fn prune_boundary_for_number(number: u64) -> Option<u64> {
@@ -1236,15 +1232,15 @@ fn require_controller() -> Result<(), String> {
     Ok(())
 }
 
-fn require_manage_write() -> Result<(), String> {
+// 制御プレーン（管理API）は非常時でも controller 操作を継続できるよう、
+// reject_write_reason には依存させない。
+fn require_control_plane_write() -> Result<(), String> {
     require_controller()?;
-    if let Some(reason) = reject_write_reason() {
-        return Err(reason);
-    }
     Ok(())
 }
 
-fn require_producer_write() -> Result<(), String> {
+// データプレーン（Tx投入/ブロック生成）は非常時に停止する。
+fn require_data_plane_write_for_producer() -> Result<(), String> {
     if let Some(reason) = reject_write_reason() {
         return Err(reason);
     }
@@ -1304,9 +1300,8 @@ fn schema_migration_tick(max_steps: u32) -> bool {
             SchemaMigrationPhase::Done => return true,
             SchemaMigrationPhase::Error => return false,
             SchemaMigrationPhase::Init => {
-                if state.from_version < 3 {
-                    set_tx_locs_v3_active(false);
-                    chain::clear_tx_locs_v3();
+                if state.from_version < 5 {
+                    chain::clear_eth_tx_hash_index();
                     state.cursor_key_set = false;
                     state.cursor_key = [0u8; 32];
                 }
@@ -1320,14 +1315,15 @@ fn schema_migration_tick(max_steps: u32) -> bool {
                 set_schema_migration_state(state);
             }
             SchemaMigrationPhase::Rewrite => {
-                if state.from_version < 3 {
+                if state.from_version < 5 {
                     let start_key = if state.cursor_key_set {
                         Some(TxId(state.cursor_key))
                     } else {
                         None
                     };
-                    let (last_key, copied, done) = chain::migrate_tx_locs_batch(start_key, 512);
-                    state.cursor = state.cursor.saturating_add(copied);
+                    let (last_key, rebuilt, done) =
+                        chain::rebuild_eth_tx_hash_index_batch(start_key, 512);
+                    state.cursor = state.cursor.saturating_add(rebuilt);
                     if let Some(key) = last_key {
                         state.cursor_key_set = true;
                         state.cursor_key = key.0;
@@ -1336,54 +1332,34 @@ fn schema_migration_tick(max_steps: u32) -> bool {
                     if !done {
                         return false;
                     }
-                }
-                if state.from_version < 4 {
-                    chain::rebuild_pending_runtime_indexes();
+                    state.cursor_key_set = false;
+                    state.cursor_key = [0u8; 32];
+                    set_schema_migration_state(state);
                 }
                 state.phase = SchemaMigrationPhase::Verify;
                 state.cursor = 0;
                 set_schema_migration_state(state);
             }
             SchemaMigrationPhase::Verify => {
-                if state.from_version < 3 {
-                    let tx_locs_migrated = with_state(|s| s.tx_locs.len() == s.tx_locs_v3.len());
-                    if !tx_locs_migrated {
-                        state.phase = SchemaMigrationPhase::Error;
-                        state.last_error = 1;
-                        set_schema_migration_state(state);
-                        return false;
-                    }
-                    set_tx_locs_v3_active(true);
-                } else if !evm_db::meta::tx_locs_v3_active() {
+                if !evm_db::meta::tx_locs_v3_active() {
                     state.phase = SchemaMigrationPhase::Error;
                     state.last_error = 2;
                     set_schema_migration_state(state);
                     return false;
                 }
-                if state.from_version < 4 {
-                    let indexes_ok = with_state(|s| {
-                        let pending_len = s.pending_by_sender_nonce.len();
-                        let fee_idx_len = s.pending_fee_key_by_tx_id.len();
-                        let ready_len = s.ready_key_by_tx_id.len();
-                        let ready_seq_len = s.ready_by_seq.len();
-                        let mut principal_total = 0u64;
-                        for entry in s.principal_pending_count.iter() {
-                            principal_total =
-                                principal_total.saturating_add(u64::from(entry.value()));
-                        }
-                        pending_len == fee_idx_len
-                            && ready_len == ready_seq_len
-                            && principal_total == pending_len
-                    });
-                    if !indexes_ok {
+                if state.from_version < 5 {
+                    let (index_ok, indexed, expected) = chain::verify_eth_tx_hash_index(256);
+                    if !index_ok {
+                        warn!(
+                            indexed_eth_hashes = indexed,
+                            expected_eth_signed = expected,
+                            "eth_tx_hash index verification failed"
+                        );
                         state.phase = SchemaMigrationPhase::Error;
-                        state.last_error = 3;
+                        state.last_error = 4;
                         set_schema_migration_state(state);
                         return false;
                     }
-                }
-                if state.from_version < 2 {
-                    chain::clear_mempool_on_upgrade();
                 }
                 mark_migration_applied(state.from_version, state.to_version, time());
                 set_needs_migration(false);
@@ -1880,9 +1856,8 @@ mod tests {
         map_execute_chain_result, map_submit_chain_error, migration_pending,
         prune_boundary_for_number, receipt_lookup_status, reject_anonymous_principal,
         reject_write_reason, tx_id_from_bytes, validate_prune_policy_input, EthLogFilterView,
-        ExecuteTxError, GetLogsErrorView, PrunePolicyView,
-        INSPECT_METHOD_POLICIES, MAX_PRUNE_BACKOFF_MS, MINING_ERROR_COUNT,
-        MIN_PRUNE_TIMER_INTERVAL_MS, PRUNE_ERROR_COUNT,
+        ExecuteTxError, GetLogsErrorView, PrunePolicyView, INSPECT_METHOD_POLICIES,
+        MAX_PRUNE_BACKOFF_MS, MINING_ERROR_COUNT, MIN_PRUNE_TIMER_INTERVAL_MS, PRUNE_ERROR_COUNT,
     };
     use candid::{encode_one, Principal};
     use evm_core::chain::{ChainError, ExecResult};
@@ -1984,6 +1959,10 @@ mod tests {
             (
                 ChainError::PrincipalQueueFull,
                 ("submit.principal_queue_full", false),
+            ),
+            (
+                ChainError::DecodeRateLimited,
+                ("submit.decode_rate_limited", false),
             ),
         ];
         for (input, (expected_code, expected_invalid_arg)) in table {
@@ -2198,7 +2177,7 @@ mod tests {
     #[test]
     fn inspect_lightweight_tx_guard_rejects_empty_raw_tx() {
         assert!(!inspect_lightweight_tx_guard_with_payload(
-            "submit_eth_tx",
+            "rpc_eth_send_raw_transaction",
             encode_one(Vec::<u8>::new()).expect("encode")
         ));
     }
@@ -2206,7 +2185,7 @@ mod tests {
     #[test]
     fn inspect_lightweight_tx_guard_rejects_unsupported_typed_prefix() {
         assert!(!inspect_lightweight_tx_guard_with_payload(
-            "submit_eth_tx",
+            "rpc_eth_send_raw_transaction",
             encode_one(vec![0x03u8, 0x01]).expect("encode")
         ));
         assert!(!inspect_lightweight_tx_guard_with_payload(
@@ -2218,14 +2197,14 @@ mod tests {
     #[test]
     fn inspect_lightweight_tx_guard_accepts_supported_payload() {
         assert!(inspect_lightweight_tx_guard_with_payload(
-            "submit_eth_tx",
+            "rpc_eth_send_raw_transaction",
             encode_one(vec![0x02u8, 0x01]).expect("encode")
         ));
         assert!(inspect_lightweight_tx_guard("set_auto_mine"));
     }
 
     fn inspect_lightweight_tx_guard_with_payload(method: &str, payload: Vec<u8>) -> bool {
-        if method != "submit_eth_tx" && method != "rpc_eth_send_raw_transaction" {
+        if method != "rpc_eth_send_raw_transaction" {
             return true;
         }
         let tx = match candid::decode_one::<Vec<u8>>(&payload) {
@@ -2333,7 +2312,8 @@ mod tests {
             timer_interval_ms: 0,
             max_ops_per_tick: 1,
         };
-        let err = validate_prune_policy_input(&policy).expect_err("timer interval must be validated");
+        let err =
+            validate_prune_policy_input(&policy).expect_err("timer interval must be validated");
         assert_eq!(err, "input.prune.timer_interval_too_low");
     }
 
@@ -2567,7 +2547,9 @@ mod tests {
         let addr = [0x11u8; 20];
         let slot = [0x22u8; 32];
         evm_db::stable_state::with_state_mut(|state| {
-            state.storage.insert(make_storage_key(addr, slot), U256Val([0x33u8; 32]));
+            state
+                .storage
+                .insert(make_storage_key(addr, slot), U256Val([0x33u8; 32]));
         });
         let out = super::rpc_eth_get_storage_at(addr.to_vec(), slot.to_vec()).expect("storage");
         assert_eq!(out, vec![0x33u8; 32]);
@@ -2576,9 +2558,11 @@ mod tests {
     #[test]
     fn rpc_eth_get_storage_at_rejects_bad_length() {
         init_stable_state();
-        let err = super::rpc_eth_get_storage_at(vec![0u8; 19], vec![0u8; 32]).expect_err("bad address");
+        let err =
+            super::rpc_eth_get_storage_at(vec![0u8; 19], vec![0u8; 32]).expect_err("bad address");
         assert_eq!(err, "address must be 20 bytes");
-        let err = super::rpc_eth_get_storage_at(vec![0u8; 20], vec![0u8; 31]).expect_err("bad slot");
+        let err =
+            super::rpc_eth_get_storage_at(vec![0u8; 20], vec![0u8; 31]).expect_err("bad slot");
         assert_eq!(err, "slot must be 32 bytes");
     }
 

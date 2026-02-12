@@ -64,6 +64,17 @@ npm run dev
 
 `archive_bytes` は日次の実サイズ（差分は集計側で算出）。
 
+## tx_index payload 仕様（固定）
+
+segment `2` の各エントリは以下の固定順序:
+
+`[tx_hash:32][entry_len:4][block_number:8][tx_index:4][caller_principal_len:2][caller_principal:caller_principal_len]`
+
+- すべて Big Endian
+- `entry_len = 14 + caller_principal_len`
+- 後方互換モードは持たない（旧 `entry_len=12` は不正として reject）
+- `caller_principal_len=0` の場合は principal なしとして扱う
+
 ## マイグレーション（Postgres）
 
 起動時に `schema_migrations` を見て **未適用のSQLのみ** 実行する。
@@ -71,6 +82,5 @@ npm run dev
 ```
 tools/indexer/migrations/
   001_init.sql
-  002_metrics.sql
-  003_archive.sql
+  002_backfill.sql
 ```

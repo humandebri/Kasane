@@ -23,7 +23,7 @@
 ### 2) ローカル事前確認（任意）
 
 ```bash
-cd /Users/0xhude/Desktop/ICP/IC-OP
+cd /Users/0xhude/Desktop/ICP/Kasane
 canbench
 canbench --persist
 ```

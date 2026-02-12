@@ -192,7 +192,7 @@ Phase2では **latestのみ厳格対応**。
 
 **モードB（スループット寄り）**
 
-* submit_eth_tx で enqueue のみ
+* rpc_eth_send_raw_transaction で enqueue のみ
 * 別途 evm_produceBlock（独自RPC）で確定
 
 POCは **モードA** が簡単で強い。

@@ -29,25 +29,29 @@ use evm_db::stable_state::{
 use evm_db::types::keys::make_account_key;
 use evm_db::types::values::AccountVal;
 use evm_db::Storable;
-use revm::database::CacheDB;
 use revm::context_interface::transaction::{AccessList, AccessListItem};
+use revm::database::CacheDB;
 use revm::database_interface::DatabaseCommit;
 use revm::primitives::Address;
-use revm::primitives::B256;
 use revm::primitives::Bytes as RevmBytes;
 use revm::primitives::TxKind as RevmTxKind;
+use revm::primitives::B256;
 use revm::primitives::U256;
+use std::borrow::Cow;
 #[cfg(not(target_arch = "wasm32"))]
 use std::cell::Cell;
-use std::borrow::Cow;
+use std::cell::RefCell;
 use std::cmp::Reverse;
-use std::collections::{BTreeSet, BinaryHeap};
+use std::collections::{BTreeMap, BTreeSet, BinaryHeap};
 
 const OPS_WARN_RATE_LIMIT_SECS: u64 = 60;
 #[cfg(not(target_arch = "wasm32"))]
 thread_local! {
     static STORE_FAIL_AT_OP: Cell<u64> = const { Cell::new(0) };
     static STORE_OP_COUNTER: Cell<u64> = const { Cell::new(0) };
+}
+thread_local! {
+    static DECODE_SUPPRESS_UNTIL_BY_PRINCIPAL: RefCell<BTreeMap<Vec<u8>, u64>> = const { RefCell::new(BTreeMap::new()) };
 }
 
 fn current_instruction_counter() -> u64 {
@@ -167,6 +171,7 @@ pub enum ChainError {
     QueueFull,
     SenderQueueFull,
     PrincipalQueueFull,
+    DecodeRateLimited,
     ExecFailed(Option<ExecError>),
     InvariantViolation(String),
     NoExecutableTx,
@@ -376,12 +381,128 @@ pub fn rebuild_pending_runtime_indexes() {
     });
 }
 
+pub fn clear_eth_tx_hash_index() {
+    with_state_mut(|state| {
+        clear_stable_map(&mut state.eth_tx_hash_index);
+    });
+}
+
+pub fn rebuild_eth_tx_hash_index_batch(
+    start_key: Option<TxId>,
+    max_items: u32,
+) -> (Option<TxId>, u64, bool) {
+    use std::ops::Bound;
+    with_state_mut(|state| {
+        let mut rebuilt = 0u64;
+        let mut last_key = None;
+        let mut iter = match start_key {
+            Some(key) => state
+                .tx_store
+                .range((Bound::Excluded(key), Bound::Unbounded)),
+            None => state.tx_store.range(..),
+        };
+        let mut done = false;
+        for _ in 0..max_items {
+            match iter.next() {
+                Some(entry) => {
+                    let tx_id = *entry.key();
+                    if let Ok(stored) = StoredTx::try_from(entry.value()) {
+                        if stored.kind == TxKind::EthSigned {
+                            state
+                                .eth_tx_hash_index
+                                .insert(TxId(hash::keccak256(&stored.raw)), tx_id);
+                        }
+                    }
+                    last_key = Some(tx_id);
+                    rebuilt = rebuilt.saturating_add(1);
+                }
+                None => {
+                    done = true;
+                    break;
+                }
+            }
+        }
+        if rebuilt < u64::from(max_items) {
+            done = true;
+        }
+        (last_key, rebuilt, done)
+    })
+}
+
+pub fn verify_eth_tx_hash_index(sample_limit: u32) -> (bool, u64, u64) {
+    with_state(|state| {
+        let mut expected_eth_signed = 0u64;
+        for entry in state.tx_store.iter() {
+            let Ok(stored) = StoredTx::try_from(entry.value()) else {
+                continue;
+            };
+            if stored.kind == TxKind::EthSigned {
+                expected_eth_signed = expected_eth_signed.saturating_add(1);
+            }
+        }
+        let indexed = state.eth_tx_hash_index.len();
+        if indexed != expected_eth_signed {
+            return (false, indexed, expected_eth_signed);
+        }
+        let mut checked = 0u32;
+        for entry in state.tx_store.iter() {
+            if checked >= sample_limit {
+                break;
+            }
+            let tx_id = *entry.key();
+            let Ok(stored) = StoredTx::try_from(entry.value()) else {
+                continue;
+            };
+            if stored.kind != TxKind::EthSigned {
+                continue;
+            }
+            checked = checked.saturating_add(1);
+            let key = TxId(hash::keccak256(&stored.raw));
+            if state.eth_tx_hash_index.get(&key) != Some(tx_id) {
+                return (false, indexed, expected_eth_signed);
+            }
+        }
+        (true, indexed, expected_eth_signed)
+    })
+}
+
 fn tx_locs_get(state: &StableState, tx_id: &TxId) -> Option<TxLoc> {
     if tx_locs_v3_active() {
         state.tx_locs_v3.get(tx_id)
     } else {
         state.tx_locs.get(tx_id)
     }
+}
+
+fn insert_eth_tx_hash_index_for_envelope(
+    state: &mut evm_db::stable_state::StableState,
+    tx_id: TxId,
+    envelope: StoredTxBytes,
+) {
+    let Ok(stored) = StoredTx::try_from(envelope) else {
+        return;
+    };
+    if stored.kind != TxKind::EthSigned {
+        return;
+    }
+    state
+        .eth_tx_hash_index
+        .insert(TxId(hash::keccak256(&stored.raw)), tx_id);
+}
+
+fn remove_eth_tx_hash_index_for_tx_id(state: &mut evm_db::stable_state::StableState, tx_id: TxId) {
+    let Some(envelope) = state.tx_store.get(&tx_id) else {
+        return;
+    };
+    let Ok(stored) = StoredTx::try_from(envelope) else {
+        return;
+    };
+    if stored.kind != TxKind::EthSigned {
+        return;
+    }
+    state
+        .eth_tx_hash_index
+        .remove(&TxId(hash::keccak256(&stored.raw)));
 }
 
 fn tx_locs_insert(state: &mut StableState, tx_id: TxId, loc: TxLoc) {
@@ -545,6 +666,9 @@ pub fn submit_tx(
     tx_bytes: Vec<u8>,
     caller_principal: Vec<u8>,
 ) -> Result<TxId, ChainError> {
+    if is_principal_decode_suppressed(caller_principal.as_slice(), crate::time::now_sec()) {
+        return Err(ChainError::DecodeRateLimited);
+    }
     let tx_id = TxId(hash::stored_tx_id(kind, &tx_bytes, None, None, None));
     with_state_mut(|state| {
         if tx_bytes.len() > MAX_TX_SIZE {
@@ -601,7 +725,8 @@ pub fn submit_tx(
             enforce_pending_caps(state, sender_key, &caller_principal, effective_gas_price)?;
         }
         state.seen_tx.insert(tx_id, 1);
-        state.tx_store.insert(tx_id, envelope);
+        state.tx_store.insert(tx_id, envelope.clone());
+        insert_eth_tx_hash_index_for_envelope(state, tx_id, envelope);
         state.pending_current_by_sender.insert(sender_key, tx_id);
         let mut metrics = *state.metrics_state.get();
         metrics.record_submission(1);
@@ -639,6 +764,9 @@ pub fn submit_ic_tx(
     canister_id: Vec<u8>,
     tx_bytes: Vec<u8>,
 ) -> Result<TxId, ChainError> {
+    if is_principal_decode_suppressed(caller_principal.as_slice(), crate::time::now_sec()) {
+        return Err(ChainError::DecodeRateLimited);
+    }
     with_state_mut(|state| {
         if tx_bytes.len() > MAX_TX_SIZE {
             return Err(ChainError::TxTooLarge);
@@ -772,6 +900,9 @@ pub fn expected_nonce_for_sender_view(sender: [u8; 20]) -> u64 {
 }
 
 pub fn produce_block(max_txs: usize) -> Result<ProduceBlockOutcome, ChainError> {
+    // どこで: ブロック組成前の候補デコード段 / 何を: 無効Txデコード処理数を制限 / なぜ: 署名不正スパムで命令を使い切らないため
+    const MAX_DECODE_DROPS_PER_BLOCK: usize =
+        evm_db::chain_data::DEFAULT_MAX_DECODE_DROPS_PER_BLOCK;
     if max_txs == 0 {
         return Err(ChainError::InvalidLimit);
     }
@@ -805,6 +936,8 @@ pub fn produce_block(max_txs: usize) -> Result<ProduceBlockOutcome, ChainError> 
     let mut staged_drops: Vec<QueuedDrop> = Vec::new();
     let mut staged_included: Vec<StagedIncludedTx> = Vec::new();
     let mut staged_txs: Vec<PreparedTx> = Vec::new();
+    let mut decode_drop_count = 0usize;
+    let mut decode_drops_by_principal: BTreeMap<Vec<u8>, u16> = BTreeMap::new();
     with_state(|state| {
         tx_ids = select_ready_candidates(state, state.chain_state.get().base_fee, max_txs);
     });
@@ -849,9 +982,24 @@ pub fn produce_block(max_txs: usize) -> Result<ProduceBlockOutcome, ChainError> 
                     sender_override: None,
                     nonce_override: None,
                 }));
+                if drop_code == DROP_CODE_DECODE || drop_code == DROP_CODE_CALLER_MISSING {
+                    decode_drop_count = decode_drop_count.saturating_add(1);
+                    if decode_drop_count >= MAX_DECODE_DROPS_PER_BLOCK {
+                        break;
+                    }
+                }
                 continue;
             }
         };
+        if is_principal_decode_suppressed(stored.caller_principal.as_slice(), timestamp) {
+            prepared.push(PreparedItem::Drop(QueuedDrop {
+                tx_id,
+                drop_code: DROP_CODE_DECODE,
+                sender_override: None,
+                nonce_override: None,
+            }));
+            continue;
+        }
         let kind = stored.kind;
         let caller = match kind {
             TxKind::IcSynthetic => match stored.caller_evm {
@@ -863,6 +1011,15 @@ pub fn produce_block(max_txs: usize) -> Result<ProduceBlockOutcome, ChainError> 
                         sender_override: None,
                         nonce_override: None,
                     }));
+                    decode_drop_count = decode_drop_count.saturating_add(1);
+                    note_decode_drop_for_principal(
+                        stored.caller_principal.as_slice(),
+                        timestamp,
+                        &mut decode_drops_by_principal,
+                    );
+                    if decode_drop_count >= MAX_DECODE_DROPS_PER_BLOCK {
+                        break;
+                    }
                     continue;
                 }
             },
@@ -877,6 +1034,15 @@ pub fn produce_block(max_txs: usize) -> Result<ProduceBlockOutcome, ChainError> 
                     sender_override: Some(caller),
                     nonce_override: None,
                 }));
+                decode_drop_count = decode_drop_count.saturating_add(1);
+                note_decode_drop_for_principal(
+                    stored.caller_principal.as_slice(),
+                    timestamp,
+                    &mut decode_drops_by_principal,
+                );
+                if decode_drop_count >= MAX_DECODE_DROPS_PER_BLOCK {
+                    break;
+                }
                 continue;
             }
         };
@@ -1236,8 +1402,12 @@ pub fn produce_block(max_txs: usize) -> Result<ProduceBlockOutcome, ChainError> 
 
         let block_ptr = store_block(state, &block);
         for persisted in staged_persisted {
-            state.tx_index.insert(persisted.tx_id, persisted.tx_index_ptr);
-            state.receipts.insert(persisted.tx_id, persisted.receipt_ptr);
+            state
+                .tx_index
+                .insert(persisted.tx_id, persisted.tx_index_ptr);
+            state
+                .receipts
+                .insert(persisted.tx_id, persisted.receipt_ptr);
             tx_locs_insert(
                 state,
                 persisted.tx_id,
@@ -1282,6 +1452,73 @@ pub fn produce_block(max_txs: usize) -> Result<ProduceBlockOutcome, ChainError> 
         gas_used: block_gas_used,
         dropped: dropped_total,
     })
+}
+
+fn is_principal_decode_suppressed(principal: &[u8], now_ts: u64) -> bool {
+    if principal.is_empty() {
+        return false;
+    }
+    DECODE_SUPPRESS_UNTIL_BY_PRINCIPAL.with(|cell| {
+        let mut map = cell.borrow_mut();
+        let expired: Vec<Vec<u8>> = map
+            .iter()
+            .filter_map(|(key, until)| {
+                if *until <= now_ts {
+                    Some(key.clone())
+                } else {
+                    None
+                }
+            })
+            .collect();
+        for key in expired {
+            map.remove(&key);
+        }
+        map.get(principal)
+            .map(|until| *until > now_ts)
+            .unwrap_or(false)
+    })
+}
+
+fn note_decode_drop_for_principal(
+    principal: &[u8],
+    now_ts: u64,
+    per_block: &mut BTreeMap<Vec<u8>, u16>,
+) {
+    if principal.is_empty() {
+        return;
+    }
+    let key = principal.to_vec();
+    let strikes = per_block.entry(key.clone()).or_insert(0);
+    *strikes = strikes.saturating_add(1);
+    if *strikes < evm_db::chain_data::DEFAULT_DECODE_SUPPRESS_STRIKES_PER_BLOCK {
+        return;
+    }
+    let until = now_ts.saturating_add(evm_db::chain_data::DEFAULT_DECODE_SUPPRESS_WINDOW_SECS);
+    DECODE_SUPPRESS_UNTIL_BY_PRINCIPAL.with(|cell| {
+        let mut map = cell.borrow_mut();
+        if map.len() >= evm_db::chain_data::DEFAULT_MAX_DECODE_SUPPRESS_PRINCIPALS {
+            let expired: Vec<Vec<u8>> = map
+                .iter()
+                .filter_map(|(k, value)| {
+                    if *value <= now_ts {
+                        Some(k.clone())
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+            for stale in expired {
+                map.remove(&stale);
+            }
+            while map.len() >= evm_db::chain_data::DEFAULT_MAX_DECODE_SUPPRESS_PRINCIPALS {
+                let Some(oldest_key) = map.keys().next().cloned() else {
+                    break;
+                };
+                map.remove(&oldest_key);
+            }
+        }
+        map.insert(key, until);
+    });
 }
 
 enum StagedIncludedTx {
@@ -1332,8 +1569,8 @@ pub fn eth_call(raw_tx: Vec<u8>) -> Result<Vec<u8>, ChainError> {
     if raw_tx.len() > MAX_TX_SIZE {
         return Err(ChainError::TxTooLarge);
     }
-    let tx_env =
-        decode_tx(TxKind::EthSigned, Address::ZERO, &raw_tx).map_err(|_| ChainError::DecodeFailed)?;
+    let tx_env = decode_tx(TxKind::EthSigned, Address::ZERO, &raw_tx)
+        .map_err(|_| ChainError::DecodeFailed)?;
     let head = with_state(|state| *state.head.get());
     let number = head.number.saturating_add(1);
     let timestamp = std::cmp::max(head.timestamp.saturating_add(1), crate::time::now_sec());
@@ -1361,7 +1598,7 @@ pub fn eth_call(raw_tx: Vec<u8>) -> Result<Vec<u8>, ChainError> {
         false,
         None,
     )
-        .map_err(|err| ChainError::ExecFailed(Some(err)))?;
+    .map_err(|err| ChainError::ExecFailed(Some(err)))?;
     Ok(outcome.return_data)
 }
 
@@ -1377,13 +1614,13 @@ pub fn eth_call_object(input: CallObjectInput) -> Result<CallObjectResult, Chain
         (chain.base_fee, chain.block_gas_limit)
     });
     let gas_limit = input.gas_limit.unwrap_or(block_gas_limit);
-    let tx_type = input
-        .tx_type
-        .unwrap_or(if input.max_fee_per_gas.is_some() || input.max_priority_fee_per_gas.is_some() {
+    let tx_type = input.tx_type.unwrap_or(
+        if input.max_fee_per_gas.is_some() || input.max_priority_fee_per_gas.is_some() {
             2
         } else {
             0
-        });
+        },
+    );
     let (gas_price, gas_priority_fee) = if tx_type == 2 {
         (
             input.max_fee_per_gas.unwrap_or(u128::from(base_fee)),
@@ -1392,7 +1629,9 @@ pub fn eth_call_object(input: CallObjectInput) -> Result<CallObjectResult, Chain
     } else {
         (input.gas_price.unwrap_or(u128::from(base_fee)), None)
     };
-    let chain_id = input.chain_id.unwrap_or(evm_db::chain_data::constants::CHAIN_ID);
+    let chain_id = input
+        .chain_id
+        .unwrap_or(evm_db::chain_data::constants::CHAIN_ID);
     let tx_id = call_object_tx_id(&input);
     let access_list = AccessList(
         input
@@ -1450,7 +1689,7 @@ pub fn eth_call_object(input: CallObjectInput) -> Result<CallObjectResult, Chain
         false,
         None,
     )
-        .map_err(|err| ChainError::ExecFailed(Some(err)))?;
+    .map_err(|err| ChainError::ExecFailed(Some(err)))?;
     let revert_data = if outcome.receipt.status == 0 && !outcome.return_data.is_empty() {
         Some(outcome.return_data.clone())
     } else {
@@ -1470,7 +1709,8 @@ pub fn eth_estimate_gas_object(input: CallObjectInput) -> Result<u64, ChainError
 }
 
 fn call_object_tx_id(input: &CallObjectInput) -> TxId {
-    let mut buf = Vec::with_capacity(1 + 20 + 20 + 8 + 16 + 16 + 8 + 1 + 4 + 32 + 4 + input.data.len());
+    let mut buf =
+        Vec::with_capacity(1 + 20 + 20 + 8 + 16 + 16 + 8 + 1 + 4 + 32 + 4 + input.data.len());
     buf.extend_from_slice(b"ic-evm:call-object:v1");
     match input.to {
         Some(to) => {
@@ -1519,10 +1759,7 @@ pub fn get_receipt(tx_id: &TxId) -> Option<ReceiptLike> {
     with_state(|state| load_receipt(state, tx_id))
 }
 
-fn store_block(
-    state: &mut StableState,
-    block: &BlockData,
-) -> evm_db::blob_ptr::BlobPtr {
+fn store_block(state: &mut StableState, block: &BlockData) -> evm_db::blob_ptr::BlobPtr {
     before_store_write_for_test("store_block", Some(block.number), None);
     let bytes = block.to_bytes().into_owned();
     let ptr = state.blob_store.store_bytes(&bytes).unwrap_or_else(|_| {
@@ -1537,11 +1774,12 @@ fn store_block(
     ptr
 }
 
-fn store_receipt(
-    state: &mut StableState,
-    receipt: &ReceiptLike,
-) -> evm_db::blob_ptr::BlobPtr {
-    before_store_write_for_test("store_receipt", Some(receipt.block_number), Some(receipt.tx_id));
+fn store_receipt(state: &mut StableState, receipt: &ReceiptLike) -> evm_db::blob_ptr::BlobPtr {
+    before_store_write_for_test(
+        "store_receipt",
+        Some(receipt.block_number),
+        Some(receipt.tx_id),
+    );
     let bytes = receipt.to_bytes().into_owned();
     let ptr = state.blob_store.store_bytes(&bytes).unwrap_or_else(|_| {
         trap_store_err(
@@ -1555,10 +1793,7 @@ fn store_receipt(
     ptr
 }
 
-fn store_tx_index_entry(
-    state: &mut StableState,
-    entry: TxIndexEntry,
-) -> evm_db::blob_ptr::BlobPtr {
+fn store_tx_index_entry(state: &mut StableState, entry: TxIndexEntry) -> evm_db::blob_ptr::BlobPtr {
     before_store_write_for_test("store_tx_index_entry", Some(entry.block_number), None);
     let bytes = entry.to_bytes().into_owned();
     let ptr = state.blob_store.store_bytes(&bytes).unwrap_or_else(|_| {
@@ -1593,6 +1828,7 @@ pub fn get_tx_envelope(tx_id: &TxId) -> Option<StoredTxBytes> {
     with_state(|state| state.tx_store.get(tx_id))
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn execute_and_seal_with_caller(
     tx_id: TxId,
     kind: TxKind,
@@ -1790,12 +2026,6 @@ pub fn prune_blocks(retain: u64, max_ops: u32) -> Result<PruneResult, ChainError
                 break;
             }
             let mut ptrs = collect_ptrs_for_block(state, next, &block);
-            for ptr in ptrs.iter() {
-                state
-                    .blob_store
-                    .mark_quarantine(ptr)
-                    .map_err(|_| ChainError::ExecFailed(None))?;
-            }
             state
                 .prune_journal
                 .insert(next, PruneJournal { ptrs: ptrs.clone() });
@@ -1810,6 +2040,7 @@ pub fn prune_blocks(retain: u64, max_ops: u32) -> Result<PruneResult, ChainError
                 state.receipts.remove(tx_id);
                 state.tx_index.remove(tx_id);
                 tx_locs_remove(state, tx_id);
+                remove_eth_tx_hash_index_for_tx_id(state, *tx_id);
                 state.tx_store.remove(tx_id);
                 state.seen_tx.remove(tx_id);
             }
@@ -1821,7 +2052,7 @@ pub fn prune_blocks(retain: u64, max_ops: u32) -> Result<PruneResult, ChainError
             for ptr in ptrs.drain(..) {
                 state
                     .blob_store
-                    .mark_free(&ptr)
+                    .reclaim_for_prune(&ptr)
                     .map_err(|_| ChainError::ExecFailed(None))?;
                 decrement_estimated_kept_bytes(state, ptr.class());
             }
@@ -1878,6 +2109,7 @@ fn recover_prune_journal(state: &mut evm_db::stable_state::StableState) -> Resul
                 state.receipts.remove(tx_id);
                 state.tx_index.remove(tx_id);
                 tx_locs_remove(state, tx_id);
+                remove_eth_tx_hash_index_for_tx_id(state, *tx_id);
                 state.tx_store.remove(tx_id);
                 state.seen_tx.remove(tx_id);
             }
@@ -1892,7 +2124,7 @@ fn recover_prune_journal(state: &mut evm_db::stable_state::StableState) -> Resul
         for ptr in journal.ptrs.iter() {
             state
                 .blob_store
-                .mark_free(ptr)
+                .reclaim_for_prune(ptr)
                 .map_err(|_| ChainError::ExecFailed(None))?;
             decrement_estimated_kept_bytes(state, ptr.class());
         }
@@ -2371,6 +2603,7 @@ fn drop_invalid_fee_pending_decode(
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn drop_exec_pending_sync(state: &mut evm_db::stable_state::StableState, tx_id: TxId) {
     let has_pending = state.pending_meta_by_tx_id.get(&tx_id).is_some();
     let has_ready = state.ready_key_by_tx_id.get(&tx_id).is_some();
@@ -2390,11 +2623,13 @@ fn drop_exec_pending_sync(state: &mut evm_db::stable_state::StableState, tx_id: 
     state.metrics_state.set(metrics);
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 struct SyncFinalizeGuard {
     tx_id: TxId,
     active: bool,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl SyncFinalizeGuard {
     fn new(tx_id: TxId) -> Self {
         Self {
@@ -2408,6 +2643,7 @@ impl SyncFinalizeGuard {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl Drop for SyncFinalizeGuard {
     fn drop(&mut self) {
         if !self.active {
@@ -2517,6 +2753,7 @@ fn mark_dropped_and_purge_payload(
     drop_code: u16,
 ) {
     remove_pending_fee_index_by_tx_id(state, tx_id);
+    remove_eth_tx_hash_index_for_tx_id(state, tx_id);
     state.tx_store.remove(&tx_id);
     tx_locs_insert(state, tx_id, TxLoc::dropped(drop_code));
     push_dropped_ring(state, tx_id);
@@ -2733,7 +2970,12 @@ enum RekeyError {
 
 #[cfg(test)]
 mod tests {
-    use super::{remaining_instruction_budget, should_stop_block_execution};
+    use super::{
+        is_principal_decode_suppressed, note_decode_drop_for_principal,
+        remaining_instruction_budget, should_stop_block_execution,
+        DECODE_SUPPRESS_UNTIL_BY_PRINCIPAL,
+    };
+    use std::collections::BTreeMap;
 
     #[test]
     fn should_stop_block_execution_stops_on_gas_limit() {
@@ -2763,5 +3005,41 @@ mod tests {
         assert_eq!(remaining_instruction_budget(5, 100, 103), Some(2));
         assert_eq!(remaining_instruction_budget(5, 100, 105), Some(0));
         assert_eq!(remaining_instruction_budget(5, 100, 999), Some(0));
+    }
+
+    #[test]
+    fn decode_suppression_activates_after_threshold_and_expires() {
+        DECODE_SUPPRESS_UNTIL_BY_PRINCIPAL.with(|cell| cell.borrow_mut().clear());
+        let principal = b"p-1".to_vec();
+        let now = 1_000u64;
+        let mut per_block = BTreeMap::new();
+        for _ in 0..evm_db::chain_data::DEFAULT_DECODE_SUPPRESS_STRIKES_PER_BLOCK {
+            note_decode_drop_for_principal(principal.as_slice(), now, &mut per_block);
+        }
+        assert!(is_principal_decode_suppressed(principal.as_slice(), now));
+        assert!(!is_principal_decode_suppressed(
+            principal.as_slice(),
+            now + evm_db::chain_data::DEFAULT_DECODE_SUPPRESS_WINDOW_SECS + 1
+        ));
+    }
+
+    #[test]
+    fn decode_suppression_map_is_bounded() {
+        DECODE_SUPPRESS_UNTIL_BY_PRINCIPAL.with(|cell| cell.borrow_mut().clear());
+        let now = 2_000u64;
+        let mut per_block = BTreeMap::new();
+        for i in 0..(evm_db::chain_data::DEFAULT_MAX_DECODE_SUPPRESS_PRINCIPALS + 128) {
+            let principal = format!("principal-{i}").into_bytes();
+            per_block.insert(
+                principal.clone(),
+                evm_db::chain_data::DEFAULT_DECODE_SUPPRESS_STRIKES_PER_BLOCK - 1,
+            );
+            note_decode_drop_for_principal(principal.as_slice(), now, &mut per_block);
+        }
+        DECODE_SUPPRESS_UNTIL_BY_PRINCIPAL.with(|cell| {
+            assert!(
+                cell.borrow().len() <= evm_db::chain_data::DEFAULT_MAX_DECODE_SUPPRESS_PRINCIPALS
+            );
+        });
     }
 }

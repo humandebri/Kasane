@@ -53,6 +53,22 @@ fn quarantine_is_not_reused() {
 }
 
 #[test]
+fn reclaim_for_prune_works_from_used_and_is_idempotent() {
+    let mut store = new_blob_store();
+    let data = vec![3u8; 64];
+    let ptr = store.store_bytes(&data).expect("store should succeed");
+    store
+        .reclaim_for_prune(&ptr)
+        .expect("reclaim from used should succeed");
+    store
+        .reclaim_for_prune(&ptr)
+        .expect("reclaim should be idempotent");
+    let ptr2 = store.store_bytes(&data).expect("store should succeed");
+    assert_eq!(ptr.offset(), ptr2.offset());
+    assert!(ptr2.gen() > ptr.gen());
+}
+
+#[test]
 fn blob_ptr_and_allockey_to_bytes_are_borrowed() {
     let ptr = evm_db::blob_ptr::BlobPtr::new(1, 2, 3, 4);
     let key = AllocKey::new(7, 9);

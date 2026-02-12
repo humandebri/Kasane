@@ -28,9 +28,9 @@ logsの完全互換（receiptは最小でOK）
 
 Phase1でどっちを採るかを明確化しておくのが重要です。
 
-A案（採用）：submit_* + produce_block だけ（同期即時レーンを廃止）
+A案（採用）：submit系 + produce_block だけ（同期即時レーンを廃止）
 
-submit_eth_tx(raw_tx) -> tx_id
+rpc_eth_send_raw_transaction(raw_tx) -> tx_id
 submit_ic_tx(tx_bytes) -> tx_id
 produce_block(max_txs) -> ProduceBlockStatus
 

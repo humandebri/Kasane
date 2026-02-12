@@ -1,6 +1,13 @@
 // どこで: JSON-RPCハンドラ / 何を: methodごとの変換とcanister呼び出しを実装 / なぜ: Ethereum風インタフェースをGatewayで提供するため
 import { CONFIG } from "./config";
-import { getActor, type CallObject, type EthBlockView, type EthReceiptView, type EthTxView } from "./client";
+import {
+  getActor,
+  type CallObject,
+  type EthBlockView,
+  type EthReceiptView,
+  type EthTxView,
+  type OpsStatusView,
+} from "./client";
 import { bytesToQuantity, ensureLen, parseDataHex, parseQuantityHex, toDataHex, toQuantityHex } from "./hex";
 import { ERR_INTERNAL, ERR_INVALID_PARAMS, ERR_METHOD_NOT_FOUND, JsonRpcRequest, JsonRpcResponse, makeError, makeSuccess } from "./jsonrpc";
 const ZERO_ADDR = "0x0000000000000000000000000000000000000000";
@@ -103,8 +110,17 @@ async function onGetTransactionByHash(id: string | number | null, params: unknow
   if (typeof hashRaw !== "string") {
     return makeError(id, ERR_INVALID_PARAMS, "tx hash must be hex string");
   }
-  const txHash = ensureLen(parseDataHex(hashRaw), 32, "tx hash");
+  let txHash: Uint8Array;
+  try {
+    txHash = ensureLen(parseDataHex(hashRaw), 32, "tx hash");
+  } catch (error) {
+    return makeInvalidParams(id, error);
+  }
   const actor = await getActor();
+  const readinessError = txHashReadinessError(id, await actor.get_ops_status());
+  if (readinessError !== null) {
+    return readinessError;
+  }
   const txOpt = await actor.rpc_eth_get_transaction_by_eth_hash(txHash);
   return makeSuccess(id, txOpt.length === 0 ? null : mapTx(txOpt[0]));
 }
@@ -114,10 +130,35 @@ async function onGetTransactionReceipt(id: string | number | null, params: unkno
   if (typeof hashRaw !== "string") {
     return makeError(id, ERR_INVALID_PARAMS, "tx hash must be hex string");
   }
-  const txHash = ensureLen(parseDataHex(hashRaw), 32, "tx hash");
+  let txHash: Uint8Array;
+  try {
+    txHash = ensureLen(parseDataHex(hashRaw), 32, "tx hash");
+  } catch (error) {
+    return makeInvalidParams(id, error);
+  }
   const actor = await getActor();
+  const readinessError = txHashReadinessError(id, await actor.get_ops_status());
+  if (readinessError !== null) {
+    return readinessError;
+  }
   const receiptOpt = await actor.rpc_eth_get_transaction_receipt_by_eth_hash(txHash);
   return makeSuccess(id, receiptOpt.length === 0 ? null : mapReceipt(receiptOpt[0], txHash));
+}
+
+function txHashReadinessError(id: string | number | null, status: OpsStatusView): JsonRpcResponse | null {
+  if (status.needs_migration) {
+    return makeError(id, -32000, "state unavailable", {
+      reason: "ops.read.needs_migration",
+      schema_version: status.schema_version,
+    });
+  }
+  if (status.critical_corrupt) {
+    return makeError(id, -32000, "state unavailable", {
+      reason: "ops.read.critical_corrupt",
+      schema_version: status.schema_version,
+    });
+  }
+  return null;
 }
 
 async function onGetBalance(id: string | number | null, params: unknown): Promise<JsonRpcResponse> {
@@ -259,7 +300,14 @@ async function onSendRawTransaction(id: string | number | null, params: unknown)
     const mapped = mapSubmitError(out.Err);
     return makeError(id, mapped.code, "submit failed", mapped.data);
   }
-  return makeSuccess(id, toDataHex(out.Ok));
+  const resolved = await resolveSubmittedEthHash(actor, out.Ok);
+  if (!resolved.ok) {
+    return makeError(id, -32000, "submit succeeded but eth hash is unavailable", {
+      reason: resolved.reason,
+      tx_id: toDataHex(out.Ok),
+    });
+  }
+  return makeSuccess(id, toDataHex(resolved.hash));
 }
 
 function mapSubmitError(err: { Internal: string } | { Rejected: string } | { InvalidArgument: string }): { code: number; data: unknown } {
@@ -270,6 +318,40 @@ function mapSubmitError(err: { Internal: string } | { Rejected: string } | { Inv
     return { code: -32000, data: { kind: "Rejected", detail: err.Rejected } };
   }
   return { code: -32603, data: { kind: "Internal", detail: err.Internal } };
+}
+
+async function resolveSubmittedEthHash(
+  actor: Awaited<ReturnType<typeof getActor>>,
+  txId: Uint8Array
+): Promise<{ ok: true; hash: Uint8Array } | { ok: false; reason: string }> {
+  const txOpt = await actor.rpc_eth_get_transaction_by_tx_id(txId);
+  return resolveSubmittedEthHashFromLookup(txOpt);
+}
+
+function resolveSubmittedEthHashFromLookup(
+  txOpt: [] | [EthTxView]
+): { ok: true; hash: Uint8Array } | { ok: false; reason: string } {
+  if (txOpt.length === 0) {
+    return { ok: false, reason: "tx_id_not_found" };
+  }
+  const tx = txOpt[0];
+  if ("EthSigned" in tx.kind && tx.eth_tx_hash.length === 0) {
+    return { ok: false, reason: "eth_signed_missing_eth_tx_hash" };
+  }
+  return { ok: true, hash: tx.eth_tx_hash.length === 0 ? tx.hash : tx.eth_tx_hash[0] };
+}
+
+export function __test_resolve_submitted_eth_hash_from_lookup(
+  txOpt: [] | [EthTxView]
+): { ok: true; hash: Uint8Array } | { ok: false; reason: string } {
+  return resolveSubmittedEthHashFromLookup(txOpt);
+}
+
+export function __test_tx_hash_readiness_error(
+  id: string | number | null,
+  status: OpsStatusView
+): JsonRpcResponse | null {
+  return txHashReadinessError(id, status);
 }
 
 function makeInvalidParams(id: string | number | null, error: unknown): JsonRpcResponse {
@@ -533,4 +615,36 @@ function parseQuantityHexSafe(value: string, label: string): { value: bigint } |
 function mapBlock(block: EthBlockView, fullTx: boolean): Record<string, unknown> { return { number: toQuantityHex(block.number), hash: toDataHex(block.block_hash), parentHash: toDataHex(block.parent_hash), nonce: ZERO_8, sha3Uncles: ZERO_32, logsBloom: ZERO_256, transactionsRoot: ZERO_32, stateRoot: toDataHex(block.state_root), receiptsRoot: ZERO_32, miner: ZERO_ADDR, difficulty: "0x0", totalDifficulty: "0x0", extraData: "0x", size: "0x0", gasLimit: "0x0", gasUsed: "0x0", timestamp: toQuantityHex(block.timestamp), transactions: mapBlockTxs(block.txs, fullTx), uncles: [], baseFeePerGas: "0x0" }; }
 function mapBlockTxs(txs: { Full: EthTxView[] } | { Hashes: Uint8Array[] }, fullTx: boolean): unknown[] { if ("Hashes" in txs) return txs.Hashes.map((v) => toDataHex(v)); return fullTx ? txs.Full.map(mapTx) : txs.Full.map((v) => toDataHex(v.eth_tx_hash.length === 0 ? v.hash : v.eth_tx_hash[0])); }
 function mapTx(tx: EthTxView): Record<string, unknown> { const decoded = tx.decoded.length === 0 ? null : tx.decoded[0]; const txHash = tx.eth_tx_hash.length === 0 ? tx.hash : tx.eth_tx_hash[0]; const toAddr = decoded && decoded.to.length > 0 ? decoded.to[0] : undefined; return { hash: toDataHex(txHash), nonce: decoded ? toQuantityHex(decoded.nonce) : "0x0", blockHash: null, blockNumber: tx.block_number.length === 0 ? null : toQuantityHex(tx.block_number[0]), transactionIndex: tx.tx_index.length === 0 ? null : toQuantityHex(BigInt(tx.tx_index[0])), from: decoded ? toDataHex(decoded.from) : ZERO_ADDR, to: toAddr ? toDataHex(toAddr) : null, value: decoded ? toQuantityHex(bytesToQuantity(decoded.value)) : "0x0", gas: decoded ? toQuantityHex(decoded.gas_limit) : "0x0", gasPrice: decoded ? toQuantityHex(decoded.gas_price) : "0x0", input: decoded ? toDataHex(decoded.input) : "0x", type: "0x0", v: "0x0", r: "0x0", s: "0x0" }; }
-function mapReceipt(receipt: EthReceiptView, fallbackTxHash: Uint8Array): Record<string, unknown> { const txHash = receipt.eth_tx_hash.length === 0 ? fallbackTxHash : receipt.eth_tx_hash[0]; return { transactionHash: toDataHex(txHash), transactionIndex: toQuantityHex(BigInt(receipt.tx_index)), blockHash: null, blockNumber: toQuantityHex(receipt.block_number), from: ZERO_ADDR, to: null, cumulativeGasUsed: toQuantityHex(receipt.gas_used), gasUsed: toQuantityHex(receipt.gas_used), contractAddress: receipt.contract_address.length === 0 ? null : toDataHex(receipt.contract_address[0]), logs: [], logsBloom: ZERO_256, status: toQuantityHex(BigInt(receipt.status)), type: "0x0", effectiveGasPrice: toQuantityHex(receipt.effective_gas_price) }; }
+function mapReceipt(receipt: EthReceiptView, fallbackTxHash: Uint8Array): Record<string, unknown> {
+  const txHash = receipt.eth_tx_hash.length === 0 ? fallbackTxHash : receipt.eth_tx_hash[0];
+  return {
+    transactionHash: toDataHex(txHash),
+    transactionIndex: toQuantityHex(BigInt(receipt.tx_index)),
+    blockHash: null,
+    blockNumber: toQuantityHex(receipt.block_number),
+    from: ZERO_ADDR,
+    to: null,
+    cumulativeGasUsed: toQuantityHex(receipt.gas_used),
+    gasUsed: toQuantityHex(receipt.gas_used),
+    contractAddress: receipt.contract_address.length === 0 ? null : toDataHex(receipt.contract_address[0]),
+    logs: receipt.logs.map((log) => ({
+      address: toDataHex(log.address),
+      topics: log.topics.map((topic) => toDataHex(topic)),
+      data: toDataHex(log.data),
+      blockNumber: toQuantityHex(receipt.block_number),
+      blockHash: null,
+      transactionHash: toDataHex(txHash),
+      transactionIndex: toQuantityHex(BigInt(receipt.tx_index)),
+      logIndex: toQuantityHex(BigInt(log.log_index)),
+      removed: false,
+    })),
+    logsBloom: ZERO_256,
+    status: toQuantityHex(BigInt(receipt.status)),
+    type: "0x0",
+    effectiveGasPrice: toQuantityHex(receipt.effective_gas_price),
+  };
+}
+
+export function __test_map_receipt(receipt: EthReceiptView, fallbackTxHash: Uint8Array): Record<string, unknown> {
+  return mapReceipt(receipt, fallbackTxHash);
+}

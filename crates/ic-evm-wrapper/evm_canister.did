@@ -53,12 +53,18 @@ type EthLogsPageView = record {
   next_cursor : opt EthLogsCursorView;
   items : vec EthLogItemView;
 };
+type EthReceiptLogView = record {
+  log_index : nat32;
+  data : blob;
+  topics : vec blob;
+  address : blob;
+};
 type EthReceiptView = record {
   effective_gas_price : nat64;
   status : nat8;
   l1_data_fee : nat;
   tx_index : nat32;
-  logs : vec LogView;
+  logs : vec EthReceiptLogView;
   total_fee : nat;
   block_number : nat64;
   operator_fee : nat;
@@ -76,6 +82,7 @@ type EthTxView = record {
   kind : TxKindView;
   block_number : opt nat64;
   eth_tx_hash : opt blob;
+  caller_principal : opt blob;
   decoded : opt DecodedTxView;
 };
 type ExportChunkView = record {
@@ -313,6 +320,7 @@ service : (opt InitArgs) -> {
     ) query;
   rpc_eth_get_storage_at : (blob, blob) -> (Result_8) query;
   rpc_eth_get_transaction_by_eth_hash : (blob) -> (opt EthTxView) query;
+  rpc_eth_get_transaction_by_tx_id : (blob) -> (opt EthTxView) query;
   rpc_eth_get_transaction_receipt_by_eth_hash : (blob) -> (
       opt EthReceiptView,
     ) query;
@@ -327,6 +335,5 @@ service : (opt InitArgs) -> {
   set_miner_allowlist : (vec principal) -> (Result_12);
   set_prune_policy : (PrunePolicyView) -> (Result_12);
   set_pruning_enabled : (bool) -> (Result_12);
-  submit_eth_tx : (blob) -> (Result_11);
   submit_ic_tx : (blob) -> (Result_11);
 }

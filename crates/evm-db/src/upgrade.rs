@@ -12,7 +12,9 @@ pub fn pre_upgrade() {
     let mut memory: VMem = get_memory(AppMemoryId::Upgrades);
     let mut writer = Writer::new(&mut memory, 0);
     let version_bytes = UPGRADE_STATE_VERSION.to_le_bytes();
-    let _ = writer.write(&version_bytes);
+    if writer.write(&version_bytes).is_err() {
+        panic!("upgrade: failed to persist state version");
+    }
 }
 
 pub fn post_upgrade() {

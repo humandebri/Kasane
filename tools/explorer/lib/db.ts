@@ -14,6 +14,7 @@ export type TxSummary = {
   txHashHex: string;
   blockNumber: bigint;
   txIndex: number;
+  callerPrincipal: Buffer | null;
 };
 
 export type BlockDetails = {
@@ -68,8 +69,8 @@ export async function getLatestBlocks(limit: number): Promise<BlockSummary[]> {
 
 export async function getLatestTxs(limit: number): Promise<TxSummary[]> {
   const pool = getPool();
-  const rows = await pool.query<{ tx_hash: Buffer; block_number: string | number; tx_index: number }>(
-    "SELECT tx_hash, block_number, tx_index FROM txs ORDER BY block_number DESC, tx_index DESC LIMIT $1",
+  const rows = await pool.query<{ tx_hash: Buffer; block_number: string | number; tx_index: number; caller_principal: Buffer | null }>(
+    "SELECT tx_hash, block_number, tx_index, caller_principal FROM txs ORDER BY block_number DESC, tx_index DESC LIMIT $1",
     [limit]
   );
 
@@ -77,6 +78,7 @@ export async function getLatestTxs(limit: number): Promise<TxSummary[]> {
     txHashHex: `0x${row.tx_hash.toString("hex")}`,
     blockNumber: BigInt(row.block_number),
     txIndex: row.tx_index,
+    callerPrincipal: row.caller_principal ?? null,
   }));
 }
 
@@ -91,8 +93,8 @@ export async function getBlockDetails(blockNumber: bigint): Promise<BlockDetails
     return null;
   }
 
-  const txRows = await pool.query<{ tx_hash: Buffer; block_number: string | number; tx_index: number }>(
-    "SELECT tx_hash, block_number, tx_index FROM txs WHERE block_number = $1 ORDER BY tx_index ASC",
+  const txRows = await pool.query<{ tx_hash: Buffer; block_number: string | number; tx_index: number; caller_principal: Buffer | null }>(
+    "SELECT tx_hash, block_number, tx_index, caller_principal FROM txs WHERE block_number = $1 ORDER BY tx_index ASC",
     [blockNumber]
   );
 
@@ -112,14 +114,15 @@ export async function getBlockDetails(blockNumber: bigint): Promise<BlockDetails
       txHashHex: `0x${tx.tx_hash.toString("hex")}`,
       blockNumber: BigInt(tx.block_number),
       txIndex: tx.tx_index,
+      callerPrincipal: tx.caller_principal ?? null,
     })),
   };
 }
 
 export async function getTx(txHash: Uint8Array): Promise<TxSummary | null> {
   const pool = getPool();
-  const row = await pool.query<{ tx_hash: Buffer; block_number: string | number; tx_index: number }>(
-    "SELECT tx_hash, block_number, tx_index FROM txs WHERE tx_hash = $1",
+  const row = await pool.query<{ tx_hash: Buffer; block_number: string | number; tx_index: number; caller_principal: Buffer | null }>(
+    "SELECT tx_hash, block_number, tx_index, caller_principal FROM txs WHERE tx_hash = $1",
     [Buffer.from(txHash)]
   );
 
@@ -134,6 +137,7 @@ export async function getTx(txHash: Uint8Array): Promise<TxSummary | null> {
     txHashHex: `0x${hit.tx_hash.toString("hex")}`,
     blockNumber: BigInt(hit.block_number),
     txIndex: hit.tx_index,
+    callerPrincipal: hit.caller_principal ?? null,
   };
 }
 

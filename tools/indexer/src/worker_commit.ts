@@ -102,8 +102,8 @@ export async function commitPending(params: {
       );
       for (const entry of txIndex) {
         await client.query(
-          "INSERT INTO txs(tx_hash, block_number, tx_index) VALUES($1, $2, $3) ON CONFLICT(tx_hash) DO UPDATE SET block_number = excluded.block_number, tx_index = excluded.tx_index",
-          [entry.txHash, entry.blockNumber, entry.txIndex]
+          "INSERT INTO txs(tx_hash, block_number, tx_index, caller_principal) VALUES($1, $2, $3, $4) ON CONFLICT(tx_hash) DO UPDATE SET block_number = excluded.block_number, tx_index = excluded.tx_index, caller_principal = excluded.caller_principal",
+          [entry.txHash, entry.blockNumber, entry.txIndex, entry.callerPrincipal]
         );
       }
       await client.query(

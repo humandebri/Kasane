@@ -307,14 +307,44 @@ impl BlobStore {
         Ok(())
     }
 
+    // prune回復経路向け:
+    // Used/Quarantine のどちらからでも Free へ遷移させる。
+    // 同一ポインタの再実行でも安全に前進できるよう冪等性を持たせる。
+    pub fn reclaim_for_prune(&mut self, ptr: &BlobPtr) -> Result<(), BlobError> {
+        let key = AllocKey::new(ptr.class(), ptr.offset());
+        let mut entry = self
+            .alloc_table
+            .get(&key)
+            .ok_or(BlobError::MissingAllocEntry)?;
+        if entry.gen != ptr.gen() {
+            return Err(BlobError::InvalidPointer);
+        }
+        if entry.state == BlobState::Free {
+            return Ok(());
+        }
+        if entry.state != BlobState::Quarantine && entry.state != BlobState::Used {
+            return Err(BlobError::InvalidState);
+        }
+        entry.state = BlobState::Free;
+        self.alloc_table.insert(key, entry);
+        Ok(())
+    }
+
     fn pop_free(&mut self, class: u32) -> Option<u64> {
         let start = AllocKey::new(class, 0);
         let end = AllocKey::new(class, u64::MAX);
         let mut iter = self.free_list_by_class.range(start..=end);
-        let entry = iter.next()?;
-        let key = entry.key().clone();
-        self.free_list_by_class.remove(&key);
-        Some(key.offset())
+        if let Some(entry) = iter.next() {
+            let key = *entry.key();
+            self.free_list_by_class.remove(&key);
+            return Some(key.offset());
+        }
+        // 低メモリ時にfree_list更新が失敗しても再利用を進められるよう、
+        // alloc_tableを直接走査してFreeエントリを見つける。
+        let mut alloc_iter = self.alloc_table.range(start..=end);
+        alloc_iter
+            .find(|entry| entry.value().state == BlobState::Free)
+            .map(|entry| entry.key().offset())
     }
 
     fn current_gen(&self, class: u32, offset: u64) -> Result<u32, BlobError> {
