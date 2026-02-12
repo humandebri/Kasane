@@ -6,14 +6,14 @@ use evm_core::chain;
 use evm_core::hash;
 use evm_db::chain_data::constants::CHAIN_ID;
 use evm_db::chain_data::constants::{MAX_QUEUE_SNAPSHOT_LIMIT, MAX_RETURN_DATA, MAX_TX_SIZE};
-use evm_db::chain_data::DEFAULT_MINING_INTERVAL_MS;
-use evm_db::chain_data::{MIN_PRUNE_MAX_OPS_PER_TICK, MIN_PRUNE_TIMER_INTERVAL_MS};
-use evm_db::chain_data::{
-    BlockData, CallerKey, MigrationPhase, OpsMode, ReceiptLike, TxId, TxKind, TxLoc,
-    TxLocKind, LOG_CONFIG_FILTER_MAX,
-};
 #[cfg(test)]
 use evm_db::chain_data::StoredTx;
+use evm_db::chain_data::DEFAULT_MINING_INTERVAL_MS;
+use evm_db::chain_data::{
+    BlockData, CallerKey, MigrationPhase, OpsMode, ReceiptLike, TxId, TxKind, TxLoc, TxLocKind,
+    LOG_CONFIG_FILTER_MAX,
+};
+use evm_db::chain_data::{MIN_PRUNE_MAX_OPS_PER_TICK, MIN_PRUNE_TIMER_INTERVAL_MS};
 use evm_db::meta::{
     current_schema_version, ensure_meta_initialized, get_meta, mark_migration_applied,
     schema_migration_state, set_needs_migration, set_schema_migration_state, set_tx_locs_v3_active,
@@ -58,7 +58,6 @@ thread_local! {
 }
 
 use ic_evm_rpc_types::*;
-
 
 #[cfg(test)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -394,7 +393,7 @@ fn produce_block(max_txs: u32) -> Result<ProduceBlockStatus, ProduceBlockError> 
     if let Some(reason) = reject_anonymous_update() {
         return Err(ProduceBlockError::Internal(reason));
     }
-    if let Err(reason) = require_producer_write() {
+    if let Err(reason) = require_data_plane_write_for_producer() {
         return Err(ProduceBlockError::Internal(reason));
     }
     if migration_pending() {
@@ -547,7 +546,7 @@ fn set_prune_policy(policy: PrunePolicyView) -> Result<(), String> {
         return Err(reason);
     }
     validate_prune_policy_input(&policy)?;
-    require_manage_write()?;
+    require_control_plane_write()?;
     let core_policy = evm_db::chain_data::PrunePolicy {
         target_bytes: policy.target_bytes,
         retain_days: policy.retain_days,
@@ -577,7 +576,7 @@ fn set_pruning_enabled(enabled: bool) -> Result<(), String> {
     if let Some(reason) = reject_anonymous_update() {
         return Err(reason);
     }
-    require_manage_write()?;
+    require_control_plane_write()?;
     chain::set_pruning_enabled(enabled).map_err(|_| "set_pruning_enabled failed".to_string())?;
     schedule_prune();
     Ok(())
@@ -714,7 +713,7 @@ fn set_miner_allowlist(principals: Vec<Principal>) -> Result<(), String> {
     if let Some(reason) = reject_anonymous_update() {
         return Err(reason);
     }
-    require_manage_write()?;
+    require_control_plane_write()?;
     evm_db::stable_state::with_state_mut(|state| {
         let old_keys: Vec<_> = state
             .miner_allowlist
@@ -781,7 +780,7 @@ fn set_log_filter(filter: Option<String>) -> Result<(), String> {
     if let Some(reason) = reject_anonymous_update() {
         return Err(reason);
     }
-    require_manage_write()?;
+    require_control_plane_write()?;
     let normalized = filter
         .map(|raw| raw.trim().to_string())
         .filter(|v| !v.is_empty());
@@ -900,7 +899,7 @@ fn set_auto_mine(enabled: bool) -> Result<(), String> {
     if let Some(reason) = reject_anonymous_update() {
         return Err(reason);
     }
-    require_manage_write()?;
+    require_control_plane_write()?;
     evm_db::stable_state::with_state_mut(|state| {
         let mut chain_state = *state.chain_state.get();
         chain_state.auto_mine_enabled = enabled;
@@ -917,7 +916,7 @@ fn set_block_gas_limit(limit: u64) -> Result<(), String> {
     if let Some(reason) = reject_anonymous_update() {
         return Err(reason);
     }
-    require_manage_write()?;
+    require_control_plane_write()?;
     if limit == 0 {
         return Err("input.block_gas_limit.non_positive".to_string());
     }
@@ -934,7 +933,7 @@ fn set_instruction_soft_limit(limit: u64) -> Result<(), String> {
     if let Some(reason) = reject_anonymous_update() {
         return Err(reason);
     }
-    require_manage_write()?;
+    require_control_plane_write()?;
     evm_db::stable_state::with_state_mut(|state| {
         let mut chain_state = *state.chain_state.get();
         chain_state.instruction_soft_limit = limit;
@@ -948,7 +947,7 @@ fn prune_blocks(retain: u64, max_ops: u32) -> Result<PruneResultView, ProduceBlo
     if let Some(reason) = reject_anonymous_update() {
         return Err(ProduceBlockError::Internal(reason));
     }
-    if let Err(reason) = require_manage_write() {
+    if let Err(reason) = require_control_plane_write() {
         return Err(ProduceBlockError::Internal(reason));
     }
     match chain::prune_blocks(retain, max_ops) {
@@ -1186,7 +1185,6 @@ fn receipt_to_eth_view(receipt: ReceiptLike) -> EthReceiptView {
     }
 }
 
-
 #[cfg(test)]
 fn prune_boundary_for_number(number: u64) -> Option<u64> {
     let pruned_before = with_state(|state| state.prune_state.get().pruned_before());
@@ -1231,15 +1229,15 @@ fn require_controller() -> Result<(), String> {
     Ok(())
 }
 
-fn require_manage_write() -> Result<(), String> {
+// 制御プレーン（管理API）は非常時でも controller 操作を継続できるよう、
+// reject_write_reason には依存させない。
+fn require_control_plane_write() -> Result<(), String> {
     require_controller()?;
-    if let Some(reason) = reject_write_reason() {
-        return Err(reason);
-    }
     Ok(())
 }
 
-fn require_producer_write() -> Result<(), String> {
+// データプレーン（Tx投入/ブロック生成）は非常時に停止する。
+fn require_data_plane_write_for_producer() -> Result<(), String> {
     if let Some(reason) = reject_write_reason() {
         return Err(reason);
     }
@@ -1855,9 +1853,8 @@ mod tests {
         map_execute_chain_result, map_submit_chain_error, migration_pending,
         prune_boundary_for_number, receipt_lookup_status, reject_anonymous_principal,
         reject_write_reason, tx_id_from_bytes, validate_prune_policy_input, EthLogFilterView,
-        ExecuteTxError, GetLogsErrorView, PrunePolicyView,
-        INSPECT_METHOD_POLICIES, MAX_PRUNE_BACKOFF_MS, MINING_ERROR_COUNT,
-        MIN_PRUNE_TIMER_INTERVAL_MS, PRUNE_ERROR_COUNT,
+        ExecuteTxError, GetLogsErrorView, PrunePolicyView, INSPECT_METHOD_POLICIES,
+        MAX_PRUNE_BACKOFF_MS, MINING_ERROR_COUNT, MIN_PRUNE_TIMER_INTERVAL_MS, PRUNE_ERROR_COUNT,
     };
     use candid::{encode_one, Principal};
     use evm_core::chain::{ChainError, ExecResult};
@@ -2308,7 +2305,8 @@ mod tests {
             timer_interval_ms: 0,
             max_ops_per_tick: 1,
         };
-        let err = validate_prune_policy_input(&policy).expect_err("timer interval must be validated");
+        let err =
+            validate_prune_policy_input(&policy).expect_err("timer interval must be validated");
         assert_eq!(err, "input.prune.timer_interval_too_low");
     }
 
@@ -2542,7 +2540,9 @@ mod tests {
         let addr = [0x11u8; 20];
         let slot = [0x22u8; 32];
         evm_db::stable_state::with_state_mut(|state| {
-            state.storage.insert(make_storage_key(addr, slot), U256Val([0x33u8; 32]));
+            state
+                .storage
+                .insert(make_storage_key(addr, slot), U256Val([0x33u8; 32]));
         });
         let out = super::rpc_eth_get_storage_at(addr.to_vec(), slot.to_vec()).expect("storage");
         assert_eq!(out, vec![0x33u8; 32]);
@@ -2551,9 +2551,11 @@ mod tests {
     #[test]
     fn rpc_eth_get_storage_at_rejects_bad_length() {
         init_stable_state();
-        let err = super::rpc_eth_get_storage_at(vec![0u8; 19], vec![0u8; 32]).expect_err("bad address");
+        let err =
+            super::rpc_eth_get_storage_at(vec![0u8; 19], vec![0u8; 32]).expect_err("bad address");
         assert_eq!(err, "address must be 20 bytes");
-        let err = super::rpc_eth_get_storage_at(vec![0u8; 20], vec![0u8; 31]).expect_err("bad slot");
+        let err =
+            super::rpc_eth_get_storage_at(vec![0u8; 20], vec![0u8; 31]).expect_err("bad slot");
         assert_eq!(err, "slot must be 32 bytes");
     }
 
