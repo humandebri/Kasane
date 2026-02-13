@@ -48,6 +48,9 @@ export type EthBlockView = {
   timestamp: bigint;
   state_root: Uint8Array;
   parent_hash: Uint8Array;
+  base_fee_per_gas: [] | [bigint];
+  gas_limit: [] | [bigint];
+  gas_used: [] | [bigint];
 };
 
 type TextResult = { Ok: Uint8Array } | { Err: string };

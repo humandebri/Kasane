@@ -79,6 +79,9 @@ export const idlFactory: IDL.InterfaceFactory = ({ IDL }) => {
     timestamp: IDL.Nat64,
     state_root: IDL.Vec(IDL.Nat8),
     parent_hash: IDL.Vec(IDL.Nat8),
+    base_fee_per_gas: IDL.Opt(IDL.Nat64),
+    gas_limit: IDL.Opt(IDL.Nat64),
+    gas_used: IDL.Opt(IDL.Nat64),
   });
   const SubmitTxError = IDL.Variant({
     Internal: IDL.Text,
