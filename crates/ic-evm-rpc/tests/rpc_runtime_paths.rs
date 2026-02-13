@@ -3,16 +3,17 @@
 //! なぜ: wrapper側テストと実運用実装の乖離を防ぐため
 
 use evm_core::hash;
-use evm_db::chain_data::{BlockData, ReceiptLike, StoredTxBytes, TxId, TxIndexEntry, TxKind};
 use evm_db::chain_data::constants::MAX_TX_SIZE;
 use evm_db::chain_data::receipt::log_entry_from_parts;
+use evm_db::chain_data::{BlockData, ReceiptLike, StoredTxBytes, TxId, TxIndexEntry, TxKind};
 use evm_db::stable_state::{init_stable_state, with_state_mut};
 use evm_db::types::keys::{make_account_key, make_storage_key};
 use evm_db::types::values::{AccountVal, U256Val};
 use evm_db::Storable;
 use ic_evm_rpc::{
-    rpc_eth_call_object, rpc_eth_call_rawtx, rpc_eth_estimate_gas_object, rpc_eth_get_balance, rpc_eth_get_block_by_number_with_status,
-    rpc_eth_get_code, rpc_eth_get_storage_at, rpc_eth_get_transaction_by_eth_hash, rpc_eth_get_transaction_receipt_by_eth_hash,
+    rpc_eth_call_object, rpc_eth_call_rawtx, rpc_eth_estimate_gas_object, rpc_eth_get_balance,
+    rpc_eth_get_block_by_number_with_status, rpc_eth_get_code, rpc_eth_get_storage_at,
+    rpc_eth_get_transaction_by_eth_hash, rpc_eth_get_transaction_receipt_by_eth_hash,
     rpc_eth_send_raw_transaction, submit_tx_in_with_code,
 };
 use ic_evm_rpc_types::{RpcBlockLookupView, RpcCallObjectView};
@@ -59,9 +60,11 @@ fn rpc_eth_get_code_returns_empty_for_unknown_account() {
 fn rpc_eth_get_storage_at_rejects_invalid_lengths() {
     let _guard = test_lock().lock().expect("lock");
     init_stable_state();
-    let err = rpc_eth_get_storage_at(vec![0u8; 19], vec![0u8; 32]).expect_err("invalid address should fail");
+    let err = rpc_eth_get_storage_at(vec![0u8; 19], vec![0u8; 32])
+        .expect_err("invalid address should fail");
     assert_eq!(err, "address must be 20 bytes");
-    let err = rpc_eth_get_storage_at(vec![0u8; 20], vec![0u8; 31]).expect_err("invalid slot should fail");
+    let err =
+        rpc_eth_get_storage_at(vec![0u8; 20], vec![0u8; 31]).expect_err("invalid slot should fail");
     assert_eq!(err, "slot must be 32 bytes");
 }
 
@@ -70,7 +73,8 @@ fn rpc_eth_get_storage_at_returns_zero_and_reads_existing_value() {
     let _guard = test_lock().lock().expect("lock");
     init_stable_state();
 
-    let missing = rpc_eth_get_storage_at(vec![0u8; 20], vec![0u8; 32]).expect("query should succeed");
+    let missing =
+        rpc_eth_get_storage_at(vec![0u8; 20], vec![0u8; 32]).expect("query should succeed");
     assert_eq!(missing, vec![0u8; 32]);
 
     let addr = [0x11u8; 20];
@@ -411,8 +415,8 @@ fn submit_tx_maps_too_large_error_to_invalid_argument() {
     let _guard = test_lock().lock().expect("lock");
     init_stable_state();
     let oversized = vec![0u8; MAX_TX_SIZE + 1];
-    let err = rpc_eth_send_raw_transaction(oversized, Vec::new())
-        .expect_err("oversized tx should fail");
+    let err =
+        rpc_eth_send_raw_transaction(oversized, Vec::new()).expect_err("oversized tx should fail");
     match err {
         ic_evm_rpc_types::SubmitTxError::InvalidArgument(code) => {
             assert_eq!(code, "arg.tx_too_large");
@@ -455,7 +459,13 @@ fn get_block_by_number_hashes_prefers_eth_tx_hash_for_eth_signed() {
     init_stable_state();
 
     let raw = vec![0x02, 0x99, 0xaa, 0xbb];
-    let tx_id = TxId(hash::stored_tx_id(TxKind::EthSigned, &raw, None, None, None));
+    let tx_id = TxId(hash::stored_tx_id(
+        TxKind::EthSigned,
+        &raw,
+        None,
+        None,
+        None,
+    ));
     let stored = StoredTxBytes::new_with_fees(
         tx_id,
         TxKind::EthSigned,
@@ -467,7 +477,18 @@ fn get_block_by_number_hashes_prefers_eth_tx_hash_for_eth_signed() {
         0,
         false,
     );
-    let block = BlockData::new(1, [0u8; 32], [1u8; 32], 1_700_000_000, vec![tx_id], [2u8; 32], [3u8; 32]);
+    let block = BlockData::new(
+        1,
+        [0u8; 32],
+        [1u8; 32],
+        1_700_000_000,
+        1_000_000_000,
+        3_000_000,
+        21_000,
+        vec![tx_id],
+        [2u8; 32],
+        [3u8; 32],
+    );
     with_state_mut(|state| {
         state.tx_store.insert(tx_id, stored);
         let ptr = state
@@ -496,7 +517,13 @@ fn get_transaction_by_hash_reads_from_eth_hash_index() {
     init_stable_state();
 
     let raw = vec![0x02, 0xaa, 0xbb, 0xcc];
-    let tx_id = TxId(hash::stored_tx_id(TxKind::EthSigned, &raw, None, None, None));
+    let tx_id = TxId(hash::stored_tx_id(
+        TxKind::EthSigned,
+        &raw,
+        None,
+        None,
+        None,
+    ));
     let eth_hash = hash::keccak256(&raw);
     let stored = StoredTxBytes::new_with_fees(
         tx_id,
@@ -524,7 +551,13 @@ fn get_transaction_by_hash_returns_none_on_index_miss() {
     init_stable_state();
 
     let raw = vec![0x02, 0xdd, 0xee, 0xff];
-    let tx_id = TxId(hash::stored_tx_id(TxKind::EthSigned, &raw, None, None, None));
+    let tx_id = TxId(hash::stored_tx_id(
+        TxKind::EthSigned,
+        &raw,
+        None,
+        None,
+        None,
+    ));
     let stored = StoredTxBytes::new_with_fees(
         tx_id,
         TxKind::EthSigned,
@@ -551,11 +584,54 @@ fn get_transaction_receipt_has_block_wide_log_index() {
 
     let raw0 = vec![0x02, 0x10];
     let raw1 = vec![0x02, 0x11];
-    let tx0 = TxId(hash::stored_tx_id(TxKind::EthSigned, &raw0, None, None, None));
-    let tx1 = TxId(hash::stored_tx_id(TxKind::EthSigned, &raw1, None, None, None));
-    let stored0 = StoredTxBytes::new_with_fees(tx0, TxKind::EthSigned, raw0, None, Vec::new(), Vec::new(), 0, 0, false);
-    let stored1 = StoredTxBytes::new_with_fees(tx1, TxKind::EthSigned, raw1, None, Vec::new(), Vec::new(), 0, 0, false);
-    let block = BlockData::new(7, [0u8; 32], [7u8; 32], 1_700_000_007, vec![tx0, tx1], [8u8; 32], [9u8; 32]);
+    let tx0 = TxId(hash::stored_tx_id(
+        TxKind::EthSigned,
+        &raw0,
+        None,
+        None,
+        None,
+    ));
+    let tx1 = TxId(hash::stored_tx_id(
+        TxKind::EthSigned,
+        &raw1,
+        None,
+        None,
+        None,
+    ));
+    let stored0 = StoredTxBytes::new_with_fees(
+        tx0,
+        TxKind::EthSigned,
+        raw0,
+        None,
+        Vec::new(),
+        Vec::new(),
+        0,
+        0,
+        false,
+    );
+    let stored1 = StoredTxBytes::new_with_fees(
+        tx1,
+        TxKind::EthSigned,
+        raw1,
+        None,
+        Vec::new(),
+        Vec::new(),
+        0,
+        0,
+        false,
+    );
+    let block = BlockData::new(
+        7,
+        [0u8; 32],
+        [7u8; 32],
+        1_700_000_007,
+        1_000_000_000,
+        3_000_000,
+        42_000,
+        vec![tx0, tx1],
+        [8u8; 32],
+        [9u8; 32],
+    );
     let receipt0 = ReceiptLike {
         tx_id: tx0,
         block_number: 7,
@@ -587,13 +663,21 @@ fn get_transaction_receipt_has_block_wide_log_index() {
         return_data_hash: [0u8; 32],
         return_data: Vec::new(),
         contract_address: None,
-        logs: vec![log_entry_from_parts([0x12; 20], vec![[0x24; 32]], vec![0xcc])],
+        logs: vec![log_entry_from_parts(
+            [0x12; 20],
+            vec![[0x24; 32]],
+            vec![0xcc],
+        )],
     };
     with_state_mut(|state| {
         state.tx_store.insert(tx0, stored0);
         state.tx_store.insert(tx1, stored1);
-        state.eth_tx_hash_index.insert(TxId(hash::keccak256(&[0x02, 0x10])), tx0);
-        state.eth_tx_hash_index.insert(TxId(hash::keccak256(&[0x02, 0x11])), tx1);
+        state
+            .eth_tx_hash_index
+            .insert(TxId(hash::keccak256(&[0x02, 0x10])), tx0);
+        state
+            .eth_tx_hash_index
+            .insert(TxId(hash::keccak256(&[0x02, 0x11])), tx1);
 
         let block_ptr = state
             .blob_store
@@ -612,8 +696,14 @@ fn get_transaction_receipt_has_block_wide_log_index() {
         state.receipts.insert(tx0, receipt0_ptr);
         state.receipts.insert(tx1, receipt1_ptr);
 
-        let tx_index0 = TxIndexEntry { block_number: 7, tx_index: 0 };
-        let tx_index1 = TxIndexEntry { block_number: 7, tx_index: 1 };
+        let tx_index0 = TxIndexEntry {
+            block_number: 7,
+            tx_index: 0,
+        };
+        let tx_index1 = TxIndexEntry {
+            block_number: 7,
+            tx_index: 1,
+        };
         let tx_index0_ptr = state
             .blob_store
             .store_bytes(&tx_index0.into_bytes())

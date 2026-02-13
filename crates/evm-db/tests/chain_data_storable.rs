@@ -77,6 +77,9 @@ fn block_roundtrip() {
         [0x10u8; 32],
         [0x11u8; 32],
         1,
+        1_000_000_000,
+        3_000_000,
+        21_000,
         tx_ids,
         [0x12u8; 32],
         [0x13u8; 32],
@@ -207,7 +210,18 @@ fn prune_journal_overflow_returns_fallback_bytes() {
 #[test]
 fn block_data_encode_overflow_returns_fallback_bytes() {
     let tx_ids = vec![TxId([0u8; 32]); MAX_TXS_PER_BLOCK + 1];
-    let block = BlockData::new(0, [0u8; 32], [0u8; 32], 0, tx_ids, [0u8; 32], [0u8; 32]);
+    let block = BlockData::new(
+        0,
+        [0u8; 32],
+        [0u8; 32],
+        0,
+        1_000_000_000,
+        3_000_000,
+        21_000,
+        tx_ids,
+        [0u8; 32],
+        [0u8; 32],
+    );
     let bytes = block.to_bytes().into_owned();
     assert!(!bytes.is_empty());
     let decoded = BlockData::from_bytes(bytes.into());

@@ -49,7 +49,10 @@ fn snapshot_tx_outcome_matrix_and_block_fields() {
         common::build_ic_tx_bytes(halt_target, 2, 2_000_000_000, 1_000_000_000),
     );
 
-    let matrix = format!("tx_statuses=[{}, {}, {}]", success.status, revert.status, halt.status);
+    let matrix = format!(
+        "tx_statuses=[{}, {}, {}]",
+        success.status, revert.status, halt.status
+    );
 
     let block = chain::get_block(3).expect("block #3");
 

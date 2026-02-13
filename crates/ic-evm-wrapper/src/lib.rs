@@ -10,7 +10,7 @@ use evm_db::chain_data::constants::{MAX_QUEUE_SNAPSHOT_LIMIT, MAX_RETURN_DATA, M
 use evm_db::chain_data::StoredTx;
 use evm_db::chain_data::DEFAULT_MINING_INTERVAL_MS;
 use evm_db::chain_data::{
-    BlockData, CallerKey, MigrationPhase, OpsMode, ReceiptLike, TxId, TxKind, TxLoc, TxLocKind,
+    BlockData, MigrationPhase, OpsMode, ReceiptLike, TxId, TxKind, TxLoc, TxLocKind,
     LOG_CONFIG_FILTER_MAX,
 };
 use evm_db::chain_data::{MIN_PRUNE_MAX_OPS_PER_TICK, MIN_PRUNE_TIMER_INTERVAL_MS};
@@ -201,7 +201,7 @@ struct InspectMethodPolicy {
     payload_limit: usize,
 }
 
-const INSPECT_METHOD_POLICIES: [InspectMethodPolicy; 11] = [
+const INSPECT_METHOD_POLICIES: [InspectMethodPolicy; 10] = [
     InspectMethodPolicy {
         method: "submit_ic_tx",
         payload_limit: INSPECT_TX_PAYLOAD_LIMIT,
@@ -232,10 +232,6 @@ const INSPECT_METHOD_POLICIES: [InspectMethodPolicy; 11] = [
     },
     InspectMethodPolicy {
         method: "set_log_filter",
-        payload_limit: INSPECT_MANAGE_PAYLOAD_LIMIT,
-    },
-    InspectMethodPolicy {
-        method: "set_miner_allowlist",
         payload_limit: INSPECT_MANAGE_PAYLOAD_LIMIT,
     },
     InspectMethodPolicy {
@@ -696,42 +692,6 @@ fn rpc_eth_send_raw_transaction(raw_tx: Vec<u8>) -> Result<Vec<u8>, SubmitTxErro
         schedule_mining();
     }
     out
-}
-
-#[ic_cdk::query]
-fn get_miner_allowlist() -> Vec<Principal> {
-    with_state(|state| {
-        let mut out = Vec::new();
-        for entry in state.miner_allowlist.iter() {
-            if let Some(principal) = caller_key_to_principal(*entry.key()) {
-                out.push(principal);
-            }
-        }
-        out
-    })
-}
-
-#[ic_cdk::update]
-fn set_miner_allowlist(principals: Vec<Principal>) -> Result<(), String> {
-    if let Some(reason) = reject_anonymous_update() {
-        return Err(reason);
-    }
-    require_control_plane_write()?;
-    evm_db::stable_state::with_state_mut(|state| {
-        let old_keys: Vec<_> = state
-            .miner_allowlist
-            .iter()
-            .map(|entry| *entry.key())
-            .collect();
-        for key in old_keys {
-            state.miner_allowlist.remove(&key);
-        }
-        for principal in principals {
-            let key = caller_key_from_principal(principal);
-            state.miner_allowlist.insert(key, 1u8);
-        }
-    });
-    Ok(())
 }
 
 #[ic_cdk::query]
@@ -1244,28 +1204,10 @@ fn require_data_plane_write_for_producer() -> Result<(), String> {
     if let Some(reason) = reject_write_reason() {
         return Err(reason);
     }
-    let caller = msg_caller();
-    if is_controller(&caller) {
-        return Ok(());
-    }
-    let key = CallerKey::from_principal_bytes(caller.as_slice());
-    let allowed = with_state(|state| state.miner_allowlist.get(&key).is_some());
-    if !allowed {
-        return Err("auth.producer_required".to_string());
+    if !is_controller(&msg_caller()) {
+        return Err("auth.controller_required".to_string());
     }
     Ok(())
-}
-
-fn caller_key_from_principal(principal: Principal) -> CallerKey {
-    CallerKey::from_principal_bytes(principal.as_slice())
-}
-
-fn caller_key_to_principal(key: CallerKey) -> Option<Principal> {
-    let len = usize::from(key.0[0]);
-    if len == 0 || len > 29 {
-        return None;
-    }
-    Some(Principal::from_slice(&key.0[1..1 + len]))
 }
 
 fn migration_pending() -> bool {
@@ -2050,7 +1992,6 @@ mod tests {
     fn inspect_allowlist_accepts_known_methods() {
         assert!(inspect_payload_limit_for_method("submit_ic_tx").is_some());
         assert!(inspect_payload_limit_for_method("set_pruning_enabled").is_some());
-        assert!(inspect_payload_limit_for_method("set_miner_allowlist").is_some());
         assert!(inspect_payload_limit_for_method("set_block_gas_limit").is_some());
         assert!(inspect_payload_limit_for_method("set_instruction_soft_limit").is_some());
     }
@@ -2135,7 +2076,7 @@ mod tests {
     #[test]
     fn inspect_payload_limit_applies_per_method() {
         let tx_limit = inspect_payload_limit_for_method("submit_ic_tx").expect("tx limit");
-        let manage_limit = inspect_payload_limit_for_method("set_miner_allowlist")
+        let manage_limit = inspect_payload_limit_for_method("set_block_gas_limit")
             .expect("manage limit should be configured");
         assert!(manage_limit > tx_limit);
         assert_eq!(

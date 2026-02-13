@@ -40,7 +40,6 @@ pub type PendingFeeKeyByTxId = StableBTreeMap<TxId, PendingFeeKey, VMem>;
 pub type ReadyBySeq = StableBTreeMap<ReadySeqKey, TxId, VMem>;
 pub type EthTxHashIndex = StableBTreeMap<TxId, TxId, VMem>;
 pub type PruneJournalMap = StableBTreeMap<u64, PruneJournal, VMem>;
-pub type MinerAllowlist = StableBTreeMap<CallerKey, u8, VMem>;
 pub type DroppedRing = StableBTreeMap<u64, TxId, VMem>;
 pub type StateStorageRoots = StableBTreeMap<AccountKey, U256Val, VMem>;
 pub type StateRootMismatch = StableBTreeMap<u64, MismatchRecordV1, VMem>;
@@ -85,7 +84,6 @@ pub struct StableState {
     pub pending_fee_key_by_tx_id: PendingFeeKeyByTxId,
     pub ready_by_seq: ReadyBySeq,
     pub eth_tx_hash_index: EthTxHashIndex,
-    pub miner_allowlist: MinerAllowlist,
     pub dropped_ring_state: StableCell<DroppedRingStateV1, VMem>,
     pub dropped_ring: DroppedRing,
     pub state_storage_roots: StateStorageRoots,
@@ -172,7 +170,6 @@ pub fn init_stable_state() {
         StableBTreeMap::init(get_memory(AppMemoryId::PendingFeeKeyByTxId));
     let ready_by_seq = StableBTreeMap::init(get_memory(AppMemoryId::ReadyBySeq));
     let eth_tx_hash_index = StableBTreeMap::init(get_memory(AppMemoryId::EthTxHashIndex));
-    let miner_allowlist = StableBTreeMap::init(get_memory(AppMemoryId::MinerAllowlist));
     let dropped_ring_state = StableCell::init(
         get_memory(AppMemoryId::DroppedRingState),
         DroppedRingStateV1::new(),
@@ -236,7 +233,6 @@ pub fn init_stable_state() {
             pending_fee_key_by_tx_id,
             ready_by_seq,
             eth_tx_hash_index,
-            miner_allowlist,
             dropped_ring_state,
             dropped_ring,
             state_storage_roots,

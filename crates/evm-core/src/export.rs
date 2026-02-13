@@ -291,8 +291,8 @@ fn build_tx_index_payload(
             .and_then(|envelope| StoredTx::try_from(envelope).ok())
             .map(|stored| stored.caller_principal)
             .unwrap_or_default();
-        let caller_principal_len =
-            u16::try_from(caller_principal.len()).map_err(|_| ExportError::InvalidCursor("principal too large"))?;
+        let caller_principal_len = u16::try_from(caller_principal.len())
+            .map_err(|_| ExportError::InvalidCursor("principal too large"))?;
         let total_len = encoded
             .len()
             .saturating_add(2)
