@@ -6,6 +6,7 @@ use alloy_primitives::B256;
 use alloy_primitives::{Address, Bytes, Signature, TxKind, U256};
 use alloy_signer::SignerSync;
 use alloy_signer_local::PrivateKeySigner;
+use evm_core::tx_decode::decode_eth_raw_tx;
 use std::env;
 
 fn parse_hex_bytes(value: &str) -> Result<Vec<u8>, String> {
@@ -40,8 +41,29 @@ fn parse_u256(value: &str) -> Result<U256, String> {
     Ok(U256::from(parsed))
 }
 
+fn parse_csv_bytes(value: &str) -> Result<Vec<u8>, String> {
+    let mut out = Vec::new();
+    for item in value.split(';') {
+        let part = item.trim();
+        if part.is_empty() {
+            continue;
+        }
+        let parsed = part
+            .parse::<u16>()
+            .map_err(|_| format!("invalid byte: {part}"))?;
+        if parsed > u16::from(u8::MAX) {
+            return Err(format!("byte out of range: {part}"));
+        }
+        out.push(parsed as u8);
+    }
+    if out.is_empty() {
+        return Err("raw csv is empty".to_string());
+    }
+    Ok(out)
+}
+
 fn usage() -> String {
-    "usage: eth_raw_tx --mode raw|sender|sender-hex|genkey --privkey HEX --to HEX --value WEI --gas-price WEI --gas-limit GAS --nonce NONCE --chain-id ID"
+    "usage: eth_raw_tx --mode raw|sender|sender-hex|genkey|decode-csv --privkey HEX --to HEX --value WEI --gas-price WEI --gas-limit GAS --nonce NONCE --chain-id ID [--raw-csv \"1; 2; ...\"]"
         .to_string()
 }
 
@@ -61,6 +83,7 @@ fn run() -> Result<(), String> {
     let mut gas_limit = None;
     let mut nonce = None;
     let mut chain_id = None;
+    let mut raw_csv = None;
 
     let mut args = env::args().skip(1);
     while let Some(arg) = args.next() {
@@ -73,6 +96,7 @@ fn run() -> Result<(), String> {
             "--gas-limit" => gas_limit = Some(args.next().ok_or_else(|| usage())?),
             "--nonce" => nonce = Some(args.next().ok_or_else(|| usage())?),
             "--chain-id" => chain_id = Some(args.next().ok_or_else(|| usage())?),
+            "--raw-csv" => raw_csv = Some(args.next().ok_or_else(|| usage())?),
             _ => return Err(usage()),
         }
     }
@@ -96,6 +120,24 @@ fn run() -> Result<(), String> {
         } else {
             print_bytes(sender.as_slice());
         }
+        return Ok(());
+    }
+
+    if mode == "decode-csv" {
+        let csv = raw_csv.ok_or_else(|| usage())?;
+        let raw = parse_csv_bytes(&csv)?;
+        let decoded = decode_eth_raw_tx(&raw).map_err(|e| format!("decode failed: {e:?}"))?;
+        let chain = decoded
+            .chain_id
+            .map(|v| v.to_string())
+            .unwrap_or_else(|| "none".to_string());
+        println!(
+            "ok sender={} nonce={} chain_id={} tx_type={}",
+            hex::encode(decoded.caller.as_slice()),
+            decoded.nonce,
+            chain,
+            decoded.tx_type
+        );
         return Ok(());
     }
 
@@ -123,6 +165,7 @@ fn run() -> Result<(), String> {
 
     let mut out = Vec::with_capacity(tx.rlp_encoded_length_with_signature(&signature));
     tx.rlp_encode_signed(&signature, &mut out);
+    decode_eth_raw_tx(&out).map_err(|e| format!("self-check decode failed: {e:?}"))?;
     print_bytes(&out);
     Ok(())
 }

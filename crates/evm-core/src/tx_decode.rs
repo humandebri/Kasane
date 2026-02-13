@@ -1,9 +1,9 @@
 //! どこで: Phase1のTxデコード / 何を: IcSynthetic + Eth の安全なデコード / なぜ: 互換性とtrap回避
 use alloy_primitives::Address as AlloyAddress;
 use byteorder::{BigEndian, ByteOrder};
-use evm_tx::{recover_eth_tx, RecoveredTx, RecoveryError};
 use evm_db::chain_data::constants::{CHAIN_ID, MAX_TX_SIZE};
 use evm_db::chain_data::TxKind;
+use evm_tx::{recover_eth_tx, RecoveredTx, RecoveryError};
 use revm::context::TxEnv;
 use revm::primitives::{
     Address as RevmAddress, Bytes as RevmBytes, TxKind as RevmTxKind, U256 as RevmU256,
@@ -261,7 +261,13 @@ mod tests {
 
     #[test]
     fn decode_eth_raw_tx_rejects_4844_and_7702_prefix_without_deep_decode() {
-        assert_eq!(decode_eth_raw_tx(&[0x03]).err(), Some(DecodeError::UnsupportedType));
-        assert_eq!(decode_eth_raw_tx(&[0x04]).err(), Some(DecodeError::UnsupportedType));
+        assert_eq!(
+            decode_eth_raw_tx(&[0x03]).err(),
+            Some(DecodeError::UnsupportedType)
+        );
+        assert_eq!(
+            decode_eth_raw_tx(&[0x04]).err(),
+            Some(DecodeError::UnsupportedType)
+        );
     }
 }

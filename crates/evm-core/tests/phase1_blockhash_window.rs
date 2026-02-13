@@ -37,7 +37,7 @@ fn call_contract(addr: [u8; 20]) -> Vec<u8> {
         to: Some(addr),
         from: [0x11u8; 20],
         gas_limit: Some(200_000),
-        gas_price: Some(2_000_000_000),
+        gas_price: Some(500_000_000_000),
         nonce: Some(0),
         max_fee_per_gas: None,
         max_priority_fee_per_gas: None,

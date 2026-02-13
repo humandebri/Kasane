@@ -10,9 +10,20 @@ use evm_db::stable_state::{init_stable_state, with_state_mut};
 
 mod common;
 
+fn relax_fee_floor_for_tests() {
+    with_state_mut(|state| {
+        let mut chain_state = *state.chain_state.get();
+        chain_state.base_fee = 1;
+        chain_state.min_gas_price = 1;
+        chain_state.min_priority_fee = 1;
+        state.chain_state.set(chain_state);
+    });
+}
+
 #[test]
 fn snapshot_tx_outcome_matrix_and_block_fields() {
     init_stable_state();
+    relax_fee_floor_for_tests();
     // ブロックハッシュを時刻依存で揺らさないため、head.timestamp を固定する。
     with_state_mut(|state| {
         let head = *state.head.get();
@@ -70,9 +81,10 @@ fn snapshot_tx_outcome_matrix_and_block_fields() {
     assert_eq!(matrix, "tx_statuses=[1, 0, 0]");
     // 意図差分の履歴:
     // - OP由来のsystem tx会計を除去し、標準EVM実行へ統一したことで state_root/block_hash が更新
+    // - fee floor をテスト内で固定したことで block_hash/state_root が再計算された
     assert_eq!(
         block_outcome,
-        "number=3 block_hash=985a33ed8d0c824043dcd7faeae65bb69e8daf78e89069c4f5093946b0c46dc2 tx_list_hash=4ad087ec0641a22f03bb82cb8cf391aca8c73cb30fd8eeda10b813d1f2a6c6df state_root=9ef63abe99c8302e58f3b5afad12ec68ee2d06e80f4ed7b8c68759a75785794c"
+        "number=3 block_hash=266de0857afd02adf889b2d8a4205f39332c4125a920ad4b9ba9dbef107cd039 tx_list_hash=4ad087ec0641a22f03bb82cb8cf391aca8c73cb30fd8eeda10b813d1f2a6c6df state_root=734b3620fff75ded3345312c60e509fd5a8a8077a5dc53f59874435f42a8bc4a"
     );
 }
 

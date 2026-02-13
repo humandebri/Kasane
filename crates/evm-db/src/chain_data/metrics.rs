@@ -7,7 +7,7 @@ use std::borrow::Cow;
 
 pub const METRICS_BUCKETS: usize = 256;
 pub const METRICS_BUCKETS_U32: u32 = 256;
-pub const DROP_CODE_SLOTS: usize = 10;
+pub const DROP_CODE_SLOTS: usize = 11;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct MetricsBucket {

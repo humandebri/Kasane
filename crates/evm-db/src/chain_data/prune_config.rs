@@ -2,8 +2,8 @@
 
 use crate::chain_data::codec::{encode_guarded, mark_decode_failure};
 use crate::chain_data::runtime_defaults::{
-    DEFAULT_PRUNE_MAX_OPS_PER_TICK, DEFAULT_PRUNE_TIMER_INTERVAL_MS,
-    MIN_PRUNE_MAX_OPS_PER_TICK, MIN_PRUNE_TIMER_INTERVAL_MS,
+    DEFAULT_PRUNE_MAX_OPS_PER_TICK, DEFAULT_PRUNE_TIMER_INTERVAL_MS, MIN_PRUNE_MAX_OPS_PER_TICK,
+    MIN_PRUNE_TIMER_INTERVAL_MS,
 };
 use ic_stable_structures::storable::Bound;
 use ic_stable_structures::Storable;
@@ -278,7 +278,9 @@ fn compute_low_water(target: u64, headroom_bps: u32) -> u64 {
 
 #[cfg(test)]
 mod tests {
-    use super::{compute_high_water, compute_low_water, compute_ratio_bytes, PruneConfigV1, PrunePolicy};
+    use super::{
+        compute_high_water, compute_low_water, compute_ratio_bytes, PruneConfigV1, PrunePolicy,
+    };
     use crate::chain_data::runtime_defaults::{
         MIN_PRUNE_MAX_OPS_PER_TICK, MIN_PRUNE_TIMER_INTERVAL_MS,
     };

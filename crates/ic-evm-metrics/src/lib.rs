@@ -48,7 +48,10 @@ pub fn build_prometheus_snapshot(input: PrometheusSnapshotInput) -> PrometheusSn
             continue;
         }
         if let Ok(code) = u16::try_from(idx) {
-            drop_counts.push(DropCountView { code, count: *count });
+            drop_counts.push(DropCountView {
+                code,
+                count: *count,
+            });
         }
     }
 
@@ -77,53 +80,116 @@ pub fn encode_prometheus(now_nanos: u64, snapshot: &PrometheusSnapshot) -> Resul
     let mut encoder = MetricsEncoder::new(Vec::new(), ts_millis);
 
     encoder
-        .encode_gauge("ic_evm_cycles_balance", to_f64_saturating(snapshot.cycles_balance), "Canister cycle balance.")
+        .encode_gauge(
+            "ic_evm_cycles_balance",
+            to_f64_saturating(snapshot.cycles_balance),
+            "Canister cycle balance.",
+        )
         .map_err(map_io)?;
     encoder
-        .encode_gauge("ic_evm_stable_memory_pages", to_f64_u64(snapshot.stable_memory_pages), "Stable memory pages in use.")
+        .encode_gauge(
+            "ic_evm_stable_memory_pages",
+            to_f64_u64(snapshot.stable_memory_pages),
+            "Stable memory pages in use.",
+        )
         .map_err(map_io)?;
     encoder
-        .encode_gauge("ic_evm_heap_memory_pages", to_f64_u64(snapshot.heap_memory_pages), "Wasm heap memory pages in use.")
+        .encode_gauge(
+            "ic_evm_heap_memory_pages",
+            to_f64_u64(snapshot.heap_memory_pages),
+            "Wasm heap memory pages in use.",
+        )
         .map_err(map_io)?;
     encoder
-        .encode_gauge("ic_evm_tip_block_number", to_f64_u64(snapshot.tip_block_number), "Latest produced block number.")
+        .encode_gauge(
+            "ic_evm_tip_block_number",
+            to_f64_u64(snapshot.tip_block_number),
+            "Latest produced block number.",
+        )
         .map_err(map_io)?;
     encoder
-        .encode_gauge("ic_evm_queue_len", to_f64_u64(snapshot.queue_len), "Pending transaction queue length.")
+        .encode_gauge(
+            "ic_evm_queue_len",
+            to_f64_u64(snapshot.queue_len),
+            "Pending transaction queue length.",
+        )
         .map_err(map_io)?;
     encoder
-        .encode_counter("ic_evm_total_submitted", to_f64_u64(snapshot.total_submitted), "Total submitted transactions.")
+        .encode_counter(
+            "ic_evm_total_submitted",
+            to_f64_u64(snapshot.total_submitted),
+            "Total submitted transactions.",
+        )
         .map_err(map_io)?;
     encoder
-        .encode_counter("ic_evm_total_included", to_f64_u64(snapshot.total_included), "Total included transactions.")
+        .encode_counter(
+            "ic_evm_total_included",
+            to_f64_u64(snapshot.total_included),
+            "Total included transactions.",
+        )
         .map_err(map_io)?;
     encoder
-        .encode_counter("ic_evm_total_dropped", to_f64_u64(snapshot.total_dropped), "Total dropped transactions.")
+        .encode_counter(
+            "ic_evm_total_dropped",
+            to_f64_u64(snapshot.total_dropped),
+            "Total dropped transactions.",
+        )
         .map_err(map_io)?;
     encoder
-        .encode_gauge("ic_evm_auto_mine_enabled", bool_to_gauge(snapshot.auto_mine_enabled), "1 when auto-mining is enabled.")
+        .encode_gauge(
+            "ic_evm_auto_mine_enabled",
+            bool_to_gauge(snapshot.auto_mine_enabled),
+            "1 when auto-mining is enabled.",
+        )
         .map_err(map_io)?;
     encoder
-        .encode_gauge("ic_evm_is_producing", bool_to_gauge(snapshot.is_producing), "1 when a block production call is in progress.")
+        .encode_gauge(
+            "ic_evm_is_producing",
+            bool_to_gauge(snapshot.is_producing),
+            "1 when a block production call is in progress.",
+        )
         .map_err(map_io)?;
     encoder
-        .encode_gauge("ic_evm_mining_scheduled", bool_to_gauge(snapshot.mining_scheduled), "1 when timer-driven mining is scheduled.")
+        .encode_gauge(
+            "ic_evm_mining_scheduled",
+            bool_to_gauge(snapshot.mining_scheduled),
+            "1 when timer-driven mining is scheduled.",
+        )
         .map_err(map_io)?;
     encoder
-        .encode_gauge("ic_evm_mining_interval_ms", to_f64_u64(snapshot.mining_interval_ms), "Configured auto-mining interval in milliseconds.")
+        .encode_gauge(
+            "ic_evm_mining_interval_ms",
+            to_f64_u64(snapshot.mining_interval_ms),
+            "Configured auto-mining interval in milliseconds.",
+        )
         .map_err(map_io)?;
     encoder
-        .encode_gauge("ic_evm_last_block_time_seconds", to_f64_u64(snapshot.last_block_time), "Timestamp of the last produced block.")
+        .encode_gauge(
+            "ic_evm_last_block_time_seconds",
+            to_f64_u64(snapshot.last_block_time),
+            "Timestamp of the last produced block.",
+        )
         .map_err(map_io)?;
     encoder
-        .encode_gauge("ic_evm_pruned_before_block_present", bool_to_gauge(snapshot.pruned_before_block.is_some()), "1 when prune boundary is set.")
+        .encode_gauge(
+            "ic_evm_pruned_before_block_present",
+            bool_to_gauge(snapshot.pruned_before_block.is_some()),
+            "1 when prune boundary is set.",
+        )
         .map_err(map_io)?;
     encoder
-        .encode_gauge("ic_evm_pruned_before_block", to_f64_u64(snapshot.pruned_before_block.unwrap_or(0)), "Prune boundary block number (0 when unset).")
+        .encode_gauge(
+            "ic_evm_pruned_before_block",
+            to_f64_u64(snapshot.pruned_before_block.unwrap_or(0)),
+            "Prune boundary block number (0 when unset).",
+        )
         .map_err(map_io)?;
 
     let mut drop_builder = encoder
-        .counter_vec("ic_evm_drop_count_total", "Dropped transaction counts by drop code.")
+        .counter_vec(
+            "ic_evm_drop_count_total",
+            "Dropped transaction counts by drop code.",
+        )
         .map_err(map_io)?;
     for sample in &snapshot.drop_counts {
         let code_text = sample.code.to_string();
@@ -147,7 +213,11 @@ fn to_f64_u64(value: u64) -> f64 {
 }
 
 fn bool_to_gauge(value: bool) -> f64 {
-    if value { 1.0 } else { 0.0 }
+    if value {
+        1.0
+    } else {
+        0.0
+    }
 }
 
 fn map_io(err: std::io::Error) -> String {
@@ -156,7 +226,9 @@ fn map_io(err: std::io::Error) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{build_prometheus_snapshot, encode_prometheus, PrometheusSnapshot, PrometheusSnapshotInput};
+    use super::{
+        build_prometheus_snapshot, encode_prometheus, PrometheusSnapshot, PrometheusSnapshotInput,
+    };
     use ic_evm_rpc_types::DropCountView;
 
     #[test]
@@ -206,7 +278,10 @@ mod tests {
         });
         assert_eq!(
             snapshot.drop_counts,
-            vec![DropCountView { code: 1, count: 3 }, DropCountView { code: 3, count: 4 }]
+            vec![
+                DropCountView { code: 1, count: 3 },
+                DropCountView { code: 3, count: 4 }
+            ]
         );
     }
 }

@@ -22,13 +22,20 @@ pub fn expected_nonce_for_sender(state: &mut StableState, sender: SenderKey) -> 
     nonce
 }
 
-pub fn finalize_pending_for_sender(state: &mut StableState, sender: SenderKey, tx_id: TxId) {
+pub fn finalize_pending_for_sender_without_nonce_bump(
+    state: &mut StableState,
+    sender: SenderKey,
+    tx_id: TxId,
+) {
     if let Some(current) = state.pending_current_by_sender.get(&sender) {
         if current == tx_id {
             state.pending_current_by_sender.remove(&sender);
-            bump_expected_nonce(state, sender);
         }
     }
+}
+
+pub fn bump_expected_nonce_on_included(state: &mut StableState, sender: SenderKey) {
+    bump_expected_nonce(state, sender);
 }
 
 pub fn apply_nonce_and_replacement(

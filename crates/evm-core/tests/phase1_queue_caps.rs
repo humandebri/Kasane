@@ -8,16 +8,28 @@ use alloy_signer_local::PrivateKeySigner;
 use evm_core::chain::{self, ChainError};
 use evm_core::hash;
 use evm_db::chain_data::constants::{
-    CHAIN_ID, DROP_CODE_REPLACED, MAX_PENDING_GLOBAL, MAX_PENDING_PER_PRINCIPAL,
+    CHAIN_ID, DROP_CODE_DECODE, DROP_CODE_EXEC_PRECHECK, DROP_CODE_REPLACED, MAX_PENDING_GLOBAL,
+    MAX_PENDING_PER_PRINCIPAL,
 };
-use evm_db::chain_data::{CallerKey, SenderNonceKey, StoredTxBytes, TxId, TxKind, TxLocKind};
+use evm_db::chain_data::{CallerKey, SenderKey, SenderNonceKey, StoredTxBytes, TxId, TxKind, TxLocKind};
 use evm_db::stable_state::{init_stable_state, with_state, with_state_mut};
 
 mod common;
 
+fn relax_fee_floor_for_tests() {
+    with_state_mut(|state| {
+        let mut chain_state = *state.chain_state.get();
+        chain_state.base_fee = 1;
+        chain_state.min_gas_price = 1;
+        chain_state.min_priority_fee = 1;
+        state.chain_state.set(chain_state);
+    });
+}
+
 #[test]
 fn submit_ic_tx_rejects_when_global_pending_cap_is_reached() {
     init_stable_state();
+    relax_fee_floor_for_tests();
     with_state_mut(|state| {
         for i in 0..MAX_PENDING_GLOBAL {
             let mut sender = [0u8; 20];
@@ -41,6 +53,7 @@ fn submit_ic_tx_rejects_when_global_pending_cap_is_reached() {
 #[test]
 fn replacement_is_allowed_even_when_global_pending_cap_is_reached() {
     init_stable_state();
+    relax_fee_floor_for_tests();
     let caller = vec![0x42];
     let canister = vec![0x77];
     let first_tx = common::build_default_ic_tx_bytes(0);
@@ -75,6 +88,7 @@ fn replacement_is_allowed_even_when_global_pending_cap_is_reached() {
 #[test]
 fn higher_fee_tx_evicts_lowest_fee_when_global_pending_cap_is_reached() {
     init_stable_state();
+    relax_fee_floor_for_tests();
     let caller_low = vec![0x42];
     let caller_high = vec![0x43];
     let canister = vec![0x77];
@@ -112,6 +126,7 @@ fn higher_fee_tx_evicts_lowest_fee_when_global_pending_cap_is_reached() {
 #[test]
 fn lower_or_equal_fee_tx_is_rejected_when_global_pending_cap_is_reached() {
     init_stable_state();
+    relax_fee_floor_for_tests();
     let caller_low = vec![0x52];
     let caller_same = vec![0x53];
     let canister = vec![0x88];
@@ -151,6 +166,7 @@ fn lower_or_equal_fee_tx_is_rejected_when_global_pending_cap_is_reached() {
 #[test]
 fn submit_ic_tx_rejects_when_principal_pending_cap_is_reached() {
     init_stable_state();
+    relax_fee_floor_for_tests();
     let caller = vec![0x99];
     let canister = vec![0x01];
     let caller_evm = hash::caller_evm_from_principal(&caller);
@@ -193,7 +209,109 @@ fn submit_ic_tx_rejects_when_principal_pending_cap_is_reached() {
     assert_eq!(err, ChainError::PrincipalQueueFull);
 }
 
+#[test]
+fn eth_signed_submit_does_not_turn_into_decode_drop_on_produce() {
+    init_stable_state();
+    relax_fee_floor_for_tests();
+    let gas_price = with_state(|state| state.chain_state.get().min_gas_price.saturating_add(1));
+    let tx_id = chain::submit_tx(
+        TxKind::EthSigned,
+        build_eth_signed_tx_with_gas_price(0, u128::from(gas_price)),
+        vec![0x42],
+    )
+        .expect("eth signed submit should succeed");
+
+    let err = chain::produce_block(1).expect_err("insufficient sender balance should drop");
+    assert_eq!(err, ChainError::NoExecutableTx);
+
+    let loc = chain::get_tx_loc(&tx_id).expect("tx loc");
+    assert_eq!(loc.kind, TxLocKind::Dropped);
+    assert_eq!(loc.drop_code, DROP_CODE_EXEC_PRECHECK);
+    assert_ne!(loc.drop_code, DROP_CODE_DECODE);
+}
+
+#[test]
+fn submit_tx_nonce_conflict_is_atomic() {
+    init_stable_state();
+    relax_fee_floor_for_tests();
+    let caller = vec![0x34];
+    let gas_price = with_state(|state| state.chain_state.get().min_gas_price.saturating_add(1));
+    let raw = build_eth_signed_tx_with_gas_price(0, u128::from(gas_price));
+    let decoded = evm_core::tx_decode::decode_eth_raw_tx(&raw).expect("decode");
+    let mut sender = [0u8; 20];
+    sender.copy_from_slice(decoded.caller.as_ref());
+    let pending_key = SenderNonceKey::new(sender, 0);
+    let existing_tx_id = TxId([0x88u8; 32]);
+    with_state_mut(|state| {
+        state.sender_expected_nonce.insert(SenderKey::new(sender), 0);
+        state.pending_by_sender_nonce.insert(pending_key, existing_tx_id);
+        state.pending_meta_by_tx_id.insert(existing_tx_id, pending_key);
+    });
+    let new_tx_id = TxId(hash::stored_tx_id(TxKind::EthSigned, &raw, None, None, None));
+    let err = chain::submit_tx(TxKind::EthSigned, raw.clone(), caller.clone())
+        .expect_err("nonce conflict expected");
+    assert_eq!(err, ChainError::NonceConflict);
+
+    with_state(|state| {
+        assert!(state.seen_tx.get(&new_tx_id).is_none());
+        assert!(state.tx_store.get(&new_tx_id).is_none());
+        assert!(chain::get_tx_loc(&new_tx_id).is_none());
+        let eth_hash = TxId(hash::keccak256(&raw));
+        assert!(state.eth_tx_hash_index.get(&eth_hash).is_none());
+        assert_eq!(
+            state
+                .principal_pending_count
+                .get(&CallerKey::from_principal_bytes(&caller)),
+            None
+        );
+    });
+}
+
+#[test]
+fn submit_ic_tx_nonce_conflict_is_atomic() {
+    init_stable_state();
+    relax_fee_floor_for_tests();
+    let caller_principal = vec![0x45];
+    let canister_id = vec![0x67];
+    let sender = hash::caller_evm_from_principal(&caller_principal);
+    let pending_key = SenderNonceKey::new(sender, 0);
+    let existing_tx_id = TxId([0x99u8; 32]);
+    with_state_mut(|state| {
+        state.sender_expected_nonce.insert(SenderKey::new(sender), 0);
+        state.pending_by_sender_nonce.insert(pending_key, existing_tx_id);
+        state.pending_meta_by_tx_id.insert(existing_tx_id, pending_key);
+    });
+
+    let tx_bytes = common::build_default_ic_tx_bytes(0);
+    let new_tx_id = TxId(hash::stored_tx_id(
+        TxKind::IcSynthetic,
+        &tx_bytes,
+        Some(sender),
+        Some(&canister_id),
+        Some(&caller_principal),
+    ));
+    let err = chain::submit_ic_tx(caller_principal.clone(), canister_id, tx_bytes)
+        .expect_err("nonce conflict expected");
+    assert_eq!(err, ChainError::NonceConflict);
+
+    with_state(|state| {
+        assert!(state.seen_tx.get(&new_tx_id).is_none());
+        assert!(state.tx_store.get(&new_tx_id).is_none());
+        assert!(chain::get_tx_loc(&new_tx_id).is_none());
+        assert_eq!(
+            state
+                .principal_pending_count
+                .get(&CallerKey::from_principal_bytes(&caller_principal)),
+            None
+        );
+    });
+}
+
 fn build_eth_signed_tx(nonce: u64) -> Vec<u8> {
+    build_eth_signed_tx_with_gas_price(nonce, 2_000_000_000)
+}
+
+fn build_eth_signed_tx_with_gas_price(nonce: u64, gas_price: u128) -> Vec<u8> {
     let signer: PrivateKeySigner =
         "0x59c6995e998f97a5a0044966f094538e0d7f4f4e4d5d8dd6a8c4f9d5f8b1e8a1"
             .parse()
@@ -201,7 +319,7 @@ fn build_eth_signed_tx(nonce: u64) -> Vec<u8> {
     let tx = TxLegacy {
         chain_id: Some(CHAIN_ID),
         nonce,
-        gas_price: 2_000_000_000,
+        gas_price,
         gas_limit: 21_000,
         to: EthTxKind::Call(Address::from([0x11u8; 20])),
         value: U256::ZERO,

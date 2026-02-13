@@ -210,9 +210,7 @@ impl TryFrom<StoredTxBytes> for StoredTx {
         {
             return Err(StoredTxError::MissingPrincipal);
         }
-        if value.kind != TxKind::IcSynthetic
-            && (!value.canister_id.is_empty() || !value.caller_principal.is_empty())
-        {
+        if value.kind != TxKind::IcSynthetic && !value.canister_id.is_empty() {
             return Err(StoredTxError::MissingPrincipal);
         }
         let expected = stored_tx_id(
@@ -622,5 +620,51 @@ fn len_to_u32(len: usize) -> Option<u32> {
             record_corrupt(b"tx_envelope_len");
             None
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{stored_tx_id, StoredTx, StoredTxBytes, StoredTxError, TxId, TxKind};
+
+    #[test]
+    fn eth_signed_allows_caller_principal_metadata() {
+        let raw = vec![0x01, 0x02, 0x03];
+        let tx_id = TxId(stored_tx_id(TxKind::EthSigned, &raw, None, None, None));
+        let envelope = StoredTxBytes::new_with_fees(
+            tx_id,
+            TxKind::EthSigned,
+            raw,
+            None,
+            Vec::new(),
+            vec![0xaa],
+            1,
+            0,
+            false,
+        );
+
+        let stored = StoredTx::try_from(envelope).expect("eth signed envelope should be valid");
+        assert_eq!(stored.kind, TxKind::EthSigned);
+        assert_eq!(stored.caller_principal, vec![0xaa]);
+    }
+
+    #[test]
+    fn eth_signed_rejects_non_empty_canister_id() {
+        let raw = vec![0x01, 0x02, 0x03];
+        let tx_id = TxId(stored_tx_id(TxKind::EthSigned, &raw, None, None, None));
+        let envelope = StoredTxBytes::new_with_fees(
+            tx_id,
+            TxKind::EthSigned,
+            raw,
+            None,
+            vec![0xbb],
+            vec![0xaa],
+            1,
+            0,
+            false,
+        );
+
+        let err = StoredTx::try_from(envelope).expect_err("canister_id is invalid for eth signed");
+        assert_eq!(err, StoredTxError::MissingPrincipal);
     }
 }

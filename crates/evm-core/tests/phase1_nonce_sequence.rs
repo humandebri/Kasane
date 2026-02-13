@@ -1,11 +1,19 @@
 //! どこで: Phase1.3テスト / 何を: 同一senderのnonce順序 / なぜ: nonceゲートの基本動作を保証するため
 
 use evm_core::chain::{self, ChainError};
+use evm_core::hash;
 use evm_db::chain_data::constants::DROP_CODE_REPLACED;
 use evm_db::chain_data::TxLocKind;
 use evm_db::stable_state::{init_stable_state, with_state_mut};
 
 mod common;
+
+fn fund_principal(principal: &[u8]) {
+    common::fund_account(
+        hash::caller_evm_from_principal(principal),
+        1_000_000_000_000_000_000,
+    );
+}
 
 #[test]
 fn sequential_nonces_are_included_across_blocks() {
@@ -21,6 +29,7 @@ fn sequential_nonces_are_included_across_blocks() {
     let tx0 = common::build_zero_to_ic_tx_bytes(0, 2_000_000_000, 1_000_000_000);
     let tx1 = common::build_zero_to_ic_tx_bytes(1, 2_000_000_000, 1_000_000_000);
 
+    fund_principal(&[0x77]);
     let id0 = chain::submit_ic_tx(vec![0x77], vec![0x07], tx0).expect("submit 0");
     let outcome1 = chain::produce_block(1).expect("produce block1");
     let block1 = outcome1.block;
@@ -62,6 +71,7 @@ fn nonce_too_low_is_rejected() {
     });
 
     let tx0 = common::build_zero_to_ic_tx_bytes(0, 2_000_000_000, 1_000_000_000);
+    fund_principal(&[0x99]);
     chain::submit_ic_tx(vec![0x99], vec![0x09], tx0).expect("submit 0");
     let _ = chain::produce_block(1).expect("produce block");
 
@@ -84,6 +94,7 @@ fn replacement_requires_higher_effective_fee() {
     let low_fee = common::build_zero_to_ic_tx_bytes(0, 2_000_000_000, 1_000_000_000);
     let high_fee = common::build_zero_to_ic_tx_bytes(0, 3_000_000_000, 2_000_000_000);
 
+    fund_principal(&[0xaa]);
     let low_id = chain::submit_ic_tx(vec![0xaa], vec![0x0a], low_fee).expect("submit low");
     let high_id = chain::submit_ic_tx(vec![0xaa], vec![0x0a], high_fee).expect("submit high");
 
