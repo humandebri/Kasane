@@ -126,7 +126,6 @@ async function main() {
     ["get_block", [0n]],
     ["get_block", [1n]],
     ["get_cycle_balance", []],
-    ["get_miner_allowlist", []],
     ["get_ops_status", []],
     ["get_pending", [zero32]],
     ["get_prune_status", []],
@@ -161,9 +160,10 @@ async function main() {
   const extraTxIdHex = process.env.EXTRA_TX_ID_HEX || "";
   if (extraTxIdHex) {
     const txId = Uint8Array.from(Buffer.from(extraTxIdHex, "hex"));
-    rows.push(await callQuery(actor, "get_pending", [txId]));
-    rows.push(await callQuery(actor, "get_receipt", [txId]));
-    rows.push(await callQuery(actor, "rpc_eth_get_transaction_by_tx_id", [txId]));
+    const txMeta = { tx_id_hex: extraTxIdHex.toLowerCase() };
+    rows.push(await callQuery(actor, "get_pending", [txId], txMeta));
+    rows.push(await callQuery(actor, "get_receipt", [txId], txMeta));
+    rows.push(await callQuery(actor, "rpc_eth_get_transaction_by_tx_id", [txId], txMeta));
   }
 
   const extraEthHashHex = process.env.EXTRA_ETH_HASH_HEX || "";
@@ -178,12 +178,12 @@ async function main() {
   if (extraAddressHex) {
     const address = Uint8Array.from(Buffer.from(extraAddressHex, "hex"));
     rows.push(await callQuery(actor, "expected_nonce_by_address", [address], { address_hex: extraAddressHex.toLowerCase() }));
+    rows.push(await callQuery(actor, "rpc_eth_get_balance", [address], { address_hex: extraAddressHex.toLowerCase() }));
   }
 
   if (summaryOut) {
     const summary = {
       get_ops_status: null,
-      get_miner_allowlist: null,
       rpc_eth_chain_id: null,
     };
     for (const row of rows) {
@@ -192,9 +192,6 @@ async function main() {
       }
       if (row.method === "get_ops_status") {
         summary.get_ops_status = row.value;
-      }
-      if (row.method === "get_miner_allowlist") {
-        summary.get_miner_allowlist = row.value;
       }
       if (row.method === "rpc_eth_chain_id") {
         summary.rpc_eth_chain_id = row.value;
