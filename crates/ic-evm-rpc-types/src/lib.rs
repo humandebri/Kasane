@@ -28,7 +28,9 @@ pub enum ProduceBlockStatus {
         gas_used: u64,
         dropped: u32,
     },
-    NoOp { reason: NoOpReason },
+    NoOp {
+        reason: NoOpReason,
+    },
 }
 
 #[derive(Clone, Debug, CandidType, Deserialize)]
@@ -199,6 +201,9 @@ pub struct EthBlockView {
     pub timestamp: u64,
     pub txs: EthTxListView,
     pub state_root: Vec<u8>,
+    pub base_fee_per_gas: Option<u64>,
+    pub gas_limit: Option<u64>,
+    pub gas_used: Option<u64>,
 }
 
 #[derive(Clone, Debug, CandidType, Deserialize)]

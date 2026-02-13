@@ -2,13 +2,24 @@
 
 use evm_core::chain;
 use evm_core::hash;
-use evm_db::stable_state::{init_stable_state, with_state};
+use evm_db::stable_state::{init_stable_state, with_state, with_state_mut};
 
 mod common;
+
+fn relax_fee_floor_for_tests() {
+    with_state_mut(|state| {
+        let mut chain_state = *state.chain_state.get();
+        chain_state.base_fee = 1;
+        chain_state.min_gas_price = 1;
+        chain_state.min_priority_fee = 1;
+        state.chain_state.set(chain_state);
+    });
+}
 
 #[test]
 fn execute_ic_tx_invalid_opcode_does_not_increment_unknown_halt_metrics() {
     init_stable_state();
+    relax_fee_floor_for_tests();
     let caller_principal = vec![0x42];
     let caller = hash::caller_evm_from_principal(&caller_principal);
     common::fund_account(caller, 1_000_000_000_000_000_000);
@@ -42,6 +53,7 @@ fn execute_ic_tx_invalid_opcode_does_not_increment_unknown_halt_metrics() {
 #[test]
 fn produce_block_selects_top_k_by_fee_then_submission_order() {
     init_stable_state();
+    relax_fee_floor_for_tests();
 
     let mut submitted: Vec<([u8; 32], u128, usize)> = Vec::new();
     let fees = [
@@ -57,8 +69,13 @@ fn produce_block_selects_top_k_by_fee_then_submission_order() {
 
     for (idx, fee) in fees.iter().copied().enumerate() {
         let idx_u8 = u8::try_from(idx).unwrap_or(0);
+        let caller_principal = vec![0x10 + idx_u8];
+        common::fund_account(
+            hash::caller_evm_from_principal(&caller_principal),
+            1_000_000_000_000_000_000,
+        );
         let tx_id = chain::submit_ic_tx(
-            vec![0x10 + idx_u8],
+            caller_principal,
             vec![0x80 + idx_u8],
             common::build_ic_tx_bytes([0x20 + idx_u8; 20], 0, fee, fee),
         )

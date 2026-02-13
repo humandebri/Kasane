@@ -712,6 +712,9 @@ fn block_to_eth_view(block: BlockData, full_tx: bool) -> EthBlockView {
         timestamp: block.timestamp,
         txs,
         state_root: block.state_root.to_vec(),
+        base_fee_per_gas: Some(block.base_fee_per_gas),
+        gas_limit: Some(block.block_gas_limit),
+        gas_used: Some(block.gas_used),
     }
 }
 

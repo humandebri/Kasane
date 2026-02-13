@@ -321,12 +321,7 @@ fn commit_state_diff(evm: &mut impl ExecuteCommitEvm<State = StateDiff>, state: 
     evm.commit(state);
 }
 
-fn store_receipt_index(
-    tx_id: TxId,
-    block_number: u64,
-    tx_index: u32,
-    receipt: &ReceiptLike,
-) {
+fn store_receipt_index(tx_id: TxId, block_number: u64, tx_index: u32, receipt: &ReceiptLike) {
     with_state_mut(|state| {
         let entry = TxIndexEntry {
             block_number,
@@ -334,19 +329,30 @@ fn store_receipt_index(
         };
         let entry_bytes = entry.to_bytes().into_owned();
         before_store_write_for_test("store_tx_index_entry", Some(block_number), Some(tx_id));
-        let entry_ptr = state.blob_store.store_bytes(&entry_bytes).unwrap_or_else(|_| {
-            trap_store_err(
-                "store_tx_index_entry",
-                Some(block_number),
-                Some(tx_id),
-                "blob_store",
-            );
-        });
+        let entry_ptr = state
+            .blob_store
+            .store_bytes(&entry_bytes)
+            .unwrap_or_else(|_| {
+                trap_store_err(
+                    "store_tx_index_entry",
+                    Some(block_number),
+                    Some(tx_id),
+                    "blob_store",
+                );
+            });
         let receipt_bytes = receipt.to_bytes().into_owned();
         before_store_write_for_test("store_receipt", Some(block_number), Some(tx_id));
-        let receipt_ptr = state.blob_store.store_bytes(&receipt_bytes).unwrap_or_else(|_| {
-            trap_store_err("store_receipt", Some(block_number), Some(tx_id), "blob_store");
-        });
+        let receipt_ptr = state
+            .blob_store
+            .store_bytes(&receipt_bytes)
+            .unwrap_or_else(|_| {
+                trap_store_err(
+                    "store_receipt",
+                    Some(block_number),
+                    Some(tx_id),
+                    "blob_store",
+                );
+            });
         state.tx_index.insert(tx_id, entry_ptr);
         state.receipts.insert(tx_id, receipt_ptr);
     });
@@ -398,8 +404,7 @@ pub(crate) fn compute_effective_gas_price(
 }
 
 fn revm_log_to_receipt_log(log: revm::primitives::Log) -> LogEntry {
-    let address =
-        try_address_to_bytes(log.address).expect("revm log address must be 20 bytes");
+    let address = try_address_to_bytes(log.address).expect("revm log address must be 20 bytes");
     let topics = log.topics().iter().map(|topic| topic.0).collect::<Vec<_>>();
     let data = log.data.data.to_vec();
     log_entry_from_parts(address, topics, data)

@@ -66,7 +66,8 @@ pub fn execute_ic_tx_via_produce(
     canister_id: Vec<u8>,
     tx_bytes: Vec<u8>,
 ) -> (TxId, ReceiptLike) {
-    let tx_id = evm_core::chain::submit_ic_tx(caller_principal, canister_id, tx_bytes).expect("submit");
+    let tx_id =
+        evm_core::chain::submit_ic_tx(caller_principal, canister_id, tx_bytes).expect("submit");
     let outcome = evm_core::chain::produce_block(1).expect("produce");
     assert_eq!(outcome.block.tx_ids.len(), 1);
     assert_eq!(outcome.block.tx_ids[0], tx_id);

@@ -30,3 +30,6 @@ dist/
 
 # environment variables
 .env
+
+# ops reports
+docs/ops/reports/

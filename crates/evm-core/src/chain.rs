@@ -5,7 +5,7 @@ use crate::bytes::try_address_to_bytes;
 use crate::hash;
 use crate::revm_exec::{
     commit_state_diff_to_db, compute_effective_gas_price, execute_tx_on, BlockExecContext,
-    ExecError, ExecOutcome, ExecPath, OpHaltReason, StateDiff,
+    ExecError, ExecOutcome, ExecPath, OpHaltReason, OpTransactionError, StateDiff,
 };
 use crate::state_root::TouchedSummary;
 use crate::trie_commit;
@@ -13,9 +13,10 @@ use crate::tx_decode::{decode_ic_synthetic_header_trusted_size, decode_tx};
 use crate::tx_submit;
 use evm_db::chain_data::constants::{
     DROPPED_RING_CAPACITY, DROP_CODE_BLOCK_GAS_EXCEEDED, DROP_CODE_CALLER_MISSING,
-    DROP_CODE_DECODE, DROP_CODE_EXEC, DROP_CODE_INSTRUCTION_BUDGET, DROP_CODE_INVALID_FEE,
-    DROP_CODE_MISSING, DROP_CODE_REPLACED, DROP_CODE_RESULT_TOO_LARGE, MAX_PENDING_GLOBAL,
-    MAX_PENDING_PER_PRINCIPAL, MAX_PENDING_PER_SENDER, MAX_TX_SIZE, READY_CANDIDATE_LIMIT,
+    DROP_CODE_DECODE, DROP_CODE_EXEC, DROP_CODE_EXEC_PRECHECK, DROP_CODE_INSTRUCTION_BUDGET,
+    DROP_CODE_INVALID_FEE, DROP_CODE_MISSING, DROP_CODE_REPLACED, DROP_CODE_RESULT_TOO_LARGE,
+    MAX_PENDING_GLOBAL, MAX_PENDING_PER_PRINCIPAL, MAX_PENDING_PER_SENDER, MAX_TX_SIZE,
+    READY_CANDIDATE_LIMIT,
 };
 use evm_db::chain_data::{
     BlockData, CallerKey, Head, PendingFeeKey, PruneJournal, PrunePolicy, ReadyKey, ReadySeqKey,
@@ -357,9 +358,16 @@ pub fn rebuild_pending_runtime_indexes() {
             let Some(envelope) = state.tx_store.get(&tx_id) else {
                 continue;
             };
-            let Ok(stored) = StoredTx::try_from(envelope) else {
-                continue;
+            let stored = match StoredTx::try_from(envelope) {
+                Ok(value) => value,
+                Err(_) => {
+                    drop_invalid_fee_pending_decode(state, tx_id, None, None);
+                    continue;
+                }
             };
+            if state.pending_meta_by_tx_id.get(&tx_id).is_none() {
+                continue;
+            }
             let principal = CallerKey::from_principal_bytes(stored.caller_principal.as_slice());
             let count = state.principal_pending_count.get(&principal).unwrap_or(0);
             state
@@ -724,6 +732,10 @@ pub fn submit_tx(
         if replaced.is_none() {
             enforce_pending_caps(state, sender_key, &caller_principal, effective_gas_price)?;
         }
+        let pending_key = SenderNonceKey::new(sender_key.0, tx_env.nonce);
+        if state.pending_by_sender_nonce.get(&pending_key).is_some() {
+            return Err(ChainError::NonceConflict);
+        }
         state.seen_tx.insert(tx_id, 1);
         state.tx_store.insert(tx_id, envelope.clone());
         insert_eth_tx_hash_index_for_envelope(state, tx_id, envelope);
@@ -738,10 +750,6 @@ pub fn submit_tx(
         let mut chain_state = *state.chain_state.get();
         chain_state.next_queue_seq = meta.tail;
         state.chain_state.set(chain_state);
-        let pending_key = SenderNonceKey::new(sender_key.0, tx_env.nonce);
-        if state.pending_by_sender_nonce.get(&pending_key).is_some() {
-            return Err(ChainError::NonceConflict);
-        }
         state.pending_by_sender_nonce.insert(pending_key, tx_id);
         state.pending_meta_by_tx_id.insert(tx_id, pending_key);
         track_pending_indexes_on_insert(state, tx_id, &caller_principal, effective_gas_price);
@@ -833,6 +841,10 @@ pub fn submit_ic_tx(
                 effective_gas_price,
             )?;
         }
+        let pending_key = SenderNonceKey::new(sender_key.0, nonce);
+        if state.pending_by_sender_nonce.get(&pending_key).is_some() {
+            return Err(ChainError::NonceConflict);
+        }
         state.seen_tx.insert(tx_id, 1);
         state.tx_store.insert(tx_id, envelope);
         state.pending_current_by_sender.insert(sender_key, tx_id);
@@ -846,10 +858,6 @@ pub fn submit_ic_tx(
         let mut chain_state = *state.chain_state.get();
         chain_state.next_queue_seq = meta.tail;
         state.chain_state.set(chain_state);
-        let pending_key = SenderNonceKey::new(sender_key.0, nonce);
-        if state.pending_by_sender_nonce.get(&pending_key).is_some() {
-            return Err(ChainError::NonceConflict);
-        }
         state.pending_by_sender_nonce.insert(pending_key, tx_id);
         state.pending_meta_by_tx_id.insert(tx_id, pending_key);
         track_pending_indexes_on_insert(state, tx_id, &caller_principal, effective_gas_price);
@@ -1114,6 +1122,7 @@ pub fn produce_block(max_txs: usize) -> Result<ProduceBlockOutcome, ChainError> 
                     drop.tx_id,
                     drop.sender_override,
                     drop.nonce_override,
+                    false,
                 );
                 mark_dropped_and_purge_payload(state, drop.tx_id, drop.drop_code);
             }
@@ -1237,30 +1246,27 @@ pub fn produce_block(max_txs: usize) -> Result<ProduceBlockOutcome, ChainError> 
                     );
                     continue;
                 }
-                let output = Vec::new();
-                let receipt = ReceiptLike {
+                if err == ExecError::TxError(OpTransactionError::TxPrecheckFailed) {
+                    staged_drops.push(QueuedDrop {
+                        tx_id,
+                        drop_code: DROP_CODE_EXEC_PRECHECK,
+                        sender_override: Some(prepared_tx.sender_bytes),
+                        nonce_override: Some(prepared_tx.sender_nonce),
+                    });
+                    track_drop(
+                        &mut dropped_total,
+                        &mut dropped_by_code,
+                        DROP_CODE_EXEC_PRECHECK,
+                    );
+                    continue;
+                }
+                staged_drops.push(QueuedDrop {
                     tx_id,
-                    block_number: number,
-                    tx_index,
-                    status: 0,
-                    gas_used: 0,
-                    effective_gas_price: 0,
-                    l1_data_fee: 0,
-                    operator_fee: 0,
-                    total_fee: 0,
-                    return_data_hash: hash::keccak256(&output),
-                    return_data: output,
-                    contract_address: None,
-                    logs: Vec::new(),
-                };
-                staged_included.push(StagedIncludedTx::Failed {
-                    tx_id,
-                    tx_index,
-                    receipt,
-                    sender_bytes: prepared_tx.sender_bytes,
-                    sender_nonce: prepared_tx.sender_nonce,
+                    drop_code: DROP_CODE_EXEC,
+                    sender_override: Some(prepared_tx.sender_bytes),
+                    nonce_override: Some(prepared_tx.sender_nonce),
                 });
-                included_tx_ids.push(tx_id);
+                track_drop(&mut dropped_total, &mut dropped_by_code, DROP_CODE_EXEC);
                 continue;
             }
         };
@@ -1327,6 +1333,9 @@ pub fn produce_block(max_txs: usize) -> Result<ProduceBlockOutcome, ChainError> 
         parent_hash,
         block_hash,
         timestamp,
+        exec_ctx.base_fee,
+        exec_ctx.block_gas_limit,
+        block_gas_used,
         included_tx_ids,
         tx_list_hash,
         state_root,
@@ -1344,60 +1353,39 @@ pub fn produce_block(max_txs: usize) -> Result<ProduceBlockOutcome, ChainError> 
 
         trie_commit::apply(state, prepared_root);
         for drop in staged_drops.iter() {
-            advance_sender_after_tx(state, drop.tx_id, drop.sender_override, drop.nonce_override);
+            advance_sender_after_tx(
+                state,
+                drop.tx_id,
+                drop.sender_override,
+                drop.nonce_override,
+                false,
+            );
             mark_dropped_and_purge_payload(state, drop.tx_id, drop.drop_code);
         }
         let mut staged_persisted = Vec::with_capacity(staged_included.len());
         for included in staged_included.iter() {
-            match included {
-                StagedIncludedTx::Success {
-                    tx_id,
-                    outcome,
-                    sender_bytes,
-                    sender_nonce,
-                } => {
-                    let tx_index_ptr = store_tx_index_entry(
-                        state,
-                        TxIndexEntry {
-                            block_number: number,
-                            tx_index: outcome.tx_index,
-                        },
-                    );
-                    let receipt_ptr = store_receipt(state, &outcome.receipt);
-                    staged_persisted.push(StagedPersist {
-                        tx_id: *tx_id,
-                        tx_index: outcome.tx_index,
-                        tx_index_ptr,
-                        receipt_ptr,
-                        sender_bytes: *sender_bytes,
-                        sender_nonce: *sender_nonce,
-                    });
-                }
-                StagedIncludedTx::Failed {
-                    tx_id,
-                    tx_index,
-                    receipt,
-                    sender_bytes,
-                    sender_nonce,
-                } => {
-                    let tx_index_ptr = store_tx_index_entry(
-                        state,
-                        TxIndexEntry {
-                            block_number: number,
-                            tx_index: *tx_index,
-                        },
-                    );
-                    let receipt_ptr = store_receipt(state, receipt);
-                    staged_persisted.push(StagedPersist {
-                        tx_id: *tx_id,
-                        tx_index: *tx_index,
-                        tx_index_ptr,
-                        receipt_ptr,
-                        sender_bytes: *sender_bytes,
-                        sender_nonce: *sender_nonce,
-                    });
-                }
-            }
+            let StagedIncludedTx::Success {
+                tx_id,
+                outcome,
+                sender_bytes,
+                sender_nonce,
+            } = included;
+            let tx_index_ptr = store_tx_index_entry(
+                state,
+                TxIndexEntry {
+                    block_number: number,
+                    tx_index: outcome.tx_index,
+                },
+            );
+            let receipt_ptr = store_receipt(state, &outcome.receipt);
+            staged_persisted.push(StagedPersist {
+                tx_id: *tx_id,
+                tx_index: outcome.tx_index,
+                tx_index_ptr,
+                receipt_ptr,
+                sender_bytes: *sender_bytes,
+                sender_nonce: *sender_nonce,
+            });
         }
 
         let block_ptr = store_block(state, &block);
@@ -1418,6 +1406,7 @@ pub fn produce_block(max_txs: usize) -> Result<ProduceBlockOutcome, ChainError> 
                 persisted.tx_id,
                 Some(persisted.sender_bytes),
                 Some(persisted.sender_nonce),
+                true,
             );
         }
         state.blocks.insert(number, block_ptr);
@@ -1525,13 +1514,6 @@ enum StagedIncludedTx {
     Success {
         tx_id: TxId,
         outcome: ExecOutcome,
-        sender_bytes: [u8; 20],
-        sender_nonce: u64,
-    },
-    Failed {
-        tx_id: TxId,
-        tx_index: u32,
-        receipt: ReceiptLike,
         sender_bytes: [u8; 20],
         sender_nonce: u64,
     },
@@ -1919,6 +1901,9 @@ fn execute_and_seal_with_caller(
         parent_hash,
         block_hash,
         timestamp,
+        exec_ctx.base_fee,
+        exec_ctx.block_gas_limit,
+        outcome.receipt.gas_used,
         vec![tx_id],
         tx_list_hash,
         state_root,
@@ -1952,7 +1937,7 @@ fn execute_and_seal_with_caller(
             block_hash,
             timestamp,
         });
-        advance_sender_after_tx(state, tx_id, Some(sender_bytes), Some(sender_nonce));
+        advance_sender_after_tx(state, tx_id, Some(sender_bytes), Some(sender_nonce), true);
         let mut chain_state = *state.chain_state.get();
         chain_state.last_block_number = number;
         chain_state.last_block_time = timestamp;
@@ -2384,7 +2369,7 @@ fn evict_lowest_fee_pending(
     }
 
     // Queue pressure eviction is modeled as a replacement-style drop for telemetry consistency.
-    advance_sender_after_tx(state, evict_tx_id, None, None);
+    advance_sender_after_tx(state, evict_tx_id, None, None, false);
     mark_dropped_and_purge_payload(state, evict_tx_id, DROP_CODE_REPLACED);
     let mut metrics = *state.metrics_state.get();
     metrics.record_drop(DROP_CODE_REPLACED, 1);
@@ -2518,6 +2503,7 @@ fn advance_sender_after_tx(
     tx_id: TxId,
     sender_override: Option<[u8; 20]>,
     nonce_override: Option<u64>,
+    bump_expected_nonce: bool,
 ) {
     remove_ready_by_tx_id(state, tx_id);
     let pending_key = match state.pending_meta_by_tx_id.remove(&tx_id) {
@@ -2530,7 +2516,7 @@ fn advance_sender_after_tx(
     state.pending_by_sender_nonce.remove(&pending_key);
     remove_pending_fee_index_by_tx_id(state, tx_id);
     decrement_principal_pending_count_for_tx(state, tx_id);
-    finalize_pending_for_sender(state, pending_key.sender, tx_id);
+    finalize_pending_for_sender(state, pending_key.sender, tx_id, bump_expected_nonce);
     let sender = pending_key.sender;
     if state.pending_min_nonce.get(&sender) != Some(pending_key.nonce) {
         return;
@@ -2575,7 +2561,7 @@ fn drop_invalid_fee_pending(
     dropped_total: Option<&mut u64>,
     dropped_by_code: Option<&mut [u64]>,
 ) {
-    advance_sender_after_tx(state, tx_id, None, None);
+    advance_sender_after_tx(state, tx_id, None, None, false);
     mark_dropped_and_purge_payload(state, tx_id, DROP_CODE_INVALID_FEE);
     if let (Some(total), Some(by_code)) = (dropped_total, dropped_by_code) {
         track_drop(total, by_code, DROP_CODE_INVALID_FEE);
@@ -2592,7 +2578,7 @@ fn drop_invalid_fee_pending_decode(
     dropped_total: Option<&mut u64>,
     dropped_by_code: Option<&mut [u64]>,
 ) {
-    advance_sender_after_tx(state, tx_id, None, None);
+    advance_sender_after_tx(state, tx_id, None, None, false);
     mark_dropped_and_purge_payload(state, tx_id, DROP_CODE_DECODE);
     if let (Some(total), Some(by_code)) = (dropped_total, dropped_by_code) {
         track_drop(total, by_code, DROP_CODE_DECODE);
@@ -2615,7 +2601,7 @@ fn drop_exec_pending_sync(state: &mut evm_db::stable_state::StableState, tx_id: 
     decrement_principal_pending_count_for_tx(state, tx_id);
     if let Some(pending_key) = state.pending_meta_by_tx_id.remove(&tx_id) {
         state.pending_by_sender_nonce.remove(&pending_key);
-        finalize_pending_for_sender(state, pending_key.sender, tx_id);
+        finalize_pending_for_sender(state, pending_key.sender, tx_id, false);
     }
     mark_dropped_and_purge_payload(state, tx_id, DROP_CODE_EXEC);
     let mut metrics = *state.metrics_state.get();
@@ -2724,8 +2710,12 @@ fn finalize_pending_for_sender(
     state: &mut evm_db::stable_state::StableState,
     sender: SenderKey,
     tx_id: TxId,
+    bump_expected_nonce: bool,
 ) {
-    tx_submit::finalize_pending_for_sender(state, sender, tx_id);
+    tx_submit::finalize_pending_for_sender_without_nonce_bump(state, sender, tx_id);
+    if bump_expected_nonce {
+        tx_submit::bump_expected_nonce_on_included(state, sender);
+    }
 }
 
 fn replace_pending_for_sender(

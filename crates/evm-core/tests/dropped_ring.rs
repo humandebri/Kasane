@@ -1,13 +1,27 @@
 //! どこで: dropped管理テスト / 何を: 固定長リングの上限維持 / なぜ: tx_locsメモリリークを防ぐため
 
 use evm_core::chain;
+use evm_core::hash;
 use evm_db::chain_data::constants::DROPPED_RING_CAPACITY;
 use evm_db::chain_data::TxLocKind;
-use evm_db::stable_state::{init_stable_state, with_state};
+use evm_db::stable_state::{init_stable_state, with_state, with_state_mut};
+
+mod common;
+
+fn relax_fee_floor_for_tests() {
+    with_state_mut(|state| {
+        let mut chain_state = *state.chain_state.get();
+        chain_state.base_fee = 1;
+        chain_state.min_gas_price = 1;
+        chain_state.min_priority_fee = 1;
+        state.chain_state.set(chain_state);
+    });
+}
 
 #[test]
 fn dropped_ring_keeps_tx_locs_bounded() {
     init_stable_state();
+    relax_fee_floor_for_tests();
     let caller_principal = vec![0x11];
     let canister_id = vec![0x22];
     let mut submitted = Vec::new();
@@ -65,8 +79,13 @@ fn build_ic_tx_bytes_with_fee(max_fee: u128, max_priority: u128, nonce: u64) -> 
 #[test]
 fn dropped_ring_does_not_remove_included_or_queued() {
     init_stable_state();
+    relax_fee_floor_for_tests();
     let caller_principal = vec![0x31];
     let canister_id = vec![0x41];
+    common::fund_account(
+        hash::caller_evm_from_principal(&caller_principal),
+        1_000_000_000_000_000_000,
+    );
     let included_tx = chain::submit_ic_tx(
         caller_principal.clone(),
         canister_id.clone(),

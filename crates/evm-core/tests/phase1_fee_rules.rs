@@ -3,9 +3,17 @@
 use alloy_eips::eip1559::{calc_next_block_base_fee, BaseFeeParams};
 use evm_core::base_fee::compute_next_base_fee;
 use evm_core::chain::{self, ChainError};
+use evm_core::hash;
 use evm_db::stable_state::{init_stable_state, with_state, with_state_mut};
 
 mod common;
+
+fn fund_principal(principal: &[u8]) {
+    common::fund_account(
+        hash::caller_evm_from_principal(principal),
+        1_000_000_000_000_000_000,
+    );
+}
 
 #[test]
 fn min_priority_fee_rejects_low_tip() {
@@ -66,6 +74,8 @@ fn base_fee_rekey_reorders_by_effective_fee() {
     let tx_a = common::build_zero_to_ic_tx_bytes(0, 6_000_000_000, 3_000_000_000);
     let tx_b = common::build_zero_to_ic_tx_bytes(0, 10_000_000_000, 2_000_000_000);
 
+    fund_principal(&[0x33]);
+    fund_principal(&[0x44]);
     let a_id = chain::submit_ic_tx(vec![0x33], vec![0x03], tx_a).expect("submit a");
     let b_id = chain::submit_ic_tx(vec![0x44], vec![0x04], tx_b).expect("submit b");
 
@@ -95,6 +105,8 @@ fn equal_fee_uses_seq_order() {
     let tx_a = common::build_zero_to_ic_tx_bytes(0, 2_000_000_000, 1_000_000_000);
     let tx_b = common::build_zero_to_ic_tx_bytes(0, 2_000_000_000, 1_000_000_000);
 
+    fund_principal(&[0x55]);
+    fund_principal(&[0x66]);
     let a_id = chain::submit_ic_tx(vec![0x55], vec![0x05], tx_a).expect("submit a");
     let b_id = chain::submit_ic_tx(vec![0x66], vec![0x06], tx_b).expect("submit b");
 
@@ -162,6 +174,7 @@ fn produce_block_base_fee_uses_configured_block_gas_limit() {
     });
 
     let tx = common::build_zero_to_ic_tx_bytes(0, 2_000_000_000, 1_000_000_000);
+    fund_principal(&[0x77]);
     let _ = chain::submit_ic_tx(vec![0x77], vec![0x07], tx).expect("submit");
     let outcome = chain::produce_block(1).expect("produce");
     let next_base_fee = with_state(|state| state.chain_state.get().base_fee);

@@ -7,6 +7,7 @@ import { computeDepth, validateRequest } from "../src/jsonrpc";
 import {
   __test_classify_call_object_err_code,
   __test_map_receipt,
+  __test_map_block,
   __test_normalize_storage_slot32,
   __test_parse_call_object,
   __test_revert_data_hex,
@@ -170,6 +171,48 @@ function testReceiptLogMapping(): void {
   assert.equal(log0.logIndex, "0x7");
 }
 
+function testBlockMappingWithFeeMetadata(): void {
+  const mapped = __test_map_block(
+    {
+      txs: { Hashes: [] },
+      block_hash: Uint8Array.from(Buffer.from("11".repeat(32), "hex")),
+      number: 7n,
+      timestamp: 1_770_000_000n,
+      state_root: Uint8Array.from(Buffer.from("22".repeat(32), "hex")),
+      parent_hash: Uint8Array.from(Buffer.from("33".repeat(32), "hex")),
+      base_fee_per_gas: [250_000_000_000n],
+      gas_limit: [3_000_000n],
+      gas_used: [24_000n],
+    },
+    false
+  );
+  assert.ok("value" in mapped);
+  if (!("value" in mapped)) {
+    throw new Error("block mapping should succeed");
+  }
+  assert.equal(mapped.value.baseFeePerGas, "0x3a35294400");
+  assert.equal(mapped.value.gasLimit, "0x2dc6c0");
+  assert.equal(mapped.value.gasUsed, "0x5dc0");
+}
+
+function testBlockMappingRejectsLegacyMetadata(): void {
+  const mapped = __test_map_block(
+    {
+      txs: { Hashes: [] },
+      block_hash: Uint8Array.from(Buffer.from("11".repeat(32), "hex")),
+      number: 7n,
+      timestamp: 1_770_000_000n,
+      state_root: Uint8Array.from(Buffer.from("22".repeat(32), "hex")),
+      parent_hash: Uint8Array.from(Buffer.from("33".repeat(32), "hex")),
+      base_fee_per_gas: [],
+      gas_limit: [3_000_000n],
+      gas_used: [24_000n],
+    },
+    false
+  );
+  assert.ok("error" in mapped);
+}
+
 function testSubmitEthHashResolutionPolicy(): void {
   const notFound = __test_resolve_submitted_eth_hash_from_lookup([]);
   assert.equal(notFound.ok, false);
@@ -285,6 +328,8 @@ testStorageSlotNormalization();
 testRevertDataFormat();
 testCanisterErrorClassification();
 testReceiptLogMapping();
+testBlockMappingWithFeeMetadata();
+testBlockMappingRejectsLegacyMetadata();
 testSubmitEthHashResolutionPolicy();
 testTxHashReadinessPolicy();
 

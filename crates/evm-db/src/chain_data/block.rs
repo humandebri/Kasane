@@ -18,6 +18,9 @@ pub struct BlockData {
     pub parent_hash: [u8; HASH_LEN],
     pub block_hash: [u8; HASH_LEN],
     pub timestamp: u64,
+    pub base_fee_per_gas: u64,
+    pub block_gas_limit: u64,
+    pub gas_used: u64,
     pub tx_ids: Vec<TxId>,
     pub tx_list_hash: [u8; HASH_LEN],
     pub state_root: [u8; HASH_LEN],
@@ -29,6 +32,9 @@ impl BlockData {
         parent_hash: [u8; HASH_LEN],
         block_hash: [u8; HASH_LEN],
         timestamp: u64,
+        base_fee_per_gas: u64,
+        block_gas_limit: u64,
+        gas_used: u64,
         tx_ids: Vec<TxId>,
         tx_list_hash: [u8; HASH_LEN],
         state_root: [u8; HASH_LEN],
@@ -38,6 +44,9 @@ impl BlockData {
             parent_hash,
             block_hash,
             timestamp,
+            base_fee_per_gas,
+            block_gas_limit,
+            gas_used,
             tx_ids,
             tx_list_hash,
             state_root,
@@ -52,6 +61,9 @@ impl Storable for BlockData {
         out.extend_from_slice(&self.parent_hash);
         out.extend_from_slice(&self.block_hash);
         out.extend_from_slice(&self.timestamp.to_be_bytes());
+        out.extend_from_slice(&self.base_fee_per_gas.to_be_bytes());
+        out.extend_from_slice(&self.block_gas_limit.to_be_bytes());
+        out.extend_from_slice(&self.gas_used.to_be_bytes());
         out.extend_from_slice(&self.tx_list_hash);
         out.extend_from_slice(&self.state_root);
         let len = match len_to_u32(self.tx_ids.len()) {
@@ -78,6 +90,9 @@ impl Storable for BlockData {
         out.extend_from_slice(&self.parent_hash);
         out.extend_from_slice(&self.block_hash);
         out.extend_from_slice(&self.timestamp.to_be_bytes());
+        out.extend_from_slice(&self.base_fee_per_gas.to_be_bytes());
+        out.extend_from_slice(&self.block_gas_limit.to_be_bytes());
+        out.extend_from_slice(&self.gas_used.to_be_bytes());
         out.extend_from_slice(&self.tx_list_hash);
         out.extend_from_slice(&self.state_root);
         let len = match len_to_u32(self.tx_ids.len()) {
@@ -93,7 +108,7 @@ impl Storable for BlockData {
 
     fn from_bytes(bytes: Cow<'_, [u8]>) -> Self {
         let data = bytes.as_ref();
-        let base_len = 8 + HASH_LEN + HASH_LEN + 8 + HASH_LEN + HASH_LEN + 4;
+        let base_len = 8 + HASH_LEN + HASH_LEN + 8 + 8 + 8 + 8 + HASH_LEN + HASH_LEN + 4;
         if data.len() < base_len {
             mark_decode_failure(b"block_data", true);
             return BlockData {
@@ -101,6 +116,9 @@ impl Storable for BlockData {
                 parent_hash: [0u8; HASH_LEN],
                 block_hash: [0u8; HASH_LEN],
                 timestamp: 0,
+                base_fee_per_gas: 0,
+                block_gas_limit: 0,
+                gas_used: 0,
                 tx_ids: Vec::new(),
                 tx_list_hash: [0u8; HASH_LEN],
                 state_root: [0u8; HASH_LEN],
@@ -118,6 +136,15 @@ impl Storable for BlockData {
         offset += HASH_LEN;
         let mut ts = [0u8; 8];
         ts.copy_from_slice(&data[offset..offset + 8]);
+        offset += 8;
+        let mut base_fee = [0u8; 8];
+        base_fee.copy_from_slice(&data[offset..offset + 8]);
+        offset += 8;
+        let mut block_gas_limit = [0u8; 8];
+        block_gas_limit.copy_from_slice(&data[offset..offset + 8]);
+        offset += 8;
+        let mut gas_used = [0u8; 8];
+        gas_used.copy_from_slice(&data[offset..offset + 8]);
         offset += 8;
         let mut tx_list_hash = [0u8; HASH_LEN];
         tx_list_hash.copy_from_slice(&data[offset..offset + HASH_LEN]);
@@ -137,6 +164,9 @@ impl Storable for BlockData {
                     parent_hash: [0u8; HASH_LEN],
                     block_hash: [0u8; HASH_LEN],
                     timestamp: 0,
+                    base_fee_per_gas: 0,
+                    block_gas_limit: 0,
+                    gas_used: 0,
                     tx_ids: Vec::new(),
                     tx_list_hash: [0u8; HASH_LEN],
                     state_root: [0u8; HASH_LEN],
@@ -150,6 +180,9 @@ impl Storable for BlockData {
                 parent_hash: [0u8; HASH_LEN],
                 block_hash: [0u8; HASH_LEN],
                 timestamp: 0,
+                base_fee_per_gas: 0,
+                block_gas_limit: 0,
+                gas_used: 0,
                 tx_ids: Vec::new(),
                 tx_list_hash: [0u8; HASH_LEN],
                 state_root: [0u8; HASH_LEN],
@@ -163,6 +196,9 @@ impl Storable for BlockData {
                 parent_hash: [0u8; HASH_LEN],
                 block_hash: [0u8; HASH_LEN],
                 timestamp: 0,
+                base_fee_per_gas: 0,
+                block_gas_limit: 0,
+                gas_used: 0,
                 tx_ids: Vec::new(),
                 tx_list_hash: [0u8; HASH_LEN],
                 state_root: [0u8; HASH_LEN],
@@ -180,6 +216,9 @@ impl Storable for BlockData {
             parent_hash: parent,
             block_hash: block,
             timestamp: u64::from_be_bytes(ts),
+            base_fee_per_gas: u64::from_be_bytes(base_fee),
+            block_gas_limit: u64::from_be_bytes(block_gas_limit),
+            gas_used: u64::from_be_bytes(gas_used),
             tx_ids,
             tx_list_hash,
             state_root,
@@ -282,10 +321,14 @@ fn len_to_u32(len: usize) -> Option<u32> {
 }
 
 fn encode_fallback_block() -> Cow<'static, [u8]> {
-    let mut out = Vec::with_capacity(8 + HASH_LEN + HASH_LEN + 8 + HASH_LEN + HASH_LEN + 4);
+    let mut out =
+        Vec::with_capacity(8 + HASH_LEN + HASH_LEN + 8 + 8 + 8 + 8 + HASH_LEN + HASH_LEN + 4);
     out.extend_from_slice(&0u64.to_be_bytes());
     out.extend_from_slice(&[0u8; HASH_LEN]);
     out.extend_from_slice(&[0u8; HASH_LEN]);
+    out.extend_from_slice(&0u64.to_be_bytes());
+    out.extend_from_slice(&0u64.to_be_bytes());
+    out.extend_from_slice(&0u64.to_be_bytes());
     out.extend_from_slice(&0u64.to_be_bytes());
     out.extend_from_slice(&[0u8; HASH_LEN]);
     out.extend_from_slice(&[0u8; HASH_LEN]);

@@ -103,7 +103,10 @@ import sys
 
 text = os.environ.get("CANDID_RESULT_TEXT", "")
 labels = set(filter(None, os.environ.get("CANDID_OK_LABELS", "").split(",")))
-m = re.search(r"variant\s*\{\s*([^=\s]+)\s*=", text, re.S)
+# Accept both:
+# - variant { Ok = ... }
+# - variant { 17_724 }
+m = re.search(r"variant\s*\{\s*([^=\s\}]+)\s*(?:=|\})", text, re.S)
 if not m:
     sys.exit(1)
 label = m.group(1).strip()
@@ -121,7 +124,10 @@ import sys
 
 text = os.environ.get("CANDID_RESULT_TEXT", "")
 labels = set(filter(None, os.environ.get("CANDID_OK_LABELS", "").split(",")))
-m = re.search(r"variant\s*\{\s*([^=\s]+)\s*=", text, re.S)
+# Accept both:
+# - variant { Ok = ... }
+# - variant { 17_724 }
+m = re.search(r"variant\s*\{\s*([^=\s\}]+)\s*(?:=|\})", text, re.S)
 if not m:
     sys.exit(1)
 label = m.group(1).strip()

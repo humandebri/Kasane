@@ -2,12 +2,18 @@
 
 use evm_core::chain::{self, ChainError};
 use evm_db::chain_data::constants::{
-    DROP_CODE_BLOCK_GAS_EXCEEDED, DROP_CODE_CALLER_MISSING, DROP_CODE_DECODE, DROP_CODE_MISSING,
+    DROP_CODE_BLOCK_GAS_EXCEEDED, DROP_CODE_CALLER_MISSING, DROP_CODE_DECODE,
+    DROP_CODE_EXEC_PRECHECK, DROP_CODE_MISSING,
 };
 use evm_db::chain_data::{
     ReadyKey, SenderKey, SenderNonceKey, StoredTxBytes, TxId, TxKind, TxLoc, TxLocKind,
 };
 use evm_db::stable_state::{init_stable_state, with_state, with_state_mut};
+use evm_db::types::keys::make_account_key;
+use evm_db::types::values::AccountVal;
+
+const TEST_MAX_FEE_PER_GAS: u128 = 500_000_000_000;
+const TEST_MAX_PRIORITY_FEE_PER_GAS: u128 = 250_000_000_000;
 
 #[test]
 fn produce_block_marks_decode_drop() {
@@ -81,7 +87,7 @@ fn produce_block_marks_missing_envelope() {
 fn produce_block_marks_caller_missing() {
     init_stable_state();
 
-    let tx_bytes = build_ic_tx_bytes_with_fee(2_000_000_000, 1_000_000_000);
+    let tx_bytes = build_ic_tx_bytes_with_fee(TEST_MAX_FEE_PER_GAS, TEST_MAX_PRIORITY_FEE_PER_GAS);
     let tx_id = TxId([0x33u8; 32]);
     let envelope = StoredTxBytes::new_with_fees(
         tx_id,
@@ -119,14 +125,65 @@ fn produce_block_marks_caller_missing() {
 fn produce_block_marks_exec_drop() {
     init_stable_state();
 
-    let tx_bytes = build_ic_tx_bytes_with_fee(2_000_000_000, 1_000_000_000);
+    let tx_bytes = build_ic_tx_bytes_with_fee(TEST_MAX_FEE_PER_GAS, TEST_MAX_PRIORITY_FEE_PER_GAS);
     let tx_id = chain::submit_ic_tx(vec![0x11], vec![0x22], tx_bytes).expect("submit");
-    let outcome = chain::produce_block(1).expect("produce_block should succeed");
-    let block = outcome.block;
-    assert_eq!(block.tx_ids.len(), 1);
+    let err = chain::produce_block(1).expect_err("precheck should drop and not produce");
+    assert_eq!(err, ChainError::NoExecutableTx);
 
     let loc = chain::get_tx_loc(&tx_id).expect("tx_loc");
-    assert_eq!(loc.kind, TxLocKind::Included);
+    assert_eq!(loc.kind, TxLocKind::Dropped);
+    assert_eq!(loc.drop_code, DROP_CODE_EXEC_PRECHECK);
+}
+
+#[test]
+fn produce_block_marks_precheck_drop_without_nonce_bump() {
+    init_stable_state();
+
+    let tx_id = chain::submit_ic_tx(
+        vec![0x99],
+        vec![0xaa],
+        build_ic_tx_bytes_with_custom_gas(
+            50_000,
+            TEST_MAX_FEE_PER_GAS,
+            TEST_MAX_PRIORITY_FEE_PER_GAS,
+        ),
+    )
+    .expect("submit");
+
+    let sender = with_state_mut(|state| {
+        let pending_key = state
+            .pending_meta_by_tx_id
+            .get(&tx_id)
+            .expect("pending key must exist");
+        let sender = pending_key.sender;
+        // Force REVM precheck failure by moving account nonce ahead of pending tx nonce.
+        let account_key = make_account_key(sender.0);
+        let value = state
+            .accounts
+            .get(&account_key)
+            .map(|current| {
+                AccountVal::from_parts(
+                    pending_key.nonce.saturating_add(1),
+                    current.balance(),
+                    current.code_hash(),
+                )
+            })
+            .unwrap_or_else(|| {
+                AccountVal::from_parts(pending_key.nonce.saturating_add(1), [0u8; 32], [0u8; 32])
+            });
+        state.accounts.insert(account_key, value);
+        sender.0
+    });
+
+    let nonce_before = chain::expected_nonce_for_sender_view(sender);
+    let err = chain::produce_block(1).expect_err("precheck failure should drop tx");
+    assert_eq!(err, ChainError::NoExecutableTx);
+
+    let loc = chain::get_tx_loc(&tx_id).expect("tx_loc");
+    assert_eq!(loc.kind, TxLocKind::Dropped);
+    assert_eq!(loc.drop_code, DROP_CODE_EXEC_PRECHECK);
+    let nonce_after = chain::expected_nonce_for_sender_view(sender);
+    assert_eq!(nonce_after, nonce_before);
 }
 
 #[test]
@@ -173,7 +230,11 @@ fn produce_block_marks_block_gas_exceeded_drop() {
     let tx_id = chain::submit_ic_tx(
         vec![0x77],
         vec![0x88],
-        build_ic_tx_bytes_with_custom_gas(50_000, 2_000_000_000, 1_000_000_000),
+        build_ic_tx_bytes_with_custom_gas(
+            50_000,
+            TEST_MAX_FEE_PER_GAS,
+            TEST_MAX_PRIORITY_FEE_PER_GAS,
+        ),
     )
     .expect("submit");
 
@@ -188,11 +249,7 @@ fn build_ic_tx_bytes_with_fee(max_fee: u128, max_priority: u128) -> Vec<u8> {
     build_ic_tx_bytes_with_custom_gas(50_000, max_fee, max_priority)
 }
 
-fn build_ic_tx_bytes_with_custom_gas(
-    gas_limit: u64,
-    max_fee: u128,
-    max_priority: u128,
-) -> Vec<u8> {
+fn build_ic_tx_bytes_with_custom_gas(gas_limit: u64, max_fee: u128, max_priority: u128) -> Vec<u8> {
     let to = [0u8; 20];
     let value = [0u8; 32];
     let gas_limit = gas_limit.to_be_bytes();

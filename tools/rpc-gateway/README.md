@@ -78,7 +78,9 @@ npm run dev
 
 従来のEVMチェーンと異なる運用上の注意（現行実装時点）:
 - Pruning: canister は履歴を prune するため、古い範囲は `rpc_eth_get_block_by_number_with_status` / `rpc_eth_get_transaction_receipt_with_status` で `Pruned` / `PossiblyPruned` が返り得ます。
-- Timer駆動: canister 側で timer により mining/pruning をスケジュールします。`set_auto_mine(false)` 運用では `produce_block` を明示的に呼ぶ必要があります。
+- Timer駆動: canister 側で timer により mining/pruning を実行します。mining は `set_timer` の単発予約を毎tickで再設定する方式で、`mining_scheduled` フラグにより多重予約を防ぎます。
+- Timer駆動（mining詳細）: `set_auto_mine(false)` 運用では `produce_block` を明示的に呼ぶ必要があります。`ready_queue` が空のときは空ブロックを作らず、次回予約のみ行います。
+- Timer駆動（backoff/停止条件）: `produce_block` 失敗時は指数バックオフ（2倍、上限 `MAX_MINING_BACKOFF_MS`）を適用し、成功で基本間隔へ戻します。cycle critical または migration 中は write 拒否により採掘を停止し、復帰後は cycle observer tick（60s）が再スケジュールを補助します。
 - Submit/Execute分離: `eth_sendRawTransaction` は投入APIへの委譲で、実行確定は別フェーズ（block production）です。
 - `eth_sendRawTransaction` 戻り値: Gateway は canister `rpc_eth_send_raw_transaction` の返却 `tx_id` から `rpc_eth_get_transaction_by_tx_id` で `eth_tx_hash` を解決して返します。解決不能時は `-32000` エラーを返します。
 - `eth_getTransactionReceipt.logs[].logIndex`: ブロック内通番で返します。

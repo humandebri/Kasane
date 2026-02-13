@@ -7,6 +7,16 @@ use evm_db::stable_state::{init_stable_state, with_state_mut};
 
 mod common;
 
+fn relax_fee_floor_for_tests() {
+    with_state_mut(|state| {
+        let mut chain_state = *state.chain_state.get();
+        chain_state.base_fee = 1;
+        chain_state.min_gas_price = 1;
+        chain_state.min_priority_fee = 1;
+        state.chain_state.set(chain_state);
+    });
+}
+
 #[test]
 fn submit_tx_in_eth_keeps_existing_decode_rules() {
     init_stable_state();
@@ -21,6 +31,7 @@ fn submit_tx_in_eth_keeps_existing_decode_rules() {
 #[test]
 fn submit_tx_in_ic_synthetic_enqueues_tx() {
     init_stable_state();
+    relax_fee_floor_for_tests();
     let caller_principal = vec![0x42];
     let canister_id = vec![0x99];
     let tx_bytes = common::build_ic_tx_bytes([0x11u8; 20], 0, 2_000_000_000, 1_000_000_000);
@@ -42,6 +53,7 @@ fn submit_tx_in_ic_synthetic_enqueues_tx() {
 #[test]
 fn submit_ic_tx_duplicate_returns_tx_already_seen() {
     init_stable_state();
+    relax_fee_floor_for_tests();
     let caller_principal = vec![0x42];
     let canister_id = vec![0x99];
     let tx_bytes = common::build_ic_tx_bytes([0x11u8; 20], 0, 2_000_000_000, 1_000_000_000);
@@ -59,6 +71,7 @@ fn submit_ic_tx_duplicate_returns_tx_already_seen() {
 #[test]
 fn submit_ic_tx_seen_duplicate_precedes_decode_failure() {
     init_stable_state();
+    relax_fee_floor_for_tests();
     let caller_principal = vec![0x51];
     let canister_id = vec![0x71];
     let mut malformed = common::build_ic_tx_bytes([0x11u8; 20], 0, 2_000_000_000, 1_000_000_000);

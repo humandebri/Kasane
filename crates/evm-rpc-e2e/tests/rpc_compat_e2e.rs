@@ -392,7 +392,7 @@ fn unprivileged_produce_block_is_rejected() {
         Ok(_) => panic!("unprivileged produce_block must be rejected"),
         Err(ProduceBlockError::Internal(message)) => {
             assert!(
-                message.contains("auth.producer_required")
+                message.contains("auth.controller_required")
                     || message.contains("ops.write.needs_migration"),
                 "unexpected message: {message}"
             );

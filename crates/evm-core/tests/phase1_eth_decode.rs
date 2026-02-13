@@ -9,8 +9,8 @@ use alloy_signer::SignerSync;
 use alloy_signer_local::PrivateKeySigner;
 use evm_core::chain::{self, ChainError};
 use evm_core::tx_decode::{decode_eth_raw_tx, DecodeError};
-use evm_db::chain_data::TxKind as StoredTxKind;
 use evm_db::chain_data::constants::CHAIN_ID;
+use evm_db::chain_data::TxKind as StoredTxKind;
 use evm_db::stable_state::{init_stable_state, with_state_mut};
 
 #[test]
@@ -59,8 +59,14 @@ fn decode_rejects_4844_and_7702_early() {
     let signer = test_signer();
     let eip4844 = sign_encoded(tx_4844(CHAIN_ID, 3), &signer);
     let eip7702 = sign_encoded(tx_7702(CHAIN_ID, 4, &signer), &signer);
-    assert_eq!(decode_eth_raw_tx(&eip4844).err(), Some(DecodeError::UnsupportedType));
-    assert_eq!(decode_eth_raw_tx(&eip7702).err(), Some(DecodeError::UnsupportedType));
+    assert_eq!(
+        decode_eth_raw_tx(&eip4844).err(),
+        Some(DecodeError::UnsupportedType)
+    );
+    assert_eq!(
+        decode_eth_raw_tx(&eip7702).err(),
+        Some(DecodeError::UnsupportedType)
+    );
 }
 
 #[test]

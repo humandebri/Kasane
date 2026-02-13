@@ -4,7 +4,7 @@
 # why: make production deploy explicit, repeatable, and auditable
 set -euo pipefail
 
-REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "${REPO_ROOT}"
 
 source "${REPO_ROOT}/scripts/lib_init_args.sh"
@@ -12,13 +12,11 @@ source "${REPO_ROOT}/scripts/lib_init_args.sh"
 ICP_ENV="${ICP_ENV:-ic}"
 CANISTER_NAME="${CANISTER_NAME:-evm_canister}"
 CANISTER_ID="${CANISTER_ID:-}"
-ICP_IDENTITY_NAME="${ICP_IDENTITY_NAME:-}"
+ICP_IDENTITY_NAME="${ICP_IDENTITY_NAME:-ci-local}"
 MODE="${MODE:-upgrade}"
 CREATE_IF_MISSING="${CREATE_IF_MISSING:-0}"
 CONFIRM="${CONFIRM:-1}"
-GENESIS_PRINCIPAL_AMOUNT="${GENESIS_PRINCIPAL_AMOUNT:-1000000000000000000}"
-GENESIS_ETH_PRIVKEY="${GENESIS_ETH_PRIVKEY:-}"
-GENESIS_ETH_AMOUNT="${GENESIS_ETH_AMOUNT:-1000000000000000000}"
+GENESIS_PRINCIPAL_AMOUNT="${GENESIS_PRINCIPAL_AMOUNT:-100000000000000000000000}"
 WASM_PATH="${WASM_PATH:-target/wasm32-unknown-unknown/release/ic_evm_wrapper.release.final.wasm}"
 
 log() {
@@ -59,13 +57,19 @@ ensure_mode() {
 }
 
 build_init_args() {
-  if [[ -n "${GENESIS_ETH_PRIVKEY}" ]]; then
-    build_init_args_for_current_identity_with_eth_sender \
-      "${GENESIS_ETH_PRIVKEY}" \
-      "${GENESIS_PRINCIPAL_AMOUNT}" \
-      "${GENESIS_ETH_AMOUNT}"
-  else
-    build_init_args_for_current_identity "${GENESIS_PRINCIPAL_AMOUNT}"
+  build_init_args_for_current_identity "${GENESIS_PRINCIPAL_AMOUNT}"
+}
+
+ensure_unsupported_env_unset() {
+  if [[ -n "${GENESIS_ETH_PRIVKEY:-}" ]]; then
+    echo "[ic-deploy] GENESIS_ETH_PRIVKEY is no longer supported in mainnet deploy." >&2
+    echo "[ic-deploy] genesis distribution is identity-derived address only." >&2
+    exit 1
+  fi
+  if [[ -n "${GENESIS_ETH_AMOUNT:-}" ]]; then
+    echo "[ic-deploy] GENESIS_ETH_AMOUNT is no longer supported in mainnet deploy." >&2
+    echo "[ic-deploy] use GENESIS_PRINCIPAL_AMOUNT only." >&2
+    exit 1
   fi
 }
 
@@ -94,6 +98,7 @@ require_cmd cargo
 require_cmd python
 
 ensure_mode
+ensure_unsupported_env_unset
 TARGET="$(target)"
 
 if [[ -n "${ICP_IDENTITY_NAME}" ]]; then

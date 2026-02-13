@@ -102,7 +102,14 @@ async function onGetBlockByNumber(id: string | number | null, params: unknown): 
     return makeInvalidParams(id, error);
   }
   const blockOpt = await actor.rpc_eth_get_block_by_number(number, fullTx);
-  return makeSuccess(id, blockOpt.length === 0 ? null : mapBlock(blockOpt[0], fullTx));
+  if (blockOpt.length === 0) {
+    return makeSuccess(id, null);
+  }
+  const mapped = mapBlock(blockOpt[0], fullTx);
+  if ("error" in mapped) {
+    return makeError(id, -32000, "legacy block metadata unavailable", { detail: mapped.error });
+  }
+  return makeSuccess(id, mapped.value);
 }
 
 async function onGetTransactionByHash(id: string | number | null, params: unknown): Promise<JsonRpcResponse> {
@@ -612,7 +619,38 @@ function parseQuantityHexSafe(value: string, label: string): { value: bigint } |
   }
 }
 
-function mapBlock(block: EthBlockView, fullTx: boolean): Record<string, unknown> { return { number: toQuantityHex(block.number), hash: toDataHex(block.block_hash), parentHash: toDataHex(block.parent_hash), nonce: ZERO_8, sha3Uncles: ZERO_32, logsBloom: ZERO_256, transactionsRoot: ZERO_32, stateRoot: toDataHex(block.state_root), receiptsRoot: ZERO_32, miner: ZERO_ADDR, difficulty: "0x0", totalDifficulty: "0x0", extraData: "0x", size: "0x0", gasLimit: "0x0", gasUsed: "0x0", timestamp: toQuantityHex(block.timestamp), transactions: mapBlockTxs(block.txs, fullTx), uncles: [], baseFeePerGas: "0x0" }; }
+function mapBlock(
+  block: EthBlockView,
+  fullTx: boolean
+): { value: Record<string, unknown> } | { error: string } {
+  if (block.base_fee_per_gas.length === 0 || block.gas_limit.length === 0 || block.gas_used.length === 0) {
+    return { error: "missing base_fee_per_gas/gas_limit/gas_used in block payload" };
+  }
+  return {
+    value: {
+      number: toQuantityHex(block.number),
+      hash: toDataHex(block.block_hash),
+      parentHash: toDataHex(block.parent_hash),
+      nonce: ZERO_8,
+      sha3Uncles: ZERO_32,
+      logsBloom: ZERO_256,
+      transactionsRoot: ZERO_32,
+      stateRoot: toDataHex(block.state_root),
+      receiptsRoot: ZERO_32,
+      miner: ZERO_ADDR,
+      difficulty: "0x0",
+      totalDifficulty: "0x0",
+      extraData: "0x",
+      size: "0x0",
+      gasLimit: toQuantityHex(block.gas_limit[0]),
+      gasUsed: toQuantityHex(block.gas_used[0]),
+      timestamp: toQuantityHex(block.timestamp),
+      transactions: mapBlockTxs(block.txs, fullTx),
+      uncles: [],
+      baseFeePerGas: toQuantityHex(block.base_fee_per_gas[0]),
+    },
+  };
+}
 function mapBlockTxs(txs: { Full: EthTxView[] } | { Hashes: Uint8Array[] }, fullTx: boolean): unknown[] { if ("Hashes" in txs) return txs.Hashes.map((v) => toDataHex(v)); return fullTx ? txs.Full.map(mapTx) : txs.Full.map((v) => toDataHex(v.eth_tx_hash.length === 0 ? v.hash : v.eth_tx_hash[0])); }
 function mapTx(tx: EthTxView): Record<string, unknown> { const decoded = tx.decoded.length === 0 ? null : tx.decoded[0]; const txHash = tx.eth_tx_hash.length === 0 ? tx.hash : tx.eth_tx_hash[0]; const toAddr = decoded && decoded.to.length > 0 ? decoded.to[0] : undefined; return { hash: toDataHex(txHash), nonce: decoded ? toQuantityHex(decoded.nonce) : "0x0", blockHash: null, blockNumber: tx.block_number.length === 0 ? null : toQuantityHex(tx.block_number[0]), transactionIndex: tx.tx_index.length === 0 ? null : toQuantityHex(BigInt(tx.tx_index[0])), from: decoded ? toDataHex(decoded.from) : ZERO_ADDR, to: toAddr ? toDataHex(toAddr) : null, value: decoded ? toQuantityHex(bytesToQuantity(decoded.value)) : "0x0", gas: decoded ? toQuantityHex(decoded.gas_limit) : "0x0", gasPrice: decoded ? toQuantityHex(decoded.gas_price) : "0x0", input: decoded ? toDataHex(decoded.input) : "0x", type: "0x0", v: "0x0", r: "0x0", s: "0x0" }; }
 function mapReceipt(receipt: EthReceiptView, fallbackTxHash: Uint8Array): Record<string, unknown> {
@@ -647,4 +685,8 @@ function mapReceipt(receipt: EthReceiptView, fallbackTxHash: Uint8Array): Record
 
 export function __test_map_receipt(receipt: EthReceiptView, fallbackTxHash: Uint8Array): Record<string, unknown> {
   return mapReceipt(receipt, fallbackTxHash);
+}
+
+export function __test_map_block(block: EthBlockView, fullTx: boolean): { value: Record<string, unknown> } | { error: string } {
+  return mapBlock(block, fullTx);
 }

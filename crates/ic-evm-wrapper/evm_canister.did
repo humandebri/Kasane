@@ -20,9 +20,12 @@ type DecodedTxView = record {
 type DropCountView = record { code : nat16; count : nat64 };
 type EthBlockView = record {
   txs : EthTxListView;
+  base_fee_per_gas : opt nat64;
   block_hash : blob;
   number : nat64;
   timestamp : nat64;
+  gas_limit : opt nat64;
+  gas_used : opt nat64;
   state_root : blob;
   parent_hash : blob;
 };
@@ -293,7 +296,6 @@ service : (opt InitArgs) -> {
   export_blocks : (opt ExportCursorView, nat32) -> (Result_1) query;
   get_block : (nat64) -> (Result_2) query;
   get_cycle_balance : () -> (nat) query;
-  get_miner_allowlist : () -> (vec principal) query;
   get_ops_status : () -> (OpsStatusView) query;
   get_pending : (blob) -> (PendingStatusView) query;
   get_prune_status : () -> (PruneStatusView) query;
@@ -332,7 +334,6 @@ service : (opt InitArgs) -> {
   set_block_gas_limit : (nat64) -> (Result_12);
   set_instruction_soft_limit : (nat64) -> (Result_12);
   set_log_filter : (opt text) -> (Result_12);
-  set_miner_allowlist : (vec principal) -> (Result_12);
   set_prune_policy : (PrunePolicyView) -> (Result_12);
   set_pruning_enabled : (bool) -> (Result_12);
   submit_ic_tx : (blob) -> (Result_11);

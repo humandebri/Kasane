@@ -2,7 +2,7 @@
 
 use evm_core::chain;
 use evm_core::hash;
-use evm_db::stable_state::{init_stable_state, with_state};
+use evm_db::stable_state::{init_stable_state, with_state, with_state_mut};
 use std::panic::{self, AssertUnwindSafe};
 
 mod common;
@@ -24,9 +24,21 @@ impl Drop for FailpointGuard {
     }
 }
 
+fn relax_fee_floor_for_tests() {
+    with_state_mut(|state| {
+        let mut chain_state = *state.chain_state.get();
+        chain_state.base_fee = 1;
+        chain_state.min_gas_price = 1;
+        chain_state.min_priority_fee = 1;
+        state.chain_state.set(chain_state);
+    });
+}
+
 #[test]
 fn produce_block_traps_and_rolls_back_when_receipt_store_fails_after_tx_index() {
     init_stable_state();
+    relax_fee_floor_for_tests();
+    common::fund_account(hash::caller_evm_from_principal(&[0x11]), 1_000_000_000_000_000_000);
     let tx_id = chain::submit_ic_tx(vec![0x11], vec![0x21], common::build_default_ic_tx_bytes(0))
         .expect("submit");
     let before = snapshot();
@@ -43,6 +55,8 @@ fn produce_block_traps_and_rolls_back_when_receipt_store_fails_after_tx_index() 
 #[test]
 fn produce_block_traps_and_rolls_back_when_block_store_fails_after_receipt() {
     init_stable_state();
+    relax_fee_floor_for_tests();
+    common::fund_account(hash::caller_evm_from_principal(&[0x12]), 1_000_000_000_000_000_000);
     let tx_id = chain::submit_ic_tx(vec![0x12], vec![0x22], common::build_default_ic_tx_bytes(0))
         .expect("submit");
     let before = snapshot();
@@ -59,6 +73,7 @@ fn produce_block_traps_and_rolls_back_when_block_store_fails_after_receipt() {
 #[test]
 fn execute_and_seal_traps_and_rolls_back_when_tx_index_store_fails_after_block() {
     init_stable_state();
+    relax_fee_floor_for_tests();
     let caller_principal = vec![0x33];
     let canister_id = vec![0x44];
     let caller_evm = hash::caller_evm_from_principal(&caller_principal);
@@ -83,6 +98,7 @@ fn execute_and_seal_traps_and_rolls_back_when_tx_index_store_fails_after_block()
 #[test]
 fn execute_and_seal_traps_and_rolls_back_when_receipt_store_fails_after_tx_index() {
     init_stable_state();
+    relax_fee_floor_for_tests();
     let caller_principal = vec![0x35];
     let canister_id = vec![0x45];
     let caller_evm = hash::caller_evm_from_principal(&caller_principal);
