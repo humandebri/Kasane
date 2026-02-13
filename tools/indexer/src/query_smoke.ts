@@ -31,9 +31,37 @@ type ExportError =
 
 type ExportResult = { Ok: ExportResponse } | { Err: ExportError };
 
+type OpsModeView = { Low: null } | { Normal: null } | { Critical: null };
+type OpsConfigView = {
+  low_watermark: bigint;
+  freeze_on_critical: boolean;
+  critical: bigint;
+};
+type OpsStatusView = {
+  needs_migration: boolean;
+  critical_corrupt: boolean;
+  decode_failure_last_ts: bigint;
+  log_filter_override: string | null;
+  last_cycle_balance: bigint;
+  mode: OpsModeView;
+  instruction_soft_limit: bigint;
+  last_check_ts: bigint;
+  mining_error_count: bigint;
+  log_truncated_count: bigint;
+  schema_version: bigint;
+  safe_stop_latched: boolean;
+  decode_failure_last_label: string | null;
+  prune_error_count: bigint;
+  block_gas_limit: bigint;
+  config: OpsConfigView;
+  decode_failure_count: bigint;
+};
+
 type QueryActor = {
+  rpc_eth_chain_id: () => Promise<bigint>;
   rpc_eth_block_number: () => Promise<bigint>;
   export_blocks: (cursor: [] | [Cursor], maxBytes: number) => Promise<ExportResult>;
+  get_ops_status: () => Promise<OpsStatusView>;
 };
 
 function envFlag(name: string, defaultValue: boolean): boolean {
@@ -86,6 +114,21 @@ async function main(): Promise<void> {
   if (requiredHeadMin !== null && head < requiredHeadMin) {
     throw new Error(`head ${head} is below required minimum ${requiredHeadMin}`);
   }
+
+  const chainId = await actor.rpc_eth_chain_id();
+  console.log(`[query-smoke] chain_id=${chainId}`);
+  const opsStatus = await actor.get_ops_status();
+  const modeLabel =
+    "Low" in opsStatus.mode
+      ? "Low"
+      : "Normal" in opsStatus.mode
+      ? "Normal"
+      : "Critical" in opsStatus.mode
+      ? "Critical"
+      : "Unknown";
+  console.log(
+    `[query-smoke] ops_status needs_migration=${opsStatus.needs_migration} mode=${modeLabel} block_gas_limit=${opsStatus.block_gas_limit} instruction_soft_limit=${opsStatus.instruction_soft_limit} last_cycle_balance=${opsStatus.last_cycle_balance}`
+  );
 
   const out = await actor.export_blocks([], maxBytes);
   if ("Err" in out) {

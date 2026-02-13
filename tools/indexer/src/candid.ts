@@ -37,10 +37,37 @@ export const idlFactory: IDL.InterfaceFactory = ({ IDL }) => {
     prune_running: IDL.Bool,
     oldest_kept_block: IDL.Opt(IDL.Nat64),
   });
+  const OpsModeView = IDL.Variant({ Low: IDL.Null, Normal: IDL.Null, Critical: IDL.Null });
+  const OpsConfigView = IDL.Record({
+    low_watermark: IDL.Nat,
+    freeze_on_critical: IDL.Bool,
+    critical: IDL.Nat,
+  });
+  const OpsStatusView = IDL.Record({
+    needs_migration: IDL.Bool,
+    critical_corrupt: IDL.Bool,
+    decode_failure_last_ts: IDL.Nat64,
+    log_filter_override: IDL.Opt(IDL.Text),
+    last_cycle_balance: IDL.Nat,
+    mode: OpsModeView,
+    instruction_soft_limit: IDL.Nat64,
+    last_check_ts: IDL.Nat64,
+    mining_error_count: IDL.Nat64,
+    log_truncated_count: IDL.Nat64,
+    schema_version: IDL.Nat32,
+    safe_stop_latched: IDL.Bool,
+    decode_failure_last_label: IDL.Opt(IDL.Text),
+    prune_error_count: IDL.Nat64,
+    block_gas_limit: IDL.Nat64,
+    config: OpsConfigView,
+    decode_failure_count: IDL.Nat64,
+  });
   const ExportResult = IDL.Variant({ Ok: ExportResponse, Err: ExportError });
   return IDL.Service({
+    rpc_eth_chain_id: IDL.Func([], [IDL.Nat64], ["query"]),
     export_blocks: IDL.Func([IDL.Opt(Cursor), IDL.Nat32], [ExportResult], ["query"]),
     get_prune_status: IDL.Func([], [PruneStatusView], ["query"]),
     rpc_eth_block_number: IDL.Func([], [IDL.Nat64], ["query"]),
+    get_ops_status: IDL.Func([], [OpsStatusView], ["query"]),
   });
 };

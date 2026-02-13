@@ -4,7 +4,7 @@
 # why: make production deploy explicit, repeatable, and auditable
 set -euo pipefail
 
-REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "${REPO_ROOT}"
 
 source "${REPO_ROOT}/scripts/lib_init_args.sh"
@@ -12,7 +12,7 @@ source "${REPO_ROOT}/scripts/lib_init_args.sh"
 ICP_ENV="${ICP_ENV:-ic}"
 CANISTER_NAME="${CANISTER_NAME:-evm_canister}"
 CANISTER_ID="${CANISTER_ID:-}"
-ICP_IDENTITY_NAME="${ICP_IDENTITY_NAME:-}"
+ICP_IDENTITY_NAME="${ICP_IDENTITY_NAME:-ci-local}"
 MODE="${MODE:-upgrade}"
 CREATE_IF_MISSING="${CREATE_IF_MISSING:-0}"
 CONFIRM="${CONFIRM:-1}"

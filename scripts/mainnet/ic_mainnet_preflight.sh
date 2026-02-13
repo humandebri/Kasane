@@ -4,13 +4,13 @@
 # why: reduce production deployment mistakes (identity/controller/cycles/artifact)
 set -euo pipefail
 
-REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "${REPO_ROOT}"
 
 ICP_ENV="${ICP_ENV:-ic}"
 CANISTER_NAME="${CANISTER_NAME:-evm_canister}"
 CANISTER_ID="${CANISTER_ID:-}"
-ICP_IDENTITY_NAME="${ICP_IDENTITY_NAME:-}"
+ICP_IDENTITY_NAME="${ICP_IDENTITY_NAME:-ci-local}"
 MIN_CYCLES="${MIN_CYCLES:-2000000000000}"
 RUN_RELEASE_GUARD="${RUN_RELEASE_GUARD:-1}"
 
@@ -57,6 +57,19 @@ extract_balance_cycles() {
     '
 }
 
+extract_controllers_line() {
+  local status_text="$1"
+  printf "%s\n" "${status_text}" \
+    | awk '
+      /Controllers:/ {
+        line = $0
+        sub(/^.*Controllers: */, "", line)
+        print line
+        exit
+      }
+    '
+}
+
 require_cmd icp
 require_cmd cargo
 require_cmd sed
@@ -77,11 +90,13 @@ fi
 TARGET="$(status_target)"
 
 log "identity principal"
+CURRENT_PRINCIPAL=""
 if [[ -n "${ICP_IDENTITY_NAME}" ]]; then
-  icp identity principal --identity "${ICP_IDENTITY_NAME}"
+  CURRENT_PRINCIPAL="$(icp identity principal --identity "${ICP_IDENTITY_NAME}")"
 else
-  icp identity principal
+  CURRENT_PRINCIPAL="$(icp identity principal)"
 fi
+printf "%s\n" "${CURRENT_PRINCIPAL}"
 
 log "canister status"
 set +e
@@ -95,9 +110,22 @@ if [[ "${STATUS_CODE}" -ne 0 ]]; then
 fi
 printf "%s\n" "${STATUS_TEXT}"
 
+CONTROLLERS_LINE="$(extract_controllers_line "${STATUS_TEXT}")"
+if [[ -n "${CURRENT_PRINCIPAL}" ]] && [[ -n "${CONTROLLERS_LINE}" ]]; then
+  if ! grep -Fq "${CURRENT_PRINCIPAL}" <<<"${CONTROLLERS_LINE}"; then
+    echo "[ic-preflight] selected identity is not a controller of target canister" >&2
+    echo "[ic-preflight] current_principal=${CURRENT_PRINCIPAL}" >&2
+    echo "[ic-preflight] controllers=${CONTROLLERS_LINE}" >&2
+    echo "[ic-preflight] set ICP_IDENTITY_NAME to a controller identity and retry" >&2
+    exit 1
+  fi
+fi
+
 BALANCE="$(extract_balance_cycles "${STATUS_TEXT}")"
 if [[ -z "${BALANCE}" ]]; then
-  echo "[ic-preflight] failed to parse cycles balance from canister status output" >&2
+  echo "[ic-preflight] cycles balance is not visible in canister status output" >&2
+  echo "[ic-preflight] if this is mainnet, the selected identity is likely not a controller" >&2
+  echo "[ic-preflight] set ICP_IDENTITY_NAME to a controller identity and retry" >&2
   exit 1
 else
   python - <<PY

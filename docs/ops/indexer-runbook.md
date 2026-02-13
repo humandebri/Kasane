@@ -329,7 +329,7 @@ scripts/predeploy_smoke.sh
 - `CANISTER_ID` は本番 canister id を指定する（初回作成前は不要）
 
 ```bash
-ICP_ENV=ic CANISTER_ID=<canister_id> scripts/ic_mainnet_preflight.sh
+ICP_ENV=ic CANISTER_ID=<canister_id> scripts/mainnet/ic_mainnet_preflight.sh
 ```
 
 3) 必須確認
@@ -345,7 +345,7 @@ ICP_ENV=ic CANISTER_ID=<canister_id> scripts/ic_mainnet_preflight.sh
 ICP_ENV=ic \
 CANISTER_ID=<canister_id> \
 MODE=upgrade \
-scripts/ic_mainnet_deploy.sh
+scripts/mainnet/ic_mainnet_deploy.sh
 ```
 
 ## 15. 障害時ロールバック
