@@ -6,7 +6,7 @@
 - Current API surface covered by this spec:
   - `submit_ic_tx`
   - `rpc_eth_send_raw_transaction`
-- Related management APIs (`set_mining_interval_ms`, `set_ops_config`) are removed from current public interface and are out of scope for PR8.
+- Related legacy management APIs are removed from current public interface and are out of scope for PR8.
 
 ## 1. Scope
 

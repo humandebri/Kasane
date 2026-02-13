@@ -36,7 +36,7 @@ ICP_ENV=ic \
 CANISTER_ID=<canister_id> \
 ICP_IDENTITY_NAME=ci-local \
 MODE=install \
-GENESIS_PRINCIPAL_AMOUNT=1000000000000000000 \
+GENESIS_PRINCIPAL_AMOUNT=100000000000000000000000 \
 scripts/mainnet/ic_mainnet_deploy.sh
 ```
 
@@ -58,10 +58,40 @@ scripts/query_smoke.sh
      → `needs_migration=false` を確認し、`mode` が `Low`/`Normal` であること、gas 上限や soft limit も妥当な値を取ること。
    - `[query-smoke] export_blocks ...` → `MissingData` や `ok ...` などいずれかが出ていること（`MissingData` は許容）。
    `ログが出ない/エラーなら query 経路で何か壊れているので、deploy を中断しログを添えてチームに報告する。
+7. fee/取り込み健全性の監視指標を確認する。
+   - `drop_counts` が急増していないこと（特に code=5）。
+   - `drop_counts` の code=10（`exec_precheck`）が増えた場合、nonce再同期/残高不足を優先確認する。
+   - `total_submitted - total_included` が増え続けていないこと。
+   - `effectiveGasPrice` が想定レンジ（運用値）に収まっていること。
+   - `queue_len` が平常値に戻ること。
+
+### Dropped code 対応表
+- `1`: `decode`
+- `2`: `exec`
+- `3`: `missing`
+- `4`: `caller_missing`
+- `5`: `invalid_fee`
+- `6`: `replaced`
+- `7`: `result_too_large`
+- `8`: `block_gas_exceeded`
+- `9`: `instruction_budget`
+- `10`: `exec_precheck`（nonce不整合・残高不足・intrinsic gas不正などの事前検証失敗）
+
+### `exec_precheck` 発生時の再同期手順
+1. `expected_nonce_by_address(sender)` で canister 側 expected nonce を取得する。
+2. `rpc_eth_get_balance(sender)` で `gas_limit * max_fee_per_gas + value` を満たすか確認する。
+3. fee が `baseFee + priority` を満たすことを確認する（不足なら再見積り）。
+4. 上記を満たした tx を同 sender の最新 nonce で再送し、`get_pending` が `Dropped` でないことを確認する。
+5. `rebuild_pending_runtime_indexes` 実行時の挙動を理解しておく。
+   - decode 破損した pending tx は黙殺されず、`Dropped(code=1)` として自己修復される。
+   - 実行後に `drop_counts{code="1"}` が増えることがあるため、異常ではなく修復イベントとして扱う。
 6. ネイティブ通貨表示を `ICP` として扱う場合、接続先ウォレット/SDK設定を以下で統一する。
    - `nativeCurrency.symbol = "ICP"`
    - `nativeCurrency.decimals = 18`
    - `1 ICP = 10^18`（EVM最小単位）
+7. 手動 `produce_block` の権限エラー文字列を監視で確認する。
+   - 現行仕様: controller 以外は `auth.controller_required`
+   - 旧仕様の `auth.producer_required` 前提アラートは更新する
 
 ## 4. ロールバック方針
 1. snapshot を事前取得する。
@@ -72,24 +102,55 @@ scripts/query_smoke.sh
 `scripts/mainnet/mainnet_method_test.sh` で本番向け総合テストを実行できる。  
 `FULL_METHOD_REQUIRED=1`（既定）では次が必須:
 
-- `ETH_PRIVKEY`
+- `ETH_PRIVKEY` または `AUTO_FUND_TEST_KEY=1`
 - `PRUNE_POLICY_TEST_ARGS`
 - `PRUNE_POLICY_RESTORE_ARGS`
-- `PRUNE_BLOCKS_ARGS`
+
+`prune_blocks` を本番で実行する場合のみ、以下を追加で指定する（通常は不要）:
 - `ALLOW_DESTRUCTIVE_PRUNE=1`
 - `DRY_PRUNE_ONLY=0`
+- `PRUNE_BLOCKS_ARGS`
 
 ```bash
 RUN_EXECUTE=1 \
 FULL_METHOD_REQUIRED=1 \
-ALLOW_DESTRUCTIVE_PRUNE=1 \
-DRY_PRUNE_ONLY=0 \
-ETH_PRIVKEY=<hex_privkey> \
+RUN_STRICT=1 \
+AUTO_FUND_TEST_KEY=1 \
+AUTO_FUND_AMOUNT_WEI=500000000000000000 \
 PRUNE_POLICY_TEST_ARGS='<record...>' \
 PRUNE_POLICY_RESTORE_ARGS='<record...>' \
-PRUNE_BLOCKS_ARGS='(0:nat64, 64:nat32)' \
 ICP_ENV=ic \
 CANISTER_ID=<canister_id> \
 ICP_IDENTITY_NAME=ci-local \
 scripts/mainnet/mainnet_method_test.sh
 ```
+
+## 6. `caller_principal` と `canister_id` の扱い
+- 用語:
+  - `caller_principal`: 「誰が呼び出したか（主体）」を表す情報。
+  - `canister_id`: 「どの canister 文脈で生成されたか（発行ドメイン）」を表す情報。
+- `IcSynthetic`:
+  - `caller_principal` と `canister_id` の両方を使う。
+  - どちらかが欠損すると不正データとして reject される。
+  - 監査時に「誰が」「どの発行経路で」生成したかを分離して追跡できる。
+- `EthSigned`:
+  - 生の署名txが本体であり、`canister_id` は使わない。
+  - `canister_id` が非空なら reject（型境界を守るため）。
+  - `caller_principal` は運用メタデータとして保持してよいが、`tx_id` 計算には使わない。
+- 運用上の注意:
+  - 同一 raw tx は principal が異なっても同一 `tx_id` になる（`EthSigned` の仕様）。
+  - 送信経路の切り分けが必要な調査では、`IcSynthetic` の `canister_id` を必ず併読する。
+
+## 7. Genesis 配布メモ（本番）
+- デプロイスクリプトの仕様:
+  - `MODE=install` 時のみ `InitArgs.genesis_balances` を投入する。
+  - 配布先は常に `build_init_args_for_current_identity(...)`（Principal由来アドレスのみ）。
+  - `GENESIS_ETH_PRIVKEY` / `GENESIS_ETH_AMOUNT` は未対応（指定するとエラー）。
+- 本番 canister (`4c52m-aiaaa-aaaam-agwwa-cai`) の read-only 確認結果:
+  - `ci-local` Principal 由来 EVMアドレス: `2287ead6f2f95b19696e900face81857db2b701d`
+  - 上記アドレスの残高: `1e18 wei`（`0x0de0b6b3a7640000`）
+  - これは旧デフォルト（`GENESIS_PRINCIPAL_AMOUNT=1000000000000000000`）時点の観測値。
+  - 現在のデフォルトは `GENESIS_PRINCIPAL_AMOUNT=100000000000000000000000`（100,000倍）。
+- 制約:
+  - canister から「genesisで配布された全アドレス一覧」や「対応秘密鍵」は取得できない。
+  - したがって、任意の `privkey` で genesis 資金を利用できるわけではない（対応鍵が必要）。

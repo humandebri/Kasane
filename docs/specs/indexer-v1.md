@@ -15,7 +15,6 @@
   - 入力ガード: `MIN_PRUNE_TIMER_INTERVAL_MS = 1_000`, `MIN_PRUNE_MAX_OPS_PER_TICK = 1`
 - 補足:
   - pruning は外部ACKに依存しない（canister単独で進行）
-  - `set_mining_interval_ms` / `set_ops_config` は現行公開APIから削除済み
 
 ## 結論：おすすめ構成（現実に回るやつ）
 
