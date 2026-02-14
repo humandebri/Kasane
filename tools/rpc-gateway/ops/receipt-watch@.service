@@ -1,0 +1,20 @@
+[Unit]
+Description=RPC receipt watcher (%i)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+# 運用環境に合わせて書き換えること
+WorkingDirectory=/opt/ic-op/tools/rpc-gateway
+User=rpcgw
+Group=rpcgw
+Environment=EVM_RPC_URL=https://rpc-testnet.kasane.network
+# Environment=ALERT_WEBHOOK_URL=https://example.com/webhook
+ExecStart=/opt/ic-op/tools/rpc-gateway/ops/watch_receipt.sh %i 180 1500
+NoNewPrivileges=true
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

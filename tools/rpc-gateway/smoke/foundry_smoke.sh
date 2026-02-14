@@ -26,9 +26,9 @@ echo "[smoke:foundry] storage"
 cast storage "${ZERO_ADDR}" "${ZERO_SLOT}" --rpc-url "${RPC_URL}"
 
 echo "[smoke:foundry] call"
-cast call "${ZERO_ADDR}" "0x" --rpc-url "${RPC_URL}"
+cast rpc eth_call "{\"to\":\"${ZERO_ADDR}\",\"data\":\"0x\"}" latest --rpc-url "${RPC_URL}"
 
 echo "[smoke:foundry] estimate"
-cast estimate "${ZERO_ADDR}" "0x" --rpc-url "${RPC_URL}"
+cast rpc eth_estimateGas "{\"to\":\"${ZERO_ADDR}\",\"data\":\"0x\"}" --rpc-url "${RPC_URL}"
 
 echo "[smoke:foundry] ok"

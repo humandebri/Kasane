@@ -13,6 +13,7 @@
     "smoke:viem": "tsx smoke/viem_smoke.ts",
     "smoke:ethers": "tsx smoke/ethers_smoke.ts",
     "smoke:foundry": "bash smoke/foundry_smoke.sh",
+    "smoke:watch-receipt": "tsx smoke/receipt_watch.ts",
     "smoke:all": "bash smoke/run_all.sh"
   },
   "dependencies": {

@@ -14,6 +14,7 @@ npm run smoke:all
 npm run smoke:viem
 npm run smoke:ethers
 npm run smoke:foundry
+npm run smoke:watch-receipt -- 0x<tx_hash> 120 1500
 ```
 
 ポリシー:
@@ -22,3 +23,4 @@ npm run smoke:foundry
 - SKIP は終了コード 0
 - `cast` 実行に失敗した場合は `FAIL`（終了コード 1）
 - `viem/ethers` は `eth_call` の revert プローブ（`data: 0xfe`）を実行し、`error.data` が `0x...` で返ることを確認
+- `smoke:watch-receipt` は `eth_getTransactionReceipt` をポーリングし、`status!=0x1` を失敗として終了コード 1 を返す
