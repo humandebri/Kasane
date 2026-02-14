@@ -18,6 +18,10 @@ CREATE_IF_MISSING="${CREATE_IF_MISSING:-0}"
 CONFIRM="${CONFIRM:-1}"
 GENESIS_PRINCIPAL_AMOUNT="${GENESIS_PRINCIPAL_AMOUNT:-100000000000000000000000}"
 WASM_PATH="${WASM_PATH:-target/wasm32-unknown-unknown/release/ic_evm_wrapper.release.final.wasm}"
+RUN_POST_SMOKE="${RUN_POST_SMOKE:-0}"
+POST_SMOKE_SCRIPT="${POST_SMOKE_SCRIPT:-scripts/mainnet/ic_mainnet_post_upgrade_smoke.sh}"
+POST_SMOKE_RPC_URL="${POST_SMOKE_RPC_URL:-}"
+POST_SMOKE_TX_HASH="${POST_SMOKE_TX_HASH:-}"
 
 log() {
   echo "[ic-deploy] $*"
@@ -142,5 +146,16 @@ fi
 
 log "post status"
 run_icp_canister status "${TARGET}"
+
+if [[ "${RUN_POST_SMOKE}" == "1" ]]; then
+  if [[ ! -x "${POST_SMOKE_SCRIPT}" ]]; then
+    echo "[ic-deploy] post smoke script is not executable: ${POST_SMOKE_SCRIPT}" >&2
+    exit 1
+  fi
+  log "running post-upgrade smoke script"
+  EVM_RPC_URL="${POST_SMOKE_RPC_URL:-${EVM_RPC_URL:-}}" \
+  TEST_TX_HASH="${POST_SMOKE_TX_HASH:-${TEST_TX_HASH:-}}" \
+  "${POST_SMOKE_SCRIPT}"
+fi
 
 log "deploy done"
