@@ -83,6 +83,50 @@ export const idlFactory: IDL.InterfaceFactory = ({ IDL }) => {
     gas_limit: IDL.Opt(IDL.Nat64),
     gas_used: IDL.Opt(IDL.Nat64),
   });
+  const RpcBlockLookupView = IDL.Variant({
+    NotFound: IDL.Null,
+    Found: EthBlockView,
+    Pruned: IDL.Record({ pruned_before_block: IDL.Nat64 }),
+  });
+  const EthLogsCursorView = IDL.Record({
+    tx_index: IDL.Nat32,
+    log_index: IDL.Nat32,
+    block_number: IDL.Nat64,
+  });
+  const EthLogItemView = IDL.Record({
+    tx_index: IDL.Nat32,
+    log_index: IDL.Nat32,
+    data: IDL.Vec(IDL.Nat8),
+    block_number: IDL.Nat64,
+    topics: IDL.Vec(IDL.Vec(IDL.Nat8)),
+    address: IDL.Vec(IDL.Nat8),
+    eth_tx_hash: IDL.Opt(IDL.Vec(IDL.Nat8)),
+    tx_hash: IDL.Vec(IDL.Nat8),
+  });
+  const EthLogsPageView = IDL.Record({
+    next_cursor: IDL.Opt(EthLogsCursorView),
+    items: IDL.Vec(EthLogItemView),
+  });
+  const EthLogFilterView = IDL.Record({
+    limit: IDL.Opt(IDL.Nat32),
+    topic0: IDL.Opt(IDL.Vec(IDL.Nat8)),
+    topic1: IDL.Opt(IDL.Vec(IDL.Nat8)),
+    address: IDL.Opt(IDL.Vec(IDL.Nat8)),
+    to_block: IDL.Opt(IDL.Nat64),
+    from_block: IDL.Opt(IDL.Nat64),
+  });
+  const GetLogsErrorView = IDL.Variant({
+    TooManyResults: IDL.Null,
+    RangeTooLarge: IDL.Null,
+    InvalidArgument: IDL.Text,
+    UnsupportedFilter: IDL.Text,
+  });
+  const RpcReceiptLookupView = IDL.Variant({
+    NotFound: IDL.Null,
+    Found: EthReceiptView,
+    PossiblyPruned: IDL.Record({ pruned_before_block: IDL.Nat64 }),
+    Pruned: IDL.Record({ pruned_before_block: IDL.Nat64 }),
+  });
   const SubmitTxError = IDL.Variant({
     Internal: IDL.Text,
     Rejected: IDL.Text,
@@ -119,12 +163,24 @@ export const idlFactory: IDL.InterfaceFactory = ({ IDL }) => {
   });
 
   return IDL.Service({
+    expected_nonce_by_address: IDL.Func(
+      [IDL.Vec(IDL.Nat8)],
+      [IDL.Variant({ Ok: IDL.Nat64, Err: IDL.Text })],
+      ["query"]
+    ),
     rpc_eth_chain_id: IDL.Func([], [IDL.Nat64], ["query"]),
     rpc_eth_block_number: IDL.Func([], [IDL.Nat64], ["query"]),
     rpc_eth_get_block_by_number: IDL.Func([IDL.Nat64, IDL.Bool], [IDL.Opt(EthBlockView)], ["query"]),
+    rpc_eth_get_block_by_number_with_status: IDL.Func([IDL.Nat64, IDL.Bool], [RpcBlockLookupView], ["query"]),
     rpc_eth_get_transaction_by_eth_hash: IDL.Func([IDL.Vec(IDL.Nat8)], [IDL.Opt(EthTxView)], ["query"]),
     rpc_eth_get_transaction_by_tx_id: IDL.Func([IDL.Vec(IDL.Nat8)], [IDL.Opt(EthTxView)], ["query"]),
     rpc_eth_get_transaction_receipt_by_eth_hash: IDL.Func([IDL.Vec(IDL.Nat8)], [IDL.Opt(EthReceiptView)], ["query"]),
+    rpc_eth_get_transaction_receipt_with_status: IDL.Func([IDL.Vec(IDL.Nat8)], [RpcReceiptLookupView], ["query"]),
+    rpc_eth_get_logs_paged: IDL.Func(
+      [EthLogFilterView, IDL.Opt(EthLogsCursorView), IDL.Nat32],
+      [IDL.Variant({ Ok: EthLogsPageView, Err: GetLogsErrorView })],
+      ["query"]
+    ),
     rpc_eth_get_balance: IDL.Func([IDL.Vec(IDL.Nat8)], [IDL.Variant({ Ok: IDL.Vec(IDL.Nat8), Err: IDL.Text })], ["query"]),
     rpc_eth_get_code: IDL.Func([IDL.Vec(IDL.Nat8)], [IDL.Variant({ Ok: IDL.Vec(IDL.Nat8), Err: IDL.Text })], ["query"]),
     rpc_eth_get_storage_at: IDL.Func(

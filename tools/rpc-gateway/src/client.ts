@@ -52,10 +52,49 @@ export type EthBlockView = {
   gas_limit: [] | [bigint];
   gas_used: [] | [bigint];
 };
+export type RpcBlockLookupView =
+  | { NotFound: null }
+  | { Found: EthBlockView }
+  | { Pruned: { pruned_before_block: bigint } };
+export type EthLogsCursorView = { tx_index: number; log_index: number; block_number: bigint };
+export type EthLogItemView = {
+  tx_index: number;
+  log_index: number;
+  data: Uint8Array;
+  block_number: bigint;
+  topics: Uint8Array[];
+  address: Uint8Array;
+  eth_tx_hash: [] | [Uint8Array];
+  tx_hash: Uint8Array;
+};
+export type EthLogsPageView = {
+  next_cursor: [] | [EthLogsCursorView];
+  items: EthLogItemView[];
+};
+export type EthLogFilterView = {
+  limit: [] | [number];
+  topic0: [] | [Uint8Array];
+  topic1: [] | [Uint8Array];
+  address: [] | [Uint8Array];
+  to_block: [] | [bigint];
+  from_block: [] | [bigint];
+};
+type GetLogsErrorView =
+  | { TooManyResults: null }
+  | { RangeTooLarge: null }
+  | { InvalidArgument: string }
+  | { UnsupportedFilter: string };
+export type RpcReceiptLookupView =
+  | { NotFound: null }
+  | { Found: EthReceiptView }
+  | { PossiblyPruned: { pruned_before_block: bigint } }
+  | { Pruned: { pruned_before_block: bigint } };
 
 type TextResult = { Ok: Uint8Array } | { Err: string };
+type NonceResult = { Ok: bigint } | { Err: string };
 export type RpcErrorView = { code: number; message: string };
 type Nat64Result = { Ok: bigint } | { Err: RpcErrorView };
+type LogsPageResult = { Ok: EthLogsPageView } | { Err: GetLogsErrorView };
 type SendErr = { Internal: string } | { Rejected: string } | { InvalidArgument: string };
 type SendResult = { Ok: Uint8Array } | { Err: SendErr };
 export type CallObject = {
@@ -86,12 +125,20 @@ export type OpsStatusView = {
 type CallResult = { Ok: CallObjectResult } | { Err: RpcErrorView };
 
 type Methods = {
+  expected_nonce_by_address: (address: Uint8Array) => Promise<NonceResult>;
   rpc_eth_chain_id: () => Promise<bigint>;
   rpc_eth_block_number: () => Promise<bigint>;
   rpc_eth_get_block_by_number: (number: bigint, fullTx: boolean) => Promise<[] | [EthBlockView]>;
+  rpc_eth_get_block_by_number_with_status: (number: bigint, fullTx: boolean) => Promise<RpcBlockLookupView>;
   rpc_eth_get_transaction_by_eth_hash: (ethTxHash: Uint8Array) => Promise<[] | [EthTxView]>;
   rpc_eth_get_transaction_by_tx_id: (txId: Uint8Array) => Promise<[] | [EthTxView]>;
   rpc_eth_get_transaction_receipt_by_eth_hash: (ethTxHash: Uint8Array) => Promise<[] | [EthReceiptView]>;
+  rpc_eth_get_transaction_receipt_with_status: (ethTxHash: Uint8Array) => Promise<RpcReceiptLookupView>;
+  rpc_eth_get_logs_paged: (
+    filter: EthLogFilterView,
+    cursor: [] | [EthLogsCursorView],
+    limit: number
+  ) => Promise<LogsPageResult>;
   rpc_eth_get_balance: (address: Uint8Array) => Promise<TextResult>;
   rpc_eth_get_code: (address: Uint8Array) => Promise<TextResult>;
   rpc_eth_get_storage_at: (address: Uint8Array, slot: Uint8Array) => Promise<TextResult>;
