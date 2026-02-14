@@ -25,3 +25,4 @@ debug = false
 [patch.crates-io]
 ark-relations = { path = "vendor/ark-relations" }
 alloy-consensus = { path = "vendor/alloy-consensus" }
+keccak = { path = "vendor/keccak" }

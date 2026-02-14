@@ -1,3 +1,0 @@
-[submodule "vendor/revm"]
-	path = vendor/revm
-	url = https://github.com/humandebri/revm.git
