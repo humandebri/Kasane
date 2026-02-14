@@ -5,7 +5,21 @@
 [![network](https://img.shields.io/badge/network-ic-2ea44f)](https://dashboard.internetcomputer.org/)
 ![chain_id](https://img.shields.io/badge/chain--id-4801360-f59e0b)
 
-**Mainnet Canister ID (`ic`)**: `4c52m-aiaaa-aaaam-agwwa-cai`  
+**Testnet Canister ID (`ic`)**: `4c52m-aiaaa-aaaam-agwwa-cai`  
+
+## Chain / RPC情報（運用サマリ）
+
+| 項目 | 値 |
+| --- | --- |
+| 環境名 | testnet（現行運用名） |
+| ネットワーク | `ic` |
+| Canister ID | `4c52m-aiaaa-aaaam-agwwa-cai` |
+| Chain ID | `4801360` |
+| RPC URL | `https://rpc-testnet.kasane.network` |
+
+運用メモ:
+- `eth_sendRawTransaction` の成功判定は submit結果ではなく `eth_getTransactionReceipt.status` で行う（`0x1` 成功 / `0x0` 失敗）。
+- nonce参照は `eth_getTransactionCount`（Gateway）または `expected_nonce_by_address`（canister query）を使用する。
 
 ## 運用上の決定事項（2026-02-04）
 
@@ -113,7 +127,7 @@ sequenceDiagram
 - `tx_id` の意味:
   - `tx_id` は `raw + caller_evm + canister_id + caller_principal` を入力にした内部識別子。
   - したがって `submit_ic_tx` の `tx_id` は `eth_tx_hash` とは別物で、追跡は `tx_id` を正とする。
-- `submit_ic_tx` 実行例（mainnet）:
+- `submit_ic_tx` 実行例（testnet）:
 
 ```bash
 CANISTER_ID=4c52m-aiaaa-aaaam-agwwa-cai
@@ -144,7 +158,7 @@ PY
   - 対応: Legacy(RLP), EIP-2930, EIP-1559
   - 非対応: EIP-4844(`0x03`), EIP-7702(`0x04`)
   - 戻り値: `tx_id`（32 bytes, internal id）
-- `rpc_eth_send_raw_transaction` 実行例（mainnet）:
+- `rpc_eth_send_raw_transaction` 実行例（testnet）:
 
 ```bash
 CANISTER_ID=4c52m-aiaaa-aaaam-agwwa-cai
@@ -183,6 +197,8 @@ icp canister call -e ic --identity "$IDENTITY" "$CANISTER_ID" produce_block '(1:
 - `ChainStateV1::new()` の `auto_mine_enabled` 既定値は `false`（手動採掘前提）。
 - storage書き込み失敗は `trap` でロールバックするため、canister内カウンタは残らない。一次監視は caller/indexer 側ログで行う。
 - デプロイ前の統合スモークは `scripts/predeploy_smoke.sh` を利用する。
+- デプロイ後の最小RPC確認は `scripts/mainnet/ic_mainnet_post_upgrade_smoke.sh` を利用する（`EVM_RPC_URL` と任意で `TEST_TX_HASH` を指定）。
+- `scripts/mainnet/ic_mainnet_deploy.sh` は `RUN_POST_SMOKE=1` で post-upgrade smoke を自動実行できる（`POST_SMOKE_RPC_URL` / `POST_SMOKE_TX_HASH` で上書き可能）。
 - 容量対策として、必要時は `cargo clean` を実行して `target/` を都度クリーンする。
 - 運用時の初期資金配布は `InitArgs.genesis_balances` に一本化する。
 
@@ -280,7 +296,7 @@ ICPのcanisterは、コンセンサスを通じてすべてのレプリカが同
 ## 4.0 Phase 2: RPCノード化 — 開発者体験の構築
 
 Phase 1で構築した独自のコア実行エンジンは、それだけでは閉じた世界に留まります。Phase 2の目的は、このエンジンを外部の開発者や標準的なツール（Viem, Ethers, Foundryなど）が利用できるようにするための「窓口」として、HTTP JSON-RPCインターフェースを実装することです。このフェーズは、プロジェクトを単なる技術的証明から、開発者が実際に触れてアプリケーションを構築できるプラットフォームへと昇華させる重要なステップです。
-本フェーズにおいて我々が下す重要な戦略的判断は、「仕様の割り切り」です。目標はEthereumノードの完全な互換性を達成することではなく、開発、デバッグ、ツール接続に必要となる最低限のRPCメソッドを戦略的に提供することにあります。このトレードオフにより、pending状態やeth_getLogsといった複雑で実装負荷の高い機能（「沼回避」）を避け、迅速に開発者体験の基盤を構築します。
+本フェーズにおいて我々が下す重要な戦略的判断は、「仕様の割り切り」です。目標はEthereumノードの完全な互換性を達成することではなく、開発、デバッグ、ツール接続に必要となる最低限のRPCメソッドを戦略的に提供することにあります。このトレードオフにより、pending/mempoolやfilter WebSocketのような実装負荷の高い機能（「沼回避」）を意図的に後回しにし、迅速に開発者体験の基盤を構築します。
 
 ### 4.1 RPC実装方針
 
@@ -294,7 +310,8 @@ RPCインターフェースは、Internet Computerのアーキテクチャに準
     - eth_sendRawTransaction (トランザクションの送信)
   - 実装見送り対象メソッド: 実装が複雑で、初期の開発サイクルにおいては必須ではないと判断されたメソッド群です。これらを意図的に除外することで、開発リソースをコア機能に集中させます。
     - pending/mempool関連: 本システムは即時実行モデルを基本とするため、pending状態の概念は適用しません。
-    - eth_getLogs/filter関連: イベントログの効率的な検索には複雑なインデックス機構が必要となり、実装の「沼」に陥りやすいため、このフェーズでは見送ります。
+    - filter/WebSocket関連: `eth_newFilter` / `eth_getFilterChanges` / `eth_subscribe` は現時点で非対応です。
+    - なお `eth_getLogs` は完全互換ではなく、制限付き実装です（`topic0` 中心、`blockHash`/OR条件は未対応）。
 
 ### 4.1.1 Ethereum JSON-RPC互換表（現行実装）
 
@@ -304,17 +321,19 @@ RPCインターフェースは、Internet Computerのアーキテクチャに準
 | --- | --- | --- | --- | --- |
 | `eth_chainId` | Supported | チェーンIDを返す | なし | 固定値はヘッダーバッジ参照 |
 | `eth_blockNumber` | Supported | 最新ブロック番号を返す | なし | - |
+| `eth_gasPrice` | Partially supported | 最新ブロックの `base_fee_per_gas` を返す | tip block metadata 依存 | 簡易gas priceとして提供 |
 | `eth_syncing` | Supported | `false` を返す | 同期進捗オブジェクトは返さない | 即時実行モデル前提 |
-| `eth_getBlockByNumber` | Supported | ブロック参照を返す | 実装仕様に依存するフィールド簡略あり | `fullTx` の有無で返却形を切替 |
+| `eth_getBlockByNumber` | Partially supported | ブロック参照を返す | `latest/pending/safe/finalized` は head 扱い。pruned範囲は `-32001` | `fullTx` の有無で返却形を切替 |
 | `eth_getTransactionByHash` | Supported | `eth_tx_hash` ベースで参照する | `tx_id` 直接参照ではない | canister側は `rpc_eth_get_transaction_by_eth_hash` |
-| `eth_getTransactionReceipt` | Supported | receipt を返す | `tx_id` 直接参照ではない | canister側は `rpc_eth_get_transaction_receipt_by_eth_hash` |
+| `eth_getTransactionReceipt` | Partially supported | receipt を返す | migration/corrupt時 `-32000`、pruned範囲は `-32001` | canister側は `rpc_eth_get_transaction_receipt_with_status` |
 | `eth_getBalance` | Partially supported | 残高取得に対応 | `latest` のみ | canister query でも取得可能 |
+| `eth_getTransactionCount` | Partially supported | nonce取得に対応 | `latest/pending/safe/finalized` のみ | canister側 `expected_nonce_by_address` |
 | `eth_getCode` | Partially supported | コード取得に対応 | `latest` のみ | canister query でも取得可能 |
 | `eth_getStorageAt` | Partially supported | ストレージ取得に対応 | `latest` のみ | `slot` は QUANTITY / DATA(32bytes) を受理 |
 | `eth_call` | Partially supported | 読み取り実行に対応 | `latest` のみ、入力制約あり | revert時は `-32000` + `error.data` |
 | `eth_estimateGas` | Partially supported | call相当で見積り | `latest` のみ、入力制約あり | canister側 `rpc_eth_estimate_gas_object` |
 | `eth_sendRawTransaction` | Supported | 署名済みtxを投入し、返却 `tx_id` から `eth_tx_hash` を解決して `0x...` を返す | `eth_tx_hash` 解決不能時は `-32000` エラー返却 | canister側投入実体は `rpc_eth_send_raw_transaction` |
-| `eth_getLogs` | Not supported | `handlers.ts` にJSON-RPCハンドラがないため `method not found` | 完全な filter API は未提供 | canister側代替は `rpc_eth_get_logs_paged` |
+| `eth_getLogs` | Partially supported | `rpc_eth_get_logs_paged` を使って取得 | `blockHash` 非対応、単一address、`topics[0]` のみ、OR配列非対応 | 大きい範囲は `-32005` |
 
 pending/mempool/filter WebSocket 系（例: `eth_newFilter`, `eth_getFilterChanges`, `eth_subscribe`）は、現行実装時点では `Not supported` です。理由は Phase 2 のスコープ（沼回避）による意図的な非対応です。
 
