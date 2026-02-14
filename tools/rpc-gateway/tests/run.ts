@@ -1,6 +1,7 @@
 // どこで: Gatewayテスト / 何を: hex規約とJSON-RPCバリデーションを検証 / なぜ: 互換フォーマットの退行を防ぐため
 
 import assert from "node:assert/strict";
+import { generateKeyPairSync } from "node:crypto";
 import { bytesToQuantity, parseDataHex, parseQuantityHex, toDataHex, toQuantityHex } from "../src/hex";
 import { handleRpc } from "../src/handlers";
 import { computeDepth, validateRequest } from "../src/jsonrpc";
@@ -12,9 +13,15 @@ import {
   __test_parse_call_object,
   __test_revert_data_hex,
   __test_resolve_submitted_eth_hash_from_lookup,
+  __test_as_call_params,
+  __test_as_tx_count_params,
+  __test_map_get_logs_error,
+  __test_parse_logs_filter,
   __test_tx_hash_readiness_error,
   __test_to_candid_call_object,
 } from "../src/handlers";
+import { loadConfig } from "../src/config";
+import { identityFromPem } from "../src/identity";
 
 function testHex(): void {
   assert.equal(toDataHex(Uint8Array.from([0, 1, 255])), "0x0001ff");
@@ -33,6 +40,54 @@ function testJsonRpc(): void {
   assert.equal(bad, null);
   const depth = computeDepth({ a: [{ b: [1] }] });
   assert.equal(depth, 5);
+}
+
+function testConfigIdentityPemPath(): void {
+  const withPem = loadConfig({
+    EVM_CANISTER_ID: "aaaaa-aa",
+    RPC_GATEWAY_IDENTITY_PEM_PATH: " /tmp/rpc-gateway.pem ",
+  });
+  assert.equal(withPem.identityPemPath, "/tmp/rpc-gateway.pem");
+
+  const withoutPem = loadConfig({
+    EVM_CANISTER_ID: "aaaaa-aa",
+    RPC_GATEWAY_IDENTITY_PEM_PATH: "   ",
+  });
+  assert.equal(withoutPem.identityPemPath, null);
+}
+
+function testIdentityFromEd25519Pem(): void {
+  const pair = generateKeyPairSync("ed25519");
+  const pem = pair.privateKey.export({ format: "pem", type: "pkcs8" }).toString();
+  const identity = identityFromPem(pem);
+  assert.notEqual(identity.getPrincipal().toText(), "2vxsx-fae");
+}
+
+function testCallParamsDefaultBlockTag(): void {
+  const [callOnly, defaultTag] = __test_as_call_params([{ to: "0x0000000000000000000000000000000000000000" }]);
+  assert.equal(typeof callOnly, "object");
+  assert.equal(defaultTag, "latest");
+
+  const [, explicitTag] = __test_as_call_params([{ to: "0x0000000000000000000000000000000000000000" }, "pending"]);
+  assert.equal(explicitTag, "pending");
+
+  assert.throws(() => __test_as_call_params([]));
+}
+
+function testTxCountParamsDefaultBlockTag(): void {
+  const [addressOnly, defaultTag] = __test_as_tx_count_params([
+    "0x0000000000000000000000000000000000000000",
+  ]);
+  assert.equal(addressOnly, "0x0000000000000000000000000000000000000000");
+  assert.equal(defaultTag, "latest");
+
+  const [, explicitTag] = __test_as_tx_count_params([
+    "0x0000000000000000000000000000000000000000",
+    "pending",
+  ]);
+  assert.equal(explicitTag, "pending");
+
+  assert.throws(() => __test_as_tx_count_params([]));
 }
 
 function testCallObjectParsing(): void {
@@ -295,6 +350,65 @@ function testTxHashReadinessPolicy(): void {
   assert.equal(ready, null);
 }
 
+async function testGetLogsFilterParsing(): Promise<void> {
+  const parsed = await __test_parse_logs_filter(
+    {
+      fromBlock: "earliest",
+      toBlock: "latest",
+      address: "0x0000000000000000000000000000000000000001",
+      topics: [
+        "0x1111111111111111111111111111111111111111111111111111111111111111",
+        null,
+      ],
+    },
+    99n
+  );
+  assert.ok(!("error" in parsed));
+  if ("error" in parsed) {
+    throw new Error(String(parsed.error));
+  }
+  assert.equal(parsed.value.candid.from_block.length, 1);
+  assert.equal(parsed.value.candid.to_block.length, 1);
+  assert.equal(parsed.value.candid.address.length, 1);
+  assert.equal(parsed.value.candid.topic0.length, 1);
+  assert.equal(parsed.value.candid.topic1.length, 0);
+
+  const ng = await __test_parse_logs_filter({ topics: ["0x11"] }, 1n);
+  assert.ok("error" in ng);
+  if ("error" in ng) {
+    assert.ok(ng.error.includes("topics[0]"));
+  }
+
+  const ng2 = await __test_parse_logs_filter({ blockHash: `0x${"00".repeat(32)}` }, 1n);
+  assert.ok("error" in ng2);
+  if ("error" in ng2) {
+    assert.equal(ng2.error, "blockHash filter is not supported");
+  }
+
+  const ng3 = await __test_parse_logs_filter(
+    {
+      topics: [
+        "0x1111111111111111111111111111111111111111111111111111111111111111",
+        "0x2222222222222222222222222222222222222222222222222222222222222222",
+      ],
+    },
+    1n
+  );
+  assert.ok("error" in ng3);
+  if ("error" in ng3) {
+    assert.equal(ng3.error, "only topics[0] is supported");
+  }
+}
+
+function testGetLogsErrorMapping(): void {
+  const invalid = __test_map_get_logs_error({ InvalidArgument: "bad filter" });
+  assert.equal(invalid.code, -32602);
+  assert.equal(invalid.message, "invalid params");
+  const range = __test_map_get_logs_error({ RangeTooLarge: null });
+  assert.equal(range.code, -32005);
+  assert.equal(range.message, "limit exceeded");
+}
+
 async function testInvalidTxHashReturnsInvalidParams(): Promise<void> {
   const txByHashRes = await handleRpc({
     jsonrpc: "2.0",
@@ -323,6 +437,10 @@ async function testInvalidTxHashReturnsInvalidParams(): Promise<void> {
 
 testHex();
 testJsonRpc();
+testConfigIdentityPemPath();
+testIdentityFromEd25519Pem();
+testCallParamsDefaultBlockTag();
+testTxCountParamsDefaultBlockTag();
 testCallObjectParsing();
 testStorageSlotNormalization();
 testRevertDataFormat();
@@ -332,9 +450,11 @@ testBlockMappingWithFeeMetadata();
 testBlockMappingRejectsLegacyMetadata();
 testSubmitEthHashResolutionPolicy();
 testTxHashReadinessPolicy();
+testGetLogsErrorMapping();
 
 async function main(): Promise<void> {
   await testInvalidTxHashReturnsInvalidParams();
+  await testGetLogsFilterParsing();
   console.log("ok");
 }
 

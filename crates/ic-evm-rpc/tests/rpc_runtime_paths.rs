@@ -5,6 +5,7 @@
 use evm_core::hash;
 use evm_db::chain_data::constants::MAX_TX_SIZE;
 use evm_db::chain_data::receipt::log_entry_from_parts;
+use evm_db::chain_data::runtime_defaults::{DEFAULT_BASE_FEE, DEFAULT_MIN_GAS_PRICE};
 use evm_db::chain_data::{BlockData, ReceiptLike, StoredTxBytes, TxId, TxIndexEntry, TxKind};
 use evm_db::stable_state::{init_stable_state, with_state_mut};
 use evm_db::types::keys::{make_account_key, make_storage_key};
@@ -14,9 +15,10 @@ use ic_evm_rpc::{
     rpc_eth_call_object, rpc_eth_call_rawtx, rpc_eth_estimate_gas_object, rpc_eth_get_balance,
     rpc_eth_get_block_by_number_with_status, rpc_eth_get_code, rpc_eth_get_storage_at,
     rpc_eth_get_transaction_by_eth_hash, rpc_eth_get_transaction_receipt_by_eth_hash,
+    rpc_eth_get_transaction_receipt_with_status,
     rpc_eth_send_raw_transaction, submit_tx_in_with_code,
 };
-use ic_evm_rpc_types::{RpcBlockLookupView, RpcCallObjectView};
+use ic_evm_rpc_types::{RpcBlockLookupView, RpcCallObjectView, RpcReceiptLookupView};
 use std::sync::{Mutex, OnceLock};
 
 fn test_lock() -> &'static Mutex<()> {
@@ -301,7 +303,7 @@ fn rpc_eth_call_object_supports_nonce_type2_and_access_list() {
         gas: Some(30_000),
         gas_price: None,
         nonce: Some(0),
-        max_fee_per_gas: Some(2_000_000_000),
+        max_fee_per_gas: Some(u128::from(DEFAULT_BASE_FEE).saturating_add(1_000_000_000)),
         max_priority_fee_per_gas: Some(1_000_000_000),
         chain_id: Some(evm_db::chain_data::constants::CHAIN_ID),
         tx_type: Some(2),
@@ -333,7 +335,7 @@ fn rpc_eth_call_object_uses_account_nonce_when_nonce_omitted() {
         to: Some(vec![0u8; 20]),
         from: Some(from.to_vec()),
         gas: Some(30_000),
-        gas_price: Some(2_000_000_000),
+        gas_price: Some(u128::from(DEFAULT_MIN_GAS_PRICE).saturating_add(1_000_000_000)),
         nonce: None,
         max_fee_per_gas: None,
         max_priority_fee_per_gas: None,
@@ -720,4 +722,64 @@ fn get_transaction_receipt_has_block_wide_log_index() {
         .expect("receipt must exist");
     assert_eq!(out.logs.len(), 1);
     assert_eq!(out.logs[0].log_index, 2);
+}
+
+#[test]
+fn get_transaction_receipt_with_status_accepts_eth_hash() {
+    let _guard = test_lock().lock().expect("lock");
+    init_stable_state();
+
+    let raw = vec![0x02, 0x44];
+    let tx_id = TxId(hash::stored_tx_id(
+        TxKind::EthSigned,
+        &raw,
+        None,
+        None,
+        None,
+    ));
+    let eth_hash = hash::keccak256(&raw);
+    let stored = StoredTxBytes::new_with_fees(
+        tx_id,
+        TxKind::EthSigned,
+        raw,
+        None,
+        Vec::new(),
+        Vec::new(),
+        0,
+        0,
+        false,
+    );
+    let receipt = ReceiptLike {
+        tx_id,
+        block_number: 9,
+        tx_index: 0,
+        status: 1,
+        gas_used: 21_000,
+        effective_gas_price: 1,
+        l1_data_fee: 0,
+        operator_fee: 0,
+        total_fee: 0,
+        return_data_hash: [0u8; 32],
+        return_data: Vec::new(),
+        contract_address: None,
+        logs: vec![],
+    };
+    with_state_mut(|state| {
+        state.tx_store.insert(tx_id, stored);
+        state.eth_tx_hash_index.insert(TxId(eth_hash), tx_id);
+        let receipt_ptr = state
+            .blob_store
+            .store_bytes(&receipt.clone().into_bytes())
+            .expect("store receipt");
+        state.receipts.insert(tx_id, receipt_ptr);
+    });
+
+    let out = rpc_eth_get_transaction_receipt_with_status(eth_hash.to_vec());
+    match out {
+        RpcReceiptLookupView::Found(found) => {
+            assert_eq!(found.tx_hash, tx_id.0.to_vec());
+            assert_eq!(found.status, 1);
+        }
+        _ => panic!("expected Found for eth hash input"),
+    }
 }

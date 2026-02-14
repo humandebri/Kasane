@@ -23,9 +23,9 @@ benches:
   produce_block_path:
     total:
       calls: 1
-      instructions: 1649165
-      heap_increase: 5
-      stable_memory_increase: 128
+      instructions: 4262
+      heap_increase: 0
+      stable_memory_increase: 0
     scopes: {}
   state_root_migration_tick_path:
     total:
@@ -37,7 +37,7 @@ benches:
   submit_ic_tx_path:
     total:
       calls: 1
-      instructions: 593232
+      instructions: 94965
       heap_increase: 0
       stable_memory_increase: 0
     scopes: {}

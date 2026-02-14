@@ -613,8 +613,8 @@ fn rpc_eth_get_transaction_by_eth_hash(eth_tx_hash: Vec<u8>) -> Option<EthTxView
 }
 
 #[ic_cdk::query]
-fn rpc_eth_get_transaction_by_tx_id(tx_hash: Vec<u8>) -> Option<EthTxView> {
-    ic_evm_rpc::rpc_eth_get_transaction_by_tx_id(tx_hash)
+fn rpc_eth_get_transaction_by_tx_id(tx_id: Vec<u8>) -> Option<EthTxView> {
+    ic_evm_rpc::rpc_eth_get_transaction_by_tx_id(tx_id)
 }
 
 #[ic_cdk::query]
@@ -667,8 +667,8 @@ fn rpc_eth_get_block_by_number_with_status(number: u64, full_tx: bool) -> RpcBlo
 }
 
 #[ic_cdk::query]
-fn rpc_eth_get_transaction_receipt_with_status(tx_hash: Vec<u8>) -> RpcReceiptLookupView {
-    ic_evm_rpc::rpc_eth_get_transaction_receipt_with_status(tx_hash)
+fn rpc_eth_get_transaction_receipt_with_status(tx_hash_or_id: Vec<u8>) -> RpcReceiptLookupView {
+    ic_evm_rpc::rpc_eth_get_transaction_receipt_with_status(tx_hash_or_id)
 }
 
 #[ic_cdk::update]

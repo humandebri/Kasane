@@ -1,6 +1,9 @@
 // どこで: JSON-RPCハンドラ / 何を: methodごとの変換とcanister呼び出しを実装 / なぜ: Ethereum風インタフェースをGatewayで提供するため
 import { CONFIG } from "./config";
 import {
+  type EthLogFilterView,
+  type EthLogsCursorView,
+  type EthLogsPageView,
   getActor,
   type CallObject,
   type EthBlockView,
@@ -14,6 +17,8 @@ const ZERO_ADDR = "0x0000000000000000000000000000000000000000";
 const ZERO_32 = `0x${"0".repeat(64)}`;
 const ZERO_8 = `0x${"0".repeat(16)}`;
 const ZERO_256 = `0x${"0".repeat(512)}`;
+const LOGS_PAGE_LIMIT = 500;
+const LOGS_MAX_PAGES = 20;
 const SUPPORTED_CALL_KEYS = new Set([
   "to",
   "from",
@@ -43,6 +48,9 @@ type ParsedCallObject = {
   chainId?: string;
   type?: string;
 };
+type ParsedLogsFilter = {
+  candid: EthLogFilterView;
+};
 
 export async function handleRpc(req: JsonRpcRequest): Promise<JsonRpcResponse | null> {
   const id = req.id ?? null;
@@ -64,6 +72,8 @@ export async function handleRpc(req: JsonRpcRequest): Promise<JsonRpcResponse | 
         const actor = await getActor();
         return makeSuccess(id, toQuantityHex(await actor.rpc_eth_block_number()));
       }
+      case "eth_gasPrice":
+        return await onGasPrice(id);
       case "eth_getBlockByNumber":
         return await onGetBlockByNumber(id, req.params);
       case "eth_getTransactionByHash":
@@ -72,10 +82,14 @@ export async function handleRpc(req: JsonRpcRequest): Promise<JsonRpcResponse | 
         return await onGetTransactionReceipt(id, req.params);
       case "eth_getBalance":
         return await onGetBalance(id, req.params);
+      case "eth_getTransactionCount":
+        return await onGetTransactionCount(id, req.params);
       case "eth_getCode":
         return await onGetCode(id, req.params);
       case "eth_getStorageAt":
         return await onGetStorageAt(id, req.params);
+      case "eth_getLogs":
+        return await onGetLogs(id, req.params);
       case "eth_call":
         return await onEthCall(id, req.params);
       case "eth_estimateGas":
@@ -101,15 +115,34 @@ async function onGetBlockByNumber(id: string | number | null, params: unknown): 
   } catch (error) {
     return makeInvalidParams(id, error);
   }
-  const blockOpt = await actor.rpc_eth_get_block_by_number(number, fullTx);
-  if (blockOpt.length === 0) {
+  const blockLookup = await actor.rpc_eth_get_block_by_number_with_status(number, fullTx);
+  if ("NotFound" in blockLookup) {
     return makeSuccess(id, null);
   }
-  const mapped = mapBlock(blockOpt[0], fullTx);
+  if ("Pruned" in blockLookup) {
+    return makeError(id, -32001, "resource not found", {
+      reason: "block.pruned",
+      pruned_before_block: toQuantityHex(blockLookup.Pruned.pruned_before_block),
+    });
+  }
+  const mapped = mapBlock(blockLookup.Found, fullTx);
   if ("error" in mapped) {
     return makeError(id, -32000, "legacy block metadata unavailable", { detail: mapped.error });
   }
   return makeSuccess(id, mapped.value);
+}
+
+async function onGasPrice(id: string | number | null): Promise<JsonRpcResponse> {
+  const actor = await getActor();
+  const head = await actor.rpc_eth_block_number();
+  const blockLookup = await actor.rpc_eth_get_block_by_number_with_status(head, false);
+  if (!("Found" in blockLookup)) {
+    return makeError(id, -32000, "state unavailable", { detail: "latest block is unavailable" });
+  }
+  if (blockLookup.Found.base_fee_per_gas.length === 0) {
+    return makeError(id, -32000, "state unavailable", { detail: "base_fee_per_gas is unavailable" });
+  }
+  return makeSuccess(id, toQuantityHex(blockLookup.Found.base_fee_per_gas[0]));
 }
 
 async function onGetTransactionByHash(id: string | number | null, params: unknown): Promise<JsonRpcResponse> {
@@ -148,8 +181,23 @@ async function onGetTransactionReceipt(id: string | number | null, params: unkno
   if (readinessError !== null) {
     return readinessError;
   }
-  const receiptOpt = await actor.rpc_eth_get_transaction_receipt_by_eth_hash(txHash);
-  return makeSuccess(id, receiptOpt.length === 0 ? null : mapReceipt(receiptOpt[0], txHash));
+  const receiptLookup = await actor.rpc_eth_get_transaction_receipt_with_status(txHash);
+  if ("NotFound" in receiptLookup) {
+    return makeSuccess(id, null);
+  }
+  if ("PossiblyPruned" in receiptLookup) {
+    return makeError(id, -32001, "resource not found", {
+      reason: "receipt.possibly_pruned",
+      pruned_before_block: toQuantityHex(receiptLookup.PossiblyPruned.pruned_before_block),
+    });
+  }
+  if ("Pruned" in receiptLookup) {
+    return makeError(id, -32001, "resource not found", {
+      reason: "receipt.pruned",
+      pruned_before_block: toQuantityHex(receiptLookup.Pruned.pruned_before_block),
+    });
+  }
+  return makeSuccess(id, mapReceipt(receiptLookup.Found, txHash));
 }
 
 function txHashReadinessError(id: string | number | null, status: OpsStatusView): JsonRpcResponse | null {
@@ -187,6 +235,27 @@ async function onGetBalance(id: string | number | null, params: unknown): Promis
   return "Err" in out
     ? makeError(id, -32000, "state unavailable", { detail: out.Err })
     : makeSuccess(id, toQuantityHex(bytesToQuantity(out.Ok)));
+}
+
+async function onGetTransactionCount(id: string | number | null, params: unknown): Promise<JsonRpcResponse> {
+  const [addressRaw, blockTagRaw] = asTxCountParams(params);
+  if (typeof addressRaw !== "string") {
+    return makeError(id, ERR_INVALID_PARAMS, "address must be hex string");
+  }
+  if (!isLatestTag(blockTagRaw)) {
+    return makeError(id, ERR_INVALID_PARAMS, "only latest/pending/safe/finalized blockTag is supported");
+  }
+  let address: Uint8Array;
+  try {
+    address = ensureLen(parseDataHex(addressRaw), 20, "address");
+  } catch (error) {
+    return makeInvalidParams(id, error);
+  }
+  const actor = await getActor();
+  const out = await actor.expected_nonce_by_address(address);
+  return "Err" in out
+    ? makeError(id, -32000, "state unavailable", { detail: out.Err })
+    : makeSuccess(id, toQuantityHex(out.Ok));
 }
 
 async function onGetCode(id: string | number | null, params: unknown): Promise<JsonRpcResponse> {
@@ -233,8 +302,22 @@ async function onGetStorageAt(id: string | number | null, params: unknown): Prom
     : makeSuccess(id, toDataHex(out.Ok));
 }
 
+async function onGetLogs(id: string | number | null, params: unknown): Promise<JsonRpcResponse> {
+  const [filterRaw] = asParams(params, 1);
+  const actor = await getActor();
+  const parsed = await parseLogsFilter(filterRaw, actor.rpc_eth_block_number);
+  if ("error" in parsed) {
+    return makeError(id, ERR_INVALID_PARAMS, parsed.error);
+  }
+  const logs = await collectLogs(actor, parsed.value);
+  if ("error" in logs) {
+    return makeError(id, logs.error.code, logs.error.message, logs.error.data);
+  }
+  return makeSuccess(id, logs.value.map(mapLogItem));
+}
+
 async function onEthCall(id: string | number | null, params: unknown): Promise<JsonRpcResponse> {
-  const [callRaw, blockTagRaw] = asParams(params, 2);
+  const [callRaw, blockTagRaw] = asCallParams(params);
   if (!isLatestTag(blockTagRaw)) {
     return makeError(id, ERR_INVALID_PARAMS, "only latest blockTag is supported");
   }
@@ -263,7 +346,7 @@ async function onEthCall(id: string | number | null, params: unknown): Promise<J
 }
 
 async function onEstimateGas(id: string | number | null, params: unknown): Promise<JsonRpcResponse> {
-  const [callRaw, blockTagRaw] = asParams(params, 2);
+  const [callRaw, blockTagRaw] = asCallParams(params);
   if (!isLatestTag(blockTagRaw)) {
     return makeError(id, ERR_INVALID_PARAMS, "only latest blockTag is supported");
   }
@@ -361,6 +444,31 @@ export function __test_tx_hash_readiness_error(
   return txHashReadinessError(id, status);
 }
 
+export function __test_as_call_params(params: unknown): [unknown, unknown] {
+  return asCallParams(params);
+}
+
+export function __test_as_tx_count_params(params: unknown): [unknown, unknown] {
+  return asTxCountParams(params);
+}
+
+export async function __test_parse_logs_filter(
+  filterRaw: unknown,
+  head: bigint
+): Promise<{ value: ParsedLogsFilter } | { error: string }> {
+  return parseLogsFilter(filterRaw, async () => head);
+}
+
+export function __test_map_get_logs_error(
+  err: { TooManyResults: null } | { RangeTooLarge: null } | { InvalidArgument: string } | { UnsupportedFilter: string }
+): {
+  code: number;
+  message: string;
+  data: unknown;
+} {
+  return mapGetLogsError(err);
+}
+
 function makeInvalidParams(id: string | number | null, error: unknown): JsonRpcResponse {
   return makeError(id, ERR_INVALID_PARAMS, toErrorMessage(error));
 }
@@ -384,6 +492,212 @@ function asParams(params: unknown, minLen: number): unknown[] {
     throw new Error(`params must include at least ${minLen} entries`);
   }
   return params;
+}
+
+function asCallParams(params: unknown): [unknown, unknown] {
+  if (!Array.isArray(params) || params.length < 1) {
+    throw new Error("params must include at least 1 entries");
+  }
+  const callRaw = params[0];
+  const blockTagRaw = params.length >= 2 ? params[1] : "latest";
+  return [callRaw, blockTagRaw];
+}
+
+function asTxCountParams(params: unknown): [unknown, unknown] {
+  if (!Array.isArray(params) || params.length < 1) {
+    throw new Error("params must include at least 1 entries");
+  }
+  const addressRaw = params[0];
+  const blockTagRaw = params.length >= 2 ? params[1] : "latest";
+  return [addressRaw, blockTagRaw];
+}
+
+async function parseLogsFilter(
+  filterRaw: unknown,
+  getHead: () => Promise<bigint>
+): Promise<{ value: ParsedLogsFilter } | { error: string }> {
+  if (!isRecord(filterRaw)) {
+    return { error: "filter must be object" };
+  }
+  const supported = new Set(["fromBlock", "toBlock", "address", "topics", "blockHash"]);
+  for (const key of Object.keys(filterRaw)) {
+    if (!supported.has(key)) {
+      return { error: `${key} is not a supported filter field` };
+    }
+  }
+  if ("blockHash" in filterRaw && filterRaw.blockHash !== undefined) {
+    return { error: "blockHash filter is not supported" };
+  }
+  if ("address" in filterRaw && filterRaw.address !== undefined) {
+    if (typeof filterRaw.address !== "string") {
+      return { error: "address must be hex string" };
+    }
+  }
+  const fromBlock = await resolveLogsBlockTag(filterRaw.fromBlock, getHead);
+  if ("error" in fromBlock) {
+    return fromBlock;
+  }
+  const toBlock = await resolveLogsBlockTag(filterRaw.toBlock, getHead);
+  if ("error" in toBlock) {
+    return toBlock;
+  }
+  if (fromBlock.value !== undefined && toBlock.value !== undefined && fromBlock.value > toBlock.value) {
+    return { error: "fromBlock must be <= toBlock" };
+  }
+  const topicsOut = parseTopicsFilter(filterRaw.topics);
+  if ("error" in topicsOut) {
+    return topicsOut;
+  }
+  let address: [] | [Uint8Array] = [];
+  if (typeof filterRaw.address === "string") {
+    try {
+      address = [ensureLen(parseDataHex(filterRaw.address), 20, "address")];
+    } catch (error) {
+      return { error: toErrorMessage(error) };
+    }
+  }
+  return {
+    value: {
+      candid: {
+        limit: [],
+        topic0: topicsOut.value.topic0,
+        topic1: topicsOut.value.topic1,
+        address,
+        from_block: fromBlock.value === undefined ? [] : [fromBlock.value],
+        to_block: toBlock.value === undefined ? [] : [toBlock.value],
+      },
+    },
+  };
+}
+
+async function resolveLogsBlockTag(
+  blockTag: unknown,
+  getHead: () => Promise<bigint>
+): Promise<{ value: bigint | undefined } | { error: string }> {
+  if (blockTag === undefined || blockTag === null) {
+    return { value: undefined };
+  }
+  if (typeof blockTag !== "string") {
+    return { error: "blockTag must be latest/earliest/pending/safe/finalized or QUANTITY" };
+  }
+  if (blockTag === "earliest") {
+    return { value: 0n };
+  }
+  if (isLatestTag(blockTag)) {
+    return { value: await getHead() };
+  }
+  try {
+    return { value: parseQuantityHex(blockTag) };
+  } catch {
+    return { error: "blockTag must be latest/earliest/pending/safe/finalized or QUANTITY" };
+  }
+}
+
+function parseTopicsFilter(
+  topicsRaw: unknown
+): { value: { topic0: [] | [Uint8Array]; topic1: [] | [Uint8Array] } } | { error: string } {
+  if (topicsRaw === undefined) {
+    return { value: { topic0: [], topic1: [] } };
+  }
+  if (!Array.isArray(topicsRaw)) {
+    return { error: "topics must be array" };
+  }
+  if (topicsRaw.length > 2) {
+    for (let i = 2; i < topicsRaw.length; i += 1) {
+      if (topicsRaw[i] !== null) {
+        return { error: "only topics[0] and topics[1] are supported" };
+      }
+    }
+  }
+  const topic0 = parseTopicAt(topicsRaw[0], 0);
+  if ("error" in topic0) {
+    return topic0;
+  }
+  const topic1 = parseTopicAt(topicsRaw[1], 1);
+  if ("error" in topic1) {
+    return topic1;
+  }
+  if (topic1.value.length > 0) {
+    return { error: "only topics[0] is supported" };
+  }
+  return { value: { topic0: topic0.value, topic1: topic1.value } };
+}
+
+function parseTopicAt(value: unknown, index: number): { value: [] | [Uint8Array] } | { error: string } {
+  if (value === undefined || value === null) {
+    return { value: [] };
+  }
+  if (Array.isArray(value)) {
+    return { error: `topics[${index}] OR条件(array)は未対応です` };
+  }
+  if (typeof value !== "string") {
+    return { error: `topics[${index}] must be hex string or null` };
+  }
+  try {
+    return { value: [ensureLen(parseDataHex(value), 32, `topics[${index}]`)] };
+  } catch (error) {
+    return { error: toErrorMessage(error) };
+  }
+}
+
+async function collectLogs(
+  actor: Awaited<ReturnType<typeof getActor>>,
+  filter: ParsedLogsFilter
+): Promise<{ value: EthLogsPageView["items"] } | { error: { code: number; message: string; data: unknown } }> {
+  let cursor: [] | [EthLogsCursorView] = [];
+  let pages = 0;
+  const items: EthLogsPageView["items"] = [];
+  while (pages < LOGS_MAX_PAGES) {
+    const page = await actor.rpc_eth_get_logs_paged(filter.candid, cursor, LOGS_PAGE_LIMIT);
+    if ("Err" in page) {
+      return { error: mapGetLogsError(page.Err) };
+    }
+    items.push(...page.Ok.items);
+    if (page.Ok.next_cursor.length === 0) {
+      return { value: items };
+    }
+    cursor = [page.Ok.next_cursor[0]];
+    pages += 1;
+  }
+  return {
+    error: {
+      code: -32005,
+      message: "limit exceeded",
+      data: { detail: "logs pagination exceeded gateway safety limit", max_pages: LOGS_MAX_PAGES },
+    },
+  };
+}
+
+function mapGetLogsError(err: { TooManyResults: null } | { RangeTooLarge: null } | { InvalidArgument: string } | { UnsupportedFilter: string }): {
+  code: number;
+  message: string;
+  data: unknown;
+} {
+  if ("InvalidArgument" in err) {
+    return { code: ERR_INVALID_PARAMS, message: "invalid params", data: { detail: err.InvalidArgument } };
+  }
+  if ("UnsupportedFilter" in err) {
+    return { code: ERR_INVALID_PARAMS, message: "invalid params", data: { detail: err.UnsupportedFilter } };
+  }
+  if ("RangeTooLarge" in err) {
+    return { code: -32005, message: "limit exceeded", data: { reason: "logs.range_too_large" } };
+  }
+  return { code: -32005, message: "limit exceeded", data: { reason: "logs.too_many_results" } };
+}
+
+function mapLogItem(item: EthLogsPageView["items"][number]): Record<string, unknown> {
+  const txHash = item.eth_tx_hash.length === 0 ? item.tx_hash : item.eth_tx_hash[0];
+  return {
+    address: toDataHex(item.address),
+    topics: item.topics.map((topic) => toDataHex(topic)),
+    data: toDataHex(item.data),
+    blockNumber: toQuantityHex(item.block_number),
+    blockHash: null,
+    transactionHash: toDataHex(txHash),
+    transactionIndex: toQuantityHex(BigInt(item.tx_index)),
+    logIndex: toQuantityHex(BigInt(item.log_index)),
+    removed: false,
+  };
 }
 
 async function resolveBlockTag(blockTag: unknown, getHead: () => Promise<bigint>): Promise<bigint> {

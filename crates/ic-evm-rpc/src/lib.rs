@@ -52,9 +52,9 @@ pub fn rpc_eth_get_transaction_by_eth_hash(eth_tx_hash: Vec<u8>) -> Option<EthTx
     tx_to_view(tx_id)
 }
 
-pub fn rpc_eth_get_transaction_by_tx_id(tx_hash: Vec<u8>) -> Option<EthTxView> {
-    let tx_id = tx_id_from_bytes(tx_hash)?;
-    tx_to_view(tx_id)
+pub fn rpc_eth_get_transaction_by_tx_id(tx_id: Vec<u8>) -> Option<EthTxView> {
+    let parsed_tx_id = tx_id_from_bytes(tx_id)?;
+    tx_to_view(parsed_tx_id)
 }
 
 pub fn rpc_eth_get_transaction_receipt_by_eth_hash(eth_tx_hash: Vec<u8>) -> Option<EthReceiptView> {
@@ -62,8 +62,12 @@ pub fn rpc_eth_get_transaction_receipt_by_eth_hash(eth_tx_hash: Vec<u8>) -> Opti
     chain::get_receipt(&tx_id).map(receipt_to_eth_view)
 }
 
-pub fn rpc_eth_get_transaction_receipt_with_status(tx_hash: Vec<u8>) -> RpcReceiptLookupView {
-    let Some(tx_id) = tx_id_from_bytes(tx_hash) else {
+pub fn rpc_eth_get_transaction_receipt_with_status(
+    tx_hash_or_id: Vec<u8>,
+) -> RpcReceiptLookupView {
+    let Some(tx_id) = find_eth_tx_id_by_eth_hash_bytes(&tx_hash_or_id)
+        .or_else(|| tx_id_from_bytes(tx_hash_or_id))
+    else {
         return RpcReceiptLookupView::NotFound;
     };
     receipt_lookup_status(tx_id)

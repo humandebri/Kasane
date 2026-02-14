@@ -549,8 +549,11 @@ fn build_ic_tx_bytes(to: [u8; 20], nonce: u64) -> Vec<u8> {
     let value = [0u8; 32];
     let gas_limit = 50_000u64.to_be_bytes();
     let nonce = nonce.to_be_bytes();
-    let max_fee = 2_000_000_000u128.to_be_bytes();
-    let max_priority = 1_000_000_000u128.to_be_bytes();
+    // NOTE: keep test txs valid under current fee floor policy.
+    // max_priority(300 gwei) >= min_priority(250 gwei),
+    // max_fee(600 gwei) >= base_fee + min_priority (500 gwei).
+    let max_fee = 600_000_000_000u128.to_be_bytes();
+    let max_priority = 300_000_000_000u128.to_be_bytes();
     let data: Vec<u8> = Vec::new();
     let data_len = u32::try_from(data.len()).unwrap_or(0).to_be_bytes();
     let mut out = Vec::with_capacity(1 + 20 + 32 + 8 + 8 + 16 + 16 + 4 + data.len());

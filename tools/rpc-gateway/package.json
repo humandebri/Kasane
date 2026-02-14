@@ -13,11 +13,14 @@
     "smoke:viem": "tsx smoke/viem_smoke.ts",
     "smoke:ethers": "tsx smoke/ethers_smoke.ts",
     "smoke:foundry": "bash smoke/foundry_smoke.sh",
+    "smoke:watch-receipt": "tsx smoke/receipt_watch.ts",
     "smoke:all": "bash smoke/run_all.sh"
   },
   "dependencies": {
     "@dfinity/agent": "^3.4.3",
-    "@dfinity/candid": "^3.4.3"
+    "@dfinity/candid": "^3.4.3",
+    "@dfinity/identity": "^3.4.3",
+    "@dfinity/identity-secp256k1": "^3.4.3"
   },
   "devDependencies": {
     "@types/node": "^22.10.2",
