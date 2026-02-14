@@ -1,8 +1,10 @@
 // どこで: Gateway canisterクライアント / 何を: query/updateの呼び出しラッパを提供 / なぜ: ハンドラ側の責務をJSON-RPC変換に集中させるため
 
 import { Actor, HttpAgent } from "@dfinity/agent";
+import { readFileSync } from "node:fs";
 import { CONFIG } from "./config";
 import { idlFactory } from "./candid";
+import { identityFromPem } from "./identity";
 
 export type DecodedTxView = {
   to: [] | [Uint8Array];
@@ -163,7 +165,8 @@ async function createActor(): Promise<Methods> {
   if (typeof fetchFn !== "function") {
     throw new Error("global fetch is not available; use Node 18+");
   }
-  const agent = new HttpAgent({ host: CONFIG.icHost, fetch: fetchFn });
+  const identity = loadOptionalIdentityFromPem();
+  const agent = new HttpAgent({ host: CONFIG.icHost, fetch: fetchFn, identity });
   if (CONFIG.fetchRootKey) {
     await agent.fetchRootKey();
   }
@@ -171,4 +174,12 @@ async function createActor(): Promise<Methods> {
     agent,
     canisterId: CONFIG.canisterId,
   });
+}
+
+function loadOptionalIdentityFromPem() {
+  if (!CONFIG.identityPemPath) {
+    return undefined;
+  }
+  const pem = readFileSync(CONFIG.identityPemPath, "utf8");
+  return identityFromPem(pem);
 }

@@ -8,6 +8,7 @@ export type GatewayConfig = {
   canisterId: string;
   icHost: string;
   fetchRootKey: boolean;
+  identityPemPath: string | null;
   host: string;
   port: number;
   clientVersion: string;
@@ -22,6 +23,7 @@ export function loadConfig(env: Record<string, string | undefined>): GatewayConf
     canisterId: required(env.EVM_CANISTER_ID, "EVM_CANISTER_ID is required"),
     icHost: env.RPC_GATEWAY_IC_HOST ?? "https://icp-api.io",
     fetchRootKey: parseBool(env.RPC_GATEWAY_FETCH_ROOT_KEY),
+    identityPemPath: parseOptionalNonEmpty(env.RPC_GATEWAY_IDENTITY_PEM_PATH),
     host: env.RPC_GATEWAY_HOST ?? "127.0.0.1",
     port: parseRangeInt(env.RPC_GATEWAY_PORT, 8545, 1, 65535),
     clientVersion: env.RPC_GATEWAY_CLIENT_VERSION ?? "kasane/phase2-gateway/v0.1.0",
@@ -55,6 +57,14 @@ function parseRangeInt(value: string | undefined, fallback: number, min: number,
     return fallback;
   }
   return parsed;
+}
+
+function parseOptionalNonEmpty(value: string | undefined): string | null {
+  if (!value) {
+    return null;
+  }
+  const trimmed = value.trim();
+  return trimmed.length === 0 ? null : trimmed;
 }
 
 export const CONFIG = loadConfig(process.env);

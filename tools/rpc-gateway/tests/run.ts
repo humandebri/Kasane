@@ -1,6 +1,7 @@
 // どこで: Gatewayテスト / 何を: hex規約とJSON-RPCバリデーションを検証 / なぜ: 互換フォーマットの退行を防ぐため
 
 import assert from "node:assert/strict";
+import { generateKeyPairSync } from "node:crypto";
 import { bytesToQuantity, parseDataHex, parseQuantityHex, toDataHex, toQuantityHex } from "../src/hex";
 import { handleRpc } from "../src/handlers";
 import { computeDepth, validateRequest } from "../src/jsonrpc";
@@ -19,6 +20,8 @@ import {
   __test_tx_hash_readiness_error,
   __test_to_candid_call_object,
 } from "../src/handlers";
+import { loadConfig } from "../src/config";
+import { identityFromPem } from "../src/identity";
 
 function testHex(): void {
   assert.equal(toDataHex(Uint8Array.from([0, 1, 255])), "0x0001ff");
@@ -37,6 +40,27 @@ function testJsonRpc(): void {
   assert.equal(bad, null);
   const depth = computeDepth({ a: [{ b: [1] }] });
   assert.equal(depth, 5);
+}
+
+function testConfigIdentityPemPath(): void {
+  const withPem = loadConfig({
+    EVM_CANISTER_ID: "aaaaa-aa",
+    RPC_GATEWAY_IDENTITY_PEM_PATH: " /tmp/rpc-gateway.pem ",
+  });
+  assert.equal(withPem.identityPemPath, "/tmp/rpc-gateway.pem");
+
+  const withoutPem = loadConfig({
+    EVM_CANISTER_ID: "aaaaa-aa",
+    RPC_GATEWAY_IDENTITY_PEM_PATH: "   ",
+  });
+  assert.equal(withoutPem.identityPemPath, null);
+}
+
+function testIdentityFromEd25519Pem(): void {
+  const pair = generateKeyPairSync("ed25519");
+  const pem = pair.privateKey.export({ format: "pem", type: "pkcs8" }).toString();
+  const identity = identityFromPem(pem);
+  assert.notEqual(identity.getPrincipal().toText(), "2vxsx-fae");
 }
 
 function testCallParamsDefaultBlockTag(): void {
@@ -413,6 +437,8 @@ async function testInvalidTxHashReturnsInvalidParams(): Promise<void> {
 
 testHex();
 testJsonRpc();
+testConfigIdentityPemPath();
+testIdentityFromEd25519Pem();
 testCallParamsDefaultBlockTag();
 testTxCountParamsDefaultBlockTag();
 testCallObjectParsing();

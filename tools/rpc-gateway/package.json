@@ -17,7 +17,9 @@
   },
   "dependencies": {
     "@dfinity/agent": "^3.4.3",
-    "@dfinity/candid": "^3.4.3"
+    "@dfinity/candid": "^3.4.3",
+    "@dfinity/identity": "^3.4.3",
+    "@dfinity/identity-secp256k1": "^3.4.3"
   },
   "devDependencies": {
     "@types/node": "^22.10.2",
