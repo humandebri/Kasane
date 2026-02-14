@@ -5,6 +5,7 @@
 use evm_core::hash;
 use evm_db::chain_data::constants::MAX_TX_SIZE;
 use evm_db::chain_data::receipt::log_entry_from_parts;
+use evm_db::chain_data::runtime_defaults::{DEFAULT_BASE_FEE, DEFAULT_MIN_GAS_PRICE};
 use evm_db::chain_data::{BlockData, ReceiptLike, StoredTxBytes, TxId, TxIndexEntry, TxKind};
 use evm_db::stable_state::{init_stable_state, with_state_mut};
 use evm_db::types::keys::{make_account_key, make_storage_key};
@@ -302,7 +303,7 @@ fn rpc_eth_call_object_supports_nonce_type2_and_access_list() {
         gas: Some(30_000),
         gas_price: None,
         nonce: Some(0),
-        max_fee_per_gas: Some(2_000_000_000),
+        max_fee_per_gas: Some(u128::from(DEFAULT_BASE_FEE).saturating_add(1_000_000_000)),
         max_priority_fee_per_gas: Some(1_000_000_000),
         chain_id: Some(evm_db::chain_data::constants::CHAIN_ID),
         tx_type: Some(2),
@@ -334,7 +335,7 @@ fn rpc_eth_call_object_uses_account_nonce_when_nonce_omitted() {
         to: Some(vec![0u8; 20]),
         from: Some(from.to_vec()),
         gas: Some(30_000),
-        gas_price: Some(2_000_000_000),
+        gas_price: Some(u128::from(DEFAULT_MIN_GAS_PRICE).saturating_add(1_000_000_000)),
         nonce: None,
         max_fee_per_gas: None,
         max_priority_fee_per_gas: None,
