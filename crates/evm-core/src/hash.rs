@@ -3,6 +3,7 @@
 use alloy_primitives::keccak256 as alloy_keccak256;
 use alloy_primitives::Keccak256;
 use evm_db::chain_data::TxKind;
+pub use ic_evm_address::derive_evm_address_from_principal;
 
 pub const HASH_LEN: usize = 32;
 
@@ -43,16 +44,6 @@ pub fn stored_tx_id(
         buf.extend_from_slice(bytes);
     }
     keccak256(&buf)
-}
-
-pub fn caller_evm_from_principal(principal_bytes: &[u8]) -> [u8; 20] {
-    let mut payload = Vec::with_capacity("ic-evm:caller_evm:v1".len() + principal_bytes.len());
-    payload.extend_from_slice(b"ic-evm:caller_evm:v1");
-    payload.extend_from_slice(principal_bytes);
-    let hash = keccak256(&payload);
-    let mut out = [0u8; 20];
-    out.copy_from_slice(&hash[12..32]);
-    out
 }
 
 pub fn tx_list_hash(tx_ids: &[[u8; HASH_LEN]]) -> [u8; HASH_LEN] {

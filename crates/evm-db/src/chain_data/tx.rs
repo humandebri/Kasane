@@ -7,6 +7,7 @@ use crate::chain_data::constants::{
 use crate::corrupt_log::record_corrupt;
 use crate::decode::hash_to_array;
 use alloy_primitives::keccak256 as alloy_keccak256;
+use ic_evm_address::derive_evm_address_from_principal;
 use ic_stable_structures::storable::Bound;
 use ic_stable_structures::Storable;
 use std::borrow::Cow;
@@ -123,6 +124,7 @@ pub enum StoredTxError {
     EmptyBytes,
     MissingCaller,
     MissingPrincipal,
+    DerivationFailed,
     CallerMismatch,
     TxIdMismatch,
 }
@@ -232,7 +234,8 @@ impl TryFrom<StoredTxBytes> for StoredTx {
             return Err(StoredTxError::TxIdMismatch);
         }
         if value.kind == TxKind::IcSynthetic {
-            let derived = caller_evm_from_principal(value.caller_principal.as_slice());
+            let derived = derive_evm_address_from_principal(value.caller_principal.as_slice())
+                .map_err(|_| StoredTxError::DerivationFailed)?;
             if value.caller_evm != Some(derived) {
                 return Err(StoredTxError::CallerMismatch);
             }
@@ -552,16 +555,6 @@ fn stored_tx_id(
         buf.extend_from_slice(bytes);
     }
     alloy_keccak256(&buf).0
-}
-
-fn caller_evm_from_principal(principal_bytes: &[u8]) -> [u8; 20] {
-    let mut payload = Vec::with_capacity("ic-evm:caller_evm:v1".len() + principal_bytes.len());
-    payload.extend_from_slice(b"ic-evm:caller_evm:v1");
-    payload.extend_from_slice(principal_bytes);
-    let hash = alloy_keccak256(&payload).0;
-    let mut out = [0u8; 20];
-    out.copy_from_slice(&hash[12..32]);
-    out
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

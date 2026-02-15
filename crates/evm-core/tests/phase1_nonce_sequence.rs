@@ -10,7 +10,7 @@ mod common;
 
 fn fund_principal(principal: &[u8]) {
     common::fund_account(
-        hash::caller_evm_from_principal(principal),
+        hash::derive_evm_address_from_principal(principal).expect("must derive"),
         1_000_000_000_000_000_000,
     );
 }
