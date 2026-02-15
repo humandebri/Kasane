@@ -809,6 +809,12 @@ checksum = "4c7f02d4ea65f2c1853089ffd8d2787bdbc63de2f0d29dedbcf8ccdfa0ccd4cf"
 
 [[package]]
 name = "base64"
+version = "0.13.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9e1b586273c5702936fe7b7d6896644d8be71e6314cfe09d3167c95f712589e8"
+
+[[package]]
+name = "base64"
 version = "0.22.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "72b3254f16251a8381aa12e40e3c4d2f0199f8c6508fbecb9d91f575e0fbb8c6"
@@ -1267,6 +1273,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e7c1832837b905bbfb5101e07cc24c8deddf52f93225eee6ead5f4d63d53ddcb"
 dependencies = [
  "const-oid",
+ "pem-rfc7468",
  "zeroize",
 ]
 
@@ -1406,6 +1413,7 @@ dependencies = [
  "ff",
  "generic-array",
  "group",
+ "pem-rfc7468",
  "pkcs8",
  "rand_core 0.6.4",
  "sec1",
@@ -1458,6 +1466,7 @@ dependencies = [
  "candid",
  "ic-cdk",
  "ic-cdk-timers",
+ "ic-evm-address",
  "ic-stable-structures",
  "proptest",
  "tracing",
@@ -1650,6 +1659,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "hex-literal"
+version = "0.4.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6fe2267d4ed49bc07b63801559be28c718ea06c4738b7a03c94df7386d2cde46"
+
+[[package]]
 name = "hmac"
 version = "0.12.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1758,6 +1773,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "ic-evm-address"
+version = "0.1.0"
+dependencies = [
+ "alloy-primitives",
+ "candid",
+ "hex",
+ "hex-literal",
+ "ic-secp256k1",
+]
+
+[[package]]
 name = "ic-evm-core"
 version = "0.1.0"
 dependencies = [
@@ -1773,6 +1799,7 @@ dependencies = [
  "evm-db",
  "hex",
  "ic-cdk",
+ "ic-evm-address",
  "ic-evm-tx",
  "revm",
  "smallvec",
@@ -1858,6 +1885,25 @@ name = "ic-metrics-encoder"
 version = "1.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8b5c7628eac357aecda461130f8074468be5aa4d258a002032d82d817f79f1f8"
+
+[[package]]
+name = "ic-secp256k1"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3bf34836f1c4e8114b6d13b7699428939742e9ad73615bc0be4799ccc5566869"
+dependencies = [
+ "hex-literal",
+ "hmac",
+ "ic_principal",
+ "k256",
+ "num-bigint",
+ "pem",
+ "rand 0.8.5",
+ "rand_chacha 0.3.1",
+ "sha2",
+ "simple_asn1",
+ "zeroize",
+]
 
 [[package]]
 name = "ic-stable-structures"
@@ -1982,6 +2028,7 @@ dependencies = [
  "once_cell",
  "serdect",
  "sha2",
+ "signature",
 ]
 
 [[package]]
@@ -2265,6 +2312,24 @@ name = "pastey"
 version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b867cad97c0791bbd3aaa6472142568c6c9e8f71937e98379f584cfb0cf35bec"
+
+[[package]]
+name = "pem"
+version = "1.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a8835c273a76a90455d7344889b0964598e3316e2a79ede8e36f16bdcf2228b8"
+dependencies = [
+ "base64 0.13.1",
+]
+
+[[package]]
+name = "pem-rfc7468"
+version = "0.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "88b39c9bfcfc231068454382784bb460aae594343fb030d46e9f50a645418412"
+dependencies = [
+ "base64ct",
+]
 
 [[package]]
 name = "pest"
@@ -3048,7 +3113,7 @@ version = "3.16.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4fa237f2807440d238e0364a218270b98f767a00d3dada77b1c53ae88940e2e7"
 dependencies = [
- "base64",
+ "base64 0.22.1",
  "chrono",
  "hex",
  "indexmap 1.9.3",
@@ -3137,6 +3202,18 @@ checksum = "77549399552de45a898a580c1b41d445bf730df867cc44e6c0233bbc4b8329de"
 dependencies = [
  "digest 0.10.7",
  "rand_core 0.6.4",
+]
+
+[[package]]
+name = "simple_asn1"
+version = "0.6.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0d585997b0ac10be3c5ee635f1bab02d512760d14b7c468801ac8a01d9ae5f1d"
+dependencies = [
+ "num-bigint",
+ "num-traits",
+ "thiserror 2.0.18",
+ "time",
 ]
 
 [[package]]
