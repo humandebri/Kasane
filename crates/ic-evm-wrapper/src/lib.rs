@@ -71,6 +71,8 @@ const CODE_ARG_TX_TOO_LARGE: &str = "arg.tx_too_large";
 #[cfg(test)]
 const CODE_ARG_DECODE_FAILED: &str = "arg.decode_failed";
 #[cfg(test)]
+const CODE_ARG_DERIVATION_FAILED: &str = "arg.principal_to_evm_derivation_failed";
+#[cfg(test)]
 const CODE_ARG_UNSUPPORTED_TX_KIND: &str = "arg.unsupported_tx_kind";
 #[cfg(test)]
 const CODE_SUBMIT_TX_ALREADY_SEEN: &str = "submit.tx_already_seen";
@@ -153,6 +155,14 @@ fn init_inner(args: Option<InitArgs>, require_args: bool) {
             addr.copy_from_slice(&alloc.address);
             chain::credit_balance(addr, alloc.amount)
                 .unwrap_or_else(|_| ic_cdk::trap("init: genesis mint failed"));
+        }
+    }
+    // 新規install直後でも write 系APIが migration_pending で止まらないよう、
+    // 初期migrationを短いループで前進させる（状態が軽い初期導入を想定）。
+    for _ in 0..8 {
+        drive_migrations_tick(1024, 1024);
+        if !migration_pending() {
+            break;
         }
     }
     observe_cycles();
@@ -305,6 +315,10 @@ fn chain_submit_error_to_code(err: &chain::ChainError) -> Option<(TxApiErrorKind
         chain::ChainError::DecodeFailed => {
             Some((TxApiErrorKind::InvalidArgument, CODE_ARG_DECODE_FAILED))
         }
+        chain::ChainError::AddressDerivationFailed => Some((
+            TxApiErrorKind::InvalidArgument,
+            CODE_ARG_DERIVATION_FAILED,
+        )),
         chain::ChainError::UnsupportedTxKind => Some((
             TxApiErrorKind::InvalidArgument,
             CODE_ARG_UNSUPPORTED_TX_KIND,
@@ -717,7 +731,8 @@ fn get_ops_status() -> OpsStatusView {
             last_check_ts: ops.last_check_ts,
             mode: ic_evm_ops::mode_to_view(ops.mode),
             safe_stop_latched: ops.safe_stop_latched,
-            needs_migration: meta.needs_migration,
+            // write-block条件と同じ判定を返し、運用上の見え方を一致させる。
+            needs_migration: migration_pending(),
             schema_version: meta.schema_version,
             log_filter_override: state.log_config.get().filter().map(str::to_string),
             log_truncated_count: LOG_TRUNCATED_COUNT.load(Ordering::Relaxed),
@@ -764,6 +779,12 @@ fn set_log_filter(filter: Option<String>) -> Result<(), String> {
 #[ic_cdk::query]
 fn expected_nonce_by_address(address: Vec<u8>) -> Result<u64, String> {
     if address.len() != 20 {
+        if address.len() == 32 {
+            return Err(
+                "address must be 20 bytes (got 32; this looks like bytes32-encoded principal)"
+                    .to_string(),
+            );
+        }
         return Err("address must be 20 bytes".to_string());
     }
     let mut buf = [0u8; 20];
@@ -1885,6 +1906,10 @@ mod tests {
             (ChainError::TxTooLarge, ("arg.tx_too_large", true)),
             (ChainError::DecodeFailed, ("arg.decode_failed", true)),
             (
+                ChainError::AddressDerivationFailed,
+                ("arg.principal_to_evm_derivation_failed", true),
+            ),
+            (
                 ChainError::UnsupportedTxKind,
                 ("arg.unsupported_tx_kind", true),
             ),
@@ -1963,6 +1988,18 @@ mod tests {
             .expect_err("must reject decode");
         match err {
             ExecuteTxError::InvalidArgument(code) => assert_eq!(code, "arg.decode_failed"),
+            other => panic!("unexpected error: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn pr8_execute_derivation_failed_maps_to_arg_code() {
+        let err = map_execute_chain_result(Err(ChainError::AddressDerivationFailed))
+            .expect_err("must reject derivation failure");
+        match err {
+            ExecuteTxError::InvalidArgument(code) => {
+                assert_eq!(code, "arg.principal_to_evm_derivation_failed")
+            }
             other => panic!("unexpected error: {other:?}"),
         }
     }
@@ -2299,6 +2336,18 @@ mod tests {
     }
 
     #[test]
+    fn ops_status_needs_migration_matches_state_root_pending() {
+        init_stable_state();
+        let mut meta = evm_db::meta::Meta::new();
+        meta.needs_migration = false;
+        meta.schema_version = current_schema_version();
+        set_meta(meta);
+        // state_root_meta.initialized は初期値 false のため migration_pending() は true。
+        let view = super::get_ops_status();
+        assert!(view.needs_migration);
+    }
+
+    #[test]
     fn decode_failure_label_view_prefers_ascii_machine_code() {
         let mut raw = [0u8; 32];
         raw[..12].copy_from_slice(b"block_data_1");
@@ -2505,6 +2554,16 @@ mod tests {
         let err =
             super::rpc_eth_get_storage_at(vec![0u8; 20], vec![0u8; 31]).expect_err("bad slot");
         assert_eq!(err, "slot must be 32 bytes");
+    }
+
+    #[test]
+    fn expected_nonce_by_address_rejects_bytes32_encoded_principal() {
+        init_stable_state();
+        let err = super::expected_nonce_by_address(vec![0u8; 32]).expect_err("bad address");
+        assert_eq!(
+            err,
+            "address must be 20 bytes (got 32; this looks like bytes32-encoded principal)"
+        );
     }
 
     #[test]

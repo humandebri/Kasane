@@ -15,8 +15,8 @@ use ic_evm_rpc::{
     rpc_eth_call_object, rpc_eth_call_rawtx, rpc_eth_estimate_gas_object, rpc_eth_get_balance,
     rpc_eth_get_block_by_number_with_status, rpc_eth_get_code, rpc_eth_get_storage_at,
     rpc_eth_get_transaction_by_eth_hash, rpc_eth_get_transaction_receipt_by_eth_hash,
-    rpc_eth_get_transaction_receipt_with_status,
-    rpc_eth_send_raw_transaction, submit_tx_in_with_code,
+    rpc_eth_get_transaction_receipt_with_status, rpc_eth_send_raw_transaction,
+    submit_tx_in_with_code,
 };
 use ic_evm_rpc_types::{RpcBlockLookupView, RpcCallObjectView, RpcReceiptLookupView};
 use std::sync::{Mutex, OnceLock};
@@ -32,6 +32,11 @@ fn rpc_eth_get_balance_rejects_invalid_address_length() {
     init_stable_state();
     let err = rpc_eth_get_balance(vec![0u8; 19]).expect_err("invalid address should fail");
     assert_eq!(err, "address must be 20 bytes");
+    let err = rpc_eth_get_balance(vec![0u8; 32]).expect_err("bytes32-like address should fail");
+    assert_eq!(
+        err,
+        "address must be 20 bytes (got 32; this looks like bytes32-encoded principal)"
+    );
 }
 
 #[test]
@@ -163,6 +168,27 @@ fn rpc_eth_call_object_rejects_bad_lengths() {
     .expect_err("invalid from should fail");
     assert_eq!(err.code, 1001);
     assert_eq!(err.message, "from must be 20 bytes");
+
+    let err = rpc_eth_call_object(RpcCallObjectView {
+        to: Some(vec![0u8; 32]),
+        from: None,
+        gas: None,
+        gas_price: None,
+        nonce: None,
+        max_fee_per_gas: None,
+        max_priority_fee_per_gas: None,
+        chain_id: None,
+        tx_type: None,
+        access_list: None,
+        value: None,
+        data: None,
+    })
+    .expect_err("bytes32-like to should fail");
+    assert_eq!(err.code, 1001);
+    assert_eq!(
+        err.message,
+        "to must be 20 bytes (got 32; this looks like bytes32-encoded principal)"
+    );
 
     let err = rpc_eth_call_object(RpcCallObjectView {
         to: Some(vec![0u8; 20]),
