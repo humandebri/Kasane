@@ -20,6 +20,16 @@ const BENCH_LEGACY_RAW_TX: [u8; 104] = [
 
 #[bench(raw)]
 fn submit_ic_tx_path() -> BenchResult {
+    // Warm path: caller principal -> EVM address derivation cache を事前に温め、
+    // submit本体のホットパス回帰を継続監視する。
+    warm_submit_caller_cache();
+    bench_fn(|| {
+        let _ = submit_synthetic_tx();
+    })
+}
+
+#[bench(raw)]
+fn submit_ic_tx_path_cold() -> BenchResult {
     bench_fn(|| {
         let _ = submit_synthetic_tx();
     })
@@ -71,6 +81,16 @@ fn submit_synthetic_tx() -> Result<evm_db::chain_data::TxId, chain::ChainError> 
         canister_id: canister.as_slice().to_vec(),
         tx_bytes: build_ic_tx_bytes(nonce),
     })
+}
+
+fn warm_submit_caller_cache() {
+    let caller = Principal::self_authenticating(b"canbench-caller");
+    let canister = Principal::self_authenticating(b"canbench-canister");
+    let _ = chain::submit_tx_in(chain::TxIn::IcSynthetic {
+        caller_principal: caller.as_slice().to_vec(),
+        canister_id: canister.as_slice().to_vec(),
+        tx_bytes: vec![0x02],
+    });
 }
 
 fn build_ic_tx_bytes(nonce: u64) -> Vec<u8> {

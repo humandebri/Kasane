@@ -1797,7 +1797,7 @@ name = "ic-evm-address"
 version = "0.1.0"
 dependencies = [
  "alloy-primitives",
- "hex-literal",
+ "ic-pub-key",
  "ic-secp256k1",
 ]
 
@@ -1838,6 +1838,16 @@ dependencies = [
  "candid",
  "serde",
  "serde_bytes",
+]
+
+[[package]]
+name = "ic-pub-key"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "16679102978cada1ced7a8902f9898bf4f4330de3c058c304658cc1cd35470cb"
+dependencies = [
+ "ic-management-canister-types",
+ "ic-secp256k1",
 ]
 
 [[package]]

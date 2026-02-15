@@ -46,6 +46,7 @@ use std::cmp::Reverse;
 use std::collections::{BTreeMap, BTreeSet, BinaryHeap};
 
 const OPS_WARN_RATE_LIMIT_SECS: u64 = 60;
+const CALLER_EVM_CACHE_CAPACITY: usize = 4096;
 #[cfg(not(target_arch = "wasm32"))]
 thread_local! {
     static STORE_FAIL_AT_OP: Cell<u64> = const { Cell::new(0) };
@@ -53,6 +54,7 @@ thread_local! {
 }
 thread_local! {
     static DECODE_SUPPRESS_UNTIL_BY_PRINCIPAL: RefCell<BTreeMap<Vec<u8>, u64>> = const { RefCell::new(BTreeMap::new()) };
+    static CALLER_EVM_BY_PRINCIPAL: RefCell<BTreeMap<Vec<u8>, [u8; 20]>> = const { RefCell::new(BTreeMap::new()) };
 }
 
 fn current_instruction_counter() -> u64 {
@@ -143,6 +145,29 @@ fn should_stop_block_execution(
         return false;
     }
     instruction_current.saturating_sub(instruction_start) >= instruction_soft_limit
+}
+
+fn derive_caller_evm_cached(caller_principal: &[u8]) -> Result<[u8; 20], ChainError> {
+    if let Some(found) = CALLER_EVM_BY_PRINCIPAL.with(|cache| {
+        cache
+            .borrow()
+            .get(caller_principal)
+            .copied()
+    }) {
+        return Ok(found);
+    }
+
+    let derived = hash::derive_evm_address_from_principal(caller_principal)
+        .map_err(|_| ChainError::AddressDerivationFailed)?;
+    CALLER_EVM_BY_PRINCIPAL.with(|cache| {
+        let mut cache = cache.borrow_mut();
+        if cache.len() >= CALLER_EVM_CACHE_CAPACITY {
+            // principalの多様化で無制限成長しないよう、上限到達時に全体をリセットする。
+            cache.clear();
+        }
+        cache.insert(caller_principal.to_vec(), derived);
+    });
+    Ok(derived)
 }
 
 fn remaining_instruction_budget(
@@ -780,8 +805,7 @@ pub fn submit_ic_tx(
         if tx_bytes.len() > MAX_TX_SIZE {
             return Err(ChainError::TxTooLarge);
         }
-        let caller_evm = hash::derive_evm_address_from_principal(&caller_principal)
-            .map_err(|_| ChainError::AddressDerivationFailed)?;
+        let caller_evm = derive_caller_evm_cached(caller_principal.as_slice())?;
         let sender_key = SenderKey::new(caller_evm);
         let tx_id = TxId(hash::stored_tx_id(
             TxKind::IcSynthetic,
@@ -2963,9 +2987,9 @@ enum RekeyError {
 #[cfg(test)]
 mod tests {
     use super::{
-        is_principal_decode_suppressed, note_decode_drop_for_principal,
-        remaining_instruction_budget, should_stop_block_execution,
-        DECODE_SUPPRESS_UNTIL_BY_PRINCIPAL,
+        derive_caller_evm_cached, is_principal_decode_suppressed, note_decode_drop_for_principal,
+        remaining_instruction_budget, should_stop_block_execution, CALLER_EVM_BY_PRINCIPAL,
+        CALLER_EVM_CACHE_CAPACITY, DECODE_SUPPRESS_UNTIL_BY_PRINCIPAL,
     };
     use std::collections::BTreeMap;
 
@@ -3032,6 +3056,30 @@ mod tests {
             assert!(
                 cell.borrow().len() <= evm_db::chain_data::DEFAULT_MAX_DECODE_SUPPRESS_PRINCIPALS
             );
+        });
+    }
+
+    #[test]
+    fn caller_evm_cache_hits_for_same_principal() {
+        CALLER_EVM_BY_PRINCIPAL.with(|cell| cell.borrow_mut().clear());
+        let principal = b"cache-hit-principal";
+        let first = derive_caller_evm_cached(principal).expect("first derive must succeed");
+        let second = derive_caller_evm_cached(principal).expect("second derive must succeed");
+        assert_eq!(first, second);
+        CALLER_EVM_BY_PRINCIPAL.with(|cell| {
+            assert_eq!(cell.borrow().len(), 1);
+        });
+    }
+
+    #[test]
+    fn caller_evm_cache_is_bounded() {
+        CALLER_EVM_BY_PRINCIPAL.with(|cell| cell.borrow_mut().clear());
+        for i in 0..(CALLER_EVM_CACHE_CAPACITY + 1) {
+            let principal = format!("cache-cap-{i}").into_bytes();
+            let _ = derive_caller_evm_cached(principal.as_slice()).expect("derive must succeed");
+        }
+        CALLER_EVM_BY_PRINCIPAL.with(|cell| {
+            assert!(cell.borrow().len() <= CALLER_EVM_CACHE_CAPACITY);
         });
     }
 }

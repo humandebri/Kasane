@@ -1,45 +1,38 @@
 //! どこで: Principal->EVMアドレス導出共通層 / 何を: ic-pub-key準拠導出 / なぜ: 複数crateで同一ロジックを厳密共有するため
 
 use alloy_primitives::keccak256;
-use hex_literal::hex;
-use ic_secp256k1::{DerivationIndex, DerivationPath, PublicKey};
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct SignerDerivationConfig {
-    pub pubkey_sec1: [u8; 33],
-    pub chaincode: [u8; 32],
-    pub eth_domain_sep: [u8; 1],
-}
-
-pub const DEFAULT_SIGNER_DERIVATION_CONFIG: SignerDerivationConfig = SignerDerivationConfig {
-    pubkey_sec1: hex!("0259761672ec7ee3bdc5eca95ba5f6a493d1133b86a76163b68af30c06fe3b75c0"),
-    chaincode: hex!("f666a98c7f70fe281ca8142f14eb4d1e0934a439237da83869e2cfd924b270c0"),
-    eth_domain_sep: [0x01],
-};
+use ic_pub_key::{derive_ecdsa_key, EcdsaCurve, EcdsaKeyId, EcdsaPublicKeyArgs};
+use ic_secp256k1::PublicKey;
+use std::sync::OnceLock;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum AddressDerivationError {
-    InvalidMasterPublicKey,
+    InvalidSignerCanisterId,
+    DerivationFailed,
     InvalidDerivedPublicKeyEncoding,
 }
+
+const ETH_DOMAIN_SEPARATOR: &[u8] = &[0x01];
+const CHAIN_FUSION_SIGNER_CANISTER_ID: &str = "grghe-syaaa-aaaar-qabyq-cai";
+const KEY_ID_KEY_1: &str = "key_1";
+static SIGNER_CANISTER_ID_BYTES: OnceLock<Result<Vec<u8>, AddressDerivationError>> = OnceLock::new();
 
 pub fn derive_evm_address_from_principal(
     principal_bytes: &[u8],
 ) -> Result<[u8; 20], AddressDerivationError> {
-    derive_evm_address_from_principal_with_config(principal_bytes, DEFAULT_SIGNER_DERIVATION_CONFIG)
-}
-
-pub fn derive_evm_address_from_principal_with_config(
-    principal_bytes: &[u8],
-    config: SignerDerivationConfig,
-) -> Result<[u8; 20], AddressDerivationError> {
-    let path = DerivationPath::new(vec![
-        DerivationIndex(config.eth_domain_sep.to_vec()),
-        DerivationIndex(principal_bytes.to_vec()),
-    ]);
-    let master = PublicKey::deserialize_sec1(&config.pubkey_sec1)
-        .map_err(|_| AddressDerivationError::InvalidMasterPublicKey)?;
-    let (derived, _) = master.derive_subkey_with_chain_code(&path, &config.chaincode);
+    let signer_canister_id_bytes = signer_canister_id_bytes()?;
+    let signer_canister_id = ic_pub_key::CanisterId::from_slice(signer_canister_id_bytes);
+    let out = derive_ecdsa_key(&EcdsaPublicKeyArgs {
+        canister_id: Some(signer_canister_id),
+        derivation_path: vec![ETH_DOMAIN_SEPARATOR.to_vec(), principal_bytes.to_vec()],
+        key_id: EcdsaKeyId {
+            curve: EcdsaCurve::Secp256k1,
+            name: KEY_ID_KEY_1.to_string(),
+        },
+    })
+    .map_err(|_| AddressDerivationError::DerivationFailed)?;
+    let derived = PublicKey::deserialize_sec1(&out.public_key)
+        .map_err(|_| AddressDerivationError::InvalidDerivedPublicKeyEncoding)?;
     let uncompressed = derived.serialize_sec1(false);
     derive_evm_address_from_uncompressed_sec1(uncompressed.as_slice())
 }
@@ -56,11 +49,22 @@ fn derive_evm_address_from_uncompressed_sec1(
     Ok(out)
 }
 
+fn signer_canister_id_bytes() -> Result<&'static [u8], AddressDerivationError> {
+    match SIGNER_CANISTER_ID_BYTES.get_or_init(|| {
+        let principal = ic_pub_key::CanisterId::from_text(CHAIN_FUSION_SIGNER_CANISTER_ID)
+            .map_err(|_| AddressDerivationError::InvalidSignerCanisterId)?;
+        Ok(principal.as_slice().to_vec())
+    }) {
+        Ok(bytes) => Ok(bytes.as_slice()),
+        Err(err) => Err(*err),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        derive_evm_address_from_principal, derive_evm_address_from_principal_with_config,
-        derive_evm_address_from_uncompressed_sec1, AddressDerivationError, SignerDerivationConfig,
+        derive_evm_address_from_principal, derive_evm_address_from_uncompressed_sec1,
+        AddressDerivationError,
     };
     use candid::Principal;
 
@@ -94,17 +98,6 @@ mod tests {
         let max_len =
             derive_evm_address_from_principal(max_principal.as_slice()).expect("must derive");
         assert_eq!(max_len.len(), 20);
-    }
-
-    #[test]
-    fn with_config_returns_error_for_invalid_master_pubkey() {
-        let cfg = SignerDerivationConfig {
-            pubkey_sec1: [0u8; 33],
-            chaincode: [0u8; 32],
-            eth_domain_sep: [0x01],
-        };
-        let out = derive_evm_address_from_principal_with_config(b"principal", cfg);
-        assert_eq!(out, Err(AddressDerivationError::InvalidMasterPublicKey));
     }
 
     #[test]

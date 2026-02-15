@@ -16,6 +16,7 @@ if command -v rg >/dev/null 2>&1; then
     --glob '!docs/**' \
     --glob '!scripts/**' \
     --glob '!vendor/**' \
+    --glob '!*.sbom.json' \
     --glob '!vendor/**/CHANGELOG.md' \
     > "$TMP_FILE" || true
 else
@@ -25,6 +26,7 @@ else
     --exclude-dir=docs \
     --exclude-dir=scripts \
     --exclude-dir=vendor \
+    --exclude='*.sbom.json' \
     --exclude='CHANGELOG.md' \
     > "$TMP_FILE" || true
 fi

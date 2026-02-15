@@ -10,8 +10,8 @@ crate-type = ["rlib"]
 
 [dependencies]
 alloy-primitives = { version = "=1.5.3", default-features = false, features = ["std"] }
+ic-pub-key = { version = "0.3.0", default-features = false, features = ["secp256k1"] }
 ic-secp256k1 = "0.3.0"
-hex-literal = "0.4"
 
 [dev-dependencies]
 candid = "0.10"

@@ -26,7 +26,12 @@ pub fn stored_tx_id(
     canister_id: Option<&[u8]>,
     caller_principal: Option<&[u8]>,
 ) -> [u8; HASH_LEN] {
-    let mut buf = Vec::new();
+    let caller_evm_len = if caller_evm.is_some() { 20 } else { 0 };
+    let canister_len = canister_id.map(|bytes| 2 + bytes.len()).unwrap_or(0);
+    let principal_len = caller_principal.map(|bytes| 2 + bytes.len()).unwrap_or(0);
+    let mut buf = Vec::with_capacity(
+        "ic-evm:storedtx:v2".len() + 1 + raw.len() + caller_evm_len + canister_len + principal_len,
+    );
     buf.extend_from_slice(b"ic-evm:storedtx:v2");
     buf.push(kind.to_u8());
     buf.extend_from_slice(raw);
