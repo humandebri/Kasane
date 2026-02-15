@@ -36,7 +36,20 @@ export async function createClient(config: Config): Promise<ExportClient> {
   return {
     exportBlocks: async (cursor: Cursor | null, maxBytes: number) => {
       const arg: [] | [Cursor] = cursor ? [cursor] : [];
-      return actor.export_blocks(arg, maxBytes);
+      const raw = await actor.export_blocks(arg, maxBytes);
+      if ("Err" in raw) {
+        return raw as Result<ExportResponse, ExportError>;
+      }
+      const nextCursor: Cursor | null =
+        Array.isArray(raw.Ok.next_cursor) && raw.Ok.next_cursor.length === 1
+          ? raw.Ok.next_cursor[0]
+          : null;
+      return {
+        Ok: {
+          chunks: raw.Ok.chunks,
+          next_cursor: nextCursor,
+        },
+      };
     },
     getHeadNumber: async () => actor.rpc_eth_block_number(),
     getPruneStatus: async () => actor.get_prune_status(),

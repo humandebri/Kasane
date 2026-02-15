@@ -18,7 +18,9 @@ const HASH_LEN = 32;
 
 export function decodeBlockPayload(payload: Uint8Array): BlockInfo {
   const data = Buffer.from(payload);
-  const baseLen = 8 + HASH_LEN + HASH_LEN + 8 + HASH_LEN + HASH_LEN + 4;
+  // BlockData v2: number, parent_hash, block_hash, timestamp,
+  // base_fee_per_gas, block_gas_limit, gas_used, tx_list_hash, state_root, tx_len
+  const baseLen = 8 + HASH_LEN + HASH_LEN + 8 + 8 + 8 + 8 + HASH_LEN + HASH_LEN + 4;
   if (data.length < baseLen) {
     throw new Error("block payload too short");
   }
@@ -31,6 +33,9 @@ export function decodeBlockPayload(payload: Uint8Array): BlockInfo {
   offset += HASH_LEN;
   const timestamp = readU64BE(data, offset);
   offset += 8;
+  offset += 8; // base_fee_per_gas
+  offset += 8; // block_gas_limit
+  offset += 8; // gas_used
   offset += HASH_LEN; // tx_list_hash
   offset += HASH_LEN; // state_root
   const txLen = readU32BE(data, offset);

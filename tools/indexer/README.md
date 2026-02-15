@@ -32,6 +32,7 @@ npm run dev
 - `INDEXER_ARCHIVE_DIR` (任意, 既定: ./archive)
 - `INDEXER_CHAIN_ID` (任意, 既定: 4801360)
 - `INDEXER_ZSTD_LEVEL` (任意, 既定: 3)
+- `INDEXER_MAX_SEGMENT` (任意, 既定: 2, `next_cursor.segment` の許容上限)
 
 注: ローカル（dfx）向けに接続する場合は `INDEXER_IC_HOST` を `http://127.0.0.1:4943` にし、`INDEXER_FETCH_ROOT_KEY=true` を推奨。
 
@@ -47,8 +48,12 @@ npm run dev
 ```
 
 - block_number は **10進ASCII、先頭0なし**（"0"は許可）
-- segment は **0/1/2**
+- segment は **0..INDEXER_MAX_SEGMENT**（既定は 0/1/2）
 - byte_offset は **0..=u32**
+
+運用メモ:
+- DBに保存された cursor の `segment` が `INDEXER_MAX_SEGMENT` を超えている場合、起動時に停止する。
+- canister 側で segment 定義を拡張した場合、デプロイ時に `INDEXER_MAX_SEGMENT` も同値へ更新する。
 
 ## idle / retry（運用）
 
