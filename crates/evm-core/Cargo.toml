@@ -10,8 +10,8 @@ crate-type = ["rlib"]
 doctest = false
 
 [[bin]]
-name = "caller_evm"
-path = "src/test_bin/caller_evm.rs"
+name = "derive_evm_address"
+path = "src/test_bin/derive_evm_address.rs"
 
 [[bin]]
 name = "eth_raw_tx"
@@ -39,6 +39,10 @@ path = "../evm-db"
 [dependencies.evm_tx]
 package = "ic-evm-tx"
 path = "../ic-evm-tx"
+
+[dependencies.ic_evm_address]
+package = "ic-evm-address"
+path = "../ic-evm-address"
 
 [features]
 full_state_root = []

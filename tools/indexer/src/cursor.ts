@@ -30,7 +30,8 @@ export function cursorFromJson(text: string): Cursor {
   });
   const segment = parseNumber(segmentValue, "segment");
   const byteOffset = parseNumber(offsetValue, "byte_offset");
-  if (segment < 0 || segment > 2) {
+  // 上限は実行時設定(INDEXER_MAX_SEGMENT)で検証し、JSONデコードは構文検証に限定する。
+  if (segment < 0) {
     throw new Error("cursor.segment out of range");
   }
   if (byteOffset < 0) {

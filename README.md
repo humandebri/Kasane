@@ -90,14 +90,19 @@ flowchart TD
 - `from`（送信者）決定方法:
   - `submit_ic_tx` では `from` を payload に含めない。
   - 実行時の sender は `msg_caller()` の Principal から決定的に導出した `caller_evm`（20 bytes）を使う。
-  - 導出規則は `keccak256("ic-evm:caller_evm:v1" || principal_bytes)` の下位20bytes。
+  - 導出規則は `@dfinity/ic-pub-key` 準拠（Chain Fusion Signerの `[0x01, principal_bytes]` 派生鍵からEthereum address化）。
+  - 実装は `derive_evm_address_from_principal(...) -> Result<[u8;20], AddressDerivationError>` を使い、
+    導出失敗時にゼロアドレスへフォールバックしない（`InvalidArgument: arg.principal_to_evm_derivation_failed`）。
+  - `encodePrincipalToEthAddress` 相当の bytes32 エンコードは **EVMアドレス導出ではない**。
+    address引数には常に20 bytesのEVMアドレスを使う。
   - このため同一 Principal なら同一 sender になり、nonce はこの sender 単位で管理される。
 
 ```mermaid
 flowchart LR
-  P["Principal bytes (msg_caller)"] --> C["concat with domain: ic-evm:caller_evm:v1"]
-  C --> K["keccak256(32 bytes)"]
-  K --> L["take lower 20 bytes"]
+  P["Principal bytes (msg_caller)"] --> D["Derivation path: [0x01, principal_bytes]"]
+  D --> K["Derive subkey (ic-pub-key compatible)"]
+  K --> H["uncompressed pubkey (64-byte body) -> keccak256"]
+  H --> L["take lower 20 bytes"]
   L --> F["caller_evm (EVM sender)"]
 ```
 

@@ -18,6 +18,11 @@ export type ExportResponse = {
   next_cursor: Cursor | null;
 };
 
+export type CandidExportResponse = {
+  chunks: Chunk[];
+  next_cursor: [] | [Cursor];
+};
+
 export type ExportError =
   | { InvalidCursor: { message: string } }
   | { Pruned: { pruned_before_block: bigint } }
@@ -41,7 +46,7 @@ export type PruneStatusView = {
 };
 
 export type ExportActorMethods = {
-  export_blocks: (cursor: [] | [Cursor], max_bytes: number) => Promise<Result<ExportResponse, ExportError>>;
+  export_blocks: (cursor: [] | [Cursor], max_bytes: number) => Promise<Result<CandidExportResponse, ExportError>>;
   rpc_eth_block_number: () => Promise<bigint>;
   get_prune_status: () => Promise<PruneStatusView>;
 };

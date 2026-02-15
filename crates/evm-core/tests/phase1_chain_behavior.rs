@@ -21,7 +21,7 @@ fn execute_ic_tx_invalid_opcode_does_not_increment_unknown_halt_metrics() {
     init_stable_state();
     relax_fee_floor_for_tests();
     let caller_principal = vec![0x42];
-    let caller = hash::caller_evm_from_principal(&caller_principal);
+    let caller = hash::derive_evm_address_from_principal(&caller_principal).expect("must derive");
     common::fund_account(caller, 1_000_000_000_000_000_000);
 
     let halt_target = [0x12u8; 20];
@@ -71,7 +71,7 @@ fn produce_block_selects_top_k_by_fee_then_submission_order() {
         let idx_u8 = u8::try_from(idx).unwrap_or(0);
         let caller_principal = vec![0x10 + idx_u8];
         common::fund_account(
-            hash::caller_evm_from_principal(&caller_principal),
+            hash::derive_evm_address_from_principal(&caller_principal).expect("must derive"),
             1_000_000_000_000_000_000,
         );
         let tx_id = chain::submit_ic_tx(

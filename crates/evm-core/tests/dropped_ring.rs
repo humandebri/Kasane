@@ -83,7 +83,7 @@ fn dropped_ring_does_not_remove_included_or_queued() {
     let caller_principal = vec![0x31];
     let canister_id = vec![0x41];
     common::fund_account(
-        hash::caller_evm_from_principal(&caller_principal),
+        hash::derive_evm_address_from_principal(&caller_principal).expect("must derive"),
         1_000_000_000_000_000_000,
     );
     let included_tx = chain::submit_ic_tx(

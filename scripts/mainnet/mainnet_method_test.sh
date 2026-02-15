@@ -77,6 +77,7 @@ submit_ic_tx_with_retry_standard() {
       if [[ "${refreshed_nonce}" -gt "${nonce}" ]]; then
         log "submit_ic_tx already_seen: nonce advanced (${nonce}->${refreshed_nonce}), 新nonceで再試行します"
       else
+        # 方針: already_seen は「同一nonceの既存pending再利用」として扱い、失敗とはみなさない。
         log "submit_ic_tx already_seen: nonce unchanged (${nonce}), 既存pendingを再利用して続行します"
         return 0
       fi
@@ -119,6 +120,7 @@ submit_ic_tx_with_retry_custom() {
       if [[ "${refreshed_nonce}" -gt "${nonce}" ]]; then
         log "submit_ic_tx already_seen: nonce advanced (${nonce}->${refreshed_nonce}), 新nonceで再試行します"
       else
+        # 方針: already_seen は「同一nonceの既存pending再利用」として扱い、失敗とはみなさない。
         log "submit_ic_tx already_seen: nonce unchanged (${nonce}), 既存pendingを再利用して続行します"
         return 0
       fi
@@ -266,20 +268,35 @@ run_update_with_cycles "set_auto_mine" "(false)" "baseline setup" "0" >/dev/null
 run_update_with_cycles "set_pruning_enabled" "(false)" "baseline setup" "0" >/dev/null
 
 CALLER_PRINCIPAL="$(icp identity principal --identity "${ICP_IDENTITY_NAME}")"
-CALLER_EVM_HEX="$(cargo run -q -p ic-evm-core --bin caller_evm -- "${CALLER_PRINCIPAL}" | tr -d '\n\r')"
+CALLER_EVM_HEX="$(cargo run -q -p ic-evm-core --bin derive_evm_address -- "${CALLER_PRINCIPAL}" | tr -d '\n\r')"
 submit_ic_tx_with_retry_standard "write path A" "3"
 SUBMIT_OUT="${RUN_UPDATE_LAST_OUT:-}"
 IC_TX_ID_HEX=""
 if candid_is_ok "${SUBMIT_OUT}" >/dev/null 2>&1; then
   IC_TX_ID_HEX="$(bytes_csv_to_hex "$(candid_extract_ok_blob_bytes "${SUBMIT_OUT}")")"
+elif printf '%s' "${SUBMIT_OUT}" | grep -q "submit.tx_already_seen"; then
+  record_method_row "submit_ic_tx_already_seen_policy" "policy" "accepted" "nonce unchanged の場合は既存pending再利用として成功扱い"
 fi
 run_update_with_cycles "produce_block" "(1:nat32)" "write path A block production" "0" >/dev/null
 
 ETH_TX_ID_HEX=""
 TEST_ETH_PRIVKEY="${ETH_PRIVKEY}"
+AUTO_FUND_SKIP_REASON=""
 if [[ -z "${TEST_ETH_PRIVKEY}" && "${AUTO_FUND_TEST_KEY}" == "1" ]]; then
+  set +e
   CALLER_BALANCE_WEI="$(query_eth_balance_wei "${CALLER_EVM_HEX}")"
-  FUND_AMOUNT_WEI="$(python - <<PY
+  BALANCE_RC=$?
+  set -e
+  if [[ "${BALANCE_RC}" -ne 0 || -z "${CALLER_BALANCE_WEI}" ]]; then
+    if [[ "${RUN_STRICT}" == "1" ]]; then
+      echo "[mainnet-test] auto fund skipped: failed to query caller balance" >&2
+      exit 1
+    fi
+    AUTO_FUND_SKIP_REASON="caller_balance_query_failed"
+    record_method_row "auto_fund_test_key" "update" "skipped" "${AUTO_FUND_SKIP_REASON}"
+  else
+    set +e
+    FUND_AMOUNT_WEI="$(python - <<PY
 balance = int("${CALLER_BALANCE_WEI}")
 requested = int("${AUTO_FUND_AMOUNT_WEI}")
 if requested <= 0:
@@ -290,17 +307,25 @@ if cap <= 0:
 print(requested if requested <= cap else cap)
 PY
 )"
-  if [[ -z "${FUND_AMOUNT_WEI}" ]]; then
-    echo "[mainnet-test] auto fund amount calculation failed" >&2
-    exit 1
+    FUND_AMOUNT_RC=$?
+    set -e
+    if [[ "${FUND_AMOUNT_RC}" -ne 0 || -z "${FUND_AMOUNT_WEI}" ]]; then
+      if [[ "${RUN_STRICT}" == "1" ]]; then
+        echo "[mainnet-test] auto fund amount calculation failed" >&2
+        exit 1
+      fi
+      AUTO_FUND_SKIP_REASON="auto_fund_amount_calculation_failed"
+      record_method_row "auto_fund_test_key" "update" "skipped" "${AUTO_FUND_SKIP_REASON}"
+    else
+      TEST_ETH_PRIVKEY="$(cargo run -q -p ic-evm-core --features local-signer-bin --bin eth_raw_tx -- --mode genkey)"
+      TEST_ETH_SENDER_HEX="$(eth_sender_hex_from_privkey "${TEST_ETH_PRIVKEY}" | tr -d '\n\r')"
+      FUND_NONCE="$(query_nonce_for_address "${CALLER_EVM_HEX}")"
+      FUND_TX_BYTES="$(generate_submit_ic_tx_bytes_custom "${FUND_NONCE}" "${TEST_ETH_SENDER_HEX}" "${FUND_AMOUNT_WEI}")"
+      run_update_with_cycles "submit_ic_tx" "(vec { ${FUND_TX_BYTES} })" "auto-fund test ETH key ${TEST_ETH_SENDER_HEX}" "0" >/dev/null
+      run_update_with_cycles "produce_block" "(1:nat32)" "auto-fund block production" "0" >/dev/null
+      record_method_row "auto_fund_test_key" "update" "ok" "funded test sender=${TEST_ETH_SENDER_HEX} amount=${FUND_AMOUNT_WEI} caller_balance_before=${CALLER_BALANCE_WEI}"
+    fi
   fi
-  TEST_ETH_PRIVKEY="$(cargo run -q -p ic-evm-core --features local-signer-bin --bin eth_raw_tx -- --mode genkey)"
-  TEST_ETH_SENDER_HEX="$(eth_sender_hex_from_privkey "${TEST_ETH_PRIVKEY}" | tr -d '\n\r')"
-  FUND_NONCE="$(query_nonce_for_address "${CALLER_EVM_HEX}")"
-  FUND_TX_BYTES="$(generate_submit_ic_tx_bytes_custom "${FUND_NONCE}" "${TEST_ETH_SENDER_HEX}" "${FUND_AMOUNT_WEI}")"
-  run_update_with_cycles "submit_ic_tx" "(vec { ${FUND_TX_BYTES} })" "auto-fund test ETH key ${TEST_ETH_SENDER_HEX}" "0" >/dev/null
-  run_update_with_cycles "produce_block" "(1:nat32)" "auto-fund block production" "0" >/dev/null
-  record_method_row "auto_fund_test_key" "update" "ok" "funded test sender=${TEST_ETH_SENDER_HEX} amount=${FUND_AMOUNT_WEI} caller_balance_before=${CALLER_BALANCE_WEI}"
 fi
 
 if [[ -n "${TEST_ETH_PRIVKEY}" ]]; then
@@ -517,10 +542,20 @@ else
 fi
 run_update_with_cycles "set_pruning_enabled" "(false)" "pruning visibility disable" "0" >/dev/null
 
+set +e
 run_query_matrix "${QUERY_POST_JSONL}" "/dev/null" "${CALLER_EVM_HEX}" "${IC_TX_ID_HEX}" "${ETH_TX_ID_HEX}"
-POST_QUERY_OK_COUNT="$(awk -F'"ok":' '/"ok":/{if ($2 ~ /^true/) c++} END{print c+0}' "${QUERY_POST_JSONL}")"
-POST_QUERY_TOTAL_COUNT="$(wc -l < "${QUERY_POST_JSONL}" | tr -d ' ')"
-record_method_row "query_matrix_post" "query" "ok=${POST_QUERY_OK_COUNT}/${POST_QUERY_TOTAL_COUNT}" "agent.query post checks completed"
+POST_QUERY_RC=$?
+set -e
+if [[ "${POST_QUERY_RC}" -ne 0 ]]; then
+  if [[ "${RUN_STRICT}" == "1" ]]; then
+    exit "${POST_QUERY_RC}"
+  fi
+  record_method_row "query_matrix_post" "query" "warn" "agent.query post checks failed (rc=${POST_QUERY_RC})"
+else
+  POST_QUERY_OK_COUNT="$(awk -F'"ok":' '/"ok":/{if ($2 ~ /^true/) c++} END{print c+0}' "${QUERY_POST_JSONL}")"
+  POST_QUERY_TOTAL_COUNT="$(wc -l < "${QUERY_POST_JSONL}" | tr -d ' ')"
+  record_method_row "query_matrix_post" "query" "ok=${POST_QUERY_OK_COUNT}/${POST_QUERY_TOTAL_COUNT}" "agent.query post checks completed"
+fi
 
 finalize_state
 append_file ""

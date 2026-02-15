@@ -165,6 +165,7 @@ pub enum ChainError {
     InvalidLimit,
     UnsupportedTxKind,
     DecodeFailed,
+    AddressDerivationFailed,
     InvalidFee,
     NonceTooLow,
     NonceGap,
@@ -779,7 +780,8 @@ pub fn submit_ic_tx(
         if tx_bytes.len() > MAX_TX_SIZE {
             return Err(ChainError::TxTooLarge);
         }
-        let caller_evm = hash::caller_evm_from_principal(&caller_principal);
+        let caller_evm = hash::derive_evm_address_from_principal(&caller_principal)
+            .map_err(|_| ChainError::AddressDerivationFailed)?;
         let sender_key = SenderKey::new(caller_evm);
         let tx_id = TxId(hash::stored_tx_id(
             TxKind::IcSynthetic,

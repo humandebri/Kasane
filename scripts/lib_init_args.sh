@@ -24,7 +24,7 @@ validate_init_args_text() {
 caller_evm_blob_from_principal() {
   local principal="$1"
   local caller_hex
-  caller_hex=$(cargo run -q --manifest-path "${REPO_ROOT}/Cargo.toml" -p ic-evm-core --bin caller_evm -- "${principal}")
+  caller_hex=$(cargo run -q --manifest-path "${REPO_ROOT}/Cargo.toml" -p ic-evm-core --bin derive_evm_address -- "${principal}")
   python - <<PY
 hex_str = "${caller_hex}".strip()
 data = bytes.fromhex(hex_str)

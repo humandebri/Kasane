@@ -20,6 +20,7 @@ export type Config = {
   archiveDir: string;
   chainId: string;
   zstdLevel: number;
+  maxSegment: number;
 };
 
 const DEFAULT_IC_HOST = "https://icp-api.io";
@@ -33,6 +34,7 @@ const DEFAULT_ARCHIVE_DIR = "./archive";
 const DEFAULT_CHAIN_ID = "4801360";
 const DEFAULT_ZSTD_LEVEL = 3;
 const DEFAULT_PRUNE_STATUS_POLL_MS = 30_000;
+const DEFAULT_MAX_SEGMENT = 2;
 
 export function loadConfig(env: NodeJS.ProcessEnv): Config {
   const canisterId = env.EVM_CANISTER_ID;
@@ -66,6 +68,7 @@ export function loadConfig(env: NodeJS.ProcessEnv): Config {
   const archiveDir = path.resolve(archiveDirRaw);
   const chainId = env.INDEXER_CHAIN_ID ?? DEFAULT_CHAIN_ID;
   const zstdLevel = readNumber(env.INDEXER_ZSTD_LEVEL, DEFAULT_ZSTD_LEVEL, "INDEXER_ZSTD_LEVEL");
+  const maxSegment = readNonNegativeNumber(env.INDEXER_MAX_SEGMENT, DEFAULT_MAX_SEGMENT, "INDEXER_MAX_SEGMENT");
   const pruneStatusPollMs = readNumber(
     env.INDEXER_PRUNE_STATUS_POLL_MS,
     DEFAULT_PRUNE_STATUS_POLL_MS,
@@ -89,6 +92,7 @@ export function loadConfig(env: NodeJS.ProcessEnv): Config {
     archiveDir,
     chainId,
     zstdLevel,
+    maxSegment,
   };
 }
 
@@ -108,6 +112,17 @@ function parseBool(value: string | undefined, fallback: boolean): boolean {
     return fallback;
   }
   return value === "1" || value.toLowerCase() === "true";
+}
+
+function readNonNegativeNumber(value: string | undefined, fallback: number, name: string): number {
+  if (!value) {
+    return fallback;
+  }
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed < 0) {
+    throw new Error(`${name} must be a non-negative number`);
+  }
+  return Math.floor(parsed);
 }
 
 export function sleep(ms: number): Promise<void> {

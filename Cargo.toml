@@ -1,5 +1,6 @@
 [workspace]
 members = [
+    "crates/ic-evm-address",
     "crates/evm-db",
     "crates/ic-evm-tx",
     "crates/evm-core",

@@ -38,7 +38,7 @@ fn relax_fee_floor_for_tests() {
 fn produce_block_traps_and_rolls_back_when_receipt_store_fails_after_tx_index() {
     init_stable_state();
     relax_fee_floor_for_tests();
-    common::fund_account(hash::caller_evm_from_principal(&[0x11]), 1_000_000_000_000_000_000);
+    common::fund_account(hash::derive_evm_address_from_principal(&[0x11]).expect("must derive"), 1_000_000_000_000_000_000);
     let tx_id = chain::submit_ic_tx(vec![0x11], vec![0x21], common::build_default_ic_tx_bytes(0))
         .expect("submit");
     let before = snapshot();
@@ -56,7 +56,7 @@ fn produce_block_traps_and_rolls_back_when_receipt_store_fails_after_tx_index() 
 fn produce_block_traps_and_rolls_back_when_block_store_fails_after_receipt() {
     init_stable_state();
     relax_fee_floor_for_tests();
-    common::fund_account(hash::caller_evm_from_principal(&[0x12]), 1_000_000_000_000_000_000);
+    common::fund_account(hash::derive_evm_address_from_principal(&[0x12]).expect("must derive"), 1_000_000_000_000_000_000);
     let tx_id = chain::submit_ic_tx(vec![0x12], vec![0x22], common::build_default_ic_tx_bytes(0))
         .expect("submit");
     let before = snapshot();
@@ -76,7 +76,7 @@ fn execute_and_seal_traps_and_rolls_back_when_tx_index_store_fails_after_block()
     relax_fee_floor_for_tests();
     let caller_principal = vec![0x33];
     let canister_id = vec![0x44];
-    let caller_evm = hash::caller_evm_from_principal(&caller_principal);
+    let caller_evm = hash::derive_evm_address_from_principal(&caller_principal).expect("must derive");
     common::fund_account(caller_evm, 1_000_000_000_000_000_000);
     let tx_id = chain::submit_ic_tx(
         caller_principal.clone(),
@@ -101,7 +101,7 @@ fn execute_and_seal_traps_and_rolls_back_when_receipt_store_fails_after_tx_index
     relax_fee_floor_for_tests();
     let caller_principal = vec![0x35];
     let canister_id = vec![0x45];
-    let caller_evm = hash::caller_evm_from_principal(&caller_principal);
+    let caller_evm = hash::derive_evm_address_from_principal(&caller_principal).expect("must derive");
     common::fund_account(caller_evm, 1_000_000_000_000_000_000);
     let tx_id = chain::submit_ic_tx(
         caller_principal.clone(),

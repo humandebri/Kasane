@@ -46,41 +46,51 @@ export function applyChunks(pending: Pending, chunks: Chunk[], cursor: Cursor | 
     }
   }
   for (const chunk of chunks) {
-    // 連続性と単調増加を保証し、ギャップを許さない
-    if (chunk.segment !== pending.segment) {
-      throw new Error("chunk segment is out of order");
+    applyChunk(pending, chunk);
+    if (pending.complete) {
+      return;
     }
-    if (chunk.start !== pending.offset) {
-      throw new Error("chunk start mismatch");
-    }
-    const segIndex = pending.segment;
-    const payloadLen = ensurePayloadLen(pending, segIndex, chunk.payload_len);
-    if (chunk.start > payloadLen) {
-      throw new Error("chunk start out of range");
-    }
-    if (chunk.bytes.length === 0) {
-      // empty chunkは「このセグメントを完走済み」の合図のみ許可
-      if (pending.offset !== payloadLen) {
-        throw new Error("empty chunk before segment end");
-      }
-    } else {
-      const nextOffset = pending.offset + chunk.bytes.length;
-      if (nextOffset > payloadLen) {
-        throw new Error("chunk exceeds payload length");
-      }
-      pending.payloadParts[segIndex].push(Buffer.from(chunk.bytes));
-      pending.offset = nextOffset;
-    }
+  }
+}
 
-    // セグメント完走時のみ次へ進む
-    if (pending.offset === payloadLen) {
-      if (pending.segment === 2) {
-        pending.complete = true;
-        return;
-      }
-      pending.segment += 1;
-      pending.offset = 0;
+export function applyChunk(pending: Pending, chunk: Chunk): void {
+  if (pending.complete) {
+    throw new Error("pending is already complete");
+  }
+  // 連続性と単調増加を保証し、ギャップを許さない
+  if (chunk.segment !== pending.segment) {
+    throw new Error("chunk segment is out of order");
+  }
+  if (chunk.start !== pending.offset) {
+    throw new Error("chunk start mismatch");
+  }
+  const segIndex = pending.segment;
+  const payloadLen = ensurePayloadLen(pending, segIndex, chunk.payload_len);
+  if (chunk.start > payloadLen) {
+    throw new Error("chunk start out of range");
+  }
+  if (chunk.bytes.length === 0) {
+    // empty chunkは「このセグメントを完走済み」の合図のみ許可
+    if (pending.offset !== payloadLen) {
+      throw new Error("empty chunk before segment end");
     }
+  } else {
+    const nextOffset = pending.offset + chunk.bytes.length;
+    if (nextOffset > payloadLen) {
+      throw new Error("chunk exceeds payload length");
+    }
+    pending.payloadParts[segIndex].push(Buffer.from(chunk.bytes));
+    pending.offset = nextOffset;
+  }
+
+  // セグメント完走時のみ次へ進む
+  if (pending.offset === payloadLen) {
+    if (pending.segment === 2) {
+      pending.complete = true;
+      return;
+    }
+    pending.segment += 1;
+    pending.offset = 0;
   }
 }
 
@@ -109,9 +119,12 @@ export function totalChunkBytes(chunks: Chunk[]): number {
   return total;
 }
 
-export function enforceNextCursor(response: ExportResponse, cursor: Cursor): void {
+export function enforceNextCursor(response: ExportResponse, cursor: Cursor, maxSegment: number): void {
   if (!response.next_cursor) {
     throw new Error("missing next_cursor");
+  }
+  if (response.next_cursor.segment < 0 || response.next_cursor.segment > maxSegment) {
+    throw new Error("next_cursor segment out of range (possible server/indexer segment schema mismatch)");
   }
   if (response.chunks.length === 0) {
     if (response.next_cursor.block_number !== cursor.block_number) {
@@ -124,8 +137,18 @@ export function enforceNextCursor(response: ExportResponse, cursor: Cursor): voi
     throw new Error("cursor and first chunk mismatch");
   }
   const nextBlock = response.next_cursor.block_number;
-  if (nextBlock !== cursor.block_number && nextBlock !== cursor.block_number + 1n) {
-    throw new Error("next_cursor block_number out of range");
+  if (nextBlock < cursor.block_number) {
+    throw new Error("next_cursor block_number regressed");
+  }
+  if (nextBlock === cursor.block_number) {
+    const nextSegment = response.next_cursor.segment;
+    const nextOffset = response.next_cursor.byte_offset;
+    if (nextSegment < cursor.segment) {
+      throw new Error("next_cursor segment regressed");
+    }
+    if (nextSegment === cursor.segment && nextOffset <= cursor.byte_offset) {
+      throw new Error("next_cursor byte_offset did not advance");
+    }
   }
 }
 

@@ -18,7 +18,7 @@ export async function commitPending(params: {
   db: IndexerDb;
   response: ExportResponse;
   previousCursor: Cursor | null;
-  cursor: Cursor | null;
+  cursor: Cursor;
   headNumber: bigint;
   pending: Pending;
   lastSizeDay: number | null;
@@ -111,9 +111,6 @@ export async function commitPending(params: {
           "ON CONFLICT(block_number) DO UPDATE SET path = excluded.path, sha256 = excluded.sha256, size_bytes = excluded.size_bytes, raw_bytes = excluded.raw_bytes, created_at = excluded.created_at",
         [blockInfo.number, archive.path, archive.sha256, archive.sizeBytes, archive.rawBytes, Date.now()]
       );
-      if (!params.cursor) {
-        throw new Error("cursor missing on commit");
-      }
       await client.query(
         "INSERT INTO meta(key, value) VALUES($1, $2) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
         ["cursor", cursorToJson(params.cursor)]
@@ -143,13 +140,11 @@ export async function commitPending(params: {
             byte_offset: params.previousCursor.byte_offset,
           }
         : null,
-      cursor_next: params.cursor
-        ? {
-            block_number: params.cursor.block_number.toString(),
-            segment: params.cursor.segment,
-            byte_offset: params.cursor.byte_offset,
-          }
-        : null,
+      cursor_next: {
+        block_number: params.cursor.block_number.toString(),
+        segment: params.cursor.segment,
+        byte_offset: params.cursor.byte_offset,
+      },
     });
   } catch (err) {
     logFatal(

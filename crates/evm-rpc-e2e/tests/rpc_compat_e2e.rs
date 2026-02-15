@@ -157,7 +157,9 @@ fn install_canister(pic: &PocketIc) -> Principal {
     let caller = test_caller();
     let init = Some(InitArgs {
         genesis_balances: vec![GenesisBalanceView {
-            address: hash::caller_evm_from_principal(caller.as_slice()).to_vec(),
+            address: hash::derive_evm_address_from_principal(caller.as_slice())
+                .expect("must derive")
+                .to_vec(),
             amount: 1_000_000_000_000_000_000u128,
         }],
     });

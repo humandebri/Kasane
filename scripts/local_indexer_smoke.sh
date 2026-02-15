@@ -14,7 +14,8 @@ NETWORK_CLEAN="${NETWORK_CLEAN:-${DFX_CLEAN:-1}}"
 KEEP_NETWORK="${KEEP_NETWORK:-${KEEP_DFX:-0}}"
 WORKDIR="${WORKDIR:-$(mktemp -d -t ic-indexer-smoke-)}"
 INDEXER_LOG="${INDEXER_LOG:-${WORKDIR}/indexer.log}"
-INDEXER_DATABASE_URL="${INDEXER_DATABASE_URL:-postgres://postgres:postgres@127.0.0.1:5432/ic_op_smoke}"
+DEFAULT_INDEXER_DB_NAME="ic_op_smoke_${$}"
+INDEXER_DATABASE_URL="${INDEXER_DATABASE_URL:-postgres://postgres:postgres@127.0.0.1:5432/${DEFAULT_INDEXER_DB_NAME}}"
 INDEXER_ARCHIVE_DIR="${INDEXER_ARCHIVE_DIR:-${WORKDIR}/archive}"
 INDEXER_IDLE_POLL_MS="${INDEXER_IDLE_POLL_MS:-1000}"
 INDEXER_MAX_BYTES="${INDEXER_MAX_BYTES:-1200000}"
@@ -25,6 +26,8 @@ SEED_RETRY_MAX="${SEED_RETRY_MAX:-8}"
 SEED_RETRY_SLEEP_SEC="${SEED_RETRY_SLEEP_SEC:-65}"
 SEED_TRANSIENT_RETRY_SLEEP_SEC="${SEED_TRANSIENT_RETRY_SLEEP_SEC:-3}"
 SEED_REQUIRED_HEAD_MIN="${SEED_REQUIRED_HEAD_MIN:-2}"
+SEED_TX_MAX_FEE_WEI="${SEED_TX_MAX_FEE_WEI:-1000000000000}"
+SEED_TX_MAX_PRIORITY_FEE_WEI="${SEED_TX_MAX_PRIORITY_FEE_WEI:-250000000000}"
 
 ICP_CANISTER_CALL=(icp canister call -e "${NETWORK}" --identity "${ICP_IDENTITY_NAME}")
 
@@ -166,7 +169,8 @@ value = (0).to_bytes(32, 'big')
 gas = (500000).to_bytes(8, 'big')
 nonce = (${nonce}).to_bytes(8, 'big')
 max_fee = (2_000_000_000).to_bytes(16, 'big')
-max_priority = (1_000_000_000).to_bytes(16, 'big')
+max_fee = (${SEED_TX_MAX_FEE_WEI}).to_bytes(16, 'big')
+max_priority = (${SEED_TX_MAX_PRIORITY_FEE_WEI}).to_bytes(16, 'big')
 data = b''
 data_len = len(data).to_bytes(4, 'big')
 tx = version + to + value + gas + nonce + max_fee + max_priority + data_len + data
@@ -348,7 +352,7 @@ const { Client } = require('./tools/indexer/node_modules/pg');
   const client = new Client({ connectionString: process.env.INDEXER_DATABASE_URL });
   await client.connect();
   try {
-    const row = await client.query("select blocks_ingested, raw_bytes, compressed_bytes, archive_bytes from metrics_daily limit 1");
+    const row = await client.query("select blocks_ingested, raw_bytes, compressed_bytes, archive_bytes from metrics_daily order by day desc limit 1");
     if (row.rowCount === 0) process.exit(1);
     const data = row.rows[0];
     const blocks = Number(data.blocks_ingested ?? 0);

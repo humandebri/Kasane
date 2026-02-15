@@ -130,7 +130,11 @@ async function main(): Promise<void> {
     `[query-smoke] ops_status needs_migration=${opsStatus.needs_migration} mode=${modeLabel} block_gas_limit=${opsStatus.block_gas_limit} instruction_soft_limit=${opsStatus.instruction_soft_limit} last_cycle_balance=${opsStatus.last_cycle_balance}`
   );
 
-  const out = await actor.export_blocks([], maxBytes);
+  // block 0 は export対象外で MissingData になる場合があるため、
+  // head>0 のときは head から確認する。
+  const initialCursor: [] | [Cursor] =
+    head > 0n ? [{ block_number: head, segment: 0, byte_offset: 0 }] : [];
+  const out = await actor.export_blocks(initialCursor, maxBytes);
   if ("Err" in out) {
     if ("MissingData" in out.Err && !allowExportMissingData) {
       throw new Error(`export_blocks returned MissingData while strict mode is enabled: ${JSON.stringify(out.Err)}`);

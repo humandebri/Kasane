@@ -50,7 +50,7 @@ fn principal_pending_and_fee_indexes_track_lifecycle() {
     init_stable_state();
     relax_fee_floor_for_tests();
     let principal = vec![0x44];
-    common::fund_account(hash::caller_evm_from_principal(&principal), 1_000_000_000_000_000_000);
+    common::fund_account(hash::derive_evm_address_from_principal(&principal).expect("must derive"), 1_000_000_000_000_000_000);
     let tx_id = chain::submit_ic_tx(
         principal.clone(),
         vec![0x99],
@@ -133,7 +133,7 @@ fn produce_block_outcome_reports_dropped_count() {
     relax_fee_floor_for_tests();
     let good_principal = vec![0x20];
     common::fund_account(
-        hash::caller_evm_from_principal(&good_principal),
+        hash::derive_evm_address_from_principal(&good_principal).expect("must derive"),
         1_000_000_000_000_000_000,
     );
     let good_id = chain::submit_ic_tx(good_principal, vec![0x30], common::build_default_ic_tx_bytes(0))

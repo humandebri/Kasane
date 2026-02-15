@@ -1,0 +1,18 @@
+[package]
+name = "ic-evm-address"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[lib]
+name = "ic_evm_address"
+crate-type = ["rlib"]
+
+[dependencies]
+alloy-primitives = { version = "=1.5.3", default-features = false, features = ["std"] }
+ic-secp256k1 = "0.3.0"
+hex-literal = "0.4"
+
+[dev-dependencies]
+candid = "0.10"
+hex = "0.4"
