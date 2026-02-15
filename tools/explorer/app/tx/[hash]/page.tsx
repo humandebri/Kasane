@@ -34,7 +34,15 @@ export default async function TxPage({ params }: { params: Promise<{ hash: strin
           <dt className="text-muted-foreground">Tx Index</dt>
           <dd>{tx.txIndex}</dd>
           <dt className="text-muted-foreground">Caller Principal</dt>
-          <dd className="font-mono">{callerPrincipal}</dd>
+          <dd className="font-mono">
+            {callerPrincipal === "-" ? (
+              "-"
+            ) : (
+              <Link href={`/principal/${encodeURIComponent(callerPrincipal)}`} className="text-sky-700 hover:underline">
+                {callerPrincipal}
+              </Link>
+            )}
+          </dd>
         </dl>
         <div>
           <Link href={`/receipt/${tx.txHashHex}`} className="text-sky-700 hover:underline">

@@ -63,7 +63,18 @@ export default async function BlockPage({ params }: { params: Promise<{ number: 
                   </Link>
                 </TableCell>
                 <TableCell>{tx.txIndex}</TableCell>
-                <TableCell className="font-mono">{tx.callerPrincipalText ?? "-"}</TableCell>
+                <TableCell className="font-mono">
+                  {tx.callerPrincipalText ? (
+                    <Link
+                      href={`/principal/${encodeURIComponent(tx.callerPrincipalText)}`}
+                      className="text-sky-700 hover:underline"
+                    >
+                      {tx.callerPrincipalText}
+                    </Link>
+                  ) : (
+                    "-"
+                  )}
+                </TableCell>
                 <TableCell>
                   <Link href={`/receipt/${tx.txHashHex}`} className="text-sky-700 hover:underline">
                     open

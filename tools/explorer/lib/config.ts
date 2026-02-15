@@ -8,6 +8,7 @@ export type ExplorerConfig = {
   fetchRootKey: boolean;
   latestBlocksLimit: number;
   latestTxsLimit: number;
+  principalTxsLimit: number;
 };
 
 const DEFAULT_IC_HOST = "https://icp-api.io";
@@ -26,6 +27,7 @@ export function loadConfig(env: NodeJS.ProcessEnv): ExplorerConfig {
     fetchRootKey: parseBool(env.EXPLORER_FETCH_ROOT_KEY ?? env.INDEXER_FETCH_ROOT_KEY),
     latestBlocksLimit: parseRangeInt(env.EXPLORER_LATEST_BLOCKS, 10, 1, 100),
     latestTxsLimit: parseRangeInt(env.EXPLORER_LATEST_TXS, 20, 1, 200),
+    principalTxsLimit: parseRangeInt(env.EXPLORER_PRINCIPAL_TXS, 50, 1, 500),
   };
 }
 

@@ -31,6 +31,13 @@ export type OverviewStats = {
   latestDayCompressedBytes: bigint;
 };
 
+export type MetaSnapshot = {
+  needPrune: boolean | null;
+  pruneStatusRaw: string | null;
+  lastHead: bigint | null;
+  lastIngestAtMs: bigint | null;
+};
+
 let sharedPool: Pool | null = null;
 
 function getPool(): Pool {
@@ -141,6 +148,28 @@ export async function getTx(txHash: Uint8Array): Promise<TxSummary | null> {
   };
 }
 
+export async function getTxsByCallerPrincipal(
+  callerPrincipal: Uint8Array,
+  limit: number
+): Promise<TxSummary[]> {
+  const pool = getPool();
+  const rows = await pool.query<{
+    tx_hash: Buffer;
+    block_number: string | number;
+    tx_index: number;
+    caller_principal: Buffer | null;
+  }>(
+    "SELECT tx_hash, block_number, tx_index, caller_principal FROM txs WHERE caller_principal = $1 ORDER BY block_number DESC, tx_index DESC LIMIT $2",
+    [Buffer.from(callerPrincipal), limit]
+  );
+  return rows.rows.map((row) => ({
+    txHashHex: `0x${row.tx_hash.toString("hex")}`,
+    blockNumber: BigInt(row.block_number),
+    txIndex: row.tx_index,
+    callerPrincipal: row.caller_principal ?? null,
+  }));
+}
+
 export async function getOverviewStats(): Promise<OverviewStats> {
   const pool = getPool();
   const [blockCount, txCount, dayMetrics] = await Promise.all([
@@ -165,6 +194,28 @@ export async function getOverviewStats(): Promise<OverviewStats> {
   };
 }
 
+export async function getMetaSnapshot(): Promise<MetaSnapshot> {
+  const pool = getPool();
+  const rows = await pool.query<{ key: string; value: string | null }>(
+    "select key, value from meta where key in ('need_prune', 'prune_status', 'last_head', 'last_ingest_at')"
+  );
+  const map = new Map<string, string | null>();
+  for (const row of rows.rows) {
+    map.set(row.key, row.value);
+  }
+  const needPruneRaw = map.get("need_prune");
+  const needPrune =
+    needPruneRaw === undefined || needPruneRaw === null
+      ? null
+      : needPruneRaw === "1" || needPruneRaw.toLowerCase() === "true";
+  return {
+    needPrune,
+    pruneStatusRaw: map.get("prune_status") ?? null,
+    lastHead: toOptionalBigInt(map.get("last_head")),
+    lastIngestAtMs: toOptionalBigInt(map.get("last_ingest_at")),
+  };
+}
+
 export async function closeExplorerPool(): Promise<void> {
   if (!sharedPool) {
     return;
@@ -176,4 +227,15 @@ export async function closeExplorerPool(): Promise<void> {
 
 export function setExplorerPool(pool: Pool): void {
   sharedPool = pool;
+}
+
+function toOptionalBigInt(value: string | null | undefined): bigint | null {
+  if (value === undefined || value === null || value.trim() === "") {
+    return null;
+  }
+  try {
+    return BigInt(value);
+  } catch {
+    return null;
+  }
 }

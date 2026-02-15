@@ -3,6 +3,7 @@
 import { Actor, HttpAgent } from "@dfinity/agent";
 import type { IDL } from "@dfinity/candid";
 import { loadConfig } from "./config";
+import { bytesToBigInt } from "./hex";
 
 export type LookupError = { NotFound: null } | { Pending: null } | { Pruned: { pruned_before_block: bigint } };
 
@@ -29,6 +30,8 @@ export type ReceiptView = {
 };
 
 type Result<T, E> = { Ok: T } | { Err: E };
+type ResultBytes = Result<Uint8Array, string>;
+type ResultNonce = Result<bigint, string>;
 
 export type TxKindView = { EthSigned: null } | { IcSynthetic: null };
 
@@ -56,6 +59,24 @@ type ExplorerActorMethods = {
   get_receipt: (txId: Uint8Array) => Promise<Result<ReceiptView, LookupError>>;
   rpc_eth_get_block_by_number: (number: bigint, fullTx: boolean) => Promise<[] | [EthBlockView]>;
   rpc_eth_get_transaction_by_tx_id: (txId: Uint8Array) => Promise<[] | [RpcTxView]>;
+  get_prune_status: () => Promise<PruneStatusView>;
+  rpc_eth_get_balance: (address: Uint8Array) => Promise<ResultBytes>;
+  rpc_eth_get_code: (address: Uint8Array) => Promise<ResultBytes>;
+  expected_nonce_by_address: (address: Uint8Array) => Promise<ResultNonce>;
+};
+
+export type PruneStatusView = {
+  pruning_enabled: boolean;
+  prune_running: boolean;
+  estimated_kept_bytes: bigint;
+  high_water_bytes: bigint;
+  low_water_bytes: bigint;
+  hard_emergency_bytes: bigint;
+  last_prune_at: bigint;
+  pruned_before_block: [] | [bigint];
+  oldest_kept_block: [] | [bigint];
+  oldest_kept_timestamp: [] | [bigint];
+  need_prune: boolean;
 };
 
 let cachedActor: ExplorerActorMethods | null = null;
@@ -84,6 +105,38 @@ export async function getRpcTxByTxId(txId: Uint8Array): Promise<RpcTxView | null
   const actor = await getActor();
   const out = await actor.rpc_eth_get_transaction_by_tx_id(txId);
   return out.length === 0 ? null : out[0];
+}
+
+export async function getRpcPruneStatus(): Promise<PruneStatusView> {
+  const actor = await getActor();
+  return actor.get_prune_status();
+}
+
+export async function getRpcBalance(address: Uint8Array): Promise<bigint> {
+  const actor = await getActor();
+  const out = await actor.rpc_eth_get_balance(address);
+  if ("Err" in out) {
+    throw new Error(out.Err);
+  }
+  return bytesToBigInt(out.Ok);
+}
+
+export async function getRpcCode(address: Uint8Array): Promise<Uint8Array> {
+  const actor = await getActor();
+  const out = await actor.rpc_eth_get_code(address);
+  if ("Err" in out) {
+    throw new Error(out.Err);
+  }
+  return out.Ok;
+}
+
+export async function getRpcExpectedNonce(address: Uint8Array): Promise<bigint> {
+  const actor = await getActor();
+  const out = await actor.expected_nonce_by_address(address);
+  if ("Err" in out) {
+    throw new Error(out.Err);
+  }
+  return out.Ok;
 }
 
 async function getActor(): Promise<ExplorerActorMethods> {
@@ -162,12 +215,42 @@ const idlFactory: IDL.InterfaceFactory = ({ IDL }) => {
 
   return IDL.Service({
     rpc_eth_block_number: IDL.Func([], [IDL.Nat64], ["query"]),
+    expected_nonce_by_address: IDL.Func([IDL.Vec(IDL.Nat8)], [IDL.Variant({ Ok: IDL.Nat64, Err: IDL.Text })], ["query"]),
     get_receipt: IDL.Func(
       [IDL.Vec(IDL.Nat8)],
       [IDL.Variant({ Ok: ReceiptView, Err: LookupError })],
       ["query"]
     ),
+    get_prune_status: IDL.Func(
+      [],
+      [
+        IDL.Record({
+          pruning_enabled: IDL.Bool,
+          prune_running: IDL.Bool,
+          estimated_kept_bytes: IDL.Nat64,
+          high_water_bytes: IDL.Nat64,
+          low_water_bytes: IDL.Nat64,
+          hard_emergency_bytes: IDL.Nat64,
+          last_prune_at: IDL.Nat64,
+          pruned_before_block: IDL.Opt(IDL.Nat64),
+          oldest_kept_block: IDL.Opt(IDL.Nat64),
+          oldest_kept_timestamp: IDL.Opt(IDL.Nat64),
+          need_prune: IDL.Bool,
+        }),
+      ],
+      ["query"]
+    ),
+    rpc_eth_get_balance: IDL.Func(
+      [IDL.Vec(IDL.Nat8)],
+      [IDL.Variant({ Ok: IDL.Vec(IDL.Nat8), Err: IDL.Text })],
+      ["query"]
+    ),
     rpc_eth_get_block_by_number: IDL.Func([IDL.Nat64, IDL.Bool], [IDL.Opt(EthBlockView)], ["query"]),
+    rpc_eth_get_code: IDL.Func(
+      [IDL.Vec(IDL.Nat8)],
+      [IDL.Variant({ Ok: IDL.Vec(IDL.Nat8), Err: IDL.Text })],
+      ["query"]
+    ),
     rpc_eth_get_transaction_by_tx_id: IDL.Func([IDL.Vec(IDL.Nat8)], [IDL.Opt(RpcTxView)], ["query"]),
   });
 };
