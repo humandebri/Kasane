@@ -134,23 +134,26 @@ export function encodeSubmitIcTx(input: IcSyntheticTxInput): Uint8Array {
 - `gas_limit`（`rpc_eth_estimate_gas_object`）
 - `max_fee_per_gas` / `max_priority_fee_per_gas`（見積り結果にバッファを加える）
 
+注意: ここで扱う `from` は **EVMアドレス(20 bytes)**。bytes32化した Principal データは address 引数に渡せません。
+導出失敗時は canister 側で reject され、`InvalidArgument`（`arg.principal_to_evm_derivation_failed`）が返ります。
+
 ```ts
 import { Principal } from '@dfinity/principal';
-import { keccak_256 } from '@noble/hashes/sha3';
+import { chainFusionSignerEthAddressFor } from '@dfinity/ic-pub-key/signer';
 
-const CALLER_EVM_DOMAIN = new TextEncoder().encode('ic-evm:caller_evm:v1');
-
-function concatBytes(a: Uint8Array, b: Uint8Array): Uint8Array {
-  const out = new Uint8Array(a.length + b.length);
-  out.set(a, 0);
-  out.set(b, a.length);
+function hexToBytes(hex: string): Uint8Array {
+  const normalized = hex.startsWith('0x') ? hex.slice(2) : hex;
+  if (normalized.length % 2 !== 0) throw new Error('invalid hex length');
+  const out = new Uint8Array(normalized.length / 2);
+  for (let i = 0; i < out.length; i += 1) {
+    out[i] = Number.parseInt(normalized.slice(i * 2, i * 2 + 2), 16);
+  }
   return out;
 }
 
-export function callerEvmFromPrincipal(principal: Principal): Uint8Array {
-  const payload = concatBytes(CALLER_EVM_DOMAIN, principal.toUint8Array());
-  const h = keccak_256(payload); // 32 bytes
-  return h.slice(12, 32); // 下位20bytes
+export function deriveEvmAddressFromPrincipal(principal: Principal): Uint8Array {
+  const { response } = chainFusionSignerEthAddressFor(principal);
+  return hexToBytes(response.eth_address); // 20 bytes
 }
 
 function u64ToNumber(n: bigint): number {
@@ -193,7 +196,7 @@ export async function preflightIcSynthetic(actor: {
   feeHintMaxFeePerGas: bigint; // 例: 2_000_000_000n
   feeHintPriority: bigint; // 例: 1_000_000_000n
 }): Promise<PreflightResult> {
-  const from20 = callerEvmFromPrincipal(input.principal);
+  const from20 = deriveEvmAddressFromPrincipal(input.principal);
 
   const nonceRes = await actor.expected_nonce_by_address(from20);
   if (nonceRes.Ok === undefined) {

@@ -12,7 +12,9 @@ Phase 0: 仕様凍結（手戻り防止フェーズ）
 
 凍結するもの（最重要）
 
-caller_evm 導出ルール（"ic-evm:caller_evm:v1" || principal_bytes の keccak 末尾20byte）
+EVMアドレス導出ルール（ic-pub-key準拠: Chain Fusion Signer鍵導出 + Ethereum address化）
+  - 導出失敗は明示エラーとして伝播し、ゼロアドレスへのサイレントフォールバックは行わない
+  - Principal bytes32エンコードはABI入力用データであり、EVMアドレス導出とは分離する
 
 ICSyntheticのcanonical encoding（CBORならcanonical CBORを明記、個人的にはRLP/TLV推奨）
 

@@ -299,15 +299,19 @@ tx_id = keccak256(
 * principalは **length prefix(u16be) + bytes**
 * `caller_evm` は `Some` の場合のみ 20 bytes を混ぜる
 
-### 3.5) caller_evm の導出ルール（固定, B案）
+### 3.5) caller_evm の導出ルール（固定）
 
-```
-caller_evm = last20bytes(keccak256("ic-evm:caller_evm:v1" || principal_bytes))
-```
+`caller_evm` は `@dfinity/ic-pub-key` の `chainFusionSignerEthAddressFor` と同一規則で導出する。
+
+1. signer master pubkey（33 bytes, sec1 compressed）と chaincode（32 bytes）を使う  
+2. derivation path を `[0x01, principal_bytes]` にする  
+3. `derive_subkey_with_chain_code` で派生公開鍵を得る  
+4. 派生公開鍵（uncompressed sec1 65 bytes）の先頭 `0x04` を除いた64 bytesを `keccak256`  
+5. hash末尾20 bytesを EVMアドレスとする
 
 * `principal_bytes = ic_cdk::caller().as_slice()`（**length prefix は付けない**）
-* keccak の入力は **domain_sep || principal_bytes** の単純連結
-* `last20bytes(hash) = hash[12..32]`（32 bytes の末尾20）
+* signer定数（master pubkey / chaincode）はコード固定（`DEFAULT_SIGNER_DERIVATION_CONFIG`）で運用する
+* 導出APIは `Result<[u8;20], AddressDerivationError>` を返し、失敗時ゼロアドレスフォールバックは禁止
 
 ### 4) decode と drop / reject
 
