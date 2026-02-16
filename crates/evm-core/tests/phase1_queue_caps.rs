@@ -169,7 +169,7 @@ fn submit_ic_tx_rejects_when_principal_pending_cap_is_reached() {
     relax_fee_floor_for_tests();
     let caller = vec![0x99];
     let canister = vec![0x01];
-    let caller_evm = hash::caller_evm_from_principal(&caller);
+    let caller_evm = hash::derive_evm_address_from_principal(&caller).expect("must derive");
     with_state_mut(|state| {
         for i in 0..MAX_PENDING_PER_PRINCIPAL {
             let mut sender = [0u8; 20];
@@ -273,7 +273,7 @@ fn submit_ic_tx_nonce_conflict_is_atomic() {
     relax_fee_floor_for_tests();
     let caller_principal = vec![0x45];
     let canister_id = vec![0x67];
-    let sender = hash::caller_evm_from_principal(&caller_principal);
+    let sender = hash::derive_evm_address_from_principal(&caller_principal).expect("must derive");
     let pending_key = SenderNonceKey::new(sender, 0);
     let existing_tx_id = TxId([0x99u8; 32]);
     with_state_mut(|state| {

@@ -1,13 +1,11 @@
-//! どこで: 開発用CLI / 何を: principal文字列 -> caller_evm / なぜ: canister外で導出するため
+//! どこで: 開発用CLI / 何を: principal文字列 -> EVMアドレス / なぜ: canister外で導出するため
 
-use alloy_primitives::keccak256;
 use candid::Principal;
-
-const DOMAIN_SEP: &[u8] = b"ic-evm:caller_evm:v1";
+use ic_evm_address::derive_evm_address_from_principal;
 
 fn main() {
     let principal = std::env::args().nth(1).unwrap_or_else(|| {
-        eprintln!("usage: caller_evm <principal_text>");
+        eprintln!("usage: derive_evm_address <principal_text>");
         std::process::exit(1);
     });
     let bytes = match decode_principal_text(&principal) {
@@ -17,11 +15,13 @@ fn main() {
             std::process::exit(1);
         }
     };
-    let mut payload = Vec::with_capacity(DOMAIN_SEP.len() + bytes.len());
-    payload.extend_from_slice(DOMAIN_SEP);
-    payload.extend_from_slice(&bytes);
-    let out = keccak256(&payload).0;
-    let addr = &out[12..32];
+    let addr = match derive_evm_address_from_principal(bytes.as_slice()) {
+        Ok(value) => value,
+        Err(err) => {
+            eprintln!("failed to derive EVM address: {err:?}");
+            std::process::exit(1);
+        }
+    };
     println!("{}", hex::encode(addr));
 }
 

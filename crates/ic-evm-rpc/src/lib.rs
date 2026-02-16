@@ -23,6 +23,7 @@ enum TxApiErrorKind {
 
 const CODE_ARG_TX_TOO_LARGE: &str = "arg.tx_too_large";
 const CODE_ARG_DECODE_FAILED: &str = "arg.decode_failed";
+const CODE_ARG_DERIVATION_FAILED: &str = "arg.principal_to_evm_derivation_failed";
 const CODE_ARG_UNSUPPORTED_TX_KIND: &str = "arg.unsupported_tx_kind";
 const CODE_SUBMIT_TX_ALREADY_SEEN: &str = "submit.tx_already_seen";
 const CODE_SUBMIT_INVALID_FEE: &str = "submit.invalid_fee";
@@ -62,9 +63,7 @@ pub fn rpc_eth_get_transaction_receipt_by_eth_hash(eth_tx_hash: Vec<u8>) -> Opti
     chain::get_receipt(&tx_id).map(receipt_to_eth_view)
 }
 
-pub fn rpc_eth_get_transaction_receipt_with_status(
-    tx_hash_or_id: Vec<u8>,
-) -> RpcReceiptLookupView {
+pub fn rpc_eth_get_transaction_receipt_with_status(tx_hash_or_id: Vec<u8>) -> RpcReceiptLookupView {
     let Some(tx_id) = find_eth_tx_id_by_eth_hash_bytes(&tx_hash_or_id)
         .or_else(|| tx_id_from_bytes(tx_hash_or_id))
     else {
@@ -74,7 +73,7 @@ pub fn rpc_eth_get_transaction_receipt_with_status(
 }
 
 pub fn rpc_eth_get_balance(address: Vec<u8>) -> Result<Vec<u8>, String> {
-    let addr = parse_address_20(address).ok_or_else(|| "address must be 20 bytes".to_string())?;
+    let addr = parse_address_20_with_label(address, "address")?;
     let key = make_account_key(addr);
     let balance = with_state(|state| {
         state
@@ -87,7 +86,7 @@ pub fn rpc_eth_get_balance(address: Vec<u8>) -> Result<Vec<u8>, String> {
 }
 
 pub fn rpc_eth_get_code(address: Vec<u8>) -> Result<Vec<u8>, String> {
-    let addr = parse_address_20(address).ok_or_else(|| "address must be 20 bytes".to_string())?;
+    let addr = parse_address_20_with_label(address, "address")?;
     let key = make_account_key(addr);
     let code = with_state(|state| {
         let Some(account) = state.accounts.get(&key) else {
@@ -107,7 +106,7 @@ pub fn rpc_eth_get_code(address: Vec<u8>) -> Result<Vec<u8>, String> {
 }
 
 pub fn rpc_eth_get_storage_at(address: Vec<u8>, slot: Vec<u8>) -> Result<Vec<u8>, String> {
-    let addr = parse_address_20(address).ok_or_else(|| "address must be 20 bytes".to_string())?;
+    let addr = parse_address_20_with_label(address, "address")?;
     let slot32 = parse_hash_32(slot).ok_or_else(|| "slot must be 32 bytes".to_string())?;
     let key = make_storage_key(addr, slot32);
     let value = with_state(|state| {
@@ -220,9 +219,10 @@ pub fn rpc_eth_get_logs_paged(
     }
 
     let address_filter = match filter.address {
-        Some(bytes) => Some(parse_address_20(bytes).ok_or_else(|| {
-            GetLogsErrorView::InvalidArgument("address must be 20 bytes".to_string())
-        })?),
+        Some(bytes) => Some(
+            parse_address_20_with_label(bytes, "address")
+                .map_err(GetLogsErrorView::InvalidArgument)?,
+        ),
         None => None,
     };
     let topic0_filter = match filter.topic0 {
@@ -370,6 +370,10 @@ fn chain_submit_error_to_code(err: &chain::ChainError) -> Option<(TxApiErrorKind
         chain::ChainError::DecodeFailed => {
             Some((TxApiErrorKind::InvalidArgument, CODE_ARG_DECODE_FAILED))
         }
+        chain::ChainError::AddressDerivationFailed => Some((
+            TxApiErrorKind::InvalidArgument,
+            CODE_ARG_DERIVATION_FAILED,
+        )),
         chain::ChainError::UnsupportedTxKind => Some((
             TxApiErrorKind::InvalidArgument,
             CODE_ARG_UNSUPPORTED_TX_KIND,
@@ -420,13 +424,22 @@ fn tx_id_from_bytes(tx_id: Vec<u8>) -> Option<TxId> {
     Some(TxId(buf))
 }
 
-fn parse_address_20(bytes: Vec<u8>) -> Option<[u8; 20]> {
+fn parse_address_20_with_label(bytes: Vec<u8>, label: &str) -> Result<[u8; 20], String> {
     if bytes.len() != 20 {
-        return None;
+        return Err(address_len_error(label, bytes.len()));
     }
     let mut out = [0u8; 20];
     out.copy_from_slice(&bytes);
-    Some(out)
+    Ok(out)
+}
+
+fn address_len_error(label: &str, len: usize) -> String {
+    if len == 32 {
+        return format!(
+            "{label} must be 20 bytes (got 32; this looks like bytes32-encoded principal)"
+        );
+    }
+    format!("{label} must be 20 bytes")
 }
 
 fn parse_hash_32(bytes: Vec<u8>) -> Option<[u8; 32]> {
@@ -476,15 +489,11 @@ fn call_object_to_input(call: RpcCallObjectView) -> Result<chain::CallObjectInpu
         }
     }
     let to = match call.to {
-        Some(bytes) => {
-            Some(parse_address_20(bytes).ok_or_else(|| "to must be 20 bytes".to_string())?)
-        }
+        Some(bytes) => Some(parse_address_20_with_label(bytes, "to")?),
         None => None,
     };
     let from = match call.from {
-        Some(bytes) => {
-            parse_address_20(bytes).ok_or_else(|| "from must be 20 bytes".to_string())?
-        }
+        Some(bytes) => parse_address_20_with_label(bytes, "from")?,
         None => [0u8; 20],
     };
     let value = match call.value {
@@ -517,8 +526,7 @@ fn parse_access_list(
 ) -> Result<Vec<([u8; 20], Vec<[u8; 32]>)>, String> {
     let mut out = Vec::with_capacity(items.len());
     for item in items {
-        let address = parse_address_20(item.address)
-            .ok_or_else(|| "accessList.address must be 20 bytes".to_string())?;
+        let address = parse_address_20_with_label(item.address, "accessList.address")?;
         let mut storage_keys = Vec::with_capacity(item.storage_keys.len());
         for key in item.storage_keys {
             storage_keys.push(

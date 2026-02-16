@@ -70,7 +70,7 @@ seen_tx で重複排除（stable）
 
 おすすめ：nonceは “EVMアカウントnonce” に統一する
 
-from = caller_evm_from_principal(caller)（Phase0凍結）
+from = derive_evm_address_from_principal(caller)（Phase0凍結）
 
 stateのaccount.nonceをREVMが更新（Ethと同じ）
 
@@ -90,7 +90,12 @@ data_len: u32 (big-endian)
 data: [u8; data_len]
 chain_id: 4801360 (0x494350, "ICP") をTxEnv/CHAINIDに固定
 
-caller は "ic-evm:caller_evm:v1" || principal_bytes の keccak256 末尾20 bytes（Phase1暫定）
+caller は ic-pub-key 準拠（Chain Fusion Signerの `[0x01, principal_bytes]` 導出パス）で得たEVMアドレス（20 bytes）
+
+補足（現行実装）:
+- `derive_evm_address_from_principal` は `Result<[u8;20], AddressDerivationError>` を返す。
+- 導出失敗時に `0x000...000` へフォールバックしない。`submit_ic_tx` は reject（`InvalidArgument`）する。
+- Principalをbytes32に詰めた値は address ではない。address入力は常に20 bytesのみ有効。
 
 注記
 - Eth raw tx のデコードは `legacy/2930/1559` を実装済み

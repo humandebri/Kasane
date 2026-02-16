@@ -34,7 +34,7 @@ fn snapshot_tx_outcome_matrix_and_block_fields() {
         });
     });
     let caller_principal = vec![0x42];
-    let caller = hash::caller_evm_from_principal(&caller_principal);
+    let caller = hash::derive_evm_address_from_principal(&caller_principal).expect("must derive");
     common::fund_account(caller, 1_000_000_000_000_000_000);
 
     let success_target = [0x10u8; 20];
@@ -84,7 +84,7 @@ fn snapshot_tx_outcome_matrix_and_block_fields() {
     // - fee floor をテスト内で固定したことで block_hash/state_root が再計算された
     assert_eq!(
         block_outcome,
-        "number=3 block_hash=266de0857afd02adf889b2d8a4205f39332c4125a920ad4b9ba9dbef107cd039 tx_list_hash=4ad087ec0641a22f03bb82cb8cf391aca8c73cb30fd8eeda10b813d1f2a6c6df state_root=734b3620fff75ded3345312c60e509fd5a8a8077a5dc53f59874435f42a8bc4a"
+        "number=3 block_hash=fe2bab5f965a7be9d7880d7a9d72394879987b1dfc70f406e306d2fe020c472c tx_list_hash=60e50781adb0b02f798fb14df878b982f864e81f3d2220e86e924a131e213ee0 state_root=4d2ba91fcb5fe0c9ee5a1a29dca4f5850ee13cff0e1e4035f762af2ed4e31620"
     );
 }
 

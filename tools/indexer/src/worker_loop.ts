@@ -6,8 +6,9 @@ import { IndexerDb } from "./db";
 import { runArchiveGcWithMode } from "./archive_gc";
 import { Cursor, ExportError, ExportResponse, PruneStatusView, Result } from "./types";
 import {
-  applyChunks,
+  applyChunk,
   enforceNextCursor,
+  finalizePayloads,
   newPending,
   newPendingFromChunk,
   Pending,
@@ -22,6 +23,7 @@ import {
 } from "./worker_utils";
 import { classifyExportError } from "./worker_errors";
 import { commitPending } from "./worker_commit";
+import { decodeBlockPayload } from "./decode";
 
 export async function runWorkerWithDeps(
   config: Config,
@@ -41,6 +43,18 @@ export async function runWorkerWithDeps(
     }
   }
   let cursor: Cursor | null = await db.getCursor();
+  if (cursor && cursor.segment > config.maxSegment) {
+    logFatal(
+      config.chainId,
+      "InvalidCursor",
+      cursor,
+      null,
+      null,
+      null,
+      `stored cursor segment exceeds INDEXER_MAX_SEGMENT (segment=${cursor.segment}, max=${config.maxSegment}); possible server/indexer schema mismatch`
+    );
+    process.exit(1);
+  }
   let lastHead: bigint | null = null;
   let backoffMs = config.backoffInitialMs;
   let pending: Pending | null = null;
@@ -114,6 +128,26 @@ export async function runWorkerWithDeps(
     }
 
     if ("Err" in result) {
+      // canisterのcursor未指定は block 0 から始まるが、block 0 は export対象外で
+      // MissingData になる場合がある。初回同期時は最小有効ブロックへbootstrapして継続する。
+      if (!cursor && "MissingData" in result.Err) {
+        if (headNumber === 0n) {
+          retryCount = 0;
+          const idleSleep = config.idlePollMs;
+          logIdle(config.chainId, cursor, headNumber, idleSleep, lastIdleLogAt, (ts) => {
+            lastIdleLogAt = ts;
+          });
+          await sleep(idleSleep);
+          backoffMs = config.backoffInitialMs;
+          continue;
+        }
+        cursor = await bootstrapCursorFromMissingData(client, headNumber, config.chainId);
+        logWarn(config.chainId, "bootstrap_cursor_from_missing_data", {
+          head: headNumber.toString(),
+          next_cursor: `${cursor.block_number.toString()}:0:0`,
+        });
+        continue;
+      }
       const classified = await classifyExportError(result.Err, db);
       logFatal(config.chainId, classified.kind, cursor, headNumber, null, null, classified.message);
       process.exit(1);
@@ -160,7 +194,7 @@ export async function runWorkerWithDeps(
 
       if (cursor) {
         try {
-          enforceNextCursor(response, cursor);
+          enforceNextCursor(response, cursor, config.maxSegment);
         } catch (err) {
           logFatal(
             config.chainId,
@@ -176,48 +210,169 @@ export async function runWorkerWithDeps(
         }
       }
 
-      if (!pending) {
-        if (cursor) {
-          pending = newPending(cursor);
+      const previousCursor = cursor;
+      const finalCursor = response.next_cursor;
+      let streamCursor = previousCursor;
+      let activePending: Pending | null = pending;
+
+      if (!activePending) {
+        if (previousCursor) {
+          activePending = newPending(previousCursor);
         } else {
-          pending = newPendingFromChunk(response.chunks[0]);
+          activePending = newPendingFromChunk(response.chunks[0]);
         }
       }
 
-      try {
-        applyChunks(pending, response.chunks, cursor);
-      } catch (err) {
+      for (let i = 0; i < response.chunks.length; i += 1) {
+        const chunk = response.chunks[i];
+        if (!activePending) {
+          activePending = newPendingFromChunk(chunk);
+        }
+        const isFirstChunk = i === 0;
+        if (streamCursor) {
+          if (chunk.segment !== streamCursor.segment || chunk.start !== streamCursor.byte_offset) {
+            logFatal(
+              config.chainId,
+              "InvalidCursor",
+              previousCursor,
+              headNumber,
+              response,
+              null,
+              "cursor and chunk stream mismatch"
+            );
+            process.exit(1);
+          }
+        } else if (isFirstChunk) {
+          if (chunk.segment !== activePending.segment || chunk.start !== activePending.offset) {
+            logFatal(
+              config.chainId,
+              "InvalidCursor",
+              previousCursor,
+              headNumber,
+              response,
+              null,
+              "initial chunk mismatch without cursor"
+            );
+            process.exit(1);
+          }
+        }
+        try {
+          applyChunk(activePending, chunk);
+        } catch (err) {
+          logFatal(
+            config.chainId,
+            "InvalidCursor",
+            previousCursor,
+            headNumber,
+            response,
+            null,
+            errMessage(err),
+            err
+          );
+          process.exit(1);
+        }
+        if (activePending.complete) {
+          let commitCursor: Cursor;
+          if (streamCursor) {
+            commitCursor = {
+              block_number: streamCursor.block_number + 1n,
+              segment: 0,
+              byte_offset: 0,
+            };
+          } else {
+            const payloads = finalizePayloads(activePending);
+            const blockInfo = decodeBlockPayload(payloads[0]);
+            commitCursor = {
+              block_number: blockInfo.number + 1n,
+              segment: 0,
+              byte_offset: 0,
+            };
+          }
+          const resultCommit = await commitPending({
+            config,
+            db,
+            response,
+            previousCursor: streamCursor,
+            cursor: commitCursor,
+            headNumber,
+            pending: activePending,
+            lastSizeDay,
+          });
+          if (resultCommit) {
+            lastSizeDay = resultCommit.lastSizeDay;
+            streamCursor = commitCursor;
+          }
+          activePending = null;
+          const hasNextChunk = i + 1 < response.chunks.length;
+          if (hasNextChunk) {
+            activePending = newPendingFromChunk(response.chunks[i + 1]);
+          }
+          continue;
+        }
+        if (streamCursor) {
+          streamCursor = {
+            block_number: streamCursor.block_number,
+            segment: activePending.segment,
+            byte_offset: activePending.offset,
+          };
+        }
+      }
+      pending = activePending;
+
+      cursor = finalCursor;
+      if (!streamCursor) {
         logFatal(
           config.chainId,
           "InvalidCursor",
-          cursor,
+          previousCursor,
           headNumber,
           response,
           null,
-          errMessage(err),
-          err
+          "unable to establish consumed stream cursor without initial cursor"
         );
         process.exit(1);
       }
-      const previousCursor = cursor;
-      cursor = response.next_cursor;
-
-      if (pending.complete) {
-        const resultCommit = await commitPending({
-          config,
-          db,
-          response,
+      if (
+        streamCursor.block_number !== finalCursor.block_number ||
+        streamCursor.segment !== finalCursor.segment ||
+        streamCursor.byte_offset !== finalCursor.byte_offset
+      ) {
+        logFatal(
+          config.chainId,
+          "InvalidCursor",
           previousCursor,
-          cursor,
           headNumber,
-          pending,
-          lastSizeDay,
-        });
-        lastSizeDay = resultCommit ? resultCommit.lastSizeDay : lastSizeDay;
-        pending = null;
+          response,
+          null,
+          "response next_cursor does not match consumed chunk stream"
+        );
+        process.exit(1);
       }
     }
   }
 
   await db.close();
+}
+
+async function bootstrapCursorFromMissingData(
+  client: { getPruneStatus: () => Promise<PruneStatusView> },
+  headNumber: bigint,
+  chainId: string
+): Promise<Cursor> {
+  let blockNumber = 1n;
+  try {
+    const pruneStatus = await client.getPruneStatus();
+    if (pruneStatus.pruned_before_block !== null) {
+      blockNumber = pruneStatus.pruned_before_block + 1n;
+    }
+  } catch (err) {
+    logWarn(chainId, "bootstrap_prune_status_failed", { err: errMessage(err) });
+  }
+  if (blockNumber < 1n) {
+    blockNumber = 1n;
+  }
+  if (blockNumber > headNumber) {
+    blockNumber = headNumber;
+  }
+  return { block_number: blockNumber, segment: 0, byte_offset: 0 };
 }

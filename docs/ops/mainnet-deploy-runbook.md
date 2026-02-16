@@ -154,3 +154,21 @@ scripts/mainnet/mainnet_method_test.sh
 - 制約:
   - canister から「genesisで配布された全アドレス一覧」や「対応秘密鍵」は取得できない。
   - したがって、任意の `privkey` で genesis 資金を利用できるわけではない（対応鍵が必要）。
+
+## 8. Principal→EVM導出 signer 定数ローテーション（コード固定運用）
+- 現行方針:
+  - signer は `ic-pub-key` の `key_1` と canister id（`grghe-syaaa-aaaar-qabyq-cai`）をコード固定で利用する。
+  - ローテーション時は `InitArgs` 注入や管理API更新ではなく、再デプロイで切り替える。
+- 更新対象:
+  - `/Users/0xhude/Desktop/ICP/IC-OP/crates/ic-evm-address/src/lib.rs`
+  - `CHAIN_FUSION_SIGNER_CANISTER_ID`
+  - `KEY_ID_KEY_1`
+- ローテーション手順:
+  1. 上記定数を更新する。
+  2. 既存ベクタ（`nggqm-...`）と、運用で使う代表 Principal の導出結果をテストで更新する。
+  3. `cargo test --workspace` を実行し、`ic-evm-address`/`evm-core`/`evm-db` の導出回帰がないことを確認する。
+  4. `scripts/mainnet/ic_mainnet_preflight.sh` を実施してから upgrade デプロイする。
+  5. デプロイ後に `scripts/query_smoke.sh` と `scripts/mainnet/mainnet_method_test.sh`（必要時）で導出経路を確認する。
+- 検証ポイント:
+  - `submit_ic_tx` が `arg.principal_to_evm_derivation_failed` を返していないこと。
+  - 20 bytes address と bytes32（Principalエンコード）が混同されていないこと。

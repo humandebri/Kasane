@@ -19,11 +19,11 @@ fn fee_sorted_prefers_higher_effective_fee() {
     });
 
     common::fund_account(
-        hash::caller_evm_from_principal(&[0x11]),
+        hash::derive_evm_address_from_principal(&[0x11]).expect("must derive"),
         1_000_000_000_000_000_000,
     );
     common::fund_account(
-        hash::caller_evm_from_principal(&[0x22]),
+        hash::derive_evm_address_from_principal(&[0x22]).expect("must derive"),
         1_000_000_000_000_000_000,
     );
 
