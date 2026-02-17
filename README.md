@@ -15,10 +15,18 @@
 | Canister ID | `4c52m-aiaaa-aaaam-agwwa-cai` |
 | Chain ID | `4801360` |
 | RPC URL | `https://rpc-testnet.kasane.network` |
+| Explorer URL | `https://explorer-testnet.kasane.network` |
 
 運用メモ:
 - `eth_sendRawTransaction` の成功判定は submit結果ではなく `eth_getTransactionReceipt.status` で行う（`0x1` 成功 / `0x0` 失敗）。
 - nonce参照は `eth_getTransactionCount`（Gateway）または `expected_nonce_by_address`（canister query）を使用する。
+- Contabo の service 環境変数は `/etc/ic-op/*.env` に固定する（`/opt/ic-op/tools/**/.env.local` 非依存）。
+- testnet indexer の正式起点 cursor は `{"v":1,"block_number":"25","segment":0,"byte_offset":0}`（先頭履歴の `MissingData` 回避）。
+- `/ops` 監視閾値（固定）:
+  - `failure_rate_warn >= 0.05`（10分継続）
+  - `failure_rate_critical >= 0.20`（10分継続）
+  - `cursor_lag_warn > 50`, `cursor_lag_critical > 200`（いずれも10分継続）
+  - `pending_stall=true` は即時warn
 
 Explorer の実装詳細（ルート一覧・lib層責務）は `tools/explorer/README.md` を参照。
 
@@ -377,7 +385,3 @@ pending/mempool/filter WebSocket 系（例: `eth_newFilter`, `eth_getFilterChang
 - 応答の決定性:
   - canisterが同一の状態にある限り、読み取り系のRPCリクエストに対して常に同一の応答を返すこと。
 内部的な実行基盤と外部との接続性が確立されたことで、このEVM環境は技術的に独立したチェーンとして機能するようになりました。
-
-## 5.0 結論：Phase 0〜2 の到達点
-
-本計画書は、Internet Computer Protocol (ICP) 上で独自のEVM互換canisterを構築するために、Phase 0〜2までの方針と実装要点を整理したものです。決定性の土台（Phase 0）、同期実行体験の中核実装（Phase 1）、外部ツール接続のためのRPC層（Phase 2）を段階的に整備することで、基盤機能と開発者体験の両立を図ります。以降の拡張計画は本READMEのスコープ外とし、必要に応じて別ドキュメントで管理します。
