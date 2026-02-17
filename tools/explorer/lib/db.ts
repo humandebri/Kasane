@@ -15,6 +15,9 @@ export type TxSummary = {
   blockNumber: bigint;
   txIndex: number;
   callerPrincipal: Buffer | null;
+  fromAddress: Buffer;
+  toAddress: Buffer | null;
+  receiptStatus: number | null;
 };
 
 export type BlockDetails = {
@@ -36,6 +39,21 @@ export type MetaSnapshot = {
   pruneStatusRaw: string | null;
   lastHead: bigint | null;
   lastIngestAtMs: bigint | null;
+};
+
+export type AddressTxCursor = {
+  blockNumber: bigint;
+  txIndex: number;
+  txHash: Uint8Array;
+};
+
+export type OpsMetricsSample = {
+  sampledAtMs: bigint;
+  queueLen: bigint;
+  totalSubmitted: bigint;
+  totalIncluded: bigint;
+  totalDropped: bigint;
+  dropCountsJson: string;
 };
 
 let sharedPool: Pool | null = null;
@@ -76,8 +94,8 @@ export async function getLatestBlocks(limit: number): Promise<BlockSummary[]> {
 
 export async function getLatestTxs(limit: number): Promise<TxSummary[]> {
   const pool = getPool();
-  const rows = await pool.query<{ tx_hash: Buffer; block_number: string | number; tx_index: number; caller_principal: Buffer | null }>(
-    "SELECT tx_hash, block_number, tx_index, caller_principal FROM txs ORDER BY block_number DESC, tx_index DESC LIMIT $1",
+  const rows = await pool.query<{ tx_hash: Buffer; block_number: string | number; tx_index: number; caller_principal: Buffer | null; from_address: Buffer; to_address: Buffer | null; receipt_status: number | null }>(
+    "SELECT tx_hash, block_number, tx_index, caller_principal, from_address, to_address, receipt_status FROM txs ORDER BY block_number DESC, tx_index DESC LIMIT $1",
     [limit]
   );
 
@@ -86,6 +104,9 @@ export async function getLatestTxs(limit: number): Promise<TxSummary[]> {
     blockNumber: BigInt(row.block_number),
     txIndex: row.tx_index,
     callerPrincipal: row.caller_principal ?? null,
+    fromAddress: row.from_address,
+    toAddress: row.to_address ?? null,
+    receiptStatus: row.receipt_status ?? null,
   }));
 }
 
@@ -100,8 +121,8 @@ export async function getBlockDetails(blockNumber: bigint): Promise<BlockDetails
     return null;
   }
 
-  const txRows = await pool.query<{ tx_hash: Buffer; block_number: string | number; tx_index: number; caller_principal: Buffer | null }>(
-    "SELECT tx_hash, block_number, tx_index, caller_principal FROM txs WHERE block_number = $1 ORDER BY tx_index ASC",
+  const txRows = await pool.query<{ tx_hash: Buffer; block_number: string | number; tx_index: number; caller_principal: Buffer | null; from_address: Buffer; to_address: Buffer | null; receipt_status: number | null }>(
+    "SELECT tx_hash, block_number, tx_index, caller_principal, from_address, to_address, receipt_status FROM txs WHERE block_number = $1 ORDER BY tx_index ASC",
     [blockNumber]
   );
 
@@ -122,14 +143,17 @@ export async function getBlockDetails(blockNumber: bigint): Promise<BlockDetails
       blockNumber: BigInt(tx.block_number),
       txIndex: tx.tx_index,
       callerPrincipal: tx.caller_principal ?? null,
+      fromAddress: tx.from_address,
+      toAddress: tx.to_address ?? null,
+      receiptStatus: tx.receipt_status ?? null,
     })),
   };
 }
 
 export async function getTx(txHash: Uint8Array): Promise<TxSummary | null> {
   const pool = getPool();
-  const row = await pool.query<{ tx_hash: Buffer; block_number: string | number; tx_index: number; caller_principal: Buffer | null }>(
-    "SELECT tx_hash, block_number, tx_index, caller_principal FROM txs WHERE tx_hash = $1",
+  const row = await pool.query<{ tx_hash: Buffer; block_number: string | number; tx_index: number; caller_principal: Buffer | null; from_address: Buffer; to_address: Buffer | null; receipt_status: number | null }>(
+    "SELECT tx_hash, block_number, tx_index, caller_principal, from_address, to_address, receipt_status FROM txs WHERE tx_hash = $1",
     [Buffer.from(txHash)]
   );
 
@@ -145,6 +169,9 @@ export async function getTx(txHash: Uint8Array): Promise<TxSummary | null> {
     blockNumber: BigInt(hit.block_number),
     txIndex: hit.tx_index,
     callerPrincipal: hit.caller_principal ?? null,
+    fromAddress: hit.from_address,
+    toAddress: hit.to_address ?? null,
+    receiptStatus: hit.receipt_status ?? null,
   };
 }
 
@@ -158,8 +185,11 @@ export async function getTxsByCallerPrincipal(
     block_number: string | number;
     tx_index: number;
     caller_principal: Buffer | null;
+    from_address: Buffer;
+    to_address: Buffer | null;
+    receipt_status: number | null;
   }>(
-    "SELECT tx_hash, block_number, tx_index, caller_principal FROM txs WHERE caller_principal = $1 ORDER BY block_number DESC, tx_index DESC LIMIT $2",
+    "SELECT tx_hash, block_number, tx_index, caller_principal, from_address, to_address, receipt_status FROM txs WHERE caller_principal = $1 ORDER BY block_number DESC, tx_index DESC LIMIT $2",
     [Buffer.from(callerPrincipal), limit]
   );
   return rows.rows.map((row) => ({
@@ -167,6 +197,86 @@ export async function getTxsByCallerPrincipal(
     blockNumber: BigInt(row.block_number),
     txIndex: row.tx_index,
     callerPrincipal: row.caller_principal ?? null,
+    fromAddress: row.from_address,
+    toAddress: row.to_address ?? null,
+    receiptStatus: row.receipt_status ?? null,
+  }));
+}
+
+export async function getTxsByAddress(
+  address: Uint8Array,
+  limit: number,
+  cursor: AddressTxCursor | null
+): Promise<TxSummary[]> {
+  const pool = getPool();
+  const addressBuf = Buffer.from(address);
+  const fetchLimit = limit + 1;
+  if (!cursor) {
+    const rows = await pool.query<{
+      tx_hash: Buffer;
+      block_number: string | number;
+      tx_index: number;
+      caller_principal: Buffer | null;
+      from_address: Buffer;
+      to_address: Buffer | null;
+      receipt_status: number | null;
+    }>(
+      "SELECT tx_hash, block_number, tx_index, caller_principal, from_address, to_address, receipt_status FROM txs WHERE from_address = $1 OR to_address = $1 ORDER BY block_number DESC, tx_index DESC, tx_hash DESC LIMIT $2",
+      [addressBuf, fetchLimit]
+    );
+    return rows.rows.map((row) => ({
+      txHashHex: `0x${row.tx_hash.toString("hex")}`,
+      blockNumber: BigInt(row.block_number),
+      txIndex: row.tx_index,
+      callerPrincipal: row.caller_principal ?? null,
+      fromAddress: row.from_address,
+      toAddress: row.to_address ?? null,
+      receiptStatus: row.receipt_status ?? null,
+    }));
+  }
+  const rows = await pool.query<{
+    tx_hash: Buffer;
+    block_number: string | number;
+    tx_index: number;
+    caller_principal: Buffer | null;
+    from_address: Buffer;
+    to_address: Buffer | null;
+    receipt_status: number | null;
+  }>(
+    "SELECT tx_hash, block_number, tx_index, caller_principal, from_address, to_address, receipt_status FROM txs WHERE (from_address = $1 OR to_address = $1) AND (block_number < $2 OR (block_number = $2 AND tx_index < $3) OR (block_number = $2 AND tx_index = $3 AND tx_hash < $4)) ORDER BY block_number DESC, tx_index DESC, tx_hash DESC LIMIT $5",
+    [addressBuf, cursor.blockNumber, cursor.txIndex, Buffer.from(cursor.txHash), fetchLimit]
+  );
+  return rows.rows.map((row) => ({
+    txHashHex: `0x${row.tx_hash.toString("hex")}`,
+    blockNumber: BigInt(row.block_number),
+    txIndex: row.tx_index,
+    callerPrincipal: row.caller_principal ?? null,
+    fromAddress: row.from_address,
+    toAddress: row.to_address ?? null,
+    receiptStatus: row.receipt_status ?? null,
+  }));
+}
+
+export async function getRecentOpsMetricsSamples(limit: number): Promise<OpsMetricsSample[]> {
+  const pool = getPool();
+  const rows = await pool.query<{
+    sampled_at_ms: string | number;
+    queue_len: string | number;
+    total_submitted: string | number;
+    total_included: string | number;
+    total_dropped: string | number;
+    drop_counts_json: string;
+  }>(
+    "SELECT sampled_at_ms, queue_len, total_submitted, total_included, total_dropped, drop_counts_json FROM ops_metrics_samples ORDER BY sampled_at_ms DESC LIMIT $1",
+    [limit]
+  );
+  return rows.rows.map((row) => ({
+    sampledAtMs: BigInt(row.sampled_at_ms),
+    queueLen: BigInt(row.queue_len),
+    totalSubmitted: BigInt(row.total_submitted),
+    totalIncluded: BigInt(row.total_included),
+    totalDropped: BigInt(row.total_dropped),
+    dropCountsJson: row.drop_counts_json,
   }));
 }
 

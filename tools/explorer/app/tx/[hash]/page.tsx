@@ -49,6 +49,11 @@ export default async function TxPage({ params }: { params: Promise<{ hash: strin
             View Receipt
           </Link>
         </div>
+        <div>
+          <Link href={`/tx-monitor/${tx.txHashHex}`} className="text-sky-700 hover:underline">
+            Open Tx Monitor
+          </Link>
+        </div>
       </CardContent>
     </Card>
   );

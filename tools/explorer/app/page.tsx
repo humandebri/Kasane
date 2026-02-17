@@ -51,6 +51,9 @@ export default async function HomePage() {
             <Link href="/ops" className="inline-flex h-9 items-center rounded-md border px-3 text-sm text-sky-700 hover:underline">
               Open Ops
             </Link>
+            <Link href="/logs" className="inline-flex h-9 items-center rounded-md border px-3 text-sm text-sky-700 hover:underline">
+              Open Logs
+            </Link>
           </form>
           <dl className="grid grid-cols-1 gap-2 md:grid-cols-[180px_1fr]">
             <dt className="text-muted-foreground">Total Blocks</dt>
