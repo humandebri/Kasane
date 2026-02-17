@@ -12,9 +12,18 @@ export type TxIndexInfo = {
   blockNumber: bigint;
   txIndex: number;
   callerPrincipal: Buffer | null;
+  fromAddress: Buffer;
+  toAddress: Buffer | null;
+};
+
+export type ReceiptStatusInfo = {
+  txHash: Buffer;
+  status: 0 | 1;
 };
 
 const HASH_LEN = 32;
+const ADDRESS_LEN = 20;
+const RECEIPT_V2_MAGIC = Buffer.from("7263707476320002", "hex");
 
 export function decodeBlockPayload(payload: Uint8Array): BlockInfo {
   const data = Buffer.from(payload);
@@ -75,8 +84,8 @@ export function decodeTxIndexPayload(payload: Uint8Array): TxIndexInfo[] {
     if (data.length - offset < len) {
       throw new Error("tx_index payload length mismatch");
     }
-    if (len < 14) {
-      throw new Error("tx_index entry size mismatch: entry must include 14+ bytes (u64 + u32 + principal_len)");
+    if (len < 35) {
+      throw new Error("tx_index entry size mismatch: entry must include 35+ bytes (u64 + u32 + principal_len + from + to_len)");
     }
     const blockNumber = readU64BE(data, offset);
     offset += 8;
@@ -84,21 +93,71 @@ export function decodeTxIndexPayload(payload: Uint8Array): TxIndexInfo[] {
     offset += 4;
     const principalLen = data.readUInt16BE(offset);
     offset += 2;
-    const expectedLen = 12 + 2 + principalLen;
-    if (len !== expectedLen) {
-      throw new Error("tx_index entry size mismatch: principal length does not match");
+    if (data.length - offset < principalLen + ADDRESS_LEN + 1) {
+      throw new Error("tx_index entry size mismatch: missing from/to fields");
     }
+    const expectedMinLen = 12 + 2 + principalLen + ADDRESS_LEN + 1;
+    if (len < expectedMinLen) {
+      throw new Error("tx_index entry size mismatch: entry_len is smaller than required fields");
+    }
+    const expectedLenBase = expectedMinLen;
+    const principalEnd = offset + principalLen;
     let callerPrincipal: Buffer | null = null;
     if (principalLen > 0) {
       callerPrincipal = Buffer.from(data.subarray(offset, offset + principalLen));
       offset += principalLen;
     }
+    if (offset !== principalEnd) {
+      throw new Error("tx_index entry size mismatch: principal length does not match");
+    }
+    const fromAddress = Buffer.from(data.subarray(offset, offset + ADDRESS_LEN));
+    offset += ADDRESS_LEN;
+    const toLen = data.readUInt8(offset);
+    offset += 1;
+    if (toLen !== 0 && toLen !== ADDRESS_LEN) {
+      throw new Error("tx_index entry size mismatch: to_len must be 0 or 20");
+    }
+    const expectedLen = expectedLenBase + toLen;
+    if (len !== expectedLen) {
+      throw new Error("tx_index entry size mismatch: entry_len does not match to_len");
+    }
+    if (data.length - offset < toLen) {
+      throw new Error("tx_index entry size mismatch: to address bytes missing");
+    }
+    const toAddress = toLen === 0 ? null : Buffer.from(data.subarray(offset, offset + toLen));
+    offset += toLen;
     out.push({
       txHash: Buffer.from(txHash),
       blockNumber,
       txIndex,
       callerPrincipal,
+      fromAddress,
+      toAddress,
     });
+  }
+  return out;
+}
+
+export function decodeReceiptStatusPayload(payload: Uint8Array): ReceiptStatusInfo[] {
+  const data = Buffer.from(payload);
+  const out: ReceiptStatusInfo[] = [];
+  let offset = 0;
+  while (offset < data.length) {
+    const remaining = data.length - offset;
+    if (remaining < HASH_LEN + 4) {
+      throw new Error("receipts payload truncated");
+    }
+    const txHash = Buffer.from(data.subarray(offset, offset + HASH_LEN));
+    offset += HASH_LEN;
+    const receiptLen = readU32BE(data, offset);
+    offset += 4;
+    if (data.length - offset < receiptLen) {
+      throw new Error("receipts payload length mismatch");
+    }
+    const receipt = data.subarray(offset, offset + receiptLen);
+    offset += receiptLen;
+    const status = decodeReceiptStatus(receipt);
+    out.push({ txHash, status });
   }
   return out;
 }
@@ -111,4 +170,22 @@ function readU64BE(data: Buffer, offset: number): bigint {
 
 function readU32BE(data: Buffer, offset: number): number {
   return data.readUInt32BE(offset);
+}
+
+function decodeReceiptStatus(encoded: Buffer): 0 | 1 {
+  let offset = 0;
+  if (encoded.length >= RECEIPT_V2_MAGIC.length && encoded.subarray(0, RECEIPT_V2_MAGIC.length).equals(RECEIPT_V2_MAGIC)) {
+    offset += RECEIPT_V2_MAGIC.length;
+  }
+  const minLen = offset + HASH_LEN + 8 + 4 + 1;
+  if (encoded.length < minLen) {
+    throw new Error("receipt bytes too short");
+  }
+  // tx_id(32) + block_number(8) + tx_index(4) の直後が status(1)
+  const statusOffset = offset + HASH_LEN + 8 + 4;
+  const status = encoded.readUInt8(statusOffset);
+  if (status !== 0 && status !== 1) {
+    throw new Error("receipt status must be 0 or 1");
+  }
+  return status;
 }

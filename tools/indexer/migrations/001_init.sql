@@ -19,10 +19,16 @@ create table if not exists txs (
   tx_hash bytea primary key,
   block_number bigint not null,
   tx_index integer not null,
-  caller_principal bytea
+  caller_principal bytea,
+  from_address bytea not null,
+  to_address bytea,
+  receipt_status smallint
 );
 
 create index if not exists idx_txs_block_number_tx_index_desc on txs(block_number desc, tx_index desc);
+create index if not exists idx_txs_from_address_block_tx_desc on txs(from_address, block_number desc, tx_index desc);
+create index if not exists idx_txs_to_address_block_tx_desc on txs(to_address, block_number desc, tx_index desc);
+create index if not exists idx_txs_receipt_status_block_tx_desc on txs(receipt_status, block_number desc, tx_index desc);
 
 create table if not exists metrics_daily (
   day integer primary key,
@@ -43,6 +49,17 @@ create table if not exists archive_parts (
 );
 
 create index if not exists idx_archive_parts_created_at_desc on archive_parts(created_at desc);
+
+create table if not exists ops_metrics_samples (
+  sampled_at_ms bigint primary key,
+  queue_len bigint not null,
+  total_submitted bigint not null,
+  total_included bigint not null,
+  total_dropped bigint not null,
+  drop_counts_json text not null
+);
+
+create index if not exists idx_ops_metrics_samples_sampled_at_desc on ops_metrics_samples(sampled_at_ms desc);
 
 create table if not exists retention_runs (
   id text primary key,
