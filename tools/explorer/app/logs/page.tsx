@@ -4,7 +4,6 @@ import Link from "next/link";
 import { Card, CardContent, CardHeader, CardTitle } from "../../components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../../components/ui/table";
 import { getLogsView } from "../../lib/logs";
-import { shortHex } from "../../lib/hex";
 
 export const dynamic = "force-dynamic";
 
@@ -46,14 +45,6 @@ export default async function LogsPage({
             <input name="limit" placeholder="limit" defaultValue={data.filters.limit} className="h-9 rounded-md border px-3 text-sm" />
             <button type="submit" className="h-9 rounded-md border px-3 text-sm">Search</button>
           </form>
-          <div className="rounded-md border bg-amber-50 p-3 text-sm">
-            <div className="font-medium">未対応/制限</div>
-            <ul className="list-disc pl-5">
-              {data.unsupportedNotes.map((note) => (
-                <li key={note}>{note}</li>
-              ))}
-            </ul>
-          </div>
           {data.error ? <div className="rounded-md border bg-rose-50 p-3 text-sm">{data.error}</div> : null}
         </CardContent>
       </Card>
@@ -83,10 +74,10 @@ export default async function LogsPage({
                     <TableCell>{item.blockNumber.toString()}</TableCell>
                     <TableCell>{item.txIndex}</TableCell>
                     <TableCell>{item.logIndex}</TableCell>
-                    <TableCell className="font-mono">{shortHex(item.addressHex)}</TableCell>
-                    <TableCell className="font-mono">{item.topic0Hex ? shortHex(item.topic0Hex) : "-"}</TableCell>
+                    <TableCell className="font-mono break-all">{item.addressHex}</TableCell>
+                    <TableCell className="font-mono break-all">{item.topic0Hex ?? "-"}</TableCell>
                     <TableCell className="font-mono">
-                      <Link href={`/tx/${item.txHashHex}`} className="text-sky-700 hover:underline">{shortHex(item.txHashHex)}</Link>
+                      <Link href={`/tx/${item.txHashHex}`} className="text-sky-700 hover:underline break-all">{item.txHashHex}</Link>
                     </TableCell>
                   </TableRow>
                 ))}

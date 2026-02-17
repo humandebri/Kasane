@@ -30,3 +30,30 @@
     font-family: "IBM Plex Mono", "Noto Sans Mono", monospace;
   }
 }
+
+@layer utilities {
+  .glass-card {
+    @apply rounded-3xl border border-zinc-200/70 bg-white/80 shadow-sm backdrop-blur;
+  }
+
+  .fade-in {
+    animation: fade-in 0.6s ease-out forwards;
+  }
+}
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .fade-in {
+    animation: none;
+  }
+}
