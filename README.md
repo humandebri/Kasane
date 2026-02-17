@@ -5,7 +5,6 @@
 [![network](https://img.shields.io/badge/network-ic-2ea44f)](https://dashboard.internetcomputer.org/)
 ![chain_id](https://img.shields.io/badge/chain--id-4801360-f59e0b)
 
-**Testnet Canister ID (`ic`)**: `4c52m-aiaaa-aaaam-agwwa-cai`  
 
 ## Chain / RPC情報（運用サマリ）
 

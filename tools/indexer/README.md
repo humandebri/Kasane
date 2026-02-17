@@ -55,6 +55,7 @@ npm run dev
 運用メモ:
 - DBに保存された cursor の `segment` が `INDEXER_MAX_SEGMENT` を超えている場合、起動時に停止する。
 - canister 側で segment 定義を拡張した場合、デプロイ時に `INDEXER_MAX_SEGMENT` も同値へ更新する。
+- `export_blocks` が `Err.Pruned` を返した場合、indexer は `pruned_before_block + 1`（最小1、最大head）へ自動補正して同期を継続する。
 
 ## idle / retry（運用）
 

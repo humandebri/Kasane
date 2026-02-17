@@ -56,6 +56,19 @@ export async function commitPending(params: {
     );
     process.exit(1);
   }
+  const expectedBlockNumber = params.previousCursor ? params.previousCursor.block_number : blockInfo.number;
+  if (blockInfo.number !== expectedBlockNumber) {
+    logFatal(
+      params.config.chainId,
+      "InvalidCursor",
+      params.previousCursor,
+      params.headNumber,
+      params.response,
+      null,
+      `decoded block number mismatch: expected=${expectedBlockNumber.toString()} actual=${blockInfo.number.toString()}`
+    );
+    process.exit(1);
+  }
   const receiptStatusByTxHash = new Map<string, number>();
   for (const receipt of receiptStatuses) {
     receiptStatusByTxHash.set(receipt.txHash.toString("hex"), receipt.status);

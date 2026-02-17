@@ -350,6 +350,427 @@ test("runWorkerWithDeps commits two blocks from one response and stores final cu
   await originalClose();
 });
 
+test("runWorkerWithDeps recovers from Pruned by rebasing cursor and dropping pending", async () => {
+  const db = await createTestIndexerDb();
+  const originalClose = db.close.bind(db);
+  (db as unknown as { close: () => Promise<void> }).close = async () => {};
+  await withTempDir(async (dir) => {
+    const config: Config = {
+      canisterId: "test-canister",
+      icHost: "http://127.0.0.1:4943",
+      databaseUrl: "postgres://unused",
+      dbPoolMax: 1,
+      retentionDays: 90,
+      retentionEnabled: false,
+      retentionDryRun: false,
+      archiveGcDeleteOrphans: false,
+      maxBytes: 1_200_000,
+      backoffInitialMs: 1,
+      backoffMaxMs: 2,
+      idlePollMs: 1,
+      pruneStatusPollMs: 0,
+      opsMetricsPollMs: 0,
+      fetchRootKey: false,
+      archiveDir: dir,
+      chainId: "test",
+      zstdLevel: 1,
+      maxSegment: 2,
+    };
+    await db.setCursor({ block_number: 50n, segment: 0, byte_offset: 0 });
+    const block101 = buildBlockPayload(101n, 20n, []);
+    const cursors: Array<{ block_number: bigint; segment: number; byte_offset: number } | null> = [];
+    let headCalls = 0;
+    let exportCalls = 0;
+    const client = {
+      getHeadNumber: async (): Promise<bigint> => {
+        headCalls += 1;
+        if (headCalls === 5) {
+          process.emit("SIGINT");
+        }
+        return 200n;
+      },
+      exportBlocks: async (
+        cursor: { block_number: bigint; segment: number; byte_offset: number } | null
+      ): Promise<
+        | {
+            Ok: {
+              chunks: Array<{ segment: number; start: number; bytes: Buffer; payload_len: number }>;
+              next_cursor: { block_number: bigint; segment: number; byte_offset: number };
+            };
+          }
+        | { Err: ExportError }
+      > => {
+        exportCalls += 1;
+        cursors.push(cursor);
+        if (exportCalls === 1) {
+          return {
+            Ok: {
+              chunks: [{ segment: 0, start: 0, bytes: Buffer.from([1]), payload_len: 8 }],
+              next_cursor: { block_number: 50n, segment: 0, byte_offset: 1 },
+            },
+          };
+        }
+        if (exportCalls === 2) {
+          return { Err: { Pruned: { pruned_before_block: 100n } } };
+        }
+        if (exportCalls === 3) {
+          return {
+            Ok: {
+              chunks: [
+                { segment: 0, start: 0, bytes: block101, payload_len: block101.length },
+                { segment: 1, start: 0, bytes: Buffer.alloc(0), payload_len: 0 },
+                { segment: 2, start: 0, bytes: Buffer.alloc(0), payload_len: 0 },
+              ],
+              next_cursor: { block_number: 102n, segment: 0, byte_offset: 0 },
+            },
+          };
+        }
+        return {
+          Ok: {
+            chunks: [],
+            next_cursor: cursor ?? { block_number: 102n, segment: 0, byte_offset: 0 },
+          },
+        };
+      },
+      getPruneStatus: async () => ({
+        pruning_enabled: false,
+        prune_running: false,
+        estimated_kept_bytes: 0n,
+        high_water_bytes: 0n,
+        low_water_bytes: 0n,
+        hard_emergency_bytes: 0n,
+        last_prune_at: 0n,
+        pruned_before_block: null,
+        oldest_kept_block: null,
+        oldest_kept_timestamp: null,
+        need_prune: false,
+      }),
+      getMetrics: async () => ({
+        txs: 0n,
+        ema_txs_per_block_x1000: 0n,
+        pruned_before_block: null,
+        ema_block_rate_per_sec_x1000: 0n,
+        total_submitted: 0n,
+        window: 128n,
+        avg_txs_per_block: 0n,
+        block_rate_per_sec_x1000: null,
+        cycles: 0n,
+        total_dropped: 0n,
+        blocks: 0n,
+        drop_counts: [],
+        queue_len: 0n,
+        total_included: 0n,
+      }),
+    };
+    await runWorkerWithDeps(config, db, client, { skipGc: true });
+    assert.equal(cursors.length >= 3, true);
+    assert.deepEqual(cursors[2], { block_number: 101n, segment: 0, byte_offset: 0 });
+    const cursor = await db.getCursor();
+    assert.deepEqual(cursor, { block_number: 102n, segment: 0, byte_offset: 0 });
+    const block = await db.queryOne<{ n: string }>("select count(*)::text as n from blocks where number = 101");
+    assert.equal(Number(block?.n ?? "0"), 1);
+    const lastError = await db.queryOne<{ value: string }>("select value from meta where key = $1", ["last_error"]);
+    assert.equal(lastError?.value, "Pruned");
+    const metricsError = await db.queryOne<{ errors: string }>("select errors::text as errors from metrics_daily");
+    assert.equal(Number(metricsError?.errors ?? "0"), 1);
+  });
+  await originalClose();
+});
+
+test("runWorkerWithDeps clamps Pruned cursor to block 1 minimum", async () => {
+  const db = await createTestIndexerDb();
+  const originalClose = db.close.bind(db);
+  (db as unknown as { close: () => Promise<void> }).close = async () => {};
+  await withTempDir(async (dir) => {
+    const config: Config = {
+      canisterId: "test-canister",
+      icHost: "http://127.0.0.1:4943",
+      databaseUrl: "postgres://unused",
+      dbPoolMax: 1,
+      retentionDays: 90,
+      retentionEnabled: false,
+      retentionDryRun: false,
+      archiveGcDeleteOrphans: false,
+      maxBytes: 1_200_000,
+      backoffInitialMs: 1,
+      backoffMaxMs: 2,
+      idlePollMs: 1,
+      pruneStatusPollMs: 0,
+      opsMetricsPollMs: 0,
+      fetchRootKey: false,
+      archiveDir: dir,
+      chainId: "test",
+      zstdLevel: 1,
+      maxSegment: 2,
+    };
+    await db.setCursor({ block_number: 50n, segment: 0, byte_offset: 0 });
+    const cursors: Array<{ block_number: bigint; segment: number; byte_offset: number } | null> = [];
+    let headCalls = 0;
+    let exportCalls = 0;
+    const client = {
+      getHeadNumber: async (): Promise<bigint> => {
+        headCalls += 1;
+        if (headCalls === 3) {
+          process.emit("SIGINT");
+        }
+        return 99n;
+      },
+      exportBlocks: async (
+        cursor: { block_number: bigint; segment: number; byte_offset: number } | null
+      ): Promise<
+        | {
+            Ok: {
+              chunks: Array<{ segment: number; start: number; bytes: Buffer; payload_len: number }>;
+              next_cursor: { block_number: bigint; segment: number; byte_offset: number };
+            };
+          }
+        | { Err: ExportError }
+      > => {
+        exportCalls += 1;
+        cursors.push(cursor);
+        if (exportCalls === 1) {
+          return { Err: { Pruned: { pruned_before_block: -2n } } };
+        }
+        return {
+          Ok: {
+            chunks: [],
+            next_cursor: cursor ?? { block_number: 1n, segment: 0, byte_offset: 0 },
+          },
+        };
+      },
+      getPruneStatus: async () => ({
+        pruning_enabled: false,
+        prune_running: false,
+        estimated_kept_bytes: 0n,
+        high_water_bytes: 0n,
+        low_water_bytes: 0n,
+        hard_emergency_bytes: 0n,
+        last_prune_at: 0n,
+        pruned_before_block: null,
+        oldest_kept_block: null,
+        oldest_kept_timestamp: null,
+        need_prune: false,
+      }),
+      getMetrics: async () => ({
+        txs: 0n,
+        ema_txs_per_block_x1000: 0n,
+        pruned_before_block: null,
+        ema_block_rate_per_sec_x1000: 0n,
+        total_submitted: 0n,
+        window: 128n,
+        avg_txs_per_block: 0n,
+        block_rate_per_sec_x1000: null,
+        cycles: 0n,
+        total_dropped: 0n,
+        blocks: 0n,
+        drop_counts: [],
+        queue_len: 0n,
+        total_included: 0n,
+      }),
+    };
+    await runWorkerWithDeps(config, db, client, { skipGc: true });
+    assert.deepEqual(cursors[1], { block_number: 1n, segment: 0, byte_offset: 0 });
+    const persisted = await db.getCursor();
+    assert.deepEqual(persisted, { block_number: 1n, segment: 0, byte_offset: 0 });
+  });
+  await originalClose();
+});
+
+test("runWorkerWithDeps clamps Pruned cursor to head when prune floor is ahead", async () => {
+  const db = await createTestIndexerDb();
+  const originalClose = db.close.bind(db);
+  (db as unknown as { close: () => Promise<void> }).close = async () => {};
+  await withTempDir(async (dir) => {
+    const config: Config = {
+      canisterId: "test-canister",
+      icHost: "http://127.0.0.1:4943",
+      databaseUrl: "postgres://unused",
+      dbPoolMax: 1,
+      retentionDays: 90,
+      retentionEnabled: false,
+      retentionDryRun: false,
+      archiveGcDeleteOrphans: false,
+      maxBytes: 1_200_000,
+      backoffInitialMs: 1,
+      backoffMaxMs: 2,
+      idlePollMs: 1,
+      pruneStatusPollMs: 0,
+      opsMetricsPollMs: 0,
+      fetchRootKey: false,
+      archiveDir: dir,
+      chainId: "test",
+      zstdLevel: 1,
+      maxSegment: 2,
+    };
+    await db.setCursor({ block_number: 50n, segment: 0, byte_offset: 0 });
+    const cursors: Array<{ block_number: bigint; segment: number; byte_offset: number } | null> = [];
+    let headCalls = 0;
+    let exportCalls = 0;
+    const client = {
+      getHeadNumber: async (): Promise<bigint> => {
+        headCalls += 1;
+        if (headCalls === 3) {
+          process.emit("SIGINT");
+        }
+        return 77n;
+      },
+      exportBlocks: async (
+        cursor: { block_number: bigint; segment: number; byte_offset: number } | null
+      ): Promise<
+        | {
+            Ok: {
+              chunks: Array<{ segment: number; start: number; bytes: Buffer; payload_len: number }>;
+              next_cursor: { block_number: bigint; segment: number; byte_offset: number };
+            };
+          }
+        | { Err: ExportError }
+      > => {
+        exportCalls += 1;
+        cursors.push(cursor);
+        if (exportCalls === 1) {
+          return { Err: { Pruned: { pruned_before_block: 120n } } };
+        }
+        return {
+          Ok: {
+            chunks: [],
+            next_cursor: cursor ?? { block_number: 77n, segment: 0, byte_offset: 0 },
+          },
+        };
+      },
+      getPruneStatus: async () => ({
+        pruning_enabled: false,
+        prune_running: false,
+        estimated_kept_bytes: 0n,
+        high_water_bytes: 0n,
+        low_water_bytes: 0n,
+        hard_emergency_bytes: 0n,
+        last_prune_at: 0n,
+        pruned_before_block: null,
+        oldest_kept_block: null,
+        oldest_kept_timestamp: null,
+        need_prune: false,
+      }),
+      getMetrics: async () => ({
+        txs: 0n,
+        ema_txs_per_block_x1000: 0n,
+        pruned_before_block: null,
+        ema_block_rate_per_sec_x1000: 0n,
+        total_submitted: 0n,
+        window: 128n,
+        avg_txs_per_block: 0n,
+        block_rate_per_sec_x1000: null,
+        cycles: 0n,
+        total_dropped: 0n,
+        blocks: 0n,
+        drop_counts: [],
+        queue_len: 0n,
+        total_included: 0n,
+      }),
+    };
+    await runWorkerWithDeps(config, db, client, { skipGc: true });
+    assert.deepEqual(cursors[1], { block_number: 77n, segment: 0, byte_offset: 0 });
+    const persisted = await db.getCursor();
+    assert.deepEqual(persisted, { block_number: 77n, segment: 0, byte_offset: 0 });
+  });
+  await originalClose();
+});
+
+test("runWorkerWithDeps bootstraps MissingData at block 1 instead of head", async () => {
+  const db = await createTestIndexerDb();
+  const originalClose = db.close.bind(db);
+  (db as unknown as { close: () => Promise<void> }).close = async () => {};
+  await withTempDir(async (dir) => {
+    const config: Config = {
+      canisterId: "test-canister",
+      icHost: "http://127.0.0.1:4943",
+      databaseUrl: "postgres://unused",
+      dbPoolMax: 1,
+      retentionDays: 90,
+      retentionEnabled: false,
+      retentionDryRun: false,
+      archiveGcDeleteOrphans: false,
+      maxBytes: 1_200_000,
+      backoffInitialMs: 1,
+      backoffMaxMs: 2,
+      idlePollMs: 1,
+      pruneStatusPollMs: 0,
+      opsMetricsPollMs: 0,
+      fetchRootKey: false,
+      archiveDir: dir,
+      chainId: "test",
+      zstdLevel: 1,
+      maxSegment: 2,
+    };
+    const cursors: Array<{ block_number: bigint; segment: number; byte_offset: number } | null> = [];
+    let headCalls = 0;
+    let exportCalls = 0;
+    const client = {
+      getHeadNumber: async (): Promise<bigint> => {
+        headCalls += 1;
+        if (headCalls === 3) {
+          process.emit("SIGINT");
+        }
+        return 25n;
+      },
+      exportBlocks: async (
+        cursor: { block_number: bigint; segment: number; byte_offset: number } | null
+      ): Promise<
+        | {
+            Ok: {
+              chunks: Array<{ segment: number; start: number; bytes: Buffer; payload_len: number }>;
+              next_cursor: { block_number: bigint; segment: number; byte_offset: number };
+            };
+          }
+        | { Err: ExportError }
+      > => {
+        exportCalls += 1;
+        cursors.push(cursor);
+        if (exportCalls === 1) {
+          return { Err: { MissingData: { message: "missing block 0" } } };
+        }
+        return {
+          Ok: {
+            chunks: [],
+            next_cursor: cursor ?? { block_number: 1n, segment: 0, byte_offset: 0 },
+          },
+        };
+      },
+      getPruneStatus: async () => ({
+        pruning_enabled: false,
+        prune_running: false,
+        estimated_kept_bytes: 0n,
+        high_water_bytes: 0n,
+        low_water_bytes: 0n,
+        hard_emergency_bytes: 0n,
+        last_prune_at: 0n,
+        pruned_before_block: null,
+        oldest_kept_block: null,
+        oldest_kept_timestamp: null,
+        need_prune: false,
+      }),
+      getMetrics: async () => ({
+        txs: 0n,
+        ema_txs_per_block_x1000: 0n,
+        pruned_before_block: null,
+        ema_block_rate_per_sec_x1000: 0n,
+        total_submitted: 0n,
+        window: 128n,
+        avg_txs_per_block: 0n,
+        block_rate_per_sec_x1000: null,
+        cycles: 0n,
+        total_dropped: 0n,
+        blocks: 0n,
+        drop_counts: [],
+        queue_len: 0n,
+        total_included: 0n,
+      }),
+    };
+    await runWorkerWithDeps(config, db, client, { skipGc: true });
+    assert.deepEqual(cursors[1], { block_number: 1n, segment: 0, byte_offset: 0 });
+  });
+  await originalClose();
+});
+
 test("runWorkerWithDeps exits on final cursor mismatch", async () => {
   const db = await createTestIndexerDb();
   const originalClose = db.close.bind(db);
@@ -399,6 +820,98 @@ test("runWorkerWithDeps exits on final cursor mismatch", async () => {
           Ok: {
             chunks,
             next_cursor: { block_number: 9n, segment: 0, byte_offset: 0 },
+          },
+        }),
+        getPruneStatus: async () => ({
+          pruning_enabled: false,
+          prune_running: false,
+          estimated_kept_bytes: 0n,
+          high_water_bytes: 0n,
+          low_water_bytes: 0n,
+          hard_emergency_bytes: 0n,
+          last_prune_at: 0n,
+          pruned_before_block: null,
+          oldest_kept_block: null,
+          oldest_kept_timestamp: null,
+          need_prune: false,
+        }),
+        getMetrics: async () => ({
+          txs: 0n,
+          ema_txs_per_block_x1000: 0n,
+          pruned_before_block: null,
+          ema_block_rate_per_sec_x1000: 0n,
+          total_submitted: 0n,
+          window: 128n,
+          avg_txs_per_block: 0n,
+          block_rate_per_sec_x1000: null,
+          cycles: 0n,
+          total_dropped: 0n,
+          blocks: 0n,
+          drop_counts: [],
+          queue_len: 0n,
+          total_included: 0n,
+        }),
+      };
+      process.exit = ((code?: number) => {
+        throw new Error(`EXIT_${code ?? 0}`);
+      }) as typeof process.exit;
+      await assert.rejects(() => runWorkerWithDeps(config, db, client, { skipGc: true }), /EXIT_1/);
+    });
+  } finally {
+    process.exit = originalExit;
+    await originalClose();
+  }
+});
+
+test("runWorkerWithDeps exits when decoded block number mismatches cursor", async () => {
+  const db = await createTestIndexerDb();
+  const originalClose = db.close.bind(db);
+  (db as unknown as { close: () => Promise<void> }).close = async () => {};
+  const originalExit = process.exit;
+  try {
+    await withTempDir(async (dir) => {
+      const config: Config = {
+        canisterId: "test-canister",
+        icHost: "http://127.0.0.1:4943",
+        databaseUrl: "postgres://unused",
+        dbPoolMax: 1,
+        retentionDays: 90,
+        retentionEnabled: false,
+        retentionDryRun: false,
+        archiveGcDeleteOrphans: false,
+        maxBytes: 1_200_000,
+        backoffInitialMs: 1,
+        backoffMaxMs: 2,
+        idlePollMs: 1,
+        pruneStatusPollMs: 0,
+        opsMetricsPollMs: 0,
+        fetchRootKey: false,
+        archiveDir: dir,
+        chainId: "test",
+        zstdLevel: 1,
+        maxSegment: 2,
+      };
+      await db.setCursor({ block_number: 10n, segment: 0, byte_offset: 0 });
+      const block12 = buildBlockPayload(12n, 10n, []);
+      const chunks = [
+        { segment: 0, start: 0, bytes: block12, payload_len: block12.length },
+        { segment: 1, start: 0, bytes: Buffer.alloc(0), payload_len: 0 },
+        { segment: 2, start: 0, bytes: Buffer.alloc(0), payload_len: 0 },
+      ];
+      const client = {
+        getHeadNumber: async (): Promise<bigint> => 20n,
+        exportBlocks: async (): Promise<
+          | {
+              Ok: {
+                chunks: Array<{ segment: number; start: number; bytes: Buffer; payload_len: number }>;
+                next_cursor: { block_number: bigint; segment: number; byte_offset: number };
+              };
+            }
+          | { Err: never }
+        > => ({
+          Ok: {
+            chunks,
+            next_cursor: { block_number: 13n, segment: 0, byte_offset: 0 },
           },
         }),
         getPruneStatus: async () => ({
@@ -695,6 +1208,103 @@ test("runWorkerWithDeps exits when cursor is null and stream cursor is not estab
     process.exit = originalExit;
     await originalClose();
   }
+});
+
+test("runWorkerWithDeps does not leak signal listeners after stop", async () => {
+  const db = await createTestIndexerDb();
+  const originalClose = db.close.bind(db);
+  (db as unknown as { close: () => Promise<void> }).close = async () => {};
+  const beforeSigInt = process.listenerCount("SIGINT");
+  const beforeSigTerm = process.listenerCount("SIGTERM");
+  const beforeUncaught = process.listenerCount("uncaughtException");
+  const beforeUnhandled = process.listenerCount("unhandledRejection");
+  try {
+    await withTempDir(async (dir) => {
+      const config: Config = {
+        canisterId: "test-canister",
+        icHost: "http://127.0.0.1:4943",
+        databaseUrl: "postgres://unused",
+        dbPoolMax: 1,
+        retentionDays: 90,
+        retentionEnabled: false,
+        retentionDryRun: false,
+        archiveGcDeleteOrphans: false,
+        maxBytes: 1_200_000,
+        backoffInitialMs: 1,
+        backoffMaxMs: 2,
+        idlePollMs: 1,
+        pruneStatusPollMs: 0,
+        opsMetricsPollMs: 0,
+        fetchRootKey: false,
+        archiveDir: dir,
+        chainId: "test",
+        zstdLevel: 1,
+        maxSegment: 2,
+      };
+      let headCalls = 0;
+      const client = {
+        getHeadNumber: async (): Promise<bigint> => {
+          headCalls += 1;
+          if (headCalls === 1) {
+            process.emit("SIGINT");
+          }
+          return 1n;
+        },
+        exportBlocks: async (
+          cursor: { block_number: bigint; segment: number; byte_offset: number } | null
+        ): Promise<
+          | {
+              Ok: {
+                chunks: Array<{ segment: number; start: number; bytes: Buffer; payload_len: number }>;
+                next_cursor: { block_number: bigint; segment: number; byte_offset: number };
+              };
+            }
+          | { Err: never }
+        > => ({
+          Ok: {
+            chunks: [],
+            next_cursor: cursor ?? { block_number: 1n, segment: 0, byte_offset: 0 },
+          },
+        }),
+        getPruneStatus: async () => ({
+          pruning_enabled: false,
+          prune_running: false,
+          estimated_kept_bytes: 0n,
+          high_water_bytes: 0n,
+          low_water_bytes: 0n,
+          hard_emergency_bytes: 0n,
+          last_prune_at: 0n,
+          pruned_before_block: null,
+          oldest_kept_block: null,
+          oldest_kept_timestamp: null,
+          need_prune: false,
+        }),
+        getMetrics: async () => ({
+          txs: 0n,
+          ema_txs_per_block_x1000: 0n,
+          pruned_before_block: null,
+          ema_block_rate_per_sec_x1000: 0n,
+          total_submitted: 0n,
+          window: 128n,
+          avg_txs_per_block: 0n,
+          block_rate_per_sec_x1000: null,
+          cycles: 0n,
+          total_dropped: 0n,
+          blocks: 0n,
+          drop_counts: [],
+          queue_len: 0n,
+          total_included: 0n,
+        }),
+      };
+      await runWorkerWithDeps(config, db, client, { skipGc: true });
+    });
+  } finally {
+    await originalClose();
+  }
+  assert.equal(process.listenerCount("SIGINT"), beforeSigInt);
+  assert.equal(process.listenerCount("SIGTERM"), beforeSigTerm);
+  assert.equal(process.listenerCount("uncaughtException"), beforeUncaught);
+  assert.equal(process.listenerCount("unhandledRejection"), beforeUnhandled);
 });
 
 test("archiveBlock reuses existing file", async () => {

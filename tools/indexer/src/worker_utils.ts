@@ -8,7 +8,7 @@ export function nextBackoff(current: number, max: number): number {
   return next > max ? max : next;
 }
 
-export function setupSignalHandlers(chainId: string, onStop: () => void): void {
+export function setupSignalHandlers(chainId: string, onStop: () => void): () => void {
   const handler = (signal: NodeJS.Signals) => {
     process.stderr.write(
       `${JSON.stringify({ ts_ms: Date.now(), level: "info", event: "signal", chain_id: chainId, pid: process.pid, signal })}\n`
@@ -17,15 +17,25 @@ export function setupSignalHandlers(chainId: string, onStop: () => void): void {
   };
   process.on("SIGINT", handler);
   process.on("SIGTERM", handler);
+  return () => {
+    process.off("SIGINT", handler);
+    process.off("SIGTERM", handler);
+  };
 }
 
-export function setupFatalHandlers(onFatal: (err: unknown) => void): void {
-  process.on("uncaughtException", (err) => {
+export function setupFatalHandlers(onFatal: (err: unknown) => void): () => void {
+  const uncaughtExceptionHandler = (err: unknown) => {
     onFatal(err);
-  });
-  process.on("unhandledRejection", (err) => {
+  };
+  const unhandledRejectionHandler = (err: unknown) => {
     onFatal(err);
-  });
+  };
+  process.on("uncaughtException", uncaughtExceptionHandler);
+  process.on("unhandledRejection", unhandledRejectionHandler);
+  return () => {
+    process.off("uncaughtException", uncaughtExceptionHandler);
+    process.off("unhandledRejection", unhandledRejectionHandler);
+  };
 }
 
 export function toDayKey(): number {
