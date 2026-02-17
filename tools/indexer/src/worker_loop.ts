@@ -20,6 +20,7 @@ import {
   nextBackoff,
   setupFatalHandlers,
   setupSignalHandlers,
+  toDayKey,
 } from "./worker_utils";
 import { classifyExportError } from "./worker_errors";
 import { commitPending } from "./worker_commit";
@@ -66,96 +67,151 @@ export async function runWorkerWithDeps(
   let lastOpsMetricsAt = 0;
   let lastSizeDay: number | null = null;
 
-  setupSignalHandlers(config.chainId, () => {
+  const teardownSignals = setupSignalHandlers(config.chainId, () => {
     stopRequested = true;
   });
-  setupFatalHandlers((err) => {
+  const teardownFatalHandlers = setupFatalHandlers((err) => {
     logFatal(config.chainId, "Unknown", cursor, lastHead, null, null, "uncaught", err);
     process.exit(1);
   });
 
-  for (;;) {
-    if (stopRequested) {
-      logInfo(config.chainId, "stop_requested", { message: "exiting loop" });
-      break;
-    }
-    let headNumber: bigint;
-    try {
-      headNumber = await client.getHeadNumber();
-    } catch (err) {
-      retryCount += 1;
-      logRetry(config.chainId, backoffMs, retryCount, "head_fetch_failed", err);
-      await sleep(backoffMs);
-      backoffMs = nextBackoff(backoffMs, config.backoffMaxMs);
-      continue;
-    }
-    lastHead = headNumber;
-
-    const nowMs = Date.now();
-    if (config.pruneStatusPollMs > 0 && nowMs - lastPruneStatusAt >= config.pruneStatusPollMs) {
-      lastPruneStatusAt = nowMs;
-      try {
-        const status = await client.getPruneStatus();
-        const payload = { v: 1, fetched_at_ms: nowMs, status };
-        await db.transaction(async (client) => {
-          await client.query(
-            "INSERT INTO meta(key, value) VALUES($1, $2) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-            ["prune_status", jsonStringifyBigInt(payload)]
-          );
-          await client.query(
-            "INSERT INTO meta(key, value) VALUES($1, $2) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-            ["prune_status_at", String(nowMs)]
-          );
-          await client.query(
-            "INSERT INTO meta(key, value) VALUES($1, $2) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-            ["need_prune", status.need_prune ? "1" : "0"]
-          );
-        });
-      } catch (err) {
-        logWarn(config.chainId, "prune_status_failed", {
-          poll_ms: config.pruneStatusPollMs,
-          err: errMessage(err),
-        });
+  try {
+    for (;;) {
+      if (stopRequested) {
+        logInfo(config.chainId, "stop_requested", { message: "exiting loop" });
+        break;
       }
-    }
-
-    if (config.opsMetricsPollMs > 0 && nowMs - lastOpsMetricsAt >= config.opsMetricsPollMs) {
-      lastOpsMetricsAt = nowMs;
+      let headNumber: bigint;
       try {
-        const metrics = await client.getMetrics(128n);
-        const retentionCutoffMs = BigInt(nowMs) - 14n * 24n * 60n * 60n * 1000n;
-        await db.addOpsMetricsSample({
-          sampledAtMs: BigInt(nowMs),
-          queueLen: metrics.queue_len,
-          totalSubmitted: metrics.total_submitted,
-          totalIncluded: metrics.total_included,
-          totalDropped: metrics.total_dropped,
-          dropCountsJson: jsonStringifyBigInt(metrics.drop_counts),
-          retentionCutoffMs,
-        });
+        headNumber = await client.getHeadNumber();
       } catch (err) {
-        logWarn(config.chainId, "ops_metrics_failed", {
-          poll_ms: config.opsMetricsPollMs,
-          err: errMessage(err),
-        });
+        retryCount += 1;
+        logRetry(config.chainId, backoffMs, retryCount, "head_fetch_failed", err);
+        await sleep(backoffMs);
+        backoffMs = nextBackoff(backoffMs, config.backoffMaxMs);
+        continue;
       }
-    }
-    let result: Result<ExportResponse, ExportError>;
-    try {
-      result = await client.exportBlocks(cursor, config.maxBytes);
-    } catch (err) {
-      retryCount += 1;
-      logRetry(config.chainId, backoffMs, retryCount, "export_blocks_failed", err);
-      await sleep(backoffMs);
-      backoffMs = nextBackoff(backoffMs, config.backoffMaxMs);
-      continue;
-    }
+      lastHead = headNumber;
 
-    if ("Err" in result) {
-      // canisterのcursor未指定は block 0 から始まるが、block 0 は export対象外で
-      // MissingData になる場合がある。初回同期時は最小有効ブロックへbootstrapして継続する。
-      if (!cursor && "MissingData" in result.Err) {
-        if (headNumber === 0n) {
+      const nowMs = Date.now();
+      if (config.pruneStatusPollMs > 0 && nowMs - lastPruneStatusAt >= config.pruneStatusPollMs) {
+        lastPruneStatusAt = nowMs;
+        try {
+          const status = await client.getPruneStatus();
+          const payload = { v: 1, fetched_at_ms: nowMs, status };
+          await db.transaction(async (client) => {
+            await client.query(
+              "INSERT INTO meta(key, value) VALUES($1, $2) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+              ["prune_status", jsonStringifyBigInt(payload)]
+            );
+            await client.query(
+              "INSERT INTO meta(key, value) VALUES($1, $2) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+              ["prune_status_at", String(nowMs)]
+            );
+            await client.query(
+              "INSERT INTO meta(key, value) VALUES($1, $2) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+              ["need_prune", status.need_prune ? "1" : "0"]
+            );
+          });
+        } catch (err) {
+          logWarn(config.chainId, "prune_status_failed", {
+            poll_ms: config.pruneStatusPollMs,
+            err: errMessage(err),
+          });
+        }
+      }
+
+      if (config.opsMetricsPollMs > 0 && nowMs - lastOpsMetricsAt >= config.opsMetricsPollMs) {
+        lastOpsMetricsAt = nowMs;
+        try {
+          const metrics = await client.getMetrics(128n);
+          const retentionCutoffMs = BigInt(nowMs) - 14n * 24n * 60n * 60n * 1000n;
+          await db.addOpsMetricsSample({
+            sampledAtMs: BigInt(nowMs),
+            queueLen: metrics.queue_len,
+            totalSubmitted: metrics.total_submitted,
+            totalIncluded: metrics.total_included,
+            totalDropped: metrics.total_dropped,
+            dropCountsJson: jsonStringifyBigInt(metrics.drop_counts),
+            retentionCutoffMs,
+          });
+        } catch (err) {
+          logWarn(config.chainId, "ops_metrics_failed", {
+            poll_ms: config.opsMetricsPollMs,
+            err: errMessage(err),
+          });
+        }
+      }
+      let result: Result<ExportResponse, ExportError>;
+      try {
+        result = await client.exportBlocks(cursor, config.maxBytes);
+      } catch (err) {
+        retryCount += 1;
+        logRetry(config.chainId, backoffMs, retryCount, "export_blocks_failed", err);
+        await sleep(backoffMs);
+        backoffMs = nextBackoff(backoffMs, config.backoffMaxMs);
+        continue;
+      }
+
+      if ("Err" in result) {
+        if ("Pruned" in result.Err) {
+          if (headNumber === 0n) {
+            retryCount = 0;
+            const idleSleep = config.idlePollMs;
+            logIdle(config.chainId, cursor, headNumber, idleSleep, lastIdleLogAt, (ts) => {
+              lastIdleLogAt = ts;
+            });
+            await sleep(idleSleep);
+            backoffMs = config.backoffInitialMs;
+            continue;
+          }
+          cursor = cursorFromPruned(result.Err.Pruned.pruned_before_block, headNumber);
+          pending = null;
+          retryCount = 0;
+          backoffMs = config.backoffInitialMs;
+          try {
+            await db.setCursor(cursor);
+          } catch (err) {
+            logWarn(config.chainId, "pruned_rebase_cursor_persist_failed", { err: errMessage(err) });
+          }
+          try {
+            await recordPrunedRebase(db);
+          } catch (err) {
+            logWarn(config.chainId, "pruned_rebase_metrics_failed", { err: errMessage(err) });
+          }
+          logWarn(config.chainId, "bootstrap_cursor_from_pruned", {
+            head: headNumber.toString(),
+            pruned_before_block: result.Err.Pruned.pruned_before_block.toString(),
+            next_cursor: `${cursor.block_number.toString()}:0:0`,
+          });
+          continue;
+        }
+        // canisterのcursor未指定は block 0 から始まるが、block 0 は export対象外で
+        // MissingData になる場合がある。初回同期時は最小有効ブロックへbootstrapして継続する。
+        if (!cursor && "MissingData" in result.Err) {
+          if (headNumber === 0n) {
+            retryCount = 0;
+            const idleSleep = config.idlePollMs;
+            logIdle(config.chainId, cursor, headNumber, idleSleep, lastIdleLogAt, (ts) => {
+              lastIdleLogAt = ts;
+            });
+            await sleep(idleSleep);
+            backoffMs = config.backoffInitialMs;
+            continue;
+          }
+          cursor = await bootstrapCursorFromMissingData(client, headNumber, config.chainId);
+          logWarn(config.chainId, "bootstrap_cursor_from_missing_data", {
+            head: headNumber.toString(),
+            next_cursor: `${cursor.block_number.toString()}:0:0`,
+          });
+          continue;
+        }
+        const classified = await classifyExportError(result.Err, db);
+        logFatal(config.chainId, classified.kind, cursor, headNumber, null, null, classified.message);
+        process.exit(1);
+      } else {
+        const response = result.Ok;
+        if (response.chunks.length === 0) {
           retryCount = 0;
           const idleSleep = config.idlePollMs;
           logIdle(config.chainId, cursor, headNumber, idleSleep, lastIdleLogAt, (ts) => {
@@ -165,56 +221,34 @@ export async function runWorkerWithDeps(
           backoffMs = config.backoffInitialMs;
           continue;
         }
-        cursor = await bootstrapCursorFromMissingData(client, headNumber, config.chainId);
-        logWarn(config.chainId, "bootstrap_cursor_from_missing_data", {
-          head: headNumber.toString(),
-          next_cursor: `${cursor.block_number.toString()}:0:0`,
-        });
-        continue;
-      }
-      const classified = await classifyExportError(result.Err, db);
-      logFatal(config.chainId, classified.kind, cursor, headNumber, null, null, classified.message);
-      process.exit(1);
-    } else {
-      const response = result.Ok;
-      if (response.chunks.length === 0) {
-        retryCount = 0;
-        const idleSleep = config.idlePollMs;
-        logIdle(config.chainId, cursor, headNumber, idleSleep, lastIdleLogAt, (ts) => {
-          lastIdleLogAt = ts;
-        });
-        await sleep(idleSleep);
         backoffMs = config.backoffInitialMs;
-        continue;
-      }
-      backoffMs = config.backoffInitialMs;
-      retryCount = 0;
-      lastIdleLogAt = 0;
-      if (totalChunkBytes(response.chunks) > config.maxBytes) {
-        logFatal(
-          config.chainId,
-          "InvalidCursor",
-          cursor,
-          headNumber,
-          response,
-          null,
-          "chunk bytes exceed max_bytes"
-        );
-        process.exit(1);
-      }
+        retryCount = 0;
+        lastIdleLogAt = 0;
+        if (totalChunkBytes(response.chunks) > config.maxBytes) {
+          logFatal(
+            config.chainId,
+            "InvalidCursor",
+            cursor,
+            headNumber,
+            response,
+            null,
+            "chunk bytes exceed max_bytes"
+          );
+          process.exit(1);
+        }
 
-      if (!response.next_cursor) {
-        logFatal(
-          config.chainId,
-          "InvalidCursor",
-          cursor,
-          headNumber,
-          response,
-          null,
-          "missing next_cursor"
-        );
-        process.exit(1);
-      }
+        if (!response.next_cursor) {
+          logFatal(
+            config.chainId,
+            "InvalidCursor",
+            cursor,
+            headNumber,
+            response,
+            null,
+            "missing next_cursor"
+          );
+          process.exit(1);
+        }
 
       if (cursor) {
         try {
@@ -361,6 +395,8 @@ export async function runWorkerWithDeps(
         streamCursor.segment !== finalCursor.segment ||
         streamCursor.byte_offset !== finalCursor.byte_offset
       ) {
+        // next_cursorの正当性は「chunk streamの実消費結果と一致するか」で最終保証する。
+        // これにより、複数block同梱レスポンス(+N進行)も欠落なく安全に許容できる。
         logFatal(
           config.chainId,
           "InvalidCursor",
@@ -372,10 +408,13 @@ export async function runWorkerWithDeps(
         );
         process.exit(1);
       }
+      }
     }
+  } finally {
+    teardownSignals();
+    teardownFatalHandlers();
+    await db.close();
   }
-
-  await db.close();
 }
 
 async function bootstrapCursorFromMissingData(
@@ -399,4 +438,20 @@ async function bootstrapCursorFromMissingData(
     blockNumber = headNumber;
   }
   return { block_number: blockNumber, segment: 0, byte_offset: 0 };
+}
+
+function cursorFromPruned(prunedBeforeBlock: bigint, headNumber: bigint): Cursor {
+  let blockNumber = prunedBeforeBlock + 1n;
+  if (blockNumber < 1n) {
+    blockNumber = 1n;
+  }
+  if (blockNumber > headNumber) {
+    blockNumber = headNumber;
+  }
+  return { block_number: blockNumber, segment: 0, byte_offset: 0 };
+}
+
+async function recordPrunedRebase(db: IndexerDb): Promise<void> {
+  await db.setMeta("last_error", "Pruned");
+  await db.addMetrics(toDayKey(), 0, 0, 0, 1);
 }

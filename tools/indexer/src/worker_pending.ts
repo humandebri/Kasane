@@ -140,6 +140,9 @@ export function enforceNextCursor(response: ExportResponse, cursor: Cursor, maxS
   if (nextBlock < cursor.block_number) {
     throw new Error("next_cursor block_number regressed");
   }
+  // +N進行の最終妥当性は worker_loop 側の
+  // 「consumed stream cursor === response.next_cursor」で検証する。
+  // ここでは逆行・不一致のみを弾いて、複数block同梱レスポンスを壊さない。
   if (nextBlock === cursor.block_number) {
     const nextSegment = response.next_cursor.segment;
     const nextOffset = response.next_cursor.byte_offset;
