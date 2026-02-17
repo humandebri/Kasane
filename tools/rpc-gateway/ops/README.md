@@ -40,3 +40,24 @@ sudo systemctl status 'receipt-watch@0x<tx_hash>.service'
 1. 送信処理が tx hash を取得
 2. 取得後すぐ `receipt-watch@<tx_hash>.service` を起動
 3. 失敗時は `journalctl -u receipt-watch@<tx_hash>.service` で確認
+
+## 4. 起動元の固定（推奨）
+
+送信系ジョブからの起動を統一するため、補助スクリプト `start_receipt_watch.sh` を使います。
+
+```bash
+cd /opt/ic-op/tools/rpc-gateway
+./ops/start_receipt_watch.sh 0x<tx_hash>
+```
+
+- tx hash は `0x` + 64hex のみ受け付けます。
+- スクリプトは `systemctl start receipt-watch@<tx_hash>.service` を実行し、直後の status を表示します。
+
+## 5. 環境ファイル運用（Contabo）
+
+`/opt/ic-op/tools/.../.env.local` はデプロイ同期で消える可能性があるため、systemd は `/etc/ic-op/*.env` を参照します。
+
+- `rpc-gateway.service` -> `/etc/ic-op/rpc-gateway.env`
+- `ic-op-indexer.service` -> `/etc/ic-op/indexer.env`
+- `ic-op-explorer.service` -> `/etc/ic-op/explorer.env`
+- `receipt-watch@.service` -> `/etc/default/receipt-watch`（`ALERT_WEBHOOK_URL`）
