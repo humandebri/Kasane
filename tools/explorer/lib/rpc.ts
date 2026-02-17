@@ -10,6 +10,7 @@ export type LookupError = { NotFound: null } | { Pending: null } | { Pruned: { p
 type Result<T, E> = { Ok: T } | { Err: E };
 type ResultBytes = Result<Uint8Array, string>;
 type ResultNonce = Result<bigint, string>;
+type ResultRpcCall = Result<RpcCallResultView, RpcErrorView>;
 
 export type LogView = { address: Uint8Array; topics: Uint8Array[]; data: Uint8Array };
 export type ReceiptView = {
@@ -29,6 +30,16 @@ export type ReceiptView = {
 };
 
 export type TxKindView = { EthSigned: null } | { IcSynthetic: null };
+export type RpcTxDecodedView = {
+  from: Uint8Array;
+  to: [] | [Uint8Array];
+  value: Uint8Array;
+  input: Uint8Array;
+  nonce: bigint;
+  gas_limit: bigint;
+  gas_price: bigint;
+  chain_id: [] | [bigint];
+};
 export type RpcTxView = {
   kind: TxKindView;
   hash: Uint8Array;
@@ -37,7 +48,7 @@ export type RpcTxView = {
   eth_tx_hash: [] | [Uint8Array];
   caller_principal: [] | [Uint8Array];
   decode_ok: boolean;
-  decoded: [] | [unknown];
+  decoded: [] | [RpcTxDecodedView];
   raw: Uint8Array;
 };
 
@@ -47,6 +58,9 @@ export type EthBlockView = {
   state_root: Uint8Array;
   number: bigint;
   timestamp: bigint;
+  gas_limit: [] | [bigint];
+  gas_used: [] | [bigint];
+  base_fee_per_gas: [] | [bigint];
   txs: { Full: RpcTxView[] } | { Hashes: Uint8Array[] };
 };
 
@@ -122,6 +136,38 @@ export type EthReceiptView = {
   logs: Array<{ log_index: number; address: Uint8Array; topics: Uint8Array[]; data: Uint8Array }>;
 };
 
+export type RpcAccessListItemView = {
+  address: Uint8Array;
+  storage_keys: Uint8Array[];
+};
+
+export type RpcCallObjectView = {
+  to: [] | [Uint8Array];
+  gas: [] | [bigint];
+  value: [] | [Uint8Array];
+  max_priority_fee_per_gas: [] | [bigint];
+  data: [] | [Uint8Array];
+  from: [] | [Uint8Array];
+  max_fee_per_gas: [] | [bigint];
+  chain_id: [] | [bigint];
+  nonce: [] | [bigint];
+  tx_type: [] | [bigint];
+  access_list: [] | [RpcAccessListItemView[]];
+  gas_price: [] | [bigint];
+};
+
+export type RpcCallResultView = {
+  status: number;
+  return_data: Uint8Array;
+  gas_used: bigint;
+  revert_data: [] | [Uint8Array];
+};
+
+export type RpcErrorView = {
+  code: number;
+  message: string;
+};
+
 export type PendingStatusView =
   | { Queued: { seq: bigint } }
   | { Included: { block_number: bigint; tx_index: number } }
@@ -152,6 +198,7 @@ type ExplorerActorMethods = {
   rpc_eth_get_balance: (address: Uint8Array) => Promise<ResultBytes>;
   rpc_eth_get_code: (address: Uint8Array) => Promise<ResultBytes>;
   expected_nonce_by_address: (address: Uint8Array) => Promise<ResultNonce>;
+  rpc_eth_call_object: (call: RpcCallObjectView) => Promise<ResultRpcCall>;
 };
 
 let cachedActor: ExplorerActorMethods | null = null;
@@ -237,6 +284,10 @@ export async function getRpcExpectedNonce(address: Uint8Array): Promise<bigint> 
     throw new Error(out.Err);
   }
   return out.Ok;
+}
+
+export async function getRpcCallObject(call: RpcCallObjectView): Promise<ResultRpcCall> {
+  return (await getActor()).rpc_eth_call_object(call);
 }
 
 async function getActor(): Promise<ExplorerActorMethods> {
@@ -373,6 +424,31 @@ const idlFactory: IDL.InterfaceFactory = ({ IDL }) => {
     PossiblyPruned: IDL.Record({ pruned_before_block: IDL.Nat64 }),
     Pruned: IDL.Record({ pruned_before_block: IDL.Nat64 }),
   });
+  const rpcAccessListItemView = IDL.Record({
+    storage_keys: IDL.Vec(IDL.Vec(IDL.Nat8)),
+    address: IDL.Vec(IDL.Nat8),
+  });
+  const rpcCallObjectView = IDL.Record({
+    to: IDL.Opt(IDL.Vec(IDL.Nat8)),
+    gas: IDL.Opt(IDL.Nat64),
+    value: IDL.Opt(IDL.Vec(IDL.Nat8)),
+    max_priority_fee_per_gas: IDL.Opt(IDL.Nat),
+    data: IDL.Opt(IDL.Vec(IDL.Nat8)),
+    from: IDL.Opt(IDL.Vec(IDL.Nat8)),
+    max_fee_per_gas: IDL.Opt(IDL.Nat),
+    chain_id: IDL.Opt(IDL.Nat64),
+    nonce: IDL.Opt(IDL.Nat64),
+    tx_type: IDL.Opt(IDL.Nat64),
+    access_list: IDL.Opt(IDL.Vec(rpcAccessListItemView)),
+    gas_price: IDL.Opt(IDL.Nat),
+  });
+  const rpcCallResultView = IDL.Record({
+    status: IDL.Nat8,
+    return_data: IDL.Vec(IDL.Nat8),
+    gas_used: IDL.Nat64,
+    revert_data: IDL.Opt(IDL.Vec(IDL.Nat8)),
+  });
+  const rpcErrorView = IDL.Record({ code: IDL.Nat32, message: IDL.Text });
 
   return IDL.Service({
     rpc_eth_block_number: IDL.Func([], [IDL.Nat64], ["query"]),
@@ -384,6 +460,7 @@ const idlFactory: IDL.InterfaceFactory = ({ IDL }) => {
     rpc_eth_get_block_by_number: IDL.Func([IDL.Nat64, IDL.Bool], [IDL.Opt(ethBlockView)], ["query"]),
     rpc_eth_get_code: IDL.Func([IDL.Vec(IDL.Nat8)], [IDL.Variant({ Ok: IDL.Vec(IDL.Nat8), Err: IDL.Text })], ["query"]),
     rpc_eth_get_logs_paged: IDL.Func([ethLogFilterView, IDL.Opt(ethLogsCursorView), IDL.Nat32], [IDL.Variant({ Ok: ethLogsPageView, Err: getLogsErrorView })], ["query"]),
+    rpc_eth_call_object: IDL.Func([rpcCallObjectView], [IDL.Variant({ Ok: rpcCallResultView, Err: rpcErrorView })], ["query"]),
     rpc_eth_get_transaction_by_tx_id: IDL.Func([IDL.Vec(IDL.Nat8)], [IDL.Opt(rpcTxView)], ["query"]),
     rpc_eth_get_transaction_by_eth_hash: IDL.Func([IDL.Vec(IDL.Nat8)], [IDL.Opt(rpcTxView)], ["query"]),
     rpc_eth_get_transaction_receipt_with_status: IDL.Func([IDL.Vec(IDL.Nat8)], [rpcReceiptLookupView], ["query"]),
