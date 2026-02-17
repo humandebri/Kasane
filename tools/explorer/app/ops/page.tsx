@@ -30,8 +30,8 @@ export default async function OpsPage() {
                 }))}
               />
               <div className="flex items-center justify-between text-xs text-slate-500">
-                <span>min: {formatBigInt(getCyclesMin(data.series))}</span>
-                <span>max: {formatBigInt(getCyclesMax(data.series))}</span>
+                <span>min: {formatCyclesT(getCyclesMin(data.series))}</span>
+                <span>max: {formatCyclesT(getCyclesMax(data.series))}</span>
               </div>
             </div>
           )}
@@ -134,6 +134,17 @@ function formatTimestamp(value: bigint | null): string {
   const n = Number(value);
   if (!Number.isFinite(n)) return "N/A";
   return new Date(n).toLocaleString();
+}
+
+function formatCyclesT(value: bigint | null): string {
+  if (value === null) {
+    return "N/A";
+  }
+  const trillion = 1_000_000_000_000n;
+  const integer = value / trillion;
+  const fraction = value % trillion;
+  const fractionText = fraction.toString().padStart(12, "0").slice(0, 4);
+  return `${integer.toString()}.${fractionText} T`;
 }
 
 function getCyclesMin(series: Array<{ cycles: bigint }>): bigint | null {

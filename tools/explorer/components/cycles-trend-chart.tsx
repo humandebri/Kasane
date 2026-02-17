@@ -2,7 +2,7 @@
 
 // どこで: OpsページのCycles Trend / 何を: lightweight-chartsで見やすい時系列ラインを描画 / なぜ: 既存SVGより操作性と可読性を上げるため
 
-import { ColorType, LineSeries, createOptionsChart } from "lightweight-charts";
+import { ColorType, LineSeries, createChart } from "lightweight-charts";
 import { useEffect, useMemo, useRef } from "react";
 
 type CyclesTrendPoint = {
@@ -13,6 +13,8 @@ type CyclesTrendPoint = {
 type Props = {
   points: CyclesTrendPoint[];
 };
+
+const CYCLES_TRILLION_DIVISOR = 1_000_000_000_000;
 
 export function CyclesTrendChart({ points }: Props) {
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -37,11 +39,12 @@ export function CyclesTrendChart({ points }: Props) {
       return;
     }
 
-    const chart = createOptionsChart(container, {
+    const chart = createChart(container, {
       width: container.clientWidth,
       height: 180,
       localization: {
         timeFormatter: (value: number) => formatLocalDateTimeSec(value),
+        priceFormatter: (value: number) => formatCyclesTrillion(value),
       },
       layout: {
         background: { color: "#ffffff", type: ColorType.Solid },
@@ -56,7 +59,7 @@ export function CyclesTrendChart({ points }: Props) {
       },
       timeScale: {
         borderColor: "#cbd5e1",
-        timeVisible: false,
+        timeVisible: true,
         secondsVisible: false,
       },
       handleScroll: {
@@ -74,6 +77,8 @@ export function CyclesTrendChart({ points }: Props) {
       lastValueVisible: true,
       priceLineVisible: true,
     });
+    // lightweight-charts の Time はブランド型だが、実行時は UNIX 秒(number)で問題なく描画される。
+    // @ts-expect-error Runtime accepts unix-seconds numeric timestamps for time values.
     line.setData(chartData);
     chart.timeScale().fitContent();
 
@@ -100,4 +105,11 @@ function formatLocalDateTimeSec(value: number): string {
     return "";
   }
   return new Date(value * 1000).toLocaleString();
+}
+
+function formatCyclesTrillion(value: number): string {
+  if (!Number.isFinite(value)) {
+    return "0.0000 T";
+  }
+  return `${(value / CYCLES_TRILLION_DIVISOR).toFixed(4)} T`;
 }
