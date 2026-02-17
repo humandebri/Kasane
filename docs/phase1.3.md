@@ -88,7 +88,7 @@ max_fee_per_gas >= base_fee + min_priority_fee_per_gas を要求（重要）
 PR8の署名検証責務境界は `docs/specs/pr8-signature-boundary.md` を正本とする。
 
 **reject = submit 時点で判定できるためキューに入れない**  
-**drop = キュー投入後、produce_block 時点で判定される失敗**
+**drop = キュー投入後、auto-mine 時点で判定される失敗**
 
 EIP-1559 の min fee 未満は **reject** に寄せる。
 
@@ -100,7 +100,7 @@ gas_limit >= intrinsic_gas(tx)（最低ガス）
 
 上の min fee 条件
 
-動的にしか分からないものは produce_block 時点で弾く：
+動的にしか分からないものは auto-mine 時点で弾く：
 
 balance >= value + gas_limit * effective
 
@@ -193,7 +193,7 @@ pending_min_nonce: StableBTreeMap<sender, nonce>（そのsenderの最小nonceを
 
 同一入力なら同じ tx が入るように、**取り出し順序とパッキング判定**を明文化する。
 
-produce_block の流れ（推奨アルゴリズム）
+auto-mine の流れ（推奨アルゴリズム）
 
 ready_queue から最高優先を pop
 

@@ -36,7 +36,7 @@
 **禁止**: queryで直近Nブロックを都度走査して集計する方式。  
 運用期間が伸びるとqueryコストが確実に上がるため、仕様で禁止する。
 
-**推奨仕様**: `produce_block`（update）で集計を進め、queryは読むだけにする。
+**推奨仕様**: `auto-mine`（update）で集計を進め、queryは読むだけにする。
 
 * `tip_height`
 * `last_block_time`
@@ -49,10 +49,10 @@
 
 ### 1.2 ログ（update / timer で出す理由）
 
-`produce_block` は **update 呼び出し**か **timerコールバック**でしか走らない。
+`auto-mine` は **update 呼び出し**か **timerコールバック**でしか走らない。
 query では状態更新ができないため、ログは update/timer に集約するのが自然。
 
-* produce_block: start/end/tx_count/reject_count
+* auto-mine: start/end/tx_count/reject_count
 * drop_code別のカウント
 * upgrade/post_upgrade
 * タイマー再スケジュール
@@ -79,7 +79,7 @@ queryで毎回「正確な cycles」を取得できる前提にしない。
   * 将来、手数料並べ替えを導入する場合は **決定的キー**
     （`effective_gas_price DESC`, `seq ASC`）を仕様として固定する
 * timestamp規則: **head.timestamp + 1**
-  * `produce_block` を呼ばない間は進まない（空ブロックを作らない）
+  * `auto-mine` を呼ばない間は進まない（空ブロックを作らない）
   * 空ブロックを生成してタイムスタンプだけ進める仕様ではない
 * reject理由: drop_code を一覧化して仕様に固定
 * upgrade中: is_producing/mining_scheduled は post_upgrade で false に戻す
@@ -100,7 +100,7 @@ drop_code（現行実装の一覧）:
 ### 2.1 reject と drop の発生場所（用語固定）
 
 * **reject**: submit 時点の拒否（キューに入らない）
-* **drop**: キュー投入後の失敗（produce_block 時に判定）
+* **drop**: キュー投入後の失敗（auto-mine 時に判定）
 
 reject/drop を混在させないことで、queue長・reject率の解釈を安定させる。
 
@@ -158,7 +158,7 @@ Option 2（暫定案）: **最新 N ブロックのみ保持（pruning）**
 
 任意案:
 
-* `maybe_prune()` を `produce_block` 後に**少しだけ**回す（分割GCとして）
+* `maybe_prune()` を `auto-mine` 後に**少しだけ**回す（分割GCとして）
 
 **テスト観点**:
 

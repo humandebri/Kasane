@@ -92,7 +92,7 @@ START_PAGE=131072 SKIP_DEPLOY=1 scripts/profile_heap_trace.sh
 - 最終判断は staging canister で行う（local は候補絞り込み）。
 
 評価指標:
-- `produce_block` 成否
+- `auto-mine` 成否
 - 1ブロック処理時間
 - cycles差分
 - drop率
@@ -153,7 +153,7 @@ scripts/sync_vendor_revm.sh /Users/you/path/to/main/repo
 - 設定ファイル: `canbench.yml`
 - 追加ベンチ:
   - `submit_ic_tx_path`
-  - `produce_block_path`
+  - `auto-mine_path`
   - `decode_ic_synthetic_header_path`
   - `decode_eth_signature_path`
   - `decode_eth_unsupported_typed_reject_path`

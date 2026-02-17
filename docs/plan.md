@@ -44,13 +44,13 @@ stable state versioning（upgrade耐性）
 
 1.2 実行API（submit中心）
 
-同期即時実行レーンは廃止し、書き込みは submit_* + produce_block に統一する。
+同期即時実行レーンは廃止し、書き込みは submit_* + auto-mine に統一する。
 
 update submit_ic_tx(...) -> tx_id
 update rpc_eth_send_raw_transaction(raw_tx) -> tx_id
-update produce_block(max_txs) -> ProduceBlockStatus
+（旧案・廃止）update 手動採掘API(max_txs) -> ProduceBlockStatus
 
-※ 同期実行APIは提供しない。書き込みは `submit_* + produce_block` に統一する。
+※ 同期実行APIは提供しない。書き込みは `submit_* + auto-mine` に統一する。
 
 1.3 最小のブロック/Tx/Receipt保存
 
@@ -120,7 +120,7 @@ IIガスレス標準：IIログイン→ERC20/NFT操作がボタンで完了
 
 サンプルdapp（フロント＋ICP canister＋EVM contract）
 
-SDK（TSで submit_ic_tx + produce_block を叩く薄いクライアント）
+SDK（TSで submit_ic_tx + auto-mine を叩く薄いクライアント）
 
 Phase 3: L1アンカー＋trusted bridge（L2“体験”フェーズ）
 

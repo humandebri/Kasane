@@ -5,7 +5,7 @@ Phase1の目的
 
 Route A（Eth署名raw tx）/ Route B（IC合成Tx）の 実行
 
-FIFO順に ブロック化（produce_block or execute_*）
+FIFO順に ブロック化（auto-mine or execute_*）
 
 REVMで順に 実行→state更新→stable永続化
 
@@ -28,15 +28,15 @@ logsの完全互換（receiptは最小でOK）
 
 Phase1でどっちを採るかを明確化しておくのが重要です。
 
-A案（採用）：submit系 + produce_block だけ（同期即時レーンを廃止）
+A案（採用）：submit系 + auto-mine だけ（同期即時レーンを廃止）
 
 rpc_eth_send_raw_transaction(raw_tx) -> tx_id
 submit_ic_tx(tx_bytes) -> tx_id
-produce_block(max_txs) -> ProduceBlockStatus
+（旧案・廃止）手動採掘API -> ProduceBlockStatus
 
 submit_ic_tx(...) -> tx_id
 
-produce_block(max_txs) -> block_number
+自動採掘（timer）で block が進行
 
 どのみちPhase2以降で “SDKから叩ける” が必要になるので、個人的にはA案で良い。
 
@@ -274,7 +274,7 @@ REVM実行revert：ブロックに含める＋status=0（EVM的）
 
 9.4 canister API
 
- submit_* + produce_block（唯一の標準書き込み導線）
+ submit_* + auto-mine（唯一の標準書き込み導線）
 
  query get_block/get_receipt/eth_call_like
 
@@ -323,7 +323,7 @@ max_tx_size / max_gas_per_tx / max_code_size が効く
 - dfx canister install <canister> --mode reinstall --wasm target/wasm32-unknown-unknown/release/ic_evm_wrapper.candid.wasm --argument "$INIT_ARGS"
 - 運用の資金配布は `InitArgs.genesis_balances` のみを使用する
 - dfx canister call <canister> submit_tx '(blob "<raw_eip2718_tx>")'
-- dfx canister call <canister> produce_block '(1:nat)'
+- （旧案・廃止）dfx canister call <canister> 手動採掘API '(1:nat)'
 - dfx canister call <canister> get_block '(0:nat)' / get_receipt
 
 旧データ混入の起動確認（最低1回）:

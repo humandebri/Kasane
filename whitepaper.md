@@ -58,7 +58,7 @@ flowchart LR
 ```
 
 ### 5.1 実行層
-- `produce_block` がmempoolから実行可能Txを選抜し、state root更新・receipt保存・block確定を行う。
+- `auto-mine` がmempoolから実行可能Txを選抜し、state root更新・receipt保存・block確定を行う。
 - `inspect_message` と本体updateの双方でanonymous拒否し、fail-closed運用。
 
 ### 5.2 データ層
@@ -78,7 +78,7 @@ flowchart LR
 ### 6.1 Tx取り扱い・ブロック生成
 - 入口Tx型: `EthSigned` / `IcSynthetic`。
 - `IcSynthetic` は caller principal / canister id / tx_bytes を保持する内部経路。
-- `produce_block(max_txs)` は権限制御付きで実行。
+- ブロック生成は自動採掘タイマーで実行（手動採掘APIは廃止）。
 
 ### 6.2 チェーン内最終性・フォールトモデル
 - チェーン確定はIC Synthesis（ICP subnet finality）を前提にする。
@@ -130,7 +130,7 @@ flowchart LR
 | prune途中クラッシュ | 継続再起動 | 影響なし | journal回復で前進 |
 
 ### 7.3 「外部DBはキャッシュ」の定義
-- 定義: 外部DB/Archiveが完全停止しても、`submit_*` / `produce_block` / state更新が継続できること。
+- 定義: 外部DB/Archiveが完全停止しても、`submit_*` / `auto-mine` / state更新が継続できること。
 - 根拠: chain正本はstable stateのみで完結し、pruneも外部ACK非依存。
 - 境界: 履歴参照の利便性は低下するが、コンセンサス状態は変化しない。
 
@@ -166,7 +166,7 @@ sequenceDiagram
 ```mermaid
 stateDiagram-v2
     [*] --> Pending
-    Pending --> Included: produce_block
+    Pending --> Included: auto-mine
     Included --> Exported: export_blocks
     Exported --> Indexed: DB commit + cursor
     Included --> Pruned: prune_tick

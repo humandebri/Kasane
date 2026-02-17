@@ -20,7 +20,6 @@
 運用メモ:
 - `eth_sendRawTransaction` の成功判定は submit結果ではなく `eth_getTransactionReceipt.status` で行う（`0x1` 成功 / `0x0` 失敗）。
 - nonce参照は `eth_getTransactionCount`（Gateway）または `expected_nonce_by_address`（canister query）を使用する。
-- Contabo の service 環境変数は `/etc/ic-op/*.env` に固定する（`/opt/ic-op/tools/**/.env.local` 非依存）。
 - testnet indexer の正式起点 cursor は `{"v":1,"block_number":"25","segment":0,"byte_offset":0}`（先頭履歴の `MissingData` 回避）。
 - `/ops` 監視閾値（固定）:
   - `failure_rate_warn >= 0.05`（10分継続）
@@ -69,7 +68,7 @@ Explorer の実装詳細（ルート一覧・lib層責務）は `tools/explorer/
   - wrapper が `msg_caller()` と `canister_self()` を付与して core の `TxIn::IcSynthetic` に渡す。
   - core が `IcSynthetic` としてデコード/fee/nonce を検証し、`tx_store`/queue/index に保存する。
   - 戻り値は `tx_id` のみ（この時点では未実行）。
-  - `produce_block` がキューから取り出して実行し、`receipt` を永続化する。
+  - `auto-production` がキューから取り出して実行し、`receipt` を永続化する。
 
 ```mermaid
 flowchart TD
@@ -77,7 +76,7 @@ flowchart TD
   B -->|"attach: msg_caller + canister_self"| C["Core (evm-core::submit_ic_tx)"]
   C -->|"decode + fee/nonce validation"| D["Persist: tx_store + queue + indexes"]
   D -->|"return tx_id"| A
-  A -->|"optional/manual: produce_block(n)"| E["Block Production"]
+  A -->|"timer(auto-production)"| E["Block Production"]
   E -->|"dequeue + execute EVM tx"| F["Persist receipt + block + tx_loc"]
   A -->|"query get_pending/get_receipt"| F
 ```
@@ -193,8 +192,8 @@ RAW_TX_BYTES=$(cargo run -q -p ic-evm-core --features local-signer-bin --bin eth
 SUBMIT_OUT=$(icp canister call -e ic --identity "$IDENTITY" "$CANISTER_ID" rpc_eth_send_raw_transaction "(vec { $RAW_TX_BYTES })")
 echo "$SUBMIT_OUT"
 
-# 実行確定（manual mining）
-icp canister call -e ic --identity "$IDENTITY" "$CANISTER_ID" produce_block '(1:nat32)'
+# 実行確定は自動採掘（必要なら block number を監視）
+icp canister call -e ic --identity "$IDENTITY" --query "$CANISTER_ID" rpc_eth_block_number '( )'
 ```
 
 - 詳細手順（`tx_id` 抽出と `get_receipt` まで）は `docs/api/rpc_eth_send_raw_transaction_payload.md` を参照。
@@ -208,7 +207,7 @@ icp canister call -e ic --identity "$IDENTITY" "$CANISTER_ID" produce_block '(1:
 - `eth_call` は raw tx 入力の `rpc_eth_call_rawtx` として公開する。
 - `rpc_eth_get_logs_paged` は `GetLogsErrorView` を返し、`RangeTooLarge` / `TooManyResults` / `UnsupportedFilter` / `InvalidArgument` を明示する。
 - `rpc_eth_get_logs_paged` の `limit=0` は `1` に正規化する（空ページ継続を防止）。
-- `ChainStateV1::new()` の `auto_mine_enabled` 既定値は `false`（手動採掘前提）。
+- `ChainStateV1::new()` の `auto_production_enabled` 既定値は `true`（タイマー駆動の自動ブロック生成が既定）。
 - storage書き込み失敗は `trap` でロールバックするため、canister内カウンタは残らない。一次監視は caller/indexer 側ログで行う。
 - デプロイ前の統合スモークは `scripts/predeploy_smoke.sh` を利用する。
 - デプロイ後の最小RPC確認は `scripts/mainnet/ic_mainnet_post_upgrade_smoke.sh` を利用する（`EVM_RPC_URL` と任意で `TEST_TX_HASH` を指定）。
@@ -220,7 +219,7 @@ icp canister call -e ic --identity "$IDENTITY" "$CANISTER_ID" produce_block '(1:
 
 本プロジェクトは、Internet Computer Protocol (ICP) の独自のアーキテクチャを最大限に活用し、高性能かつユニークなEVM（Ethereum Virtual Machine）互換環境をcanister上に構築することをビジョンとして掲げます。我々はICPの特性である同期的な関数呼び出しやcanister間のシームレスな連携能力を活かし、「ICPから呼び出して嬉しいEVM」という新たな価値を提供することを目指します。このアプローチは、単なるEthereumの拡張ではなく、ICPエコシステムとEVMエコシステムの双方に新たな可能性をもたらす戦略的選択です。
 このビジョンを実現するため、プロジェクト全体を導く基本方針として以下の3点を定めます。
-- 同期的な開発体験の提供 プロジェクトの核となる価値は、ICP canister からEVM実行結果に到達する導線を明確に保つ点にあります。現行実装では `submit_*` は非同期のキュー投入であり、実行結果（成功、失敗、返り値）は `produce_block` 後に receipt/参照API で確認します。この運用により、従来の非同期モデルに比べて実行フェーズの観測点を明示しやすく、ICP上のワークフローや他canisterとの連携にEVMロジックを組み込みやすくなります。
+- 同期的な開発体験の提供 プロジェクトの核となる価値は、ICP canister からEVM実行結果に到達する導線を明確に保つ点にあります。現行実装では `submit_*` は非同期のキュー投入であり、実行結果（成功、失敗、返り値）は `auto-production` 後に receipt/参照API で確認します。この運用により、従来の非同期モデルに比べて実行フェーズの観測点を明示しやすく、ICP上のワークフローや他canisterとの連携にEVMロジックを組み込みやすくなります。
 - RPCの戦略的ポジショニング 我々はHTTP JSON-RPCインターフェースを、敢えてEthereumノードの完全互換を目指すのではなく、「開発・デバッグ・外部ツール接続のための補助的なインターフェース」と位置づける戦略的判断を下します。このトレードオフにより、mempoolや複雑なフィルター機能といった実装負荷の高い仕様を意図的に後回しにし、開発リソースをプロジェクト独自の価値である同期実行体験の向上に集中させることができます。
 これらの戦略的アプローチは、プロジェクトを現実的かつ持続可能な形で推進するための羅針盤です。以降のセクションでは、この全体戦略に基づき、各開発フェーズにおける具体的な技術的決定と目標を詳述します。
 
@@ -281,7 +280,7 @@ Phase 0で確立した不変の土台の上に、submit/produceモデルでEVM�
 この同期実行体験を実現するため、高性能EVM実行エンジンであるREVMと、ICPの永続化ストレージであるStable Structuresを統合します。このアーキテクチャパターンでは、メモリ上のOverlayDBに変更をバッチし、「Committer」がそれを決定的な順序で永続化層に適用します。
 [REVM Engine] -> [Database Adapter (RevmStableDb)] <-> [OverlayDB (RAM)] -> [Committer] -> [StableBTreeMap (Stable Memory)]
 このパターンの具体的な実装がcrates/evm-core/src/revm_db.rsのRevmStableDbです。これはREVMのDatabaseトレイトを実装したアダプタであり、EVMの状態読み取りをStableBTreeMapにブリッジします。さらに、DatabaseCommitトレイトを実装することで、REVMの実行結果（状態差分）を受け取り、それを直接StableStateのマップ群に書き込むことで「Committer」の役割を果たします。
-この実行基盤を外部に公開する主要な書き込み導線は、crates/ic-evm-wrapper/src/lib.rsで定義されたsubmit_* + produce_blockです。これらのupdate callを通じて、内部ではcrates/evm-core/src/chain.rsの実行ロジックが段階的に適用されます。
+この実行基盤を外部に公開する主要な書き込み導線は、crates/ic-evm-wrapper/src/lib.rsで定義されたsubmit_* + auto-productionです。これらのupdate callを通じて、内部ではcrates/evm-core/src/chain.rsの実行ロジックが段階的に適用されます。
 1. 受け取ったトランザクションをデコードする。
 2. REVMエンジンを用いてトランザクションを実行し、状態変更をコミットする。
 3. 更新後の状態から新しいstate_rootを計算する。
@@ -304,7 +303,7 @@ ICPのcanisterは、コンセンサスを通じてすべてのレプリカが同
 このフェーズの完了は、以下の基準が満たされることで検証されます。
 - 同一トランザクション列の再現性: 同一のトランザクション列を複数回実行した際に、最終的なstate_rootが完全に一致すること。
 - アップグレード耐性: canisterをアップグレードした後も、既存の状態（アカウント、ストレージ、ブロック履歴）が破壊されず、正常に動作し続けること。
-- 書き込み導線の機能: submit_* + produce_block 経路で、トランザクションの成功（success）または失敗（revert）のステータスがreceipt経由で正しく取得できること。
+- 書き込み導線の機能: submit_* + auto-production 経路で、トランザクションの成功（success）または失敗（revert）のステータスがreceipt経由で正しく取得できること。
 このコア実行基盤が完成したことで、プロジェクトは独自の価値を持つエンジンを手に入れました。次のフェーズでは、この強力なエンジンを外部の開発者エコシステムに接続するための窓口となる、RPC層の実装へと進みます。
 
 ## 4.0 Phase 2: RPCノード化 — 開発者体験の構築
@@ -355,23 +354,24 @@ pending/mempool/filter WebSocket 系（例: `eth_newFilter`, `eth_getFilterChang
 
 従来のEVMチェーンと異なる運用上の注意（現行実装時点）:
 - Pruning: 古い履歴は prune される可能性があり、範囲によっては参照RPCが `Pruned` / `PossiblyPruned` を返します。長期保管が必要な履歴は indexer 側で保持してください。
-- Timer駆動: 採掘とpruneは canister timer で実行します。mining は `set_timer` の単発予約で駆動し、`mining_scheduled` フラグで多重予約を防ぎます（queue空では待機）。
-- Timer駆動（mining詳細）: `auto_mine_enabled=false` の間は `produce_block` の手動実行が必要です。`ready_queue` が空のときは採掘timerを再予約せず待機し、submit成功時に採掘timerを再armします。
-- Timer駆動（backoff/停止条件）: `produce_block` 失敗時は指数バックオフ（2倍、上限 `MAX_MINING_BACKOFF_MS`）を適用し、成功時は queue 残量がある場合のみ基本間隔で再予約します。cycle critical または migration 中は write 拒否により採掘を停止し、復帰後は cycle observer tick（60s）が必要時のみ再スケジュールを補助します。
-- Finalityモデル: 本チェーンは単一シーケンサ前提で、`produce_block` 後のブロックはreorgを前提にしません（Ethereum L1の一般的なfork前提と異なる）。
+- Timer駆動: 採掘は canister timer で実行します。mining は `set_timer` による単発予約を毎tickで再設定する方式で、`mining_scheduled` フラグで多重予約を防ぎます。
+- Timer駆動（mining詳細）: 採掘は自動実行のみを提供します。`ready_queue` が空のときは次回予約のみ行います。
+- Timer駆動（停止条件）: 採掘失敗時は基本間隔で再試行します。cycle critical または migration 中は write 拒否により採掘を停止し、復帰後は cycle observer tick が再スケジュールを補助します。prune は block event 駆動（`block_number % 84 == 0`）でのみ試行されます。
+- Finalityモデル: 本チェーンは単一シーケンサ前提で、`auto-production` 後のブロックはreorgを前提にしません（Ethereum L1の一般的なfork前提と異なる）。
 - Submit/Execute分離: `eth_sendRawTransaction` は投入（enqueue）であり、実行確定は後続の block production 後に反映されます。
 - `eth_sendRawTransaction` 戻り値: Gateway は canister `rpc_eth_send_raw_transaction` の返却 `tx_id` から `rpc_eth_get_transaction_by_tx_id` で `eth_tx_hash` を解決して返します。解決不能時は `-32000` エラーを返します。
 - `eth_getTransactionReceipt.logs[].logIndex`: ブロック内通番で返します。
 - ハッシュ運用: 内部主キー `tx_id` と外部互換 `eth_tx_hash` は別物です。外部連携は `eth_tx_hash` 系参照を使用してください。
 
 関連定数（現行実装値）:
-- mining 基本間隔: `DEFAULT_MINING_INTERVAL_MS = 5_000`（`crates/evm-db/src/chain_data/runtime_defaults.rs`）
-- cycle observer 間隔: `60s`（`crates/ic-evm-wrapper/src/lib.rs` の `set_timer_interval(Duration::from_secs(60), ...)`）
-- prune 基本間隔: `DEFAULT_PRUNE_TIMER_INTERVAL_MS = 3_600_000`（1時間）
-- prune 間隔の下限: `MIN_PRUNE_TIMER_INTERVAL_MS = 1_000`
+- mining 基本間隔: `DEFAULT_MINING_INTERVAL_MS = 2_000`（`crates/evm-db/src/chain_data/runtime_defaults.rs`）
+- cycle observer 間隔: migration中 `60s` / 通常 `3600s`（`crates/ic-evm-wrapper/src/lib.rs` の `set_timer` 再帰スケジュール）
+- prune policy 間隔フィールド: `DEFAULT_PRUNE_TIMER_INTERVAL_MS = 3_600_000`（内部保持値。`set_prune_policy` 入力では未使用）
+- prune イベント間隔: `PRUNE_EVENT_BLOCK_INTERVAL = 84` blocks（`crates/ic-evm-wrapper/src/lib.rs`）
+- prune 間隔の下限: `MIN_PRUNE_TIMER_INTERVAL_MS = 1_000`（内部保持値向け）
 - prune 1tick上限: `DEFAULT_PRUNE_MAX_OPS_PER_TICK = 5_000`
 - prune 1tick最小: `MIN_PRUNE_MAX_OPS_PER_TICK = 1`
-- backoff 上限: `MAX_MINING_BACKOFF_MS = 300_000`, `MAX_PRUNE_BACKOFF_MS = 300_000`
+- backoff 上限: `MAX_PRUNE_BACKOFF_MS = 300_000`
 - 運用ルール: 上記の実値変更時は `crates/evm-db/src/chain_data/runtime_defaults.rs` と本READMEを同一PRで同期更新する。
 
 運用ルール: 互換表の更新正本は `tools/rpc-gateway/README.md` とし、メソッド追加・制約変更時は同一PRで本README要約と同期更新します。

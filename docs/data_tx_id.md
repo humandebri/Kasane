@@ -60,7 +60,7 @@ struct StableStateV1 {
   // chain config
   chain_id: u64,
   canister_id: [u8; 29], // Principal bytes (variableだが固定長にパックしても良い)
-  auto_mine_enabled: bool,
+  auto_production_enabled: bool,
   max_txs_per_block: u32,
   block_gas_limit: u64,
 

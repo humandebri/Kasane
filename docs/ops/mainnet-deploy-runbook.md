@@ -89,7 +89,7 @@ scripts/query_smoke.sh
    - `nativeCurrency.symbol = "ICP"`
    - `nativeCurrency.decimals = 18`
    - `1 ICP = 10^18`（EVM最小単位）
-7. 手動 `produce_block` の権限エラー文字列を監視で確認する。
+7. 手動 `auto-mine` の権限エラー文字列を監視で確認する。
    - 現行仕様: controller 以外は `auth.controller_required`
    - 旧仕様の `auth.producer_required` 前提アラートは更新する
 
@@ -114,6 +114,85 @@ cd /opt/ic-op/tools/rpc-gateway
 2. 直後に `start_receipt_watch.sh` を実行
 3. 成否判定は `receipt.status==0x1` のみを成功条件にする
 
+## 3.2 Contabo: indexer migration再適用 + 再デプロイ手順
+
+### 3.2.1 SSHエイリアス（ローカル）
+`~/.ssh/config` に deployer 用 entry を追加しておく。
+
+```sshconfig
+Host contabo-deployer
+  HostName 167.86.83.183
+  User deployer
+  IdentityFile ~/.ssh/id_ed25519
+```
+
+### 3.2.2 事前確認（Contabo）
+
+```bash
+ssh contabo-deployer
+hostname
+whoami
+sudo -n whoami
+```
+
+`sudo -n whoami` が `root` で返ることを確認する。
+
+### 3.2.3 indexer migration再適用（idempotent）
+
+```bash
+ssh contabo-deployer
+cd /opt/ic-op
+
+# 本番indexer接続先の確認（/etc/ic-op/indexer.env）
+sudo sed -n '1,200p' /etc/ic-op/indexer.env
+source /etc/ic-op/indexer.env
+
+# 適用済みmigration確認
+psql "$INDEXER_DATABASE_URL" -c "select id, to_timestamp(applied_at/1000) from schema_migrations order by id;"
+
+# 009を再適用したい場合のみ migration履歴を戻す
+psql "$INDEXER_DATABASE_URL" -c "delete from schema_migrations where id='009_add_txs_selector.sql';"
+
+# indexer再起動（起動時に未適用migrationを自動適用）
+sudo systemctl restart ic-op-indexer.service
+sudo journalctl -u ic-op-indexer.service -n 200 --no-pager
+```
+
+補足:
+- `009_add_txs_selector.sql` は `add column if not exists` のため、再適用しても破壊的変更にならない。
+- `schema_migrations` から対象idを消しても、SQL自体が安全に再実行される前提で運用する。
+
+### 3.2.4 canister再デプロイ（upgrade）
+
+```bash
+ssh contabo-deployer
+cd /opt/ic-op
+
+source /etc/ic-op/indexer.env
+ICP_ENV=ic \
+CANISTER_ID="${EVM_CANISTER_ID}" \
+ICP_IDENTITY_NAME=ci-local \
+MODE=upgrade \
+CONFIRM=0 \
+scripts/mainnet/ic_mainnet_deploy.sh
+```
+
+### 3.2.5 デプロイ後確認 + explorer再起動
+
+```bash
+ssh contabo-deployer
+cd /opt/ic-op
+source /etc/ic-op/indexer.env
+
+NETWORK=ic \
+CANISTER_ID="${EVM_CANISTER_ID}" \
+ICP_IDENTITY_NAME=ci-local \
+scripts/query_smoke.sh
+
+sudo systemctl restart ic-op-explorer.service
+sudo journalctl -u ic-op-explorer.service -n 200 --no-pager
+```
+
 ## 4. ロールバック方針
 1. snapshot を事前取得する。
 2. 障害時は snapshot を load し、直前安定 wasm を reinstall する。
@@ -127,6 +206,12 @@ cd /opt/ic-op/tools/rpc-gateway
 - `PRUNE_POLICY_TEST_ARGS`
 - `PRUNE_POLICY_RESTORE_ARGS`
 
+84-block prune cadence 前提の推奨初期値:
+- `retain_blocks`: `168`
+- `max_ops_per_tick`: `300`
+- `retain_days`: `14`
+- `target_bytes`: `0`（容量制御を使わない場合）
+
 `prune_blocks` を本番で実行する場合のみ、以下を追加で指定する（通常は不要）:
 - `ALLOW_DESTRUCTIVE_PRUNE=1`
 - `DRY_PRUNE_ONLY=0`
@@ -138,8 +223,22 @@ FULL_METHOD_REQUIRED=1 \
 RUN_STRICT=1 \
 AUTO_FUND_TEST_KEY=1 \
 AUTO_FUND_AMOUNT_WEI=500000000000000000 \
-PRUNE_POLICY_TEST_ARGS='<record...>' \
-PRUNE_POLICY_RESTORE_ARGS='<record...>' \
+PRUNE_POLICY_TEST_ARGS='(record {
+  headroom_ratio_bps = 2000:nat32;
+  target_bytes = 0:nat64;
+  retain_blocks = 168:nat64;
+  retain_days = 14:nat64;
+  hard_emergency_ratio_bps = 9500:nat32;
+  max_ops_per_tick = 300:nat32;
+})' \
+PRUNE_POLICY_RESTORE_ARGS='(record {
+  headroom_ratio_bps = 2000:nat32;
+  target_bytes = 0:nat64;
+  retain_blocks = 168:nat64;
+  retain_days = 14:nat64;
+  hard_emergency_ratio_bps = 9500:nat32;
+  max_ops_per_tick = 300:nat32;
+})' \
 ICP_ENV=ic \
 CANISTER_ID=<canister_id> \
 ICP_IDENTITY_NAME=ci-local \

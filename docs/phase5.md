@@ -66,7 +66,7 @@
 
 ## 6) “ICPから呼べる価値”のプロダクト化
 
-* submit_ic_tx + produce_block を中心に SDK/権限/課金/レート制限テンプレ
+* submit_ic_tx + auto-mine を中心に SDK/権限/課金/レート制限テンプレ
 * “ワークフロー→EVM確定”のライブラリ化
 * サンプルdappを複数用意
 

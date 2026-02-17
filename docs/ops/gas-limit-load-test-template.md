@@ -29,13 +29,13 @@ canbench --persist
 ```
 
 メモ:
-- `produce_block_path` と `submit_ic_tx_path` の instructions/heap/stable を確認する。
+- `auto-mine_path` と `submit_ic_tx_path` の instructions/heap/stable を確認する。
 
 ローカル基準値（2026-02-08, `canbench_results.yml`）:
 
 | bench | calls | instructions | heap_increase(pages) | stable_memory_increase(pages) |
 |---|---:|---:|---:|---:|
-| produce_block_path | 1 | 1,480,196 | 5 | 128 |
+| auto-mine_path | 1 | 1,480,196 | 5 | 128 |
 | submit_ic_tx_path | 1 | 537,645 | 0 | 0 |
 
 注記:
@@ -50,7 +50,7 @@ canbench --persist
 2. wasm ビルド・デプロイ
 3. 同一ワークロードを3回実行
 4. 各回で以下を記録
-   - `produce_block` 成否
+   - `auto-mine` 成否
    - 1ブロック処理時間（ms）
    - cycles 差分
    - drop率（dropped/total）
@@ -60,7 +60,7 @@ canbench --persist
 
 ### 4) 記録表（候補×反復）
 
-| candidate_gas_limit | run | produce_block_success | p95_block_time_ms | cycles_delta | total_submitted | total_included | total_dropped | drop_rate |
+| candidate_gas_limit | run | auto-mine_success | p95_block_time_ms | cycles_delta | total_submitted | total_included | total_dropped | drop_rate |
 |---|---:|---|---:|---:|---:|---:|---:|---:|
 | 2_000_000 | 1 |  |  |  |  |  |  |  |
 | 2_000_000 | 2 |  |  |  |  |  |  |  |
@@ -85,7 +85,7 @@ canbench --persist
 
 ### 5) 採用判定
 
-1. `produce_block_success=true` が全反復で満たされる候補を抽出
+1. `auto-mine_success=true` が全反復で満たされる候補を抽出
 2. その中から最大 `candidate_gas_limit` を基準値に選ぶ
 3. 基準値に 20% ヘッドルームを適用して採用値を決定
 

@@ -234,10 +234,10 @@ INDEXER_DATABASE_URL=postgres://... scripts/indexer_retention_report.sh
 推奨フロー（事故りにくい順）:
 1) **policy だけ投入**（enabled=false のまま）
 2) `get_prune_status` で水位・oldest・推定容量を確認
-3) enabled=true にして timer を動かす（最初は小さく）
+3) enabled=true にして prune 実行を有効化する（最初は小さく）
 
 初期推奨パラメータ（例）:
-- `timer_interval_ms`: 30_000〜60_000
+- `retain_blocks`: 168（84 block cadence の 2サイクル分）
 - `max_ops_per_tick`: 200〜500（最初は小さく）
 - `headroom_ratio_bps`: 2000（20%）
 - `hard_emergency_ratio_bps`: 9500（95%）
@@ -258,6 +258,13 @@ pruning enable の手順をスクリプト化（set_policy → enabled=true を�
 * `get_prune_status()` を定期ポーリングして `meta.prune_status` に JSON 保存
 * JSON は `estimated_kept_bytes` / `high_water_bytes` / `hard_emergency_bytes` を文字列で保持して追跡
 * 監視側は `need_prune` フラグと `cursor_lag` を合わせてアラート
+* アラート条件:
+  - `need_prune=true` が連続3観測以上
+  - `prune_error_count` が増加
+  - `mining_error_count` が増加
+* 対処フロー:
+  - まず `max_ops_per_tick` を段階調整（+/-200）
+  - 悪化時のみ `set_instruction_soft_limit` の調整を検討
 
 ### 9.2 Opsアラート閾値（固定）
 
