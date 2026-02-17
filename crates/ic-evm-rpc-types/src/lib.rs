@@ -21,26 +21,6 @@ pub enum LookupError {
 }
 
 #[derive(Clone, Debug, CandidType, Deserialize)]
-pub enum ProduceBlockStatus {
-    Produced {
-        block_number: u64,
-        txs: u32,
-        gas_used: u64,
-        dropped: u32,
-    },
-    NoOp {
-        reason: NoOpReason,
-    },
-}
-
-#[derive(Clone, Debug, CandidType, Deserialize)]
-pub enum NoOpReason {
-    NoExecutableTx,
-    CycleCritical,
-    NeedsMigration,
-}
-
-#[derive(Clone, Debug, CandidType, Deserialize)]
 pub enum ProduceBlockError {
     Internal(String),
     InvalidArgument(String),
@@ -149,7 +129,7 @@ pub struct HealthView {
     pub tip_hash: Vec<u8>,
     pub last_block_time: u64,
     pub queue_len: u64,
-    pub auto_mine_enabled: bool,
+    pub auto_production_enabled: bool,
     pub is_producing: bool,
     pub mining_scheduled: bool,
     pub block_gas_limit: u64,
@@ -178,6 +158,23 @@ pub struct MetricsView {
     pub total_dropped: u64,
     pub cycles: u128,
     pub pruned_before_block: Option<u64>,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize)]
+pub struct MemoryRegionView {
+    pub id: u8,
+    pub name: String,
+    pub pages: u64,
+    pub bytes: u64,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize)]
+pub struct MemoryBreakdownView {
+    pub stable_pages_total: u64,
+    pub stable_bytes_total: u64,
+    pub heap_pages: u64,
+    pub heap_bytes: u64,
+    pub regions: Vec<MemoryRegionView>,
 }
 
 #[derive(Clone, Debug, CandidType, Deserialize)]
@@ -399,7 +396,6 @@ pub struct PrunePolicyView {
     pub retain_blocks: u64,
     pub headroom_ratio_bps: u32,
     pub hard_emergency_ratio_bps: u32,
-    pub timer_interval_ms: u64,
     pub max_ops_per_tick: u32,
 }
 

@@ -13,19 +13,19 @@ use evm_db::chain_data::{
     BlockData, MigrationPhase, OpsMode, ReceiptLike, TxId, TxKind, TxLoc, TxLocKind,
     LOG_CONFIG_FILTER_MAX,
 };
-use evm_db::chain_data::{MIN_PRUNE_MAX_OPS_PER_TICK, MIN_PRUNE_TIMER_INTERVAL_MS};
+use evm_db::chain_data::MIN_PRUNE_MAX_OPS_PER_TICK;
 use evm_db::meta::{
     current_schema_version, ensure_meta_initialized, get_meta, mark_migration_applied,
     schema_migration_state, set_needs_migration, set_schema_migration_state, set_tx_locs_v3_active,
     SchemaMigrationPhase, SchemaMigrationState,
 };
+use evm_db::memory::{all_memory_regions, memory_size_pages, WASM_PAGE_SIZE_BYTES};
 use evm_db::stable_state::{init_stable_state, with_state};
 use evm_db::upgrade;
 use ic_cdk::api::{
     accept_message, canister_cycle_balance, is_controller, msg_caller, msg_method_name, time,
 };
 use serde::Deserialize;
-use std::cell::{Cell, RefCell};
 use std::sync::atomic::{AtomicU64, Ordering};
 use tracing::{error, info, warn};
 
@@ -49,14 +49,9 @@ fn always_fail_getrandom(_buf: &mut [u8]) -> Result<(), getrandom::Error> {
     Err(getrandom::Error::UNSUPPORTED)
 }
 
-const MAX_MINING_BACKOFF_MS: u64 = 300_000;
-const MAX_PRUNE_BACKOFF_MS: u64 = 300_000;
-
-thread_local! {
-    static MINING_FAIL_STREAK: Cell<u32> = Cell::new(0);
-    static PRUNE_FAIL_STREAK: Cell<u32> = Cell::new(0);
-    static MINING_TIMER_ID: RefCell<Option<ic_cdk_timers::TimerId>> = const { RefCell::new(None) };
-}
+const PRUNE_EVENT_BLOCK_INTERVAL: u64 = 84;
+const CYCLE_OBSERVER_FAST_INTERVAL_SECS: u64 = 60;
+const CYCLE_OBSERVER_SLOW_INTERVAL_SECS: u64 = 3_600;
 
 use ic_evm_rpc_types::*;
 
@@ -167,9 +162,8 @@ fn init_inner(args: Option<InitArgs>, require_args: bool) {
         }
     }
     observe_cycles();
-    clear_mining_timer_state();
+    schedule_mining();
     schedule_cycle_observer();
-    schedule_prune();
 }
 
 #[ic_cdk::post_upgrade]
@@ -180,9 +174,8 @@ fn post_upgrade() {
     init_tracing();
     apply_post_upgrade_migrations();
     observe_cycles();
-    clear_mining_timer_state();
+    schedule_mining();
     schedule_cycle_observer();
-    schedule_prune();
 }
 
 #[ic_cdk::pre_upgrade]
@@ -214,7 +207,7 @@ struct InspectMethodPolicy {
     payload_limit: usize,
 }
 
-const INSPECT_METHOD_POLICIES: [InspectMethodPolicy; 10] = [
+const INSPECT_METHOD_POLICIES: [InspectMethodPolicy; 8] = [
     InspectMethodPolicy {
         method: "submit_ic_tx",
         payload_limit: INSPECT_TX_PAYLOAD_LIMIT,
@@ -222,10 +215,6 @@ const INSPECT_METHOD_POLICIES: [InspectMethodPolicy; 10] = [
     InspectMethodPolicy {
         method: "rpc_eth_send_raw_transaction",
         payload_limit: INSPECT_TX_PAYLOAD_LIMIT,
-    },
-    InspectMethodPolicy {
-        method: "set_auto_mine",
-        payload_limit: INSPECT_MANAGE_PAYLOAD_LIMIT,
     },
     InspectMethodPolicy {
         method: "set_block_gas_limit",
@@ -249,10 +238,6 @@ const INSPECT_METHOD_POLICIES: [InspectMethodPolicy; 10] = [
     },
     InspectMethodPolicy {
         method: "prune_blocks",
-        payload_limit: INSPECT_MANAGE_PAYLOAD_LIMIT,
-    },
-    InspectMethodPolicy {
-        method: "produce_block",
         payload_limit: INSPECT_MANAGE_PAYLOAD_LIMIT,
     },
 ];
@@ -318,9 +303,10 @@ fn chain_submit_error_to_code(err: &chain::ChainError) -> Option<(TxApiErrorKind
         chain::ChainError::DecodeFailed => {
             Some((TxApiErrorKind::InvalidArgument, CODE_ARG_DECODE_FAILED))
         }
-        chain::ChainError::AddressDerivationFailed => {
-            Some((TxApiErrorKind::InvalidArgument, CODE_ARG_DERIVATION_FAILED))
-        }
+        chain::ChainError::AddressDerivationFailed => Some((
+            TxApiErrorKind::InvalidArgument,
+            CODE_ARG_DERIVATION_FAILED,
+        )),
         chain::ChainError::UnsupportedTxKind => Some((
             TxApiErrorKind::InvalidArgument,
             CODE_ARG_UNSUPPORTED_TX_KIND,
@@ -398,59 +384,9 @@ fn submit_ic_tx(tx_bytes: Vec<u8>) -> Result<Vec<u8>, SubmitTxError> {
         "submit_ic_tx",
     );
     if out.is_ok() {
-        schedule_mining_resume_after_submit();
+        schedule_mining();
     }
     out
-}
-
-#[ic_cdk::update]
-fn produce_block(max_txs: u32) -> Result<ProduceBlockStatus, ProduceBlockError> {
-    if let Some(reason) = reject_anonymous_update() {
-        return Err(ProduceBlockError::Internal(reason));
-    }
-    if let Err(reason) = require_data_plane_write_for_producer() {
-        return Err(ProduceBlockError::Internal(reason));
-    }
-    if migration_pending() {
-        return Ok(ProduceBlockStatus::NoOp {
-            reason: NoOpReason::NeedsMigration,
-        });
-    }
-    if cycle_mode() == OpsMode::Critical {
-        return Ok(ProduceBlockStatus::NoOp {
-            reason: NoOpReason::CycleCritical,
-        });
-    }
-    let limit = usize::try_from(max_txs).unwrap_or(0);
-    match chain::produce_block(limit) {
-        Ok(outcome) => {
-            let block = outcome.block;
-            info!(
-                block_number = block.number,
-                tx_count = block.tx_ids.len(),
-                dropped = outcome.dropped,
-                "produce_block succeeded"
-            );
-            Ok(ProduceBlockStatus::Produced {
-                block_number: block.number,
-                txs: block.tx_ids.len().try_into().unwrap_or(u32::MAX),
-                gas_used: outcome.gas_used,
-                dropped: outcome.dropped.try_into().unwrap_or(u32::MAX),
-            })
-        }
-        Err(chain::ChainError::NoExecutableTx) | Err(chain::ChainError::QueueEmpty) => {
-            Ok(ProduceBlockStatus::NoOp {
-                reason: NoOpReason::NoExecutableTx,
-            })
-        }
-        Err(chain::ChainError::InvalidLimit) => Err(ProduceBlockError::InvalidArgument(
-            "max_txs must be > 0".to_string(),
-        )),
-        Err(err) => {
-            error!(error = ?err, "produce_block failed");
-            Err(ProduceBlockError::Internal("internal error".to_string()))
-        }
-    }
 }
 
 #[ic_cdk::query]
@@ -568,18 +504,13 @@ fn set_prune_policy(policy: PrunePolicyView) -> Result<(), String> {
         retain_blocks: policy.retain_blocks,
         headroom_ratio_bps: policy.headroom_ratio_bps,
         hard_emergency_ratio_bps: policy.hard_emergency_ratio_bps,
-        timer_interval_ms: policy.timer_interval_ms,
         max_ops_per_tick: policy.max_ops_per_tick,
     };
     chain::set_prune_policy(core_policy).map_err(|_| "set_prune_policy failed".to_string())?;
-    schedule_prune();
     Ok(())
 }
 
 fn validate_prune_policy_input(policy: &PrunePolicyView) -> Result<(), String> {
-    if policy.timer_interval_ms < MIN_PRUNE_TIMER_INTERVAL_MS {
-        return Err("input.prune.timer_interval_too_low".to_string());
-    }
     if policy.max_ops_per_tick < MIN_PRUNE_MAX_OPS_PER_TICK {
         return Err("input.prune.max_ops_per_tick.non_positive".to_string());
     }
@@ -593,7 +524,6 @@ fn set_pruning_enabled(enabled: bool) -> Result<(), String> {
     }
     require_control_plane_write()?;
     chain::set_pruning_enabled(enabled).map_err(|_| "set_pruning_enabled failed".to_string())?;
-    schedule_prune();
     Ok(())
 }
 
@@ -705,7 +635,7 @@ fn rpc_eth_send_raw_transaction(raw_tx: Vec<u8>) -> Result<Vec<u8>, SubmitTxErro
         ic_cdk::api::msg_caller().as_slice().to_vec(),
     );
     if out.is_ok() {
-        schedule_mining_resume_after_submit();
+        schedule_mining();
     }
     out
 }
@@ -805,7 +735,7 @@ fn health() -> HealthView {
             tip_hash: head.block_hash.to_vec(),
             last_block_time: chain_state.last_block_time,
             queue_len,
-            auto_mine_enabled: chain_state.auto_mine_enabled,
+            auto_production_enabled: chain_state.auto_production_enabled,
             is_producing: chain_state.is_producing,
             mining_scheduled: chain_state.mining_scheduled,
             block_gas_limit: chain_state.block_gas_limit,
@@ -868,7 +798,7 @@ fn metrics_prometheus() -> Result<String, String> {
             total_submitted: metrics.total_submitted,
             total_included: metrics.total_included,
             total_dropped: metrics.total_dropped,
-            auto_mine_enabled: chain_state.auto_mine_enabled,
+            auto_production_enabled: chain_state.auto_production_enabled,
             is_producing: chain_state.is_producing,
             mining_scheduled: chain_state.mining_scheduled,
             mining_interval_ms: DEFAULT_MINING_INTERVAL_MS,
@@ -880,24 +810,31 @@ fn metrics_prometheus() -> Result<String, String> {
     ic_evm_metrics::encode_prometheus(now_nanos, &snapshot)
 }
 
-#[ic_cdk::update]
-fn set_auto_mine(enabled: bool) -> Result<(), String> {
-    if let Some(reason) = reject_anonymous_update() {
-        return Err(reason);
+#[ic_cdk::query]
+fn memory_breakdown() -> MemoryBreakdownView {
+    let stable_pages_total = current_stable_memory_pages();
+    let stable_bytes_total = stable_pages_total.saturating_mul(WASM_PAGE_SIZE_BYTES);
+    let heap_pages = current_heap_memory_pages();
+    let heap_bytes = heap_pages.saturating_mul(WASM_PAGE_SIZE_BYTES);
+    let regions = all_memory_regions()
+        .iter()
+        .map(|region| {
+            let pages = memory_size_pages(region.id);
+            MemoryRegionView {
+                id: region.id.as_u8(),
+                name: region.name.to_string(),
+                pages,
+                bytes: pages.saturating_mul(WASM_PAGE_SIZE_BYTES),
+            }
+        })
+        .collect();
+    MemoryBreakdownView {
+        stable_pages_total,
+        stable_bytes_total,
+        heap_pages,
+        heap_bytes,
+        regions,
     }
-    require_control_plane_write()?;
-    evm_db::stable_state::with_state_mut(|state| {
-        let mut chain_state = *state.chain_state.get();
-        chain_state.auto_mine_enabled = enabled;
-        state.chain_state.set(chain_state);
-    });
-    if enabled {
-        schedule_mining();
-    } else {
-        reset_mining_fail_streak();
-        clear_mining_timer_state();
-    }
-    Ok(())
 }
 
 #[ic_cdk::update]
@@ -1122,6 +1059,18 @@ fn current_heap_memory_pages() -> u64 {
     0
 }
 
+#[cfg(target_arch = "wasm32")]
+fn current_stable_memory_pages() -> u64 {
+    ic_cdk::stable::stable_size()
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn current_stable_memory_pages() -> u64 {
+    all_memory_regions()
+        .iter()
+        .fold(0u64, |acc, region| acc.saturating_add(memory_size_pages(region.id)))
+}
+
 #[cfg(test)]
 fn tx_id_from_bytes(tx_id: Vec<u8>) -> Option<TxId> {
     if tx_id.len() != 32 {
@@ -1222,17 +1171,6 @@ fn require_controller() -> Result<(), String> {
 // reject_write_reason には依存させない。
 fn require_control_plane_write() -> Result<(), String> {
     require_controller()?;
-    Ok(())
-}
-
-// データプレーン（Tx投入/ブロック生成）は非常時に停止する。
-fn require_data_plane_write_for_producer() -> Result<(), String> {
-    if let Some(reason) = reject_write_reason() {
-        return Err(reason);
-    }
-    if !is_controller(&msg_caller()) {
-        return Err("auth.controller_required".to_string());
-    }
     Ok(())
 }
 
@@ -1587,223 +1525,108 @@ fn apply_post_upgrade_migrations() {
 }
 
 fn schedule_cycle_observer() {
-    ic_cdk_timers::set_timer_interval(std::time::Duration::from_secs(60), || async {
-        drive_migrations_tick(256, 512);
-        let mode = observe_cycles();
-        if mode != OpsMode::Critical
-            && !migration_pending()
-            && !mining_timer_armed()
-            && mining_ready_queue_non_empty()
-        {
-            schedule_mining();
-        }
+    // migration中は短周期、通常時は1時間周期で再スケジュールする。
+    let interval_secs = if migration_pending() {
+        CYCLE_OBSERVER_FAST_INTERVAL_SECS
+    } else {
+        CYCLE_OBSERVER_SLOW_INTERVAL_SECS
+    };
+    ic_cdk_timers::set_timer(std::time::Duration::from_secs(interval_secs), async move {
+        let _ = run_cycle_observer_once();
+        schedule_cycle_observer();
     });
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct CycleObserverTickOutcome {
+    migration_tick_ran: bool,
+    migration_pending: bool,
+    mode: OpsMode,
+    schedule_mining_called: bool,
+}
+
+fn run_cycle_observer_once() -> CycleObserverTickOutcome {
+    let mut migration_tick_ran = false;
+    if should_run_cycle_observer_migration_tick(migration_pending()) {
+        drive_migrations_tick(256, 512);
+        migration_tick_ran = true;
+    }
+    let migration_pending = migration_pending();
+    let mode = observe_cycles();
+    let schedule_mining_called = should_schedule_mining_after_cycle_observer(mode, migration_pending);
+    if schedule_mining_called {
+        schedule_mining();
+    }
+    info!(
+        event = "cycle_observer_tick",
+        migration_pending,
+        mode = ?mode,
+        schedule_mining_called
+    );
+    CycleObserverTickOutcome {
+        migration_tick_ran,
+        migration_pending,
+        mode,
+        schedule_mining_called,
+    }
+}
+
+fn should_run_cycle_observer_migration_tick(migration_pending: bool) -> bool {
+    migration_pending
+}
+
+fn should_schedule_mining_after_cycle_observer(mode: OpsMode, migration_pending: bool) -> bool {
+    mode != OpsMode::Critical && !migration_pending
 }
 
 fn schedule_mining() {
-    schedule_mining_with_interval(None, false);
+    schedule_mining_with_interval(None);
 }
 
-fn schedule_mining_resume_after_submit() {
-    schedule_mining_with_interval(Some(DEFAULT_MINING_INTERVAL_MS), true);
-}
-
-fn schedule_mining_with_interval(override_interval_ms: Option<u64>, replace_existing: bool) {
+fn schedule_mining_with_interval(override_interval_ms: Option<u64>) {
     if reject_write_reason().is_some() {
-        clear_mining_timer_state();
         return;
     }
-    let schedule_ctx = evm_db::stable_state::with_state(|state| {
-        let chain_state = state.chain_state.get();
-        (
-            chain_state.auto_mine_enabled,
-            chain_state.is_producing,
-            state.ready_queue.len() > 0,
-        )
-    });
-    let (auto_mine_enabled, is_producing, has_ready_queue) = schedule_ctx;
-    if !auto_mine_enabled || is_producing || !has_ready_queue {
-        clear_mining_timer_state();
-        return;
-    }
-    if mining_timer_armed() && !replace_existing {
-        set_mining_scheduled_flag(true);
-        return;
-    }
-    let interval_ms = override_interval_ms.unwrap_or(DEFAULT_MINING_INTERVAL_MS);
-    arm_mining_timer(interval_ms);
-}
-
-fn schedule_mining_retry_with_interval(interval_ms: u64) {
-    if reject_write_reason().is_some() {
-        clear_mining_timer_state();
-        return;
-    }
-    let should_retry =
-        evm_db::stable_state::with_state(|state| state.chain_state.get().auto_mine_enabled);
-    if !should_retry {
-        clear_mining_timer_state();
-        return;
-    }
-    arm_mining_timer(interval_ms);
-}
-
-fn set_mining_scheduled_flag(enabled: bool) {
-    evm_db::stable_state::with_state_mut(|state| {
-        let mut chain_state = *state.chain_state.get();
-        chain_state.mining_scheduled = enabled;
-        state.chain_state.set(chain_state);
-    });
-}
-
-fn mining_timer_armed() -> bool {
-    MINING_TIMER_ID.with(|timer_id| timer_id.borrow().is_some())
-}
-
-fn arm_mining_timer(interval_ms: u64) {
-    cancel_mining_timer_if_any();
-    let timer_id =
-        ic_cdk_timers::set_timer(std::time::Duration::from_millis(interval_ms), async move {
-            mining_tick();
-        });
-    MINING_TIMER_ID.with(|slot| {
-        *slot.borrow_mut() = Some(timer_id);
-    });
-    set_mining_scheduled_flag(true);
-}
-
-fn cancel_mining_timer_if_any() {
-    MINING_TIMER_ID.with(|slot| {
-        if let Some(id) = slot.borrow_mut().take() {
-            ic_cdk_timers::clear_timer(id);
-        }
-    });
-}
-
-fn clear_mining_timer_state() {
-    cancel_mining_timer_if_any();
-    set_mining_scheduled_flag(false);
-}
-
-fn mining_ready_queue_non_empty() -> bool {
-    evm_db::stable_state::with_state(|state| {
-        let chain_state = state.chain_state.get();
-        chain_state.auto_mine_enabled && state.ready_queue.len() > 0
-    })
-}
-
-fn bump_mining_fail_streak() -> u32 {
-    MINING_FAIL_STREAK.with(|cell| {
-        let next = cell.get().saturating_add(1);
-        cell.set(next);
-        next
-    })
-}
-
-fn reset_mining_fail_streak() {
-    MINING_FAIL_STREAK.with(|cell| cell.set(0));
-}
-
-fn mining_backoff_interval_ms(base_interval_ms: u64, failures: u32) -> u64 {
-    if failures == 0 {
-        return base_interval_ms;
-    }
-    let shift = failures.min(16);
-    let multiplier = 1u64.checked_shl(shift).unwrap_or(u64::MAX);
-    let interval = base_interval_ms.saturating_mul(multiplier);
-    interval.min(MAX_MINING_BACKOFF_MS).max(base_interval_ms)
-}
-
-fn schedule_prune() {
-    schedule_prune_with_interval(None);
-}
-
-fn schedule_prune_with_interval(override_interval_ms: Option<u64>) {
-    // RefCell再入防止: with_state_mut内はフラグ更新のみ。タイマー副作用は外で実行する。
+    // RefCell再入防止: with_state_mut内は状態更新のみ。タイマー副作用は借用解放後に実行する。
     let interval_ms = evm_db::stable_state::with_state_mut(|state| {
-        let mut config = *state.prune_config.get();
-        if !config.pruning_enabled {
+        let mut chain_state = *state.chain_state.get();
+        if !chain_state.auto_production_enabled {
             return None;
         }
-        if config.prune_scheduled {
+        if chain_state.mining_scheduled {
             return None;
         }
-        config.prune_scheduled = true;
-        let interval_ms = override_interval_ms
-            .unwrap_or(config.timer_interval_ms)
-            .max(MIN_PRUNE_TIMER_INTERVAL_MS);
-        state.prune_config.set(config);
+        chain_state.mining_scheduled = true;
+        let interval_ms = override_interval_ms.unwrap_or(DEFAULT_MINING_INTERVAL_MS);
+        state.chain_state.set(chain_state);
         Some(interval_ms)
     });
     if let Some(interval_ms) = interval_ms {
         ic_cdk_timers::set_timer(std::time::Duration::from_millis(interval_ms), async move {
-            pruning_tick();
+            mining_tick();
         });
     }
 }
 
-fn bump_prune_fail_streak() -> u32 {
-    PRUNE_FAIL_STREAK.with(|cell| {
-        let next = cell.get().saturating_add(1);
-        cell.set(next);
-        next
-    })
+fn should_prune_on_block_event(block_number: u64) -> bool {
+    block_number != 0 && block_number % PRUNE_EVENT_BLOCK_INTERVAL == 0
 }
 
-fn reset_prune_fail_streak() {
-    PRUNE_FAIL_STREAK.with(|cell| cell.set(0));
-}
-
-fn prune_backoff_interval_ms(base_interval_ms: u64, failures: u32) -> u64 {
-    if failures == 0 {
-        return base_interval_ms;
-    }
-    let shift = failures.min(16);
-    let multiplier = 1u64.checked_shl(shift).unwrap_or(u64::MAX);
-    let interval = base_interval_ms.saturating_mul(multiplier);
-    interval.min(MAX_PRUNE_BACKOFF_MS).max(base_interval_ms)
-}
-
-fn pruning_tick() {
-    let (should_run, base_interval_ms) = evm_db::stable_state::with_state_mut(|state| {
-        let mut config = *state.prune_config.get();
-        config.prune_scheduled = false;
-        let enabled = config.pruning_enabled;
-        let interval = config.timer_interval_ms.max(MIN_PRUNE_TIMER_INTERVAL_MS);
-        state.prune_config.set(config);
-        (enabled, interval)
-    });
-    if !should_run {
-        reset_prune_fail_streak();
-        schedule_prune();
+fn maybe_prune_on_block_event(block_number: u64) {
+    if !should_prune_on_block_event(block_number) {
         return;
     }
     if let Err(err) = chain::prune_tick() {
         PRUNE_ERROR_COUNT.fetch_add(1, Ordering::Relaxed);
-        let failures = bump_prune_fail_streak();
-        let backoff_interval = prune_backoff_interval_ms(base_interval_ms, failures);
-        error!(
-            error = ?err,
-            failures,
-            backoff_interval_ms = backoff_interval,
-            "prune_tick failed"
-        );
-        schedule_prune_with_interval(Some(backoff_interval));
-        return;
+        error!(error = ?err, block_number, "prune_tick failed on block event");
     }
-    reset_prune_fail_streak();
-    schedule_prune();
 }
 
 fn mining_tick() {
-    // 単発timer発火時点で「予約済み」状態は解消する。
-    MINING_TIMER_ID.with(|slot| {
-        slot.borrow_mut().take();
-    });
-    set_mining_scheduled_flag(false);
     if reject_write_reason().is_some() {
         evm_db::stable_state::with_state_mut(|state| {
             let mut chain_state = *state.chain_state.get();
+            chain_state.mining_scheduled = false;
             chain_state.is_producing = false;
             state.chain_state.set(chain_state);
         });
@@ -1811,7 +1634,8 @@ fn mining_tick() {
     }
     let should_produce = evm_db::stable_state::with_state_mut(|state| {
         let mut chain_state = *state.chain_state.get();
-        if !chain_state.auto_mine_enabled {
+        chain_state.mining_scheduled = false;
+        if !chain_state.auto_production_enabled {
             state.chain_state.set(chain_state);
             return false;
         }
@@ -1838,30 +1662,23 @@ fn mining_tick() {
             state.chain_state.set(chain_state);
         });
         let next_interval_ms = match result {
-            Ok(_) => {
-                reset_mining_fail_streak();
-                if mining_ready_queue_non_empty() {
-                    Some(base_interval_ms)
-                } else {
-                    None
-                }
+            Ok(outcome) => {
+                maybe_prune_on_block_event(outcome.block.number);
+                base_interval_ms
             }
             Err(chain::ChainError::NoExecutableTx) | Err(chain::ChainError::QueueEmpty) => {
-                let failures = bump_mining_fail_streak();
-                Some(mining_backoff_interval_ms(base_interval_ms, failures))
+                base_interval_ms
             }
             Err(err) => {
                 MINING_ERROR_COUNT.fetch_add(1, Ordering::Relaxed);
                 error!(error = ?err, "mining_tick produce_block failed");
-                let failures = bump_mining_fail_streak();
-                Some(mining_backoff_interval_ms(base_interval_ms, failures))
+                base_interval_ms
             }
         };
-        if let Some(next_interval_ms) = next_interval_ms {
-            schedule_mining_retry_with_interval(next_interval_ms);
-        }
+        schedule_mining_with_interval(Some(next_interval_ms));
         return;
     }
+    schedule_mining();
 }
 
 #[ic_cdk::query]
@@ -1898,15 +1715,18 @@ mod tests {
         inspect_lightweight_tx_guard, inspect_payload_limit_for_method, inspect_policy_for_method,
         map_execute_chain_result, map_submit_chain_error, migration_pending,
         prune_boundary_for_number, receipt_lookup_status, reject_anonymous_principal,
-        reject_write_reason, tx_id_from_bytes, validate_prune_policy_input, EthLogFilterView,
+        reject_write_reason,
+        should_run_cycle_observer_migration_tick, should_schedule_mining_after_cycle_observer,
+        tx_id_from_bytes, validate_prune_policy_input, EthLogFilterView,
         ExecuteTxError, GetLogsErrorView, PrunePolicyView, INSPECT_METHOD_POLICIES,
-        MAX_PRUNE_BACKOFF_MS, MINING_ERROR_COUNT, MIN_PRUNE_TIMER_INTERVAL_MS, PRUNE_ERROR_COUNT,
+        MINING_ERROR_COUNT, PRUNE_ERROR_COUNT,
     };
     use candid::{encode_one, Principal};
     use evm_core::chain::{ChainError, ExecResult};
     use evm_core::revm_exec::{ExecError, OpHaltReason, OpTransactionError};
     use evm_db::chain_data::constants::MAX_RETURN_DATA;
-    use evm_db::chain_data::{MigrationPhase, TxId, TxLoc};
+    use evm_db::chain_data::{MigrationPhase, OpsMode, TxId, TxLoc};
+    use evm_db::memory::WASM_PAGE_SIZE_BYTES;
     use evm_db::meta::{
         current_schema_version, schema_migration_state, set_meta, set_needs_migration,
         set_schema_migration_state, SchemaMigrationPhase, SchemaMigrationState,
@@ -2157,19 +1977,9 @@ mod tests {
         assert_eq!(reason, "ops.write.needs_migration");
     }
 
-    #[test]
-    fn migration_pending_does_not_advance_schema_migration_state() {
-        init_stable_state();
+    fn set_migration_not_pending_for_test() {
         set_needs_migration(false);
-        set_schema_migration_state(SchemaMigrationState {
-            phase: SchemaMigrationPhase::Init,
-            cursor: 0,
-            from_version: current_schema_version(),
-            to_version: current_schema_version(),
-            last_error: 0,
-            cursor_key_set: false,
-            cursor_key: [0u8; 32],
-        });
+        set_schema_migration_state(SchemaMigrationState::done());
         evm_db::stable_state::with_state_mut(|state| {
             let mut meta = *state.state_root_meta.get();
             meta.initialized = true;
@@ -2179,6 +1989,28 @@ mod tests {
             migration.cursor = 0;
             migration.last_error = 0;
             state.state_root_migration.set(migration);
+        });
+    }
+
+    #[test]
+    fn producer_gate_cycle_critical_reason_is_stable() {
+        let reason = ic_evm_ops::reject_write_reason_with_mode_provider(false, || OpsMode::Critical)
+            .expect("critical mode must reject");
+        assert_eq!(reason, "ops.write.cycle_critical");
+    }
+
+    #[test]
+    fn migration_pending_does_not_advance_schema_migration_state() {
+        init_stable_state();
+        set_migration_not_pending_for_test();
+        set_schema_migration_state(SchemaMigrationState {
+            phase: SchemaMigrationPhase::Init,
+            cursor: 0,
+            from_version: current_schema_version(),
+            to_version: current_schema_version(),
+            last_error: 0,
+            cursor_key_set: false,
+            cursor_key: [0u8; 32],
         });
 
         let before = schema_migration_state();
@@ -2191,6 +2023,20 @@ mod tests {
     }
 
     #[test]
+    fn cycle_observer_migration_tick_condition_matches_pending_state() {
+        assert!(should_run_cycle_observer_migration_tick(true));
+        assert!(!should_run_cycle_observer_migration_tick(false));
+    }
+
+    #[test]
+    fn cycle_observer_schedule_mining_condition_is_explicit() {
+        assert!(should_schedule_mining_after_cycle_observer(OpsMode::Normal, false));
+        assert!(should_schedule_mining_after_cycle_observer(OpsMode::Low, false));
+        assert!(!should_schedule_mining_after_cycle_observer(OpsMode::Critical, false));
+        assert!(!should_schedule_mining_after_cycle_observer(OpsMode::Normal, true));
+    }
+
+    #[test]
     fn inspect_payload_limit_applies_per_method() {
         let tx_limit = inspect_payload_limit_for_method("submit_ic_tx").expect("tx limit");
         let manage_limit = inspect_payload_limit_for_method("set_block_gas_limit")
@@ -2199,10 +2045,6 @@ mod tests {
         assert_eq!(
             inspect_payload_limit_for_method("rpc_eth_send_raw_transaction"),
             Some(tx_limit)
-        );
-        assert_eq!(
-            inspect_payload_limit_for_method("produce_block"),
-            Some(manage_limit)
         );
         assert_eq!(inspect_payload_limit_for_method("unknown_method"), None);
     }
@@ -2258,7 +2100,7 @@ mod tests {
             "rpc_eth_send_raw_transaction",
             encode_one(vec![0x02u8, 0x01]).expect("encode")
         ));
-        assert!(inspect_lightweight_tx_guard("set_auto_mine"));
+        assert!(inspect_lightweight_tx_guard("set_block_gas_limit"));
     }
 
     fn inspect_lightweight_tx_guard_with_payload(method: &str, payload: Vec<u8>) -> bool {
@@ -2359,23 +2201,6 @@ mod tests {
     }
 
     #[test]
-    fn set_prune_policy_rejects_too_small_timer_interval() {
-        init_stable_state();
-        let policy = PrunePolicyView {
-            target_bytes: 1,
-            retain_days: 1,
-            retain_blocks: 1,
-            headroom_ratio_bps: 2000,
-            hard_emergency_ratio_bps: 9500,
-            timer_interval_ms: 0,
-            max_ops_per_tick: 1,
-        };
-        let err =
-            validate_prune_policy_input(&policy).expect_err("timer interval must be validated");
-        assert_eq!(err, "input.prune.timer_interval_too_low");
-    }
-
-    #[test]
     fn set_prune_policy_rejects_non_positive_max_ops() {
         init_stable_state();
         let policy = PrunePolicyView {
@@ -2384,7 +2209,6 @@ mod tests {
             retain_blocks: 1,
             headroom_ratio_bps: 2000,
             hard_emergency_ratio_bps: 9500,
-            timer_interval_ms: MIN_PRUNE_TIMER_INTERVAL_MS,
             max_ops_per_tick: 0,
         };
         let err = validate_prune_policy_input(&policy).expect_err("max ops must be positive");
@@ -2392,47 +2216,12 @@ mod tests {
     }
 
     #[test]
-    fn prune_backoff_interval_has_floor_and_cap() {
-        let base = MIN_PRUNE_TIMER_INTERVAL_MS;
-        assert_eq!(super::prune_backoff_interval_ms(base, 0), base);
-        let doubled = super::prune_backoff_interval_ms(base, 1);
-        assert!(doubled >= base.saturating_mul(2));
-        let capped = super::prune_backoff_interval_ms(base, 20);
-        assert!(capped <= MAX_PRUNE_BACKOFF_MS);
-    }
-
-    #[test]
-    fn mining_backoff_interval_has_floor_and_cap() {
-        let base = super::DEFAULT_MINING_INTERVAL_MS;
-        assert_eq!(super::mining_backoff_interval_ms(base, 0), base);
-        let doubled = super::mining_backoff_interval_ms(base, 1);
-        assert!(doubled >= base.saturating_mul(2));
-        let capped = super::mining_backoff_interval_ms(base, 20);
-        assert!(capped <= super::MAX_MINING_BACKOFF_MS);
-    }
-
-    #[test]
-    fn mining_ready_queue_non_empty_depends_on_auto_mine_and_queue() {
-        init_stable_state();
-        evm_db::stable_state::with_state_mut(|state| {
-            let mut chain_state = *state.chain_state.get();
-            chain_state.auto_mine_enabled = true;
-            state.chain_state.set(chain_state);
-        });
-        assert!(!super::mining_ready_queue_non_empty());
-        evm_db::stable_state::with_state_mut(|state| {
-            state.ready_queue.insert(
-                evm_db::chain_data::ReadyKey::new(1, 1, 0, [8u8; 32]),
-                evm_db::chain_data::TxId([7u8; 32]),
-            );
-        });
-        assert!(super::mining_ready_queue_non_empty());
-        evm_db::stable_state::with_state_mut(|state| {
-            let mut chain_state = *state.chain_state.get();
-            chain_state.auto_mine_enabled = false;
-            state.chain_state.set(chain_state);
-        });
-        assert!(!super::mining_ready_queue_non_empty());
+    fn should_prune_on_block_event_only_on_84_multiples() {
+        assert!(!super::should_prune_on_block_event(0));
+        assert!(!super::should_prune_on_block_event(83));
+        assert!(super::should_prune_on_block_event(84));
+        assert!(!super::should_prune_on_block_event(85));
+        assert!(super::should_prune_on_block_event(168));
     }
 
     #[test]
@@ -2459,6 +2248,36 @@ mod tests {
         // state_root_meta.initialized は初期値 false のため migration_pending() は true。
         let view = super::get_ops_status();
         assert!(view.needs_migration);
+    }
+
+    #[test]
+    fn memory_breakdown_reports_consistent_totals_and_known_regions() {
+        init_stable_state();
+        let view = super::memory_breakdown();
+        assert_eq!(
+            view.stable_bytes_total,
+            view.stable_pages_total.saturating_mul(WASM_PAGE_SIZE_BYTES)
+        );
+        assert_eq!(
+            view.heap_bytes,
+            view.heap_pages.saturating_mul(WASM_PAGE_SIZE_BYTES)
+        );
+        for pair in view.regions.windows(2) {
+            assert!(pair[0].id <= pair[1].id, "regions must be sorted by id");
+        }
+        let mut has_tx_store = false;
+        let mut has_blob_arena = false;
+        for region in view.regions {
+            assert_eq!(region.bytes, region.pages.saturating_mul(WASM_PAGE_SIZE_BYTES));
+            if region.name == "TxStore" {
+                has_tx_store = true;
+            }
+            if region.name == "BlobArena" {
+                has_blob_arena = true;
+            }
+        }
+        assert!(has_tx_store, "TxStore region must exist");
+        assert!(has_blob_arena, "BlobArena region must exist");
     }
 
     #[test]

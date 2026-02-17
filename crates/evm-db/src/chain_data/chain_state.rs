@@ -18,7 +18,7 @@ pub struct ChainStateV1 {
     pub chain_id: u64,
     pub last_block_number: u64,
     pub last_block_time: u64,
-    pub auto_mine_enabled: bool,
+    pub auto_production_enabled: bool,
     pub is_producing: bool,
     pub mining_scheduled: bool,
     pub next_queue_seq: u64,
@@ -77,7 +77,7 @@ impl ChainStateV1 {
             chain_id,
             last_block_number: 0,
             last_block_time: 0,
-            auto_mine_enabled: false,
+            auto_production_enabled: true,
             is_producing: false,
             mining_scheduled: false,
             next_queue_seq: 0,
@@ -92,7 +92,7 @@ impl ChainStateV1 {
 
     fn flags(&self) -> u8 {
         let mut out = 0u8;
-        if self.auto_mine_enabled {
+        if self.auto_production_enabled {
             out |= 1 << 0;
         }
         if self.is_producing {
@@ -105,7 +105,7 @@ impl ChainStateV1 {
     }
 
     fn apply_flags(&mut self, flags: u8) {
-        self.auto_mine_enabled = (flags & (1 << 0)) != 0;
+        self.auto_production_enabled = (flags & (1 << 0)) != 0;
         self.is_producing = (flags & (1 << 1)) != 0;
         self.mining_scheduled = (flags & (1 << 2)) != 0;
     }
@@ -149,7 +149,7 @@ impl Storable for ChainStateV1 {
             chain_id: wire.chain_id.get(),
             last_block_number: wire.last_block_number.get(),
             last_block_time: wire.last_block_time.get(),
-            auto_mine_enabled: false,
+            auto_production_enabled: false,
             is_producing: false,
             mining_scheduled: false,
             next_queue_seq: wire.next_queue_seq.get(),
