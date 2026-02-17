@@ -355,9 +355,9 @@ pending/mempool/filter WebSocket 系（例: `eth_newFilter`, `eth_getFilterChang
 
 従来のEVMチェーンと異なる運用上の注意（現行実装時点）:
 - Pruning: 古い履歴は prune される可能性があり、範囲によっては参照RPCが `Pruned` / `PossiblyPruned` を返します。長期保管が必要な履歴は indexer 側で保持してください。
-- Timer駆動: 採掘とpruneは canister timer で実行します。mining は `set_timer` による単発予約を毎tickで再設定する方式で、`mining_scheduled` フラグで多重予約を防ぎます。
-- Timer駆動（mining詳細）: `auto_mine_enabled=false` の間は `produce_block` の手動実行が必要です。`ready_queue` が空のときは空ブロックを作らず次回予約のみ行います。
-- Timer駆動（backoff/停止条件）: `produce_block` 失敗時は指数バックオフ（2倍、上限 `MAX_MINING_BACKOFF_MS`）を適用し、成功で基本間隔に戻します。cycle critical または migration 中は write 拒否により採掘を停止し、復帰後は cycle observer tick（60s）が再スケジュールを補助します。
+- Timer駆動: 採掘とpruneは canister timer で実行します。mining は `set_timer` の単発予約で駆動し、`mining_scheduled` フラグで多重予約を防ぎます（queue空では待機）。
+- Timer駆動（mining詳細）: `auto_mine_enabled=false` の間は `produce_block` の手動実行が必要です。`ready_queue` が空のときは採掘timerを再予約せず待機し、submit成功時に採掘timerを再armします。
+- Timer駆動（backoff/停止条件）: `produce_block` 失敗時は指数バックオフ（2倍、上限 `MAX_MINING_BACKOFF_MS`）を適用し、成功時は queue 残量がある場合のみ基本間隔で再予約します。cycle critical または migration 中は write 拒否により採掘を停止し、復帰後は cycle observer tick（60s）が必要時のみ再スケジュールを補助します。
 - Finalityモデル: 本チェーンは単一シーケンサ前提で、`produce_block` 後のブロックはreorgを前提にしません（Ethereum L1の一般的なfork前提と異なる）。
 - Submit/Execute分離: `eth_sendRawTransaction` は投入（enqueue）であり、実行確定は後続の block production 後に反映されます。
 - `eth_sendRawTransaction` 戻り値: Gateway は canister `rpc_eth_send_raw_transaction` の返却 `tx_id` から `rpc_eth_get_transaction_by_tx_id` で `eth_tx_hash` を解決して返します。解決不能時は `-32000` エラーを返します。

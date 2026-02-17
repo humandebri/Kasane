@@ -2,7 +2,9 @@
 
 use evm_core::{chain, hash};
 use evm_db::chain_data::constants::DROP_CODE_DECODE;
-use evm_db::chain_data::{CallerKey, ReadyKey, ReadySeqKey, SenderNonceKey, StoredTxBytes, TxId, TxKind, TxLocKind};
+use evm_db::chain_data::{
+    CallerKey, ReadyKey, ReadySeqKey, SenderNonceKey, StoredTxBytes, TxId, TxKind, TxLocKind,
+};
 use evm_db::stable_state::{clear_map, init_stable_state, with_state, with_state_mut};
 
 mod common;
@@ -50,7 +52,10 @@ fn principal_pending_and_fee_indexes_track_lifecycle() {
     init_stable_state();
     relax_fee_floor_for_tests();
     let principal = vec![0x44];
-    common::fund_account(hash::derive_evm_address_from_principal(&principal).expect("must derive"), 1_000_000_000_000_000_000);
+    common::fund_account(
+        hash::derive_evm_address_from_principal(&principal).expect("must derive"),
+        1_000_000_000_000_000_000,
+    );
     let tx_id = chain::submit_ic_tx(
         principal.clone(),
         vec![0x99],
@@ -136,8 +141,12 @@ fn produce_block_outcome_reports_dropped_count() {
         hash::derive_evm_address_from_principal(&good_principal).expect("must derive"),
         1_000_000_000_000_000_000,
     );
-    let good_id = chain::submit_ic_tx(good_principal, vec![0x30], common::build_default_ic_tx_bytes(0))
-        .expect("submit good");
+    let good_id = chain::submit_ic_tx(
+        good_principal,
+        vec![0x30],
+        common::build_default_ic_tx_bytes(0),
+    )
+    .expect("submit good");
     let bad_id = TxId([0xabu8; 32]);
     with_state_mut(|state| {
         // caller_evm が None の IcSynthetic は decode 時に drop される。
@@ -196,7 +205,9 @@ fn rebuild_runtime_indexes_drops_decode_broken_pending_entries() {
                 false,
             ),
         );
-        state.tx_locs.insert(bad_id, evm_db::chain_data::TxLoc::queued(10));
+        state
+            .tx_locs
+            .insert(bad_id, evm_db::chain_data::TxLoc::queued(10));
         state.pending_by_sender_nonce.insert(bad_pending, bad_id);
         state.pending_meta_by_tx_id.insert(bad_id, bad_pending);
         let bad_ready = ReadyKey::new(1, 0, 10, bad_id.0);
@@ -214,7 +225,10 @@ fn rebuild_runtime_indexes_drops_decode_broken_pending_entries() {
         assert!(state.pending_by_sender_nonce.get(&bad_pending).is_none());
         assert!(state.pending_meta_by_tx_id.get(&bad_id).is_none());
         assert!(state.ready_key_by_tx_id.get(&bad_id).is_none());
-        assert!(state.ready_by_seq.get(&ReadySeqKey::new(10, bad_id.0)).is_none());
+        assert!(state
+            .ready_by_seq
+            .get(&ReadySeqKey::new(10, bad_id.0))
+            .is_none());
         let loc = chain::get_tx_loc(&bad_id).expect("bad tx loc");
         assert_eq!(loc.kind, TxLocKind::Dropped);
         assert_eq!(loc.drop_code, DROP_CODE_DECODE);

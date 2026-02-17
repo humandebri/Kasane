@@ -148,12 +148,9 @@ fn should_stop_block_execution(
 }
 
 fn derive_caller_evm_cached(caller_principal: &[u8]) -> Result<[u8; 20], ChainError> {
-    if let Some(found) = CALLER_EVM_BY_PRINCIPAL.with(|cache| {
-        cache
-            .borrow()
-            .get(caller_principal)
-            .copied()
-    }) {
+    if let Some(found) =
+        CALLER_EVM_BY_PRINCIPAL.with(|cache| cache.borrow().get(caller_principal).copied())
+    {
         return Ok(found);
     }
 

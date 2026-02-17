@@ -25,7 +25,7 @@ use ic_cdk::api::{
     accept_message, canister_cycle_balance, is_controller, msg_caller, msg_method_name, time,
 };
 use serde::Deserialize;
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::sync::atomic::{AtomicU64, Ordering};
 use tracing::{error, info, warn};
 
@@ -55,6 +55,7 @@ const MAX_PRUNE_BACKOFF_MS: u64 = 300_000;
 thread_local! {
     static MINING_FAIL_STREAK: Cell<u32> = Cell::new(0);
     static PRUNE_FAIL_STREAK: Cell<u32> = Cell::new(0);
+    static MINING_TIMER_ID: RefCell<Option<ic_cdk_timers::TimerId>> = const { RefCell::new(None) };
 }
 
 use ic_evm_rpc_types::*;
@@ -166,6 +167,7 @@ fn init_inner(args: Option<InitArgs>, require_args: bool) {
         }
     }
     observe_cycles();
+    clear_mining_timer_state();
     schedule_cycle_observer();
     schedule_prune();
 }
@@ -178,6 +180,7 @@ fn post_upgrade() {
     init_tracing();
     apply_post_upgrade_migrations();
     observe_cycles();
+    clear_mining_timer_state();
     schedule_cycle_observer();
     schedule_prune();
 }
@@ -315,10 +318,9 @@ fn chain_submit_error_to_code(err: &chain::ChainError) -> Option<(TxApiErrorKind
         chain::ChainError::DecodeFailed => {
             Some((TxApiErrorKind::InvalidArgument, CODE_ARG_DECODE_FAILED))
         }
-        chain::ChainError::AddressDerivationFailed => Some((
-            TxApiErrorKind::InvalidArgument,
-            CODE_ARG_DERIVATION_FAILED,
-        )),
+        chain::ChainError::AddressDerivationFailed => {
+            Some((TxApiErrorKind::InvalidArgument, CODE_ARG_DERIVATION_FAILED))
+        }
         chain::ChainError::UnsupportedTxKind => Some((
             TxApiErrorKind::InvalidArgument,
             CODE_ARG_UNSUPPORTED_TX_KIND,
@@ -396,7 +398,7 @@ fn submit_ic_tx(tx_bytes: Vec<u8>) -> Result<Vec<u8>, SubmitTxError> {
         "submit_ic_tx",
     );
     if out.is_ok() {
-        schedule_mining();
+        schedule_mining_resume_after_submit();
     }
     out
 }
@@ -703,7 +705,7 @@ fn rpc_eth_send_raw_transaction(raw_tx: Vec<u8>) -> Result<Vec<u8>, SubmitTxErro
         ic_cdk::api::msg_caller().as_slice().to_vec(),
     );
     if out.is_ok() {
-        schedule_mining();
+        schedule_mining_resume_after_submit();
     }
     out
 }
@@ -891,6 +893,9 @@ fn set_auto_mine(enabled: bool) -> Result<(), String> {
     });
     if enabled {
         schedule_mining();
+    } else {
+        reset_mining_fail_streak();
+        clear_mining_timer_state();
     }
     Ok(())
 }
@@ -1585,39 +1590,106 @@ fn schedule_cycle_observer() {
     ic_cdk_timers::set_timer_interval(std::time::Duration::from_secs(60), || async {
         drive_migrations_tick(256, 512);
         let mode = observe_cycles();
-        if mode != OpsMode::Critical && !migration_pending() {
+        if mode != OpsMode::Critical
+            && !migration_pending()
+            && !mining_timer_armed()
+            && mining_ready_queue_non_empty()
+        {
             schedule_mining();
         }
     });
 }
 
 fn schedule_mining() {
-    schedule_mining_with_interval(None);
+    schedule_mining_with_interval(None, false);
 }
 
-fn schedule_mining_with_interval(override_interval_ms: Option<u64>) {
+fn schedule_mining_resume_after_submit() {
+    schedule_mining_with_interval(Some(DEFAULT_MINING_INTERVAL_MS), true);
+}
+
+fn schedule_mining_with_interval(override_interval_ms: Option<u64>, replace_existing: bool) {
     if reject_write_reason().is_some() {
+        clear_mining_timer_state();
         return;
     }
-    // RefCell再入防止: with_state_mut内は状態更新のみ。タイマー副作用は借用解放後に実行する。
-    let interval_ms = evm_db::stable_state::with_state_mut(|state| {
-        let mut chain_state = *state.chain_state.get();
-        if !chain_state.auto_mine_enabled {
-            return None;
-        }
-        if chain_state.mining_scheduled {
-            return None;
-        }
-        chain_state.mining_scheduled = true;
-        let interval_ms = override_interval_ms.unwrap_or(DEFAULT_MINING_INTERVAL_MS);
-        state.chain_state.set(chain_state);
-        Some(interval_ms)
+    let schedule_ctx = evm_db::stable_state::with_state(|state| {
+        let chain_state = state.chain_state.get();
+        (
+            chain_state.auto_mine_enabled,
+            chain_state.is_producing,
+            state.ready_queue.len() > 0,
+        )
     });
-    if let Some(interval_ms) = interval_ms {
+    let (auto_mine_enabled, is_producing, has_ready_queue) = schedule_ctx;
+    if !auto_mine_enabled || is_producing || !has_ready_queue {
+        clear_mining_timer_state();
+        return;
+    }
+    if mining_timer_armed() && !replace_existing {
+        set_mining_scheduled_flag(true);
+        return;
+    }
+    let interval_ms = override_interval_ms.unwrap_or(DEFAULT_MINING_INTERVAL_MS);
+    arm_mining_timer(interval_ms);
+}
+
+fn schedule_mining_retry_with_interval(interval_ms: u64) {
+    if reject_write_reason().is_some() {
+        clear_mining_timer_state();
+        return;
+    }
+    let should_retry =
+        evm_db::stable_state::with_state(|state| state.chain_state.get().auto_mine_enabled);
+    if !should_retry {
+        clear_mining_timer_state();
+        return;
+    }
+    arm_mining_timer(interval_ms);
+}
+
+fn set_mining_scheduled_flag(enabled: bool) {
+    evm_db::stable_state::with_state_mut(|state| {
+        let mut chain_state = *state.chain_state.get();
+        chain_state.mining_scheduled = enabled;
+        state.chain_state.set(chain_state);
+    });
+}
+
+fn mining_timer_armed() -> bool {
+    MINING_TIMER_ID.with(|timer_id| timer_id.borrow().is_some())
+}
+
+fn arm_mining_timer(interval_ms: u64) {
+    cancel_mining_timer_if_any();
+    let timer_id =
         ic_cdk_timers::set_timer(std::time::Duration::from_millis(interval_ms), async move {
             mining_tick();
         });
-    }
+    MINING_TIMER_ID.with(|slot| {
+        *slot.borrow_mut() = Some(timer_id);
+    });
+    set_mining_scheduled_flag(true);
+}
+
+fn cancel_mining_timer_if_any() {
+    MINING_TIMER_ID.with(|slot| {
+        if let Some(id) = slot.borrow_mut().take() {
+            ic_cdk_timers::clear_timer(id);
+        }
+    });
+}
+
+fn clear_mining_timer_state() {
+    cancel_mining_timer_if_any();
+    set_mining_scheduled_flag(false);
+}
+
+fn mining_ready_queue_non_empty() -> bool {
+    evm_db::stable_state::with_state(|state| {
+        let chain_state = state.chain_state.get();
+        chain_state.auto_mine_enabled && state.ready_queue.len() > 0
+    })
 }
 
 fn bump_mining_fail_streak() -> u32 {
@@ -1724,10 +1796,14 @@ fn pruning_tick() {
 }
 
 fn mining_tick() {
+    // 単発timer発火時点で「予約済み」状態は解消する。
+    MINING_TIMER_ID.with(|slot| {
+        slot.borrow_mut().take();
+    });
+    set_mining_scheduled_flag(false);
     if reject_write_reason().is_some() {
         evm_db::stable_state::with_state_mut(|state| {
             let mut chain_state = *state.chain_state.get();
-            chain_state.mining_scheduled = false;
             chain_state.is_producing = false;
             state.chain_state.set(chain_state);
         });
@@ -1735,7 +1811,6 @@ fn mining_tick() {
     }
     let should_produce = evm_db::stable_state::with_state_mut(|state| {
         let mut chain_state = *state.chain_state.get();
-        chain_state.mining_scheduled = false;
         if !chain_state.auto_mine_enabled {
             state.chain_state.set(chain_state);
             return false;
@@ -1765,23 +1840,28 @@ fn mining_tick() {
         let next_interval_ms = match result {
             Ok(_) => {
                 reset_mining_fail_streak();
-                base_interval_ms
+                if mining_ready_queue_non_empty() {
+                    Some(base_interval_ms)
+                } else {
+                    None
+                }
             }
             Err(chain::ChainError::NoExecutableTx) | Err(chain::ChainError::QueueEmpty) => {
                 let failures = bump_mining_fail_streak();
-                mining_backoff_interval_ms(base_interval_ms, failures)
+                Some(mining_backoff_interval_ms(base_interval_ms, failures))
             }
             Err(err) => {
                 MINING_ERROR_COUNT.fetch_add(1, Ordering::Relaxed);
                 error!(error = ?err, "mining_tick produce_block failed");
                 let failures = bump_mining_fail_streak();
-                mining_backoff_interval_ms(base_interval_ms, failures)
+                Some(mining_backoff_interval_ms(base_interval_ms, failures))
             }
         };
-        schedule_mining_with_interval(Some(next_interval_ms));
+        if let Some(next_interval_ms) = next_interval_ms {
+            schedule_mining_retry_with_interval(next_interval_ms);
+        }
         return;
     }
-    schedule_mining();
 }
 
 #[ic_cdk::query]
@@ -2319,6 +2399,40 @@ mod tests {
         assert!(doubled >= base.saturating_mul(2));
         let capped = super::prune_backoff_interval_ms(base, 20);
         assert!(capped <= MAX_PRUNE_BACKOFF_MS);
+    }
+
+    #[test]
+    fn mining_backoff_interval_has_floor_and_cap() {
+        let base = super::DEFAULT_MINING_INTERVAL_MS;
+        assert_eq!(super::mining_backoff_interval_ms(base, 0), base);
+        let doubled = super::mining_backoff_interval_ms(base, 1);
+        assert!(doubled >= base.saturating_mul(2));
+        let capped = super::mining_backoff_interval_ms(base, 20);
+        assert!(capped <= super::MAX_MINING_BACKOFF_MS);
+    }
+
+    #[test]
+    fn mining_ready_queue_non_empty_depends_on_auto_mine_and_queue() {
+        init_stable_state();
+        evm_db::stable_state::with_state_mut(|state| {
+            let mut chain_state = *state.chain_state.get();
+            chain_state.auto_mine_enabled = true;
+            state.chain_state.set(chain_state);
+        });
+        assert!(!super::mining_ready_queue_non_empty());
+        evm_db::stable_state::with_state_mut(|state| {
+            state.ready_queue.insert(
+                evm_db::chain_data::ReadyKey::new(1, 1, 0, [8u8; 32]),
+                evm_db::chain_data::TxId([7u8; 32]),
+            );
+        });
+        assert!(super::mining_ready_queue_non_empty());
+        evm_db::stable_state::with_state_mut(|state| {
+            let mut chain_state = *state.chain_state.get();
+            chain_state.auto_mine_enabled = false;
+            state.chain_state.set(chain_state);
+        });
+        assert!(!super::mining_ready_queue_non_empty());
     }
 
     #[test]
