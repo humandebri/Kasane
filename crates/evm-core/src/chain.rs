@@ -23,6 +23,7 @@ use evm_db::chain_data::{
     ReceiptLike, SenderKey, SenderNonceKey, StoredTx, StoredTxBytes, StoredTxError, TxId,
     TxIndexEntry, TxKind, TxLoc, TxLocKind,
 };
+use evm_db::memory::{chain_data_memory_ids_for_estimate, memory_size_pages, WASM_PAGE_SIZE_BYTES};
 use evm_db::meta::tx_locs_v3_active;
 use evm_db::stable_state::{
     clear_map as clear_stable_map, with_state, with_state_mut, StableState,
@@ -555,11 +556,12 @@ fn tx_locs_remove(state: &mut StableState, tx_id: &TxId) {
 pub fn get_prune_status() -> PruneStatus {
     with_state(|state| {
         let config = *state.prune_config.get();
-        let need_prune = need_prune_internal(state);
+        let estimated_kept_bytes = recompute_estimated_kept_bytes_value();
+        let need_prune = need_prune_internal(state, estimated_kept_bytes);
         PruneStatus {
             pruning_enabled: config.pruning_enabled,
             prune_running: config.prune_running,
-            estimated_kept_bytes: config.estimated_kept_bytes,
+            estimated_kept_bytes,
             high_water_bytes: config.high_water_bytes,
             low_water_bytes: config.low_water_bytes,
             hard_emergency_bytes: config.hard_emergency_bytes,
@@ -574,6 +576,7 @@ pub fn get_prune_status() -> PruneStatus {
 
 pub fn prune_tick() -> Result<PruneResult, ChainError> {
     let should_run = with_state_mut(|state| {
+        let estimated_kept_bytes = recompute_estimated_kept_bytes(state);
         let mut config = *state.prune_config.get();
         ensure_oldest(state, &mut config);
         if !config.pruning_enabled {
@@ -585,7 +588,7 @@ pub fn prune_tick() -> Result<PruneResult, ChainError> {
             return false;
         }
         state.prune_config.set(config);
-        if !need_prune_internal(state) {
+        if !need_prune_internal(state, estimated_kept_bytes) {
             return false;
         }
         let mut config = *state.prune_config.get();
@@ -603,7 +606,8 @@ pub fn prune_tick() -> Result<PruneResult, ChainError> {
 
     let (retain, max_ops, last_prune_at) = with_state(|state| {
         let policy = state.prune_config.get().policy();
-        let retain = compute_retain_count(state, policy);
+        let estimated_kept_bytes = state.prune_config.get().estimated_kept_bytes;
+        let retain = compute_retain_count(state, policy, estimated_kept_bytes);
         (retain, policy.max_ops_per_tick, state.head.get().timestamp)
     });
     let result = prune_blocks(retain, max_ops);
@@ -616,7 +620,7 @@ pub fn prune_tick() -> Result<PruneResult, ChainError> {
     result
 }
 
-fn need_prune_internal(state: &StableState) -> bool {
+fn need_prune_internal(state: &StableState, estimated_kept_bytes: u64) -> bool {
     let config = *state.prune_config.get();
     let now = state.head.get().timestamp;
     let time_trigger = if config.retain_days > 0 {
@@ -629,18 +633,15 @@ fn need_prune_internal(state: &StableState) -> bool {
     } else {
         false
     };
-    let cap_trigger =
-        config.target_bytes > 0 && config.estimated_kept_bytes > config.high_water_bytes;
+    let cap_trigger = config.target_bytes > 0 && estimated_kept_bytes > config.high_water_bytes;
     time_trigger || cap_trigger
 }
 
-fn compute_retain_count(state: &StableState, policy: PrunePolicy) -> u64 {
+fn compute_retain_count(state: &StableState, policy: PrunePolicy, estimated_kept_bytes: u64) -> u64 {
     let head = state.head.get().number;
     let config = state.prune_config.get();
-    let emergency =
-        policy.target_bytes > 0 && config.estimated_kept_bytes > config.hard_emergency_bytes;
-    let cap_trigger =
-        policy.target_bytes > 0 && config.estimated_kept_bytes > config.high_water_bytes;
+    let emergency = policy.target_bytes > 0 && estimated_kept_bytes > config.hard_emergency_bytes;
+    let cap_trigger = policy.target_bytes > 0 && estimated_kept_bytes > config.high_water_bytes;
     if emergency || cap_trigger {
         // 容量トリガ発動時は retain を無視して古い方から削る
         return 1;
@@ -1770,7 +1771,6 @@ fn store_block(state: &mut StableState, block: &BlockData) -> evm_db::blob_ptr::
     let ptr = state.blob_store.store_bytes(&bytes).unwrap_or_else(|_| {
         trap_store_err("store_block", Some(block.number), None, "blob_store");
     });
-    increment_estimated_kept_bytes(state, ptr.class());
     let mut config = *state.prune_config.get();
     if config.oldest_block().is_none() {
         config.set_oldest(block.number, block.timestamp);
@@ -1794,7 +1794,6 @@ fn store_receipt(state: &mut StableState, receipt: &ReceiptLike) -> evm_db::blob
             "blob_store",
         );
     });
-    increment_estimated_kept_bytes(state, ptr.class());
     ptr
 }
 
@@ -1809,7 +1808,6 @@ fn store_tx_index_entry(state: &mut StableState, entry: TxIndexEntry) -> evm_db:
             "blob_store",
         );
     });
-    increment_estimated_kept_bytes(state, ptr.class());
     ptr
 }
 
@@ -2062,7 +2060,6 @@ pub fn prune_blocks(retain: u64, max_ops: u32) -> Result<PruneResult, ChainError
                     .blob_store
                     .reclaim_for_prune(&ptr)
                     .map_err(|_| ChainError::ExecFailed(None))?;
-                decrement_estimated_kept_bytes(state, ptr.class());
             }
             state.prune_journal.remove(&next.saturating_sub(1));
             prune_state.clear_journal();
@@ -2134,7 +2131,6 @@ fn recover_prune_journal(state: &mut evm_db::stable_state::StableState) -> Resul
                 .blob_store
                 .reclaim_for_prune(ptr)
                 .map_err(|_| ChainError::ExecFailed(None))?;
-            decrement_estimated_kept_bytes(state, ptr.class());
         }
         state.prune_journal.remove(&journal_block);
     }
@@ -2170,16 +2166,19 @@ fn collect_ptrs_for_block(
     out
 }
 
-fn increment_estimated_kept_bytes(state: &mut StableState, class: u32) {
+fn recompute_estimated_kept_bytes(state: &mut StableState) -> u64 {
+    let estimated = recompute_estimated_kept_bytes_value();
     let mut config = *state.prune_config.get();
-    config.estimated_kept_bytes = config.estimated_kept_bytes.saturating_add(u64::from(class));
+    config.estimated_kept_bytes = estimated;
     state.prune_config.set(config);
+    estimated
 }
 
-fn decrement_estimated_kept_bytes(state: &mut StableState, class: u32) {
-    let mut config = *state.prune_config.get();
-    config.estimated_kept_bytes = config.estimated_kept_bytes.saturating_sub(u64::from(class));
-    state.prune_config.set(config);
+fn recompute_estimated_kept_bytes_value() -> u64 {
+    let total_pages = chain_data_memory_ids_for_estimate()
+        .into_iter()
+        .fold(0u64, |acc, id| acc.saturating_add(memory_size_pages(id)));
+    total_pages.saturating_mul(WASM_PAGE_SIZE_BYTES)
 }
 
 fn refresh_oldest(state: &mut StableState) {

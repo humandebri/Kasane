@@ -10,13 +10,12 @@ fn memory_id_layout_is_frozen() {
     assert_eq!(AppMemoryId::Storage.as_u8(), 3);
     assert_eq!(AppMemoryId::Codes.as_u8(), 4);
     assert_eq!(AppMemoryId::StateAux.as_u8(), 5);
-    assert_eq!(AppMemoryId::CorruptLog.as_u8(), 34);
-    assert_eq!(AppMemoryId::OpsConfig.as_u8(), 35);
-    assert_eq!(AppMemoryId::OpsState.as_u8(), 36);
-    assert_eq!(AppMemoryId::Reserved37.as_u8(), 37);
-    assert_eq!(AppMemoryId::Reserved38.as_u8(), 38);
-    assert_eq!(AppMemoryId::OpsMetrics.as_u8(), 39);
-    assert_eq!(AppMemoryId::Reserved40.as_u8(), 40);
-    assert_eq!(AppMemoryId::Reserved41.as_u8(), 41);
-    assert_eq!(AppMemoryId::EthTxHashIndex.as_u8(), 57);
+    assert_eq!(AppMemoryId::CorruptLog.as_u8(), 31);
+    assert_eq!(AppMemoryId::OpsConfig.as_u8(), 32);
+    assert_eq!(AppMemoryId::OpsState.as_u8(), 33);
+    assert_eq!(AppMemoryId::LogConfig.as_u8(), 34);
+    assert_eq!(AppMemoryId::SchemaMigrationState.as_u8(), 35);
+    assert_eq!(AppMemoryId::OpsMetrics.as_u8(), 36);
+    assert_eq!(AppMemoryId::TxLocsV3.as_u8(), 37);
+    assert_eq!(AppMemoryId::EthTxHashIndex.as_u8(), 53);
 }

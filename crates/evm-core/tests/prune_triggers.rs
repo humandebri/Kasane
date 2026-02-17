@@ -40,6 +40,8 @@ fn capacity_trigger_sets_need_prune() {
         head.number = 1;
         head.timestamp = 1_000;
         state.head.set(head);
+        let block = make_block(1);
+        insert_block(state, 1, &block);
         let mut config = *state.prune_config.get();
         let policy = PrunePolicy {
             target_bytes: 100,
@@ -47,11 +49,9 @@ fn capacity_trigger_sets_need_prune() {
             retain_blocks: 0,
             headroom_ratio_bps: 2000,
             hard_emergency_ratio_bps: 9500,
-            timer_interval_ms: 1_000,
             max_ops_per_tick: 1_000,
         };
         config.set_policy(policy);
-        config.estimated_kept_bytes = config.high_water_bytes.saturating_add(1);
         config.set_oldest(0, 0);
         state.prune_config.set(config);
     });
@@ -79,12 +79,10 @@ fn hard_emergency_prunes_down_to_one_block() {
             retain_blocks: 0,
             headroom_ratio_bps: 2000,
             hard_emergency_ratio_bps: 9000,
-            timer_interval_ms: 1_000,
             max_ops_per_tick: 10_000,
         };
         config.set_policy(policy);
         config.pruning_enabled = true;
-        config.estimated_kept_bytes = config.hard_emergency_bytes.saturating_add(1);
         config.set_oldest(0, 0);
         state.prune_config.set(config);
     });

@@ -55,7 +55,6 @@ fn retain_blocks_keeps_exact_count() {
             retain_blocks: 3,
             headroom_ratio_bps: 2000,
             hard_emergency_ratio_bps: 9500,
-            timer_interval_ms: 60_000,
             max_ops_per_tick: 5_000,
         });
         config.set_oldest(0, 0);
