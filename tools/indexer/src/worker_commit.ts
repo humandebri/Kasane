@@ -3,7 +3,7 @@
 
 import { archiveBlock } from "./archiver";
 import { cursorToJson } from "./cursor";
-import { decodeBlockPayload, decodeTxIndexPayload } from "./decode";
+import { decodeBlockPayload, decodeReceiptStatusPayload, decodeTxIndexPayload } from "./decode";
 import { IndexerDb } from "./db";
 import { Config } from "./config";
 import { Cursor, ExportResponse } from "./types";
@@ -11,7 +11,7 @@ import { finalizePayloads, Pending } from "./worker_pending";
 import { errMessage, logFatal, logInfo } from "./worker_log";
 import { toDayKey } from "./worker_utils";
 import type { ArchiveResult } from "./archiver";
-import type { BlockInfo, TxIndexInfo } from "./decode";
+import type { BlockInfo, ReceiptStatusInfo, TxIndexInfo } from "./decode";
 
 export async function commitPending(params: {
   config: Config;
@@ -25,9 +25,11 @@ export async function commitPending(params: {
 }): Promise<{ lastSizeDay: number | null } | null> {
   let blockInfo: BlockInfo | null = null;
   let txIndex: TxIndexInfo[] | null = null;
+  let receiptStatuses: ReceiptStatusInfo[] | null = null;
   const payloads = finalizePayloads(params.pending);
   try {
     blockInfo = decodeBlockPayload(payloads[0]);
+    receiptStatuses = decodeReceiptStatusPayload(payloads[1]);
     txIndex = decodeTxIndexPayload(payloads[2]);
   } catch (err) {
     logFatal(
@@ -42,7 +44,7 @@ export async function commitPending(params: {
     );
     process.exit(1);
   }
-  if (!blockInfo || !txIndex) {
+  if (!blockInfo || !txIndex || !receiptStatuses) {
     logFatal(
       params.config.chainId,
       "Decode",
@@ -53,6 +55,54 @@ export async function commitPending(params: {
       "decode result missing"
     );
     process.exit(1);
+  }
+  const receiptStatusByTxHash = new Map<string, number>();
+  for (const receipt of receiptStatuses) {
+    receiptStatusByTxHash.set(receipt.txHash.toString("hex"), receipt.status);
+  }
+  const txHashes = new Set<string>();
+  for (const entry of txIndex) {
+    txHashes.add(entry.txHash.toString("hex"));
+  }
+  if (receiptStatusByTxHash.size !== txHashes.size) {
+    logFatal(
+      params.config.chainId,
+      "Decode",
+      params.previousCursor,
+      params.headNumber,
+      params.response,
+      null,
+      `receipt status count mismatch: tx_index=${txHashes.size} receipts=${receiptStatusByTxHash.size}`
+    );
+    process.exit(1);
+  }
+  for (const txHash of txHashes) {
+    if (!receiptStatusByTxHash.has(txHash)) {
+      logFatal(
+        params.config.chainId,
+        "Decode",
+        params.previousCursor,
+        params.headNumber,
+        params.response,
+        null,
+        `receipt status missing for tx_hash=${txHash}`
+      );
+      process.exit(1);
+    }
+  }
+  for (const txHash of receiptStatusByTxHash.keys()) {
+    if (!txHashes.has(txHash)) {
+      logFatal(
+        params.config.chainId,
+        "Decode",
+        params.previousCursor,
+        params.headNumber,
+        params.response,
+        null,
+        `receipt status has unknown tx_hash=${txHash}`
+      );
+      process.exit(1);
+    }
   }
   let archive: ArchiveResult | null = null;
   try {
@@ -101,9 +151,21 @@ export async function commitPending(params: {
         [blockInfo.number, blockInfo.blockHash, blockInfo.timestamp, blockInfo.txIds.length]
       );
       for (const entry of txIndex) {
+        const receiptStatus = receiptStatusByTxHash.get(entry.txHash.toString("hex"));
+        if (receiptStatus === undefined) {
+          throw new Error(`receipt status missing after validation for tx_hash=${entry.txHash.toString("hex")}`);
+        }
         await client.query(
-          "INSERT INTO txs(tx_hash, block_number, tx_index, caller_principal) VALUES($1, $2, $3, $4) ON CONFLICT(tx_hash) DO UPDATE SET block_number = excluded.block_number, tx_index = excluded.tx_index, caller_principal = excluded.caller_principal",
-          [entry.txHash, entry.blockNumber, entry.txIndex, entry.callerPrincipal]
+          "INSERT INTO txs(tx_hash, block_number, tx_index, caller_principal, from_address, to_address, receipt_status) VALUES($1, $2, $3, $4, $5, $6, $7) ON CONFLICT(tx_hash) DO UPDATE SET block_number = excluded.block_number, tx_index = excluded.tx_index, caller_principal = excluded.caller_principal, from_address = excluded.from_address, to_address = excluded.to_address, receipt_status = excluded.receipt_status",
+          [
+            entry.txHash,
+            entry.blockNumber,
+            entry.txIndex,
+            entry.callerPrincipal,
+            entry.fromAddress,
+            entry.toAddress,
+            receiptStatus,
+          ]
         );
       }
       await client.query(

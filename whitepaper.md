@@ -90,6 +90,7 @@ flowchart LR
 - API: `export_blocks(cursor, max_bytes)`。
 - 実装上限: `MAX_EXPORT_BYTES = 1,500,000` bytes（約1.5MiB、2MiB未満に制限）。
 - 分割方式: 1 blockを3 segment（block/receipts/tx_index）に分け、`segment + byte_offset` で追跡。
+- `tx_index` entry: `[tx_hash][entry_len][block_number][tx_index][caller_principal_len][caller_principal][from(20)][to_len][to]`。
 - 上限制御: `MAX_EXPORT_BLOCKS=64`, `MAX_SEGMENT_LEN=8MiB`。
 - 追いつき時: `chunks=[]` + `next_cursor=cursor` を返す。
 - prune越境時: `Pruned{pruned_before_block}` を返す。

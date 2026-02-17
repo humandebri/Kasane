@@ -41,13 +41,19 @@ export default async function HomePage() {
           <form action="/search" className="flex flex-col gap-2 md:flex-row">
             <input
               name="q"
-              placeholder="block number or tx hash"
+              placeholder="block number / tx hash / address / principal"
               className="h-9 rounded-md border px-3 font-mono text-sm"
               required
             />
             <button type="submit" className="h-9 rounded-md border px-3 text-sm">
               Search
             </button>
+            <Link href="/ops" className="inline-flex h-9 items-center rounded-md border px-3 text-sm text-sky-700 hover:underline">
+              Open Ops
+            </Link>
+            <Link href="/logs" className="inline-flex h-9 items-center rounded-md border px-3 text-sm text-sky-700 hover:underline">
+              Open Logs
+            </Link>
           </form>
           <dl className="grid grid-cols-1 gap-2 md:grid-cols-[180px_1fr]">
             <dt className="text-muted-foreground">Total Blocks</dt>
@@ -122,7 +128,18 @@ export default async function HomePage() {
                   </TableCell>
                   <TableCell>{tx.blockNumber.toString()}</TableCell>
                   <TableCell>{tx.txIndex}</TableCell>
-                  <TableCell className="font-mono">{tx.callerPrincipalText ?? "-"}</TableCell>
+                  <TableCell className="font-mono">
+                    {tx.callerPrincipalText ? (
+                      <Link
+                        href={`/principal/${encodeURIComponent(tx.callerPrincipalText)}`}
+                        className="text-sky-700 hover:underline"
+                      >
+                        {tx.callerPrincipalText}
+                      </Link>
+                    ) : (
+                      "-"
+                    )}
+                  </TableCell>
                 </TableRow>
               ))}
             </TableBody>

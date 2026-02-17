@@ -16,6 +16,7 @@ export type Config = {
   backoffMaxMs: number;
   idlePollMs: number;
   pruneStatusPollMs: number;
+  opsMetricsPollMs: number;
   fetchRootKey: boolean;
   archiveDir: string;
   chainId: string;
@@ -34,6 +35,7 @@ const DEFAULT_ARCHIVE_DIR = "./archive";
 const DEFAULT_CHAIN_ID = "4801360";
 const DEFAULT_ZSTD_LEVEL = 3;
 const DEFAULT_PRUNE_STATUS_POLL_MS = 30_000;
+const DEFAULT_OPS_METRICS_POLL_MS = 30_000;
 const DEFAULT_MAX_SEGMENT = 2;
 
 export function loadConfig(env: NodeJS.ProcessEnv): Config {
@@ -74,6 +76,11 @@ export function loadConfig(env: NodeJS.ProcessEnv): Config {
     DEFAULT_PRUNE_STATUS_POLL_MS,
     "INDEXER_PRUNE_STATUS_POLL_MS"
   );
+  const opsMetricsPollMs = readNumber(
+    env.INDEXER_OPS_METRICS_POLL_MS,
+    DEFAULT_OPS_METRICS_POLL_MS,
+    "INDEXER_OPS_METRICS_POLL_MS"
+  );
   return {
     canisterId,
     icHost,
@@ -88,6 +95,7 @@ export function loadConfig(env: NodeJS.ProcessEnv): Config {
     backoffMaxMs,
     idlePollMs,
     pruneStatusPollMs,
+    opsMetricsPollMs,
     fetchRootKey,
     archiveDir,
     chainId,

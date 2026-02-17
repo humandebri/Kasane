@@ -16,7 +16,7 @@ npm run dev
 - `.env.example` は配布用のひな型
 
 - `EVM_CANISTER_ID` (必須)
-- `INDEXER_DATABASE_URL` (必須, 例: `postgres://postgres:postgres@127.0.0.1:5432/ic_op`)
+- `INDEXER_DATABASE_URL` (必須, 例: `postgres://postgres:postgres@127.0.0.1:5432/kasane`)
 - `INDEXER_DB_POOL_MAX` (任意, 既定: 10)
 - `INDEXER_RETENTION_ENABLED` (任意, 既定: true)
 - `INDEXER_RETENTION_DAYS` (任意, 既定: 90)
@@ -28,6 +28,7 @@ npm run dev
 - `INDEXER_BACKOFF_MAX_MS` (任意, 既定: 5000)
 - `INDEXER_IDLE_POLL_MS` (任意, 既定: 1000)
 - `INDEXER_PRUNE_STATUS_POLL_MS` (任意, 既定: 30000)
+- `INDEXER_OPS_METRICS_POLL_MS` (任意, 既定: 30000)
 - `INDEXER_FETCH_ROOT_KEY` (任意, 1/true で有効。local向け)
 - `INDEXER_ARCHIVE_DIR` (任意, 既定: ./archive)
 - `INDEXER_CHAIN_ID` (任意, 既定: 4801360)
@@ -69,15 +70,27 @@ npm run dev
 
 `archive_bytes` は日次の実サイズ（差分は集計側で算出）。
 
+## txs / receipt_status
+
+- `txs.receipt_status` に `segment=1` のreceipt payloadから抽出した `0|1` を保存します。
+- payload不正時は fatal で停止します（整合性優先）。
+
+## ops_metrics_samples
+
+- canister `metrics(128)` を `INDEXER_OPS_METRICS_POLL_MS` 間隔で保存します。
+- 保存項目: `queue_len / total_submitted / total_included / total_dropped / drop_counts_json`
+- 保存時に 14日より古いサンプルを削除します（retention固定）。
+
 ## tx_index payload 仕様（固定）
 
 segment `2` の各エントリは以下の固定順序:
 
-`[tx_hash:32][entry_len:4][block_number:8][tx_index:4][caller_principal_len:2][caller_principal:caller_principal_len]`
+`[tx_hash:32][entry_len:4][block_number:8][tx_index:4][caller_principal_len:2][caller_principal:caller_principal_len][from:20][to_len:1][to:to_len]`
 
 - すべて Big Endian
-- `entry_len = 14 + caller_principal_len`
-- 後方互換モードは持たない（旧 `entry_len=12` は不正として reject）
+- `entry_len = 12 + 2 + caller_principal_len + 20 + 1 + to_len`
+- `to_len` は `0`（contract creation）または `20` のみ許可
+- 後方互換モードは持たない（旧形式は不正として reject）
 - `caller_principal_len=0` の場合は principal なしとして扱う
 
 ## マイグレーション（Postgres）
@@ -88,4 +101,7 @@ segment `2` の各エントリは以下の固定順序:
 tools/indexer/migrations/
   001_init.sql
   002_backfill.sql
+  003_add_txs_caller_principal_index.sql
+  004_add_txs_from_to_addresses.sql
+  005_add_receipt_status_and_ops_metrics.sql
 ```

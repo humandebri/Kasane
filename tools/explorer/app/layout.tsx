@@ -26,6 +26,12 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
               <Link href="/" className="text-sky-700 hover:underline">
                 Home
               </Link>
+              <Link href="/ops" className="text-sky-700 hover:underline">
+                Ops
+              </Link>
+              <Link href="/logs" className="text-sky-700 hover:underline">
+                Logs
+              </Link>
             </CardContent>
           </Card>
           {children}

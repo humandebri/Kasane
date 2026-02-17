@@ -160,7 +160,7 @@ function errToJson(err: unknown): { name?: string; message?: string; stack?: str
 }
 
 function toLag(head: bigint, cursor: Cursor): number {
-  const diff = head - cursor.block_number;
+  const diff = head - toBigInt(cursor.block_number);
   if (diff < 0n) {
     return 0;
   }
@@ -169,4 +169,20 @@ function toLag(head: bigint, cursor: Cursor): number {
     return Number.MAX_SAFE_INTEGER;
   }
   return Number(diff);
+}
+
+function toBigInt(value: bigint | number | string): bigint {
+  if (typeof value === "bigint") {
+    return value;
+  }
+  if (typeof value === "number") {
+    if (!Number.isSafeInteger(value)) {
+      return BigInt(Number.MAX_SAFE_INTEGER);
+    }
+    return BigInt(value);
+  }
+  if (/^(0|[1-9][0-9]*)$/.test(value)) {
+    return BigInt(value);
+  }
+  return 0n;
 }

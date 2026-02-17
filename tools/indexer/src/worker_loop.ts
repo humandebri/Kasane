@@ -4,7 +4,7 @@
 import { Config, sleep } from "./config";
 import { IndexerDb } from "./db";
 import { runArchiveGcWithMode } from "./archive_gc";
-import { Cursor, ExportError, ExportResponse, PruneStatusView, Result } from "./types";
+import { Cursor, ExportError, ExportResponse, MetricsView, PruneStatusView, Result } from "./types";
 import {
   applyChunk,
   enforceNextCursor,
@@ -32,6 +32,7 @@ export async function runWorkerWithDeps(
     getHeadNumber: () => Promise<bigint>;
     exportBlocks: (cursor: Cursor | null, maxBytes: number) => Promise<Result<ExportResponse, ExportError>>;
     getPruneStatus: () => Promise<PruneStatusView>;
+    getMetrics: (window: bigint) => Promise<MetricsView>;
   },
   options: { skipGc: boolean }
 ): Promise<void> {
@@ -62,6 +63,7 @@ export async function runWorkerWithDeps(
   let lastIdleLogAt = 0;
   let stopRequested = false;
   let lastPruneStatusAt = 0;
+  let lastOpsMetricsAt = 0;
   let lastSizeDay: number | null = null;
 
   setupSignalHandlers(config.chainId, () => {
@@ -112,6 +114,28 @@ export async function runWorkerWithDeps(
       } catch (err) {
         logWarn(config.chainId, "prune_status_failed", {
           poll_ms: config.pruneStatusPollMs,
+          err: errMessage(err),
+        });
+      }
+    }
+
+    if (config.opsMetricsPollMs > 0 && nowMs - lastOpsMetricsAt >= config.opsMetricsPollMs) {
+      lastOpsMetricsAt = nowMs;
+      try {
+        const metrics = await client.getMetrics(128n);
+        const retentionCutoffMs = BigInt(nowMs) - 14n * 24n * 60n * 60n * 1000n;
+        await db.addOpsMetricsSample({
+          sampledAtMs: BigInt(nowMs),
+          queueLen: metrics.queue_len,
+          totalSubmitted: metrics.total_submitted,
+          totalIncluded: metrics.total_included,
+          totalDropped: metrics.total_dropped,
+          dropCountsJson: jsonStringifyBigInt(metrics.drop_counts),
+          retentionCutoffMs,
+        });
+      } catch (err) {
+        logWarn(config.chainId, "ops_metrics_failed", {
+          poll_ms: config.opsMetricsPollMs,
           err: errMessage(err),
         });
       }

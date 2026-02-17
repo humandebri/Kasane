@@ -37,6 +37,26 @@ export const idlFactory: IDL.InterfaceFactory = ({ IDL }) => {
     prune_running: IDL.Bool,
     oldest_kept_block: IDL.Opt(IDL.Nat64),
   });
+  const DropCountView = IDL.Record({
+    code: IDL.Nat16,
+    count: IDL.Nat64,
+  });
+  const MetricsView = IDL.Record({
+    txs: IDL.Nat64,
+    ema_txs_per_block_x1000: IDL.Nat64,
+    pruned_before_block: IDL.Opt(IDL.Nat64),
+    ema_block_rate_per_sec_x1000: IDL.Nat64,
+    total_submitted: IDL.Nat64,
+    window: IDL.Nat64,
+    avg_txs_per_block: IDL.Nat64,
+    block_rate_per_sec_x1000: IDL.Opt(IDL.Nat64),
+    cycles: IDL.Nat,
+    total_dropped: IDL.Nat64,
+    blocks: IDL.Nat64,
+    drop_counts: IDL.Vec(DropCountView),
+    queue_len: IDL.Nat64,
+    total_included: IDL.Nat64,
+  });
   const OpsModeView = IDL.Variant({ Low: IDL.Null, Normal: IDL.Null, Critical: IDL.Null });
   const OpsConfigView = IDL.Record({
     low_watermark: IDL.Nat,
@@ -67,6 +87,7 @@ export const idlFactory: IDL.InterfaceFactory = ({ IDL }) => {
     rpc_eth_chain_id: IDL.Func([], [IDL.Nat64], ["query"]),
     export_blocks: IDL.Func([IDL.Opt(Cursor), IDL.Nat32], [ExportResult], ["query"]),
     get_prune_status: IDL.Func([], [PruneStatusView], ["query"]),
+    metrics: IDL.Func([IDL.Nat64], [MetricsView], ["query"]),
     rpc_eth_block_number: IDL.Func([], [IDL.Nat64], ["query"]),
     get_ops_status: IDL.Func([], [OpsStatusView], ["query"]),
   });

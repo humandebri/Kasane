@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "next dev",
-    "build": "next build",
+    "build": "next build --webpack",
     "start": "next start",
     "lint": "tsc -p tsconfig.json --noEmit",
     "test": "tsx tests/run.ts"
@@ -13,6 +13,7 @@
   "dependencies": {
     "@dfinity/agent": "^3.4.3",
     "@dfinity/candid": "^3.4.3",
+    "@dfinity/ic-pub-key": "1.0.1",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "lucide-react": "^0.539.0",
