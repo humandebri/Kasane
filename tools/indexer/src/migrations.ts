@@ -12,6 +12,8 @@ export const MIGRATIONS = [
   "003_add_txs_caller_principal_index.sql",
   "004_add_txs_from_to_addresses.sql",
   "005_add_receipt_status_and_ops_metrics.sql",
+  "006_add_token_transfers.sql",
+  "007_add_ops_metrics_cycles.sql",
 ] as const;
 
 export async function applyMigrations(pool: Pool, migrations: readonly string[]): Promise<void> {

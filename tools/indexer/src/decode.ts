@@ -1,4 +1,11 @@
-// どこで: payloadデコード / 何を: block/tx_indexの最小デコード / なぜ: v2最小取り込みのため
+// どこで: payloadデコード / 何を: block/tx_indexの最小デコードとreceiptデコード呼び出し / なぜ: workerの責務を単純化するため
+
+import {
+  decodeReceiptsPayload as decodeReceiptsPayloadImpl,
+  type DecodedReceiptsInfo,
+  type Erc20TransferInfo,
+  type ReceiptStatusInfo,
+} from "./decode_receipt";
 
 export type BlockInfo = {
   number: bigint;
@@ -16,14 +23,10 @@ export type TxIndexInfo = {
   toAddress: Buffer | null;
 };
 
-export type ReceiptStatusInfo = {
-  txHash: Buffer;
-  status: 0 | 1;
-};
+export type { DecodedReceiptsInfo, Erc20TransferInfo, ReceiptStatusInfo };
 
 const HASH_LEN = 32;
 const ADDRESS_LEN = 20;
-const RECEIPT_V2_MAGIC = Buffer.from("7263707476320002", "hex");
 
 export function decodeBlockPayload(payload: Uint8Array): BlockInfo {
   const data = Buffer.from(payload);
@@ -33,20 +36,19 @@ export function decodeBlockPayload(payload: Uint8Array): BlockInfo {
   if (data.length < baseLen) {
     throw new Error("block payload too short");
   }
-  // Rust側Storableと同じ順序で読み出す（big-endian固定）
   let offset = 0;
   const number = readU64BE(data, offset);
   offset += 8;
-  offset += HASH_LEN; // parent_hash
+  offset += HASH_LEN;
   const blockHash = data.subarray(offset, offset + HASH_LEN);
   offset += HASH_LEN;
   const timestamp = readU64BE(data, offset);
   offset += 8;
-  offset += 8; // base_fee_per_gas
-  offset += 8; // block_gas_limit
-  offset += 8; // gas_used
-  offset += HASH_LEN; // tx_list_hash
-  offset += HASH_LEN; // state_root
+  offset += 8;
+  offset += 8;
+  offset += 8;
+  offset += HASH_LEN;
+  offset += HASH_LEN;
   const txLen = readU32BE(data, offset);
   offset += 4;
   const txCount = Number(txLen);
@@ -138,28 +140,16 @@ export function decodeTxIndexPayload(payload: Uint8Array): TxIndexInfo[] {
   return out;
 }
 
+export function decodeReceiptsPayload(payload: Uint8Array): DecodedReceiptsInfo {
+  return decodeReceiptsPayloadImpl(payload);
+}
+
 export function decodeReceiptStatusPayload(payload: Uint8Array): ReceiptStatusInfo[] {
-  const data = Buffer.from(payload);
-  const out: ReceiptStatusInfo[] = [];
-  let offset = 0;
-  while (offset < data.length) {
-    const remaining = data.length - offset;
-    if (remaining < HASH_LEN + 4) {
-      throw new Error("receipts payload truncated");
-    }
-    const txHash = Buffer.from(data.subarray(offset, offset + HASH_LEN));
-    offset += HASH_LEN;
-    const receiptLen = readU32BE(data, offset);
-    offset += 4;
-    if (data.length - offset < receiptLen) {
-      throw new Error("receipts payload length mismatch");
-    }
-    const receipt = data.subarray(offset, offset + receiptLen);
-    offset += receiptLen;
-    const status = decodeReceiptStatus(receipt);
-    out.push({ txHash, status });
-  }
-  return out;
+  return decodeReceiptsPayloadImpl(payload).statuses;
+}
+
+export function decodeErc20TransferPayload(payload: Uint8Array): Erc20TransferInfo[] {
+  return decodeReceiptsPayloadImpl(payload).tokenTransfers;
 }
 
 function readU64BE(data: Buffer, offset: number): bigint {
@@ -170,22 +160,4 @@ function readU64BE(data: Buffer, offset: number): bigint {
 
 function readU32BE(data: Buffer, offset: number): number {
   return data.readUInt32BE(offset);
-}
-
-function decodeReceiptStatus(encoded: Buffer): 0 | 1 {
-  let offset = 0;
-  if (encoded.length >= RECEIPT_V2_MAGIC.length && encoded.subarray(0, RECEIPT_V2_MAGIC.length).equals(RECEIPT_V2_MAGIC)) {
-    offset += RECEIPT_V2_MAGIC.length;
-  }
-  const minLen = offset + HASH_LEN + 8 + 4 + 1;
-  if (encoded.length < minLen) {
-    throw new Error("receipt bytes too short");
-  }
-  // tx_id(32) + block_number(8) + tx_index(4) の直後が status(1)
-  const statusOffset = offset + HASH_LEN + 8 + 4;
-  const status = encoded.readUInt8(statusOffset);
-  if (status !== 0 && status !== 1) {
-    throw new Error("receipt status must be 0 or 1");
-  }
-  return status;
 }

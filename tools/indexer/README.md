@@ -76,10 +76,18 @@ npm run dev
 - `txs.receipt_status` に `segment=1` のreceipt payloadから抽出した `0|1` を保存します。
 - payload不正時は fatal で停止します（整合性優先）。
 
+## token_transfers (ERC-20)
+
+- `segment=1` のreceipt payloadから `Transfer(address,address,uint256)` ログを抽出し、`token_transfers` に保存します。
+- 保存項目: `tx_hash / block_number / tx_index / log_index / token_address / from_address / to_address / amount_numeric`
+- `topic0` が Transfer でも `topic1/topic2/data(>=32byte)` が不正なログは、そのログだけをスキップして取り込み継続します。
+- `amount` は ABI準拠で先頭32byteのみを使用します。`numeric(78,0)` に収まらない値や行単位INSERT失敗は、その行だけスキップして取り込み継続します。
+- `commit_block` ログに `token_transfer_skipped_*` を出力し、スキップ件数を監視できます。
+
 ## ops_metrics_samples
 
 - canister `metrics(128)` を `INDEXER_OPS_METRICS_POLL_MS` 間隔で保存します。
-- 保存項目: `queue_len / total_submitted / total_included / total_dropped / drop_counts_json`
+- 保存項目: `queue_len / cycles / total_submitted / total_included / total_dropped / drop_counts_json`
 - 保存時に 14日より古いサンプルを削除します（retention固定）。
 
 ## tx_index payload 仕様（固定）
@@ -105,4 +113,6 @@ tools/indexer/migrations/
   003_add_txs_caller_principal_index.sql
   004_add_txs_from_to_addresses.sql
   005_add_receipt_status_and_ops_metrics.sql
+  006_add_token_transfers.sql
+  007_add_ops_metrics_cycles.sql
 ```
