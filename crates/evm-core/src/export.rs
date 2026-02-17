@@ -301,6 +301,12 @@ fn build_tx_index_payload(
             .map_err(|_| ExportError::MissingData("tx decode failed"))?;
         let from = decoded.from;
         let to = decoded.to;
+        let selector = if decoded.input.len() >= 4 {
+            Some(&decoded.input[..4])
+        } else {
+            None
+        };
+        let selector_len: u8 = if selector.is_some() { 4 } else { 0 };
         let to_len: u8 = if to.is_some() { 20 } else { 0 };
         let caller_principal_len = u16::try_from(caller_principal.len())
             .map_err(|_| ExportError::InvalidCursor("principal too large"))?;
@@ -310,7 +316,9 @@ fn build_tx_index_payload(
             .saturating_add(usize::from(caller_principal_len))
             .saturating_add(20)
             .saturating_add(1)
-            .saturating_add(usize::from(to_len));
+            .saturating_add(usize::from(to_len))
+            .saturating_add(1)
+            .saturating_add(usize::from(selector_len));
         let len = u32::try_from(total_len)
             .map_err(|_| ExportError::InvalidCursor("tx_index too large"))?;
         out.extend_from_slice(&tx_id.0);
@@ -322,6 +330,10 @@ fn build_tx_index_payload(
         out.push(to_len);
         if let Some(to_addr) = to {
             out.extend_from_slice(&to_addr);
+        }
+        out.push(selector_len);
+        if let Some(bytes) = selector {
+            out.extend_from_slice(bytes);
         }
     }
     Ok(out)

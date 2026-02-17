@@ -245,6 +245,7 @@ fn export_tx_index_payload_contains_from_and_to() {
         derive_evm_address_from_principal(&[0x88]).expect("must derive")
     );
     assert_eq!(decoded.to, Some([0x10; 20]));
+    assert_eq!(decoded.selector, None);
 }
 
 #[test]
@@ -429,6 +430,7 @@ struct DecodedEntry {
     tx_index: u32,
     from: [u8; 20],
     to: Option<[u8; 20]>,
+    selector: Option<[u8; 4]>,
 }
 
 fn decode_single_tx_index_entry(payload: &[u8]) -> Result<DecodedEntry, &'static str> {
@@ -476,6 +478,23 @@ fn decode_single_tx_index_entry(payload: &[u8]) -> Result<DecodedEntry, &'static
     } else {
         return Err("invalid to_len");
     };
+    if payload.len() < offset + 1 {
+        return Err("missing selector_len");
+    }
+    let selector_len = payload[offset] as usize;
+    offset += 1;
+    let selector = if selector_len == 0 {
+        None
+    } else if selector_len == 4 {
+        if payload.len() < offset + 4 {
+            return Err("selector bytes missing");
+        }
+        let bytes = <[u8; 4]>::try_from(&payload[offset..offset + 4]).map_err(|_| "selector")?;
+        offset += 4;
+        Some(bytes)
+    } else {
+        return Err("invalid selector_len");
+    };
     if offset != payload.len() {
         return Err("trailing bytes");
     }
@@ -485,5 +504,6 @@ fn decode_single_tx_index_entry(payload: &[u8]) -> Result<DecodedEntry, &'static
         tx_index,
         from,
         to,
+        selector,
     })
 }

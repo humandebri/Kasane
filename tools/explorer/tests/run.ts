@@ -18,6 +18,7 @@ import {
   getLatestTxs,
   getMaxBlockNumber,
   getMetaSnapshot,
+  getOpsMetricsSamplesSince,
   getRecentOpsMetricsSamples,
   getTokenTransfersByAddress,
   getOverviewStats,
@@ -26,8 +27,9 @@ import {
   getTxsByCallerPrincipal,
   setExplorerPool,
 } from "../lib/db";
-import { getPrincipalView, resolveHomeBlocksLimit } from "../lib/data";
+import { getPrincipalView, parseCyclesTrendWindow, resolveHomeBlocksLimit } from "../lib/data";
 import { parseStoredPruneStatusForTest } from "../lib/data_ops";
+import { mapAddressHistory } from "../lib/data_address";
 import { calcRoundedBps, formatEthFromWei, formatGweiFromWei } from "../lib/format";
 import { deriveEvmAddressFromPrincipal } from "../lib/principal";
 import { logsTestHooks } from "../lib/logs";
@@ -80,6 +82,13 @@ async function runHomeBlocksLimitTests(): Promise<void> {
   assert.equal(resolveHomeBlocksLimit("0", 10), 10);
   assert.equal(resolveHomeBlocksLimit("501", 10), 10);
   assert.equal(resolveHomeBlocksLimit("abc", 10), 10);
+}
+
+async function runCyclesTrendWindowTests(): Promise<void> {
+  assert.equal(parseCyclesTrendWindow("24h"), "24h");
+  assert.equal(parseCyclesTrendWindow("7d"), "7d");
+  assert.equal(parseCyclesTrendWindow(undefined), "24h");
+  assert.equal(parseCyclesTrendWindow("x"), "24h");
 }
 
 async function runConfigTests(): Promise<void> {
@@ -433,7 +442,7 @@ async function runDbTests(): Promise<void> {
   const mem = newDb({ noAstCoverageCheck: true });
   mem.public.none(`
     CREATE TABLE blocks(number bigint primary key, hash bytea, timestamp bigint not null, tx_count integer not null, gas_used bigint);
-    CREATE TABLE txs(tx_hash bytea primary key, block_number bigint not null, tx_index integer not null, caller_principal bytea, from_address bytea not null, to_address bytea, receipt_status smallint);
+    CREATE TABLE txs(tx_hash bytea primary key, block_number bigint not null, tx_index integer not null, caller_principal bytea, from_address bytea not null, to_address bytea, tx_selector bytea, receipt_status smallint);
     CREATE TABLE token_transfers(tx_hash bytea not null, block_number bigint not null, tx_index integer not null, log_index integer not null, token_address bytea not null, from_address bytea not null, to_address bytea not null, amount_numeric numeric(78,0) not null, primary key(tx_hash, log_index));
     CREATE TABLE metrics_daily(day integer primary key, raw_bytes bigint not null default 0, compressed_bytes bigint not null default 0, archive_bytes bigint, blocks_ingested bigint not null default 0, errors bigint not null default 0);
     CREATE TABLE ops_metrics_samples(sampled_at_ms bigint primary key, queue_len bigint not null, cycles bigint not null default 0, total_submitted bigint not null, total_included bigint not null, total_dropped bigint not null, drop_counts_json text not null);
@@ -445,31 +454,34 @@ async function runDbTests(): Promise<void> {
   setExplorerPool(pool);
   await pool.query("INSERT INTO blocks(number, hash, timestamp, tx_count, gas_used) VALUES($1, $2, $3, $4, $5)", [12, Buffer.from("aa", "hex"), 1000, 1, 21000]);
   await pool.query("INSERT INTO blocks(number, hash, timestamp, tx_count, gas_used) VALUES($1, $2, $3, $4, $5)", [11, Buffer.from("bb", "hex"), 900, 1, 20000]);
-  await pool.query("INSERT INTO txs(tx_hash, block_number, tx_index, caller_principal, from_address, to_address, receipt_status) VALUES($1, $2, $3, $4, $5, $6, $7)", [
+  await pool.query("INSERT INTO txs(tx_hash, block_number, tx_index, caller_principal, from_address, to_address, tx_selector, receipt_status) VALUES($1, $2, $3, $4, $5, $6, $7, $8)", [
     Buffer.from("1122", "hex"),
     12,
     0,
     null,
     Buffer.from("11".repeat(20), "hex"),
     Buffer.from("22".repeat(20), "hex"),
+    Buffer.from("01020304", "hex"),
     1,
   ]);
-  await pool.query("INSERT INTO txs(tx_hash, block_number, tx_index, caller_principal, from_address, to_address, receipt_status) VALUES($1, $2, $3, $4, $5, $6, $7)", [
+  await pool.query("INSERT INTO txs(tx_hash, block_number, tx_index, caller_principal, from_address, to_address, tx_selector, receipt_status) VALUES($1, $2, $3, $4, $5, $6, $7, $8)", [
     Buffer.from("3344", "hex"),
     11,
     0,
     Buffer.from([4]),
     Buffer.from("22".repeat(20), "hex"),
     Buffer.from("11".repeat(20), "hex"),
+    Buffer.from("095ea7b3", "hex"),
     0,
   ]);
-  await pool.query("INSERT INTO txs(tx_hash, block_number, tx_index, caller_principal, from_address, to_address, receipt_status) VALUES($1, $2, $3, $4, $5, $6, $7)", [
+  await pool.query("INSERT INTO txs(tx_hash, block_number, tx_index, caller_principal, from_address, to_address, tx_selector, receipt_status) VALUES($1, $2, $3, $4, $5, $6, $7, $8)", [
     Buffer.from("5566", "hex"),
     10,
     1,
     null,
     Buffer.from("11".repeat(20), "hex"),
     Buffer.from("11".repeat(20), "hex"),
+    null,
     null,
   ]);
   await pool.query("INSERT INTO token_transfers(tx_hash, block_number, tx_index, log_index, token_address, from_address, to_address, amount_numeric) VALUES($1, $2, $3, $4, $5, $6, $7, $8)", [
@@ -542,6 +554,8 @@ async function runDbTests(): Promise<void> {
   assert.equal(txsByAddress.length, 3);
   assert.equal(txsByAddress[0]?.txHashHex, "0x1122");
   assert.equal(txsByAddress[1]?.txHashHex, "0x3344");
+  assert.equal(txsByAddress[0]?.blockTimestamp, 1000n);
+  assert.equal(txsByAddress[0]?.txSelector?.toString("hex"), "01020304");
   const next = txsByAddress[1];
   assert.ok(next);
   const page2 = await getTxsByAddress(address, 2, {
@@ -558,6 +572,9 @@ async function runDbTests(): Promise<void> {
   const opsSamples = await getRecentOpsMetricsSamples(10);
   assert.equal(opsSamples.length, 2);
   assert.equal(opsSamples[0]?.sampledAtMs, 2000n);
+  const opsSamples24h = await getOpsMetricsSamplesSince(1500n);
+  assert.equal(opsSamples24h.length, 1);
+  assert.equal(opsSamples24h[0]?.sampledAtMs, 2000n);
 
   await closeExplorerPool();
 }
@@ -607,10 +624,58 @@ async function runDataTests(): Promise<void> {
   assert.equal(parseStoredPruneStatusForTest("{"), null);
 }
 
+async function runAddressHistoryMappingTests(): Promise<void> {
+  const target = "0x" + "11".repeat(20);
+  const inRow = mapAddressHistory(
+    [
+      {
+        txHashHex: "0x" + "aa".repeat(32),
+        blockNumber: 100n,
+        blockTimestamp: 999n,
+        txIndex: 0,
+        callerPrincipal: null,
+        fromAddress: Buffer.from("22".repeat(20), "hex"),
+        toAddress: Buffer.from("11".repeat(20), "hex"),
+        txSelector: Buffer.from("a9059cbb", "hex"),
+        receiptStatus: 1,
+      },
+    ],
+    target
+  );
+  assert.equal(inRow.length, 1);
+  assert.equal(inRow[0]?.direction, "in");
+  assert.equal(inRow[0]?.fromAddressHex, "0x" + "22".repeat(20));
+  assert.equal(inRow[0]?.toAddressHex, "0x" + "11".repeat(20));
+  assert.equal(inRow[0]?.methodLabel, "transfer");
+
+  const createRow = mapAddressHistory(
+    [
+      {
+        txHashHex: "0x" + "bb".repeat(32),
+        blockNumber: 101n,
+        blockTimestamp: 1000n,
+        txIndex: 1,
+        callerPrincipal: null,
+        fromAddress: Buffer.from("11".repeat(20), "hex"),
+        toAddress: null,
+        txSelector: null,
+        receiptStatus: 0,
+      },
+    ],
+    target
+  );
+  assert.equal(createRow.length, 1);
+  assert.equal(createRow[0]?.direction, "out");
+  assert.equal(createRow[0]?.fromAddressHex, "0x" + "11".repeat(20));
+  assert.equal(createRow[0]?.toAddressHex, null);
+  assert.equal(createRow[0]?.methodLabel, "create");
+}
+
 runHexTests()
   .then(runTxMetricsInputValidationTests)
   .then(runSearchTests)
   .then(runHomeBlocksLimitTests)
+  .then(runCyclesTrendWindowTests)
   .then(runConfigTests)
   .then(runFormatTests)
   .then(runPrincipalDeriveTests)
@@ -620,6 +685,7 @@ runHexTests()
   .then(runTimelineTests)
   .then(runDbTests)
   .then(runDataTests)
+  .then(runAddressHistoryMappingTests)
   .then(() => {
     console.log("ok");
   })

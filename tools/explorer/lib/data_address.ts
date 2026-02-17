@@ -13,7 +13,12 @@ export const ADDRESS_HISTORY_LIMIT = 50;
 export type AddressHistoryItem = {
   txHashHex: string;
   blockNumber: bigint;
+  blockTimestamp: bigint | null;
   txIndex: number;
+  fromAddressHex: string;
+  toAddressHex: string | null;
+  txSelectorHex: string | null;
+  methodLabel: string;
   direction: "in" | "out" | "self";
   counterpartyHex: string | null;
   receiptStatus: number | null;
@@ -147,7 +152,12 @@ function toAddressHistoryItem(tx: TxSummary, targetHex: string): AddressHistoryI
     return {
       txHashHex: tx.txHashHex,
       blockNumber: tx.blockNumber,
+      blockTimestamp: tx.blockTimestamp ?? null,
       txIndex: tx.txIndex,
+      fromAddressHex: fromHex,
+      toAddressHex: toHex,
+      txSelectorHex: toHex === null || !tx.txSelector ? null : toHexLower(tx.txSelector),
+      methodLabel: inferMethodLabel(toHex, tx.txSelector),
       direction: "self",
       counterpartyHex: targetHex,
       receiptStatus: tx.receiptStatus,
@@ -157,7 +167,12 @@ function toAddressHistoryItem(tx: TxSummary, targetHex: string): AddressHistoryI
     return {
       txHashHex: tx.txHashHex,
       blockNumber: tx.blockNumber,
+      blockTimestamp: tx.blockTimestamp ?? null,
       txIndex: tx.txIndex,
+      fromAddressHex: fromHex,
+      toAddressHex: toHex,
+      txSelectorHex: toHex === null || !tx.txSelector ? null : toHexLower(tx.txSelector),
+      methodLabel: inferMethodLabel(toHex, tx.txSelector),
       direction: "out",
       counterpartyHex: toHex,
       receiptStatus: tx.receiptStatus,
@@ -166,9 +181,38 @@ function toAddressHistoryItem(tx: TxSummary, targetHex: string): AddressHistoryI
   return {
     txHashHex: tx.txHashHex,
     blockNumber: tx.blockNumber,
+    blockTimestamp: tx.blockTimestamp ?? null,
     txIndex: tx.txIndex,
+    fromAddressHex: fromHex,
+    toAddressHex: toHex,
+    txSelectorHex: toHex === null || !tx.txSelector ? null : toHexLower(tx.txSelector),
+    methodLabel: inferMethodLabel(toHex, tx.txSelector),
     direction: "in",
     counterpartyHex: fromHex,
     receiptStatus: tx.receiptStatus,
   };
+}
+
+function inferMethodLabel(toHex: string | null, txSelector: Buffer | null): string {
+  if (toHex === null) {
+    return "create";
+  }
+  if (!txSelector || txSelector.length !== 4) {
+    return "call";
+  }
+  const selector = txSelector.toString("hex");
+  const known = selectorToMethodName(selector);
+  return known ?? `0x${selector}`;
+}
+
+function selectorToMethodName(selectorHex: string): string | null {
+  if (selectorHex === "a9059cbb") return "transfer";
+  if (selectorHex === "095ea7b3") return "approve";
+  if (selectorHex === "23b872dd") return "transferFrom";
+  if (selectorHex === "70a08231") return "balanceOf";
+  if (selectorHex === "dd62ed3e") return "allowance";
+  if (selectorHex === "313ce567") return "decimals";
+  if (selectorHex === "95d89b41") return "symbol";
+  if (selectorHex === "06fdde03") return "name";
+  return null;
 }
