@@ -5,6 +5,7 @@ import { notFound } from "next/navigation";
 import { Badge } from "../../../components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "../../../components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../../../components/ui/table";
+import { TxValueFeeCells } from "../../../components/tx-value-fee-cells";
 import { getAddressView } from "../../../lib/data";
 import { receiptStatusLabel } from "../../../lib/format";
 import { isAddressHex, normalizeHex, shortHex } from "../../../lib/hex";
@@ -28,6 +29,8 @@ export default async function AddressPage({
   const normalizedHex = normalizeHex(hex);
   const currentTab: AddressTab = tab === "token" ? "token" : "tx";
   const data = await getAddressView(normalizedHex, cursor, tokenCursor, principal ?? null);
+  const canisterId = process.env.EVM_CANISTER_ID ?? null;
+  const icHost = process.env.EXPLORER_IC_HOST ?? process.env.INDEXER_IC_HOST ?? "https://icp-api.io";
 
   return (
     <div className="space-y-4">
@@ -120,11 +123,16 @@ export default async function AddressPage({
                   <TableHeader>
                     <TableRow>
                       <TableHead>Tx Hash</TableHead>
+                      <TableHead>Method</TableHead>
                       <TableHead>Block</TableHead>
+                      <TableHead>Age</TableHead>
                       <TableHead>Index</TableHead>
+                      <TableHead>Amount</TableHead>
+                      <TableHead>Txn Fee</TableHead>
                       <TableHead>Status</TableHead>
                       <TableHead>Direction</TableHead>
-                      <TableHead>Counterparty</TableHead>
+                      <TableHead>From</TableHead>
+                      <TableHead>To</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -134,15 +142,20 @@ export default async function AddressPage({
                         <TableRow key={item.txHashHex}>
                           <TableCell className="font-mono text-xs">
                             <Link href={`/tx/${item.txHashHex}`} className="text-sky-700 hover:underline" title={item.txHashHex}>
-                              {shortHex(item.txHashHex)}
+                              {shortPrefixHex(item.txHashHex)}
                             </Link>
+                          </TableCell>
+                          <TableCell>
+                            <Badge variant="outline" title={item.txSelectorHex ?? undefined}>{item.methodLabel}</Badge>
                           </TableCell>
                           <TableCell>
                             <Link href={`/blocks/${item.blockNumber.toString()}`} className="text-sky-700 hover:underline">
                               {item.blockNumber.toString()}
                             </Link>
                           </TableCell>
+                          <TableCell>{formatAge(item.blockTimestamp)}</TableCell>
                           <TableCell>{item.txIndex}</TableCell>
+                          <TxValueFeeCells txHashHex={item.txHashHex} canisterId={canisterId} icHost={icHost} />
                           <TableCell>
                             <Badge variant={status === "success" ? "secondary" : status === "failed" ? "default" : "outline"}>{status}</Badge>
                           </TableCell>
@@ -150,12 +163,17 @@ export default async function AddressPage({
                             <Badge variant={item.direction === "in" ? "secondary" : "outline"}>{item.direction}</Badge>
                           </TableCell>
                           <TableCell className="font-mono text-xs">
-                            {item.counterpartyHex ? (
-                              <Link href={`/address/${item.counterpartyHex}`} className="text-sky-700 hover:underline" title={item.counterpartyHex}>
-                                {shortHex(item.counterpartyHex)}
+                            <Link href={`/address/${item.fromAddressHex}`} className="text-sky-700 hover:underline" title={item.fromAddressHex}>
+                              {shortHex(item.fromAddressHex)}
+                            </Link>
+                          </TableCell>
+                          <TableCell className="font-mono text-xs">
+                            {item.toAddressHex ? (
+                              <Link href={`/address/${item.toAddressHex}`} className="text-sky-700 hover:underline" title={item.toAddressHex}>
+                                {shortHex(item.toAddressHex)}
                               </Link>
                             ) : (
-                              "(contract creation)"
+                              "(create)"
                             )}
                           </TableCell>
                         </TableRow>
@@ -201,7 +219,7 @@ export default async function AddressPage({
                         <TableRow key={`${item.txHashHex}:${item.logIndex}`}>
                           <TableCell className="font-mono text-xs">
                             <Link href={`/tx/${item.txHashHex}`} className="text-sky-700 hover:underline" title={item.txHashHex}>
-                              {shortHex(item.txHashHex)}
+                              {shortPrefixHex(item.txHashHex)}
                             </Link>
                           </TableCell>
                           <TableCell>
@@ -269,7 +287,7 @@ export default async function AddressPage({
                   <TableRow key={`failed:${item.txHashHex}`}>
                     <TableCell className="font-mono text-xs">
                       <Link href={`/tx/${item.txHashHex}`} className="text-sky-700 hover:underline" title={item.txHashHex}>
-                        {shortHex(item.txHashHex)}
+                        {shortPrefixHex(item.txHashHex)}
                       </Link>
                     </TableCell>
                     <TableCell>{item.blockNumber.toString()}</TableCell>
@@ -286,6 +304,32 @@ export default async function AddressPage({
       </Card>
     </div>
   );
+}
+
+function shortPrefixHex(value: string, keep: number = 10): string {
+  if (value.length <= keep) {
+    return value;
+  }
+  return `${value.slice(0, keep)}...`;
+}
+
+function formatAge(rawTimestamp: bigint | null): string {
+  if (rawTimestamp === null) {
+    return "N/A";
+  }
+  const nowSec = BigInt(Math.floor(Date.now() / 1000));
+  const tsSec = rawTimestamp > 10_000_000_000n ? rawTimestamp / 1000n : rawTimestamp;
+  const delta = nowSec > tsSec ? nowSec - tsSec : 0n;
+  if (delta < 60n) {
+    return `${delta.toString()}s ago`;
+  }
+  if (delta < 3600n) {
+    return `${(delta / 60n).toString()}m ago`;
+  }
+  if (delta < 86_400n) {
+    return `${(delta / 3600n).toString()}h ago`;
+  }
+  return `${(delta / 86_400n).toString()}d ago`;
 }
 
 function buildAddressTabHref(addressHex: string, tab: AddressTab, principal: string | null): string {

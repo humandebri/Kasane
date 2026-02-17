@@ -4,34 +4,57 @@ import { Badge } from "../../components/ui/badge";
 import { CyclesTrendChart } from "../../components/cycles-trend-chart";
 import { OpsTimeseriesTable } from "../../components/ops-timeseries-table";
 import { Card, CardContent, CardHeader, CardTitle } from "../../components/ui/card";
-import { getOpsView } from "../../lib/data";
+import Link from "next/link";
+import { getOpsView, parseCyclesTrendWindow } from "../../lib/data";
 
 export const dynamic = "force-dynamic";
 
-export default async function OpsPage() {
-  const data = await getOpsView();
+export default async function OpsPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ trend?: string }>;
+}) {
+  const params = await searchParams;
+  const trend = parseCyclesTrendWindow(params.trend);
+  const data = await getOpsView(trend);
   const prune = data.pruneStatus?.status;
 
   return (
     <>
       <Card>
         <CardHeader>
-          <CardTitle>Cycles Trend</CardTitle>
+          <div className="flex items-center justify-between gap-2">
+            <CardTitle>Cycles Trend</CardTitle>
+            <div className="flex items-center gap-2 text-xs">
+              <Link
+                href="/ops?trend=24h"
+                className={`rounded-full border px-3 py-1 ${trend === "24h" ? "border-sky-300 bg-sky-50 text-sky-700" : "border-slate-300 bg-white text-slate-700"}`}
+              >
+                24h
+              </Link>
+              <Link
+                href="/ops?trend=7d"
+                className={`rounded-full border px-3 py-1 ${trend === "7d" ? "border-sky-300 bg-sky-50 text-sky-700" : "border-slate-300 bg-white text-slate-700"}`}
+              >
+                7d
+              </Link>
+            </div>
+          </div>
         </CardHeader>
         <CardContent>
-          {data.series.length === 0 ? (
-            <p className="text-sm text-muted-foreground">No cycle samples.</p>
+          {data.cyclesTrendSeries.length === 0 ? (
+            <p className="text-sm text-muted-foreground">No cycle samples in the selected window.</p>
           ) : (
             <div className="space-y-2">
               <CyclesTrendChart
-                points={data.series.map((point) => ({
+                points={data.cyclesTrendSeries.map((point) => ({
                   sampledAtMs: point.sampledAtMs.toString(),
                   cycles: point.cycles.toString(),
                 }))}
               />
               <div className="flex items-center justify-between text-xs text-slate-500">
-                <span>min: {formatCyclesT(getCyclesMin(data.series))}</span>
-                <span>max: {formatCyclesT(getCyclesMax(data.series))}</span>
+                <span>min: {formatCyclesT(getCyclesMin(data.cyclesTrendSeries))}</span>
+                <span>max: {formatCyclesT(getCyclesMax(data.cyclesTrendSeries))}</span>
               </div>
             </div>
           )}

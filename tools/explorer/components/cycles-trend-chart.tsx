@@ -61,6 +61,7 @@ export function CyclesTrendChart({ points }: Props) {
         borderColor: "#cbd5e1",
         timeVisible: true,
         secondsVisible: false,
+        tickMarkFormatter: (time: unknown) => formatChartLocalTick(time),
       },
       handleScroll: {
         mouseWheel: true,
@@ -105,6 +106,48 @@ function formatLocalDateTimeSec(value: number): string {
     return "";
   }
   return new Date(value * 1000).toLocaleString();
+}
+
+function formatChartLocalTick(time: unknown): string {
+  const unixSec = parseChartUnixSec(time);
+  if (unixSec === null) {
+    return "";
+  }
+  return formatLocalTimeSec(unixSec);
+}
+
+function parseChartUnixSec(value: unknown): number | null {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value;
+  }
+  if (typeof value !== "object" || value === null) {
+    return null;
+  }
+  if ("timestamp" in value && typeof value.timestamp === "number" && Number.isFinite(value.timestamp)) {
+    return value.timestamp;
+  }
+  if (
+    "year" in value &&
+    "month" in value &&
+    "day" in value &&
+    typeof value.year === "number" &&
+    typeof value.month === "number" &&
+    typeof value.day === "number"
+  ) {
+    return Math.floor(Date.UTC(value.year, value.month - 1, value.day) / 1000);
+  }
+  return null;
+}
+
+function formatLocalTimeSec(value: number): string {
+  if (!Number.isFinite(value)) {
+    return "";
+  }
+  return new Date(value * 1000).toLocaleTimeString([], {
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  });
 }
 
 function formatCyclesTrillion(value: number): string {

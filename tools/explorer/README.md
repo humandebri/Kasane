@@ -53,6 +53,7 @@ Search の入力判定:
 ## 既知の制約
 
 - Addressページは snapshot 情報（balance / nonce / code）に加えて tx履歴と ERC-20 Transfer 履歴を表示します。
+- Addressページの tx履歴は `Method(selector推定) / Block / Age / Amount / Txn Fee / From / To` を表示します（hashは先頭省略表示）。
 - address履歴は `Older`（50件単位カーソル）で継続取得します。
 - token transfer履歴も `Older`（50件単位カーソル）で継続取得します。
 - `/tx` の `Value / Transaction Fee / Gas Price` は、wei由来の値を `ICP` 表記で表示します（表示要件に合わせたUI上の換算）。
@@ -68,7 +69,7 @@ Search の入力判定:
 - `rpc_eth_get_logs_paged` の制約により、`from/to` span 上限・page limit上限・cursor継続が必要なケースがあります。
 - Tx詳細ページは `Monitor State` を内包し、`send受理` と `receipt.status` の差を明示します。
 - Opsページの failure_rate は `Δdropped / max(Δsubmitted,1)`、pending stall は「15分連続で queue_len>0 かつ Δincluded=0」です。
-- Opsページは cycles 時系列をライン表示し、テーブルにも cycles 列を表示します。
+- Opsページは cycles 時系列を `24h / 7d` 切り替えでライン表示し、テーブルにも cycles 列を表示します。
 - Opsページの prune 情報は `meta.prune_status` が無い環境では `not available` と表示します。
 
 ## 内部構成（lib層）
