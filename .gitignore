@@ -11,6 +11,7 @@
 .dfx/
 .icp/
 .cache/
+.idea
 
 # generated files
 **/declarations/
