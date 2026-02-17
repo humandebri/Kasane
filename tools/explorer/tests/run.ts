@@ -30,6 +30,8 @@ import { parseStoredPruneStatusForTest } from "../lib/data_ops";
 import { deriveEvmAddressFromPrincipal } from "../lib/principal";
 import { logsTestHooks } from "../lib/logs";
 import { resolveSearchRoute } from "../lib/search";
+import { buildTimelineFromReceiptLogs } from "../lib/tx_timeline";
+import type { ReceiptView } from "../lib/rpc";
 
 async function runHexTests(): Promise<void> {
   const bytes = parseHex("0x00aabb");
@@ -108,6 +110,155 @@ async function runLogsTests(): Promise<void> {
     throw new Error("blockHash unsupported test expected error");
   }
   assert.equal(blockHashUnsupported.error, "blockHash フィルタは未対応です（from/to を使用してください）");
+}
+
+async function runTimelineTests(): Promise<void> {
+  const aavePool = bytes("11".repeat(20));
+  const initiator = bytes("22".repeat(20));
+  const receiver = bytes("33".repeat(20));
+  const asset = bytes("44".repeat(20));
+  const user = bytes("55".repeat(20));
+  const pair = bytes("66".repeat(20));
+  const token = bytes("77".repeat(20));
+
+  const timeline = buildTimelineFromReceiptLogs(
+    buildReceipt([
+      {
+        address: aavePool,
+        topics: [
+          bytes("631042c832b07452973831137f2d73e395028b44b250dedc5abb0ee766e168ac"),
+          toTopic(receiver),
+          toTopic(initiator),
+          toTopic(asset),
+        ],
+        data: concatWords([3n, 1n, 0n]),
+      },
+      {
+        address: pair,
+        topics: [
+          bytes("d78ad95fa46c994b6551d0da85fc275fe613ce37657fb8d5e3d130840159d822"),
+          toTopic(user),
+          toTopic(user),
+        ],
+        data: concatWords([10n, 0n, 0n, 9n]),
+      },
+      {
+        address: asset,
+        topics: [
+          bytes("ddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"),
+          toTopic(user),
+          toTopic(aavePool),
+        ],
+        data: concatWords([4n]),
+      },
+      {
+        address: token,
+        topics: [bytes("ddf252ad")],
+        data: bytes("00"),
+      },
+    ])
+  );
+
+  assert.equal(timeline.steps.length, 4);
+  assert.equal(timeline.steps[0]?.type, "flash_borrow");
+  assert.equal(timeline.steps[0]?.protocol, "aave");
+  assert.equal(timeline.steps[1]?.type, "swap");
+  assert.equal(timeline.steps[1]?.protocol, "uniswap_v2");
+  assert.equal(timeline.steps[2]?.type, "repay_candidate");
+  assert.equal(timeline.steps[2]?.protocol, "aave");
+  assert.equal(timeline.steps[3]?.type, "unknown");
+  assert.equal(timeline.counters.borrow, 1);
+  assert.equal(timeline.counters.swap, 1);
+  assert.equal(timeline.counters.repay, 1);
+  assert.equal(timeline.counters.unknown, 1);
+  assert.equal(timeline.steps[0]?.index, 0);
+  assert.equal(timeline.steps[1]?.index, 1);
+  assert.equal(timeline.steps[2]?.index, 2);
+  assert.equal(timeline.steps[3]?.index, 3);
+
+  const transferApprovalTimeline = buildTimelineFromReceiptLogs(
+    buildReceipt([
+      {
+        address: token,
+        topics: [
+          bytes("ddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"),
+          toTopic(user),
+          toTopic(receiver),
+        ],
+        data: concatWords([7n]),
+      },
+      {
+        address: token,
+        topics: [
+          bytes("8c5be1e5ebec7d5bd14f71427d1e84f3dd0314c0f7b2291e5b200ac8c7c3b925"),
+          toTopic(user),
+          toTopic(receiver),
+        ],
+        data: concatWords([8n]),
+      },
+    ])
+  );
+  assert.equal(transferApprovalTimeline.steps[0]?.type, "transfer");
+  assert.equal(transferApprovalTimeline.steps[1]?.type, "approval");
+
+  const reverseOrderTimeline = buildTimelineFromReceiptLogs(
+    buildReceipt([
+      {
+        address: token,
+        topics: [
+          bytes("ddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"),
+          toTopic(user),
+          toTopic(aavePool),
+        ],
+        data: concatWords([5n]),
+      },
+      {
+        address: aavePool,
+        topics: [
+          bytes("631042c832b07452973831137f2d73e395028b44b250dedc5abb0ee766e168ac"),
+          toTopic(receiver),
+          toTopic(initiator),
+          toTopic(asset),
+        ],
+        data: concatWords([5n, 1n, 0n]),
+      },
+    ])
+  );
+  assert.equal(reverseOrderTimeline.steps[0]?.type, "transfer");
+  assert.equal(reverseOrderTimeline.steps[0]?.protocol, "erc20");
+
+  const aaveV3Pool = bytes("88".repeat(20));
+  const v3Initiator = bytes("99".repeat(20));
+  const v3Asset = bytes("aa".repeat(20));
+  const aaveV3Timeline = buildTimelineFromReceiptLogs(
+    buildReceipt([
+      {
+        address: aaveV3Pool,
+        topics: [
+          bytes("efefaba5e921573100900a3ad9cf29f222d995fb3b6045797eaea7521bd8d6f0"),
+          toTopic(receiver),
+          toTopic(v3Initiator),
+        ],
+        data: concatWords([addressWord(v3Asset), 9n, 0n, 2n, 0n]),
+      },
+      {
+        address: aaveV3Pool,
+        topics: [
+          bytes("f164a7d9b7e450d8229718aed20376118864bcc756709e0fc1d0891133dd2fe8"),
+          toTopic(receiver),
+          toTopic(v3Initiator),
+          toTopic(v3Asset),
+        ],
+        data: concatWords([11n, 3n, 0n]),
+      },
+    ])
+  );
+  const v3Summary = aaveV3Timeline.steps[0]?.summary ?? "";
+  assert.equal(v3Summary.includes("asset=0x" + "aa".repeat(20)), true);
+  assert.equal(v3Summary.includes("initiator=0x" + "99".repeat(20)), true);
+  const simpleSummary = aaveV3Timeline.steps[1]?.summary ?? "";
+  assert.equal(simpleSummary.includes("asset=0x" + "aa".repeat(20)), true);
+  assert.equal(simpleSummary.includes("initiator=0x" + "99".repeat(20)), true);
 }
 
 async function runDbTests(): Promise<void> {
@@ -277,6 +428,7 @@ runHexTests()
   .then(runPrincipalDeriveTests)
   .then(runDependencyPinTests)
   .then(runLogsTests)
+  .then(runTimelineTests)
   .then(runDbTests)
   .then(runDataTests)
   .then(() => {
@@ -286,3 +438,61 @@ runHexTests()
     console.error(err);
     process.exit(1);
   });
+
+function buildReceipt(logs: ReceiptView["logs"]): ReceiptView {
+  return {
+    tx_id: bytes("00".repeat(32)),
+    block_number: 1n,
+    tx_index: 0,
+    status: 1,
+    gas_used: 0n,
+    effective_gas_price: 0n,
+    l1_data_fee: 0n,
+    operator_fee: 0n,
+    total_fee: 0n,
+    contract_address: [],
+    return_data_hash: bytes("00".repeat(32)),
+    return_data: [],
+    logs,
+  };
+}
+
+function bytes(hexNoPrefix: string): Uint8Array {
+  return Uint8Array.from(Buffer.from(hexNoPrefix, "hex"));
+}
+
+function word(value: bigint): Uint8Array {
+  const out = new Uint8Array(32);
+  let current = value;
+  for (let i = 31; i >= 0; i -= 1) {
+    out[i] = Number(current & 0xffn);
+    current >>= 8n;
+  }
+  return out;
+}
+
+function toTopic(address: Uint8Array): Uint8Array {
+  const out = new Uint8Array(32);
+  out.set(address, 12);
+  return out;
+}
+
+function concatWords(values: bigint[]): Uint8Array {
+  const out = new Uint8Array(values.length * 32);
+  for (let i = 0; i < values.length; i += 1) {
+    const current = values[i];
+    out.set(word(current === undefined ? 0n : current), i * 32);
+  }
+  return out;
+}
+
+function addressWord(address: Uint8Array): bigint {
+  if (address.length !== 20) {
+    throw new Error("address must be 20 bytes");
+  }
+  let out = 0n;
+  for (const value of address) {
+    out = (out << 8n) | BigInt(value);
+  }
+  return out;
+}

@@ -51,6 +51,10 @@ Search の入力判定:
 - Addressページは snapshot 情報（balance / nonce / code）に加えて tx履歴を表示します。
 - address履歴は `Older`（50件単位カーソル）で継続取得します。
 - Failed Transactions は `txs.receipt_status=0` を表示します（同ページ内履歴のみ）。
+- Receiptページは `Timeline` を表示しますが、logs再構成であり内部call traceではありません。
+- `Timeline` は Aave（v2/v3/v3 simple）/Uniswap/ERC20 の主要イベントを優先判定し、デコード不能イベントは `unknown` として表示します。
+- `repay_candidate` 判定は「同一tx内で先に観測された flash borrow と同一 pool + 同一token への ERC20 transfer」を対象にします。
+- `Timeline` は raw単位表示です（token decimalsを使った正規化は未対応）。
 - Principalルートは導出EVM addressの `/address/:hex` へリダイレクトします（表示はAddressページに統合）。
 - Principal導出は `@dfinity/ic-pub-key@1.0.1` を固定利用しています（導出互換性の安定化）。
 - Logsページは canister を直接呼び出します。`topic1` / `topics OR配列` / `blockHash` は未対応です。
@@ -67,6 +71,7 @@ Search の入力判定:
 - `lib/db.ts`: Postgres読み取りクエリ（txs/blocks/meta/metrics/ops_samples）
 - `lib/rpc.ts`: canister queryのIDL定義とRPC呼び出し
 - `lib/logs.ts`: `/logs` 用のフィルタ解釈・cursor処理・エラー正規化
+- `lib/tx_timeline.ts`: receipt logs のイベント再構成（Aave/Uniswap/ERC20）
 - `lib/tx-monitor.ts`: `send受理` と `receipt.status` を分離した状態判定
 - `lib/principal.ts`: principal -> EVM address 導出（`@dfinity/ic-pub-key`）
 - `lib/search.ts`: Search入力のルーティング判定
