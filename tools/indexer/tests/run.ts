@@ -7,7 +7,8 @@ import os from "node:os";
 import path from "node:path";
 import { newDb } from "pg-mem";
 import { cursorFromJson, cursorToJson } from "../src/cursor";
-import { decodeBlockPayload, decodeTxIndexPayload } from "../src/decode";
+import { clientTestHooks } from "../src/client";
+import { decodeBlockPayload, decodeReceiptStatusPayload, decodeTxIndexPayload } from "../src/decode";
 import { archiveBlock } from "../src/archiver";
 import { runArchiveGc, runArchiveGcWithMode } from "../src/archive_gc";
 import { IndexerDb } from "../src/db";
@@ -50,6 +51,17 @@ test("cursor json rejects negative segment", () => {
   );
 });
 
+test("client cursor normalization accepts numeric strings", () => {
+  const out = clientTestHooks.normalizeCursorForCandid({
+    block_number: "1",
+    segment: "0",
+    byte_offset: "0",
+  });
+  assert.equal(out.block_number, 1n);
+  assert.equal(out.segment, 0);
+  assert.equal(out.byte_offset, 0);
+});
+
 test("tx_index payload length mismatch throws", () => {
   const txHash = Buffer.alloc(32, 0xaa);
   const len = Buffer.alloc(4);
@@ -64,18 +76,23 @@ test("tx_index payload rejects legacy 12-byte entry", () => {
   len.writeUInt32BE(12, 0);
   const body = Buffer.alloc(12);
   const payload = Buffer.concat([txHash, len, body]);
-  assert.throws(() => decodeTxIndexPayload(payload), /14\+ bytes/);
+  assert.throws(() => decodeTxIndexPayload(payload), /35\+ bytes/);
 });
 
 test("tx_index payload decodes caller principal", () => {
   const txHash = Buffer.alloc(32, 0xcc);
   const principal = Buffer.from([1, 2, 3, 4]);
-  const body = Buffer.alloc(12 + 2 + principal.length);
+  const fromAddress = Buffer.alloc(20, 0x11);
+  const toAddress = Buffer.alloc(20, 0x22);
+  const body = Buffer.alloc(12 + 2 + principal.length + 20 + 1 + toAddress.length);
   body.writeUInt32BE(0, 0);
   body.writeUInt32BE(7, 4);
   body.writeUInt32BE(3, 8);
   body.writeUInt16BE(principal.length, 12);
   principal.copy(body, 14);
+  fromAddress.copy(body, 14 + principal.length);
+  body.writeUInt8(toAddress.length, 14 + principal.length + fromAddress.length);
+  toAddress.copy(body, 14 + principal.length + fromAddress.length + 1);
   const len = Buffer.alloc(4);
   len.writeUInt32BE(body.length, 0);
   const payload = Buffer.concat([txHash, len, body]);
@@ -84,6 +101,29 @@ test("tx_index payload decodes caller principal", () => {
   assert.equal(out[0]?.blockNumber, 7n);
   assert.equal(out[0]?.txIndex, 3);
   assert.equal(out[0]?.callerPrincipal?.toString("hex"), principal.toString("hex"));
+  assert.equal(out[0]?.fromAddress.toString("hex"), fromAddress.toString("hex"));
+  assert.equal(out[0]?.toAddress?.toString("hex"), toAddress.toString("hex"));
+});
+
+test("receipts payload decodes status", () => {
+  const txHash = Buffer.alloc(32, 0x33);
+  const receipt = buildReceiptBytes(1, true);
+  const len = Buffer.alloc(4);
+  len.writeUInt32BE(receipt.length, 0);
+  const payload = Buffer.concat([txHash, len, receipt]);
+  const out = decodeReceiptStatusPayload(payload);
+  assert.equal(out.length, 1);
+  assert.equal(out[0]?.txHash.toString("hex"), txHash.toString("hex"));
+  assert.equal(out[0]?.status, 1);
+});
+
+test("receipts payload rejects invalid status", () => {
+  const txHash = Buffer.alloc(32, 0x44);
+  const receipt = buildReceiptBytes(2, true);
+  const len = Buffer.alloc(4);
+  len.writeUInt32BE(receipt.length, 0);
+  const payload = Buffer.concat([txHash, len, receipt]);
+  assert.throws(() => decodeReceiptStatusPayload(payload), /status/);
 });
 
 test("block payload decodes v2 layout", () => {
@@ -216,6 +256,7 @@ test("runWorkerWithDeps commits two blocks from one response and stores final cu
       backoffMaxMs: 2,
       idlePollMs: 1,
       pruneStatusPollMs: 0,
+      opsMetricsPollMs: 0,
       fetchRootKey: false,
       archiveDir: dir,
       chainId: "test",
@@ -283,6 +324,22 @@ test("runWorkerWithDeps commits two blocks from one response and stores final cu
         oldest_kept_timestamp: null,
         need_prune: false,
       }),
+      getMetrics: async () => ({
+        txs: 0n,
+        ema_txs_per_block_x1000: 0n,
+        pruned_before_block: null,
+        ema_block_rate_per_sec_x1000: 0n,
+        total_submitted: 0n,
+        window: 128n,
+        avg_txs_per_block: 0n,
+        block_rate_per_sec_x1000: null,
+        cycles: 0n,
+        total_dropped: 0n,
+        blocks: 0n,
+        drop_counts: [],
+        queue_len: 0n,
+        total_included: 0n,
+      }),
     };
     await runWorkerWithDeps(config, db, client, { skipGc: true });
     const cursor = await db.getCursor();
@@ -314,6 +371,7 @@ test("runWorkerWithDeps exits on final cursor mismatch", async () => {
         backoffMaxMs: 2,
         idlePollMs: 1,
         pruneStatusPollMs: 0,
+        opsMetricsPollMs: 0,
         fetchRootKey: false,
         archiveDir: dir,
         chainId: "test",
@@ -356,6 +414,116 @@ test("runWorkerWithDeps exits on final cursor mismatch", async () => {
           oldest_kept_timestamp: null,
           need_prune: false,
         }),
+        getMetrics: async () => ({
+          txs: 0n,
+          ema_txs_per_block_x1000: 0n,
+          pruned_before_block: null,
+          ema_block_rate_per_sec_x1000: 0n,
+          total_submitted: 0n,
+          window: 128n,
+          avg_txs_per_block: 0n,
+          block_rate_per_sec_x1000: null,
+          cycles: 0n,
+          total_dropped: 0n,
+          blocks: 0n,
+          drop_counts: [],
+          queue_len: 0n,
+          total_included: 0n,
+        }),
+      };
+      process.exit = ((code?: number) => {
+        throw new Error(`EXIT_${code ?? 0}`);
+      }) as typeof process.exit;
+      await assert.rejects(() => runWorkerWithDeps(config, db, client, { skipGc: true }), /EXIT_1/);
+    });
+  } finally {
+    process.exit = originalExit;
+    await originalClose();
+  }
+});
+
+test("runWorkerWithDeps exits when tx_index and receipts counts differ", async () => {
+  const db = await createTestIndexerDb();
+  const originalClose = db.close.bind(db);
+  (db as unknown as { close: () => Promise<void> }).close = async () => {};
+  const originalExit = process.exit;
+  try {
+    await withTempDir(async (dir) => {
+      const config: Config = {
+        canisterId: "test-canister",
+        icHost: "http://127.0.0.1:4943",
+        databaseUrl: "postgres://unused",
+        dbPoolMax: 1,
+        retentionDays: 90,
+        retentionEnabled: false,
+        retentionDryRun: false,
+        archiveGcDeleteOrphans: false,
+        maxBytes: 1_200_000,
+        backoffInitialMs: 1,
+        backoffMaxMs: 2,
+        idlePollMs: 1,
+        pruneStatusPollMs: 0,
+        opsMetricsPollMs: 0,
+        fetchRootKey: false,
+        archiveDir: dir,
+        chainId: "test",
+        zstdLevel: 1,
+        maxSegment: 2,
+      };
+      await db.setCursor({ block_number: 1n, segment: 0, byte_offset: 0 });
+      const txHash = Buffer.alloc(32, 0x77);
+      const block1 = buildBlockPayload(1n, 10n, [txHash]);
+      const txIndexPayload = buildTxIndexPayload(1n, txHash);
+      const chunks = [
+        { segment: 0, start: 0, bytes: block1, payload_len: block1.length },
+        { segment: 1, start: 0, bytes: Buffer.alloc(0), payload_len: 0 },
+        { segment: 2, start: 0, bytes: txIndexPayload, payload_len: txIndexPayload.length },
+      ];
+      const client = {
+        getHeadNumber: async (): Promise<bigint> => 1n,
+        exportBlocks: async (): Promise<
+          | {
+              Ok: {
+                chunks: Array<{ segment: number; start: number; bytes: Buffer; payload_len: number }>;
+                next_cursor: { block_number: bigint; segment: number; byte_offset: number };
+              };
+            }
+          | { Err: never }
+        > => ({
+          Ok: {
+            chunks,
+            next_cursor: { block_number: 2n, segment: 0, byte_offset: 0 },
+          },
+        }),
+        getPruneStatus: async () => ({
+          pruning_enabled: false,
+          prune_running: false,
+          estimated_kept_bytes: 0n,
+          high_water_bytes: 0n,
+          low_water_bytes: 0n,
+          hard_emergency_bytes: 0n,
+          last_prune_at: 0n,
+          pruned_before_block: null,
+          oldest_kept_block: null,
+          oldest_kept_timestamp: null,
+          need_prune: false,
+        }),
+        getMetrics: async () => ({
+          txs: 0n,
+          ema_txs_per_block_x1000: 0n,
+          pruned_before_block: null,
+          ema_block_rate_per_sec_x1000: 0n,
+          total_submitted: 0n,
+          window: 128n,
+          avg_txs_per_block: 0n,
+          block_rate_per_sec_x1000: null,
+          cycles: 0n,
+          total_dropped: 0n,
+          blocks: 0n,
+          drop_counts: [],
+          queue_len: 0n,
+          total_included: 0n,
+        }),
       };
       process.exit = ((code?: number) => {
         throw new Error(`EXIT_${code ?? 0}`);
@@ -389,6 +557,7 @@ test("runWorkerWithDeps exits when stored cursor segment exceeds maxSegment", as
         backoffMaxMs: 2,
         idlePollMs: 1,
         pruneStatusPollMs: 0,
+        opsMetricsPollMs: 0,
         fetchRootKey: false,
         archiveDir: dir,
         chainId: "test",
@@ -413,6 +582,22 @@ test("runWorkerWithDeps exits when stored cursor segment exceeds maxSegment", as
           oldest_kept_block: null,
           oldest_kept_timestamp: null,
           need_prune: false,
+        }),
+        getMetrics: async () => ({
+          txs: 0n,
+          ema_txs_per_block_x1000: 0n,
+          pruned_before_block: null,
+          ema_block_rate_per_sec_x1000: 0n,
+          total_submitted: 0n,
+          window: 128n,
+          avg_txs_per_block: 0n,
+          block_rate_per_sec_x1000: null,
+          cycles: 0n,
+          total_dropped: 0n,
+          blocks: 0n,
+          drop_counts: [],
+          queue_len: 0n,
+          total_included: 0n,
         }),
       };
       process.exit = ((code?: number) => {
@@ -447,6 +632,7 @@ test("runWorkerWithDeps exits when cursor is null and stream cursor is not estab
         backoffMaxMs: 2,
         idlePollMs: 1,
         pruneStatusPollMs: 0,
+        opsMetricsPollMs: 0,
         fetchRootKey: false,
         archiveDir: dir,
         chainId: "test",
@@ -483,6 +669,22 @@ test("runWorkerWithDeps exits when cursor is null and stream cursor is not estab
           oldest_kept_timestamp: null,
           need_prune: false,
         }),
+        getMetrics: async () => ({
+          txs: 0n,
+          ema_txs_per_block_x1000: 0n,
+          pruned_before_block: null,
+          ema_block_rate_per_sec_x1000: 0n,
+          total_submitted: 0n,
+          window: 128n,
+          avg_txs_per_block: 0n,
+          block_rate_per_sec_x1000: null,
+          cycles: 0n,
+          total_dropped: 0n,
+          blocks: 0n,
+          drop_counts: [],
+          queue_len: 0n,
+          total_included: 0n,
+        }),
       };
       process.exit = ((code?: number) => {
         throw new Error(`EXIT_${code ?? 0}`);
@@ -518,7 +720,15 @@ test("db upsert and metrics aggregation", async () => {
   const db = await createTestIndexerDb();
   try {
     await db.upsertBlock({ number: 10n, hash: Buffer.alloc(32, 1), timestamp: 123n, tx_count: 1 });
-    await db.upsertTx({ tx_hash: Buffer.alloc(32, 2), block_number: 10n, tx_index: 0, caller_principal: null });
+    await db.upsertTx({
+      tx_hash: Buffer.alloc(32, 2),
+      block_number: 10n,
+      tx_index: 0,
+      caller_principal: null,
+      from_address: Buffer.alloc(20, 0x01),
+      to_address: Buffer.alloc(20, 0x02),
+      receipt_status: 1,
+    });
     await db.setCursor({ block_number: 11n, segment: 0, byte_offset: 0 });
     const cursor = await db.getCursor();
     assert.ok(cursor);
@@ -537,6 +747,26 @@ test("db upsert and metrics aggregation", async () => {
     });
     const archiveSum = await db.getArchiveBytesSum();
     assert.equal(archiveSum, 40);
+    await db.addOpsMetricsSample({
+      sampledAtMs: 1_000n,
+      queueLen: 2n,
+      totalSubmitted: 3n,
+      totalIncluded: 1n,
+      totalDropped: 1n,
+      dropCountsJson: "[]",
+      retentionCutoffMs: 900n,
+    });
+    await db.addOpsMetricsSample({
+      sampledAtMs: 2_000n,
+      queueLen: 4n,
+      totalSubmitted: 7n,
+      totalIncluded: 2n,
+      totalDropped: 2n,
+      dropCountsJson: '[{"code":"1","count":"2"}]',
+      retentionCutoffMs: 1_500n,
+    });
+    const samples = await db.queryOne<{ n: string }>("select count(*)::text as n from ops_metrics_samples");
+    assert.equal(Number(samples?.n ?? "0"), 1);
   } finally {
     await db.close();
   }
@@ -595,8 +825,24 @@ test("retention cleanup dry-run and delete follow 90-day boundary", async () => 
 
     await db.upsertBlock({ number: 1n, hash: Buffer.alloc(32, 1), timestamp: oldSec, tx_count: 1 });
     await db.upsertBlock({ number: 2n, hash: Buffer.alloc(32, 2), timestamp: freshSec, tx_count: 1 });
-    await db.upsertTx({ tx_hash: Buffer.alloc(32, 11), block_number: 1n, tx_index: 0, caller_principal: null });
-    await db.upsertTx({ tx_hash: Buffer.alloc(32, 22), block_number: 2n, tx_index: 0, caller_principal: null });
+    await db.upsertTx({
+      tx_hash: Buffer.alloc(32, 11),
+      block_number: 1n,
+      tx_index: 0,
+      caller_principal: null,
+      from_address: Buffer.alloc(20, 0x11),
+      to_address: Buffer.alloc(20, 0x21),
+      receipt_status: 1,
+    });
+    await db.upsertTx({
+      tx_hash: Buffer.alloc(32, 22),
+      block_number: 2n,
+      tx_index: 0,
+      caller_principal: null,
+      from_address: Buffer.alloc(20, 0x12),
+      to_address: Buffer.alloc(20, 0x22),
+      receipt_status: 0,
+    });
     await db.addArchive({ blockNumber: 1n, path: "1.bundle.zst", sha256: Buffer.alloc(32, 3), sizeBytes: 10, rawBytes: 10, createdAt: Number(oldSec) * 1000 });
     await db.addArchive({ blockNumber: 2n, path: "2.bundle.zst", sha256: Buffer.alloc(32, 4), sizeBytes: 10, rawBytes: 10, createdAt: Number(freshSec) * 1000 });
     await db.addMetrics(oldDay, 1, 1, 1, 0, 10);
@@ -705,6 +951,36 @@ function buildBlockPayload(number: bigint, timestamp: bigint, txIds: Buffer[]): 
     offset += hashLen;
   }
   return out;
+}
+
+function buildReceiptBytes(status: number, withV2Magic: boolean): Buffer {
+  const magic = withV2Magic ? Buffer.from("7263707476320002", "hex") : Buffer.alloc(0);
+  const out = Buffer.alloc(magic.length + 32 + 8 + 4 + 1);
+  let offset = 0;
+  magic.copy(out, offset);
+  offset += magic.length;
+  offset = writeZeros(out, offset, 32);
+  offset = writeU64BE(out, offset, 1n);
+  out.writeUInt32BE(0, offset);
+  offset += 4;
+  out.writeUInt8(status, offset);
+  return out;
+}
+
+function buildTxIndexPayload(blockNumber: bigint, txHash: Buffer): Buffer {
+  const fromAddress = Buffer.alloc(20, 0x11);
+  const toAddress = Buffer.alloc(20, 0x22);
+  const principalLen = 0;
+  const body = Buffer.alloc(12 + 2 + principalLen + fromAddress.length + 1 + toAddress.length);
+  body.writeBigUInt64BE(blockNumber, 0);
+  body.writeUInt32BE(0, 8);
+  body.writeUInt16BE(principalLen, 12);
+  fromAddress.copy(body, 14);
+  body.writeUInt8(toAddress.length, 14 + fromAddress.length);
+  toAddress.copy(body, 14 + fromAddress.length + 1);
+  const entryLen = Buffer.alloc(4);
+  entryLen.writeUInt32BE(body.length, 0);
+  return Buffer.concat([txHash, entryLen, body]);
 }
 
 function writeU64BE(buf: Buffer, offset: number, value: bigint): number {
