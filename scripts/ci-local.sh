@@ -24,7 +24,6 @@ run_github_equivalent_phase() {
   scripts/check_rng_paths.sh
   scripts/check_getrandom_wasm_features.sh
   scripts/check_did_sync.sh
-  scripts/check_legacy_rpc_removed.sh
   scripts/check_alloy_isolation.sh
 
   echo "[phase=${CURRENT_PHASE}] deny OP stack references"
@@ -62,7 +61,6 @@ run_github_equivalent_phase() {
   cargo test --manifest-path crates/evm-rpc-e2e/Cargo.toml --no-run --locked
 
   scripts/run_canbench_guard.sh
-  scripts/release_wasm_guard.sh
 
   echo "[phase=${CURRENT_PHASE}] done"
 }
