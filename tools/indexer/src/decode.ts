@@ -11,6 +11,7 @@ export type BlockInfo = {
   number: bigint;
   blockHash: Buffer;
   timestamp: bigint;
+  gasUsed: bigint;
   txIds: Buffer[];
 };
 
@@ -46,6 +47,7 @@ export function decodeBlockPayload(payload: Uint8Array): BlockInfo {
   offset += 8;
   offset += 8;
   offset += 8;
+  const gasUsed = readU64BE(data, offset);
   offset += 8;
   offset += HASH_LEN;
   offset += HASH_LEN;
@@ -66,6 +68,7 @@ export function decodeBlockPayload(payload: Uint8Array): BlockInfo {
     number,
     blockHash: Buffer.from(blockHash),
     timestamp,
+    gasUsed,
     txIds,
   };
 }

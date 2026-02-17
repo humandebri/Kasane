@@ -250,6 +250,7 @@ test("block payload decodes v2 layout", () => {
   const out = decodeBlockPayload(payload);
   assert.equal(out.number, 7n);
   assert.equal(out.timestamp, 123n);
+  assert.equal(out.gasUsed, 21_000n);
   assert.equal(out.blockHash.toString("hex"), blockHash.toString("hex"));
   assert.equal(out.txIds.length, 1);
   assert.equal(out.txIds[0]?.toString("hex"), txId.toString("hex"));
@@ -1716,6 +1717,7 @@ async function createTestIndexerDb(): Promise<IndexerDb> {
   const adapter = mem.adapters.createPg();
   const pool = new adapter.Pool();
   const db = await IndexerDb.fromPool(pool, { migrations: MIGRATIONS.slice(0, 1) });
+  await db.queryOne("alter table if exists blocks add column if not exists gas_used bigint");
   await db.queryOne("alter table if exists ops_metrics_samples add column if not exists cycles bigint not null default 0");
   await db.queryOne(
     "create table if not exists retention_runs(" +

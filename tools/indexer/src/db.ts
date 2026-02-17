@@ -11,6 +11,7 @@ export type BlockRow = {
   hash: Buffer | null;
   timestamp: bigint;
   tx_count: number;
+  gas_used: bigint;
 };
 
 export type TxRow = {
@@ -131,8 +132,8 @@ export class IndexerDb {
 
   async upsertBlock(row: BlockRow): Promise<void> {
     await this.pool.query(
-      "INSERT INTO blocks(number, hash, timestamp, tx_count) VALUES($1, $2, $3, $4) ON CONFLICT(number) DO UPDATE SET hash = excluded.hash, timestamp = excluded.timestamp, tx_count = excluded.tx_count",
-      [row.number, row.hash, row.timestamp, row.tx_count]
+      "INSERT INTO blocks(number, hash, timestamp, tx_count, gas_used) VALUES($1, $2, $3, $4, $5) ON CONFLICT(number) DO UPDATE SET hash = excluded.hash, timestamp = excluded.timestamp, tx_count = excluded.tx_count, gas_used = excluded.gas_used",
+      [row.number, row.hash, row.timestamp, row.tx_count, row.gas_used]
     );
   }
 

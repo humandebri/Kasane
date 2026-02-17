@@ -191,8 +191,8 @@ export async function commitPending(params: {
   try {
     await params.db.transaction(async (client) => {
       await client.query(
-        "INSERT INTO blocks(number, hash, timestamp, tx_count) VALUES($1, $2, $3, $4) ON CONFLICT(number) DO UPDATE SET hash = excluded.hash, timestamp = excluded.timestamp, tx_count = excluded.tx_count",
-        [blockInfo.number, blockInfo.blockHash, blockInfo.timestamp, blockInfo.txIds.length]
+        "INSERT INTO blocks(number, hash, timestamp, tx_count, gas_used) VALUES($1, $2, $3, $4, $5) ON CONFLICT(number) DO UPDATE SET hash = excluded.hash, timestamp = excluded.timestamp, tx_count = excluded.tx_count, gas_used = excluded.gas_used",
+        [blockInfo.number, blockInfo.blockHash, blockInfo.timestamp, blockInfo.txIds.length, blockInfo.gasUsed]
       );
       for (const entry of txIndex) {
         const receiptStatus = receiptStatusByTxHash.get(entry.txHash.toString("hex"));
