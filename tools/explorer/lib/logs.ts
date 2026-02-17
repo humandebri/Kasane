@@ -17,7 +17,6 @@ export type LogsView = {
     topic0: string;
     limit: string;
   };
-  unsupportedNotes: string[];
   items: Array<{
     txHashHex: string;
     ethTxHashHex: string | null;
@@ -48,30 +47,27 @@ export async function getLogsView(searchParams: {
     toBlock: searchParams.toBlock?.trim() ?? "",
     address: searchParams.address?.trim() ?? "",
     topic0: searchParams.topic0?.trim() ?? "",
-    limit: searchParams.limit?.trim() ?? "200",
+    limit: searchParams.limit?.trim() ?? "",
   };
-  const unsupportedNotes = [
-    "topic1 はcanister未対応です（topic0のみ対応）",
-    "topics OR配列は未対応です",
-    "blockHashフィルタは未対応です",
-    "from/to の block span 上限は 1000 です",
-    "page limit 上限は 2000 です",
-  ];
+  const cursor = parseCursor(searchParams.cursor);
+
+  // 初期表示（入力なし）は未検索扱い。RPCを呼ばず空結果を返す。
+  if (!cursor && !hasAnySearchInput(filters)) {
+    return { filters, items: [], nextCursor: null, error: null };
+  }
 
   const rpcFilter = parseFilter({
     ...filters,
     topic1: searchParams.topic1?.trim() ?? "",
     blockHash: searchParams.blockHash?.trim() ?? "",
   });
-  const cursor = parseCursor(searchParams.cursor);
   if (!rpcFilter.ok) {
-    return { filters, unsupportedNotes, items: [], nextCursor: null, error: rpcFilter.error };
+    return { filters, items: [], nextCursor: null, error: rpcFilter.error };
   }
   const out = await getRpcLogsPaged(rpcFilter.filter, cursor, rpcFilter.pageLimit);
   if ("Err" in out) {
     return {
       filters,
-      unsupportedNotes,
       items: [],
       nextCursor: null,
       error: toErrorText(out.Err),
@@ -79,7 +75,6 @@ export async function getLogsView(searchParams: {
   }
   return {
     filters,
-    unsupportedNotes,
     items: out.Ok.items.map(mapItem),
     nextCursor: out.Ok.next_cursor.length === 0 ? null : encodeCursor(out.Ok.next_cursor[0]),
     error: null,
@@ -98,47 +93,47 @@ function parseFilter(filters: {
   | { ok: true; filter: EthLogFilterInput; pageLimit: number }
   | { ok: false; error: string } {
   if (filters.topic1 !== "") {
-    return { ok: false, error: "topic1 は未対応です（topic0 のみ指定してください）" };
+    return { ok: false, error: "topic1 is not supported. Use topic0 only." };
   }
   if (filters.blockHash !== "") {
-    return { ok: false, error: "blockHash フィルタは未対応です（from/to を使用してください）" };
+    return { ok: false, error: "blockHash filter is not supported. Use fromBlock/toBlock." };
   }
   const out: EthLogFilterInput = {};
   if (filters.fromBlock !== "") {
     if (!/^\d+$/.test(filters.fromBlock)) {
-      return { ok: false, error: "fromBlock は整数で指定してください" };
+      return { ok: false, error: "fromBlock must be an integer." };
     }
     out.fromBlock = BigInt(filters.fromBlock);
   }
   if (filters.toBlock !== "") {
     if (!/^\d+$/.test(filters.toBlock)) {
-      return { ok: false, error: "toBlock は整数で指定してください" };
+      return { ok: false, error: "toBlock must be an integer." };
     }
     out.toBlock = BigInt(filters.toBlock);
   }
   if (out.fromBlock !== undefined && out.toBlock !== undefined && out.toBlock < out.fromBlock) {
-    return { ok: false, error: "toBlock は fromBlock 以上にしてください" };
+    return { ok: false, error: "toBlock must be greater than or equal to fromBlock." };
   }
   if (filters.address !== "") {
     if (!isAddressHex(filters.address)) {
-      return { ok: false, error: "address は 20-byte hex で指定してください" };
+      return { ok: false, error: "address must be a 20-byte hex string." };
     }
     out.address = parseAddressHex(normalizeHex(filters.address));
   }
   if (filters.topic0 !== "") {
     if (!isTxHashHex(filters.topic0)) {
-      return { ok: false, error: "topic0 は 32-byte hex で指定してください" };
+      return { ok: false, error: "topic0 must be a 32-byte hex string." };
     }
     out.topic0 = parseHex(normalizeHex(filters.topic0));
   }
   let pageLimit = 200;
   if (filters.limit !== "") {
     if (!/^\d+$/.test(filters.limit)) {
-      return { ok: false, error: "limit は整数で指定してください" };
+      return { ok: false, error: "limit must be an integer." };
     }
     const parsed = Number(filters.limit);
     if (!Number.isSafeInteger(parsed) || parsed < 1 || parsed > 2000) {
-      return { ok: false, error: "limit は 1..2000 で指定してください" };
+      return { ok: false, error: "limit must be in the range 1..2000." };
     }
     pageLimit = parsed;
   }
@@ -147,6 +142,7 @@ function parseFilter(filters: {
 
 export const logsTestHooks = {
   parseFilter,
+  hasAnySearchInput,
 };
 
 function parseCursor(raw?: string): EthLogsCursorView | null {
@@ -201,13 +197,29 @@ function mapItem(item: EthLogItemView): {
 
 function toErrorText(error: GetLogsErrorView): string {
   if ("TooManyResults" in error) {
-    return "TooManyResults: limitを下げるか範囲を絞ってください";
+    return "TooManyResults: narrow the block range or lower limit.";
   }
   if ("RangeTooLarge" in error) {
-    return "RangeTooLarge: from/to の範囲を縮めてください";
+    return "RangeTooLarge: reduce the fromBlock/toBlock span.";
   }
   if ("InvalidArgument" in error) {
     return `InvalidArgument: ${error.InvalidArgument}`;
   }
   return `UnsupportedFilter: ${error.UnsupportedFilter}`;
+}
+
+function hasAnySearchInput(filters: {
+  fromBlock: string;
+  toBlock: string;
+  address: string;
+  topic0: string;
+  limit: string;
+}): boolean {
+  return (
+    filters.fromBlock !== "" ||
+    filters.toBlock !== "" ||
+    filters.address !== "" ||
+    filters.topic0 !== "" ||
+    filters.limit !== ""
+  );
 }

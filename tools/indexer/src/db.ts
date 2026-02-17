@@ -11,6 +11,7 @@ export type BlockRow = {
   hash: Buffer | null;
   timestamp: bigint;
   tx_count: number;
+  gas_used: bigint;
 };
 
 export type TxRow = {
@@ -131,8 +132,8 @@ export class IndexerDb {
 
   async upsertBlock(row: BlockRow): Promise<void> {
     await this.pool.query(
-      "INSERT INTO blocks(number, hash, timestamp, tx_count) VALUES($1, $2, $3, $4) ON CONFLICT(number) DO UPDATE SET hash = excluded.hash, timestamp = excluded.timestamp, tx_count = excluded.tx_count",
-      [row.number, row.hash, row.timestamp, row.tx_count]
+      "INSERT INTO blocks(number, hash, timestamp, tx_count, gas_used) VALUES($1, $2, $3, $4, $5) ON CONFLICT(number) DO UPDATE SET hash = excluded.hash, timestamp = excluded.timestamp, tx_count = excluded.tx_count, gas_used = excluded.gas_used",
+      [row.number, row.hash, row.timestamp, row.tx_count, row.gas_used]
     );
   }
 
@@ -146,6 +147,7 @@ export class IndexerDb {
   async addOpsMetricsSample(params: {
     sampledAtMs: bigint;
     queueLen: bigint;
+    cycles: bigint;
     totalSubmitted: bigint;
     totalIncluded: bigint;
     totalDropped: bigint;
@@ -153,10 +155,11 @@ export class IndexerDb {
     retentionCutoffMs: bigint;
   }): Promise<void> {
     await this.pool.query(
-      "INSERT INTO ops_metrics_samples(sampled_at_ms, queue_len, total_submitted, total_included, total_dropped, drop_counts_json) VALUES($1, $2, $3, $4, $5, $6) ON CONFLICT(sampled_at_ms) DO UPDATE SET queue_len = excluded.queue_len, total_submitted = excluded.total_submitted, total_included = excluded.total_included, total_dropped = excluded.total_dropped, drop_counts_json = excluded.drop_counts_json",
+      "INSERT INTO ops_metrics_samples(sampled_at_ms, queue_len, cycles, total_submitted, total_included, total_dropped, drop_counts_json) VALUES($1, $2, $3, $4, $5, $6, $7) ON CONFLICT(sampled_at_ms) DO UPDATE SET queue_len = excluded.queue_len, cycles = excluded.cycles, total_submitted = excluded.total_submitted, total_included = excluded.total_included, total_dropped = excluded.total_dropped, drop_counts_json = excluded.drop_counts_json",
       [
         params.sampledAtMs,
         params.queueLen,
+        params.cycles,
         params.totalSubmitted,
         params.totalIncluded,
         params.totalDropped,

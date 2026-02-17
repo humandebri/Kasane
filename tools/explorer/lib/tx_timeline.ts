@@ -57,9 +57,9 @@ export function buildTimelineFromReceiptLogs(receipt: ReceiptView): TimelineView
     steps,
     counters,
     notes: [
-      "この表示はログ再構成であり、内部call traceではありません。",
-      "repay_candidate は logs ベースの推定です。",
-      "event未発行の内部処理は表示されません。",
+      "This view is reconstructed from logs, not an internal call trace.",
+      "repay_candidate is a logs-based inference.",
+      "Internal processing without emitted events is not shown.",
     ],
   };
 }

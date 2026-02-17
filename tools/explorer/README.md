@@ -1,7 +1,7 @@
 # Explorer (Phase2.1)
 
 `tools/indexer` の Postgres を読み取り、`head / blocks / tx / receipt` と運用向け集計を表示する Explorer です。
-公開向け導線として `address / principal / logs / tx-monitor / ops` を提供します。
+公開向け導線として `address / principal / logs / ops` を提供します。
 
 現在のUI基盤:
 - Next.js App Router
@@ -28,12 +28,16 @@ npm run dev
 - Search: `/search?q=...`
 - Block: `/blocks/:number`
 - Tx: `/tx/:hash`
-- Receipt: `/receipt/:hash`
-- Address: `/address/:hex`（20-byte hex）
+- Address: `/address/:hex`（20-byte hex, `Transactions`/`Token Transfers` タブ）
 - Principal: `/principal/:text`
 - Logs: `/logs`
-- Tx Monitor: `/tx-monitor/:hash`
 - Ops: `/ops`
+
+Block詳細ページは RPC が返す場合に `Gas Used / Gas Limit / Base Fee Per Gas / Burnt Fees / Gas vs Target` を表示します。
+
+Home の `Latest Blocks` は、`?blocks=<N>`（1-500）で表示件数を一時変更できます。
+例: `/?blocks=100`
+`EXPLORER_LATEST_BLOCKS` は初期件数として使われます。
 
 Search の入力判定:
 - block number（10進） -> `/blocks/:number`
@@ -48,8 +52,11 @@ Search の入力判定:
 
 ## 既知の制約
 
-- Addressページは snapshot 情報（balance / nonce / code）に加えて tx履歴を表示します。
+- Addressページは snapshot 情報（balance / nonce / code）に加えて tx履歴と ERC-20 Transfer 履歴を表示します。
 - address履歴は `Older`（50件単位カーソル）で継続取得します。
+- token transfer履歴も `Older`（50件単位カーソル）で継続取得します。
+- `/tx` の `Value / Transaction Fee / Gas Price` は、wei由来の値を `ICP` 表記で表示します（表示要件に合わせたUI上の換算）。
+- token metadata（symbol/decimals）は in-memory キャッシュを使用します（上限1000、成功TTL 24h、失敗TTL 5m、同時取得上限5）。
 - Failed Transactions は `txs.receipt_status=0` を表示します（同ページ内履歴のみ）。
 - Receiptページは `Timeline` を表示しますが、logs再構成であり内部call traceではありません。
 - `Timeline` は Aave（v2/v3/v3 simple）/Uniswap/ERC20 の主要イベントを優先判定し、デコード不能イベントは `unknown` として表示します。
@@ -59,20 +66,21 @@ Search の入力判定:
 - Principal導出は `@dfinity/ic-pub-key@1.0.1` を固定利用しています（導出互換性の安定化）。
 - Logsページは canister を直接呼び出します。`topic1` / `topics OR配列` / `blockHash` は未対応です。
 - `rpc_eth_get_logs_paged` の制約により、`from/to` span 上限・page limit上限・cursor継続が必要なケースがあります。
-- Tx Monitor は `send受理` と `receipt.status` を分離表示します（`included_failed` を明確化）。
+- Tx詳細ページは `Monitor State` を内包し、`send受理` と `receipt.status` の差を明示します。
 - Opsページの failure_rate は `Δdropped / max(Δsubmitted,1)`、pending stall は「15分連続で queue_len>0 かつ Δincluded=0」です。
+- Opsページは cycles 時系列をライン表示し、テーブルにも cycles 列を表示します。
 - Opsページの prune 情報は `meta.prune_status` が無い環境では `not available` と表示します。
 
 ## 内部構成（lib層）
 
-- `lib/data.ts`: page向けのユースケース集約（home/block/tx/receipt/address/ops/principal）
+- `lib/data.ts`: page向けのユースケース集約（home/block/tx/address/ops/principal）
 - `lib/data_address.ts`: address履歴の変換・方向判定・カーソル処理
 - `lib/data_ops.ts`: prune_statusパース、ops時系列計算、stall判定
-- `lib/db.ts`: Postgres読み取りクエリ（txs/blocks/meta/metrics/ops_samples）
+- `lib/db.ts`: Postgres読み取りクエリ（txs/token_transfers/blocks/meta/metrics/ops_samples）
 - `lib/rpc.ts`: canister queryのIDL定義とRPC呼び出し
 - `lib/logs.ts`: `/logs` 用のフィルタ解釈・cursor処理・エラー正規化
 - `lib/tx_timeline.ts`: receipt logs のイベント再構成（Aave/Uniswap/ERC20）
-- `lib/tx-monitor.ts`: `send受理` と `receipt.status` を分離した状態判定
+- `lib/tx-monitor.ts`: `send受理` と `receipt.status` を分離した状態判定（`/tx` で利用）
 - `lib/principal.ts`: principal -> EVM address 導出（`@dfinity/ic-pub-key`）
 - `lib/search.ts`: Search入力のルーティング判定
 

@@ -22,6 +22,7 @@ export type StoredPruneStatus = {
 export type OpsSeriesPoint = {
   sampledAtMs: bigint;
   queueLen: bigint;
+  cycles: bigint;
   totalSubmitted: bigint;
   totalIncluded: bigint;
   totalDropped: bigint;
@@ -29,7 +30,7 @@ export type OpsSeriesPoint = {
 };
 
 export function buildOpsSeries(
-  samples: Array<{ sampledAtMs: bigint; queueLen: bigint; totalSubmitted: bigint; totalIncluded: bigint; totalDropped: bigint }>
+  samples: Array<{ sampledAtMs: bigint; queueLen: bigint; cycles: bigint; totalSubmitted: bigint; totalIncluded: bigint; totalDropped: bigint }>
 ): OpsSeriesPoint[] {
   const asc = [...samples].reverse();
   return asc.map((current, index) => {
@@ -41,6 +42,7 @@ export function buildOpsSeries(
     return {
       sampledAtMs: current.sampledAtMs,
       queueLen: current.queueLen,
+      cycles: current.cycles,
       totalSubmitted: current.totalSubmitted,
       totalIncluded: current.totalIncluded,
       totalDropped: current.totalDropped,

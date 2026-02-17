@@ -25,7 +25,7 @@ export function loadConfig(env: NodeJS.ProcessEnv): ExplorerConfig {
     canisterId: env.EVM_CANISTER_ID ?? null,
     icHost: env.EXPLORER_IC_HOST ?? env.INDEXER_IC_HOST ?? DEFAULT_IC_HOST,
     fetchRootKey: parseBool(env.EXPLORER_FETCH_ROOT_KEY ?? env.INDEXER_FETCH_ROOT_KEY),
-    latestBlocksLimit: parseRangeInt(env.EXPLORER_LATEST_BLOCKS, 10, 1, 100),
+    latestBlocksLimit: parseRangeInt(env.EXPLORER_LATEST_BLOCKS, 10, 1, 500),
     latestTxsLimit: parseRangeInt(env.EXPLORER_LATEST_TXS, 20, 1, 200),
     principalTxsLimit: parseRangeInt(env.EXPLORER_PRINCIPAL_TXS, 50, 1, 500),
   };

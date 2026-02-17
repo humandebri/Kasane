@@ -4,6 +4,9 @@ import { Actor, HttpAgent } from "@dfinity/agent";
 import { idlFactory } from "./candid";
 import { Config } from "./config";
 import {
+  CandidMetricsView,
+  CandidOptNat64,
+  CandidPruneStatusView,
   Cursor,
   ExportActorMethods,
   ExportError,
@@ -103,7 +106,7 @@ function toNat32Number(value: bigint | number | string, name: string): number {
   return parsed;
 }
 
-function normalizePruneStatus(raw: PruneStatusView): PruneStatusView {
+function normalizePruneStatus(raw: CandidPruneStatusView): PruneStatusView {
   return {
     pruning_enabled: raw.pruning_enabled,
     prune_running: raw.prune_running,
@@ -112,36 +115,23 @@ function normalizePruneStatus(raw: PruneStatusView): PruneStatusView {
     low_water_bytes: toNat64BigInt(raw.low_water_bytes, "prune_status.low_water_bytes"),
     hard_emergency_bytes: toNat64BigInt(raw.hard_emergency_bytes, "prune_status.hard_emergency_bytes"),
     last_prune_at: toNat64BigInt(raw.last_prune_at, "prune_status.last_prune_at"),
-    pruned_before_block:
-      raw.pruned_before_block === null
-        ? null
-        : toNat64BigInt(raw.pruned_before_block, "prune_status.pruned_before_block"),
-    oldest_kept_block:
-      raw.oldest_kept_block === null
-        ? null
-        : toNat64BigInt(raw.oldest_kept_block, "prune_status.oldest_kept_block"),
-    oldest_kept_timestamp:
-      raw.oldest_kept_timestamp === null
-        ? null
-        : toNat64BigInt(raw.oldest_kept_timestamp, "prune_status.oldest_kept_timestamp"),
+    pruned_before_block: normalizeOptNat64(raw.pruned_before_block, "prune_status.pruned_before_block"),
+    oldest_kept_block: normalizeOptNat64(raw.oldest_kept_block, "prune_status.oldest_kept_block"),
+    oldest_kept_timestamp: normalizeOptNat64(raw.oldest_kept_timestamp, "prune_status.oldest_kept_timestamp"),
     need_prune: raw.need_prune,
   };
 }
 
-function normalizeMetrics(raw: MetricsView): MetricsView {
+function normalizeMetrics(raw: CandidMetricsView): MetricsView {
   return {
     txs: toNat64BigInt(raw.txs, "metrics.txs"),
     ema_txs_per_block_x1000: toNat64BigInt(raw.ema_txs_per_block_x1000, "metrics.ema_txs_per_block_x1000"),
-    pruned_before_block:
-      raw.pruned_before_block === null ? null : toNat64BigInt(raw.pruned_before_block, "metrics.pruned_before_block"),
+    pruned_before_block: normalizeOptNat64(raw.pruned_before_block, "metrics.pruned_before_block"),
     ema_block_rate_per_sec_x1000: toNat64BigInt(raw.ema_block_rate_per_sec_x1000, "metrics.ema_block_rate_per_sec_x1000"),
     total_submitted: toNat64BigInt(raw.total_submitted, "metrics.total_submitted"),
     window: toNat64BigInt(raw.window, "metrics.window"),
     avg_txs_per_block: toNat64BigInt(raw.avg_txs_per_block, "metrics.avg_txs_per_block"),
-    block_rate_per_sec_x1000:
-      raw.block_rate_per_sec_x1000 === null
-        ? null
-        : toNat64BigInt(raw.block_rate_per_sec_x1000, "metrics.block_rate_per_sec_x1000"),
+    block_rate_per_sec_x1000: normalizeOptNat64(raw.block_rate_per_sec_x1000, "metrics.block_rate_per_sec_x1000"),
     cycles: toNat64BigInt(raw.cycles, "metrics.cycles"),
     total_dropped: toNat64BigInt(raw.total_dropped, "metrics.total_dropped"),
     blocks: toNat64BigInt(raw.blocks, "metrics.blocks"),
@@ -152,6 +142,22 @@ function normalizeMetrics(raw: MetricsView): MetricsView {
     queue_len: toNat64BigInt(raw.queue_len, "metrics.queue_len"),
     total_included: toNat64BigInt(raw.total_included, "metrics.total_included"),
   };
+}
+
+function normalizeOptNat64(value: CandidOptNat64, name: string): bigint | null {
+  if (value === null) {
+    return null;
+  }
+  if (Array.isArray(value)) {
+    if (value.length === 0) {
+      return null;
+    }
+    if (value.length === 1) {
+      return toNat64BigInt(value[0], name);
+    }
+    throw new Error(`${name} opt must contain at most one value`);
+  }
+  return toNat64BigInt(value, name);
 }
 
 export const clientTestHooks = {

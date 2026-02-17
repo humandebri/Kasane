@@ -19,18 +19,24 @@ import {
   getMaxBlockNumber,
   getMetaSnapshot,
   getRecentOpsMetricsSamples,
+  getTokenTransfersByAddress,
   getOverviewStats,
   getTx,
   getTxsByAddress,
   getTxsByCallerPrincipal,
   setExplorerPool,
 } from "../lib/db";
-import { getPrincipalView } from "../lib/data";
+import { getPrincipalView, resolveHomeBlocksLimit } from "../lib/data";
 import { parseStoredPruneStatusForTest } from "../lib/data_ops";
+import { calcRoundedBps, formatEthFromWei, formatGweiFromWei } from "../lib/format";
 import { deriveEvmAddressFromPrincipal } from "../lib/principal";
 import { logsTestHooks } from "../lib/logs";
 import { resolveSearchRoute } from "../lib/search";
+import { loadConfig } from "../lib/config";
+import { getTokenMeta } from "../lib/token_meta";
+import { tokenMetaTestHooks } from "../lib/token_meta";
 import { buildTimelineFromReceiptLogs } from "../lib/tx_timeline";
+import { txValueFeeCellsTestHooks } from "../components/tx-value-fee-cells";
 import type { ReceiptView } from "../lib/rpc";
 
 async function runHexTests(): Promise<void> {
@@ -48,6 +54,14 @@ async function runHexTests(): Promise<void> {
   assert.throws(() => parseAddressHex("0x" + "22".repeat(19)));
 }
 
+async function runTxMetricsInputValidationTests(): Promise<void> {
+  assert.equal(txValueFeeCellsTestHooks.isValidTxIdHex("0x" + "ab".repeat(32)), true);
+  assert.equal(txValueFeeCellsTestHooks.isValidTxIdHex("0x" + "ab".repeat(31)), false);
+  assert.equal(txValueFeeCellsTestHooks.isValidTxIdHex("0x" + "ab".repeat(33)), false);
+  assert.equal(txValueFeeCellsTestHooks.isValidTxIdHex("ab".repeat(32)), false);
+  assert.equal(txValueFeeCellsTestHooks.isValidTxIdHex("0x" + "zz".repeat(32)), false);
+}
+
 async function runSearchTests(): Promise<void> {
   assert.equal(resolveSearchRoute("12"), "/blocks/12");
   assert.equal(resolveSearchRoute("0x" + "11".repeat(32)), "/tx/0x" + "11".repeat(32));
@@ -57,6 +71,42 @@ async function runSearchTests(): Promise<void> {
     "/principal/2vxsx-fae"
   );
   assert.equal(resolveSearchRoute("invalid"), "/");
+}
+
+async function runHomeBlocksLimitTests(): Promise<void> {
+  assert.equal(resolveHomeBlocksLimit(undefined, 10), 10);
+  assert.equal(resolveHomeBlocksLimit("20", 10), 20);
+  assert.equal(resolveHomeBlocksLimit(["30", "40"], 10), 30);
+  assert.equal(resolveHomeBlocksLimit("0", 10), 10);
+  assert.equal(resolveHomeBlocksLimit("501", 10), 10);
+  assert.equal(resolveHomeBlocksLimit("abc", 10), 10);
+}
+
+async function runConfigTests(): Promise<void> {
+  const cfg = loadConfig({
+    ...process.env,
+    NODE_ENV: process.env.NODE_ENV ?? "test",
+    EXPLORER_DATABASE_URL: "postgres://localhost:5432/test",
+    EXPLORER_LATEST_BLOCKS: "500",
+  });
+  assert.equal(cfg.latestBlocksLimit, 500);
+  const fallback = loadConfig({
+    ...process.env,
+    NODE_ENV: process.env.NODE_ENV ?? "test",
+    EXPLORER_DATABASE_URL: "postgres://localhost:5432/test",
+    EXPLORER_LATEST_BLOCKS: "900",
+  });
+  assert.equal(fallback.latestBlocksLimit, 10);
+}
+
+async function runFormatTests(): Promise<void> {
+  assert.equal(formatEthFromWei(30_575_433n), "0.000000000030575433 ETH");
+  assert.equal(formatGweiFromWei(30_575_433n), "0.030575433 Gwei");
+  assert.equal(formatEthFromWei(1_566_262_114_653_579n), "0.001566262114653579 ETH");
+  assert.equal(calcRoundedBps(51_226_163n, 60_000_000n), 8538n);
+  assert.equal(calcRoundedBps(8_000_000n, 10_000_000n), 8000n);
+  assert.equal(calcRoundedBps(-5n, 2n), -25000n);
+  assert.equal(calcRoundedBps(1n, 0n), null);
 }
 
 async function runPrincipalDeriveTests(): Promise<void> {
@@ -94,7 +144,7 @@ async function runLogsTests(): Promise<void> {
   if (topic1Unsupported.ok) {
     throw new Error("topic1 unsupported test expected error");
   }
-  assert.equal(topic1Unsupported.error, "topic1 は未対応です（topic0 のみ指定してください）");
+  assert.equal(topic1Unsupported.error, "topic1 is not supported. Use topic0 only.");
 
   const blockHashUnsupported = logsTestHooks.parseFilter({
     fromBlock: "",
@@ -109,7 +159,125 @@ async function runLogsTests(): Promise<void> {
   if (blockHashUnsupported.ok) {
     throw new Error("blockHash unsupported test expected error");
   }
-  assert.equal(blockHashUnsupported.error, "blockHash フィルタは未対応です（from/to を使用してください）");
+  assert.equal(blockHashUnsupported.error, "blockHash filter is not supported. Use fromBlock/toBlock.");
+
+  assert.equal(
+    logsTestHooks.hasAnySearchInput({
+      fromBlock: "",
+      toBlock: "",
+      address: "",
+      topic0: "",
+      limit: "",
+    }),
+    false
+  );
+  assert.equal(
+    logsTestHooks.hasAnySearchInput({
+      fromBlock: "1",
+      toBlock: "",
+      address: "",
+      topic0: "",
+      limit: "",
+    }),
+    true
+  );
+}
+
+async function runTokenMetaTests(): Promise<void> {
+  tokenMetaTestHooks.resetForTest();
+  const dynamic = new Uint8Array([
+    ...new Array<number>(31).fill(0), 32, // offset
+    ...new Array<number>(31).fill(0), 3, // length
+    85, 83, 68, // USD
+    ...new Array<number>(29).fill(0),
+  ]);
+  assert.equal(tokenMetaTestHooks.decodeSymbol(dynamic), "USD");
+
+  const bytes32 = new Uint8Array(32);
+  bytes32.set([73, 67, 80]); // ICP
+  assert.equal(tokenMetaTestHooks.decodeSymbol(bytes32), "ICP");
+
+  const decimals = new Uint8Array(32);
+  decimals[31] = 18;
+  assert.equal(tokenMetaTestHooks.decodeDecimals(decimals), 18);
+
+  const originalNow = Date.now();
+  let nowMs = originalNow;
+  tokenMetaTestHooks.setNowProviderForTest(() => nowMs);
+  let fetchCount = 0;
+  tokenMetaTestHooks.setFetcherForTest(async () => {
+    fetchCount += 1;
+    return { symbol: "AAA", decimals: 18 };
+  });
+
+  const addrA = "0x" + "01".repeat(20);
+  const first = await getTokenMeta(addrA);
+  const second = await getTokenMeta(addrA);
+  assert.equal(first.symbol, "AAA");
+  assert.equal(second.symbol, "AAA");
+  assert.equal(fetchCount, 1);
+
+  nowMs += tokenMetaTestHooks.constants.SUCCESS_TTL_MS + 1;
+  await getTokenMeta(addrA);
+  assert.equal(fetchCount, 2);
+
+  tokenMetaTestHooks.resetForTest();
+  nowMs = originalNow;
+  tokenMetaTestHooks.setNowProviderForTest(() => nowMs);
+  let fail = true;
+  fetchCount = 0;
+  tokenMetaTestHooks.setFetcherForTest(async () => {
+    fetchCount += 1;
+    if (fail) {
+      throw new Error("rpc failed");
+    }
+    return { symbol: "BBB", decimals: 6 };
+  });
+  const failed = await getTokenMeta(addrA);
+  assert.equal(failed.symbol, null);
+  assert.equal(tokenMetaTestHooks.getIsErrorForTest(addrA), true);
+  await getTokenMeta(addrA);
+  assert.equal(fetchCount, 1);
+  fail = false;
+  nowMs += tokenMetaTestHooks.constants.ERROR_TTL_MS + 1;
+  const recovered = await getTokenMeta(addrA);
+  assert.equal(recovered.symbol, "BBB");
+  assert.equal(fetchCount, 2);
+
+  tokenMetaTestHooks.resetForTest();
+  tokenMetaTestHooks.setNowProviderForTest(() => nowMs);
+  fetchCount = 0;
+  tokenMetaTestHooks.setFetcherForTest(async () => {
+    fetchCount += 1;
+    return { symbol: "LRU", decimals: 18 };
+  });
+  const maxEntries = tokenMetaTestHooks.constants.MAX_CACHE_ENTRIES;
+  for (let i = 0; i < maxEntries; i += 1) {
+    await getTokenMeta(addressFromIndex(i));
+  }
+  assert.equal(tokenMetaTestHooks.getCacheSizeForTest(), maxEntries);
+  await getTokenMeta(addressFromIndex(maxEntries));
+  assert.equal(tokenMetaTestHooks.getCacheSizeForTest(), maxEntries);
+  const beforeEvictedFetch = fetchCount;
+  await getTokenMeta(addressFromIndex(0));
+  assert.equal(fetchCount, beforeEvictedFetch + 1);
+
+  tokenMetaTestHooks.resetForTest();
+  tokenMetaTestHooks.setNowProviderForTest(() => nowMs);
+  let inflight = 0;
+  let maxInflight = 0;
+  tokenMetaTestHooks.setFetcherForTest(async () => {
+    inflight += 1;
+    if (inflight > maxInflight) {
+      maxInflight = inflight;
+    }
+    await sleep(20);
+    inflight -= 1;
+    return { symbol: "C", decimals: 18 };
+  });
+  await Promise.all(Array.from({ length: 20 }, (_, i) => getTokenMeta(addressFromIndex(10_000 + i))));
+  assert.equal(maxInflight <= tokenMetaTestHooks.constants.MAX_CONCURRENT_FETCHES, true);
+  tokenMetaTestHooks.resetForTest();
 }
 
 async function runTimelineTests(): Promise<void> {
@@ -264,18 +432,19 @@ async function runTimelineTests(): Promise<void> {
 async function runDbTests(): Promise<void> {
   const mem = newDb({ noAstCoverageCheck: true });
   mem.public.none(`
-    CREATE TABLE blocks(number bigint primary key, hash bytea, timestamp bigint not null, tx_count integer not null);
+    CREATE TABLE blocks(number bigint primary key, hash bytea, timestamp bigint not null, tx_count integer not null, gas_used bigint);
     CREATE TABLE txs(tx_hash bytea primary key, block_number bigint not null, tx_index integer not null, caller_principal bytea, from_address bytea not null, to_address bytea, receipt_status smallint);
+    CREATE TABLE token_transfers(tx_hash bytea not null, block_number bigint not null, tx_index integer not null, log_index integer not null, token_address bytea not null, from_address bytea not null, to_address bytea not null, amount_numeric numeric(78,0) not null, primary key(tx_hash, log_index));
     CREATE TABLE metrics_daily(day integer primary key, raw_bytes bigint not null default 0, compressed_bytes bigint not null default 0, archive_bytes bigint, blocks_ingested bigint not null default 0, errors bigint not null default 0);
-    CREATE TABLE ops_metrics_samples(sampled_at_ms bigint primary key, queue_len bigint not null, total_submitted bigint not null, total_included bigint not null, total_dropped bigint not null, drop_counts_json text not null);
+    CREATE TABLE ops_metrics_samples(sampled_at_ms bigint primary key, queue_len bigint not null, cycles bigint not null default 0, total_submitted bigint not null, total_included bigint not null, total_dropped bigint not null, drop_counts_json text not null);
     CREATE TABLE meta(key text primary key, value text);
   `);
 
   const adapter = mem.adapters.createPg();
   const pool = new adapter.Pool();
   setExplorerPool(pool);
-  await pool.query("INSERT INTO blocks(number, hash, timestamp, tx_count) VALUES($1, $2, $3, $4)", [12, Buffer.from("aa", "hex"), 1000, 1]);
-  await pool.query("INSERT INTO blocks(number, hash, timestamp, tx_count) VALUES($1, $2, $3, $4)", [11, Buffer.from("bb", "hex"), 900, 1]);
+  await pool.query("INSERT INTO blocks(number, hash, timestamp, tx_count, gas_used) VALUES($1, $2, $3, $4, $5)", [12, Buffer.from("aa", "hex"), 1000, 1, 21000]);
+  await pool.query("INSERT INTO blocks(number, hash, timestamp, tx_count, gas_used) VALUES($1, $2, $3, $4, $5)", [11, Buffer.from("bb", "hex"), 900, 1, 20000]);
   await pool.query("INSERT INTO txs(tx_hash, block_number, tx_index, caller_principal, from_address, to_address, receipt_status) VALUES($1, $2, $3, $4, $5, $6, $7)", [
     Buffer.from("1122", "hex"),
     12,
@@ -303,9 +472,19 @@ async function runDbTests(): Promise<void> {
     Buffer.from("11".repeat(20), "hex"),
     null,
   ]);
+  await pool.query("INSERT INTO token_transfers(tx_hash, block_number, tx_index, log_index, token_address, from_address, to_address, amount_numeric) VALUES($1, $2, $3, $4, $5, $6, $7, $8)", [
+    Buffer.from("1122", "hex"),
+    12,
+    0,
+    0,
+    Buffer.from("99".repeat(20), "hex"),
+    Buffer.from("22".repeat(20), "hex"),
+    Buffer.from("11".repeat(20), "hex"),
+    "250000000000000000",
+  ]);
   await pool.query(
-    "INSERT INTO ops_metrics_samples(sampled_at_ms, queue_len, total_submitted, total_included, total_dropped, drop_counts_json) VALUES($1, $2, $3, $4, $5, $6), ($7, $8, $9, $10, $11, $12)",
-    [1000, 1, 10, 5, 2, "[]", 2000, 2, 12, 5, 3, '[{\"code\":1,\"count\":3}]']
+    "INSERT INTO ops_metrics_samples(sampled_at_ms, queue_len, cycles, total_submitted, total_included, total_dropped, drop_counts_json) VALUES($1, $2, $3, $4, $5, $6, $7), ($8, $9, $10, $11, $12, $13, $14)",
+    [1000, 1, 200, 10, 5, 2, "[]", 2000, 2, 199, 12, 5, 3, '[{\"code\":1,\"count\":3}]']
   );
   await pool.query(
     "INSERT INTO metrics_daily(day, raw_bytes, compressed_bytes, archive_bytes, blocks_ingested, errors) VALUES($1, $2, $3, $4, $5, $6)",
@@ -332,6 +511,7 @@ async function runDbTests(): Promise<void> {
   assert.ok(latestBlock);
   assert.ok(latestTx);
   assert.equal(latestBlock?.number, 12n);
+  assert.equal(latestBlock?.gasUsed, 21000n);
   assert.equal(latestTx?.txHashHex, "0x1122");
   assert.equal((await getBlockDetails(12n))?.txs.length, 1);
   assert.equal((await getTx(Uint8Array.from(Buffer.from("1122", "hex"))))?.blockNumber, 12n);
@@ -371,6 +551,10 @@ async function runDbTests(): Promise<void> {
   });
   assert.equal(page2.length, 1);
   assert.equal(page2[0]?.txHashHex, "0x5566");
+  const tokenTransfers = await getTokenTransfersByAddress(address, 10, null);
+  assert.equal(tokenTransfers.length, 1);
+  assert.equal(tokenTransfers[0]?.txHashHex, "0x1122");
+  assert.equal(tokenTransfers[0]?.amount, 250000000000000000n);
   const opsSamples = await getRecentOpsMetricsSamples(10);
   assert.equal(opsSamples.length, 2);
   assert.equal(opsSamples[0]?.sampledAtMs, 2000n);
@@ -424,10 +608,15 @@ async function runDataTests(): Promise<void> {
 }
 
 runHexTests()
+  .then(runTxMetricsInputValidationTests)
   .then(runSearchTests)
+  .then(runHomeBlocksLimitTests)
+  .then(runConfigTests)
+  .then(runFormatTests)
   .then(runPrincipalDeriveTests)
   .then(runDependencyPinTests)
   .then(runLogsTests)
+  .then(runTokenMetaTests)
   .then(runTimelineTests)
   .then(runDbTests)
   .then(runDataTests)
@@ -495,4 +684,15 @@ function addressWord(address: Uint8Array): bigint {
     out = (out << 8n) | BigInt(value);
   }
   return out;
+}
+
+function addressFromIndex(index: number): string {
+  const hex = index.toString(16).padStart(40, "0");
+  return "0x" + hex.slice(-40);
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
 }

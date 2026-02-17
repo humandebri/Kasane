@@ -93,6 +93,27 @@ scripts/query_smoke.sh
    - 現行仕様: controller 以外は `auth.controller_required`
    - 旧仕様の `auth.producer_required` 前提アラートは更新する
 
+## 3.1 Contabo 運用ファイル配置（testnet共通）
+
+`rsync --delete` 運用で `.env.local` が消える事故を防ぐため、環境変数は `/etc/ic-op/*.env` に集約する。
+
+- `rpc-gateway.service` -> `EnvironmentFile=/etc/ic-op/rpc-gateway.env`
+- `ic-op-indexer.service` -> `EnvironmentFile=/etc/ic-op/indexer.env`
+- `ic-op-explorer.service` -> `EnvironmentFile=/etc/ic-op/explorer.env`
+- `receipt-watch@.service` -> `EnvironmentFile=-/etc/default/receipt-watch`
+
+送信監視の起動元は固定:
+
+```bash
+cd /opt/ic-op/tools/rpc-gateway
+./ops/start_receipt_watch.sh 0x<tx_hash>
+```
+
+運用ルール:
+1. `eth_sendRawTransaction` 戻り値の tx hash を保存
+2. 直後に `start_receipt_watch.sh` を実行
+3. 成否判定は `receipt.status==0x1` のみを成功条件にする
+
 ## 4. ロールバック方針
 1. snapshot を事前取得する。
 2. 障害時は snapshot を load し、直前安定 wasm を reinstall する。

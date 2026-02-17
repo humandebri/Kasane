@@ -1,9 +1,7 @@
-// どこで: ルートレイアウト / 何を: 共通ヘッダーと枠組みを提供 / なぜ: ページ間で導線と情報密度を揃えるため
+// どこで: ルートレイアウト / 何を: 共通ナビと検索導線を提供 / なぜ: 全ページで同じ導線と情報密度を保つため
 
 import type { Metadata } from "next";
-import Link from "next/link";
-import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
-import { Badge } from "../components/ui/badge";
+import { AppHeader } from "../components/app-header";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -15,26 +13,10 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
   return (
     <html lang="ja">
       <body>
-        <main className="mx-auto grid w-full max-w-6xl gap-4 p-4 md:p-6">
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2 text-xl">
-                Kasane Explorer <Badge variant="secondary">Phase2.1</Badge>
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="flex items-center gap-4 text-sm">
-              <Link href="/" className="text-sky-700 hover:underline">
-                Home
-              </Link>
-              <Link href="/ops" className="text-sky-700 hover:underline">
-                Ops
-              </Link>
-              <Link href="/logs" className="text-sky-700 hover:underline">
-                Logs
-              </Link>
-            </CardContent>
-          </Card>
-          {children}
+        <main className="relative mx-auto min-h-screen w-full max-w-7xl space-y-4 px-4 pb-8 pt-5 sm:px-6">
+          <AppHeader />
+
+          <section className="space-y-4">{children}</section>
         </main>
       </body>
     </html>

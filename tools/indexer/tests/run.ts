@@ -8,11 +8,12 @@ import path from "node:path";
 import { newDb } from "pg-mem";
 import { cursorFromJson, cursorToJson } from "../src/cursor";
 import { clientTestHooks } from "../src/client";
-import { decodeBlockPayload, decodeReceiptStatusPayload, decodeTxIndexPayload } from "../src/decode";
+import { decodeBlockPayload, decodeErc20TransferPayload, decodeReceiptStatusPayload, decodeTxIndexPayload } from "../src/decode";
 import { archiveBlock } from "../src/archiver";
 import { runArchiveGc, runArchiveGcWithMode } from "../src/archive_gc";
 import { IndexerDb } from "../src/db";
 import { MIGRATIONS } from "../src/migrations";
+import { workerCommitGuardTestHooks } from "../src/worker_commit_guard";
 import { applyChunk, enforceNextCursor, finalizePayloads, newPendingFromChunk } from "../src/worker_pending";
 import { runWorkerWithDeps } from "../src/worker";
 import { classifyExportError } from "../src/worker_errors";
@@ -126,6 +127,95 @@ test("receipts payload rejects invalid status", () => {
   assert.throws(() => decodeReceiptStatusPayload(payload), /status/);
 });
 
+test("receipts payload decodes erc20 transfer", () => {
+  const txHash = Buffer.alloc(32, 0x55);
+  const transfer = {
+    tokenAddress: Buffer.from("11".repeat(20), "hex"),
+    fromAddress: Buffer.from("22".repeat(20), "hex"),
+    toAddress: Buffer.from("33".repeat(20), "hex"),
+    amount: 25n,
+  };
+  const receipt = buildReceiptBytes(1, true, [transfer]);
+  const len = Buffer.alloc(4);
+  len.writeUInt32BE(receipt.length, 0);
+  const payload = Buffer.concat([txHash, len, receipt]);
+  const out = decodeErc20TransferPayload(payload);
+  assert.equal(out.length, 1);
+  assert.equal(out[0]?.txHash.toString("hex"), txHash.toString("hex"));
+  assert.equal(out[0]?.tokenAddress.toString("hex"), transfer.tokenAddress.toString("hex"));
+  assert.equal(out[0]?.fromAddress.toString("hex"), transfer.fromAddress.toString("hex"));
+  assert.equal(out[0]?.toAddress.toString("hex"), transfer.toAddress.toString("hex"));
+  assert.equal(out[0]?.amount, 25n);
+});
+
+test("receipts payload skips malformed transfer log with missing topics", () => {
+  const txHash = Buffer.alloc(32, 0x56);
+  const malformedTransferLog = buildRawLog({
+    tokenAddress: Buffer.from("11".repeat(20), "hex"),
+    topics: [Buffer.from("ddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef", "hex")],
+    data: toWord32(99n),
+  });
+  const receipt = buildReceiptFromRawLogs(1, true, [malformedTransferLog]);
+  const len = Buffer.alloc(4);
+  len.writeUInt32BE(receipt.length, 0);
+  const payload = Buffer.concat([txHash, len, receipt]);
+  const statuses = decodeReceiptStatusPayload(payload);
+  const transfers = decodeErc20TransferPayload(payload);
+  assert.equal(statuses.length, 1);
+  assert.equal(statuses[0]?.status, 1);
+  assert.equal(transfers.length, 0);
+});
+
+test("receipts payload skips malformed transfer log with short data", () => {
+  const txHash = Buffer.alloc(32, 0x57);
+  const topic0 = Buffer.from("ddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef", "hex");
+  const topic1 = Buffer.concat([Buffer.alloc(12, 0), Buffer.from("aa".repeat(20), "hex")]);
+  const topic2 = Buffer.concat([Buffer.alloc(12, 0), Buffer.from("bb".repeat(20), "hex")]);
+  const malformedTransferLog = buildRawLog({
+    tokenAddress: Buffer.from("11".repeat(20), "hex"),
+    topics: [topic0, topic1, topic2],
+    data: Buffer.from([0x01]),
+  });
+  const receipt = buildReceiptFromRawLogs(1, true, [malformedTransferLog]);
+  const len = Buffer.alloc(4);
+  len.writeUInt32BE(receipt.length, 0);
+  const payload = Buffer.concat([txHash, len, receipt]);
+  const statuses = decodeReceiptStatusPayload(payload);
+  const transfers = decodeErc20TransferPayload(payload);
+  assert.equal(statuses.length, 1);
+  assert.equal(statuses[0]?.status, 1);
+  assert.equal(transfers.length, 0);
+});
+
+test("receipts payload reads erc20 amount from first 32 bytes", () => {
+  const txHash = Buffer.alloc(32, 0x58);
+  const transfer = {
+    tokenAddress: Buffer.from("11".repeat(20), "hex"),
+    fromAddress: Buffer.from("22".repeat(20), "hex"),
+    toAddress: Buffer.from("33".repeat(20), "hex"),
+    amount: 7n,
+  };
+  const trailingGarbage = Buffer.from("ff".repeat(32), "hex");
+  const receipt = buildReceiptBytes(1, true, [
+    {
+      ...transfer,
+      dataOverride: Buffer.concat([toWord32(transfer.amount), trailingGarbage]),
+    },
+  ]);
+  const len = Buffer.alloc(4);
+  len.writeUInt32BE(receipt.length, 0);
+  const payload = Buffer.concat([txHash, len, receipt]);
+  const out = decodeErc20TransferPayload(payload);
+  assert.equal(out.length, 1);
+  assert.equal(out[0]?.amount, 7n);
+});
+
+test("token transfer amount guard rejects numeric(78,0) overflow", () => {
+  const maxUint256 = (1n << 256n) - 1n;
+  assert.equal(workerCommitGuardTestHooks.isTokenTransferAmountSupported(maxUint256), true);
+  assert.equal(workerCommitGuardTestHooks.isTokenTransferAmountSupported(BigInt("1" + "0".repeat(78))), false);
+});
+
 test("block payload decodes v2 layout", () => {
   const number = Buffer.alloc(8);
   number.writeBigUInt64BE(7n, 0);
@@ -160,6 +250,7 @@ test("block payload decodes v2 layout", () => {
   const out = decodeBlockPayload(payload);
   assert.equal(out.number, 7n);
   assert.equal(out.timestamp, 123n);
+  assert.equal(out.gasUsed, 21_000n);
   assert.equal(out.blockHash.toString("hex"), blockHash.toString("hex"));
   assert.equal(out.txIds.length, 1);
   assert.equal(out.txIds[0]?.toString("hex"), txId.toString("hex"));
@@ -1049,6 +1140,130 @@ test("runWorkerWithDeps exits when tx_index and receipts counts differ", async (
   }
 });
 
+test("runWorkerWithDeps stores token_transfers block/tx index from tx_index payload", async () => {
+  const db = await createTestIndexerDb();
+  const originalClose = db.close.bind(db);
+  (db as unknown as { close: () => Promise<void> }).close = async () => {};
+  await withTempDir(async (dir) => {
+    const config: Config = {
+      canisterId: "test-canister",
+      icHost: "http://127.0.0.1:4943",
+      databaseUrl: "postgres://unused",
+      dbPoolMax: 1,
+      retentionDays: 90,
+      retentionEnabled: false,
+      retentionDryRun: false,
+      archiveGcDeleteOrphans: false,
+      maxBytes: 1_200_000,
+      backoffInitialMs: 1,
+      backoffMaxMs: 2,
+      idlePollMs: 1,
+      pruneStatusPollMs: 0,
+      opsMetricsPollMs: 0,
+      fetchRootKey: false,
+      archiveDir: dir,
+      chainId: "test",
+      zstdLevel: 1,
+      maxSegment: 2,
+    };
+    await db.setCursor({ block_number: 1n, segment: 0, byte_offset: 0 });
+    const txHash = Buffer.alloc(32, 0x91);
+    const block = buildBlockPayload(1n, 10n, [txHash]);
+    const receipts = buildReceiptsPayload([
+      {
+        txHash,
+        receipt: buildReceiptBytes(1, true, [
+          {
+            tokenAddress: Buffer.from("11".repeat(20), "hex"),
+            fromAddress: Buffer.from("22".repeat(20), "hex"),
+            toAddress: Buffer.from("33".repeat(20), "hex"),
+            amount: 123n,
+          },
+        ]),
+      },
+    ]);
+    const txIndex = buildTxIndexPayload(1n, txHash, 9);
+    const chunks = [
+      { segment: 0, start: 0, bytes: block, payload_len: block.length },
+      { segment: 1, start: 0, bytes: receipts, payload_len: receipts.length },
+      { segment: 2, start: 0, bytes: txIndex, payload_len: txIndex.length },
+    ];
+    let headCalls = 0;
+    const client = {
+      getHeadNumber: async (): Promise<bigint> => {
+        headCalls += 1;
+        if (headCalls === 2) {
+          process.emit("SIGINT");
+        }
+        return 1n;
+      },
+      exportBlocks: async (
+        cursor: { block_number: bigint; segment: number; byte_offset: number } | null
+      ): Promise<
+        | {
+            Ok: {
+              chunks: Array<{ segment: number; start: number; bytes: Buffer; payload_len: number }>;
+              next_cursor: { block_number: bigint; segment: number; byte_offset: number };
+            };
+          }
+        | { Err: never }
+      > => {
+        if (headCalls === 1) {
+          return {
+            Ok: {
+              chunks,
+              next_cursor: { block_number: 2n, segment: 0, byte_offset: 0 },
+            },
+          };
+        }
+        return {
+          Ok: {
+            chunks: [],
+            next_cursor: cursor ?? { block_number: 2n, segment: 0, byte_offset: 0 },
+          },
+        };
+      },
+      getPruneStatus: async () => ({
+        pruning_enabled: false,
+        prune_running: false,
+        estimated_kept_bytes: 0n,
+        high_water_bytes: 0n,
+        low_water_bytes: 0n,
+        hard_emergency_bytes: 0n,
+        last_prune_at: 0n,
+        pruned_before_block: null,
+        oldest_kept_block: null,
+        oldest_kept_timestamp: null,
+        need_prune: false,
+      }),
+      getMetrics: async () => ({
+        txs: 0n,
+        ema_txs_per_block_x1000: 0n,
+        pruned_before_block: null,
+        ema_block_rate_per_sec_x1000: 0n,
+        total_submitted: 0n,
+        window: 128n,
+        avg_txs_per_block: 0n,
+        block_rate_per_sec_x1000: null,
+        cycles: 0n,
+        total_dropped: 0n,
+        blocks: 0n,
+        drop_counts: [],
+        queue_len: 0n,
+        total_included: 0n,
+      }),
+    };
+    await runWorkerWithDeps(config, db, client, { skipGc: true });
+    const row = await db.queryOne<{ block_number: string; tx_index: string }>(
+      "select block_number::text as block_number, tx_index::text as tx_index from token_transfers where tx_hash = $1",
+      [txHash]
+    );
+    assert.equal(row?.block_number, "1");
+    assert.equal(row?.tx_index, "9");
+  });
+  await originalClose();
+});
+
 test("runWorkerWithDeps exits when stored cursor segment exceeds maxSegment", async () => {
   const db = await createTestIndexerDb();
   const originalClose = db.close.bind(db);
@@ -1360,6 +1575,7 @@ test("db upsert and metrics aggregation", async () => {
     await db.addOpsMetricsSample({
       sampledAtMs: 1_000n,
       queueLen: 2n,
+      cycles: 123n,
       totalSubmitted: 3n,
       totalIncluded: 1n,
       totalDropped: 1n,
@@ -1369,6 +1585,7 @@ test("db upsert and metrics aggregation", async () => {
     await db.addOpsMetricsSample({
       sampledAtMs: 2_000n,
       queueLen: 4n,
+      cycles: 122n,
       totalSubmitted: 7n,
       totalIncluded: 2n,
       totalDropped: 2n,
@@ -1500,6 +1717,8 @@ async function createTestIndexerDb(): Promise<IndexerDb> {
   const adapter = mem.adapters.createPg();
   const pool = new adapter.Pool();
   const db = await IndexerDb.fromPool(pool, { migrations: MIGRATIONS.slice(0, 1) });
+  await db.queryOne("alter table if exists blocks add column if not exists gas_used bigint");
+  await db.queryOne("alter table if exists ops_metrics_samples add column if not exists cycles bigint not null default 0");
   await db.queryOne(
     "create table if not exists retention_runs(" +
       "id text primary key, started_at bigint not null, finished_at bigint not null, retention_days integer not null, dry_run boolean not null, deleted_blocks bigint not null, deleted_txs bigint not null, deleted_metrics_daily bigint not null, deleted_archive_parts bigint not null, status text not null, error_message text)"
@@ -1563,27 +1782,76 @@ function buildBlockPayload(number: bigint, timestamp: bigint, txIds: Buffer[]): 
   return out;
 }
 
-function buildReceiptBytes(status: number, withV2Magic: boolean): Buffer {
-  const magic = withV2Magic ? Buffer.from("7263707476320002", "hex") : Buffer.alloc(0);
-  const out = Buffer.alloc(magic.length + 32 + 8 + 4 + 1);
-  let offset = 0;
-  magic.copy(out, offset);
-  offset += magic.length;
-  offset = writeZeros(out, offset, 32);
-  offset = writeU64BE(out, offset, 1n);
-  out.writeUInt32BE(0, offset);
-  offset += 4;
-  out.writeUInt8(status, offset);
-  return out;
+function buildReceiptBytes(
+  status: number,
+  withV2Magic: boolean,
+  transfers: Array<{
+    tokenAddress: Buffer;
+    fromAddress: Buffer;
+    toAddress: Buffer;
+    amount: bigint;
+    dataOverride?: Buffer;
+  }> = []
+): Buffer {
+  const logs: Buffer[] = transfers.map((item) => {
+    const topic0 = Buffer.from("ddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef", "hex");
+    const topic1 = Buffer.concat([Buffer.alloc(12, 0), item.fromAddress]);
+    const topic2 = Buffer.concat([Buffer.alloc(12, 0), item.toAddress]);
+    return buildRawLog({
+      tokenAddress: item.tokenAddress,
+      topics: [topic0, topic1, topic2],
+      data: item.dataOverride ?? toWord32(item.amount),
+    });
+  });
+  return buildReceiptFromRawLogs(status, withV2Magic, logs);
 }
 
-function buildTxIndexPayload(blockNumber: bigint, txHash: Buffer): Buffer {
+function buildReceiptFromRawLogs(status: number, withV2Magic: boolean, logs: Buffer[]): Buffer {
+  const magic = withV2Magic ? Buffer.from("7263707476320002", "hex") : Buffer.alloc(0);
+  const logsLen = Buffer.alloc(4);
+  logsLen.writeUInt32BE(logs.length, 0);
+  const returnDataLen = Buffer.alloc(4);
+  returnDataLen.writeUInt32BE(0, 0);
+
+  const baseParts = [
+    magic,
+    Buffer.alloc(32, 0), // tx_id
+    u64(1n), // block_number
+    u32(0), // tx_index
+    Buffer.from([status]),
+    u64(21000n), // gas_used
+    u64(1n), // effective_gas_price
+  ];
+  if (withV2Magic) {
+    baseParts.push(Buffer.alloc(16, 0), Buffer.alloc(16, 0), Buffer.alloc(16, 0)); // fee fields
+  }
+  baseParts.push(
+    Buffer.alloc(32, 0), // return_data_hash
+    returnDataLen,
+    Buffer.alloc(0), // return_data
+    Buffer.from([0]), // has_contract
+    Buffer.alloc(20, 0), // contract address bytes
+    logsLen,
+    ...logs
+  );
+  return Buffer.concat(baseParts);
+}
+
+function buildRawLog(params: { tokenAddress: Buffer; topics: Buffer[]; data: Buffer }): Buffer {
+  const topicsLen = Buffer.alloc(4);
+  topicsLen.writeUInt32BE(params.topics.length, 0);
+  const dataLen = Buffer.alloc(4);
+  dataLen.writeUInt32BE(params.data.length, 0);
+  return Buffer.concat([params.tokenAddress, topicsLen, ...params.topics, dataLen, params.data]);
+}
+
+function buildTxIndexPayload(blockNumber: bigint, txHash: Buffer, txIndex = 0): Buffer {
   const fromAddress = Buffer.alloc(20, 0x11);
   const toAddress = Buffer.alloc(20, 0x22);
   const principalLen = 0;
   const body = Buffer.alloc(12 + 2 + principalLen + fromAddress.length + 1 + toAddress.length);
   body.writeBigUInt64BE(blockNumber, 0);
-  body.writeUInt32BE(0, 8);
+  body.writeUInt32BE(txIndex, 8);
   body.writeUInt16BE(principalLen, 12);
   fromAddress.copy(body, 14);
   body.writeUInt8(toAddress.length, 14 + fromAddress.length);
@@ -1591,6 +1859,16 @@ function buildTxIndexPayload(blockNumber: bigint, txHash: Buffer): Buffer {
   const entryLen = Buffer.alloc(4);
   entryLen.writeUInt32BE(body.length, 0);
   return Buffer.concat([txHash, entryLen, body]);
+}
+
+function buildReceiptsPayload(rows: Array<{ txHash: Buffer; receipt: Buffer }>): Buffer {
+  const parts: Buffer[] = [];
+  for (const row of rows) {
+    const len = Buffer.alloc(4);
+    len.writeUInt32BE(row.receipt.length, 0);
+    parts.push(row.txHash, len, row.receipt);
+  }
+  return Buffer.concat(parts);
 }
 
 function writeU64BE(buf: Buffer, offset: number, value: bigint): number {
@@ -1604,6 +1882,28 @@ function writeU64BE(buf: Buffer, offset: number, value: bigint): number {
 function writeZeros(buf: Buffer, offset: number, len: number): number {
   buf.fill(0, offset, offset + len);
   return offset + len;
+}
+
+function toWord32(value: bigint): Buffer {
+  const out = Buffer.alloc(32, 0);
+  let current = value;
+  for (let i = 31; i >= 0; i -= 1) {
+    out[i] = Number(current & 0xffn);
+    current >>= 8n;
+  }
+  return out;
+}
+
+function u32(value: number): Buffer {
+  const out = Buffer.alloc(4);
+  out.writeUInt32BE(value, 0);
+  return out;
+}
+
+function u64(value: bigint): Buffer {
+  const out = Buffer.alloc(8);
+  writeU64BE(out, 0, value);
+  return out;
 }
 
 async function exists(filePath: string): Promise<boolean> {

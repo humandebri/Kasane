@@ -8,6 +8,7 @@ export type BlockSummary = {
   hashHex: string | null;
   timestamp: bigint;
   txCount: number;
+  gasUsed: bigint | null;
 };
 
 export type TxSummary = {
@@ -47,9 +48,28 @@ export type AddressTxCursor = {
   txHash: Uint8Array;
 };
 
+export type AddressTokenTransferCursor = {
+  blockNumber: bigint;
+  txIndex: number;
+  logIndex: number;
+  txHash: Uint8Array;
+};
+
+export type TokenTransferSummary = {
+  txHashHex: string;
+  blockNumber: bigint;
+  txIndex: number;
+  logIndex: number;
+  tokenAddress: Buffer;
+  fromAddress: Buffer;
+  toAddress: Buffer;
+  amount: bigint;
+};
+
 export type OpsMetricsSample = {
   sampledAtMs: bigint;
   queueLen: bigint;
+  cycles: bigint;
   totalSubmitted: bigint;
   totalIncluded: bigint;
   totalDropped: bigint;
@@ -79,8 +99,14 @@ export async function getMaxBlockNumber(): Promise<bigint | null> {
 
 export async function getLatestBlocks(limit: number): Promise<BlockSummary[]> {
   const pool = getPool();
-  const rows = await pool.query<{ number: string | number; hash: Buffer | null; timestamp: string | number; tx_count: number }>(
-    "SELECT number, hash, timestamp, tx_count FROM blocks ORDER BY number DESC LIMIT $1",
+  const rows = await pool.query<{
+    number: string | number;
+    hash: Buffer | null;
+    timestamp: string | number;
+    tx_count: number;
+    gas_used: string | number | null;
+  }>(
+    "SELECT number, hash, timestamp, tx_count, gas_used FROM blocks ORDER BY number DESC LIMIT $1",
     [limit]
   );
 
@@ -89,6 +115,28 @@ export async function getLatestBlocks(limit: number): Promise<BlockSummary[]> {
     hashHex: row.hash ? `0x${row.hash.toString("hex")}` : null,
     timestamp: BigInt(row.timestamp),
     txCount: row.tx_count,
+    gasUsed: row.gas_used === null ? null : BigInt(row.gas_used),
+  }));
+}
+
+export async function getLatestBlocksPage(limit: number, offset: number): Promise<BlockSummary[]> {
+  const pool = getPool();
+  const rows = await pool.query<{
+    number: string | number;
+    hash: Buffer | null;
+    timestamp: string | number;
+    tx_count: number;
+    gas_used: string | number | null;
+  }>(
+    "SELECT number, hash, timestamp, tx_count, gas_used FROM blocks ORDER BY number DESC LIMIT $1 OFFSET $2",
+    [limit, offset]
+  );
+  return rows.rows.map((row) => ({
+    number: BigInt(row.number),
+    hashHex: row.hash ? `0x${row.hash.toString("hex")}` : null,
+    timestamp: BigInt(row.timestamp),
+    txCount: row.tx_count,
+    gasUsed: row.gas_used === null ? null : BigInt(row.gas_used),
   }));
 }
 
@@ -110,10 +158,42 @@ export async function getLatestTxs(limit: number): Promise<TxSummary[]> {
   }));
 }
 
+export async function getLatestTxsPage(limit: number, offset: number): Promise<TxSummary[]> {
+  const pool = getPool();
+  const rows = await pool.query<{
+    tx_hash: Buffer;
+    block_number: string | number;
+    tx_index: number;
+    caller_principal: Buffer | null;
+    from_address: Buffer;
+    to_address: Buffer | null;
+    receipt_status: number | null;
+  }>(
+    "SELECT tx_hash, block_number, tx_index, caller_principal, from_address, to_address, receipt_status FROM txs ORDER BY block_number DESC, tx_index DESC LIMIT $1 OFFSET $2",
+    [limit, offset]
+  );
+
+  return rows.rows.map((row) => ({
+    txHashHex: `0x${row.tx_hash.toString("hex")}`,
+    blockNumber: BigInt(row.block_number),
+    txIndex: row.tx_index,
+    callerPrincipal: row.caller_principal ?? null,
+    fromAddress: row.from_address,
+    toAddress: row.to_address ?? null,
+    receiptStatus: row.receipt_status ?? null,
+  }));
+}
+
 export async function getBlockDetails(blockNumber: bigint): Promise<BlockDetails | null> {
   const pool = getPool();
-  const blockRow = await pool.query<{ number: string | number; hash: Buffer | null; timestamp: string | number; tx_count: number }>(
-    "SELECT number, hash, timestamp, tx_count FROM blocks WHERE number = $1",
+  const blockRow = await pool.query<{
+    number: string | number;
+    hash: Buffer | null;
+    timestamp: string | number;
+    tx_count: number;
+    gas_used: string | number | null;
+  }>(
+    "SELECT number, hash, timestamp, tx_count, gas_used FROM blocks WHERE number = $1",
     [blockNumber]
   );
 
@@ -137,6 +217,7 @@ export async function getBlockDetails(blockNumber: bigint): Promise<BlockDetails
       hashHex: row.hash ? `0x${row.hash.toString("hex")}` : null,
       timestamp: BigInt(row.timestamp),
       txCount: row.tx_count,
+      gasUsed: row.gas_used === null ? null : BigInt(row.gas_used),
     },
     txs: txRows.rows.map((tx) => ({
       txHashHex: `0x${tx.tx_hash.toString("hex")}`,
@@ -257,22 +338,82 @@ export async function getTxsByAddress(
   }));
 }
 
+export async function getTokenTransfersByAddress(
+  address: Uint8Array,
+  limit: number,
+  cursor: AddressTokenTransferCursor | null
+): Promise<TokenTransferSummary[]> {
+  const pool = getPool();
+  const addressBuf = Buffer.from(address);
+  const fetchLimit = limit + 1;
+  if (!cursor) {
+    const rows = await pool.query<{
+      tx_hash: Buffer;
+      block_number: string | number;
+      tx_index: number;
+      log_index: number;
+      token_address: Buffer;
+      from_address: Buffer;
+      to_address: Buffer;
+      amount_numeric: string | number;
+    }>(
+      "SELECT tx_hash, block_number, tx_index, log_index, token_address, from_address, to_address, amount_numeric FROM token_transfers WHERE from_address = $1 OR to_address = $1 ORDER BY block_number DESC, tx_index DESC, log_index DESC, tx_hash DESC LIMIT $2",
+      [addressBuf, fetchLimit]
+    );
+    return rows.rows.map((row) => ({
+      txHashHex: `0x${row.tx_hash.toString("hex")}`,
+      blockNumber: BigInt(row.block_number),
+      txIndex: row.tx_index,
+      logIndex: row.log_index,
+      tokenAddress: row.token_address,
+      fromAddress: row.from_address,
+      toAddress: row.to_address,
+      amount: BigInt(row.amount_numeric),
+    }));
+  }
+  const rows = await pool.query<{
+    tx_hash: Buffer;
+    block_number: string | number;
+    tx_index: number;
+    log_index: number;
+    token_address: Buffer;
+    from_address: Buffer;
+    to_address: Buffer;
+    amount_numeric: string | number;
+  }>(
+    "SELECT tx_hash, block_number, tx_index, log_index, token_address, from_address, to_address, amount_numeric FROM token_transfers WHERE (from_address = $1 OR to_address = $1) AND (block_number < $2 OR (block_number = $2 AND tx_index < $3) OR (block_number = $2 AND tx_index = $3 AND log_index < $4) OR (block_number = $2 AND tx_index = $3 AND log_index = $4 AND tx_hash < $5)) ORDER BY block_number DESC, tx_index DESC, log_index DESC, tx_hash DESC LIMIT $6",
+    [addressBuf, cursor.blockNumber, cursor.txIndex, cursor.logIndex, Buffer.from(cursor.txHash), fetchLimit]
+  );
+  return rows.rows.map((row) => ({
+    txHashHex: `0x${row.tx_hash.toString("hex")}`,
+    blockNumber: BigInt(row.block_number),
+    txIndex: row.tx_index,
+    logIndex: row.log_index,
+    tokenAddress: row.token_address,
+    fromAddress: row.from_address,
+    toAddress: row.to_address,
+    amount: BigInt(row.amount_numeric),
+  }));
+}
+
 export async function getRecentOpsMetricsSamples(limit: number): Promise<OpsMetricsSample[]> {
   const pool = getPool();
   const rows = await pool.query<{
     sampled_at_ms: string | number;
     queue_len: string | number;
+    cycles: string | number;
     total_submitted: string | number;
     total_included: string | number;
     total_dropped: string | number;
     drop_counts_json: string;
   }>(
-    "SELECT sampled_at_ms, queue_len, total_submitted, total_included, total_dropped, drop_counts_json FROM ops_metrics_samples ORDER BY sampled_at_ms DESC LIMIT $1",
+    "SELECT sampled_at_ms, queue_len, cycles, total_submitted, total_included, total_dropped, drop_counts_json FROM ops_metrics_samples ORDER BY sampled_at_ms DESC LIMIT $1",
     [limit]
   );
   return rows.rows.map((row) => ({
     sampledAtMs: BigInt(row.sampled_at_ms),
     queueLen: BigInt(row.queue_len),
+    cycles: BigInt(row.cycles),
     totalSubmitted: BigInt(row.total_submitted),
     totalIncluded: BigInt(row.total_included),
     totalDropped: BigInt(row.total_dropped),

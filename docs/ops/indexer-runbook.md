@@ -113,6 +113,10 @@ DB接続で落ちる場合:
 - `INDEXER_BACKOFF_MAX_MS`（失敗時の最大バックオフ。既定 5000ms）
 - `INDEXER_FETCH_ROOT_KEY`（local向け）
 
+運用配置（Contabo）:
+- systemd の `EnvironmentFile` は `/etc/ic-op/indexer.env` を使う。
+- `/opt/ic-op/tools/indexer/.env.local` は参照しない（デプロイ同期で消える事故を避けるため）。
+
 ### 2.3 起動
 - `node dist/run.js`（実際の起動コマンドはプロジェクトの package.json に合わせる）
 
@@ -208,6 +212,15 @@ INDEXER_DATABASE_URL=postgres://... scripts/indexer_retention_report.sh
 - pruning を有効化する前に indexer を常時稼働させ、lag を監視する
 - hard_emergency が発動する前に通常水位で prune できるようにする
 
+### 8.4 `MissingData: tx_store missing`（testnet既知）
+
+対象 canister: `4c52m-aiaaa-aaaam-agwwa-cai`  
+本testnetでは先頭履歴の一部が export 不可のため、indexer の運用起点を固定する。
+
+- 正式起点 cursor: `{"v":1,"block_number":"25","segment":0,"byte_offset":0}`
+- 意味: block 25 以降を正史として追随する。
+- 運用メモ: 復旧時に cursor を再投入する場合も同じ値を使う。
+
 ### 8.2 InvalidCursor / Decode
 - 仕様違反か実装バグの可能性が高い
 - `fatal` ログに `cursor / next_cursor / chunks_summary` が出るので、その組み合わせで再現テストを作る
@@ -245,6 +258,22 @@ pruning enable の手順をスクリプト化（set_policy → enabled=true を�
 * `get_prune_status()` を定期ポーリングして `meta.prune_status` に JSON 保存
 * JSON は `estimated_kept_bytes` / `high_water_bytes` / `hard_emergency_bytes` を文字列で保持して追跡
 * 監視側は `need_prune` フラグと `cursor_lag` を合わせてアラート
+
+### 9.2 Opsアラート閾値（固定）
+
+`/ops` の時系列値を使って以下で判定する。
+
+- `failure_rate_warn`: `>= 0.05` が 10分継続
+- `failure_rate_critical`: `>= 0.20` が 10分継続
+- `pending_stall_warn`: `pending_stall=true` を検知（15分連続条件はアプリ定義）
+- `cursor_lag_warn`: `> 50 blocks` が 10分継続
+- `cursor_lag_critical`: `> 200 blocks` が 10分継続
+
+優先順位:
+1. `pending_stall_warn`
+2. `failure_rate_critical`
+3. `cursor_lag_critical`
+4. それ以外の warn
 
 ## 10. ローカル統合スモーク（最優先）
 

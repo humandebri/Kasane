@@ -45,6 +45,22 @@ export type PruneStatusView = {
   need_prune: boolean;
 };
 
+export type CandidOptNat64 = [] | [bigint] | bigint | null;
+
+export type CandidPruneStatusView = {
+  pruning_enabled: boolean;
+  prune_running: boolean;
+  estimated_kept_bytes: bigint;
+  high_water_bytes: bigint;
+  low_water_bytes: bigint;
+  hard_emergency_bytes: bigint;
+  last_prune_at: bigint;
+  pruned_before_block: CandidOptNat64;
+  oldest_kept_block: CandidOptNat64;
+  oldest_kept_timestamp: CandidOptNat64;
+  need_prune: boolean;
+};
+
 export type DropCountView = {
   code: number;
   count: bigint;
@@ -67,9 +83,26 @@ export type MetricsView = {
   total_included: bigint;
 };
 
+export type CandidMetricsView = {
+  txs: bigint;
+  ema_txs_per_block_x1000: bigint;
+  pruned_before_block: CandidOptNat64;
+  ema_block_rate_per_sec_x1000: bigint;
+  total_submitted: bigint;
+  window: bigint;
+  avg_txs_per_block: bigint;
+  block_rate_per_sec_x1000: CandidOptNat64;
+  cycles: bigint;
+  total_dropped: bigint;
+  blocks: bigint;
+  drop_counts: DropCountView[];
+  queue_len: bigint;
+  total_included: bigint;
+};
+
 export type ExportActorMethods = {
   export_blocks: (cursor: [] | [Cursor], max_bytes: number) => Promise<Result<CandidExportResponse, ExportError>>;
   rpc_eth_block_number: () => Promise<bigint>;
-  get_prune_status: () => Promise<PruneStatusView>;
-  metrics: (window: bigint) => Promise<MetricsView>;
+  get_prune_status: () => Promise<CandidPruneStatusView>;
+  metrics: (window: bigint) => Promise<CandidMetricsView>;
 };

@@ -129,6 +129,7 @@ export async function runWorkerWithDeps(
           await db.addOpsMetricsSample({
             sampledAtMs: BigInt(nowMs),
             queueLen: metrics.queue_len,
+            cycles: metrics.cycles,
             totalSubmitted: metrics.total_submitted,
             totalIncluded: metrics.total_included,
             totalDropped: metrics.total_dropped,
