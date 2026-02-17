@@ -63,7 +63,7 @@ export default async function BlockPage({ params }: { params: Promise<{ number: 
               <TableHead>Index</TableHead>
               <TableHead>Status</TableHead>
               <TableHead>Caller Principal</TableHead>
-              <TableHead>Receipt</TableHead>
+              <TableHead>Details</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -90,7 +90,7 @@ export default async function BlockPage({ params }: { params: Promise<{ number: 
                     )}
                   </TableCell>
                   <TableCell>
-                    <Link href={`/receipt/${tx.txHashHex}`} className="text-sky-700 hover:underline">
+                    <Link href={`/tx/${tx.txHashHex}`} className="text-sky-700 hover:underline">
                       open
                     </Link>
                   </TableCell>

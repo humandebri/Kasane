@@ -7,7 +7,9 @@ import { getTokenMeta } from "./token_meta";
 import {
   getBlockDetails,
   getLatestBlocks,
+  getLatestBlocksPage,
   getLatestTxs,
+  getLatestTxsPage,
   getMaxBlockNumber,
   getMetaSnapshot,
   getOverviewStats,
@@ -63,6 +65,22 @@ type HomeView = {
   blockLimit: number;
 };
 
+export type LatestTxsPageView = {
+  txs: TxSummaryWithPrincipal[];
+  page: number;
+  limit: number;
+  hasPrev: boolean;
+  hasNext: boolean;
+};
+
+export type LatestBlocksPageView = {
+  blocks: BlockSummary[];
+  page: number;
+  limit: number;
+  hasPrev: boolean;
+  hasNext: boolean;
+};
+
 export type { AddressView, OpsSeriesPoint, StoredPruneStatus };
 
 export type OpsView = {
@@ -97,6 +115,8 @@ export type TxDetailView = {
   valueWei: bigint | null;
   gasPriceWei: bigint | null;
   transactionFeeWei: bigint | null;
+  receipt: ReceiptView | null;
+  receiptLookupError: LookupError | null;
   erc20Transfers: Array<Erc20TransferView & { tokenSymbol: string | null; tokenDecimals: number | null }>;
 };
 
@@ -113,6 +133,21 @@ export type BlockGasView = {
 };
 
 const HOME_BLOCKS_LIMIT_MAX = 500;
+const TXS_PAGE_LIMIT_DEFAULT = 50;
+const TXS_PAGE_LIMIT_MAX = 100;
+const BLOCKS_PAGE_LIMIT_MAX = 100;
+
+function parsePositiveInt(rawValue: string | string[] | undefined, fallback: number): number {
+  const raw = Array.isArray(rawValue) ? rawValue[0] : rawValue;
+  if (!raw || !/^\d+$/.test(raw)) {
+    return fallback;
+  }
+  const parsed = Number.parseInt(raw, 10);
+  if (!Number.isFinite(parsed) || parsed < 1) {
+    return fallback;
+  }
+  return parsed;
+}
 
 export function resolveHomeBlocksLimit(rawValue: string | string[] | undefined, fallback: number): number {
   const raw = Array.isArray(rawValue) ? rawValue[0] : rawValue;
@@ -140,6 +175,46 @@ export async function getHomeView(blocksLimitRaw?: string | string[]): Promise<H
     getLatestTxs(cfg.latestTxsLimit),
   ]);
   return { rpcHead, dbHead, stats, blocks, txs: withCallerPrincipalText(txs), blockLimit };
+}
+
+export async function getLatestTxsPageView(
+  pageRaw?: string | string[],
+  limitRaw?: string | string[]
+): Promise<LatestTxsPageView> {
+  const page = parsePositiveInt(pageRaw, 1);
+  const limitParsed = parsePositiveInt(limitRaw, TXS_PAGE_LIMIT_DEFAULT);
+  const limit = Math.min(limitParsed, TXS_PAGE_LIMIT_MAX);
+  const offset = (page - 1) * limit;
+  const [txsRaw, stats] = await Promise.all([getLatestTxsPage(limit, offset), getOverviewStats()]);
+  const total = Number(stats.totalTxs);
+  const nextOffset = page * limit;
+  return {
+    txs: withCallerPrincipalText(txsRaw),
+    page,
+    limit,
+    hasPrev: page > 1,
+    hasNext: Number.isFinite(total) ? nextOffset < total : txsRaw.length === limit,
+  };
+}
+
+export async function getLatestBlocksPageView(
+  pageRaw?: string | string[],
+  limitRaw?: string | string[]
+): Promise<LatestBlocksPageView> {
+  const page = parsePositiveInt(pageRaw, 1);
+  const limitParsed = parsePositiveInt(limitRaw, 50);
+  const limit = Math.min(limitParsed, BLOCKS_PAGE_LIMIT_MAX);
+  const offset = (page - 1) * limit;
+  const [blocks, stats] = await Promise.all([getLatestBlocksPage(limit, offset), getOverviewStats()]);
+  const total = Number(stats.totalBlocks);
+  const nextOffset = page * limit;
+  return {
+    blocks,
+    page,
+    limit,
+    hasPrev: page > 1,
+    hasNext: Number.isFinite(total) ? nextOffset < total : blocks.length === limit,
+  };
 }
 
 export async function getBlockView(
@@ -199,19 +274,10 @@ export async function getTxDetailView(txHashHex: string): Promise<TxDetailView |
     valueWei,
     gasPriceWei,
     transactionFeeWei,
+    receipt: "Ok" in receiptOut ? receiptOut.Ok : null,
+    receiptLookupError: "Ok" in receiptOut ? null : receiptOut.Err,
     erc20Transfers,
   };
-}
-
-export async function getReceiptView(
-  txHashHex: string
-): Promise<{ tx: TxSummary | null; receipt: ReceiptView | null; lookupError: LookupError | null }> {
-  const txHash = parseHex(txHashHex);
-  const [tx, out] = await Promise.all([getTx(txHash), getReceiptByTxId(txHash)]);
-  if ("Ok" in out) {
-    return { tx, receipt: out.Ok, lookupError: null };
-  }
-  return { tx, receipt: null, lookupError: out.Err };
 }
 
 export async function getAddressView(

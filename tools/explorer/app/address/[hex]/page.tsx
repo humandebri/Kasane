@@ -33,8 +33,7 @@ export default async function AddressPage({
     <div className="space-y-4">
       <Card className="border-slate-200 bg-white shadow-sm">
         <CardHeader className="gap-3 border-b border-slate-200">
-          <CardTitle className="text-xl">Address Details</CardTitle>
-          <p className="font-mono text-xs text-slate-600 break-all">{data.addressHex}</p>
+          <CardTitle className="font-mono text-base break-all">{data.addressHex}</CardTitle>
         </CardHeader>
         <CardContent className="space-y-4 pt-4">
           {data.providedPrincipal ? (

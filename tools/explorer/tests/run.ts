@@ -36,6 +36,7 @@ import { loadConfig } from "../lib/config";
 import { getTokenMeta } from "../lib/token_meta";
 import { tokenMetaTestHooks } from "../lib/token_meta";
 import { buildTimelineFromReceiptLogs } from "../lib/tx_timeline";
+import { txValueFeeCellsTestHooks } from "../components/tx-value-fee-cells";
 import type { ReceiptView } from "../lib/rpc";
 
 async function runHexTests(): Promise<void> {
@@ -51,6 +52,14 @@ async function runHexTests(): Promise<void> {
   assert.equal(isTxHashHex("0x" + "11".repeat(20)), false);
   assert.equal(parseAddressHex("0x" + "22".repeat(20)).length, 20);
   assert.throws(() => parseAddressHex("0x" + "22".repeat(19)));
+}
+
+async function runTxMetricsInputValidationTests(): Promise<void> {
+  assert.equal(txValueFeeCellsTestHooks.isValidTxIdHex("0x" + "ab".repeat(32)), true);
+  assert.equal(txValueFeeCellsTestHooks.isValidTxIdHex("0x" + "ab".repeat(31)), false);
+  assert.equal(txValueFeeCellsTestHooks.isValidTxIdHex("0x" + "ab".repeat(33)), false);
+  assert.equal(txValueFeeCellsTestHooks.isValidTxIdHex("ab".repeat(32)), false);
+  assert.equal(txValueFeeCellsTestHooks.isValidTxIdHex("0x" + "zz".repeat(32)), false);
 }
 
 async function runSearchTests(): Promise<void> {
@@ -423,7 +432,7 @@ async function runTimelineTests(): Promise<void> {
 async function runDbTests(): Promise<void> {
   const mem = newDb({ noAstCoverageCheck: true });
   mem.public.none(`
-    CREATE TABLE blocks(number bigint primary key, hash bytea, timestamp bigint not null, tx_count integer not null);
+    CREATE TABLE blocks(number bigint primary key, hash bytea, timestamp bigint not null, tx_count integer not null, gas_used bigint);
     CREATE TABLE txs(tx_hash bytea primary key, block_number bigint not null, tx_index integer not null, caller_principal bytea, from_address bytea not null, to_address bytea, receipt_status smallint);
     CREATE TABLE token_transfers(tx_hash bytea not null, block_number bigint not null, tx_index integer not null, log_index integer not null, token_address bytea not null, from_address bytea not null, to_address bytea not null, amount_numeric numeric(78,0) not null, primary key(tx_hash, log_index));
     CREATE TABLE metrics_daily(day integer primary key, raw_bytes bigint not null default 0, compressed_bytes bigint not null default 0, archive_bytes bigint, blocks_ingested bigint not null default 0, errors bigint not null default 0);
@@ -434,8 +443,8 @@ async function runDbTests(): Promise<void> {
   const adapter = mem.adapters.createPg();
   const pool = new adapter.Pool();
   setExplorerPool(pool);
-  await pool.query("INSERT INTO blocks(number, hash, timestamp, tx_count) VALUES($1, $2, $3, $4)", [12, Buffer.from("aa", "hex"), 1000, 1]);
-  await pool.query("INSERT INTO blocks(number, hash, timestamp, tx_count) VALUES($1, $2, $3, $4)", [11, Buffer.from("bb", "hex"), 900, 1]);
+  await pool.query("INSERT INTO blocks(number, hash, timestamp, tx_count, gas_used) VALUES($1, $2, $3, $4, $5)", [12, Buffer.from("aa", "hex"), 1000, 1, 21000]);
+  await pool.query("INSERT INTO blocks(number, hash, timestamp, tx_count, gas_used) VALUES($1, $2, $3, $4, $5)", [11, Buffer.from("bb", "hex"), 900, 1, 20000]);
   await pool.query("INSERT INTO txs(tx_hash, block_number, tx_index, caller_principal, from_address, to_address, receipt_status) VALUES($1, $2, $3, $4, $5, $6, $7)", [
     Buffer.from("1122", "hex"),
     12,
@@ -502,6 +511,7 @@ async function runDbTests(): Promise<void> {
   assert.ok(latestBlock);
   assert.ok(latestTx);
   assert.equal(latestBlock?.number, 12n);
+  assert.equal(latestBlock?.gasUsed, 21000n);
   assert.equal(latestTx?.txHashHex, "0x1122");
   assert.equal((await getBlockDetails(12n))?.txs.length, 1);
   assert.equal((await getTx(Uint8Array.from(Buffer.from("1122", "hex"))))?.blockNumber, 12n);
@@ -598,6 +608,7 @@ async function runDataTests(): Promise<void> {
 }
 
 runHexTests()
+  .then(runTxMetricsInputValidationTests)
   .then(runSearchTests)
   .then(runHomeBlocksLimitTests)
   .then(runConfigTests)

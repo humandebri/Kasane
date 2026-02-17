@@ -8,6 +8,7 @@ export type BlockSummary = {
   hashHex: string | null;
   timestamp: bigint;
   txCount: number;
+  gasUsed: bigint | null;
 };
 
 export type TxSummary = {
@@ -98,8 +99,14 @@ export async function getMaxBlockNumber(): Promise<bigint | null> {
 
 export async function getLatestBlocks(limit: number): Promise<BlockSummary[]> {
   const pool = getPool();
-  const rows = await pool.query<{ number: string | number; hash: Buffer | null; timestamp: string | number; tx_count: number }>(
-    "SELECT number, hash, timestamp, tx_count FROM blocks ORDER BY number DESC LIMIT $1",
+  const rows = await pool.query<{
+    number: string | number;
+    hash: Buffer | null;
+    timestamp: string | number;
+    tx_count: number;
+    gas_used: string | number | null;
+  }>(
+    "SELECT number, hash, timestamp, tx_count, gas_used FROM blocks ORDER BY number DESC LIMIT $1",
     [limit]
   );
 
@@ -108,6 +115,28 @@ export async function getLatestBlocks(limit: number): Promise<BlockSummary[]> {
     hashHex: row.hash ? `0x${row.hash.toString("hex")}` : null,
     timestamp: BigInt(row.timestamp),
     txCount: row.tx_count,
+    gasUsed: row.gas_used === null ? null : BigInt(row.gas_used),
+  }));
+}
+
+export async function getLatestBlocksPage(limit: number, offset: number): Promise<BlockSummary[]> {
+  const pool = getPool();
+  const rows = await pool.query<{
+    number: string | number;
+    hash: Buffer | null;
+    timestamp: string | number;
+    tx_count: number;
+    gas_used: string | number | null;
+  }>(
+    "SELECT number, hash, timestamp, tx_count, gas_used FROM blocks ORDER BY number DESC LIMIT $1 OFFSET $2",
+    [limit, offset]
+  );
+  return rows.rows.map((row) => ({
+    number: BigInt(row.number),
+    hashHex: row.hash ? `0x${row.hash.toString("hex")}` : null,
+    timestamp: BigInt(row.timestamp),
+    txCount: row.tx_count,
+    gasUsed: row.gas_used === null ? null : BigInt(row.gas_used),
   }));
 }
 
@@ -129,10 +158,42 @@ export async function getLatestTxs(limit: number): Promise<TxSummary[]> {
   }));
 }
 
+export async function getLatestTxsPage(limit: number, offset: number): Promise<TxSummary[]> {
+  const pool = getPool();
+  const rows = await pool.query<{
+    tx_hash: Buffer;
+    block_number: string | number;
+    tx_index: number;
+    caller_principal: Buffer | null;
+    from_address: Buffer;
+    to_address: Buffer | null;
+    receipt_status: number | null;
+  }>(
+    "SELECT tx_hash, block_number, tx_index, caller_principal, from_address, to_address, receipt_status FROM txs ORDER BY block_number DESC, tx_index DESC LIMIT $1 OFFSET $2",
+    [limit, offset]
+  );
+
+  return rows.rows.map((row) => ({
+    txHashHex: `0x${row.tx_hash.toString("hex")}`,
+    blockNumber: BigInt(row.block_number),
+    txIndex: row.tx_index,
+    callerPrincipal: row.caller_principal ?? null,
+    fromAddress: row.from_address,
+    toAddress: row.to_address ?? null,
+    receiptStatus: row.receipt_status ?? null,
+  }));
+}
+
 export async function getBlockDetails(blockNumber: bigint): Promise<BlockDetails | null> {
   const pool = getPool();
-  const blockRow = await pool.query<{ number: string | number; hash: Buffer | null; timestamp: string | number; tx_count: number }>(
-    "SELECT number, hash, timestamp, tx_count FROM blocks WHERE number = $1",
+  const blockRow = await pool.query<{
+    number: string | number;
+    hash: Buffer | null;
+    timestamp: string | number;
+    tx_count: number;
+    gas_used: string | number | null;
+  }>(
+    "SELECT number, hash, timestamp, tx_count, gas_used FROM blocks WHERE number = $1",
     [blockNumber]
   );
 
@@ -156,6 +217,7 @@ export async function getBlockDetails(blockNumber: bigint): Promise<BlockDetails
       hashHex: row.hash ? `0x${row.hash.toString("hex")}` : null,
       timestamp: BigInt(row.timestamp),
       txCount: row.tx_count,
+      gasUsed: row.gas_used === null ? null : BigInt(row.gas_used),
     },
     txs: txRows.rows.map((tx) => ({
       txHashHex: `0x${tx.tx_hash.toString("hex")}`,
