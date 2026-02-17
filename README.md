@@ -21,6 +21,8 @@
 - `eth_sendRawTransaction` の成功判定は submit結果ではなく `eth_getTransactionReceipt.status` で行う（`0x1` 成功 / `0x0` 失敗）。
 - nonce参照は `eth_getTransactionCount`（Gateway）または `expected_nonce_by_address`（canister query）を使用する。
 
+Explorer の実装詳細（ルート一覧・lib層責務）は `tools/explorer/README.md` を参照。
+
 ## 運用上の決定事項（2026-02-04）
 
 - InitArgs: Candidは service : (opt InitArgs) を維持するが、互換性維持目的であり runtime では None を拒否する。
