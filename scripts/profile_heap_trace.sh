@@ -12,7 +12,7 @@ NETWORK="${NETWORK:-staging}"
 CANISTER_NAME="${CANISTER_NAME:-evm_canister}"
 CANISTER_ID="${CANISTER_ID:-}"
 MODE="${MODE:-reinstall}"
-TRACE_ONLY="${TRACE_ONLY:-produce_block,execute_tx_on}"
+TRACE_ONLY="${TRACE_ONLY:-execute_tx_on,mining_tick}"
 INPUT_WASM="${REPO_ROOT}/target/wasm32-unknown-unknown/release/ic_evm_wrapper.wasm"
 OPT_WASM="${REPO_ROOT}/target/wasm32-unknown-unknown/release/ic_evm_wrapper.final.wasm"
 PROFILED_WASM="${REPO_ROOT}/target/wasm32-unknown-unknown/release/ic_evm_wrapper.profiled.wasm"
@@ -101,8 +101,8 @@ deploy_profiled() {
 
   cat <<'EOF'
 [profile] next step examples:
-  dfx canister --network "$NETWORK" call evm_canister set_auto_mine '(false)'
-  dfx canister --network "$NETWORK" call evm_canister produce_block '(1:nat32)'
+  dfx canister --network "$NETWORK" call evm_canister submit_ic_tx '(vec { <tx_bytes...> })'
+  dfx canister --network "$NETWORK" call --query evm_canister rpc_eth_block_number '( )'
   dfx canister --network "$NETWORK" call evm_canister metrics '(60:nat64)'
 EOF
 }

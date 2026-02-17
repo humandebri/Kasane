@@ -189,13 +189,10 @@ PY
 }
 
 seed_blocks() {
-  log "set_auto_mine(false)"
-  "${ICP_CANISTER_CALL[@]}" "${CANISTER_NAME}" set_auto_mine '(false)' >/dev/null
-
   submit_ic_tx_with_retry 0
-  produce_seed_block 0
+  wait_for_head_advance 0
   submit_ic_tx_with_retry 1
-  produce_seed_block 1
+  wait_for_head_advance 1
 }
 
 submit_ic_tx_with_retry() {
@@ -250,15 +247,38 @@ submit_ic_tx_with_retry() {
   done
 }
 
-produce_seed_block() {
-  local nonce="$1"
+query_head_block() {
   local out
-  out=$("${ICP_CANISTER_CALL[@]}" "${CANISTER_NAME}" produce_block '(1)' 2>&1)
-  if ! candid_is_ok "${out}"; then
-    echo "[local-indexer-smoke] seed failed: produce_block after nonce=${nonce} did not return Ok" >&2
-    echo "[local-indexer-smoke] produce_block output: ${out}" >&2
-    return 1
-  fi
+  out=$(
+    NETWORK="${NETWORK}" \
+    CANISTER_NAME="${CANISTER_NAME}" \
+    ICP_IDENTITY_NAME="${ICP_IDENTITY_NAME}" \
+    QUERY_SMOKE_ALLOW_EXPORT_MISSING_DATA="true" \
+    QUERY_SMOKE_REQUIRED_HEAD_MIN="" \
+    scripts/query_smoke.sh 2>/dev/null || true
+  )
+  python - <<PY
+import re
+text = """${out}"""
+m = re.search(r'head=(\d+)', text)
+print(m.group(1) if m else "0")
+PY
+}
+
+wait_for_head_advance() {
+  local nonce="$1"
+  local start deadline
+  start="$(query_head_block)"
+  deadline=$((SECONDS + 40))
+  while [[ ${SECONDS} -lt ${deadline} ]]; do
+    if [[ "$(query_head_block)" -gt "${start}" ]]; then
+      log "auto-mine advanced head after nonce=${nonce}"
+      return 0
+    fi
+    sleep 1
+  done
+  echo "[local-indexer-smoke] seed failed: auto-mine did not advance head after nonce=${nonce}" >&2
+  return 1
 }
 
 run_query_smoke_strict() {

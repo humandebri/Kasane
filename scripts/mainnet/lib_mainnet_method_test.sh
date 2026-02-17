@@ -138,6 +138,44 @@ run_icp_call() {
   return "${rc}"
 }
 
+run_icp_query_call() {
+  local method="$1"
+  local args="${2-}"
+  local timeout_sec="${ICP_CALL_TIMEOUT_SEC:-120}"
+  local cmd=(icp canister call -e "${ICP_ENV}" --identity "${ICP_IDENTITY_NAME}" --query "${CANISTER_ID}" "${method}")
+  if [[ -n "${args}" ]]; then
+    cmd+=("${args}")
+  fi
+  if [[ "${timeout_sec}" -le 0 ]]; then
+    "${cmd[@]}"
+    return $?
+  fi
+
+  local out_file
+  out_file="$(mktemp -t icp_query_out.XXXXXX)"
+  "${cmd[@]}" >"${out_file}" 2>&1 &
+  local pid=$!
+  local elapsed=0
+  while kill -0 "${pid}" >/dev/null 2>&1; do
+    if [[ "${elapsed}" -ge "${timeout_sec}" ]]; then
+      kill "${pid}" >/dev/null 2>&1 || true
+      sleep 1
+      kill -9 "${pid}" >/dev/null 2>&1 || true
+      cat "${out_file}"
+      rm -f "${out_file}"
+      echo "[mainnet-test] icp query timeout: method=${method} timeout_sec=${timeout_sec}" >&2
+      return 124
+    fi
+    sleep 1
+    elapsed=$((elapsed + 1))
+  done
+  wait "${pid}"
+  local rc=$?
+  cat "${out_file}"
+  rm -f "${out_file}"
+  return "${rc}"
+}
+
 get_cycles() {
   local out
   out="$(icp canister status -e "${ICP_ENV}" --identity "${ICP_IDENTITY_NAME}" "${CANISTER_ID}")"

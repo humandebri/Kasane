@@ -112,6 +112,31 @@ print('; '.join(str(b) for b in raw))
 PY
 }
 
+query_head_block() {
+  local out
+  out=$(${DFX_CANISTER} call --query "${CANISTER_NAME}" rpc_eth_block_number '( )' 2>/dev/null || true)
+  python - <<PY
+import re
+text = """${out}"""
+m = re.search(r'(\d+)', text)
+print(m.group(1) if m else "0")
+PY
+}
+
+wait_for_head_advance() {
+  local start deadline
+  start="$(query_head_block)"
+  deadline=$((SECONDS + 30))
+  while [[ ${SECONDS} -lt ${deadline} ]]; do
+    if [[ "$(query_head_block)" -gt "${start}" ]]; then
+      return 0
+    fi
+    sleep 1
+  done
+  echo "[local-indexer-faults] auto-mine did not advance head in time" >&2
+  return 1
+}
+
 seed_block() {
   local nonce="$1"
   local tx_hex
@@ -119,7 +144,7 @@ seed_block() {
   local tx_bytes
   tx_bytes=$(hex_to_vec_bytes "${tx_hex}")
   ${DFX_CANISTER} call "${CANISTER_NAME}" submit_ic_tx "(vec { ${tx_bytes} })" >/dev/null
-  ${DFX_CANISTER} call "${CANISTER_NAME}" produce_block '(1)' >/dev/null
+  wait_for_head_advance
 }
 
 start_indexer() {

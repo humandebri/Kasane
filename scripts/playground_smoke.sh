@@ -9,6 +9,7 @@ NETWORK="${NETWORK:-playground}"
 FUNDED_ETH_PRIVKEY="${FUNDED_ETH_PRIVKEY:-}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SMOKE_ENV_FILE="${SMOKE_ENV_FILE:-${SCRIPT_DIR}/.playground_smoke.env}"
+DFX=(dfx --network "${NETWORK}")
 
 if [[ -z "${FUNDED_ETH_PRIVKEY}" && -f "${SMOKE_ENV_FILE}" ]]; then
   # shellcheck source=/dev/null
@@ -19,7 +20,7 @@ cycle_balance() {
   local label=$1
   local raw
   local balance
-  raw=$(icp canister call -n "${NETWORK}" "$CANISTER_ID" get_cycle_balance '()')
+  raw=$("${DFX[@]}" canister call --query "$CANISTER_ID" get_cycle_balance '()')
   if ! balance=$(python - "$raw" <<'PY'
 import re
 import sys
@@ -138,11 +139,37 @@ assert_command() {
   bash -c "$1" >/dev/null
 }
 
+query_block_number() {
+  local out
+  out=$("${DFX[@]}" canister call --query "$CANISTER_ID" rpc_eth_block_number '( )' 2>/dev/null || true)
+  python - <<PY
+import re
+text = """${out}"""
+m = re.search(r'(\d+)', text)
+print(m.group(1) if m else "0")
+PY
+}
+
+wait_for_head_advance() {
+  local note="$1"
+  local start deadline
+  start="$(query_block_number)"
+  deadline=$((SECONDS + 30))
+  while [[ ${SECONDS} -lt ${deadline} ]]; do
+    if [[ "$(query_block_number)" -gt "${start}" ]]; then
+      return 0
+    fi
+    sleep 1
+  done
+  echo "[playground-smoke] auto-mine did not advance head: ${note}" >&2
+  return 1
+}
+
 log "starting playground smoke"
 if ! before=$(cycle_balance "before"); then
   exit 1
 fi
-CALLER_PRINCIPAL=$(icp identity principal)
+CALLER_PRINCIPAL=$(dfx identity get-principal)
 CALLER_HEX=$(cargo run -q -p ic-evm-core --bin derive_evm_address -- "$CALLER_PRINCIPAL")
 CALLER_BLOB=$(python - <<PY
 data = bytes.fromhex("$CALLER_HEX")
@@ -152,7 +179,7 @@ PY
 log "triggering ic tx"
 EXEC_OUT=""
 SELECTED_NONCE=""
-EXPECTED_NONCE=$(icp canister call -n "${NETWORK}" "$CANISTER_ID" expected_nonce_by_address "(blob \"$CALLER_BLOB\")")
+EXPECTED_NONCE=$("${DFX[@]}" canister call --query "$CANISTER_ID" expected_nonce_by_address "(blob \"$CALLER_BLOB\")")
 IC_NONCE=$(python - <<PY
 import re
 text = "$EXPECTED_NONCE"
@@ -195,8 +222,8 @@ if ! EXEC_OUT="$EXEC_OUT" is_ok_variant; then
   exit 1
 fi
 log "submit_ic_tx accepted nonce=${SELECTED_NONCE}"
-log "producing block for ic tx"
-assert_command "icp canister call -n \"${NETWORK}\" \"$CANISTER_ID\" produce_block '(1)'"
+log "waiting auto-mine for ic tx"
+wait_for_head_advance "ic tx inclusion"
 SKIP_ETH=0
 if [[ -n "$FUNDED_ETH_PRIVKEY" ]]; then
   ETH_PRIVKEY="$FUNDED_ETH_PRIVKEY"
@@ -207,7 +234,7 @@ else
   log "skipping eth raw tx smoke (provide FUNDED_ETH_PRIVKEY)"
 fi
 if [[ "$SKIP_ETH" == "0" ]]; then
-  ETH_BALANCE_OUT=$(icp canister call -n "${NETWORK}" "$CANISTER_ID" rpc_eth_get_balance "(blob \"$SENDER_BLOB\")")
+  ETH_BALANCE_OUT=$("${DFX[@]}" canister call --query "$CANISTER_ID" rpc_eth_get_balance "(blob \"$SENDER_BLOB\")")
   ETH_BALANCE_WEI=$(BALANCE_TEXT="$ETH_BALANCE_OUT" python - <<'PY'
 import os
 import re
@@ -254,7 +281,7 @@ PY
   log "submitting eth raw tx"
   SUBMIT_ETH_OUT=""
   ETH_TX_ID_BYTES=""
-  EXPECTED_ETH_NONCE=$(icp canister call -n "${NETWORK}" "$CANISTER_ID" expected_nonce_by_address "(blob \"$SENDER_BLOB\")")
+  EXPECTED_ETH_NONCE=$("${DFX[@]}" canister call --query "$CANISTER_ID" expected_nonce_by_address "(blob \"$SENDER_BLOB\")")
   ETH_NONCE=$(python - <<PY
 import re
 text = "$EXPECTED_ETH_NONCE"
@@ -276,10 +303,10 @@ PY
     echo "[playground-smoke] rpc_eth_send_raw_transaction failed: $SUBMIT_ETH_OUT"
     exit 1
   fi
-  log "producing block"
-  assert_command "icp canister call -n \"${NETWORK}\" \"$CANISTER_ID\" produce_block '(1)'"
+  log "waiting auto-mine for eth tx"
+  wait_for_head_advance "eth tx inclusion"
   log "fetching receipt for eth tx"
-  icp canister call -n "${NETWORK}" "$CANISTER_ID" get_receipt "(vec { $ETH_TX_ID_BYTES })"
+  "${DFX[@]}" canister call --query "$CANISTER_ID" get_receipt "(vec { $ETH_TX_ID_BYTES })"
 fi
 if ! after=$(cycle_balance "after"); then
   exit 1
@@ -287,9 +314,9 @@ fi
 delta=$((before - after))
 log "cycles consumed delta=$delta"
 log "fetching block1"
-icp canister call -n "${NETWORK}" "$CANISTER_ID" get_block '(1)'
+"${DFX[@]}" canister call --query "$CANISTER_ID" get_block '(1)'
 if [[ "$SKIP_ETH" == "0" ]]; then
   log "fetching block2"
-  icp canister call -n "${NETWORK}" "$CANISTER_ID" get_block '(2)'
+  "${DFX[@]}" canister call --query "$CANISTER_ID" get_block '(2)'
 fi
 log "playground smoke finished"
