@@ -63,11 +63,10 @@ use core::{
 #[rustfmt::skip]
 mod unroll;
 
-#[cfg(all(target_arch = "aarch64", feature = "asm"))]
-mod armv8;
-
-#[cfg(all(target_arch = "aarch64", feature = "asm"))]
-cpufeatures::new!(armv8_sha3_intrinsics, "sha3");
+// NOTE:
+// ARMv8 ASM backend is intentionally disabled in this vendored build.
+// Reason: RUSTSEC-2026-0012 reports unsoundness in the opt-in ASM path.
+// Keep the pure-Rust implementation for correctness and deterministic behavior.
 
 const PLEN: usize = 25;
 
@@ -177,28 +176,7 @@ impl_keccak!(p200, f200, u8);
 impl_keccak!(p400, f400, u16);
 impl_keccak!(p800, f800, u32);
 
-#[cfg(not(all(target_arch = "aarch64", feature = "asm")))]
 impl_keccak!(p1600, f1600, u64);
-
-/// Keccak-p[1600, rc] permutation.
-#[cfg(all(target_arch = "aarch64", feature = "asm"))]
-pub fn p1600(state: &mut [u64; PLEN], round_count: usize) {
-    if armv8_sha3_intrinsics::get() {
-        unsafe { armv8::p1600_armv8_sha3_asm(state, round_count) }
-    } else {
-        keccak_p(state, round_count);
-    }
-}
-
-/// Keccak-f[1600] permutation.
-#[cfg(all(target_arch = "aarch64", feature = "asm"))]
-pub fn f1600(state: &mut [u64; PLEN]) {
-    if armv8_sha3_intrinsics::get() {
-        unsafe { armv8::p1600_armv8_sha3_asm(state, 24) }
-    } else {
-        keccak_p(state, u64::KECCAK_F_ROUND_COUNT);
-    }
-}
 
 #[cfg(feature = "simd")]
 /// SIMD implementations for Keccak-f1600 sponge function
