@@ -556,7 +556,7 @@ fn tx_locs_remove(state: &mut StableState, tx_id: &TxId) {
 pub fn get_prune_status() -> PruneStatus {
     with_state(|state| {
         let config = *state.prune_config.get();
-        let estimated_kept_bytes = recompute_estimated_kept_bytes_value();
+        let estimated_kept_bytes = recompute_estimated_kept_bytes_value(state);
         let need_prune = need_prune_internal(state, estimated_kept_bytes);
         PruneStatus {
             pruning_enabled: config.pruning_enabled,
@@ -2167,18 +2167,20 @@ fn collect_ptrs_for_block(
 }
 
 fn recompute_estimated_kept_bytes(state: &mut StableState) -> u64 {
-    let estimated = recompute_estimated_kept_bytes_value();
+    let estimated = recompute_estimated_kept_bytes_value(state);
     let mut config = *state.prune_config.get();
     config.estimated_kept_bytes = estimated;
     state.prune_config.set(config);
     estimated
 }
 
-fn recompute_estimated_kept_bytes_value() -> u64 {
-    let total_pages = chain_data_memory_ids_for_estimate()
+fn recompute_estimated_kept_bytes_value(state: &StableState) -> u64 {
+    let non_blob_pages = chain_data_memory_ids_for_estimate()
         .into_iter()
         .fold(0u64, |acc, id| acc.saturating_add(memory_size_pages(id)));
-    total_pages.saturating_mul(WASM_PAGE_SIZE_BYTES)
+    let non_blob_bytes = non_blob_pages.saturating_mul(WASM_PAGE_SIZE_BYTES);
+    let blob_usage = state.blob_store.usage_stats();
+    non_blob_bytes.saturating_add(blob_usage.used_class_bytes)
 }
 
 fn refresh_oldest(state: &mut StableState) {

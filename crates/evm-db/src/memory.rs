@@ -419,9 +419,19 @@ pub fn all_memory_regions() -> &'static [MemoryRegionInfo] {
 pub fn chain_data_memory_ids_for_estimate() -> Vec<AppMemoryId> {
     all_memory_regions()
         .iter()
-        .filter(|region| region.include_in_estimate)
+        .filter(|region| region.include_in_estimate && !is_blob_store_region(region.id))
         .map(|region| region.id)
         .collect()
+}
+
+pub fn is_blob_store_region(id: AppMemoryId) -> bool {
+    matches!(
+        id,
+        AppMemoryId::BlobArena
+            | AppMemoryId::BlobArenaMeta
+            | AppMemoryId::BlobAllocTable
+            | AppMemoryId::BlobFreeList
+    )
 }
 
 thread_local! {

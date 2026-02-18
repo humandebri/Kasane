@@ -32,6 +32,8 @@ pub struct PruneConfigV1 {
     pub retain_blocks: u64,
     pub headroom_ratio_bps: u32,
     pub hard_emergency_ratio_bps: u32,
+    // Legacy stable slot: kept for binary compatibility only.
+    // Runtime prune scheduling is event-driven and ignores this value.
     pub timer_interval_ms: u64,
     pub max_ops_per_tick: u32,
     pub high_water_bytes: u64,
@@ -138,6 +140,7 @@ impl Storable for PruneConfigV1 {
         out[24..32].copy_from_slice(&self.retain_blocks.to_be_bytes());
         out[32..36].copy_from_slice(&self.headroom_ratio_bps.to_be_bytes());
         out[36..40].copy_from_slice(&self.hard_emergency_ratio_bps.to_be_bytes());
+        // Legacy slot (offset 40..48): preserve value for stable layout compatibility.
         out[40..48].copy_from_slice(&self.timer_interval_ms.to_be_bytes());
         out[48..52].copy_from_slice(&self.max_ops_per_tick.to_be_bytes());
         out[56..64].copy_from_slice(&self.high_water_bytes.to_be_bytes());
@@ -180,6 +183,7 @@ impl Storable for PruneConfigV1 {
         headroom_ratio_bps.copy_from_slice(&data[32..36]);
         let mut hard_emergency_ratio_bps = [0u8; 4];
         hard_emergency_ratio_bps.copy_from_slice(&data[36..40]);
+        // Legacy slot (offset 40..48): decode for backward-compatible roundtrip only.
         let mut timer_interval_ms = [0u8; 8];
         timer_interval_ms.copy_from_slice(&data[40..48]);
         let mut max_ops_per_tick = [0u8; 4];
