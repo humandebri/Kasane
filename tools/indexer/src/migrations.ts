@@ -16,6 +16,8 @@ export const MIGRATIONS = [
   "007_add_ops_metrics_cycles.sql",
   "008_add_blocks_gas_used.sql",
   "009_add_txs_selector.sql",
+  "010_add_pruned_before_to_ops_metrics.sql",
+  "011_add_capacity_metrics_to_ops_samples.sql",
 ] as const;
 
 export async function applyMigrations(pool: Pool, migrations: readonly string[]): Promise<void> {

@@ -1607,6 +1607,11 @@ test("db upsert and metrics aggregation", async () => {
       sampledAtMs: 1_000n,
       queueLen: 2n,
       cycles: 123n,
+      prunedBeforeBlock: 10n,
+      estimatedKeptBytes: 1_000n,
+      lowWaterBytes: 800n,
+      highWaterBytes: 1_200n,
+      hardEmergencyBytes: 1_500n,
       totalSubmitted: 3n,
       totalIncluded: 1n,
       totalDropped: 1n,
@@ -1617,6 +1622,11 @@ test("db upsert and metrics aggregation", async () => {
       sampledAtMs: 2_000n,
       queueLen: 4n,
       cycles: 122n,
+      prunedBeforeBlock: 11n,
+      estimatedKeptBytes: 1_100n,
+      lowWaterBytes: 800n,
+      highWaterBytes: 1_200n,
+      hardEmergencyBytes: 1_500n,
       totalSubmitted: 7n,
       totalIncluded: 2n,
       totalDropped: 2n,
@@ -1753,6 +1763,11 @@ async function createTestIndexerDb(): Promise<IndexerDb> {
   await db.queryOne("alter table if exists blocks add column if not exists gas_used bigint");
   await db.queryOne("alter table if exists txs add column if not exists tx_selector bytea");
   await db.queryOne("alter table if exists ops_metrics_samples add column if not exists cycles bigint not null default 0");
+  await db.queryOne("alter table if exists ops_metrics_samples add column if not exists pruned_before_block bigint");
+  await db.queryOne("alter table if exists ops_metrics_samples add column if not exists estimated_kept_bytes bigint");
+  await db.queryOne("alter table if exists ops_metrics_samples add column if not exists low_water_bytes bigint");
+  await db.queryOne("alter table if exists ops_metrics_samples add column if not exists high_water_bytes bigint");
+  await db.queryOne("alter table if exists ops_metrics_samples add column if not exists hard_emergency_bytes bigint");
   await db.queryOne(
     "create table if not exists retention_runs(" +
       "id text primary key, started_at bigint not null, finished_at bigint not null, retention_days integer not null, dry_run boolean not null, deleted_blocks bigint not null, deleted_txs bigint not null, deleted_metrics_daily bigint not null, deleted_archive_parts bigint not null, status text not null, error_message text)"

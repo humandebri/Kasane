@@ -64,6 +64,7 @@ export async function runWorkerWithDeps(
   let lastIdleLogAt = 0;
   let stopRequested = false;
   let lastPruneStatusAt = 0;
+  let lastPruneStatus: PruneStatusView | null = null;
   let lastOpsMetricsAt = 0;
   let lastSizeDay: number | null = null;
 
@@ -98,6 +99,7 @@ export async function runWorkerWithDeps(
         lastPruneStatusAt = nowMs;
         try {
           const status = await client.getPruneStatus();
+          lastPruneStatus = status;
           const payload = { v: 1, fetched_at_ms: nowMs, status };
           await db.transaction(async (client) => {
             await client.query(
@@ -130,6 +132,11 @@ export async function runWorkerWithDeps(
             sampledAtMs: BigInt(nowMs),
             queueLen: metrics.queue_len,
             cycles: metrics.cycles,
+            prunedBeforeBlock: metrics.pruned_before_block,
+            estimatedKeptBytes: lastPruneStatus?.estimated_kept_bytes ?? null,
+            lowWaterBytes: lastPruneStatus?.low_water_bytes ?? null,
+            highWaterBytes: lastPruneStatus?.high_water_bytes ?? null,
+            hardEmergencyBytes: lastPruneStatus?.hard_emergency_bytes ?? null,
             totalSubmitted: metrics.total_submitted,
             totalIncluded: metrics.total_included,
             totalDropped: metrics.total_dropped,
