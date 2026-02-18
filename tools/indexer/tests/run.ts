@@ -63,6 +63,32 @@ test("client cursor normalization accepts numeric strings", () => {
   assert.equal(out.byte_offset, 0);
 });
 
+test("client memory_breakdown normalization maps totals and regions", () => {
+  const out = clientTestHooks.normalizeMemoryBreakdown({
+    stable_pages_total: "10",
+    stable_bytes_total: "655360",
+    regions_pages_total: "4",
+    regions_bytes_total: "262144",
+    unattributed_stable_pages: "6",
+    unattributed_stable_bytes: "393216",
+    heap_pages: "2",
+    heap_bytes: "131072",
+    regions: [
+      {
+        id: 9,
+        name: "TxStore",
+        pages: "3",
+        bytes: "196608",
+      },
+    ],
+  });
+  assert.equal(out.stable_pages_total, 10n);
+  assert.equal(out.unattributed_stable_bytes, 393216n);
+  assert.equal(out.regions.length, 1);
+  assert.equal(out.regions[0]?.id, 9);
+  assert.equal(out.regions[0]?.name, "TxStore");
+});
+
 test("tx_index payload length mismatch throws", () => {
   const txHash = Buffer.alloc(32, 0xaa);
   const len = Buffer.alloc(4);
@@ -1607,6 +1633,11 @@ test("db upsert and metrics aggregation", async () => {
       sampledAtMs: 1_000n,
       queueLen: 2n,
       cycles: 123n,
+      prunedBeforeBlock: 10n,
+      estimatedKeptBytes: 1_000n,
+      lowWaterBytes: 800n,
+      highWaterBytes: 1_200n,
+      hardEmergencyBytes: 1_500n,
       totalSubmitted: 3n,
       totalIncluded: 1n,
       totalDropped: 1n,
@@ -1617,6 +1648,11 @@ test("db upsert and metrics aggregation", async () => {
       sampledAtMs: 2_000n,
       queueLen: 4n,
       cycles: 122n,
+      prunedBeforeBlock: 11n,
+      estimatedKeptBytes: 1_100n,
+      lowWaterBytes: 800n,
+      highWaterBytes: 1_200n,
+      hardEmergencyBytes: 1_500n,
       totalSubmitted: 7n,
       totalIncluded: 2n,
       totalDropped: 2n,
@@ -1753,6 +1789,11 @@ async function createTestIndexerDb(): Promise<IndexerDb> {
   await db.queryOne("alter table if exists blocks add column if not exists gas_used bigint");
   await db.queryOne("alter table if exists txs add column if not exists tx_selector bytea");
   await db.queryOne("alter table if exists ops_metrics_samples add column if not exists cycles bigint not null default 0");
+  await db.queryOne("alter table if exists ops_metrics_samples add column if not exists pruned_before_block bigint");
+  await db.queryOne("alter table if exists ops_metrics_samples add column if not exists estimated_kept_bytes bigint");
+  await db.queryOne("alter table if exists ops_metrics_samples add column if not exists low_water_bytes bigint");
+  await db.queryOne("alter table if exists ops_metrics_samples add column if not exists high_water_bytes bigint");
+  await db.queryOne("alter table if exists ops_metrics_samples add column if not exists hard_emergency_bytes bigint");
   await db.queryOne(
     "create table if not exists retention_runs(" +
       "id text primary key, started_at bigint not null, finished_at bigint not null, retention_days integer not null, dry_run boolean not null, deleted_blocks bigint not null, deleted_txs bigint not null, deleted_metrics_daily bigint not null, deleted_archive_parts bigint not null, status text not null, error_message text)"

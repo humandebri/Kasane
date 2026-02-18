@@ -816,7 +816,7 @@ fn memory_breakdown() -> MemoryBreakdownView {
     let stable_bytes_total = stable_pages_total.saturating_mul(WASM_PAGE_SIZE_BYTES);
     let heap_pages = current_heap_memory_pages();
     let heap_bytes = heap_pages.saturating_mul(WASM_PAGE_SIZE_BYTES);
-    let regions = all_memory_regions()
+    let regions: Vec<MemoryRegionView> = all_memory_regions()
         .iter()
         .map(|region| {
             let pages = memory_size_pages(region.id);
@@ -828,9 +828,17 @@ fn memory_breakdown() -> MemoryBreakdownView {
             }
         })
         .collect();
+    let regions_pages_total = regions.iter().fold(0u64, |acc, r| acc.saturating_add(r.pages));
+    let regions_bytes_total = regions.iter().fold(0u64, |acc, r| acc.saturating_add(r.bytes));
+    let unattributed_stable_pages = stable_pages_total.saturating_sub(regions_pages_total);
+    let unattributed_stable_bytes = stable_bytes_total.saturating_sub(regions_bytes_total);
     MemoryBreakdownView {
         stable_pages_total,
         stable_bytes_total,
+        regions_pages_total,
+        regions_bytes_total,
+        unattributed_stable_pages,
+        unattributed_stable_bytes,
         heap_pages,
         heap_bytes,
         regions,
@@ -2262,13 +2270,34 @@ mod tests {
             view.heap_bytes,
             view.heap_pages.saturating_mul(WASM_PAGE_SIZE_BYTES)
         );
+        assert_eq!(
+            view.regions_bytes_total,
+            view.regions_pages_total.saturating_mul(WASM_PAGE_SIZE_BYTES)
+        );
+        assert_eq!(
+            view.unattributed_stable_bytes,
+            view.unattributed_stable_pages
+                .saturating_mul(WASM_PAGE_SIZE_BYTES)
+        );
+        assert_eq!(
+            view.unattributed_stable_pages,
+            view.stable_pages_total.saturating_sub(view.regions_pages_total)
+        );
+        assert_eq!(
+            view.unattributed_stable_bytes,
+            view.stable_bytes_total.saturating_sub(view.regions_bytes_total)
+        );
         for pair in view.regions.windows(2) {
             assert!(pair[0].id <= pair[1].id, "regions must be sorted by id");
         }
         let mut has_tx_store = false;
         let mut has_blob_arena = false;
-        for region in view.regions {
+        let mut sum_pages = 0u64;
+        let mut sum_bytes = 0u64;
+        for region in &view.regions {
             assert_eq!(region.bytes, region.pages.saturating_mul(WASM_PAGE_SIZE_BYTES));
+            sum_pages = sum_pages.saturating_add(region.pages);
+            sum_bytes = sum_bytes.saturating_add(region.bytes);
             if region.name == "TxStore" {
                 has_tx_store = true;
             }
@@ -2276,6 +2305,8 @@ mod tests {
                 has_blob_arena = true;
             }
         }
+        assert_eq!(sum_pages, view.regions_pages_total);
+        assert_eq!(sum_bytes, view.regions_bytes_total);
         assert!(has_tx_store, "TxStore region must exist");
         assert!(has_blob_arena, "BlobArena region must exist");
     }

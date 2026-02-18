@@ -189,10 +189,13 @@ PY
 }
 
 seed_blocks() {
+  local start_head
+  start_head="$(query_head_block)"
   submit_ic_tx_with_retry 0
-  wait_for_head_advance 0
+  wait_for_head_advance 0 "${start_head}"
+  start_head="$(query_head_block)"
   submit_ic_tx_with_retry 1
-  wait_for_head_advance 1
+  wait_for_head_advance 1 "${start_head}"
 }
 
 submit_ic_tx_with_retry() {
@@ -260,18 +263,24 @@ query_head_block() {
   python - <<PY
 import re
 text = """${out}"""
-m = re.search(r'head=(\d+)', text)
-print(m.group(1) if m else "0")
+m = re.search(r'head=([0-9][0-9_]*)', text)
+if not m:
+    m = re.search(r'([0-9][0-9_]*)\s*:\s*(?:nat|int)\d*', text)
+if not m:
+    m = re.search(r'([0-9][0-9_]*)', text)
+print(str(int(m.group(1).replace("_", ""))) if m else "0")
 PY
 }
 
 wait_for_head_advance() {
   local nonce="$1"
-  local start deadline
-  start="$(query_head_block)"
+  local start="$2"
+  local deadline current target
+  target=$((start + 1))
   deadline=$((SECONDS + 40))
   while [[ ${SECONDS} -lt ${deadline} ]]; do
-    if [[ "$(query_head_block)" -gt "${start}" ]]; then
+    current="$(query_head_block)"
+    if (( current >= target )); then
       log "auto-mine advanced head after nonce=${nonce}"
       return 0
     fi

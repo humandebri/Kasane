@@ -5,7 +5,7 @@ import { notFound } from "next/navigation";
 import { Badge } from "../../../components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "../../../components/ui/card";
 import { getTxDetailView } from "../../../lib/data";
-import { formatIcpAmountFromWei, formatTokenAmount } from "../../../lib/format";
+import { formatGweiFromWei, formatIcpAmountFromWei, formatTokenAmount } from "../../../lib/format";
 import { shortHex, toHexLower } from "../../../lib/hex";
 import { buildTimelineFromReceiptLogs, type TimelineStep } from "../../../lib/tx_timeline";
 import { getTxMonitorView } from "../../../lib/tx-monitor";
@@ -75,8 +75,8 @@ export default async function TxPage({ params }: { params: Promise<{ hash: strin
           <dt className="text-slate-500">Transaction Fee:</dt>
           <dd className="font-mono">{detail.transactionFeeWei === null ? "N/A" : formatIcpAmountFromWei(detail.transactionFeeWei)}</dd>
 
-          <dt className="text-slate-500">Gas Price:</dt>
-          <dd className="font-mono">{detail.gasPriceWei === null ? "N/A" : `${formatIcpAmountFromWei(detail.gasPriceWei)} / gas`}</dd>
+          <dt className="text-slate-500">Gas Price (effective_gas_price):</dt>
+          <dd className="font-mono">{detail.effectiveGasPriceWei === null ? "N/A" : formatGweiFromWei(detail.effectiveGasPriceWei)}</dd>
           <dt className="text-slate-500">Monitor State:</dt>
           <dd>
             <Badge variant={monitor.state === "included_success" ? "secondary" : monitor.state === "included_failed" ? "default" : "outline"}>

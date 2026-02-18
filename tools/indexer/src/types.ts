@@ -83,6 +83,44 @@ export type MetricsView = {
   total_included: bigint;
 };
 
+export type MemoryRegionView = {
+  id: number;
+  name: string;
+  pages: bigint;
+  bytes: bigint;
+};
+
+export type MemoryBreakdownView = {
+  stable_pages_total: bigint;
+  stable_bytes_total: bigint;
+  regions_pages_total: bigint;
+  regions_bytes_total: bigint;
+  unattributed_stable_pages: bigint;
+  unattributed_stable_bytes: bigint;
+  heap_pages: bigint;
+  heap_bytes: bigint;
+  regions: MemoryRegionView[];
+};
+
+export type CandidMemoryRegionView = {
+  id: number | string | bigint;
+  name: string;
+  pages: bigint | number | string;
+  bytes: bigint | number | string;
+};
+
+export type CandidMemoryBreakdownView = {
+  stable_pages_total: bigint | number | string;
+  stable_bytes_total: bigint | number | string;
+  regions_pages_total: bigint | number | string;
+  regions_bytes_total: bigint | number | string;
+  unattributed_stable_pages: bigint | number | string;
+  unattributed_stable_bytes: bigint | number | string;
+  heap_pages: bigint | number | string;
+  heap_bytes: bigint | number | string;
+  regions: CandidMemoryRegionView[];
+};
+
 export type CandidMetricsView = {
   txs: bigint;
   ema_txs_per_block_x1000: bigint;
@@ -105,4 +143,5 @@ export type ExportActorMethods = {
   rpc_eth_block_number: () => Promise<bigint>;
   get_prune_status: () => Promise<CandidPruneStatusView>;
   metrics: (window: bigint) => Promise<CandidMetricsView>;
+  memory_breakdown: () => Promise<CandidMemoryBreakdownView>;
 };

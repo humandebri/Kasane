@@ -2,6 +2,7 @@
 # where: ops helper for prune max_ops tuning
 # what: adjust max_ops_per_tick based on need_prune continuity and error counters
 # why: keep 84-block prune cadence safe while avoiding instruction pressure spikes
+# note: timer interval is fixed by canister-side event-driven scheduling
 set -euo pipefail
 
 CANISTER_NAME_OR_ID="${CANISTER_NAME_OR_ID:-}"

@@ -56,7 +56,7 @@ Search の入力判定:
 - Addressページの tx履歴は `Method(selector推定) / Block / Age / Amount / Txn Fee / From / To` を表示します（hashは先頭省略表示）。
 - address履歴は `Older`（50件単位カーソル）で継続取得します。
 - token transfer履歴も `Older`（50件単位カーソル）で継続取得します。
-- `/tx` の `Value / Transaction Fee / Gas Price` は、wei由来の値を `ICP` 表記で表示します（表示要件に合わせたUI上の換算）。
+- `/tx` の `Value / Transaction Fee` は wei由来の値を `ICP` 表記で、`Gas Price` は `effective_gas_price` を `Gwei` 表記で表示します。
 - token metadata（symbol/decimals）は in-memory キャッシュを使用します（上限1000、成功TTL 24h、失敗TTL 5m、同時取得上限5）。
 - Failed Transactions は `txs.receipt_status=0` を表示します（同ページ内履歴のみ）。
 - Receiptページは `Timeline` を表示しますが、logs再構成であり内部call traceではありません。
@@ -65,12 +65,17 @@ Search の入力判定:
 - `Timeline` は raw単位表示です（token decimalsを使った正規化は未対応）。
 - Principalルートは導出EVM addressの `/address/:hex` へリダイレクトします（表示はAddressページに統合）。
 - Principal導出は `@dfinity/ic-pub-key@1.0.1` を固定利用しています（導出互換性の安定化）。
-- Logsページは canister を直接呼び出します。`topic1` / `topics OR配列` / `blockHash` は未対応です。
-- `rpc_eth_get_logs_paged` の制約により、`from/to` span 上限・page limit上限・cursor継続が必要なケースがあります。
+- Logsページは canister を直接呼び出します。`topic1` / `topics OR配列` は未対応（指定時はURL正規化で除外）、`blockHash` は未対応です。
+- Logsページは未指定時に `window`（既定20）で最新ブロック範囲を自動検索します（例: `/logs?window=50`）。
+- Logsページの取得件数は1ページ100件固定です（`Older` で継続取得）。
+- Logs検索条件は Enter または入力欄フォーカスアウト時にURLクエリへ反映されます（入力中は反映しません）。
+- `rpc_eth_get_logs_paged` の制約により、`from/to` span 上限・cursor継続が必要なケースがあります。
 - Tx詳細ページは `Monitor State` を内包し、`send受理` と `receipt.status` の差を明示します。
 - Opsページの failure_rate は `Δdropped / max(Δsubmitted,1)`、pending stall は「15分連続で queue_len>0 かつ Δincluded=0」です。
-- Opsページは cycles 時系列を `24h / 7d` 切り替えでライン表示し、テーブルにも cycles 列を表示します。
+- Opsページは cycles 時系列を `24h / 7d` 切り替えでライン表示し、`Ops Timeseries` は直近10件を表示します。
+- Opsページは `ops_metrics_samples.pruned_before_block` から `Prune History (latest 10 changes)` を表示します。
 - Opsページの prune 情報は `meta.prune_status` が無い環境では `not available` と表示します。
+- Opsページは `Canister Capacity` で `estimated/high/low/hard_emergency` のMB表示・使用率・容量推移（estimated/high/hard）に加え、24h/7d増加率から `days_to_high_water` / `days_to_hard_emergency` を表示します。
 
 ## 内部構成（lib層）
 

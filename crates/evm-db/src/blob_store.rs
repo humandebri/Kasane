@@ -150,6 +150,14 @@ pub enum BlobError {
     DuplicateFree,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct BlobUsageStats {
+    pub used_class_bytes: u64,
+    pub quarantine_class_bytes: u64,
+    pub free_class_bytes: u64,
+    pub arena_end_bytes: u64,
+}
+
 pub struct BlobStore {
     arena: VMem,
     arena_end: StableCell<u64, VMem>,
@@ -328,6 +336,32 @@ impl BlobStore {
         entry.state = BlobState::Free;
         self.alloc_table.insert(key, entry);
         Ok(())
+    }
+
+    pub fn usage_stats(&self) -> BlobUsageStats {
+        let mut used_class_bytes = 0u64;
+        let mut quarantine_class_bytes = 0u64;
+        let mut free_class_bytes = 0u64;
+        for entry in self.alloc_table.range(..) {
+            let class_bytes = u64::from(entry.key().class());
+            match entry.value().state {
+                BlobState::Used => {
+                    used_class_bytes = used_class_bytes.saturating_add(class_bytes);
+                }
+                BlobState::Quarantine => {
+                    quarantine_class_bytes = quarantine_class_bytes.saturating_add(class_bytes);
+                }
+                BlobState::Free => {
+                    free_class_bytes = free_class_bytes.saturating_add(class_bytes);
+                }
+            }
+        }
+        BlobUsageStats {
+            used_class_bytes,
+            quarantine_class_bytes,
+            free_class_bytes,
+            arena_end_bytes: *self.arena_end.get(),
+        }
     }
 
     fn pop_free(&mut self, class: u32) -> Option<u64> {

@@ -27,8 +27,8 @@ import {
   getTxsByCallerPrincipal,
   setExplorerPool,
 } from "../lib/db";
-import { getPrincipalView, parseCyclesTrendWindow, resolveHomeBlocksLimit } from "../lib/data";
-import { parseStoredPruneStatusForTest } from "../lib/data_ops";
+import { getPrincipalView, opsDataTestHooks, parseCyclesTrendWindow, resolveHomeBlocksLimit } from "../lib/data";
+import { buildPruneHistory, parseStoredPruneStatusForTest } from "../lib/data_ops";
 import { mapAddressHistory } from "../lib/data_address";
 import { calcRoundedBps, formatEthFromWei, formatGweiFromWei } from "../lib/format";
 import { deriveEvmAddressFromPrincipal } from "../lib/principal";
@@ -91,6 +91,45 @@ async function runCyclesTrendWindowTests(): Promise<void> {
   assert.equal(parseCyclesTrendWindow("x"), "24h");
 }
 
+async function runPruneHistoryTests(): Promise<void> {
+  const out = buildPruneHistory(
+    [
+      { sampledAtMs: 5000n, prunedBeforeBlock: 12n },
+      { sampledAtMs: 4000n, prunedBeforeBlock: 12n },
+      { sampledAtMs: 3000n, prunedBeforeBlock: 10n },
+      { sampledAtMs: 2000n, prunedBeforeBlock: null },
+      { sampledAtMs: 1000n, prunedBeforeBlock: 8n },
+    ],
+    10
+  );
+  assert.deepEqual(out, [
+    { sampledAtMs: 5000n, prunedBeforeBlock: 12n },
+    { sampledAtMs: 3000n, prunedBeforeBlock: 10n },
+    { sampledAtMs: 1000n, prunedBeforeBlock: 8n },
+  ]);
+}
+
+async function runCapacityForecastTests(): Promise<void> {
+  const forecast = opsDataTestHooks.buildCapacityForecast(
+    [
+      { sampledAtMs: 0n, estimatedKeptBytes: 100n * 1024n * 1024n },
+      { sampledAtMs: 12n * 60n * 60n * 1000n, estimatedKeptBytes: 110n * 1024n * 1024n },
+      { sampledAtMs: 24n * 60n * 60n * 1000n, estimatedKeptBytes: 120n * 1024n * 1024n },
+    ],
+    24 * 60 * 60 * 1000,
+    200n * 1024n * 1024n,
+    300n * 1024n * 1024n
+  );
+  assert.equal(forecast.growthBytesPerDay === null, false);
+  if (forecast.growthBytesPerDay === null) {
+    throw new Error("growthBytesPerDay should not be null");
+  }
+  const growthMbPerDay = forecast.growthBytesPerDay / (1024 * 1024);
+  assert.equal(Math.round(growthMbPerDay), 20);
+  assert.equal(forecast.daysToHighWater === null, false);
+  assert.equal(forecast.daysToHardEmergency === null, false);
+}
+
 async function runConfigTests(): Promise<void> {
   const cfg = loadConfig({
     ...process.env,
@@ -140,29 +179,12 @@ async function runDependencyPinTests(): Promise<void> {
 }
 
 async function runLogsTests(): Promise<void> {
-  const topic1Unsupported = logsTestHooks.parseFilter({
-    fromBlock: "",
-    toBlock: "",
-    address: "",
-    topic0: "",
-    topic1: "0x" + "11".repeat(32),
-    blockHash: "",
-    limit: "200",
-  });
-  assert.equal(topic1Unsupported.ok, false);
-  if (topic1Unsupported.ok) {
-    throw new Error("topic1 unsupported test expected error");
-  }
-  assert.equal(topic1Unsupported.error, "topic1 is not supported. Use topic0 only.");
-
   const blockHashUnsupported = logsTestHooks.parseFilter({
     fromBlock: "",
     toBlock: "",
     address: "",
     topic0: "",
-    topic1: "",
     blockHash: "0x" + "22".repeat(32),
-    limit: "200",
   });
   assert.equal(blockHashUnsupported.ok, false);
   if (blockHashUnsupported.ok) {
@@ -176,7 +198,7 @@ async function runLogsTests(): Promise<void> {
       toBlock: "",
       address: "",
       topic0: "",
-      limit: "",
+      window: "",
     }),
     false
   );
@@ -186,10 +208,46 @@ async function runLogsTests(): Promise<void> {
       toBlock: "",
       address: "",
       topic0: "",
-      limit: "",
+      window: "",
     }),
     true
   );
+  assert.equal(
+    logsTestHooks.hasAnySearchInput(
+      {
+        fromBlock: "",
+        toBlock: "",
+        address: "",
+        topic0: "",
+        window: "",
+      },
+      "0x" + "22".repeat(32)
+    ),
+    true
+  );
+
+  const defaultWindow = logsTestHooks.parseWindowSize("");
+  assert.equal(defaultWindow.ok, true);
+  if (!defaultWindow.ok) {
+    throw new Error("default window must be valid");
+  }
+  assert.equal(defaultWindow.window, 20);
+
+  const invalidWindow = logsTestHooks.parseWindowSize("abc");
+  assert.equal(invalidWindow.ok, false);
+  if (invalidWindow.ok) {
+    throw new Error("invalid window test expected error");
+  }
+  assert.equal(invalidWindow.error, "window must be an integer.");
+
+  assert.deepEqual(logsTestHooks.buildDefaultRange(100n, 20), {
+    fromBlock: "81",
+    toBlock: "100",
+  });
+  assert.deepEqual(logsTestHooks.buildDefaultRange(7n, 20), {
+    fromBlock: "0",
+    toBlock: "7",
+  });
 }
 
 async function runTokenMetaTests(): Promise<void> {
@@ -445,7 +503,7 @@ async function runDbTests(): Promise<void> {
     CREATE TABLE txs(tx_hash bytea primary key, block_number bigint not null, tx_index integer not null, caller_principal bytea, from_address bytea not null, to_address bytea, tx_selector bytea, receipt_status smallint);
     CREATE TABLE token_transfers(tx_hash bytea not null, block_number bigint not null, tx_index integer not null, log_index integer not null, token_address bytea not null, from_address bytea not null, to_address bytea not null, amount_numeric numeric(78,0) not null, primary key(tx_hash, log_index));
     CREATE TABLE metrics_daily(day integer primary key, raw_bytes bigint not null default 0, compressed_bytes bigint not null default 0, archive_bytes bigint, blocks_ingested bigint not null default 0, errors bigint not null default 0);
-    CREATE TABLE ops_metrics_samples(sampled_at_ms bigint primary key, queue_len bigint not null, cycles bigint not null default 0, total_submitted bigint not null, total_included bigint not null, total_dropped bigint not null, drop_counts_json text not null);
+    CREATE TABLE ops_metrics_samples(sampled_at_ms bigint primary key, queue_len bigint not null, cycles bigint not null default 0, pruned_before_block bigint, estimated_kept_bytes bigint, low_water_bytes bigint, high_water_bytes bigint, hard_emergency_bytes bigint, total_submitted bigint not null, total_included bigint not null, total_dropped bigint not null, drop_counts_json text not null);
     CREATE TABLE meta(key text primary key, value text);
   `);
 
@@ -495,8 +553,8 @@ async function runDbTests(): Promise<void> {
     "250000000000000000",
   ]);
   await pool.query(
-    "INSERT INTO ops_metrics_samples(sampled_at_ms, queue_len, cycles, total_submitted, total_included, total_dropped, drop_counts_json) VALUES($1, $2, $3, $4, $5, $6, $7), ($8, $9, $10, $11, $12, $13, $14)",
-    [1000, 1, 200, 10, 5, 2, "[]", 2000, 2, 199, 12, 5, 3, '[{\"code\":1,\"count\":3}]']
+    "INSERT INTO ops_metrics_samples(sampled_at_ms, queue_len, cycles, pruned_before_block, estimated_kept_bytes, low_water_bytes, high_water_bytes, hard_emergency_bytes, total_submitted, total_included, total_dropped, drop_counts_json) VALUES($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12), ($13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24)",
+    [1000, 1, 200, 9, 900, 800, 1000, 1200, 10, 5, 2, "[]", 2000, 2, 199, 10, 950, 800, 1000, 1200, 12, 5, 3, '[{\"code\":1,\"count\":3}]']
   );
   await pool.query(
     "INSERT INTO metrics_daily(day, raw_bytes, compressed_bytes, archive_bytes, blocks_ingested, errors) VALUES($1, $2, $3, $4, $5, $6)",
@@ -549,6 +607,7 @@ async function runDbTests(): Promise<void> {
   assert.equal(meta.lastHead, 12n);
   assert.equal(meta.lastIngestAtMs, 1700000000000n);
   assert.ok(meta.pruneStatusRaw);
+  assert.equal(meta.memoryBreakdownRaw, null);
   const address = Uint8Array.from(Buffer.from("11".repeat(20), "hex"));
   const txsByAddress = await getTxsByAddress(address, 2, null);
   assert.equal(txsByAddress.length, 3);
@@ -572,6 +631,8 @@ async function runDbTests(): Promise<void> {
   const opsSamples = await getRecentOpsMetricsSamples(10);
   assert.equal(opsSamples.length, 2);
   assert.equal(opsSamples[0]?.sampledAtMs, 2000n);
+  assert.equal(opsSamples[0]?.prunedBeforeBlock, 10n);
+  assert.equal(opsSamples[0]?.estimatedKeptBytes, 950n);
   const opsSamples24h = await getOpsMetricsSamplesSince(1500n);
   assert.equal(opsSamples24h.length, 1);
   assert.equal(opsSamples24h[0]?.sampledAtMs, 2000n);
@@ -676,6 +737,8 @@ runHexTests()
   .then(runSearchTests)
   .then(runHomeBlocksLimitTests)
   .then(runCyclesTrendWindowTests)
+  .then(runPruneHistoryTests)
+  .then(runCapacityForecastTests)
   .then(runConfigTests)
   .then(runFormatTests)
   .then(runPrincipalDeriveTests)

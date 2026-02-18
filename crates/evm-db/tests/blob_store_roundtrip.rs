@@ -75,3 +75,38 @@ fn blob_ptr_and_allockey_to_bytes_are_borrowed() {
     assert!(matches!(ptr.to_bytes(), Cow::Borrowed(_)));
     assert!(matches!(key.to_bytes(), Cow::Borrowed(_)));
 }
+
+#[test]
+fn usage_stats_tracks_used_quarantine_free_and_arena_end() {
+    let mut store = new_blob_store();
+    let data = vec![1u8; 100];
+
+    let initial = store.usage_stats();
+    assert_eq!(initial.used_class_bytes, 0);
+    assert_eq!(initial.quarantine_class_bytes, 0);
+    assert_eq!(initial.free_class_bytes, 0);
+    assert_eq!(initial.arena_end_bytes, 0);
+
+    let ptr = store.store_bytes(&data).expect("store should succeed");
+    let after_store = store.usage_stats();
+    assert!(after_store.used_class_bytes >= u64::from(ptr.class()));
+    assert_eq!(after_store.quarantine_class_bytes, 0);
+    assert_eq!(after_store.free_class_bytes, 0);
+    assert!(after_store.arena_end_bytes >= u64::from(ptr.class()));
+
+    store
+        .mark_quarantine(&ptr)
+        .expect("quarantine should succeed");
+    let after_quarantine = store.usage_stats();
+    assert_eq!(after_quarantine.used_class_bytes, 0);
+    assert!(after_quarantine.quarantine_class_bytes >= u64::from(ptr.class()));
+
+    store
+        .reclaim_for_prune(&ptr)
+        .expect("reclaim should succeed");
+    let after_reclaim = store.usage_stats();
+    assert_eq!(after_reclaim.used_class_bytes, 0);
+    assert_eq!(after_reclaim.quarantine_class_bytes, 0);
+    assert!(after_reclaim.free_class_bytes >= u64::from(ptr.class()));
+    assert_eq!(after_reclaim.arena_end_bytes, after_store.arena_end_bytes);
+}

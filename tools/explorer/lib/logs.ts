@@ -2,6 +2,7 @@
 
 import { isAddressHex, isTxHashHex, normalizeHex, parseAddressHex, parseHex, toHexLower } from "./hex";
 import {
+  getRpcHeadNumber,
   getRpcLogsPaged,
   type EthLogItemView,
   type EthLogFilterInput,
@@ -9,13 +10,16 @@ import {
   type GetLogsErrorView,
 } from "./rpc";
 
+const DEFAULT_LOGS_WINDOW = 20;
+const DEFAULT_LOGS_PAGE_LIMIT = 100;
+
 export type LogsView = {
   filters: {
     fromBlock: string;
     toBlock: string;
     address: string;
     topic0: string;
-    limit: string;
+    window: string;
   };
   items: Array<{
     txHashHex: string;
@@ -37,28 +41,36 @@ export async function getLogsView(searchParams: {
   toBlock?: string;
   address?: string;
   topic0?: string;
-  topic1?: string;
   blockHash?: string;
-  limit?: string;
+  window?: string;
   cursor?: string;
 }): Promise<LogsView> {
-  const filters = {
+  const filters: LogsView["filters"] = {
     fromBlock: searchParams.fromBlock?.trim() ?? "",
     toBlock: searchParams.toBlock?.trim() ?? "",
     address: searchParams.address?.trim() ?? "",
     topic0: searchParams.topic0?.trim() ?? "",
-    limit: searchParams.limit?.trim() ?? "",
+    window: searchParams.window?.trim() ?? "",
   };
   const cursor = parseCursor(searchParams.cursor);
 
-  // 初期表示（入力なし）は未検索扱い。RPCを呼ばず空結果を返す。
-  if (!cursor && !hasAnySearchInput(filters)) {
-    return { filters, items: [], nextCursor: null, error: null };
+  // 初期表示（入力なし）は最新Nブロックを既定検索する。
+  if (!cursor && !hasAnySearchInput(filters, searchParams.blockHash?.trim() ?? "")) {
+    const windowOut = parseWindowSize(filters.window);
+    if (!windowOut.ok) {
+      return { filters, items: [], nextCursor: null, error: windowOut.error };
+    }
+    const head = await getRpcHeadNumber();
+    const range = buildDefaultRange(head, windowOut.window);
+    filters.fromBlock = range.fromBlock;
+    filters.toBlock = range.toBlock;
+    if (filters.window === "") {
+      filters.window = String(DEFAULT_LOGS_WINDOW);
+    }
   }
 
   const rpcFilter = parseFilter({
     ...filters,
-    topic1: searchParams.topic1?.trim() ?? "",
     blockHash: searchParams.blockHash?.trim() ?? "",
   });
   if (!rpcFilter.ok) {
@@ -86,15 +98,10 @@ function parseFilter(filters: {
   toBlock: string;
   address: string;
   topic0: string;
-  topic1: string;
   blockHash: string;
-  limit: string;
 }):
   | { ok: true; filter: EthLogFilterInput; pageLimit: number }
   | { ok: false; error: string } {
-  if (filters.topic1 !== "") {
-    return { ok: false, error: "topic1 is not supported. Use topic0 only." };
-  }
   if (filters.blockHash !== "") {
     return { ok: false, error: "blockHash filter is not supported. Use fromBlock/toBlock." };
   }
@@ -126,24 +133,38 @@ function parseFilter(filters: {
     }
     out.topic0 = parseHex(normalizeHex(filters.topic0));
   }
-  let pageLimit = 200;
-  if (filters.limit !== "") {
-    if (!/^\d+$/.test(filters.limit)) {
-      return { ok: false, error: "limit must be an integer." };
-    }
-    const parsed = Number(filters.limit);
-    if (!Number.isSafeInteger(parsed) || parsed < 1 || parsed > 2000) {
-      return { ok: false, error: "limit must be in the range 1..2000." };
-    }
-    pageLimit = parsed;
-  }
-  return { ok: true, filter: out, pageLimit };
+  return { ok: true, filter: out, pageLimit: DEFAULT_LOGS_PAGE_LIMIT };
 }
 
 export const logsTestHooks = {
+  buildDefaultRange,
+  parseWindowSize,
   parseFilter,
   hasAnySearchInput,
 };
+
+function parseWindowSize(raw: string): { ok: true; window: number } | { ok: false; error: string } {
+  if (raw === "") {
+    return { ok: true, window: DEFAULT_LOGS_WINDOW };
+  }
+  if (!/^\d+$/.test(raw)) {
+    return { ok: false, error: "window must be an integer." };
+  }
+  const window = Number(raw);
+  if (!Number.isSafeInteger(window) || window < 1 || window > 2000) {
+    return { ok: false, error: "window must be in the range 1..2000." };
+  }
+  return { ok: true, window };
+}
+
+function buildDefaultRange(headBlock: bigint, windowSize: number): { fromBlock: string; toBlock: string } {
+  const span = BigInt(windowSize - 1);
+  const from = headBlock > span ? headBlock - span : 0n;
+  return {
+    fromBlock: from.toString(),
+    toBlock: headBlock.toString(),
+  };
+}
 
 function parseCursor(raw?: string): EthLogsCursorView | null {
   if (!raw) {
@@ -197,7 +218,7 @@ function mapItem(item: EthLogItemView): {
 
 function toErrorText(error: GetLogsErrorView): string {
   if ("TooManyResults" in error) {
-    return "TooManyResults: narrow the block range or lower limit.";
+    return "TooManyResults: narrow the block range.";
   }
   if ("RangeTooLarge" in error) {
     return "RangeTooLarge: reduce the fromBlock/toBlock span.";
@@ -208,18 +229,21 @@ function toErrorText(error: GetLogsErrorView): string {
   return `UnsupportedFilter: ${error.UnsupportedFilter}`;
 }
 
-function hasAnySearchInput(filters: {
+function hasAnySearchInput(
+  filters: {
   fromBlock: string;
   toBlock: string;
   address: string;
   topic0: string;
-  limit: string;
-}): boolean {
+  window: string;
+  },
+  blockHash: string = ""
+): boolean {
   return (
     filters.fromBlock !== "" ||
     filters.toBlock !== "" ||
     filters.address !== "" ||
     filters.topic0 !== "" ||
-    filters.limit !== ""
+    blockHash !== ""
   );
 }

@@ -172,6 +172,10 @@ pub struct MemoryRegionView {
 pub struct MemoryBreakdownView {
     pub stable_pages_total: u64,
     pub stable_bytes_total: u64,
+    pub regions_pages_total: u64,
+    pub regions_bytes_total: u64,
+    pub unattributed_stable_pages: u64,
+    pub unattributed_stable_bytes: u64,
     pub heap_pages: u64,
     pub heap_bytes: u64,
     pub regions: Vec<MemoryRegionView>,

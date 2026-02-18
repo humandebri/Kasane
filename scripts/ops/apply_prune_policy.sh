@@ -2,6 +2,7 @@
 # where: ops helper for canister prune settings
 # what: apply prune policy + enable pruning + print verification summary
 # why: reduce operator error under 84-block prune execution model
+# note: timer interval is fixed by canister-side event-driven scheduling
 set -euo pipefail
 
 CANISTER_NAME_OR_ID="${CANISTER_NAME_OR_ID:-}"

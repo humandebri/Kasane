@@ -149,6 +149,11 @@ export class IndexerDb {
     sampledAtMs: bigint;
     queueLen: bigint;
     cycles: bigint;
+    prunedBeforeBlock: bigint | null;
+    estimatedKeptBytes: bigint | null;
+    lowWaterBytes: bigint | null;
+    highWaterBytes: bigint | null;
+    hardEmergencyBytes: bigint | null;
     totalSubmitted: bigint;
     totalIncluded: bigint;
     totalDropped: bigint;
@@ -156,11 +161,16 @@ export class IndexerDb {
     retentionCutoffMs: bigint;
   }): Promise<void> {
     await this.pool.query(
-      "INSERT INTO ops_metrics_samples(sampled_at_ms, queue_len, cycles, total_submitted, total_included, total_dropped, drop_counts_json) VALUES($1, $2, $3, $4, $5, $6, $7) ON CONFLICT(sampled_at_ms) DO UPDATE SET queue_len = excluded.queue_len, cycles = excluded.cycles, total_submitted = excluded.total_submitted, total_included = excluded.total_included, total_dropped = excluded.total_dropped, drop_counts_json = excluded.drop_counts_json",
+      "INSERT INTO ops_metrics_samples(sampled_at_ms, queue_len, cycles, pruned_before_block, estimated_kept_bytes, low_water_bytes, high_water_bytes, hard_emergency_bytes, total_submitted, total_included, total_dropped, drop_counts_json) VALUES($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) ON CONFLICT(sampled_at_ms) DO UPDATE SET queue_len = excluded.queue_len, cycles = excluded.cycles, pruned_before_block = excluded.pruned_before_block, estimated_kept_bytes = excluded.estimated_kept_bytes, low_water_bytes = excluded.low_water_bytes, high_water_bytes = excluded.high_water_bytes, hard_emergency_bytes = excluded.hard_emergency_bytes, total_submitted = excluded.total_submitted, total_included = excluded.total_included, total_dropped = excluded.total_dropped, drop_counts_json = excluded.drop_counts_json",
       [
         params.sampledAtMs,
         params.queueLen,
         params.cycles,
+        params.prunedBeforeBlock,
+        params.estimatedKeptBytes,
+        params.lowWaterBytes,
+        params.highWaterBytes,
+        params.hardEmergencyBytes,
         params.totalSubmitted,
         params.totalIncluded,
         params.totalDropped,

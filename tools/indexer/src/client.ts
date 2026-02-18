@@ -4,13 +4,17 @@ import { Actor, HttpAgent } from "@dfinity/agent";
 import { idlFactory } from "./candid";
 import { Config } from "./config";
 import {
+  CandidMemoryBreakdownView,
   CandidMetricsView,
+  CandidMemoryRegionView,
   CandidOptNat64,
   CandidPruneStatusView,
   Cursor,
   ExportActorMethods,
   ExportError,
   ExportResponse,
+  MemoryBreakdownView,
+  MemoryRegionView,
   MetricsView,
   PruneStatusView,
   Result,
@@ -21,6 +25,7 @@ export type ExportClient = {
   getHeadNumber: () => Promise<bigint>;
   getPruneStatus: () => Promise<PruneStatusView>;
   getMetrics: (window: bigint) => Promise<MetricsView>;
+  getMemoryBreakdown: () => Promise<MemoryBreakdownView>;
 };
 
 export async function createClient(config: Config): Promise<ExportClient> {
@@ -59,6 +64,7 @@ export async function createClient(config: Config): Promise<ExportClient> {
     getHeadNumber: async () => toNat64BigInt(await actor.rpc_eth_block_number(), "rpc_eth_block_number"),
     getPruneStatus: async () => normalizePruneStatus(await actor.get_prune_status()),
     getMetrics: async (window: bigint) => normalizeMetrics(await actor.metrics(window)),
+    getMemoryBreakdown: async () => normalizeMemoryBreakdown(await actor.memory_breakdown()),
   };
 }
 
@@ -144,6 +150,35 @@ function normalizeMetrics(raw: CandidMetricsView): MetricsView {
   };
 }
 
+function normalizeMemoryBreakdown(raw: CandidMemoryBreakdownView): MemoryBreakdownView {
+  return {
+    stable_pages_total: toNat64BigInt(raw.stable_pages_total, "memory_breakdown.stable_pages_total"),
+    stable_bytes_total: toNat64BigInt(raw.stable_bytes_total, "memory_breakdown.stable_bytes_total"),
+    regions_pages_total: toNat64BigInt(raw.regions_pages_total, "memory_breakdown.regions_pages_total"),
+    regions_bytes_total: toNat64BigInt(raw.regions_bytes_total, "memory_breakdown.regions_bytes_total"),
+    unattributed_stable_pages: toNat64BigInt(
+      raw.unattributed_stable_pages,
+      "memory_breakdown.unattributed_stable_pages"
+    ),
+    unattributed_stable_bytes: toNat64BigInt(
+      raw.unattributed_stable_bytes,
+      "memory_breakdown.unattributed_stable_bytes"
+    ),
+    heap_pages: toNat64BigInt(raw.heap_pages, "memory_breakdown.heap_pages"),
+    heap_bytes: toNat64BigInt(raw.heap_bytes, "memory_breakdown.heap_bytes"),
+    regions: raw.regions.map(normalizeMemoryRegion),
+  };
+}
+
+function normalizeMemoryRegion(raw: CandidMemoryRegionView): MemoryRegionView {
+  return {
+    id: toNat32Number(raw.id, "memory_breakdown.region.id"),
+    name: raw.name,
+    pages: toNat64BigInt(raw.pages, "memory_breakdown.region.pages"),
+    bytes: toNat64BigInt(raw.bytes, "memory_breakdown.region.bytes"),
+  };
+}
+
 function normalizeOptNat64(value: CandidOptNat64, name: string): bigint | null {
   if (value === null) {
     return null;
@@ -162,4 +197,5 @@ function normalizeOptNat64(value: CandidOptNat64, name: string): bigint | null {
 
 export const clientTestHooks = {
   normalizeCursorForCandid,
+  normalizeMemoryBreakdown,
 };
