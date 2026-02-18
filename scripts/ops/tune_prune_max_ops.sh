@@ -15,7 +15,7 @@ HEADROOM_RATIO_BPS="${HEADROOM_RATIO_BPS:-2000}"
 HARD_EMERGENCY_RATIO_BPS="${HARD_EMERGENCY_RATIO_BPS:-9500}"
 MAX_OPS_STEP="${MAX_OPS_STEP:-200}"
 DFX_BIN="${DFX_BIN:-dfx}"
-STATE_FILE="${STATE_FILE:-/tmp/ic-op-prune-tune-state-${NETWORK}-${CANISTER_NAME_OR_ID}.json}"
+STATE_FILE="${STATE_FILE:-/tmp/kasane-prune-tune-state-${NETWORK}-${CANISTER_NAME_OR_ID}.json}"
 
 log() {
   echo "[tune-prune-max-ops] $*"

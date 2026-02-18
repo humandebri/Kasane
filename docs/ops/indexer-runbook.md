@@ -114,8 +114,8 @@ DB接続で落ちる場合:
 - `INDEXER_FETCH_ROOT_KEY`（local向け）
 
 運用配置（Contabo）:
-- systemd の `EnvironmentFile` は `/etc/ic-op/indexer.env` を使う。
-- `/opt/ic-op/tools/indexer/.env.local` は参照しない（デプロイ同期で消える事故を避けるため）。
+- systemd の `EnvironmentFile` は `/etc/kasane/indexer.env` を使う。
+- `/opt/kasane/tools/indexer/.env.local` は参照しない（デプロイ同期で消える事故を避けるため）。
 
 ### 2.3 起動
 - `node dist/run.js`（実際の起動コマンドはプロジェクトの package.json に合わせる）

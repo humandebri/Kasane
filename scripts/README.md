@@ -4,7 +4,7 @@
 迷ったらまずこの順で実行してください。
 
 ## 前提
-- 実行ディレクトリ: リポジトリルート（`IC-OP/`）
+- 実行ディレクトリ: リポジトリルート（`Kasane/`）
 - 主な依存: `cargo`, `dfx`, `icp`, `node`, `npm`, `python`
 - query 呼び出しは `dfx canister call --query ...` を使う
 

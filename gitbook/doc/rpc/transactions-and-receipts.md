@@ -1,0 +1,17 @@
+# Transaction & Receipt Methods
+
+## TL;DR
+- tx参照は `eth_tx_hash` 基準。
+- receiptは `PossiblyPruned/Pruned` を明示的に返しうる。
+
+## メソッド
+- `eth_getTransactionByHash` -> `rpc_eth_get_transaction_by_eth_hash`
+- `eth_getTransactionReceipt` -> `rpc_eth_get_transaction_receipt_with_status`
+
+## 注意
+- `tx_id` は内部キー、外部連携は `eth_tx_hash` を使う。
+- migration/corrupt時は `state unavailable` エラー。
+
+## 根拠
+- `/Users/0xhude/Desktop/ICP/Kasane/tools/rpc-gateway/src/handlers.ts`
+- `/Users/0xhude/Desktop/ICP/Kasane/crates/ic-evm-rpc/src/lib.rs`

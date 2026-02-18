@@ -95,17 +95,17 @@ scripts/query_smoke.sh
 
 ## 3.1 Contabo 運用ファイル配置（testnet共通）
 
-`rsync --delete` 運用で `.env.local` が消える事故を防ぐため、環境変数は `/etc/ic-op/*.env` に集約する。
+`rsync --delete` 運用で `.env.local` が消える事故を防ぐため、環境変数は `/etc/kasane/*.env` に集約する。
 
-- `rpc-gateway.service` -> `EnvironmentFile=/etc/ic-op/rpc-gateway.env`
-- `ic-op-indexer.service` -> `EnvironmentFile=/etc/ic-op/indexer.env`
-- `ic-op-explorer.service` -> `EnvironmentFile=/etc/ic-op/explorer.env`
+- `rpc-gateway.service` -> `EnvironmentFile=/etc/kasane/rpc-gateway.env`
+- `kasane-indexer.service` -> `EnvironmentFile=/etc/kasane/indexer.env`
+- `kasane-explorer.service` -> `EnvironmentFile=/etc/kasane/explorer.env`
 - `receipt-watch@.service` -> `EnvironmentFile=-/etc/default/receipt-watch`
 
 送信監視の起動元は固定:
 
 ```bash
-cd /opt/ic-op/tools/rpc-gateway
+cd /opt/kasane/tools/rpc-gateway
 ./ops/start_receipt_watch.sh 0x<tx_hash>
 ```
 
@@ -141,11 +141,11 @@ sudo -n whoami
 
 ```bash
 ssh contabo-deployer
-cd /opt/ic-op
+cd /opt/kasane
 
-# 本番indexer接続先の確認（/etc/ic-op/indexer.env）
-sudo sed -n '1,200p' /etc/ic-op/indexer.env
-source /etc/ic-op/indexer.env
+# 本番indexer接続先の確認（/etc/kasane/indexer.env）
+sudo sed -n '1,200p' /etc/kasane/indexer.env
+source /etc/kasane/indexer.env
 
 # 適用済みmigration確認
 psql "$INDEXER_DATABASE_URL" -c "select id, to_timestamp(applied_at/1000) from schema_migrations order by id;"
@@ -154,8 +154,8 @@ psql "$INDEXER_DATABASE_URL" -c "select id, to_timestamp(applied_at/1000) from s
 psql "$INDEXER_DATABASE_URL" -c "delete from schema_migrations where id='009_add_txs_selector.sql';"
 
 # indexer再起動（起動時に未適用migrationを自動適用）
-sudo systemctl restart ic-op-indexer.service
-sudo journalctl -u ic-op-indexer.service -n 200 --no-pager
+sudo systemctl restart kasane-indexer.service
+sudo journalctl -u kasane-indexer.service -n 200 --no-pager
 ```
 
 補足:
@@ -166,9 +166,9 @@ sudo journalctl -u ic-op-indexer.service -n 200 --no-pager
 
 ```bash
 ssh contabo-deployer
-cd /opt/ic-op
+cd /opt/kasane
 
-source /etc/ic-op/indexer.env
+source /etc/kasane/indexer.env
 ICP_ENV=ic \
 CANISTER_ID="${EVM_CANISTER_ID}" \
 ICP_IDENTITY_NAME=ci-local \
@@ -181,16 +181,16 @@ scripts/mainnet/ic_mainnet_deploy.sh
 
 ```bash
 ssh contabo-deployer
-cd /opt/ic-op
-source /etc/ic-op/indexer.env
+cd /opt/kasane
+source /etc/kasane/indexer.env
 
 NETWORK=ic \
 CANISTER_ID="${EVM_CANISTER_ID}" \
 ICP_IDENTITY_NAME=ci-local \
 scripts/query_smoke.sh
 
-sudo systemctl restart ic-op-explorer.service
-sudo journalctl -u ic-op-explorer.service -n 200 --no-pager
+sudo systemctl restart kasane-explorer.service
+sudo journalctl -u kasane-explorer.service -n 200 --no-pager
 ```
 
 ## 4. ロールバック方針
@@ -280,7 +280,7 @@ scripts/mainnet/mainnet_method_test.sh
   - signer は `ic-pub-key` の `key_1` と canister id（`grghe-syaaa-aaaar-qabyq-cai`）をコード固定で利用する。
   - ローテーション時は `InitArgs` 注入や管理API更新ではなく、再デプロイで切り替える。
 - 更新対象:
-  - `/Users/0xhude/Desktop/ICP/IC-OP/crates/ic-evm-address/src/lib.rs`
+  - `/Users/0xhude/Desktop/ICP/Kasane/crates/ic-evm-address/src/lib.rs`
   - `CHAIN_FUSION_SIGNER_CANISTER_ID`
   - `KEY_ID_KEY_1`
 - ローテーション手順:

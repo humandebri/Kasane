@@ -46,7 +46,7 @@ sudo systemctl status 'receipt-watch@0x<tx_hash>.service'
 送信系ジョブからの起動を統一するため、補助スクリプト `start_receipt_watch.sh` を使います。
 
 ```bash
-cd /opt/ic-op/tools/rpc-gateway
+cd /opt/kasane/tools/rpc-gateway
 ./ops/start_receipt_watch.sh 0x<tx_hash>
 ```
 
@@ -55,9 +55,9 @@ cd /opt/ic-op/tools/rpc-gateway
 
 ## 5. 環境ファイル運用（Contabo）
 
-`/opt/ic-op/tools/.../.env.local` はデプロイ同期で消える可能性があるため、systemd は `/etc/ic-op/*.env` を参照します。
+`/opt/kasane/tools/.../.env.local` はデプロイ同期で消える可能性があるため、systemd は `/etc/kasane/*.env` を参照します。
 
-- `rpc-gateway.service` -> `/etc/ic-op/rpc-gateway.env`
-- `ic-op-indexer.service` -> `/etc/ic-op/indexer.env`
-- `ic-op-explorer.service` -> `/etc/ic-op/explorer.env`
+- `rpc-gateway.service` -> `/etc/kasane/rpc-gateway.env`
+- `kasane-indexer.service` -> `/etc/kasane/indexer.env`
+- `kasane-explorer.service` -> `/etc/kasane/explorer.env`
 - `receipt-watch@.service` -> `/etc/default/receipt-watch`（`ALERT_WEBHOOK_URL`）
