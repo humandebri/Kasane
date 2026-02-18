@@ -110,3 +110,33 @@ fn usage_stats_tracks_used_quarantine_free_and_arena_end() {
     assert!(after_reclaim.free_class_bytes >= u64::from(ptr.class()));
     assert_eq!(after_reclaim.arena_end_bytes, after_store.arena_end_bytes);
 }
+
+#[test]
+fn usage_stats_updates_when_reusing_free_slot() {
+    let mut store = new_blob_store();
+    let payload = vec![7u8; 96];
+
+    let first = store.store_bytes(&payload).expect("initial store should succeed");
+    store
+        .mark_quarantine(&first)
+        .expect("quarantine should succeed");
+    store.mark_free(&first).expect("mark_free should succeed");
+
+    let after_free = store.usage_stats();
+    assert_eq!(after_free.used_class_bytes, 0);
+    assert!(after_free.free_class_bytes >= u64::from(first.class()));
+
+    let second = store.store_bytes(&payload).expect("reuse store should succeed");
+    assert_eq!(second.class(), first.class());
+
+    let after_reuse = store.usage_stats();
+    assert!(
+        after_reuse.used_class_bytes >= u64::from(second.class()),
+        "used bytes should increase when reusing free slot"
+    );
+    assert!(
+        after_reuse.free_class_bytes.saturating_add(u64::from(second.class()))
+            >= after_free.free_class_bytes,
+        "free bytes should decrease when free slot is reused"
+    );
+}

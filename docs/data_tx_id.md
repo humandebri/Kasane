@@ -1,229 +1,102 @@
-1) tx_id の定義（これが最優先の根っこ）
-Route A: 署名付き raw Ethereum Tx
+# data_tx_id（現行実装準拠）
+
+このドキュメントは、`tx_id` と関連ハッシュ/保存構造の「現在の実装」を簡潔に固定するためのものです。
+設計案ではなく、実装追従の運用ドキュメントとして扱います。
 
-tx_id = Ethereum tx hash と一致させる。
+## 1. tx_id の現行定義
 
-tx_id = keccak256(raw_tx_bytes)
+`tx_id` は Route 別に別定義ではなく、内部的には共通で `stored_tx_id` を使います。
 
-これは Ethereum の定義どおり（RLP/typed tx を含めて「署名込みの生バイト列」を keccak）
+```text
+tx_id = keccak256(
+  "ic-evm:storedtx:v2" ||
+  kind_u8 ||
+  raw_tx_bytes ||
+  optional(caller_evm[20]) ||
+  optional(u16be(canister_id_len) || canister_id_bytes) ||
+  optional(u16be(caller_principal_len) || caller_principal_bytes)
+)
+```
 
-これで Phase2 の eth_getTransactionByHash がそのまま通る。
+- `kind_u8`
+  - `0x01`: `EthSigned`
+  - `0x02`: `IcSynthetic`
+- 実装: `crates/evm-core/src/hash.rs` の `stored_tx_id`
 
-Route B: IC 合成 Tx（canister 呼び出し由来）
+## 2. Route A: EthSigned（raw Ethereum tx）
 
-Ethereum互換ハッシュは作れない（署名が無い/形式が違う）ので、独自 tx_id を定義する。ただし衝突耐性と将来拡張のため domain separation を必ず入れる。
+### 2.1 内部 `tx_id`
+- `submit_tx` では `stored_tx_id(kind=EthSigned, raw, None, None, None)` を採用。
+- つまり内部 `tx_id` は **Ethereum tx hash（`keccak(raw)`）と同一ではない**。
 
-tx_id = keccak256( domain_sep || version || chain_id || canister_id || caller_principal || caller_nonce || payload_hash )
+### 2.2 Ethereum 互換 hash との対応
+- `eth_tx_hash = keccak256(raw_tx_bytes)` は別に算出。
+- `eth_tx_hash_index` に `eth_tx_hash -> tx_id` を保存。
+- `eth_getTransactionByHash` 相当はこの index を引いて内部 `tx_id` に解決する。
 
-具体：
+## 3. Route B: IcSynthetic（canister 呼び出し由来）
 
-domain_sep = b"icp-evm:synthetic-tx"
+### 3.1 内部 `tx_id`
+- `stored_tx_id(kind=IcSynthetic, raw, caller_evm, canister_id, caller_principal)`。
+- `caller_evm` は `caller_principal` から導出。
 
-version = 0x01（1 byte）
+### 3.2 nonce の扱い
+- nonce は canister 側の自動採番ではない。
+- `submit_ic_tx` で `tx_bytes` ヘッダを decode し、ヘッダ内 `nonce` を使う。
 
-chain_id: u64（固定値）
+## 4. ハッシュ規則（現行）
 
-canister_id: Principal（このEVM canisterのprincipal。bytesで）
+### 4.1 `tx_list_hash`
 
-caller_principal: Principal（呼び出し元）
+```text
+tx_list_hash = keccak256(0x00 || tx_id_0 || tx_id_1 || ...)
+```
 
-caller_nonce: u64（callerごとの単調増加 nonce。必須）
+- 先頭に `0x00` を付ける（domain separation）。
 
-payload_hash = keccak256(payload_cbor_or_candid_bytes)（payloadそのものは入れずhashで十分）
+### 4.2 `block_hash`
 
-caller_nonce の扱い
+```text
+block_hash = keccak256(
+  0x01 ||
+  parent_hash(32) ||
+  number(u64 be) ||
+  timestamp(u64 be) ||
+  tx_list_hash(32) ||
+  state_root(32)
+)
+```
 
-nonce は canister 側が保持し、submit_ic_tx 時に nonce += 1 して採番
+- 先頭に `0x01` を付ける（domain separation）。
 
-外部から nonce 指定を許すなら検証が要るので、Phase1では canister採番固定でいい
+## 5. stable schema（実装の要点）
 
-これで「同じcallerが同じpayloadを2回投げてもtx_idが別になる」。リトライも安全。
+現行は「最小構成」より拡張されています。主要ポイントのみ記載します。
 
-2) stable schema（Phase1で固める“最低限 + 将来の逃げ道”）
+- ルート: `StableState`（`StableBTreeMap` 群 + `StableCell` 群）
+- 主要 map:
+  - `queue: seq(u64) -> tx_id`
+  - `tx_store: tx_id -> StoredTxBytes`
+  - `tx_locs/tx_locs_v3: tx_id -> TxLoc`
+  - `blocks: block_number -> BlobPtr`
+  - `receipts: tx_id -> BlobPtr`
+  - `eth_tx_hash_index: eth_tx_hash(TxId wrapper) -> tx_id`
+- 主要 cell:
+  - `chain_state`（chain設定・base fee・`next_queue_seq` 等）
+  - `head`
+  - `queue_meta`
 
-設計方針：
+## 6. API 影響（現行動作）
 
-安定領域に巨大Vecをそのまま置かない（アップグレード/メモリ移動が痛い）
+- `submit_raw_tx` / `submit_tx` は内部 `tx_id` を返す。
+- `rpc_eth_get_transaction_by_hash` は `eth_tx_hash_index` で解決する。
+- `get_pending` / `get_receipt` は内部 `tx_id` 基準で参照する。
 
-stable-structures の StableBTreeMap 前提で「キー→値」ストアに分解
+## 7. 実装参照
 
-先頭に SchemaVersion と Config を置く
+- `crates/evm-core/src/hash.rs`
+- `crates/evm-core/src/chain.rs`
+- `crates/ic-evm-rpc/src/lib.rs`
+- `crates/evm-db/src/stable_state.rs`
+- `crates/evm-db/src/chain_data/tx.rs`
 
-ブロック/receipt/txloc を別マップにする（索引は最小）
-
-2.1 Top-level: StableState（1つのルート）
-/// stable root (versioned)
-struct StableStateV1 {
-  // schema
-  schema_version: u32, // = 1
-
-  // chain config
-  chain_id: u64,
-  canister_id: [u8; 29], // Principal bytes (variableだが固定長にパックしても良い)
-  auto_production_enabled: bool,
-  max_txs_per_block: u32,
-  block_gas_limit: u64,
-
-  // deterministic time model
-  last_block_time: u64,      // seconds
-  last_block_number: u64,    // tip
-
-  // re-entrancy / heartbeat guard
-  is_producing: bool,
-
-  // queue bookkeeping
-  next_queue_seq: u64,       // monotonic enqueue id
-}
-
-
-これは “小さい固定領域” なので stable に直置きしてOK。
-
-2.2 Queue（mempool無しの中核）
-QueueItem
-enum TxKind { RawEth = 0, ICSynthetic = 1 }
-
-struct QueuedTx {
-  tx_id: [u8; 32],
-  kind: TxKind,
-  seq: u64,          // enqueue order (monotonic)
-  // optional minimal payload reference:
-  // raw bytes / synthetic payload can be stored elsewhere if needed.
-}
-
-stable maps
-
-queue_by_seq: StableBTreeMap<u64, QueuedTx>
-
-key = seq
-
-queue_head_seq: u64 / queue_tail_seq: u64 は StableStateV1 に持つか、next_queue_seq から導く
-
-実装は「head を別に持つ」のが楽（popがO(1)）
-
-ポイント
-
-“キュー本体”は seq で並ぶ。limit/offset も cursor_seq もやりやすい。
-
-2.3 tx_index（pending可視化のための最小索引）
-enum TxLocV1 {
-  Queued { seq: u64 },
-  Included { block_number: u64, tx_index: u32 },
-  Dropped { code: u16 }, // optional but recommended
-}
-
-
-tx_loc: StableBTreeMap<[u8;32], TxLocV1>
-
-ルール
-
-submit した瞬間に tx_loc[tx_id] = Queued{seq}
-
-ブロックに入れた瞬間に Included{...} に更新
-
-キューから捨てたら Dropped{...}（OOM/invalidなど）
-
-2.4 Blocks（ブロックヘッダ + tx_id列）
-BlockHeaderV1（最小）
-struct BlockHeaderV1 {
-  number: u64,
-  parent_hash: [u8; 32],
-  block_hash: [u8; 32],
-  timestamp: u64,
-  state_root: [u8; 32],
-  tx_list_hash: [u8; 32], // keccak256(concat(tx_id...)) でもよい
-  gas_used: u64,
-}
-
-BlockBodyV1
-struct BlockBodyV1 {
-  tx_ids: Vec<[u8;32]>, // size <= max_txs_per_block
-}
-
-stable maps
-
-blocks_header: StableBTreeMap<u64, BlockHeaderV1>
-
-blocks_body: StableBTreeMap<u64, BlockBodyV1>
-
-ヘッダとボディを分けると、ヘッダだけ読む用途（Phase2 RPC）で軽くなる。
-
-2.5 Receipts（logs保存：索引なし）
-ReceiptV1（最小互換）
-struct LogV1 {
-  address: [u8; 20],
-  topics: Vec<[u8; 32]>,
-  data: Vec<u8>,
-}
-
-struct ReceiptV1 {
-  tx_id: [u8; 32],
-  block_number: u64,
-  tx_index: u32,
-  status: u8,                 // 1 or 0
-  gas_used: u64,
-  cumulative_gas_used: u64,   // optionalだが互換が上がる
-  return_data: Vec<u8>,       // revert含む raw bytes
-  contract_address: Option<[u8;20]>,
-  logs: Vec<LogV1>,
-}
-
-stable map
-
-receipts: StableBTreeMap<[u8;32], ReceiptV1>
-
-索引なしポリシーでも、
-
-block -> tx_ids -> receipts[tx_id]
-で全部取れる。
-
-2.6 実行State（EVM state DB）
-
-ここはあなたの REVM fork 側の設計に依存するけど、stable schema としては “stateのコミットを別領域” にするのが重要。
-
-最小の逃げ道：
-
-state_snapshot_root_by_block: StableBTreeMap<u64, [u8;32]>
-
-state_root と一致させる（ヘッダにも入ってるが別に持つのは将来用）
-
-実際のKV（accounts/storage）は Phase1のStateDB設計で決めるとして、ブロック単位コミット境界が stable に残ることだけ保証する。
-
-3) ハッシュ類の定義（仕様として固定）
-
-raw tx_id：keccak256(raw_tx_bytes)
-
-tx_list_hash：keccak256( concat(tx_id_0 || tx_id_1 || ... ) )
-
-block_hash：Phase1は簡略でもいいが、後で互換を取りたければ
-
-block_hash = keccak256( encode(header fields in a fixed canonical encoding) )
-
-ここで encoding は「自作の固定バイト列」でも良い（RLP互換を狙わないなら）
-
-state_root：StateDBのコミット結果（REVM forkで決定的に）
-
-Phase2でeth互換ヘッダhashに寄せたくなった時のために、block_hash の “計算方式version” をヘッダに1byte入れてもいい。
-
-4) Upgrade（壊れないための最低条件）
-
-ルートは StableState = enum { V1(StableStateV1), V2(...) } みたいにバージョン付き
-
-post_upgrade で is_producing=false に強制リセット（安全側）
-
-追加フィールドは “末尾に足す” or “V2を作る” のどちらかに固定
-
-5) これで実現できるAPI（即）
-
-submit_raw_tx(raw) -> tx_id
-
-submit_ic_tx(payload) -> tx_id
-
-get_pending(tx_id) -> TxLocV1 or Unknown
-
-get_queue_snapshot(limit, cursor_seq) -> items + next_cursor
-
-get_block_by_number(n) -> header + tx_ids
-
-get_receipt(tx_id) -> ReceiptV1
-
-Phase2のRPCはただの翻訳機になる。

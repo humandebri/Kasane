@@ -26,7 +26,7 @@ export default async function HomePage({
   return (
     <>
       <section className="grid gap-4">
-        <Card className="fade-in border-slate-200 bg-white shadow-sm">
+        <Card className="fade-in gap-4 border-slate-200 bg-white py-4 shadow-sm">
           <CardHeader className="space-y-2">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <CardTitle className="text-xl tracking-tight">Kasane Testnet Explorer</CardTitle>
@@ -43,7 +43,6 @@ export default async function HomePage({
                 </Link>
               </div>
             </div>
-            <p className="text-sm text-slate-600">Search + Monitoring</p>
           </CardHeader>
           <CardContent className="space-y-4">
             <form action="/search" className="flex flex-col gap-2 md:flex-row">
@@ -81,7 +80,7 @@ export default async function HomePage({
       </section>
 
       <section className="grid gap-4 xl:grid-cols-5">
-        <Card className="fade-in border-slate-200 bg-white shadow-sm xl:col-span-2">
+        <Card className="fade-in gap-4 border-slate-200 bg-white py-4 shadow-sm xl:col-span-2">
           <CardHeader className="flex flex-row items-center justify-between gap-3">
             <CardTitle>Latest Blocks</CardTitle>
             <Link href="/blocks" className="text-sm text-sky-700 hover:underline">
@@ -116,7 +115,7 @@ export default async function HomePage({
           </CardContent>
         </Card>
 
-        <Card className="fade-in border-slate-200 bg-white shadow-sm xl:col-span-3">
+        <Card className="fade-in gap-4 border-slate-200 bg-white py-4 shadow-sm xl:col-span-3">
           <CardHeader className="flex flex-row items-center justify-between gap-3">
             <CardTitle>Latest Transactions</CardTitle>
             <Link href="/txs" className="text-sm text-sky-700 hover:underline">

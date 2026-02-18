@@ -163,6 +163,7 @@ pub struct BlobStore {
     arena_end: StableCell<u64, VMem>,
     alloc_table: StableBTreeMap<AllocKey, AllocEntry, VMem>,
     free_list_by_class: StableBTreeMap<AllocKey, (), VMem>,
+    usage_totals: BlobUsageStats,
 }
 
 impl BlobStore {
@@ -172,11 +173,13 @@ impl BlobStore {
         alloc_table: StableBTreeMap<AllocKey, AllocEntry, VMem>,
         free_list_by_class: StableBTreeMap<AllocKey, (), VMem>,
     ) -> Self {
+        let usage_totals = scan_usage_totals(&alloc_table, *arena_end.get());
         Self {
             arena,
             arena_end,
             alloc_table,
             free_list_by_class,
+            usage_totals,
         }
     }
 
@@ -196,6 +199,14 @@ impl BlobStore {
                 entry.gen = entry.gen.checked_add(1).ok_or(BlobError::Overflow)?;
                 entry.state = BlobState::Used;
                 self.alloc_table.insert(key, entry);
+                self.usage_totals.free_class_bytes = self
+                    .usage_totals
+                    .free_class_bytes
+                    .saturating_sub(class_u64(class));
+                self.usage_totals.used_class_bytes = self
+                    .usage_totals
+                    .used_class_bytes
+                    .saturating_add(class_u64(class));
                 value
             }
             None => {
@@ -210,6 +221,11 @@ impl BlobStore {
                     state: BlobState::Used,
                 };
                 self.alloc_table.insert(key, entry);
+                self.usage_totals.used_class_bytes = self
+                    .usage_totals
+                    .used_class_bytes
+                    .saturating_add(class_u64);
+                self.usage_totals.arena_end_bytes = end;
                 current
             }
         };
@@ -288,6 +304,14 @@ impl BlobStore {
         }
         entry.state = BlobState::Quarantine;
         self.alloc_table.insert(key, entry);
+        self.usage_totals.used_class_bytes = self
+            .usage_totals
+            .used_class_bytes
+            .saturating_sub(class_u64(ptr.class()));
+        self.usage_totals.quarantine_class_bytes = self
+            .usage_totals
+            .quarantine_class_bytes
+            .saturating_add(class_u64(ptr.class()));
         Ok(())
     }
 
@@ -312,6 +336,14 @@ impl BlobStore {
         entry.state = BlobState::Free;
         self.alloc_table.insert(key, entry);
         self.free_list_by_class.insert(key, ());
+        self.usage_totals.quarantine_class_bytes = self
+            .usage_totals
+            .quarantine_class_bytes
+            .saturating_sub(class_u64(ptr.class()));
+        self.usage_totals.free_class_bytes = self
+            .usage_totals
+            .free_class_bytes
+            .saturating_add(class_u64(ptr.class()));
         Ok(())
     }
 
@@ -333,35 +365,34 @@ impl BlobStore {
         if entry.state != BlobState::Quarantine && entry.state != BlobState::Used {
             return Err(BlobError::InvalidState);
         }
+        match entry.state {
+            BlobState::Used => {
+                self.usage_totals.used_class_bytes = self
+                    .usage_totals
+                    .used_class_bytes
+                    .saturating_sub(class_u64(ptr.class()));
+            }
+            BlobState::Quarantine => {
+                self.usage_totals.quarantine_class_bytes = self
+                    .usage_totals
+                    .quarantine_class_bytes
+                    .saturating_sub(class_u64(ptr.class()));
+            }
+            BlobState::Free => {}
+        }
         entry.state = BlobState::Free;
         self.alloc_table.insert(key, entry);
+        self.usage_totals.free_class_bytes = self
+            .usage_totals
+            .free_class_bytes
+            .saturating_add(class_u64(ptr.class()));
         Ok(())
     }
 
     pub fn usage_stats(&self) -> BlobUsageStats {
-        let mut used_class_bytes = 0u64;
-        let mut quarantine_class_bytes = 0u64;
-        let mut free_class_bytes = 0u64;
-        for entry in self.alloc_table.range(..) {
-            let class_bytes = u64::from(entry.key().class());
-            match entry.value().state {
-                BlobState::Used => {
-                    used_class_bytes = used_class_bytes.saturating_add(class_bytes);
-                }
-                BlobState::Quarantine => {
-                    quarantine_class_bytes = quarantine_class_bytes.saturating_add(class_bytes);
-                }
-                BlobState::Free => {
-                    free_class_bytes = free_class_bytes.saturating_add(class_bytes);
-                }
-            }
-        }
-        BlobUsageStats {
-            used_class_bytes,
-            quarantine_class_bytes,
-            free_class_bytes,
-            arena_end_bytes: *self.arena_end.get(),
-        }
+        let mut stats = self.usage_totals;
+        stats.arena_end_bytes = *self.arena_end.get();
+        stats
     }
 
     fn pop_free(&mut self, class: u32) -> Option<u64> {
@@ -410,4 +441,36 @@ fn pages_required(end_offset: u64) -> Result<u64, BlobError> {
     let add = WASM_PAGE_SIZE.checked_sub(1).ok_or(BlobError::Overflow)?;
     let sum = end_offset.checked_add(add).ok_or(BlobError::Overflow)?;
     Ok(sum / WASM_PAGE_SIZE)
+}
+
+fn class_u64(class: u32) -> u64 {
+    u64::from(class)
+}
+
+fn scan_usage_totals(
+    alloc_table: &StableBTreeMap<AllocKey, AllocEntry, VMem>,
+    arena_end_bytes: u64,
+) -> BlobUsageStats {
+    let mut stats = BlobUsageStats {
+        used_class_bytes: 0,
+        quarantine_class_bytes: 0,
+        free_class_bytes: 0,
+        arena_end_bytes,
+    };
+    for entry in alloc_table.range(..) {
+        let class_bytes = class_u64(entry.key().class());
+        match entry.value().state {
+            BlobState::Used => {
+                stats.used_class_bytes = stats.used_class_bytes.saturating_add(class_bytes);
+            }
+            BlobState::Quarantine => {
+                stats.quarantine_class_bytes =
+                    stats.quarantine_class_bytes.saturating_add(class_bytes);
+            }
+            BlobState::Free => {
+                stats.free_class_bytes = stats.free_class_bytes.saturating_add(class_bytes);
+            }
+        }
+    }
+    stats
 }

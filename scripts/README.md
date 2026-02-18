@@ -4,7 +4,7 @@
 迷ったらまずこの順で実行してください。
 
 ## 前提
-- 実行ディレクトリ: リポジトリルート（`IC-OP/`）
+- 実行ディレクトリ: リポジトリルート（`Kasane/`）
 - 主な依存: `cargo`, `dfx`, `icp`, `node`, `npm`, `python`
 - query 呼び出しは `dfx canister call --query ...` を使う
 
@@ -52,6 +52,8 @@ scripts/query_smoke.sh
 - `scripts/mainnet/ic_mainnet_deploy.sh`: 本番デプロイ本体
 - `scripts/mainnet/ic_mainnet_post_upgrade_smoke.sh`: デプロイ後の最小RPC確認
 - `scripts/mainnet/mainnet_method_test.sh`: 本番メソッド検証（重い）
+  - `MINING_IDLE_OBSERVE_SEC`: 冒頭の idle 観測秒数（既定: `6`）
+  - `IDLE_MAX_CYCLE_DELTA`: idle 観測で許容する cycle 減少上限。`0` で閾値チェック無効（既定: `0`）
 
 ### prune運用
 - `scripts/ops/apply_prune_policy.sh`: policy適用 + pruning有効化 + status確認

@@ -15,7 +15,7 @@ cp .env.example .env.local
 `eth_sendRawTransaction` など update call を使う場合は、署名用identityのPEMも設定してください。
 
 ```env
-RPC_GATEWAY_IDENTITY_PEM_PATH=/opt/ic-op/secrets/rpc-gateway-identity.pem
+RPC_GATEWAY_IDENTITY_PEM_PATH=/opt/kasane/secrets/rpc-gateway-identity.pem
 ```
 
 対応PEM形式は `secp256k1` と `ed25519(PKCS#8)` です。`icp identity export` が出力する鍵種が `ec` の場合は使えないため、Gateway専用に `secp256k1` 鍵を作成してください。

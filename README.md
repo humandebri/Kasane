@@ -11,7 +11,7 @@
 | 項目 | 値 |
 | --- | --- |
 | 環境名 | testnet（現行運用名） |
-| ネットワーク | `ic` |
+| ネットワーク | `kasane` |
 | Canister ID | `4c52m-aiaaa-aaaam-agwwa-cai` |
 | Chain ID | `4801360` |
 | RPC URL | `https://rpc-testnet.kasane.network` |
