@@ -22,6 +22,7 @@ export type TxIndexInfo = {
   callerPrincipal: Buffer | null;
   fromAddress: Buffer;
   toAddress: Buffer | null;
+  txSelector: Buffer | null;
 };
 
 export type { DecodedReceiptsInfo, Erc20TransferInfo, ReceiptStatusInfo };
@@ -123,7 +124,7 @@ export function decodeTxIndexPayload(payload: Uint8Array): TxIndexInfo[] {
       throw new Error("tx_index entry size mismatch: to_len must be 0 or 20");
     }
     const expectedLen = expectedLenBase + toLen;
-    if (len !== expectedLen) {
+    if (len < expectedLen + 1) {
       throw new Error("tx_index entry size mismatch: entry_len does not match to_len");
     }
     if (data.length - offset < toLen) {
@@ -131,6 +132,23 @@ export function decodeTxIndexPayload(payload: Uint8Array): TxIndexInfo[] {
     }
     const toAddress = toLen === 0 ? null : Buffer.from(data.subarray(offset, offset + toLen));
     offset += toLen;
+    const extraLen = len - expectedLen;
+    const selectorLen = data.readUInt8(offset);
+    offset += 1;
+    if (selectorLen !== 0 && selectorLen !== 4) {
+      throw new Error("tx_index entry size mismatch: selector_len must be 0 or 4");
+    }
+    if (extraLen !== 1 + selectorLen) {
+      throw new Error("tx_index entry size mismatch: selector length mismatch");
+    }
+    let txSelector: Buffer | null = null;
+    if (selectorLen > 0) {
+      if (data.length - offset < selectorLen) {
+        throw new Error("tx_index entry size mismatch: selector bytes missing");
+      }
+      txSelector = Buffer.from(data.subarray(offset, offset + selectorLen));
+      offset += selectorLen;
+    }
     out.push({
       txHash: Buffer.from(txHash),
       blockNumber,
@@ -138,6 +156,7 @@ export function decodeTxIndexPayload(payload: Uint8Array): TxIndexInfo[] {
       callerPrincipal,
       fromAddress,
       toAddress,
+      txSelector,
     });
   }
   return out;

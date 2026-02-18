@@ -12,7 +12,7 @@
 - prune既定値（runtime defaults）:
   - `DEFAULT_PRUNE_TIMER_INTERVAL_MS = 3_600_000`（1h）
   - `DEFAULT_PRUNE_MAX_OPS_PER_TICK = 5_000`
-  - 入力ガード: `MIN_PRUNE_TIMER_INTERVAL_MS = 1_000`, `MIN_PRUNE_MAX_OPS_PER_TICK = 1`
+  - 入力ガード: `MIN_PRUNE_MAX_OPS_PER_TICK = 1`
 - 補足:
   - pruning は外部ACKに依存しない（canister単独で進行）
 

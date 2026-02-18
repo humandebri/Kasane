@@ -94,12 +94,13 @@ npm run dev
 
 segment `2` の各エントリは以下の固定順序:
 
-`[tx_hash:32][entry_len:4][block_number:8][tx_index:4][caller_principal_len:2][caller_principal:caller_principal_len][from:20][to_len:1][to:to_len]`
+`[tx_hash:32][entry_len:4][block_number:8][tx_index:4][caller_principal_len:2][caller_principal:caller_principal_len][from:20][to_len:1][to:to_len][selector_len:1][selector:selector_len]`
 
 - すべて Big Endian
-- `entry_len = 12 + 2 + caller_principal_len + 20 + 1 + to_len`
+- `entry_len = 12 + 2 + caller_principal_len + 20 + 1 + to_len (+ 1 + selector_len)`
 - `to_len` は `0`（contract creation）または `20` のみ許可
-- 後方互換モードは持たない（旧形式は不正として reject）
+- `selector_len` は `0` または `4` のみ許可（必須）
+- 旧形式（selector_len未付与）は reject
 - `caller_principal_len=0` の場合は principal なしとして扱う
 
 ## マイグレーション（Postgres）
@@ -115,4 +116,6 @@ tools/indexer/migrations/
   005_add_receipt_status_and_ops_metrics.sql
   006_add_token_transfers.sql
   007_add_ops_metrics_cycles.sql
+  008_add_blocks_gas_used.sql
+  009_add_txs_selector.sql
 ```

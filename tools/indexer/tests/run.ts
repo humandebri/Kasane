@@ -85,7 +85,7 @@ test("tx_index payload decodes caller principal", () => {
   const principal = Buffer.from([1, 2, 3, 4]);
   const fromAddress = Buffer.alloc(20, 0x11);
   const toAddress = Buffer.alloc(20, 0x22);
-  const body = Buffer.alloc(12 + 2 + principal.length + 20 + 1 + toAddress.length);
+  const body = Buffer.alloc(12 + 2 + principal.length + 20 + 1 + toAddress.length + 1);
   body.writeUInt32BE(0, 0);
   body.writeUInt32BE(7, 4);
   body.writeUInt32BE(3, 8);
@@ -94,6 +94,7 @@ test("tx_index payload decodes caller principal", () => {
   fromAddress.copy(body, 14 + principal.length);
   body.writeUInt8(toAddress.length, 14 + principal.length + fromAddress.length);
   toAddress.copy(body, 14 + principal.length + fromAddress.length + 1);
+  body.writeUInt8(0, 14 + principal.length + fromAddress.length + 1 + toAddress.length);
   const len = Buffer.alloc(4);
   len.writeUInt32BE(body.length, 0);
   const payload = Buffer.concat([txHash, len, body]);
@@ -104,6 +105,35 @@ test("tx_index payload decodes caller principal", () => {
   assert.equal(out[0]?.callerPrincipal?.toString("hex"), principal.toString("hex"));
   assert.equal(out[0]?.fromAddress.toString("hex"), fromAddress.toString("hex"));
   assert.equal(out[0]?.toAddress?.toString("hex"), toAddress.toString("hex"));
+  assert.equal(out[0]?.txSelector, null);
+});
+
+test("tx_index payload rejects missing selector_len in legacy body", () => {
+  const txHash = Buffer.alloc(32, 0xce);
+  const principal = Buffer.alloc(0);
+  const fromAddress = Buffer.alloc(20, 0x11);
+  const toAddress = Buffer.alloc(20, 0x22);
+  const body = Buffer.alloc(12 + 2 + principal.length + 20 + 1 + toAddress.length);
+  body.writeUInt32BE(0, 0);
+  body.writeUInt32BE(7, 4);
+  body.writeUInt32BE(3, 8);
+  body.writeUInt16BE(principal.length, 12);
+  fromAddress.copy(body, 14 + principal.length);
+  body.writeUInt8(toAddress.length, 14 + principal.length + fromAddress.length);
+  toAddress.copy(body, 14 + principal.length + fromAddress.length + 1);
+  const len = Buffer.alloc(4);
+  len.writeUInt32BE(body.length, 0);
+  const payload = Buffer.concat([txHash, len, body]);
+  assert.throws(() => decodeTxIndexPayload(payload), /entry_len does not match to_len/);
+});
+
+test("tx_index payload decodes selector when present", () => {
+  const txHash = Buffer.alloc(32, 0xcd);
+  const selector = Buffer.from("a9059cbb", "hex");
+  const payload = buildTxIndexPayload(7n, txHash, 3, selector);
+  const out = decodeTxIndexPayload(payload);
+  assert.equal(out.length, 1);
+  assert.equal(out[0]?.txSelector?.toString("hex"), selector.toString("hex"));
 });
 
 test("receipts payload decodes status", () => {
@@ -1544,7 +1574,7 @@ test("archiveBlock reuses existing file", async () => {
 test("db upsert and metrics aggregation", async () => {
   const db = await createTestIndexerDb();
   try {
-    await db.upsertBlock({ number: 10n, hash: Buffer.alloc(32, 1), timestamp: 123n, tx_count: 1 });
+    await db.upsertBlock({ number: 10n, hash: Buffer.alloc(32, 1), timestamp: 123n, tx_count: 1, gas_used: 0n });
     await db.upsertTx({
       tx_hash: Buffer.alloc(32, 2),
       block_number: 10n,
@@ -1552,6 +1582,7 @@ test("db upsert and metrics aggregation", async () => {
       caller_principal: null,
       from_address: Buffer.alloc(20, 0x01),
       to_address: Buffer.alloc(20, 0x02),
+      tx_selector: null,
       receipt_status: 1,
     });
     await db.setCursor({ block_number: 11n, segment: 0, byte_offset: 0 });
@@ -1650,8 +1681,8 @@ test("retention cleanup dry-run and delete follow 90-day boundary", async () => 
     const oldDay = Number(formatDay(nowSec - 91 * 24 * 60 * 60));
     const freshDay = Number(formatDay(nowSec - 10 * 24 * 60 * 60));
 
-    await db.upsertBlock({ number: 1n, hash: Buffer.alloc(32, 1), timestamp: oldSec, tx_count: 1 });
-    await db.upsertBlock({ number: 2n, hash: Buffer.alloc(32, 2), timestamp: freshSec, tx_count: 1 });
+    await db.upsertBlock({ number: 1n, hash: Buffer.alloc(32, 1), timestamp: oldSec, tx_count: 1, gas_used: 0n });
+    await db.upsertBlock({ number: 2n, hash: Buffer.alloc(32, 2), timestamp: freshSec, tx_count: 1, gas_used: 0n });
     await db.upsertTx({
       tx_hash: Buffer.alloc(32, 11),
       block_number: 1n,
@@ -1659,6 +1690,7 @@ test("retention cleanup dry-run and delete follow 90-day boundary", async () => 
       caller_principal: null,
       from_address: Buffer.alloc(20, 0x11),
       to_address: Buffer.alloc(20, 0x21),
+      tx_selector: null,
       receipt_status: 1,
     });
     await db.upsertTx({
@@ -1668,6 +1700,7 @@ test("retention cleanup dry-run and delete follow 90-day boundary", async () => 
       caller_principal: null,
       from_address: Buffer.alloc(20, 0x12),
       to_address: Buffer.alloc(20, 0x22),
+      tx_selector: null,
       receipt_status: 0,
     });
     await db.addArchive({ blockNumber: 1n, path: "1.bundle.zst", sha256: Buffer.alloc(32, 3), sizeBytes: 10, rawBytes: 10, createdAt: Number(oldSec) * 1000 });
@@ -1718,6 +1751,7 @@ async function createTestIndexerDb(): Promise<IndexerDb> {
   const pool = new adapter.Pool();
   const db = await IndexerDb.fromPool(pool, { migrations: MIGRATIONS.slice(0, 1) });
   await db.queryOne("alter table if exists blocks add column if not exists gas_used bigint");
+  await db.queryOne("alter table if exists txs add column if not exists tx_selector bytea");
   await db.queryOne("alter table if exists ops_metrics_samples add column if not exists cycles bigint not null default 0");
   await db.queryOne(
     "create table if not exists retention_runs(" +
@@ -1845,17 +1879,22 @@ function buildRawLog(params: { tokenAddress: Buffer; topics: Buffer[]; data: Buf
   return Buffer.concat([params.tokenAddress, topicsLen, ...params.topics, dataLen, params.data]);
 }
 
-function buildTxIndexPayload(blockNumber: bigint, txHash: Buffer, txIndex = 0): Buffer {
+function buildTxIndexPayload(blockNumber: bigint, txHash: Buffer, txIndex = 0, selector: Buffer | null = null): Buffer {
   const fromAddress = Buffer.alloc(20, 0x11);
   const toAddress = Buffer.alloc(20, 0x22);
   const principalLen = 0;
-  const body = Buffer.alloc(12 + 2 + principalLen + fromAddress.length + 1 + toAddress.length);
+  const selectorLen = selector ? selector.length : 0;
+  const body = Buffer.alloc(12 + 2 + principalLen + fromAddress.length + 1 + toAddress.length + 1 + selectorLen);
   body.writeBigUInt64BE(blockNumber, 0);
   body.writeUInt32BE(txIndex, 8);
   body.writeUInt16BE(principalLen, 12);
   fromAddress.copy(body, 14);
   body.writeUInt8(toAddress.length, 14 + fromAddress.length);
   toAddress.copy(body, 14 + fromAddress.length + 1);
+  body.writeUInt8(selectorLen, 14 + fromAddress.length + 1 + toAddress.length);
+  if (selector) {
+    selector.copy(body, 14 + fromAddress.length + 1 + toAddress.length + 1);
+  }
   const entryLen = Buffer.alloc(4);
   entryLen.writeUInt32BE(body.length, 0);
   return Buffer.concat([txHash, entryLen, body]);

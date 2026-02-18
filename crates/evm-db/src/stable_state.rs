@@ -121,9 +121,9 @@ pub fn init_stable_state() {
     let queue = StableBTreeMap::init(get_memory(AppMemoryId::Queue));
     let seen_tx = StableBTreeMap::init(get_memory(AppMemoryId::SeenTx));
     let tx_store = StableBTreeMap::init(get_memory(AppMemoryId::TxStore));
-    let tx_index = StableBTreeMap::init(get_memory(AppMemoryId::TxIndexPtr));
-    let receipts = StableBTreeMap::init(get_memory(AppMemoryId::ReceiptsPtr));
-    let blocks = StableBTreeMap::init(get_memory(AppMemoryId::BlocksPtr));
+    let tx_index = StableBTreeMap::init(get_memory(AppMemoryId::TxIndex));
+    let receipts = StableBTreeMap::init(get_memory(AppMemoryId::Receipts));
+    let blocks = StableBTreeMap::init(get_memory(AppMemoryId::Blocks));
     let blob_store = BlobStore::new(
         get_memory(AppMemoryId::BlobArena),
         StableCell::init(get_memory(AppMemoryId::BlobArenaMeta), 0u64),
@@ -149,11 +149,11 @@ pub fn init_stable_state() {
     let ops_config = StableCell::init(get_memory(AppMemoryId::OpsConfig), OpsConfigV1::new());
     let ops_state = StableCell::init(get_memory(AppMemoryId::OpsState), OpsStateV1::new());
     let ops_metrics = StableCell::init(get_memory(AppMemoryId::OpsMetrics), OpsMetricsV1::new());
-    let log_config = StableCell::init(get_memory(AppMemoryId::Reserved37), LogConfigV1::new());
+    let log_config = StableCell::init(get_memory(AppMemoryId::LogConfig), LogConfigV1::new());
     let prune_journal = StableBTreeMap::init(get_memory(AppMemoryId::PruneJournal));
     let caller_nonces = StableBTreeMap::init(get_memory(AppMemoryId::CallerNonces));
     let tx_locs = StableBTreeMap::init(get_memory(AppMemoryId::TxLocs));
-    let tx_locs_v3 = StableBTreeMap::init(get_memory(AppMemoryId::Reserved40));
+    let tx_locs_v3 = StableBTreeMap::init(get_memory(AppMemoryId::TxLocsV3));
     let ready_queue = StableBTreeMap::init(get_memory(AppMemoryId::ReadyQueue));
     let ready_key_by_tx_id = StableBTreeMap::init(get_memory(AppMemoryId::ReadyKeyByTxId));
     let pending_by_sender_nonce =

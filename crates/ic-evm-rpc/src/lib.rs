@@ -370,10 +370,9 @@ fn chain_submit_error_to_code(err: &chain::ChainError) -> Option<(TxApiErrorKind
         chain::ChainError::DecodeFailed => {
             Some((TxApiErrorKind::InvalidArgument, CODE_ARG_DECODE_FAILED))
         }
-        chain::ChainError::AddressDerivationFailed => Some((
-            TxApiErrorKind::InvalidArgument,
-            CODE_ARG_DERIVATION_FAILED,
-        )),
+        chain::ChainError::AddressDerivationFailed => {
+            Some((TxApiErrorKind::InvalidArgument, CODE_ARG_DERIVATION_FAILED))
+        }
         chain::ChainError::UnsupportedTxKind => Some((
             TxApiErrorKind::InvalidArgument,
             CODE_ARG_UNSUPPORTED_TX_KIND,

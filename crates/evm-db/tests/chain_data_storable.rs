@@ -408,7 +408,7 @@ fn chain_state_roundtrip() {
     let mut state = ChainStateV1::new(4_801_360);
     state.last_block_number = 10;
     state.last_block_time = 11;
-    state.auto_mine_enabled = true;
+    state.auto_production_enabled = true;
     state.is_producing = true;
     state.mining_scheduled = false;
     state.next_queue_seq = 12;
@@ -426,7 +426,7 @@ fn chain_state_roundtrip() {
 #[test]
 fn chain_state_default_fees_follow_runtime_defaults() {
     let state = ChainStateV1::new(4_801_360);
-    assert!(!state.auto_mine_enabled);
+    assert!(state.auto_production_enabled);
     assert_eq!(state.min_gas_price, DEFAULT_MIN_GAS_PRICE);
     assert_eq!(state.min_priority_fee, DEFAULT_MIN_PRIORITY_FEE);
     assert_eq!(state.block_gas_limit, DEFAULT_BLOCK_GAS_LIMIT);

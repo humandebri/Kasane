@@ -23,7 +23,7 @@ benches:
   produce_block_path:
     total:
       calls: 1
-      instructions: 4262
+      instructions: 4255
       heap_increase: 0
       stable_memory_increase: 0
     scopes: {}
@@ -37,14 +37,14 @@ benches:
   submit_ic_tx_path:
     total:
       calls: 1
-      instructions: 72634
+      instructions: 72737
       heap_increase: 0
       stable_memory_increase: 0
     scopes: {}
   submit_ic_tx_path_cold:
     total:
       calls: 1
-      instructions: 12441700
+      instructions: 12441710
       heap_increase: 0
       stable_memory_increase: 0
     scopes: {}

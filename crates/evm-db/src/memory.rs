@@ -2,9 +2,11 @@
 
 use ic_stable_structures::memory_manager::{MemoryId, MemoryManager, VirtualMemory};
 use ic_stable_structures::DefaultMemoryImpl;
+use ic_stable_structures::Memory;
 use std::cell::RefCell;
 
 pub type VMem = VirtualMemory<DefaultMemoryImpl>;
+pub const WASM_PAGE_SIZE_BYTES: u64 = 65_536;
 
 #[repr(u8)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -34,40 +36,316 @@ pub enum AppMemoryId {
     PendingMetaByTxId = 22,
     SenderExpectedNonce = 23,
     PendingCurrentBySender = 24,
-    BlocksPtr = 25,
-    ReceiptsPtr = 26,
-    TxIndexPtr = 27,
-    BlobArena = 28,
-    BlobArenaMeta = 29,
-    BlobAllocTable = 30,
-    BlobFreeList = 31,
-    PruneJournal = 32,
-    PruneConfig = 33,
-    CorruptLog = 34,
-    OpsConfig = 35,
-    OpsState = 36,
-    Reserved37 = 37,
-    Reserved38 = 38,
-    OpsMetrics = 39,
-    Reserved40 = 40,
-    Reserved41 = 41,
-    DroppedRingState = 42,
-    DroppedRing = 43,
-    StateStorageRoots = 44,
-    StateRootMeta = 45,
-    StateRootMismatch = 46,
-    StateRootMetrics = 47,
-    StateRootMigration = 48,
-    StateRootNodeDb = 49,
-    StateRootAccountLeafHash = 50,
-    StateRootGcQueue = 51,
-    StateRootGcState = 52,
-    PrincipalPendingCount = 53,
-    PendingFeeIndex = 54,
-    PendingFeeKeyByTxId = 55,
-    ReadyBySeq = 56,
-    EthTxHashIndex = 57,
+    BlobArena = 25,
+    BlobArenaMeta = 26,
+    BlobAllocTable = 27,
+    BlobFreeList = 28,
+    PruneJournal = 29,
+    PruneConfig = 30,
+    CorruptLog = 31,
+    OpsConfig = 32,
+    OpsState = 33,
+    LogConfig = 34,
+    SchemaMigrationState = 35,
+    OpsMetrics = 36,
+    TxLocsV3 = 37,
+    DroppedRingState = 38,
+    DroppedRing = 39,
+    StateStorageRoots = 40,
+    StateRootMeta = 41,
+    StateRootMismatch = 42,
+    StateRootMetrics = 43,
+    StateRootMigration = 44,
+    StateRootNodeDb = 45,
+    StateRootAccountLeafHash = 46,
+    StateRootGcQueue = 47,
+    StateRootGcState = 48,
+    PrincipalPendingCount = 49,
+    PendingFeeIndex = 50,
+    PendingFeeKeyByTxId = 51,
+    ReadyBySeq = 52,
+    EthTxHashIndex = 53,
 }
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct MemoryRegionInfo {
+    pub id: AppMemoryId,
+    pub name: &'static str,
+    pub include_in_estimate: bool,
+}
+
+const ALL_MEMORY_REGIONS: [MemoryRegionInfo; 54] = [
+    MemoryRegionInfo {
+        id: AppMemoryId::Upgrades,
+        name: "Upgrades",
+        include_in_estimate: false,
+    },
+    MemoryRegionInfo {
+        id: AppMemoryId::Meta,
+        name: "Meta",
+        include_in_estimate: false,
+    },
+    MemoryRegionInfo {
+        id: AppMemoryId::Accounts,
+        name: "Accounts",
+        include_in_estimate: true,
+    },
+    MemoryRegionInfo {
+        id: AppMemoryId::Storage,
+        name: "Storage",
+        include_in_estimate: true,
+    },
+    MemoryRegionInfo {
+        id: AppMemoryId::Codes,
+        name: "Codes",
+        include_in_estimate: true,
+    },
+    MemoryRegionInfo {
+        id: AppMemoryId::StateAux,
+        name: "StateAux",
+        include_in_estimate: true,
+    },
+    MemoryRegionInfo {
+        id: AppMemoryId::QueueMeta,
+        name: "QueueMeta",
+        include_in_estimate: true,
+    },
+    MemoryRegionInfo {
+        id: AppMemoryId::Queue,
+        name: "Queue",
+        include_in_estimate: true,
+    },
+    MemoryRegionInfo {
+        id: AppMemoryId::SeenTx,
+        name: "SeenTx",
+        include_in_estimate: true,
+    },
+    MemoryRegionInfo {
+        id: AppMemoryId::TxStore,
+        name: "TxStore",
+        include_in_estimate: true,
+    },
+    MemoryRegionInfo {
+        id: AppMemoryId::TxIndex,
+        name: "TxIndex",
+        include_in_estimate: true,
+    },
+    MemoryRegionInfo {
+        id: AppMemoryId::Receipts,
+        name: "Receipts",
+        include_in_estimate: true,
+    },
+    MemoryRegionInfo {
+        id: AppMemoryId::Blocks,
+        name: "Blocks",
+        include_in_estimate: true,
+    },
+    MemoryRegionInfo {
+        id: AppMemoryId::Head,
+        name: "Head",
+        include_in_estimate: true,
+    },
+    MemoryRegionInfo {
+        id: AppMemoryId::ChainState,
+        name: "ChainState",
+        include_in_estimate: true,
+    },
+    MemoryRegionInfo {
+        id: AppMemoryId::CallerNonces,
+        name: "CallerNonces",
+        include_in_estimate: true,
+    },
+    MemoryRegionInfo {
+        id: AppMemoryId::TxLocs,
+        name: "TxLocs",
+        include_in_estimate: true,
+    },
+    MemoryRegionInfo {
+        id: AppMemoryId::PruneState,
+        name: "PruneState",
+        include_in_estimate: true,
+    },
+    MemoryRegionInfo {
+        id: AppMemoryId::ReadyQueue,
+        name: "ReadyQueue",
+        include_in_estimate: true,
+    },
+    MemoryRegionInfo {
+        id: AppMemoryId::ReadyKeyByTxId,
+        name: "ReadyKeyByTxId",
+        include_in_estimate: true,
+    },
+    MemoryRegionInfo {
+        id: AppMemoryId::PendingBySenderNonce,
+        name: "PendingBySenderNonce",
+        include_in_estimate: true,
+    },
+    MemoryRegionInfo {
+        id: AppMemoryId::PendingMinNonce,
+        name: "PendingMinNonce",
+        include_in_estimate: true,
+    },
+    MemoryRegionInfo {
+        id: AppMemoryId::PendingMetaByTxId,
+        name: "PendingMetaByTxId",
+        include_in_estimate: true,
+    },
+    MemoryRegionInfo {
+        id: AppMemoryId::SenderExpectedNonce,
+        name: "SenderExpectedNonce",
+        include_in_estimate: true,
+    },
+    MemoryRegionInfo {
+        id: AppMemoryId::PendingCurrentBySender,
+        name: "PendingCurrentBySender",
+        include_in_estimate: true,
+    },
+    MemoryRegionInfo {
+        id: AppMemoryId::BlobArena,
+        name: "BlobArena",
+        include_in_estimate: true,
+    },
+    MemoryRegionInfo {
+        id: AppMemoryId::BlobArenaMeta,
+        name: "BlobArenaMeta",
+        include_in_estimate: true,
+    },
+    MemoryRegionInfo {
+        id: AppMemoryId::BlobAllocTable,
+        name: "BlobAllocTable",
+        include_in_estimate: true,
+    },
+    MemoryRegionInfo {
+        id: AppMemoryId::BlobFreeList,
+        name: "BlobFreeList",
+        include_in_estimate: true,
+    },
+    MemoryRegionInfo {
+        id: AppMemoryId::PruneJournal,
+        name: "PruneJournal",
+        include_in_estimate: true,
+    },
+    MemoryRegionInfo {
+        id: AppMemoryId::PruneConfig,
+        name: "PruneConfig",
+        include_in_estimate: true,
+    },
+    MemoryRegionInfo {
+        id: AppMemoryId::CorruptLog,
+        name: "CorruptLog",
+        include_in_estimate: false,
+    },
+    MemoryRegionInfo {
+        id: AppMemoryId::OpsConfig,
+        name: "OpsConfig",
+        include_in_estimate: false,
+    },
+    MemoryRegionInfo {
+        id: AppMemoryId::OpsState,
+        name: "OpsState",
+        include_in_estimate: false,
+    },
+    MemoryRegionInfo {
+        id: AppMemoryId::LogConfig,
+        name: "LogConfig",
+        include_in_estimate: false,
+    },
+    MemoryRegionInfo {
+        id: AppMemoryId::SchemaMigrationState,
+        name: "SchemaMigrationState",
+        include_in_estimate: false,
+    },
+    MemoryRegionInfo {
+        id: AppMemoryId::OpsMetrics,
+        name: "OpsMetrics",
+        include_in_estimate: false,
+    },
+    MemoryRegionInfo {
+        id: AppMemoryId::TxLocsV3,
+        name: "TxLocsV3",
+        include_in_estimate: true,
+    },
+    MemoryRegionInfo {
+        id: AppMemoryId::DroppedRingState,
+        name: "DroppedRingState",
+        include_in_estimate: true,
+    },
+    MemoryRegionInfo {
+        id: AppMemoryId::DroppedRing,
+        name: "DroppedRing",
+        include_in_estimate: true,
+    },
+    MemoryRegionInfo {
+        id: AppMemoryId::StateStorageRoots,
+        name: "StateStorageRoots",
+        include_in_estimate: true,
+    },
+    MemoryRegionInfo {
+        id: AppMemoryId::StateRootMeta,
+        name: "StateRootMeta",
+        include_in_estimate: true,
+    },
+    MemoryRegionInfo {
+        id: AppMemoryId::StateRootMismatch,
+        name: "StateRootMismatch",
+        include_in_estimate: true,
+    },
+    MemoryRegionInfo {
+        id: AppMemoryId::StateRootMetrics,
+        name: "StateRootMetrics",
+        include_in_estimate: true,
+    },
+    MemoryRegionInfo {
+        id: AppMemoryId::StateRootMigration,
+        name: "StateRootMigration",
+        include_in_estimate: true,
+    },
+    MemoryRegionInfo {
+        id: AppMemoryId::StateRootNodeDb,
+        name: "StateRootNodeDb",
+        include_in_estimate: true,
+    },
+    MemoryRegionInfo {
+        id: AppMemoryId::StateRootAccountLeafHash,
+        name: "StateRootAccountLeafHash",
+        include_in_estimate: true,
+    },
+    MemoryRegionInfo {
+        id: AppMemoryId::StateRootGcQueue,
+        name: "StateRootGcQueue",
+        include_in_estimate: true,
+    },
+    MemoryRegionInfo {
+        id: AppMemoryId::StateRootGcState,
+        name: "StateRootGcState",
+        include_in_estimate: true,
+    },
+    MemoryRegionInfo {
+        id: AppMemoryId::PrincipalPendingCount,
+        name: "PrincipalPendingCount",
+        include_in_estimate: true,
+    },
+    MemoryRegionInfo {
+        id: AppMemoryId::PendingFeeIndex,
+        name: "PendingFeeIndex",
+        include_in_estimate: true,
+    },
+    MemoryRegionInfo {
+        id: AppMemoryId::PendingFeeKeyByTxId,
+        name: "PendingFeeKeyByTxId",
+        include_in_estimate: true,
+    },
+    MemoryRegionInfo {
+        id: AppMemoryId::ReadyBySeq,
+        name: "ReadyBySeq",
+        include_in_estimate: true,
+    },
+    MemoryRegionInfo {
+        id: AppMemoryId::EthTxHashIndex,
+        name: "EthTxHashIndex",
+        include_in_estimate: true,
+    },
+];
 
 impl AppMemoryId {
     pub fn as_u8(self) -> u8 {
@@ -97,45 +375,53 @@ impl AppMemoryId {
             AppMemoryId::PendingMetaByTxId => 22,
             AppMemoryId::SenderExpectedNonce => 23,
             AppMemoryId::PendingCurrentBySender => 24,
-            AppMemoryId::BlocksPtr => 25,
-            AppMemoryId::ReceiptsPtr => 26,
-            AppMemoryId::TxIndexPtr => 27,
-            AppMemoryId::BlobArena => 28,
-            AppMemoryId::BlobArenaMeta => 29,
-            AppMemoryId::BlobAllocTable => 30,
-            AppMemoryId::BlobFreeList => 31,
-            AppMemoryId::PruneJournal => 32,
-            AppMemoryId::PruneConfig => 33,
-            AppMemoryId::CorruptLog => 34,
-            AppMemoryId::OpsConfig => 35,
-            AppMemoryId::OpsState => 36,
-            AppMemoryId::Reserved37 => 37,
-            AppMemoryId::Reserved38 => 38,
-            AppMemoryId::OpsMetrics => 39,
-            AppMemoryId::Reserved40 => 40,
-            AppMemoryId::Reserved41 => 41,
-            AppMemoryId::DroppedRingState => 42,
-            AppMemoryId::DroppedRing => 43,
-            AppMemoryId::StateStorageRoots => 44,
-            AppMemoryId::StateRootMeta => 45,
-            AppMemoryId::StateRootMismatch => 46,
-            AppMemoryId::StateRootMetrics => 47,
-            AppMemoryId::StateRootMigration => 48,
-            AppMemoryId::StateRootNodeDb => 49,
-            AppMemoryId::StateRootAccountLeafHash => 50,
-            AppMemoryId::StateRootGcQueue => 51,
-            AppMemoryId::StateRootGcState => 52,
-            AppMemoryId::PrincipalPendingCount => 53,
-            AppMemoryId::PendingFeeIndex => 54,
-            AppMemoryId::PendingFeeKeyByTxId => 55,
-            AppMemoryId::ReadyBySeq => 56,
-            AppMemoryId::EthTxHashIndex => 57,
+            AppMemoryId::BlobArena => 25,
+            AppMemoryId::BlobArenaMeta => 26,
+            AppMemoryId::BlobAllocTable => 27,
+            AppMemoryId::BlobFreeList => 28,
+            AppMemoryId::PruneJournal => 29,
+            AppMemoryId::PruneConfig => 30,
+            AppMemoryId::CorruptLog => 31,
+            AppMemoryId::OpsConfig => 32,
+            AppMemoryId::OpsState => 33,
+            AppMemoryId::LogConfig => 34,
+            AppMemoryId::SchemaMigrationState => 35,
+            AppMemoryId::OpsMetrics => 36,
+            AppMemoryId::TxLocsV3 => 37,
+            AppMemoryId::DroppedRingState => 38,
+            AppMemoryId::DroppedRing => 39,
+            AppMemoryId::StateStorageRoots => 40,
+            AppMemoryId::StateRootMeta => 41,
+            AppMemoryId::StateRootMismatch => 42,
+            AppMemoryId::StateRootMetrics => 43,
+            AppMemoryId::StateRootMigration => 44,
+            AppMemoryId::StateRootNodeDb => 45,
+            AppMemoryId::StateRootAccountLeafHash => 46,
+            AppMemoryId::StateRootGcQueue => 47,
+            AppMemoryId::StateRootGcState => 48,
+            AppMemoryId::PrincipalPendingCount => 49,
+            AppMemoryId::PendingFeeIndex => 50,
+            AppMemoryId::PendingFeeKeyByTxId => 51,
+            AppMemoryId::ReadyBySeq => 52,
+            AppMemoryId::EthTxHashIndex => 53,
         }
     }
 
     pub fn as_memory_id(self) -> MemoryId {
         MemoryId::new(self.as_u8())
     }
+}
+
+pub fn all_memory_regions() -> &'static [MemoryRegionInfo] {
+    &ALL_MEMORY_REGIONS
+}
+
+pub fn chain_data_memory_ids_for_estimate() -> Vec<AppMemoryId> {
+    all_memory_regions()
+        .iter()
+        .filter(|region| region.include_in_estimate)
+        .map(|region| region.id)
+        .collect()
 }
 
 thread_local! {
@@ -145,4 +431,8 @@ thread_local! {
 
 pub fn get_memory(id: AppMemoryId) -> VMem {
     MEMORY_MANAGER.with(|m| m.borrow().get(id.as_memory_id()))
+}
+
+pub fn memory_size_pages(id: AppMemoryId) -> u64 {
+    get_memory(id).size()
 }

@@ -4,7 +4,7 @@
 
 **timestamp / block_time は外部時計に依存させない。**
 ICPの `time()` をそのまま使うとレプリカ間決定性が揺れる可能性があるので、ブロックの timestamp は **チェーン内部状態だけ** で決める。
-現行実装は **`head.timestamp + 1`** で単調増加にしている（`produce_block` と `execute_*` 両方）。
+現行実装は **`head.timestamp + 1`** で単調増加にしている（`auto-mine` と `execute_*` 両方）。
 ---
 
 1) 自動ブロック生成（タイマー：一定間隔 + キュー非空なら実行）
@@ -30,7 +30,7 @@ submit_* が tx をキューに入れた直後に schedule_mining() を呼ぶ
 
 schedule_mining() の仕様：
 
-if auto_mine_enabled == false -> return
+if auto_production_enabled == false -> return
 
 if is_producing == true -> return
 
@@ -46,7 +46,7 @@ mining_scheduled = true
 
 mining_scheduled = false（最初に落とす）
 
-if auto_mine_enabled == false -> return
+if auto_production_enabled == false -> return
 
 if is_producing == true -> return
 
@@ -54,7 +54,7 @@ if queue_len == 0 -> return
 
 is_producing = true（先に立てて再入防止）
 
-produce_block(max_txs_per_block) を実行
+自動採掘（timer）を実行
 
 is_producing = false
 
@@ -64,7 +64,7 @@ is_producing = false
 
 1.3 await と再入
 
-produce_block の内部で await を挟まないのが理想
+auto-mine の内部で await を挟まないのが理想
 
 もし跨ぐなら 状態機械化が必要（Phase1では避けるのが無難）
 
@@ -78,7 +78,7 @@ last_block_time: u64
 
 is_producing: bool
 
-auto_mine_enabled: bool
+auto_production_enabled: bool
 
 追加（イベント駆動に必要）：
 
@@ -185,7 +185,7 @@ REVMの実行結果（ExecutionResult / ResultAndState 等）から logs を収�
 
 ### 4.1 specに入れる文言（そのまま使える）
 
-* **Finality**: This chain is single-sequencer and does not support forks. A block produced by `produce_block` is final and will never be reverted (no reorg).
+* **Finality**: This chain is single-sequencer and does not support forks. A block produced by `auto-mine` is final and will never be reverted (no reorg).
 
 ### 4.2 影響を書く（短く）
 
@@ -196,7 +196,7 @@ REVMの実行結果（ExecutionResult / ResultAndState 等）から logs を収�
 
 ---
 
-## 5) produce_block の仕様をもう一段だけ固める（バグ予防）
+## 5) auto-mine の仕様をもう一段だけ固める（バグ予防）
 
 ### 5.1 失敗Txをどう扱うか
 
@@ -241,8 +241,8 @@ Phase1で揃えるならこのセットが美しい：
 
 * `submit_raw_tx(bytes) -> tx_id`
 * `submit_ic_tx(args) -> tx_id`
-* `produce_block(max_txs) -> block_number`（手動用）
-* `set_auto_mine(enabled: bool)`
+* （旧案・廃止）`手動採掘API(max_txs) -> block_number`
+* （旧案・廃止）`自動採掘のON/OFF API`
 * `get_pending(tx_id) -> ...`
 * `get_queue_snapshot(limit, cursor?) -> ...`
 * `get_block_by_number(n) -> Block { header, tx_ids, ... }`
@@ -258,4 +258,4 @@ Phase2のJSON-RPCは、結局これらの薄いラッパーになる。
 
 * **stable構造は “追記/バージョニング” 前提で設計**（upgradeで壊さない）
 * `is_producing` は upgrade 中に true のまま死ぬ可能性があるので、`post_upgrade` で false に戻す（仕様にしてよい）
-* `queue_len > 0` 判定と `pop` の間で状態が変わる可能性は、単一スレッドでも `await` があると起こる。なので `produce_block` は基本 `await` なし（または状態機械）
+* `queue_len > 0` 判定と `pop` の間で状態が変わる可能性は、単一スレッドでも `await` があると起こる。なので `auto-mine` は基本 `await` なし（または状態機械）

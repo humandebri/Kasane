@@ -1,7 +1,7 @@
 //! どこで: chain_data の実行時デフォルト / 何を: 運用調整しうる既定値を集約 / なぜ: 仕様固定値と責務分離するため
 
 // 自動ブロック生成の既定間隔（ms）
-pub const DEFAULT_MINING_INTERVAL_MS: u64 = 5_000;
+pub const DEFAULT_MINING_INTERVAL_MS: u64 = 2_000;
 
 // ガス関連の既定値（Phase1の足場）
 // block gas limit は固定運用。更新時は docs/ops/ic-wasm-workflow.md の

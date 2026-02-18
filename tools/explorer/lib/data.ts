@@ -12,6 +12,7 @@ import {
   getLatestTxsPage,
   getMaxBlockNumber,
   getMetaSnapshot,
+  getOpsMetricsSamplesSince,
   getOverviewStats,
   getRecentOpsMetricsSamples,
   getTokenTransfersByAddress,
@@ -93,10 +94,13 @@ export type OpsView = {
   lastIngestAtMs: bigint | null;
   pruneStatus: StoredPruneStatus | null;
   pruneStatusLive: PruneStatusView | null;
+  cyclesTrendSeries: OpsSeriesPoint[];
   series: OpsSeriesPoint[];
   pendingStall: boolean;
   warnings: string[];
 };
+
+export type CyclesTrendWindow = "24h" | "7d";
 
 export type PrincipalView = {
   principalText: string;
@@ -136,6 +140,9 @@ const HOME_BLOCKS_LIMIT_MAX = 500;
 const TXS_PAGE_LIMIT_DEFAULT = 50;
 const TXS_PAGE_LIMIT_MAX = 100;
 const BLOCKS_PAGE_LIMIT_MAX = 100;
+const OPS_TIMESERIES_TABLE_LIMIT = 120;
+const CYCLES_TREND_WINDOW_MS_24H = 24 * 60 * 60 * 1000;
+const CYCLES_TREND_WINDOW_MS_7D = 7 * 24 * 60 * 60 * 1000;
 
 function parsePositiveInt(rawValue: string | string[] | undefined, fallback: number): number {
   const raw = Array.isArray(rawValue) ? rawValue[0] : rawValue;
@@ -332,21 +339,30 @@ export async function getAddressView(
   };
 }
 
-export async function getOpsView(): Promise<OpsView> {
+export function parseCyclesTrendWindow(raw: string | undefined): CyclesTrendWindow {
+  return raw === "7d" ? "7d" : "24h";
+}
+
+export async function getOpsView(cyclesTrendWindow: CyclesTrendWindow = "24h"): Promise<OpsView> {
   const warnings: string[] = [];
-  const [rpcHead, dbHead, stats, meta, pruneStatusLive, samples] = await Promise.all([
+  const nowMs = Date.now();
+  const windowMs = cyclesTrendWindow === "7d" ? CYCLES_TREND_WINDOW_MS_7D : CYCLES_TREND_WINDOW_MS_24H;
+  const cyclesTrendSinceMs = BigInt(nowMs - windowMs);
+  const [rpcHead, dbHead, stats, meta, pruneStatusLive, samples, cyclesTrendSamples] = await Promise.all([
     tryRpc(() => getRpcHeadNumber(), "rpc head is unavailable", warnings),
     getMaxBlockNumber(),
     getOverviewStats(),
     getMetaSnapshot(),
     tryRpc(() => getRpcPruneStatus(), "live prune status is unavailable", warnings),
-    getRecentOpsMetricsSamples(120),
+    getRecentOpsMetricsSamples(OPS_TIMESERIES_TABLE_LIMIT),
+    getOpsMetricsSamplesSince(cyclesTrendSinceMs),
   ]);
 
   const pruneStatus = parseStoredPruneStatus(meta.pruneStatusRaw);
   const effectiveNeedPrune =
     meta.needPrune !== null ? meta.needPrune : pruneStatusLive ? pruneStatusLive.need_prune : null;
   const effectiveStoredPruneStatus = pruneStatus ?? pruneStatusFromLive(pruneStatusLive);
+  const cyclesTrendSeries = buildOpsSeries(cyclesTrendSamples);
   const series = buildOpsSeries(samples);
 
   return {
@@ -359,6 +375,7 @@ export async function getOpsView(): Promise<OpsView> {
     lastIngestAtMs: meta.lastIngestAtMs,
     pruneStatus: effectiveStoredPruneStatus,
     pruneStatusLive,
+    cyclesTrendSeries,
     series,
     pendingStall: detectPendingStall(series, 15 * 60 * 1000),
     warnings,

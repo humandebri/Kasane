@@ -142,7 +142,7 @@
 ### 原則（拘束条件）
 - `ic_cdk::trap` は「到達不能なプログラマバグ」専用にする
 - 外部入力・EVM実行結果・デコード失敗・サイズ超過・容量超過は `Result::Err` で返す
-- `produce_block` は `Err` を見て `Dropped(reason)` に遷移させ、前進を保証する
+- `auto-mine` は `Err` を見て `Dropped(reason)` に遷移させ、前進を保証する
 
 ### Txライフサイクル（状態機械）
 - `Queued -> Prepared (任意) -> Included | Dropped(reason)` を固定

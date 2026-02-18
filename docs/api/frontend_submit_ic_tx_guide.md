@@ -1,12 +1,12 @@
 # Frontend実装ガイド: ICPウォレット起点でKasane(EVM canister)を実行する
 
-このドキュメントは、`submit_ic_tx -> (必要なら) produce_block -> get_pending/get_receipt` の実装に絞って説明します。  
+このドキュメントは、`submit_ic_tx -> (必要なら) auto-mine -> get_pending/get_receipt` の実装に絞って説明します。  
 前提: canister は `4c52m-aiaaa-aaaam-agwwa-cai`、API公開は `crates/ic-evm-wrapper/evm_canister.did` に準拠。
 
 ## 1. 実行モデル（最重要）
 
 - `submit_ic_tx` は **実行ではなくキュー投入**。
-- 実行確定は `produce_block`（または auto mine 有効時のタイマー）で進む。
+- 実行確定は `auto-mine`（または auto mine 有効時のタイマー）で進む。
 - UIは最低でも次の状態を持つ。
   - `Submitting`
   - `Queued`
@@ -19,7 +19,6 @@
 - `submit_ic_tx(blob) -> Result<blob, SubmitTxError>`
 - `get_pending(blob tx_id) -> PendingStatusView`（query）
 - `get_receipt(blob tx_id) -> Result<ReceiptView, LookupError>`（query）
-- `produce_block(nat32) -> Result<ProduceBlockStatus, ProduceBlockError>`（update, 任意）
 
 補足: 匿名呼び出しは拒否されるため、ICPウォレットで認証した identity を使って update を呼びます。
 
@@ -263,7 +262,7 @@ export async function submitAndTrack(actor: {
   }) => Promise<{ Ok?: bigint; Err?: { code: number; message: string } }>;
   get_pending: (txId: Uint8Array) => Promise<unknown>;
   get_receipt: (txId: Uint8Array) => Promise<{ Ok?: unknown; Err?: unknown }>;
-  produce_block: (n: number) => Promise<{ Ok?: unknown; Err?: unknown }>;
+  auto-mine: (n: number) => Promise<{ Ok?: unknown; Err?: unknown }>;
 }, principal: Principal) {
   const preflight = await preflightIcSynthetic(actor, {
     principal,
@@ -292,8 +291,11 @@ export async function submitAndTrack(actor: {
 
   const txId = submit.Ok;
 
-  // manual mining運用の場合のみ呼ぶ。
-  await actor.produce_block(1);
+  // 自動採掘を待つ（block number を監視）
+  for (let i = 0; i < 20; i += 1) {
+    await actor.rpc_eth_block_number();
+    await new Promise((r) => setTimeout(r, 1000));
+  }
 
   for (let i = 0; i < 20; i += 1) {
     const pending = await actor.get_pending(txId);
@@ -318,7 +320,7 @@ export async function submitAndTrack(actor: {
 
 - 1回目のボタン押下で `submit_ic_tx` のみ実行し、`tx_id` を即表示。
 - 「確定を待つ」段階で `get_pending` をポーリングし、`Queued/Included/Dropped` を明示。
-- `produce_block` は運用モードで分岐。
+- `auto-mine` は運用モードで分岐。
   - auto mine ON: フロントは呼ばない。
   - auto mine OFF: 管理者UI/バックエンドworkerのみ呼ぶ。
 - `SubmitTxError.Rejected` の code はそのままUIに出さず、ユーザー向け文言に変換。
@@ -334,7 +336,7 @@ export async function submitAndTrack(actor: {
 - fee が低いと `submit.invalid_fee` で reject されるため、見積り時より高めの `max_fee_per_gas` を使う。
 - `tx_id` と `eth_tx_hash` は同一ではない。
   - IcSynthetic の追跡キーは `tx_id`。
-- `produce_block` は権限制御や運用状態で `NoOp`/`Err` になり得るため、UIで「採掘失敗」ではなく「未実行」を区別する。
+- `auto-mine` は権限制御や運用状態で `NoOp`/`Err` になり得るため、UIで「採掘失敗」ではなく「未実行」を区別する。
 
 ## 9. 参照
 

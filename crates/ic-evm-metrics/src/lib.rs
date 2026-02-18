@@ -13,7 +13,7 @@ pub struct PrometheusSnapshot {
     pub total_submitted: u64,
     pub total_included: u64,
     pub total_dropped: u64,
-    pub auto_mine_enabled: bool,
+    pub auto_production_enabled: bool,
     pub is_producing: bool,
     pub mining_scheduled: bool,
     pub mining_interval_ms: u64,
@@ -32,7 +32,7 @@ pub struct PrometheusSnapshotInput {
     pub total_submitted: u64,
     pub total_included: u64,
     pub total_dropped: u64,
-    pub auto_mine_enabled: bool,
+    pub auto_production_enabled: bool,
     pub is_producing: bool,
     pub mining_scheduled: bool,
     pub mining_interval_ms: u64,
@@ -64,7 +64,7 @@ pub fn build_prometheus_snapshot(input: PrometheusSnapshotInput) -> PrometheusSn
         total_submitted: input.total_submitted,
         total_included: input.total_included,
         total_dropped: input.total_dropped,
-        auto_mine_enabled: input.auto_mine_enabled,
+        auto_production_enabled: input.auto_production_enabled,
         is_producing: input.is_producing,
         mining_scheduled: input.mining_scheduled,
         mining_interval_ms: input.mining_interval_ms,
@@ -137,8 +137,8 @@ pub fn encode_prometheus(now_nanos: u64, snapshot: &PrometheusSnapshot) -> Resul
         .map_err(map_io)?;
     encoder
         .encode_gauge(
-            "ic_evm_auto_mine_enabled",
-            bool_to_gauge(snapshot.auto_mine_enabled),
+            "ic_evm_auto_production_enabled",
+            bool_to_gauge(snapshot.auto_production_enabled),
             "1 when auto-mining is enabled.",
         )
         .map_err(map_io)?;
@@ -242,7 +242,7 @@ mod tests {
             total_submitted: 5,
             total_included: 4,
             total_dropped: 1,
-            auto_mine_enabled: true,
+            auto_production_enabled: true,
             is_producing: false,
             mining_scheduled: true,
             mining_interval_ms: 5000,
@@ -268,7 +268,7 @@ mod tests {
             total_submitted: 1,
             total_included: 1,
             total_dropped: 1,
-            auto_mine_enabled: false,
+            auto_production_enabled: false,
             is_producing: false,
             mining_scheduled: false,
             mining_interval_ms: 1,

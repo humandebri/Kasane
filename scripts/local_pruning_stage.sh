@@ -57,6 +57,31 @@ print('; '.join(str(b) for b in raw))
 PY
 }
 
+query_head_block() {
+  local out
+  out=$(${DFX_CANISTER} call --query "${CANISTER_NAME}" rpc_eth_block_number '( )' 2>/dev/null || true)
+  python - <<PY
+import re
+text = """${out}"""
+m = re.search(r'(\d+)', text)
+print(m.group(1) if m else "0")
+PY
+}
+
+wait_for_head_advance() {
+  local start deadline
+  start="$(query_head_block)"
+  deadline=$((SECONDS + 30))
+  while [[ ${SECONDS} -lt ${deadline} ]]; do
+    if [[ "$(query_head_block)" -gt "${start}" ]]; then
+      return 0
+    fi
+    sleep 1
+  done
+  echo "[local-pruning-stage] auto-mine did not advance head in time" >&2
+  return 1
+}
+
 seed_blocks() {
   local start_nonce="$1"
   local count="$2"
@@ -68,7 +93,7 @@ seed_blocks() {
     local tx_bytes
     tx_bytes=$(hex_to_vec_bytes "${tx_hex}")
     ${DFX_CANISTER} call "${CANISTER_NAME}" submit_ic_tx "(vec { ${tx_bytes} })" >/dev/null
-    ${DFX_CANISTER} call "${CANISTER_NAME}" produce_block '(1)' >/dev/null
+    wait_for_head_advance
   done
 }
 
@@ -77,10 +102,8 @@ set_prune_policy() {
   local retain_blocks="$2"
   local retain_days="$3"
   local max_ops="$4"
-  local timer_interval_ms="${PRUNE_TIMER_INTERVAL_MS:-3600000}"
   ${DFX_CANISTER} call "${CANISTER_NAME}" set_prune_policy "(record {
     headroom_ratio_bps = 2000;
-    timer_interval_ms = ${timer_interval_ms}:nat64;
     target_bytes = ${target_bytes}:nat64;
     retain_blocks = ${retain_blocks}:nat64;
     retain_days = ${retain_days}:nat64;

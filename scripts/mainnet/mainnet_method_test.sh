@@ -34,6 +34,24 @@ HEAVY_TX_GAS_LIMIT="${HEAVY_TX_GAS_LIMIT:-1500000}"
 PRUNE_POLICY_TEST_ARGS="${PRUNE_POLICY_TEST_ARGS:-}"
 PRUNE_POLICY_RESTORE_ARGS="${PRUNE_POLICY_RESTORE_ARGS:-}"
 PRUNE_BLOCKS_ARGS="${PRUNE_BLOCKS_ARGS:-}"
+
+# 推奨サンプル（84-block prune cadence向け）:
+# PRUNE_POLICY_TEST_ARGS='(record {
+#   headroom_ratio_bps = 2000:nat32;
+#   target_bytes = 0:nat64;
+#   retain_blocks = 168:nat64;
+#   retain_days = 14:nat64;
+#   hard_emergency_ratio_bps = 9500:nat32;
+#   max_ops_per_tick = 300:nat32;
+# })'
+# PRUNE_POLICY_RESTORE_ARGS='(record {
+#   headroom_ratio_bps = 2000:nat32;
+#   target_bytes = 0:nat64;
+#   retain_blocks = 168:nat64;
+#   retain_days = 14:nat64;
+#   hard_emergency_ratio_bps = 9500:nat32;
+#   max_ops_per_tick = 300:nat32;
+# })'
 REPORT_DIR="${REPORT_DIR:-docs/ops/reports}"
 TIMESTAMP="$(date +%Y%m%d-%H%M%S)"
 REPORT_FILE="${REPORT_DIR}/mainnet-method-test-${TIMESTAMP}.md"
@@ -57,6 +75,53 @@ require_cmd() {
 
 log() {
   echo "[mainnet-test] $*"
+}
+
+query_block_number() {
+  local out
+  out="$(run_icp_query_call "rpc_eth_block_number" "( )")"
+  python - <<PY
+import re
+text = """${out}"""
+m = re.search(r'([0-9][0-9_]*)\s*:\s*(?:nat|int)\d*', text)
+if m:
+    print(m.group(1).replace('_', ''))
+else:
+    candidates = []
+    for token in re.finditer(r'(?<![0-9A-Za-z_])([0-9][0-9_]*)(?![0-9A-Za-z_])', text):
+        raw = token.group(1).replace('_', '')
+        if raw:
+            candidates.append(int(raw))
+    print(str(max(candidates)) if candidates else "0")
+PY
+}
+
+wait_for_auto_production_block() {
+  local note="${1:-auto-production settle}"
+  local timeout_sec="${2:-60}"
+  local before after delta start now
+  before="$(get_cycles)"
+  start="$(query_block_number)"
+  now=0
+  while (( now < timeout_sec )); do
+    if [[ "$(query_block_number)" -gt "${start}" ]]; then
+      break
+    fi
+    sleep 1
+    now=$((now + 1))
+  done
+  after="$(get_cycles)"
+  delta=$((before - after))
+  if (( now >= timeout_sec )); then
+    record_cycle_row "auto_production_wait" "-" "err:timeout" "${before}" "${after}" "${delta}" "${note} timeout=${timeout_sec}s"
+    record_method_row "auto_production_wait" "event" "err:timeout" "${note} start_block=${start} waited=${now}s"
+    if [[ "${RUN_STRICT}" == "1" ]]; then
+      return 124
+    fi
+    return 0
+  fi
+  record_cycle_row "auto_production_wait" "-" "ok" "${before}" "${after}" "${delta}" "${note} timeout=${timeout_sec}s"
+  record_method_row "auto_production_wait" "event" "ok" "${note} start_block=${start} waited=${now}s"
 }
 
 submit_ic_tx_with_retry_standard() {
@@ -179,7 +244,6 @@ finalize_state() {
   fi
 
   set +e
-  run_update_with_cycles "set_auto_mine" "(false)" "finalize: enforce disabled" "1" >/dev/null
   run_update_with_cycles "set_pruning_enabled" "(false)" "finalize: enforce disabled" "1" >/dev/null
   if [[ -n "${INITIAL_BLOCK_GAS_LIMIT}" ]]; then
     run_update_with_cycles "set_block_gas_limit" "(${INITIAL_BLOCK_GAS_LIMIT}:nat64)" "finalize: restore gas" "1" >/dev/null
@@ -264,7 +328,6 @@ record_method_row "query_matrix_baseline" "query" "ok=${QUERY_OK_COUNT}/${QUERY_
 INITIAL_BLOCK_GAS_LIMIT="$(node -e 'const fs=require("fs");const j=JSON.parse(fs.readFileSync(process.argv[1],"utf8"));console.log(j.get_ops_status?.block_gas_limit ?? "3000000");' "${QUERY_SUMMARY}")"
 INITIAL_INSTR_LIMIT="$(node -e 'const fs=require("fs");const j=JSON.parse(fs.readFileSync(process.argv[1],"utf8"));console.log(j.get_ops_status?.instruction_soft_limit ?? "4000000000");' "${QUERY_SUMMARY}")"
 
-run_update_with_cycles "set_auto_mine" "(false)" "baseline setup" "0" >/dev/null
 run_update_with_cycles "set_pruning_enabled" "(false)" "baseline setup" "0" >/dev/null
 
 CALLER_PRINCIPAL="$(icp identity principal --identity "${ICP_IDENTITY_NAME}")"
@@ -277,7 +340,7 @@ if candid_is_ok "${SUBMIT_OUT}" >/dev/null 2>&1; then
 elif printf '%s' "${SUBMIT_OUT}" | grep -q "submit.tx_already_seen"; then
   record_method_row "submit_ic_tx_already_seen_policy" "policy" "accepted" "nonce unchanged の場合は既存pending再利用として成功扱い"
 fi
-run_update_with_cycles "produce_block" "(1:nat32)" "write path A block production" "0" >/dev/null
+wait_for_auto_production_block "write path A block production"
 
 ETH_TX_ID_HEX=""
 TEST_ETH_PRIVKEY="${ETH_PRIVKEY}"
@@ -322,7 +385,7 @@ PY
       FUND_NONCE="$(query_nonce_for_address "${CALLER_EVM_HEX}")"
       FUND_TX_BYTES="$(generate_submit_ic_tx_bytes_custom "${FUND_NONCE}" "${TEST_ETH_SENDER_HEX}" "${FUND_AMOUNT_WEI}")"
       run_update_with_cycles "submit_ic_tx" "(vec { ${FUND_TX_BYTES} })" "auto-fund test ETH key ${TEST_ETH_SENDER_HEX}" "0" >/dev/null
-      run_update_with_cycles "produce_block" "(1:nat32)" "auto-fund block production" "0" >/dev/null
+      wait_for_auto_production_block "auto-fund block production"
       record_method_row "auto_fund_test_key" "update" "ok" "funded test sender=${TEST_ETH_SENDER_HEX} amount=${FUND_AMOUNT_WEI} caller_balance_before=${CALLER_BALANCE_WEI}"
     fi
   fi
@@ -365,11 +428,11 @@ if [[ -n "${TEST_ETH_PRIVKEY}" ]]; then
   fi
   record_method_row "raw_tx_pending_status_pre" "query" "${RAW_TX_PENDING_STATUS_PRE}" "${RAW_TX_PRE_SUMMARY}"
   if [[ "${RUN_STRICT}" == "1" && "${RAW_TX_PENDING_STATUS_PRE}" == "Dropped" ]]; then
-    echo "[mainnet-test] raw tx dropped before produce_block (drop_code=${RAW_TX_DROP_CODE_PRE:-n/a})" >&2
+    echo "[mainnet-test] raw tx dropped before auto-production (drop_code=${RAW_TX_DROP_CODE_PRE:-n/a})" >&2
     exit 1
   fi
 
-  run_update_with_cycles "produce_block" "(1:nat32)" "write path B block production" "0" >/dev/null
+  wait_for_auto_production_block "write path B block production"
   RAW_TX_PENDING_STATUS_POST="Unknown"
   RAW_TX_DROP_CODE_POST=""
   RAW_TX_DROP_LABEL_POST=""
@@ -385,7 +448,7 @@ if [[ -n "${TEST_ETH_PRIVKEY}" ]]; then
   fi
   record_method_row "raw_tx_pending_status_post" "query" "${RAW_TX_PENDING_STATUS_POST}" "${RAW_TX_POST_SUMMARY}"
   if [[ "${RUN_STRICT}" == "1" && "${RAW_TX_PENDING_STATUS_POST}" == "Dropped" ]]; then
-    echo "[mainnet-test] raw tx dropped after produce_block (drop_code=${RAW_TX_DROP_CODE_POST:-n/a})" >&2
+    echo "[mainnet-test] raw tx dropped after auto-production (drop_code=${RAW_TX_DROP_CODE_POST:-n/a})" >&2
     exit 1
   fi
 else
@@ -409,7 +472,7 @@ PY
 for limit in "${GAS_LIMITS[@]}"; do
   run_update_with_cycles "set_block_gas_limit" "(${limit}:nat64)" "gas sweep set" "0" >/dev/null
   submit_ic_tx_with_retry_standard "gas sweep submit limit=${limit}" "3"
-  run_update_with_cycles "produce_block" "(1:nat32)" "gas sweep produce limit=${limit}" "0" >/dev/null
+  wait_for_auto_production_block "gas sweep produce limit=${limit}"
 done
 run_update_with_cycles "set_block_gas_limit" "(${INITIAL_BLOCK_GAS_LIMIT}:nat64)" "gas sweep restore" "0" >/dev/null
 
@@ -460,8 +523,8 @@ PY
       fi
       HEAVY_PENDING_PRE_STATUS="${HEAVY_PENDING_PRE%%|*}"
 
-      run_update_with_cycles "produce_block" "(1:nat32)" "heavy matrix produce payload=${payload_bytes} rep=${rep}" "0" >/dev/null
-      HEAVY_PRODUCE_DELTA="${RUN_UPDATE_LAST_DELTA:-n/a}"
+      wait_for_auto_production_block "heavy matrix produce payload=${payload_bytes} rep=${rep}"
+      HEAVY_PRODUCE_DELTA="n/a"
 
       HEAVY_PENDING_POST="Unknown|"
       HEAVY_GAS_USED="n/a"

@@ -15,7 +15,8 @@ pub enum AddressDerivationError {
 const ETH_DOMAIN_SEPARATOR: &[u8] = &[0x01];
 const CHAIN_FUSION_SIGNER_CANISTER_ID: &str = "grghe-syaaa-aaaar-qabyq-cai";
 const KEY_ID_KEY_1: &str = "key_1";
-static SIGNER_CANISTER_ID_BYTES: OnceLock<Result<Vec<u8>, AddressDerivationError>> = OnceLock::new();
+static SIGNER_CANISTER_ID_BYTES: OnceLock<Result<Vec<u8>, AddressDerivationError>> =
+    OnceLock::new();
 
 pub fn derive_evm_address_from_principal(
     principal_bytes: &[u8],

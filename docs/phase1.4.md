@@ -66,7 +66,7 @@ prune は **キー削除**ではなく **Blob領域の回収（free list）**を
   block/receipt/tx_index をエンコードして byte を積算  
   `block_size_estimate[number]` をリングで保持
 * **安定メモリの増分で測る**  
-  `produce_block` 前後の stable ページ差分を観測して平均化
+  `auto-mine` 前後の stable ページ差分を観測して平均化
 
 **注意（推定誤差）**  
 ここで得られる値は **推定**であり誤差がある前提で運用する。  
@@ -96,7 +96,7 @@ Phase1.4では **自動化を薄く入れる**のが正解。理由：
 ### 3.1 追加する状態（最小）
 
 * `pruning_enabled: bool`
-* `policy: PrunePolicy { target_bytes, retain_days, retain_blocks, headroom_ratio, timer_interval, max_ops_per_tick }`
+* `policy: PrunePolicy { target_bytes, retain_days, retain_blocks, headroom_ratio, max_ops_per_tick }`
 * `high_water_bytes / low_water_bytes`（ヒステリシス用・例: 0.90 / 0.80）
 * `pruned_before_block: Option<u64>`（既存）
 * `prune_cursor: u64`（次に消すブロック）
@@ -106,8 +106,8 @@ Phase1.4では **自動化を薄く入れる**のが正解。理由：
 
 ### 3.2 自動実行の仕組み（IC的に安全）
 
-* `timer_interval` で `prune_tick()` を呼ぶ  
-* `produce_block` の中では行わない（重くて詰む）
+* block event（84 blockごと）で `prune_tick()` を呼ぶ  
+* `auto-mine` の中では行わない（重くて詰む）
 * `prune_tick()` は **1回で少しだけ**進める  
   → `prune_blocks(retain, max_ops)` を1回呼んで終了
 * `max_ops_per_tick` で 1tick の仕事量を固定（暴走防止）

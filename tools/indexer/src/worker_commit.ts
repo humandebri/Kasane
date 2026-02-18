@@ -200,7 +200,7 @@ export async function commitPending(params: {
           throw new Error(`receipt status missing after validation for tx_hash=${entry.txHash.toString("hex")}`);
         }
         await client.query(
-          "INSERT INTO txs(tx_hash, block_number, tx_index, caller_principal, from_address, to_address, receipt_status) VALUES($1, $2, $3, $4, $5, $6, $7) ON CONFLICT(tx_hash) DO UPDATE SET block_number = excluded.block_number, tx_index = excluded.tx_index, caller_principal = excluded.caller_principal, from_address = excluded.from_address, to_address = excluded.to_address, receipt_status = excluded.receipt_status",
+          "INSERT INTO txs(tx_hash, block_number, tx_index, caller_principal, from_address, to_address, tx_selector, receipt_status) VALUES($1, $2, $3, $4, $5, $6, $7, $8) ON CONFLICT(tx_hash) DO UPDATE SET block_number = excluded.block_number, tx_index = excluded.tx_index, caller_principal = excluded.caller_principal, from_address = excluded.from_address, to_address = excluded.to_address, tx_selector = excluded.tx_selector, receipt_status = excluded.receipt_status",
           [
             entry.txHash,
             entry.blockNumber,
@@ -208,6 +208,7 @@ export async function commitPending(params: {
             entry.callerPrincipal,
             entry.fromAddress,
             entry.toAddress,
+            entry.txSelector,
             receiptStatus,
           ]
         );

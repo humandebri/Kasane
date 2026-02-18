@@ -100,28 +100,6 @@ enum ProduceBlockError {
 }
 
 #[derive(Clone, Debug, CandidType, Deserialize, Eq, PartialEq)]
-enum NoOpReason {
-    NoExecutableTx,
-    CycleCritical,
-    NeedsMigration,
-}
-
-#[derive(Clone, Debug, CandidType, Deserialize, Eq, PartialEq)]
-enum ProduceBlockStatus {
-    Produced {
-        block_number: u64,
-        txs: u32,
-        gas_used: u64,
-        dropped: u32,
-    },
-    NoOp {
-        reason: NoOpReason,
-    },
-}
-
-type ProduceBlockResult = Result<ProduceBlockStatus, ProduceBlockError>;
-
-#[derive(Clone, Debug, CandidType, Deserialize, Eq, PartialEq)]
 struct PruneResultView {
     did_work: bool,
     remaining: u64,
@@ -315,18 +293,6 @@ fn rpc_get_transaction_receipt_by_eth_hash_returns_none_for_non_eth_tx() {
         }
     }
     let tx_id = tx_id.expect("submit ok");
-    let produce_bytes = call_update(
-        &pic,
-        canister_id,
-        "produce_block",
-        Encode!(&1u32).expect("encode produce"),
-    );
-    let produce: ProduceBlockResult = Decode!(&produce_bytes, ProduceBlockResult).expect("decode produce");
-    match produce.expect("produce result") {
-        ProduceBlockStatus::Produced { .. } => {}
-        ProduceBlockStatus::NoOp { reason } => panic!("unexpected no-op: {:?}", reason),
-    }
-
     let receipt_bytes = call_query(
         &pic,
         canister_id,
@@ -378,56 +344,6 @@ fn prune_blocks_requires_controller() {
 }
 
 #[test]
-fn unprivileged_produce_block_is_rejected() {
-    let pic = PocketIc::new();
-    let canister_id = install_canister(&pic);
-    let unprivileged = Principal::self_authenticating(b"unprivileged-producer");
-    let out = call_update_as(
-        &pic,
-        canister_id,
-        unprivileged,
-        "produce_block",
-        Encode!(&1u32).expect("encode produce"),
-    );
-    let result: ProduceBlockResult = Decode!(&out, ProduceBlockResult).expect("decode produce");
-    match result {
-        Ok(_) => panic!("unprivileged produce_block must be rejected"),
-        Err(ProduceBlockError::Internal(message)) => {
-            assert!(
-                message.contains("auth.controller_required")
-                    || message.contains("ops.write.needs_migration"),
-                "unexpected message: {message}"
-            );
-        }
-        Err(other) => panic!("unexpected produce error: {other:?}"),
-    }
-}
-
-#[test]
-fn unprivileged_set_auto_mine_is_rejected() {
-    let pic = PocketIc::new();
-    let canister_id = install_canister(&pic);
-    let unprivileged = Principal::self_authenticating(b"unprivileged-manager");
-    let out = call_update_as(
-        &pic,
-        canister_id,
-        unprivileged,
-        "set_auto_mine",
-        Encode!(&true).expect("encode set_auto_mine"),
-    );
-    let result: ManageWriteResult = Decode!(&out, ManageWriteResult).expect("decode set_auto_mine");
-    match result {
-        Ok(()) => panic!("unprivileged set_auto_mine must be rejected"),
-        Err(message) => {
-            assert!(
-                message.contains("auth.controller_required"),
-                "unexpected message: {message}"
-            );
-        }
-    }
-}
-
-#[test]
 #[ignore = "manual_pocket_ic_timing_sensitive"]
 fn instruction_soft_limit_blocks_inclusion_in_pending_status() {
     let pic = PocketIc::new();
@@ -455,20 +371,6 @@ fn instruction_soft_limit_blocks_inclusion_in_pending_status() {
         Ok(value) => value,
         Err(err) => panic!("submit failed: {:?}", err),
     };
-
-    let produce_out = call_update(
-        &pic,
-        canister_id,
-        "produce_block",
-        Encode!(&1u32).expect("encode produce"),
-    );
-    let produce: ProduceBlockResult = Decode!(&produce_out, ProduceBlockResult).expect("decode produce");
-    match produce.expect("produce result") {
-        ProduceBlockStatus::NoOp {
-            reason: NoOpReason::NoExecutableTx,
-        } => {}
-        other => panic!("unexpected produce status: {:?}", other),
-    }
 
     let pending_out = call_query(
         &pic,

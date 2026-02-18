@@ -2,7 +2,9 @@
 
 use alloy_primitives::keccak256;
 use evm_core::export::{export_blocks, ExportCursor, ExportError};
-use evm_db::chain_data::{BlockData, ReceiptLike, StoredTxBytes, TxId, TxIndexEntry, TxKind, TxLoc};
+use evm_db::chain_data::{
+    BlockData, ReceiptLike, StoredTxBytes, TxId, TxIndexEntry, TxKind, TxLoc,
+};
 use evm_db::stable_state::{init_stable_state, with_state_mut};
 use evm_db::Storable;
 use ic_evm_address::derive_evm_address_from_principal;
@@ -14,7 +16,9 @@ fn export_cursor_alignment_and_next_cursor() {
     let block = make_block(1, tx);
 
     with_state_mut(|state| {
-        state.tx_store.insert(tx, build_ic_synthetic_envelope(0x11, 0));
+        state
+            .tx_store
+            .insert(tx, build_ic_synthetic_envelope(0x11, 0));
         insert_block(state, 1, &block);
         insert_receipt(state, tx, 1);
         insert_tx_index(state, tx, 1);
@@ -47,7 +51,9 @@ fn export_respects_max_bytes() {
     let tx = build_ic_synthetic_tx(0x22, 0);
     let block = make_block(2, tx);
     with_state_mut(|state| {
-        state.tx_store.insert(tx, build_ic_synthetic_envelope(0x22, 0));
+        state
+            .tx_store
+            .insert(tx, build_ic_synthetic_envelope(0x22, 0));
         insert_block(state, 2, &block);
         insert_receipt(state, tx, 2);
         insert_tx_index(state, tx, 2);
@@ -73,7 +79,9 @@ fn export_pruned_and_oldest_exportable() {
     let tx = build_ic_synthetic_tx(0x33, 0);
     let block = make_block(6, tx);
     with_state_mut(|state| {
-        state.tx_store.insert(tx, build_ic_synthetic_envelope(0x33, 0));
+        state
+            .tx_store
+            .insert(tx, build_ic_synthetic_envelope(0x33, 0));
         insert_block(state, 6, &block);
         insert_receipt(state, tx, 6);
         insert_tx_index(state, tx, 6);
@@ -109,13 +117,17 @@ fn export_advances_across_blocks_when_budget_allows() {
     let block1 = make_block(1, tx1);
     let block2 = make_block(2, tx2);
     with_state_mut(|state| {
-        state.tx_store.insert(tx1, build_ic_synthetic_envelope(0x44, 0));
+        state
+            .tx_store
+            .insert(tx1, build_ic_synthetic_envelope(0x44, 0));
         insert_block(state, 1, &block1);
         insert_receipt(state, tx1, 1);
         insert_tx_index(state, tx1, 1);
         state.tx_locs.insert(tx1, TxLoc::included(1, 0));
 
-        state.tx_store.insert(tx2, build_ic_synthetic_envelope(0x55, 1));
+        state
+            .tx_store
+            .insert(tx2, build_ic_synthetic_envelope(0x55, 1));
         insert_block(state, 2, &block2);
         insert_receipt(state, tx2, 2);
         insert_tx_index(state, tx2, 2);
@@ -143,7 +155,9 @@ fn export_rejects_segment_out_of_range() {
     let tx = build_ic_synthetic_tx(0x66, 0);
     let block = make_block(1, tx);
     with_state_mut(|state| {
-        state.tx_store.insert(tx, build_ic_synthetic_envelope(0x66, 0));
+        state
+            .tx_store
+            .insert(tx, build_ic_synthetic_envelope(0x66, 0));
         insert_block(state, 1, &block);
         insert_receipt(state, tx, 1);
         insert_tx_index(state, tx, 1);
@@ -168,7 +182,9 @@ fn export_advances_on_segment_boundary() {
     let tx = build_ic_synthetic_tx(0x77, 0);
     let block = make_block(1, tx);
     with_state_mut(|state| {
-        state.tx_store.insert(tx, build_ic_synthetic_envelope(0x77, 0));
+        state
+            .tx_store
+            .insert(tx, build_ic_synthetic_envelope(0x77, 0));
         insert_block(state, 1, &block);
         insert_receipt(state, tx, 1);
         insert_tx_index(state, tx, 1);
@@ -198,7 +214,9 @@ fn export_tx_index_payload_contains_from_and_to() {
     let tx = build_ic_synthetic_tx(0x88, 9);
     let block = make_block(1, tx);
     with_state_mut(|state| {
-        state.tx_store.insert(tx, build_ic_synthetic_envelope(0x88, 9));
+        state
+            .tx_store
+            .insert(tx, build_ic_synthetic_envelope(0x88, 9));
         insert_block(state, 1, &block);
         insert_receipt(state, tx, 1);
         insert_tx_index(state, tx, 1);
@@ -222,8 +240,12 @@ fn export_tx_index_payload_contains_from_and_to() {
     assert_eq!(decoded.tx_hash, tx.0.to_vec());
     assert_eq!(decoded.block_number, 1);
     assert_eq!(decoded.tx_index, 0);
-    assert_eq!(decoded.from, derive_evm_address_from_principal(&[0x88]).expect("must derive"));
+    assert_eq!(
+        decoded.from,
+        derive_evm_address_from_principal(&[0x88]).expect("must derive")
+    );
     assert_eq!(decoded.to, Some([0x10; 20]));
+    assert_eq!(decoded.selector, None);
 }
 
 #[test]
@@ -392,7 +414,11 @@ fn build_ic_tx_bytes(to: [u8; 20], nonce: u64) -> Vec<u8> {
 
 fn collect_segment_bytes(result: &evm_core::export::ExportResponse, segment: u8) -> Vec<u8> {
     let mut out = Vec::new();
-    for chunk in result.chunks.iter().filter(|chunk| chunk.segment == segment) {
+    for chunk in result
+        .chunks
+        .iter()
+        .filter(|chunk| chunk.segment == segment)
+    {
         out.extend_from_slice(&chunk.bytes);
     }
     out
@@ -404,6 +430,7 @@ struct DecodedEntry {
     tx_index: u32,
     from: [u8; 20],
     to: Option<[u8; 20]>,
+    selector: Option<[u8; 4]>,
 }
 
 fn decode_single_tx_index_entry(payload: &[u8]) -> Result<DecodedEntry, &'static str> {
@@ -416,11 +443,23 @@ fn decode_single_tx_index_entry(payload: &[u8]) -> Result<DecodedEntry, &'static
         return Err("entry_len mismatch");
     }
     let mut offset = 36usize;
-    let block_number = u64::from_be_bytes(payload[offset..offset + 8].try_into().map_err(|_| "block")?);
+    let block_number = u64::from_be_bytes(
+        payload[offset..offset + 8]
+            .try_into()
+            .map_err(|_| "block")?,
+    );
     offset += 8;
-    let tx_index = u32::from_be_bytes(payload[offset..offset + 4].try_into().map_err(|_| "index")?);
+    let tx_index = u32::from_be_bytes(
+        payload[offset..offset + 4]
+            .try_into()
+            .map_err(|_| "index")?,
+    );
     offset += 4;
-    let principal_len = u16::from_be_bytes(payload[offset..offset + 2].try_into().map_err(|_| "principal_len")?) as usize;
+    let principal_len = u16::from_be_bytes(
+        payload[offset..offset + 2]
+            .try_into()
+            .map_err(|_| "principal_len")?,
+    ) as usize;
     offset += 2;
     offset += principal_len;
     if payload.len() < offset + 20 + 1 {
@@ -439,6 +478,23 @@ fn decode_single_tx_index_entry(payload: &[u8]) -> Result<DecodedEntry, &'static
     } else {
         return Err("invalid to_len");
     };
+    if payload.len() < offset + 1 {
+        return Err("missing selector_len");
+    }
+    let selector_len = payload[offset] as usize;
+    offset += 1;
+    let selector = if selector_len == 0 {
+        None
+    } else if selector_len == 4 {
+        if payload.len() < offset + 4 {
+            return Err("selector bytes missing");
+        }
+        let bytes = <[u8; 4]>::try_from(&payload[offset..offset + 4]).map_err(|_| "selector")?;
+        offset += 4;
+        Some(bytes)
+    } else {
+        return Err("invalid selector_len");
+    };
     if offset != payload.len() {
         return Err("trailing bytes");
     }
@@ -448,5 +504,6 @@ fn decode_single_tx_index_entry(payload: &[u8]) -> Result<DecodedEntry, &'static
         tx_index,
         from,
         to,
+        selector,
     })
 }

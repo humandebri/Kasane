@@ -11,7 +11,9 @@ use evm_db::chain_data::constants::{
     CHAIN_ID, DROP_CODE_DECODE, DROP_CODE_EXEC_PRECHECK, DROP_CODE_REPLACED, MAX_PENDING_GLOBAL,
     MAX_PENDING_PER_PRINCIPAL,
 };
-use evm_db::chain_data::{CallerKey, SenderKey, SenderNonceKey, StoredTxBytes, TxId, TxKind, TxLocKind};
+use evm_db::chain_data::{
+    CallerKey, SenderKey, SenderNonceKey, StoredTxBytes, TxId, TxKind, TxLocKind,
+};
 use evm_db::stable_state::{init_stable_state, with_state, with_state_mut};
 
 mod common;
@@ -219,7 +221,7 @@ fn eth_signed_submit_does_not_turn_into_decode_drop_on_produce() {
         build_eth_signed_tx_with_gas_price(0, u128::from(gas_price)),
         vec![0x42],
     )
-        .expect("eth signed submit should succeed");
+    .expect("eth signed submit should succeed");
 
     let err = chain::produce_block(1).expect_err("insufficient sender balance should drop");
     assert_eq!(err, ChainError::NoExecutableTx);
@@ -243,11 +245,23 @@ fn submit_tx_nonce_conflict_is_atomic() {
     let pending_key = SenderNonceKey::new(sender, 0);
     let existing_tx_id = TxId([0x88u8; 32]);
     with_state_mut(|state| {
-        state.sender_expected_nonce.insert(SenderKey::new(sender), 0);
-        state.pending_by_sender_nonce.insert(pending_key, existing_tx_id);
-        state.pending_meta_by_tx_id.insert(existing_tx_id, pending_key);
+        state
+            .sender_expected_nonce
+            .insert(SenderKey::new(sender), 0);
+        state
+            .pending_by_sender_nonce
+            .insert(pending_key, existing_tx_id);
+        state
+            .pending_meta_by_tx_id
+            .insert(existing_tx_id, pending_key);
     });
-    let new_tx_id = TxId(hash::stored_tx_id(TxKind::EthSigned, &raw, None, None, None));
+    let new_tx_id = TxId(hash::stored_tx_id(
+        TxKind::EthSigned,
+        &raw,
+        None,
+        None,
+        None,
+    ));
     let err = chain::submit_tx(TxKind::EthSigned, raw.clone(), caller.clone())
         .expect_err("nonce conflict expected");
     assert_eq!(err, ChainError::NonceConflict);
@@ -277,9 +291,15 @@ fn submit_ic_tx_nonce_conflict_is_atomic() {
     let pending_key = SenderNonceKey::new(sender, 0);
     let existing_tx_id = TxId([0x99u8; 32]);
     with_state_mut(|state| {
-        state.sender_expected_nonce.insert(SenderKey::new(sender), 0);
-        state.pending_by_sender_nonce.insert(pending_key, existing_tx_id);
-        state.pending_meta_by_tx_id.insert(existing_tx_id, pending_key);
+        state
+            .sender_expected_nonce
+            .insert(SenderKey::new(sender), 0);
+        state
+            .pending_by_sender_nonce
+            .insert(pending_key, existing_tx_id);
+        state
+            .pending_meta_by_tx_id
+            .insert(existing_tx_id, pending_key);
     });
 
     let tx_bytes = common::build_default_ic_tx_bytes(0);

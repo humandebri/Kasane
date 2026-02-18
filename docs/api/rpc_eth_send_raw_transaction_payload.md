@@ -1,7 +1,7 @@
 ## rpc_eth_send_raw_transaction の `blob` 仕様
 
 このドキュメントは、`rpc_eth_send_raw_transaction` に渡す `blob`（Ethereum signed raw transaction）の作り方と、
-`submit -> produce_block -> get_receipt` までの確認手順を示します。  
+`submit -> auto-mine -> get_receipt` までの確認手順を示します。  
 正本実装は `/Users/0xhude/Desktop/ICP/Kasane/crates/evm-core/src/tx_decode.rs` と
 `/Users/0xhude/Desktop/ICP/Kasane/crates/ic-evm-wrapper/src/lib.rs` です。
 
@@ -74,8 +74,8 @@ print('; '.join(str(b) for b in out))
 PY
 )
 
-# キューからブロック化（manual 実行）
-icp canister call -e ic --identity "$IDENTITY" "$CANISTER_ID" produce_block '(1:nat32)'
+# 自動採掘の進行確認（必要なら head を観測）
+icp canister call -e ic --identity "$IDENTITY" --query "$CANISTER_ID" rpc_eth_block_number '( )'
 
 # receipt 取得
 icp canister call -e ic --identity "$IDENTITY" "$CANISTER_ID" get_receipt "(vec { $TX_ID_BYTES })"
@@ -83,7 +83,7 @@ icp canister call -e ic --identity "$IDENTITY" "$CANISTER_ID" get_receipt "(vec 
 
 ### 4) 注意点
 
-- `rpc_eth_send_raw_transaction` はキュー投入のみで、実行確定は `produce_block`（または auto mine）後です。
+- `rpc_eth_send_raw_transaction` はキュー投入のみで、実行確定は自動採掘後です。
 - `nonce` は送信元アドレスごとに整合させてください。  
   必要なら `expected_nonce_by_address(blob_address_20bytes)` で事前確認します。
 - `eth_tx_hash` は `rpc_eth_send_raw_transaction` の戻り値ではなく、必要に応じて参照系RPCで取得してください。

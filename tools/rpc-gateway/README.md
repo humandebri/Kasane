@@ -100,9 +100,9 @@ npm run dev
 
 従来のEVMチェーンと異なる運用上の注意（現行実装時点）:
 - Pruning: canister は履歴を prune するため、古い範囲は `rpc_eth_get_block_by_number_with_status` / `rpc_eth_get_transaction_receipt_with_status` で `Pruned` / `PossiblyPruned` が返り得ます。
-- Timer駆動: canister 側で timer により mining/pruning を実行します。mining は `set_timer` の単発予約を毎tickで再設定する方式で、`mining_scheduled` フラグにより多重予約を防ぎます。
-- Timer駆動（mining詳細）: `set_auto_mine(false)` 運用では `produce_block` を明示的に呼ぶ必要があります。`ready_queue` が空のときは空ブロックを作らず、次回予約のみ行います。
-- Timer駆動（backoff/停止条件）: `produce_block` 失敗時は指数バックオフ（2倍、上限 `MAX_MINING_BACKOFF_MS`）を適用し、成功で基本間隔へ戻します。cycle critical または migration 中は write 拒否により採掘を停止し、復帰後は cycle observer tick（60s）が再スケジュールを補助します。
+- Timer駆動: canister 側で timer により mining を実行します。mining は `set_timer` の単発予約を毎tickで再設定する方式で、`mining_scheduled` フラグにより多重予約を防ぎます。
+- Timer駆動（mining詳細）: 採掘は自動実行のみを提供します。`ready_queue` が空のときは次回予約のみ行います。
+- Timer駆動（停止条件）: 採掘失敗時は基本間隔で再試行します。cycle critical または migration 中は write 拒否により採掘を停止し、復帰後は cycle observer tick（60s）が再スケジュールを補助します。prune は block event 駆動（`block_number % 84 == 0`）でのみ試行されます。
 - Submit/Execute分離: `eth_sendRawTransaction` は投入APIへの委譲で、実行確定は別フェーズ（block production）です。
 - 監視運用: `eth_sendRawTransaction` 成功だけでは不十分です。`eth_getTransactionReceipt` の `status` が `0x1` であることを成功条件にしてください（`0x0` は実行失敗）。
 - `eth_sendRawTransaction` 戻り値: Gateway は canister `rpc_eth_send_raw_transaction` の返却 `tx_id` から `rpc_eth_get_transaction_by_tx_id` で `eth_tx_hash` を解決して返します。解決不能時は `-32000` エラーを返します。
@@ -112,13 +112,14 @@ npm run dev
 - `expected_nonce_by_address` は query メソッドです。`icp canister call` 直叩き時は `--query` を付けないと `IC0406` になります。
 
 関連定数（現行実装値）:
-- mining 基本間隔: `DEFAULT_MINING_INTERVAL_MS = 5_000`
+- mining 基本間隔: `DEFAULT_MINING_INTERVAL_MS = 2_000`
 - cycle observer 間隔: `60s`（`set_timer_interval(Duration::from_secs(60), ...)`）
-- prune 基本間隔: `DEFAULT_PRUNE_TIMER_INTERVAL_MS = 3_600_000`（1時間）
-- prune 間隔の下限: `MIN_PRUNE_TIMER_INTERVAL_MS = 1_000`
+- prune policy 間隔フィールド: `DEFAULT_PRUNE_TIMER_INTERVAL_MS = 3_600_000`（内部保持値。`set_prune_policy` 入力では未使用）
+- prune イベント間隔: `PRUNE_EVENT_BLOCK_INTERVAL = 84` blocks（`crates/ic-evm-wrapper/src/lib.rs`）
+- prune 間隔の下限: `MIN_PRUNE_TIMER_INTERVAL_MS = 1_000`（内部保持値向け）
 - prune 1tick上限: `DEFAULT_PRUNE_MAX_OPS_PER_TICK = 5_000`
 - prune 1tick最小: `MIN_PRUNE_MAX_OPS_PER_TICK = 1`
-- backoff 上限: `MAX_MINING_BACKOFF_MS = 300_000`, `MAX_PRUNE_BACKOFF_MS = 300_000`
+- backoff 上限: `MAX_PRUNE_BACKOFF_MS = 300_000`
 - 運用ルール: 上記の実値を変更する場合は `crates/evm-db/src/chain_data/runtime_defaults.rs` を正本として同一PRで本READMEを同期更新すること。
 
 ## 互換ノート

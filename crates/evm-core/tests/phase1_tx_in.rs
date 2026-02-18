@@ -77,7 +77,8 @@ fn submit_ic_tx_seen_duplicate_precedes_decode_failure() {
     let mut malformed = common::build_ic_tx_bytes([0x11u8; 20], 0, 2_000_000_000, 1_000_000_000);
     malformed[0] = 1;
 
-    let caller_evm = hash::derive_evm_address_from_principal(&caller_principal).expect("must derive");
+    let caller_evm =
+        hash::derive_evm_address_from_principal(&caller_principal).expect("must derive");
     let tx_id = TxId(hash::stored_tx_id(
         TxKind::IcSynthetic,
         &malformed,

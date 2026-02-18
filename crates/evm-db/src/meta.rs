@@ -447,7 +447,7 @@ pub fn mark_meta_needs_migration_if_unsupported() {
 
 fn init_schema_migration_cell() -> StableCell<SchemaMigrationState, VMem> {
     StableCell::init(
-        get_memory(AppMemoryId::Reserved38),
+        get_memory(AppMemoryId::SchemaMigrationState),
         SchemaMigrationState::done(),
     )
 }
