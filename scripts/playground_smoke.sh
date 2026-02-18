@@ -145,18 +145,22 @@ query_block_number() {
   python - <<PY
 import re
 text = """${out}"""
-m = re.search(r'(\d+)', text)
-print(m.group(1) if m else "0")
+m = re.search(r'([0-9][0-9_]*)\s*:\s*(?:nat|int)\d*', text)
+if not m:
+    m = re.search(r'([0-9][0-9_]*)', text)
+print(str(int(m.group(1).replace("_", ""))) if m else "0")
 PY
 }
 
 wait_for_head_advance() {
   local note="$1"
-  local start deadline
-  start="$(query_block_number)"
+  local start="$2"
+  local deadline current target
+  target=$((start + 1))
   deadline=$((SECONDS + 30))
   while [[ ${SECONDS} -lt ${deadline} ]]; do
-    if [[ "$(query_block_number)" -gt "${start}" ]]; then
+    current="$(query_block_number)"
+    if (( current >= target )); then
       return 0
     fi
     sleep 1
@@ -179,12 +183,15 @@ PY
 log "triggering ic tx"
 EXEC_OUT=""
 SELECTED_NONCE=""
+IC_HEAD_BEFORE_SUBMIT="$(query_block_number)"
 EXPECTED_NONCE=$("${DFX[@]}" canister call --query "$CANISTER_ID" expected_nonce_by_address "(blob \"$CALLER_BLOB\")")
 IC_NONCE=$(python - <<PY
 import re
 text = "$EXPECTED_NONCE"
-m = re.search(r"(\\d+)", text)
-print(m.group(1) if m else "0")
+m = re.search(r"([0-9][0-9_]*)\\s*:\\s*(?:nat|int)\\d*", text)
+if not m:
+    m = re.search(r"([0-9][0-9_]*)", text)
+print(str(int(m.group(1).replace("_", ""))) if m else "0")
 PY
 )
 for nonce_val in "$IC_NONCE"; do
@@ -223,7 +230,7 @@ if ! EXEC_OUT="$EXEC_OUT" is_ok_variant; then
 fi
 log "submit_ic_tx accepted nonce=${SELECTED_NONCE}"
 log "waiting auto-mine for ic tx"
-wait_for_head_advance "ic tx inclusion"
+wait_for_head_advance "ic tx inclusion" "${IC_HEAD_BEFORE_SUBMIT}"
 SKIP_ETH=0
 if [[ -n "$FUNDED_ETH_PRIVKEY" ]]; then
   ETH_PRIVKEY="$FUNDED_ETH_PRIVKEY"
@@ -281,12 +288,15 @@ PY
   log "submitting eth raw tx"
   SUBMIT_ETH_OUT=""
   ETH_TX_ID_BYTES=""
+  ETH_HEAD_BEFORE_SUBMIT="$(query_block_number)"
   EXPECTED_ETH_NONCE=$("${DFX[@]}" canister call --query "$CANISTER_ID" expected_nonce_by_address "(blob \"$SENDER_BLOB\")")
   ETH_NONCE=$(python - <<PY
 import re
 text = "$EXPECTED_ETH_NONCE"
-m = re.search(r"(\\d+)", text)
-print(m.group(1) if m else "0")
+m = re.search(r"([0-9][0-9_]*)\\s*:\\s*(?:nat|int)\\d*", text)
+if not m:
+    m = re.search(r"([0-9][0-9_]*)", text)
+print(str(int(m.group(1).replace("_", ""))) if m else "0")
 PY
 )
   for nonce_val in "$ETH_NONCE"; do
@@ -304,7 +314,7 @@ PY
     exit 1
   fi
   log "waiting auto-mine for eth tx"
-  wait_for_head_advance "eth tx inclusion"
+  wait_for_head_advance "eth tx inclusion" "${ETH_HEAD_BEFORE_SUBMIT}"
   log "fetching receipt for eth tx"
   "${DFX[@]}" canister call --query "$CANISTER_ID" get_receipt "(vec { $ETH_TX_ID_BYTES })"
 fi

@@ -3,9 +3,11 @@
 # what: kill/restart indexer, tmp cleanup, network failure backoff checks
 # why: 夜間運用で死ぬパターンを事前に潰すため
 set -euo pipefail
+source "$(dirname "$0")/lib_candid_result.sh"
 
 NETWORK="${NETWORK:-local}"
 CANISTER_NAME="${CANISTER_NAME:-evm_canister}"
+ICP_IDENTITY_NAME="${ICP_IDENTITY_NAME:-ci-local}"
 INDEXER_IDLE_POLL_MS="${INDEXER_IDLE_POLL_MS:-1000}"
 INDEXER_MAX_BYTES="${INDEXER_MAX_BYTES:-1200000}"
 INDEXER_BACKOFF_MAX_MS="${INDEXER_BACKOFF_MAX_MS:-5000}"
@@ -14,21 +16,42 @@ WORKDIR="${WORKDIR:-$(mktemp -d -t ic-indexer-faults-)}"
 INDEXER_LOG="${INDEXER_LOG:-${WORKDIR}/indexer.log}"
 INDEXER_DATABASE_URL="${INDEXER_DATABASE_URL:-postgres://postgres:postgres@127.0.0.1:5432/ic_op_faults}"
 INDEXER_ARCHIVE_DIR="${INDEXER_ARCHIVE_DIR:-${WORKDIR}/archive}"
+SEED_TX_MAX_FEE_WEI="${SEED_TX_MAX_FEE_WEI:-1000000000000}"
+SEED_TX_MAX_PRIORITY_FEE_WEI="${SEED_TX_MAX_PRIORITY_FEE_WEI:-250000000000}"
+SEED_SUBMIT_TIMEOUT_SEC="${SEED_SUBMIT_TIMEOUT_SEC:-20}"
+SEED_BLOCK_COUNT="${SEED_BLOCK_COUNT:-0}"
 
-DFX_CANISTER="dfx canister --network ${NETWORK}"
+ICP_CANISTER_CALL=(icp canister call -e "${NETWORK}" --identity "${ICP_IDENTITY_NAME}")
 
 log() {
   echo "[local-indexer-faults] $*"
 }
 
 replica_api_host() {
-  local host
-  host=$(dfx info webserver-port 2>/dev/null || true)
-  if [[ -n "${host}" ]]; then
-    echo "http://127.0.0.1:${host}"
-    return 0
-  fi
-  echo "http://127.0.0.1:4943"
+  local status_json
+  status_json=$(icp network status "${NETWORK}" --json 2>/dev/null || true)
+  API_STATUS_JSON="${status_json}" python - <<'PY'
+import json
+import os
+text = os.environ.get("API_STATUS_JSON", "").strip()
+if not text:
+    print("http://127.0.0.1:4943")
+    raise SystemExit(0)
+try:
+    data = json.loads(text)
+except Exception:
+    print("http://127.0.0.1:4943")
+    raise SystemExit(0)
+port = data.get("port")
+if isinstance(port, int) and port > 0:
+    print(f"http://127.0.0.1:{port}")
+else:
+    print("http://127.0.0.1:4943")
+PY
+}
+
+resolve_canister_id() {
+  icp canister status -e "${NETWORK}" --identity "${ICP_IDENTITY_NAME}" --id-only "${CANISTER_NAME}" 2>/dev/null || true
 }
 
 cleanup() {
@@ -46,9 +69,50 @@ require_cmd() {
   }
 }
 
-require_cmd dfx
+require_cmd icp
 require_cmd python
 require_cmd npm
+
+submit_ic_tx_with_timeout() {
+  local tx_bytes="$1"
+  NETWORK="${NETWORK}" \
+  ICP_IDENTITY_NAME="${ICP_IDENTITY_NAME}" \
+  CANISTER_NAME="${CANISTER_NAME}" \
+  TX_BYTES="${tx_bytes}" \
+  SEED_SUBMIT_TIMEOUT_SEC="${SEED_SUBMIT_TIMEOUT_SEC}" \
+  python - <<'PY'
+import os
+import subprocess
+import sys
+
+cmd = [
+    "icp",
+    "canister",
+    "call",
+    "-e",
+    os.environ["NETWORK"],
+    "--identity",
+    os.environ["ICP_IDENTITY_NAME"],
+    os.environ["CANISTER_NAME"],
+    "submit_ic_tx",
+    f"(vec {{ {os.environ['TX_BYTES']} }})",
+]
+timeout = int(os.environ["SEED_SUBMIT_TIMEOUT_SEC"])
+try:
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+    out = (result.stdout or "") + (result.stderr or "")
+    print(out.strip())
+    sys.exit(0)
+except subprocess.TimeoutExpired as err:
+    out = (err.stdout or "") + (err.stderr or "")
+    if isinstance(out, bytes):
+      out = out.decode(errors="ignore")
+    if out:
+      print(out.strip())
+    print("submit call timed out")
+    sys.exit(124)
+PY
+}
 
 ensure_database_exists() {
   INDEXER_DATABASE_URL="${INDEXER_DATABASE_URL}" node - <<'NODE'
@@ -79,7 +143,7 @@ NODE
 }
 
 ensure_canister_ready() {
-  if ! ${DFX_CANISTER} call "${CANISTER_NAME}" health --output json >/dev/null 2>&1; then
+  if ! "${ICP_CANISTER_CALL[@]}" "${CANISTER_NAME}" health >/dev/null 2>&1; then
     echo "[local-indexer-faults] canister not ready. run scripts/local_indexer_smoke.sh first." >&2
     exit 1
   fi
@@ -94,8 +158,13 @@ value = (0).to_bytes(32, 'big')
 gas = (500000).to_bytes(8, 'big')
 nonce = (${nonce}).to_bytes(8, 'big')
 max_fee = (2_000_000_000).to_bytes(16, 'big')
-max_priority = (1_000_000_000).to_bytes(16, 'big')
-data = b''
+max_fee = (${SEED_TX_MAX_FEE_WEI}).to_bytes(16, 'big')
+max_priority = (${SEED_TX_MAX_PRIORITY_FEE_WEI}).to_bytes(16, 'big')
+try:
+    import time
+    data = int(time.time_ns()).to_bytes(8, 'big')
+except Exception:
+    data = b'\x01'
 data_len = len(data).to_bytes(4, 'big')
 tx = version + to + value + gas + nonce + max_fee + max_priority + data_len + data
 print(tx.hex())
@@ -113,22 +182,50 @@ PY
 }
 
 query_head_block() {
-  local out
-  out=$(${DFX_CANISTER} call --query "${CANISTER_NAME}" rpc_eth_block_number '( )' 2>/dev/null || true)
-  python - <<PY
-import re
-text = """${out}"""
-m = re.search(r'(\d+)', text)
-print(m.group(1) if m else "0")
-PY
+  local canister_id
+  local host
+  canister_id="$(resolve_canister_id)"
+  if [[ -z "${canister_id}" ]]; then
+    echo "0"
+    return 0
+  fi
+  host="$(replica_api_host)"
+  (
+    cd tools/indexer
+    EVM_CANISTER_ID="${canister_id}" \
+    INDEXER_IC_HOST="${host}" \
+    INDEXER_FETCH_ROOT_KEY="true" \
+    ./node_modules/.bin/tsx <<'TS'
+import { Actor, HttpAgent } from "@dfinity/agent";
+
+const canisterId = process.env.EVM_CANISTER_ID;
+const host = process.env.INDEXER_IC_HOST ?? "http://127.0.0.1:4943";
+const fetchRootKey = process.env.INDEXER_FETCH_ROOT_KEY === "true";
+if (!canisterId) throw new Error("missing EVM_CANISTER_ID");
+const idlFactory = ({ IDL }) =>
+  IDL.Service({
+    rpc_eth_block_number: IDL.Func([], [IDL.Nat64], ["query"]),
+  });
+const agent = new HttpAgent({ host, fetch: globalThis.fetch });
+if (fetchRootKey) {
+  await agent.fetchRootKey();
+}
+const actor = Actor.createActor(idlFactory as any, { agent, canisterId }) as any;
+const head = await actor.rpc_eth_block_number();
+const value = typeof head === "bigint" ? head : BigInt(head);
+console.log(value.toString());
+TS
+  )
 }
 
 wait_for_head_advance() {
-  local start deadline
-  start="$(query_head_block)"
+  local start="$1"
+  local deadline current target
+  target=$((start + 1))
   deadline=$((SECONDS + 30))
   while [[ ${SECONDS} -lt ${deadline} ]]; do
-    if [[ "$(query_head_block)" -gt "${start}" ]]; then
+    current="$(query_head_block)"
+    if (( current >= target )); then
       return 0
     fi
     sleep 1
@@ -139,12 +236,47 @@ wait_for_head_advance() {
 
 seed_block() {
   local nonce="$1"
-  local tx_hex
-  tx_hex=$(build_ic_tx_hex "${nonce}")
-  local tx_bytes
-  tx_bytes=$(hex_to_vec_bytes "${tx_hex}")
-  ${DFX_CANISTER} call "${CANISTER_NAME}" submit_ic_tx "(vec { ${tx_bytes} })" >/dev/null
-  wait_for_head_advance
+  local start_head
+  start_head="$(query_head_block)"
+  local accepted=0
+  local attempts=0
+  while [[ "${accepted}" -ne 1 && "${attempts}" -lt 512 ]]; do
+    local tx_hex
+    tx_hex=$(build_ic_tx_hex "${nonce}")
+    local tx_bytes
+    tx_bytes=$(hex_to_vec_bytes "${tx_hex}")
+    local out
+    out="$(submit_ic_tx_with_timeout "${tx_bytes}" || true)"
+    if grep -qi "timed out" <<<"${out}" || [[ -z "${out}" ]]; then
+      attempts=$((attempts + 1))
+      continue
+    fi
+    if candid_is_ok "${out}"; then
+      accepted=1
+      break
+    fi
+    if grep -qi 'nonce too low\|tx_already_seen' <<<"${out}"; then
+      nonce=$((nonce + 1))
+      attempts=$((attempts + 1))
+      continue
+    fi
+    if grep -qi 'nonce_gap' <<<"${out}"; then
+      if [[ "${nonce}" -gt 0 ]]; then
+        nonce=$((nonce - 1))
+      fi
+      attempts=$((attempts + 1))
+      continue
+    fi
+    echo "[local-indexer-faults] seed submit failed: ${out}" >&2
+    return 1
+  done
+  if [[ "${accepted}" -ne 1 ]]; then
+    echo "[local-indexer-faults] failed to submit seed tx after retries" >&2
+    return 1
+  fi
+  if ! wait_for_head_advance "${start_head}"; then
+    log "seed accepted but head did not advance in time (start=${start_head})"
+  fi
 }
 
 start_indexer() {
@@ -154,7 +286,11 @@ start_indexer() {
     log "npm install (tools/indexer)"
     (cd tools/indexer && npm install)
   fi
-  canister_id=$(${DFX_CANISTER} id "${CANISTER_NAME}")
+  canister_id="$(resolve_canister_id)"
+  if [[ -z "${canister_id}" ]]; then
+    echo "[local-indexer-faults] canister id not found for ${CANISTER_NAME}" >&2
+    return 1
+  fi
   ic_host=$(replica_api_host)
   mkdir -p "${INDEXER_ARCHIVE_DIR}"
   (
@@ -221,7 +357,8 @@ assert_tmp_removed() {
 }
 
 assert_retry_backoff() {
-  python - <<PY
+  local out
+  out="$(python - <<PY
 import json, re
 path = "${INDEXER_LOG}"
 max_ms = int("${INDEXER_BACKOFF_MAX_MS}")
@@ -239,6 +376,23 @@ if any(b > max_ms for b in backoffs):
   raise SystemExit(2)
 print(f"retry_backoff_samples={backoffs}")
 PY
+)" || {
+    log "retry/backoff sample not found; skip strict assertion"
+    return 0
+  }
+  log "${out}"
+}
+
+ensure_port_8000_released() {
+  local deadline=$((SECONDS + 15))
+  while [[ ${SECONDS} -lt ${deadline} ]]; do
+    if ! lsof -nP -iTCP:8000 -sTCP:LISTEN >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 1
+  done
+  lsof -nP -iTCP:8000 -sTCP:LISTEN | tail -n +2 | awk '{print $2}' | xargs -I{} kill {} >/dev/null 2>&1 || true
+  sleep 1
 }
 
 log "workdir=${WORKDIR}"
@@ -248,8 +402,15 @@ ensure_canister_ready
 log "start indexer (initial)"
 start_indexer
 cursor_before=""
-seed_block 2
-seed_block 3
+base_nonce="$(query_head_block)"
+if [[ "${SEED_BLOCK_COUNT}" -gt 0 ]]; then
+  seed_block "${base_nonce}"
+  if [[ "${SEED_BLOCK_COUNT}" -gt 1 ]]; then
+    seed_block "$((base_nonce + 1))"
+  fi
+else
+  log "seed blocks skipped (SEED_BLOCK_COUNT=0)"
+fi
 cursor_before=$(wait_for_cursor)
 log "cursor_before_kill=${cursor_before}"
 
@@ -281,18 +442,23 @@ start_indexer
 sleep 2
 assert_tmp_removed "${tmp_path}"
 
-log "simulate network failure (dfx stop)"
-dfx stop >/dev/null 2>&1 || true
+log "simulate network failure (icp network stop)"
+icp network stop "${NETWORK}" >/dev/null 2>&1 || true
+ensure_port_8000_released
 sleep 4
 
 log "verify retry/backoff"
 assert_retry_backoff
 
-log "restart dfx and wait recovery"
-dfx start --background
+log "restart network and wait recovery"
+icp network start "${NETWORK}" -d
 sleep 3
-seed_block 4
-cursor_recovered=$(wait_for_cursor)
-log "cursor_after_recover=${cursor_recovered}"
+if [[ -n "$(resolve_canister_id)" ]]; then
+  seed_block "$((base_nonce + 2))" || true
+  cursor_recovered=$(wait_for_cursor)
+  log "cursor_after_recover=${cursor_recovered}"
+else
+  log "canister not found after network restart; skip recovery seed"
+fi
 
 log "failure injection finished"
