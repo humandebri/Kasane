@@ -31,6 +31,8 @@ RUN_HEAVY_MATRIX="${RUN_HEAVY_MATRIX:-0}"
 HEAVY_TX_PAYLOAD_BYTES_LIST="${HEAVY_TX_PAYLOAD_BYTES_LIST:-0,256,1024,4096}"
 HEAVY_TX_REPEAT="${HEAVY_TX_REPEAT:-3}"
 HEAVY_TX_GAS_LIMIT="${HEAVY_TX_GAS_LIMIT:-1500000}"
+MINING_IDLE_OBSERVE_SEC="${MINING_IDLE_OBSERVE_SEC:-6}"
+IDLE_MAX_CYCLE_DELTA="${IDLE_MAX_CYCLE_DELTA:-0}"
 PRUNE_POLICY_TEST_ARGS="${PRUNE_POLICY_TEST_ARGS:-}"
 PRUNE_POLICY_RESTORE_ARGS="${PRUNE_POLICY_RESTORE_ARGS:-}"
 PRUNE_BLOCKS_ARGS="${PRUNE_BLOCKS_ARGS:-}"
@@ -94,6 +96,33 @@ else:
             candidates.append(int(raw))
     print(str(max(candidates)) if candidates else "0")
 PY
+}
+
+observe_idle_mining_cycles() {
+  local observe_sec="${1:-${MINING_IDLE_OBSERVE_SEC}}"
+  local before_block after_block before_cycles after_cycles delta status note
+  before_block="$(query_block_number)"
+  before_cycles="$(get_cycles)"
+  sleep "${observe_sec}"
+  after_block="$(query_block_number)"
+  after_cycles="$(get_cycles)"
+  delta=$((before_cycles - after_cycles))
+  status="ok"
+  note="observe_sec=${observe_sec} start_block=${before_block} end_block=${after_block}"
+
+  if [[ "${after_block}" -gt "${before_block}" ]]; then
+    status="skipped:block_advanced"
+    note="${note} reason=block_advanced"
+  elif [[ "${IDLE_MAX_CYCLE_DELTA}" =~ ^[0-9]+$ ]] && [[ "${IDLE_MAX_CYCLE_DELTA}" -gt 0 ]] && [[ "${delta}" -gt "${IDLE_MAX_CYCLE_DELTA}" ]]; then
+    status="err:idle_delta_exceeded"
+    note="${note} idle_max_cycle_delta=${IDLE_MAX_CYCLE_DELTA}"
+  fi
+
+  record_cycle_row "mining_idle_cycle_probe" "-" "${status}" "${before_cycles}" "${after_cycles}" "${delta}" "${note}"
+  record_method_row "mining_idle_cycle_probe" "event" "${status}" "delta=${delta} ${note}"
+  if [[ "${status}" == "err:idle_delta_exceeded" && "${RUN_STRICT}" == "1" ]]; then
+    return 125
+  fi
 }
 
 wait_for_auto_production_block() {
@@ -284,6 +313,8 @@ cat > "${REPORT_FILE}" <<EOF_REPORT
 - heavy_tx_payload_bytes_list: \`${HEAVY_TX_PAYLOAD_BYTES_LIST}\`
 - heavy_tx_repeat: \`${HEAVY_TX_REPEAT}\`
 - heavy_tx_gas_limit: \`${HEAVY_TX_GAS_LIMIT}\`
+- mining_idle_observe_sec: \`${MINING_IDLE_OBSERVE_SEC}\`
+- idle_max_cycle_delta: \`${IDLE_MAX_CYCLE_DELTA}\`
 
 ## Cycle Events
 
@@ -329,6 +360,7 @@ INITIAL_BLOCK_GAS_LIMIT="$(node -e 'const fs=require("fs");const j=JSON.parse(fs
 INITIAL_INSTR_LIMIT="$(node -e 'const fs=require("fs");const j=JSON.parse(fs.readFileSync(process.argv[1],"utf8"));console.log(j.get_ops_status?.instruction_soft_limit ?? "4000000000");' "${QUERY_SUMMARY}")"
 
 run_update_with_cycles "set_pruning_enabled" "(false)" "baseline setup" "0" >/dev/null
+observe_idle_mining_cycles "${MINING_IDLE_OBSERVE_SEC}"
 
 CALLER_PRINCIPAL="$(icp identity principal --identity "${ICP_IDENTITY_NAME}")"
 CALLER_EVM_HEX="$(cargo run -q -p ic-evm-core --bin derive_evm_address -- "${CALLER_PRINCIPAL}" | tr -d '\n\r')"

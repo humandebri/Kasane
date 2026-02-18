@@ -1588,11 +1588,14 @@ fn should_schedule_mining_after_cycle_observer(mode: OpsMode, migration_pending:
 }
 
 fn schedule_mining() {
-    schedule_mining_with_interval(None);
+    schedule_mining_with_timer(install_mining_timer, reject_write_reason);
 }
 
-fn schedule_mining_with_interval(override_interval_ms: Option<u64>) {
-    if reject_write_reason().is_some() {
+fn schedule_mining_with_timer(
+    timer_scheduler: fn(u64),
+    reject_provider: fn() -> Option<String>,
+) {
+    if reject_provider().is_some() {
         return;
     }
     // RefCell再入防止: with_state_mut内は状態更新のみ。タイマー副作用は借用解放後に実行する。
@@ -1605,15 +1608,18 @@ fn schedule_mining_with_interval(override_interval_ms: Option<u64>) {
             return None;
         }
         chain_state.mining_scheduled = true;
-        let interval_ms = override_interval_ms.unwrap_or(DEFAULT_MINING_INTERVAL_MS);
         state.chain_state.set(chain_state);
-        Some(interval_ms)
+        Some(DEFAULT_MINING_INTERVAL_MS)
     });
     if let Some(interval_ms) = interval_ms {
-        ic_cdk_timers::set_timer(std::time::Duration::from_millis(interval_ms), async move {
-            mining_tick();
-        });
+        timer_scheduler(interval_ms);
     }
+}
+
+fn install_mining_timer(interval_ms: u64) {
+    ic_cdk_timers::set_timer(std::time::Duration::from_millis(interval_ms), async move {
+        mining_tick();
+    });
 }
 
 fn should_prune_on_block_event(block_number: u64) -> bool {
@@ -1631,7 +1637,14 @@ fn maybe_prune_on_block_event(block_number: u64) {
 }
 
 fn mining_tick() {
-    if reject_write_reason().is_some() {
+    mining_tick_with_timer(install_mining_timer, reject_write_reason);
+}
+
+fn mining_tick_with_timer(
+    timer_scheduler: fn(u64),
+    reject_provider: fn() -> Option<String>,
+) {
+    if reject_provider().is_some() {
         evm_db::stable_state::with_state_mut(|state| {
             let mut chain_state = *state.chain_state.get();
             chain_state.mining_scheduled = false;
@@ -1661,7 +1674,6 @@ fn mining_tick() {
     });
 
     if should_produce {
-        let base_interval_ms = DEFAULT_MINING_INTERVAL_MS;
         let result = chain::produce_block(evm_db::chain_data::MAX_TXS_PER_BLOCK);
 
         evm_db::stable_state::with_state_mut(|state| {
@@ -1669,24 +1681,22 @@ fn mining_tick() {
             chain_state.is_producing = false;
             state.chain_state.set(chain_state);
         });
-        let next_interval_ms = match result {
+        match result {
             Ok(outcome) => {
                 maybe_prune_on_block_event(outcome.block.number);
-                base_interval_ms
             }
-            Err(chain::ChainError::NoExecutableTx) | Err(chain::ChainError::QueueEmpty) => {
-                base_interval_ms
-            }
+            Err(chain::ChainError::NoExecutableTx) | Err(chain::ChainError::QueueEmpty) => {}
             Err(err) => {
                 MINING_ERROR_COUNT.fetch_add(1, Ordering::Relaxed);
                 error!(error = ?err, "mining_tick produce_block failed");
-                base_interval_ms
             }
-        };
-        schedule_mining_with_interval(Some(next_interval_ms));
+        }
+        let has_ready_tx = with_state(|state| state.ready_queue.len() > 0);
+        if has_ready_tx {
+            schedule_mining_with_timer(timer_scheduler, reject_provider);
+        }
         return;
     }
-    schedule_mining();
 }
 
 #[ic_cdk::query]
@@ -2042,6 +2052,128 @@ mod tests {
         assert!(should_schedule_mining_after_cycle_observer(OpsMode::Low, false));
         assert!(!should_schedule_mining_after_cycle_observer(OpsMode::Critical, false));
         assert!(!should_schedule_mining_after_cycle_observer(OpsMode::Normal, true));
+    }
+
+    fn build_ic_synthetic_tx_bytes_for_test(
+        nonce: u64,
+        max_fee_per_gas: u128,
+        max_priority_fee_per_gas: u128,
+    ) -> Vec<u8> {
+        let mut out = Vec::with_capacity(105);
+        let to = [0x11u8; 20];
+        let value = [0u8; 32];
+        let gas_limit = 21_000u64;
+        let data_len = 0u32;
+        out.push(0x02);
+        out.extend_from_slice(&to);
+        out.extend_from_slice(&value);
+        out.extend_from_slice(&gas_limit.to_be_bytes());
+        out.extend_from_slice(&nonce.to_be_bytes());
+        out.extend_from_slice(&max_fee_per_gas.to_be_bytes());
+        out.extend_from_slice(&max_priority_fee_per_gas.to_be_bytes());
+        out.extend_from_slice(&data_len.to_be_bytes());
+        out
+    }
+
+    fn no_timer_for_test(_interval_ms: u64) {}
+
+    fn no_reject_for_test() -> Option<String> {
+        None
+    }
+
+    #[test]
+    fn mining_tick_stops_on_empty_queue_and_restarts_after_tx_arrival() {
+        init_stable_state();
+        set_migration_not_pending_for_test();
+        evm_db::stable_state::with_state_mut(|state| {
+            let mut chain_state = *state.chain_state.get();
+            chain_state.auto_production_enabled = true;
+            chain_state.mining_scheduled = true;
+            chain_state.is_producing = false;
+            state.chain_state.set(chain_state);
+        });
+
+        super::mining_tick_with_timer(no_timer_for_test, no_reject_for_test);
+        evm_db::stable_state::with_state(|state| {
+            assert_eq!(state.ready_queue.len(), 0);
+            assert!(!state.chain_state.get().mining_scheduled);
+            assert!(!state.chain_state.get().is_producing);
+        });
+
+        let caller = Principal::self_authenticating(b"mining-tick-resume-caller");
+        let canister = Principal::self_authenticating(b"mining-tick-resume-canister");
+        let (max_fee_per_gas, max_priority_fee_per_gas) = evm_db::stable_state::with_state(|state| {
+            let chain_state = *state.chain_state.get();
+            let min_priority = u128::from(chain_state.min_priority_fee);
+            let base_fee = u128::from(chain_state.base_fee);
+            let min_gas_price = u128::from(chain_state.min_gas_price);
+            let required_max_fee = base_fee.saturating_add(min_priority).max(min_gas_price);
+            (
+                required_max_fee,
+                min_priority,
+            )
+        });
+        let tx_id = evm_core::chain::submit_ic_tx(
+            caller.as_slice().to_vec(),
+            canister.as_slice().to_vec(),
+            build_ic_synthetic_tx_bytes_for_test(0, max_fee_per_gas, max_priority_fee_per_gas),
+        )
+        .expect("submit_ic_tx should succeed");
+        evm_db::stable_state::with_state(|state| {
+            assert!(state.seen_tx.get(&tx_id).is_some());
+            assert!(state.ready_queue.len() > 0);
+            assert!(!state.chain_state.get().mining_scheduled);
+        });
+
+        super::schedule_mining_with_timer(no_timer_for_test, no_reject_for_test);
+        evm_db::stable_state::with_state(|state| {
+            assert!(state.chain_state.get().mining_scheduled);
+        });
+    }
+
+    #[test]
+    fn mining_tick_does_not_reschedule_after_dropping_non_executable_tx() {
+        init_stable_state();
+        set_migration_not_pending_for_test();
+        evm_db::stable_state::with_state_mut(|state| {
+            let mut chain_state = *state.chain_state.get();
+            chain_state.auto_production_enabled = true;
+            chain_state.mining_scheduled = true;
+            chain_state.is_producing = false;
+            state.chain_state.set(chain_state);
+        });
+
+        let caller = Principal::self_authenticating(b"mining-drop-caller");
+        let canister = Principal::self_authenticating(b"mining-drop-canister");
+        let (max_fee_per_gas, max_priority_fee_per_gas) = evm_db::stable_state::with_state(|state| {
+            let chain_state = *state.chain_state.get();
+            let min_priority = u128::from(chain_state.min_priority_fee);
+            let base_fee = u128::from(chain_state.base_fee);
+            let min_gas_price = u128::from(chain_state.min_gas_price);
+            let required_max_fee = base_fee.saturating_add(min_priority).max(min_gas_price);
+            (required_max_fee, min_priority)
+        });
+        let tx_id = evm_core::chain::submit_ic_tx(
+            caller.as_slice().to_vec(),
+            canister.as_slice().to_vec(),
+            build_ic_synthetic_tx_bytes_for_test(0, max_fee_per_gas, max_priority_fee_per_gas),
+        )
+        .expect("submit_ic_tx should succeed");
+
+        // 直前に最低ガス価格を引き上げ、queue内txを「実行不能」にする。
+        evm_db::stable_state::with_state_mut(|state| {
+            let mut chain_state = *state.chain_state.get();
+            chain_state.min_gas_price = u64::MAX;
+            state.chain_state.set(chain_state);
+        });
+
+        super::mining_tick_with_timer(no_timer_for_test, no_reject_for_test);
+        evm_db::stable_state::with_state(|state| {
+            assert_eq!(state.ready_queue.len(), 0);
+            assert!(state.tx_store.get(&tx_id).is_none());
+            assert!(!state.chain_state.get().mining_scheduled);
+            assert!(!state.chain_state.get().is_producing);
+        });
     }
 
     #[test]
