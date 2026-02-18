@@ -607,6 +607,7 @@ async function runDbTests(): Promise<void> {
   assert.equal(meta.lastHead, 12n);
   assert.equal(meta.lastIngestAtMs, 1700000000000n);
   assert.ok(meta.pruneStatusRaw);
+  assert.equal(meta.memoryBreakdownRaw, null);
   const address = Uint8Array.from(Buffer.from("11".repeat(20), "hex"));
   const txsByAddress = await getTxsByAddress(address, 2, null);
   assert.equal(txsByAddress.length, 3);

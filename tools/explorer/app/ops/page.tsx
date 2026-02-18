@@ -110,7 +110,7 @@ export default async function OpsPage({
           </CardHeader>
           <CardContent className="space-y-3">
             <dl className="grid grid-cols-1 gap-2 text-sm md:grid-cols-[220px_1fr]">
-              <dt className="text-muted-foreground">need_prune (meta)</dt>
+              <dt className="text-muted-foreground">need_prune (live)</dt>
               <dd>{formatOptionalBool(data.needPrune)}</dd>
               <dt className="text-muted-foreground">Stored status</dt>
               <dd>{data.pruneStatus ? "available" : "not available"}</dd>
@@ -227,6 +227,64 @@ export default async function OpsPage({
         </CardContent>
       </Card>
 
+      <Card>
+        <CardHeader>
+          <CardTitle>Stable Memory Breakdown</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          {data.memoryBreakdown === null ? (
+            <p className="text-sm text-muted-foreground">No memory breakdown snapshot yet.</p>
+          ) : (
+            <>
+              <dl className="grid grid-cols-1 gap-2 text-sm md:grid-cols-[220px_1fr]">
+                <dt className="text-muted-foreground">Fetched at</dt>
+                <dd>{formatTimestamp(data.memoryBreakdown.fetchedAtMs)}</dd>
+                <dt className="text-muted-foreground">Stable total</dt>
+                <dd>
+                  {formatMegaBytes(data.memoryBreakdown.stableBytesTotal)} ({formatPages(data.memoryBreakdown.stablePagesTotal)})
+                </dd>
+                <dt className="text-muted-foreground">Regions total</dt>
+                <dd>
+                  {formatMegaBytes(data.memoryBreakdown.regionsBytesTotal)} ({formatPages(data.memoryBreakdown.regionsPagesTotal)})
+                </dd>
+                <dt className="text-muted-foreground">Unattributed stable</dt>
+                <dd>
+                  {formatMegaBytes(data.memoryBreakdown.unattributedStableBytes)} (
+                  {formatPages(data.memoryBreakdown.unattributedStablePages)})
+                </dd>
+                <dt className="text-muted-foreground">Heap total</dt>
+                <dd>
+                  {formatMegaBytes(data.memoryBreakdown.heapBytes)} ({formatPages(data.memoryBreakdown.heapPages)})
+                </dd>
+              </dl>
+              <div className="overflow-x-auto">
+                <table className="min-w-full text-sm">
+                  <thead>
+                    <tr className="border-b text-left">
+                      <th className="py-2 pr-4 font-medium text-muted-foreground">Region</th>
+                      <th className="py-2 pr-4 font-medium text-muted-foreground">Pages</th>
+                      <th className="py-2 pr-4 font-medium text-muted-foreground">Bytes</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {[...data.memoryBreakdown.regions]
+                      .sort((a, b) => Number(b.bytes - a.bytes))
+                      .slice(0, 12)
+                      .map((region) => (
+                        <tr key={`${region.id}:${region.name}`} className="border-b last:border-0">
+                          <td className="py-2 pr-4">{region.name}</td>
+                          <td className="py-2 pr-4">{region.pages.toString()}</td>
+                          <td className="py-2 pr-4">{formatMegaBytes(region.bytes)}</td>
+                        </tr>
+                      ))}
+                  </tbody>
+                </table>
+              </div>
+            </>
+          )}
+        </CardContent>
+      </Card>
+
       {data.warnings.length > 0 ? (
         <Card>
           <CardHeader>
@@ -266,6 +324,11 @@ function formatMegaBytes(value: bigint | null): string {
   if (!Number.isFinite(bytes) || bytes < 0) return value.toString();
   const mb = bytes / (1024 * 1024);
   return `${mb.toFixed(2)} MB`;
+}
+
+function formatPages(value: bigint | null): string {
+  if (value === null) return "N/A";
+  return `${value.toString()} pages`;
 }
 
 function formatPercent(ratio: number | null): string {

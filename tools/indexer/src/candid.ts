@@ -37,6 +37,23 @@ export const idlFactory: IDL.InterfaceFactory = ({ IDL }) => {
     prune_running: IDL.Bool,
     oldest_kept_block: IDL.Opt(IDL.Nat64),
   });
+  const MemoryRegionView = IDL.Record({
+    id: IDL.Nat8,
+    name: IDL.Text,
+    pages: IDL.Nat64,
+    bytes: IDL.Nat64,
+  });
+  const MemoryBreakdownView = IDL.Record({
+    stable_pages_total: IDL.Nat64,
+    stable_bytes_total: IDL.Nat64,
+    regions_pages_total: IDL.Nat64,
+    regions_bytes_total: IDL.Nat64,
+    unattributed_stable_pages: IDL.Nat64,
+    unattributed_stable_bytes: IDL.Nat64,
+    heap_pages: IDL.Nat64,
+    heap_bytes: IDL.Nat64,
+    regions: IDL.Vec(MemoryRegionView),
+  });
   const DropCountView = IDL.Record({
     code: IDL.Nat16,
     count: IDL.Nat64,
@@ -87,6 +104,7 @@ export const idlFactory: IDL.InterfaceFactory = ({ IDL }) => {
     rpc_eth_chain_id: IDL.Func([], [IDL.Nat64], ["query"]),
     export_blocks: IDL.Func([IDL.Opt(Cursor), IDL.Nat32], [ExportResult], ["query"]),
     get_prune_status: IDL.Func([], [PruneStatusView], ["query"]),
+    memory_breakdown: IDL.Func([], [MemoryBreakdownView], ["query"]),
     metrics: IDL.Func([IDL.Nat64], [MetricsView], ["query"]),
     rpc_eth_block_number: IDL.Func([], [IDL.Nat64], ["query"]),
     get_ops_status: IDL.Func([], [OpsStatusView], ["query"]),

@@ -56,7 +56,7 @@ Search の入力判定:
 - Addressページの tx履歴は `Method(selector推定) / Block / Age / Amount / Txn Fee / From / To` を表示します（hashは先頭省略表示）。
 - address履歴は `Older`（50件単位カーソル）で継続取得します。
 - token transfer履歴も `Older`（50件単位カーソル）で継続取得します。
-- `/tx` の `Value / Transaction Fee / Gas Price` は、wei由来の値を `ICP` 表記で表示します（表示要件に合わせたUI上の換算）。
+- `/tx` の `Value / Transaction Fee` は wei由来の値を `ICP` 表記で、`Gas Price` は `effective_gas_price` を `Gwei` 表記で表示します。
 - token metadata（symbol/decimals）は in-memory キャッシュを使用します（上限1000、成功TTL 24h、失敗TTL 5m、同時取得上限5）。
 - Failed Transactions は `txs.receipt_status=0` を表示します（同ページ内履歴のみ）。
 - Receiptページは `Timeline` を表示しますが、logs再構成であり内部call traceではありません。

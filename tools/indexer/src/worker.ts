@@ -12,7 +12,15 @@ import {
   newPendingFromChunk,
   totalChunkBytes,
 } from "./worker_pending";
-import type { Cursor, ExportError, ExportResponse, MetricsView, PruneStatusView, Result } from "./types";
+import type {
+  Cursor,
+  ExportError,
+  ExportResponse,
+  MemoryBreakdownView,
+  MetricsView,
+  PruneStatusView,
+  Result,
+} from "./types";
 
 export async function runWorker(config: Config): Promise<void> {
   const db = await IndexerDb.connect({ databaseUrl: config.databaseUrl, poolMax: config.dbPoolMax });
@@ -34,6 +42,7 @@ export async function runWorkerWithDeps(
     exportBlocks: (cursor: Cursor | null, maxBytes: number) => Promise<Result<ExportResponse, ExportError>>;
     getPruneStatus: () => Promise<PruneStatusView>;
     getMetrics: (window: bigint) => Promise<MetricsView>;
+    getMemoryBreakdown?: () => Promise<MemoryBreakdownView>;
   },
   options: { skipGc: boolean }
 ): Promise<void> {

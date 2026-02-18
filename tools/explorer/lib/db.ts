@@ -40,6 +40,7 @@ export type OverviewStats = {
 export type MetaSnapshot = {
   needPrune: boolean | null;
   pruneStatusRaw: string | null;
+  memoryBreakdownRaw: string | null;
   lastHead: bigint | null;
   lastIngestAtMs: bigint | null;
 };
@@ -520,7 +521,7 @@ export async function getOverviewStats(): Promise<OverviewStats> {
 export async function getMetaSnapshot(): Promise<MetaSnapshot> {
   const pool = getPool();
   const rows = await pool.query<{ key: string; value: string | null }>(
-    "select key, value from meta where key in ('need_prune', 'prune_status', 'last_head', 'last_ingest_at')"
+    "select key, value from meta where key in ('need_prune', 'prune_status', 'memory_breakdown', 'last_head', 'last_ingest_at')"
   );
   const map = new Map<string, string | null>();
   for (const row of rows.rows) {
@@ -534,6 +535,7 @@ export async function getMetaSnapshot(): Promise<MetaSnapshot> {
   return {
     needPrune,
     pruneStatusRaw: map.get("prune_status") ?? null,
+    memoryBreakdownRaw: map.get("memory_breakdown") ?? null,
     lastHead: toOptionalBigInt(map.get("last_head")),
     lastIngestAtMs: toOptionalBigInt(map.get("last_ingest_at")),
   };

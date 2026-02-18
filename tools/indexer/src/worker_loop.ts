@@ -4,7 +4,7 @@
 import { Config, sleep } from "./config";
 import { IndexerDb } from "./db";
 import { runArchiveGcWithMode } from "./archive_gc";
-import { Cursor, ExportError, ExportResponse, MetricsView, PruneStatusView, Result } from "./types";
+import { Cursor, ExportError, ExportResponse, MemoryBreakdownView, MetricsView, PruneStatusView, Result } from "./types";
 import {
   applyChunk,
   enforceNextCursor,
@@ -34,6 +34,7 @@ export async function runWorkerWithDeps(
     exportBlocks: (cursor: Cursor | null, maxBytes: number) => Promise<Result<ExportResponse, ExportError>>;
     getPruneStatus: () => Promise<PruneStatusView>;
     getMetrics: (window: bigint) => Promise<MetricsView>;
+    getMemoryBreakdown?: () => Promise<MemoryBreakdownView>;
   },
   options: { skipGc: boolean }
 ): Promise<void> {
@@ -143,6 +144,11 @@ export async function runWorkerWithDeps(
             dropCountsJson: jsonStringifyBigInt(metrics.drop_counts),
             retentionCutoffMs,
           });
+          if (client.getMemoryBreakdown) {
+            const breakdown = await client.getMemoryBreakdown();
+            const payload = { v: 1, fetched_at_ms: nowMs, breakdown };
+            await db.setMeta("memory_breakdown", jsonStringifyBigInt(payload));
+          }
         } catch (err) {
           logWarn(config.chainId, "ops_metrics_failed", {
             poll_ms: config.opsMetricsPollMs,

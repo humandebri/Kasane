@@ -63,6 +63,32 @@ test("client cursor normalization accepts numeric strings", () => {
   assert.equal(out.byte_offset, 0);
 });
 
+test("client memory_breakdown normalization maps totals and regions", () => {
+  const out = clientTestHooks.normalizeMemoryBreakdown({
+    stable_pages_total: "10",
+    stable_bytes_total: "655360",
+    regions_pages_total: "4",
+    regions_bytes_total: "262144",
+    unattributed_stable_pages: "6",
+    unattributed_stable_bytes: "393216",
+    heap_pages: "2",
+    heap_bytes: "131072",
+    regions: [
+      {
+        id: 9,
+        name: "TxStore",
+        pages: "3",
+        bytes: "196608",
+      },
+    ],
+  });
+  assert.equal(out.stable_pages_total, 10n);
+  assert.equal(out.unattributed_stable_bytes, 393216n);
+  assert.equal(out.regions.length, 1);
+  assert.equal(out.regions[0]?.id, 9);
+  assert.equal(out.regions[0]?.name, "TxStore");
+});
+
 test("tx_index payload length mismatch throws", () => {
   const txHash = Buffer.alloc(32, 0xaa);
   const len = Buffer.alloc(4);

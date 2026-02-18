@@ -37,7 +37,6 @@ import {
   buildPruneHistory,
   buildOpsSeries,
   detectPendingStall,
-  parseStoredPruneStatus,
   pruneStatusFromLive,
   type OpsSeriesPoint,
   type PruneHistoryPoint,
@@ -117,12 +116,33 @@ export type OpsView = {
   series: OpsSeriesPoint[];
   pendingStall: boolean;
   warnings: string[];
+  memoryBreakdown: StoredMemoryBreakdown | null;
 };
 
 type CapacityForecast = {
   growthBytesPerDay: number | null;
   daysToHighWater: number | null;
   daysToHardEmergency: number | null;
+};
+
+type StoredMemoryRegion = {
+  id: number;
+  name: string;
+  pages: bigint;
+  bytes: bigint;
+};
+
+type StoredMemoryBreakdown = {
+  fetchedAtMs: bigint | null;
+  stablePagesTotal: bigint;
+  stableBytesTotal: bigint;
+  regionsPagesTotal: bigint;
+  regionsBytesTotal: bigint;
+  unattributedStablePages: bigint;
+  unattributedStableBytes: bigint;
+  heapPages: bigint;
+  heapBytes: bigint;
+  regions: StoredMemoryRegion[];
 };
 
 export type CyclesTrendWindow = "24h" | "7d";
@@ -142,7 +162,7 @@ export type TxDetailView = {
   tx: TxSummaryWithPrincipal;
   statusLabel: string;
   valueWei: bigint | null;
-  gasPriceWei: bigint | null;
+  effectiveGasPriceWei: bigint | null;
   transactionFeeWei: bigint | null;
   receipt: ReceiptView | null;
   receiptLookupError: LookupError | null;
@@ -298,7 +318,7 @@ export async function getTxDetailView(txHashHex: string): Promise<TxDetailView |
     return null;
   }
   const valueWei = rpcTx?.decoded[0] ? bytesToBigInt(rpcTx.decoded[0].value) : null;
-  const gasPriceWei = rpcTx?.decoded[0] ? rpcTx.decoded[0].gas_price : null;
+  const effectiveGasPriceWei = "Ok" in receiptOut ? receiptOut.Ok.effective_gas_price : null;
   const transactionFeeWei = "Ok" in receiptOut ? receiptOut.Ok.total_fee : null;
   const erc20TransfersRaw = "Ok" in receiptOut ? extractErc20TransfersFromReceipt(receiptOut.Ok) : [];
   const erc20Transfers = await withTokenMeta(erc20TransfersRaw);
@@ -306,7 +326,7 @@ export async function getTxDetailView(txHashHex: string): Promise<TxDetailView |
     tx,
     statusLabel: receiptStatusLabel(tx.receiptStatus),
     valueWei,
-    gasPriceWei,
+    effectiveGasPriceWei,
     transactionFeeWei,
     receipt: "Ok" in receiptOut ? receiptOut.Ok : null,
     receiptLookupError: "Ok" in receiptOut ? null : receiptOut.Err,
@@ -386,10 +406,9 @@ export async function getOpsView(cyclesTrendWindow: CyclesTrendWindow = "24h"): 
     getOpsMetricsSamplesSince(BigInt(nowMs - CYCLES_TREND_WINDOW_MS_7D)),
   ]);
 
-  const pruneStatus = parseStoredPruneStatus(meta.pruneStatusRaw);
-  const effectiveNeedPrune =
-    meta.needPrune !== null ? meta.needPrune : pruneStatusLive ? pruneStatusLive.need_prune : null;
-  const effectiveStoredPruneStatus = pruneStatus ?? pruneStatusFromLive(pruneStatusLive);
+  const effectiveNeedPrune = pruneStatusLive ? pruneStatusLive.need_prune : null;
+  const effectiveStoredPruneStatus = pruneStatusFromLive(pruneStatusLive);
+  const memoryBreakdown = parseStoredMemoryBreakdown(meta.memoryBreakdownRaw);
   const capacity = buildCapacityView(effectiveStoredPruneStatus, capacityForecastSamples);
   const cyclesTrendSeries = buildOpsSeries(cyclesTrendSamples);
   const series = buildOpsSeries(samples);
@@ -413,6 +432,7 @@ export async function getOpsView(cyclesTrendWindow: CyclesTrendWindow = "24h"): 
     series,
     pendingStall: detectPendingStall(series, 15 * 60 * 1000),
     warnings,
+    memoryBreakdown,
   };
 }
 
@@ -578,6 +598,73 @@ function withCallerPrincipalText(txs: TxSummary[]): TxSummaryWithPrincipal[] {
   });
 }
 
+function parseStoredMemoryBreakdown(raw: string | null): StoredMemoryBreakdown | null {
+  if (!raw) {
+    return null;
+  }
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (!isRecord(parsed)) {
+      return null;
+    }
+    const breakdownRaw = parsed.breakdown;
+    if (!isRecord(breakdownRaw)) {
+      return null;
+    }
+    const fetchedAtMs = toBigIntOrNull(parsed.fetched_at_ms);
+    const stablePagesTotal = toBigIntOrNull(breakdownRaw.stable_pages_total);
+    const stableBytesTotal = toBigIntOrNull(breakdownRaw.stable_bytes_total);
+    const regionsPagesTotal = toBigIntOrNull(breakdownRaw.regions_pages_total);
+    const regionsBytesTotal = toBigIntOrNull(breakdownRaw.regions_bytes_total);
+    const unattributedStablePages = toBigIntOrNull(breakdownRaw.unattributed_stable_pages);
+    const unattributedStableBytes = toBigIntOrNull(breakdownRaw.unattributed_stable_bytes);
+    const heapPages = toBigIntOrNull(breakdownRaw.heap_pages);
+    const heapBytes = toBigIntOrNull(breakdownRaw.heap_bytes);
+    const regionsRaw = breakdownRaw.regions;
+    if (
+      stablePagesTotal === null ||
+      stableBytesTotal === null ||
+      regionsPagesTotal === null ||
+      regionsBytesTotal === null ||
+      unattributedStablePages === null ||
+      unattributedStableBytes === null ||
+      heapPages === null ||
+      heapBytes === null ||
+      !Array.isArray(regionsRaw)
+    ) {
+      return null;
+    }
+    const regions: StoredMemoryRegion[] = [];
+    for (const item of regionsRaw) {
+      if (!isRecord(item)) {
+        continue;
+      }
+      const id = toNumberOrNull(item.id);
+      const name = typeof item.name === "string" ? item.name : null;
+      const pages = toBigIntOrNull(item.pages);
+      const bytes = toBigIntOrNull(item.bytes);
+      if (id === null || name === null || pages === null || bytes === null) {
+        continue;
+      }
+      regions.push({ id, name, pages, bytes });
+    }
+    return {
+      fetchedAtMs,
+      stablePagesTotal,
+      stableBytesTotal,
+      regionsPagesTotal,
+      regionsBytesTotal,
+      unattributedStablePages,
+      unattributedStableBytes,
+      heapPages,
+      heapBytes,
+      regions,
+    };
+  } catch {
+    return null;
+  }
+}
+
 async function tryRpc<T>(call: () => Promise<T>, warningMessage: string, warnings: string[]): Promise<T | null> {
   try {
     return await call();
@@ -585,6 +672,47 @@ async function tryRpc<T>(call: () => Promise<T>, warningMessage: string, warning
     warnings.push(warningMessage);
     return null;
   }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+function toBigIntOrNull(value: unknown): bigint | null {
+  if (typeof value === "bigint") {
+    return value;
+  }
+  if (typeof value === "number" && Number.isFinite(value) && Number.isInteger(value)) {
+    return BigInt(value);
+  }
+  if (typeof value === "string" && value.trim() !== "") {
+    try {
+      return BigInt(value);
+    } catch {
+      return null;
+    }
+  }
+  return null;
+}
+
+function toNumberOrNull(value: unknown): number | null {
+  if (typeof value === "number" && Number.isInteger(value)) {
+    return value;
+  }
+  if (typeof value === "bigint") {
+    const asNumber = Number(value);
+    if (Number.isInteger(asNumber)) {
+      return asNumber;
+    }
+    return null;
+  }
+  if (typeof value === "string" && /^(0|[1-9][0-9]*)$/.test(value)) {
+    const parsed = Number(value);
+    if (Number.isInteger(parsed)) {
+      return parsed;
+    }
+  }
+  return null;
 }
 
 async function withTokenMeta(
