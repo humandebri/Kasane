@@ -136,10 +136,14 @@ type LookupError = variant {
 };
 type MemoryBreakdownView = record {
   stable_bytes_total : nat64;
+  regions_pages_total : nat64;
   regions : vec MemoryRegionView;
+  unattributed_stable_pages : nat64;
+  unattributed_stable_bytes : nat64;
   stable_pages_total : nat64;
   heap_pages : nat64;
   heap_bytes : nat64;
+  regions_bytes_total : nat64;
 };
 type MemoryRegionView = record {
   id : nat8;
