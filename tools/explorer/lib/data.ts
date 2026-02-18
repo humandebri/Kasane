@@ -34,11 +34,13 @@ import {
   type AddressView,
 } from "./data_address";
 import {
+  buildPruneHistory,
   buildOpsSeries,
   detectPendingStall,
   parseStoredPruneStatus,
   pruneStatusFromLive,
   type OpsSeriesPoint,
+  type PruneHistoryPoint,
   type StoredPruneStatus,
 } from "./data_ops";
 import { bytesToBigInt, isAddressHex, normalizeHex, parseAddressHex, parseHex, toHexLower } from "./hex";
@@ -94,10 +96,33 @@ export type OpsView = {
   lastIngestAtMs: bigint | null;
   pruneStatus: StoredPruneStatus | null;
   pruneStatusLive: PruneStatusView | null;
+  pruneHistory: PruneHistoryPoint[];
+  capacityTrendSeries: Array<{
+    sampledAtMs: bigint;
+    estimatedKeptBytes: bigint;
+    highWaterBytes: bigint;
+    hardEmergencyBytes: bigint;
+  }>;
+  capacity: {
+    estimatedKeptBytes: bigint | null;
+    lowWaterBytes: bigint | null;
+    highWaterBytes: bigint | null;
+    hardEmergencyBytes: bigint | null;
+    highWaterRatio: number | null;
+    hardEmergencyRatio: number | null;
+    forecast24h: CapacityForecast;
+    forecast7d: CapacityForecast;
+  };
   cyclesTrendSeries: OpsSeriesPoint[];
   series: OpsSeriesPoint[];
   pendingStall: boolean;
   warnings: string[];
+};
+
+type CapacityForecast = {
+  growthBytesPerDay: number | null;
+  daysToHighWater: number | null;
+  daysToHardEmergency: number | null;
 };
 
 export type CyclesTrendWindow = "24h" | "7d";
@@ -140,9 +165,11 @@ const HOME_BLOCKS_LIMIT_MAX = 500;
 const TXS_PAGE_LIMIT_DEFAULT = 50;
 const TXS_PAGE_LIMIT_MAX = 100;
 const BLOCKS_PAGE_LIMIT_MAX = 100;
-const OPS_TIMESERIES_TABLE_LIMIT = 120;
+const OPS_TIMESERIES_TABLE_LIMIT = 10;
+const OPS_PRUNE_HISTORY_LIMIT = 10;
 const CYCLES_TREND_WINDOW_MS_24H = 24 * 60 * 60 * 1000;
 const CYCLES_TREND_WINDOW_MS_7D = 7 * 24 * 60 * 60 * 1000;
+const DAY_MS = 24 * 60 * 60 * 1000;
 
 function parsePositiveInt(rawValue: string | string[] | undefined, fallback: number): number {
   const raw = Array.isArray(rawValue) ? rawValue[0] : rawValue;
@@ -348,7 +375,7 @@ export async function getOpsView(cyclesTrendWindow: CyclesTrendWindow = "24h"): 
   const nowMs = Date.now();
   const windowMs = cyclesTrendWindow === "7d" ? CYCLES_TREND_WINDOW_MS_7D : CYCLES_TREND_WINDOW_MS_24H;
   const cyclesTrendSinceMs = BigInt(nowMs - windowMs);
-  const [rpcHead, dbHead, stats, meta, pruneStatusLive, samples, cyclesTrendSamples] = await Promise.all([
+  const [rpcHead, dbHead, stats, meta, pruneStatusLive, samples, cyclesTrendSamples, capacityForecastSamples] = await Promise.all([
     tryRpc(() => getRpcHeadNumber(), "rpc head is unavailable", warnings),
     getMaxBlockNumber(),
     getOverviewStats(),
@@ -356,14 +383,18 @@ export async function getOpsView(cyclesTrendWindow: CyclesTrendWindow = "24h"): 
     tryRpc(() => getRpcPruneStatus(), "live prune status is unavailable", warnings),
     getRecentOpsMetricsSamples(OPS_TIMESERIES_TABLE_LIMIT),
     getOpsMetricsSamplesSince(cyclesTrendSinceMs),
+    getOpsMetricsSamplesSince(BigInt(nowMs - CYCLES_TREND_WINDOW_MS_7D)),
   ]);
 
   const pruneStatus = parseStoredPruneStatus(meta.pruneStatusRaw);
   const effectiveNeedPrune =
     meta.needPrune !== null ? meta.needPrune : pruneStatusLive ? pruneStatusLive.need_prune : null;
   const effectiveStoredPruneStatus = pruneStatus ?? pruneStatusFromLive(pruneStatusLive);
+  const capacity = buildCapacityView(effectiveStoredPruneStatus, capacityForecastSamples);
   const cyclesTrendSeries = buildOpsSeries(cyclesTrendSamples);
   const series = buildOpsSeries(samples);
+  const capacityTrendSeries = buildCapacityTrendSeries(cyclesTrendSamples);
+  const pruneHistory = buildPruneHistory(samples, OPS_PRUNE_HISTORY_LIMIT);
 
   return {
     rpcHead,
@@ -375,12 +406,148 @@ export async function getOpsView(cyclesTrendWindow: CyclesTrendWindow = "24h"): 
     lastIngestAtMs: meta.lastIngestAtMs,
     pruneStatus: effectiveStoredPruneStatus,
     pruneStatusLive,
+    pruneHistory,
+    capacityTrendSeries,
+    capacity,
     cyclesTrendSeries,
     series,
     pendingStall: detectPendingStall(series, 15 * 60 * 1000),
     warnings,
   };
 }
+
+function buildCapacityTrendSeries(
+  samples: Array<{
+    sampledAtMs: bigint;
+    estimatedKeptBytes: bigint | null;
+    highWaterBytes: bigint | null;
+    hardEmergencyBytes: bigint | null;
+  }>
+): OpsView["capacityTrendSeries"] {
+  const out: OpsView["capacityTrendSeries"] = [];
+  for (const sample of [...samples].reverse()) {
+    if (
+      sample.estimatedKeptBytes === null ||
+      sample.highWaterBytes === null ||
+      sample.hardEmergencyBytes === null
+    ) {
+      continue;
+    }
+    out.push({
+      sampledAtMs: sample.sampledAtMs,
+      estimatedKeptBytes: sample.estimatedKeptBytes,
+      highWaterBytes: sample.highWaterBytes,
+      hardEmergencyBytes: sample.hardEmergencyBytes,
+    });
+  }
+  return out;
+}
+
+function buildCapacityView(
+  pruneStatus: StoredPruneStatus | null,
+  samples: Array<{ sampledAtMs: bigint; estimatedKeptBytes: bigint | null }>
+): OpsView["capacity"] {
+  const status = pruneStatus?.status ?? null;
+  const forecast24h = buildCapacityForecast(samples, CYCLES_TREND_WINDOW_MS_24H, status?.highWaterBytes ?? null, status?.hardEmergencyBytes ?? null);
+  const forecast7d = buildCapacityForecast(samples, CYCLES_TREND_WINDOW_MS_7D, status?.highWaterBytes ?? null, status?.hardEmergencyBytes ?? null);
+  if (!status) {
+    return {
+      estimatedKeptBytes: null,
+      lowWaterBytes: null,
+      highWaterBytes: null,
+      hardEmergencyBytes: null,
+      highWaterRatio: null,
+      hardEmergencyRatio: null,
+      forecast24h,
+      forecast7d,
+    };
+  }
+  return {
+    estimatedKeptBytes: status.estimatedKeptBytes,
+    lowWaterBytes: status.lowWaterBytes,
+    highWaterBytes: status.highWaterBytes,
+    hardEmergencyBytes: status.hardEmergencyBytes,
+    highWaterRatio: ratioOrNull(status.estimatedKeptBytes, status.highWaterBytes),
+    hardEmergencyRatio: ratioOrNull(status.estimatedKeptBytes, status.hardEmergencyBytes),
+    forecast24h,
+    forecast7d,
+  };
+}
+
+function buildCapacityForecast(
+  samples: Array<{ sampledAtMs: bigint; estimatedKeptBytes: bigint | null }>,
+  windowMs: number,
+  highWaterBytes: bigint | null,
+  hardEmergencyBytes: bigint | null
+): CapacityForecast {
+  const estimatedSeries = [...samples]
+    .filter((sample) => sample.estimatedKeptBytes !== null)
+    .map((sample) => ({
+      sampledAtMs: sample.sampledAtMs,
+      estimatedKeptBytes: sample.estimatedKeptBytes ?? 0n,
+    }))
+    .sort((a, b) => Number(a.sampledAtMs - b.sampledAtMs));
+  if (estimatedSeries.length < 2) {
+    return { growthBytesPerDay: null, daysToHighWater: null, daysToHardEmergency: null };
+  }
+  const newest = estimatedSeries[estimatedSeries.length - 1];
+  if (!newest) {
+    return { growthBytesPerDay: null, daysToHighWater: null, daysToHardEmergency: null };
+  }
+  const windowStart = newest.sampledAtMs - BigInt(windowMs);
+  const inWindow = estimatedSeries.filter((point) => point.sampledAtMs >= windowStart);
+  if (inWindow.length < 2) {
+    return { growthBytesPerDay: null, daysToHighWater: null, daysToHardEmergency: null };
+  }
+  const first = inWindow[0];
+  const last = inWindow[inWindow.length - 1];
+  if (!first || !last) {
+    return { growthBytesPerDay: null, daysToHighWater: null, daysToHardEmergency: null };
+  }
+  const deltaMs = Number(last.sampledAtMs - first.sampledAtMs);
+  if (!Number.isFinite(deltaMs) || deltaMs <= 0) {
+    return { growthBytesPerDay: null, daysToHighWater: null, daysToHardEmergency: null };
+  }
+  const deltaBytes = Number(last.estimatedKeptBytes - first.estimatedKeptBytes);
+  if (!Number.isFinite(deltaBytes)) {
+    return { growthBytesPerDay: null, daysToHighWater: null, daysToHardEmergency: null };
+  }
+  const growthBytesPerDay = (deltaBytes * DAY_MS) / deltaMs;
+  return {
+    growthBytesPerDay,
+    daysToHighWater: daysToThreshold(last.estimatedKeptBytes, highWaterBytes, growthBytesPerDay),
+    daysToHardEmergency: daysToThreshold(last.estimatedKeptBytes, hardEmergencyBytes, growthBytesPerDay),
+  };
+}
+
+function daysToThreshold(current: bigint, threshold: bigint | null, growthBytesPerDay: number): number | null {
+  if (threshold === null) {
+    return null;
+  }
+  if (current >= threshold) {
+    return 0;
+  }
+  if (!Number.isFinite(growthBytesPerDay) || growthBytesPerDay <= 0) {
+    return null;
+  }
+  const remainingBytes = Number(threshold - current);
+  if (!Number.isFinite(remainingBytes) || remainingBytes <= 0) {
+    return 0;
+  }
+  return remainingBytes / growthBytesPerDay;
+}
+
+function ratioOrNull(numerator: bigint, denominator: bigint): number | null {
+  if (denominator <= 0n) {
+    return null;
+  }
+  const ratioBps = (numerator * 10_000n) / denominator;
+  return Number(ratioBps) / 10_000;
+}
+
+export const opsDataTestHooks = {
+  buildCapacityForecast,
+};
 
 export async function getPrincipalView(principalText: string): Promise<PrincipalView> {
   const principalBytes = Principal.fromText(principalText).toUint8Array();

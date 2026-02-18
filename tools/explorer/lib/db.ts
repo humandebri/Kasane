@@ -72,6 +72,11 @@ export type OpsMetricsSample = {
   sampledAtMs: bigint;
   queueLen: bigint;
   cycles: bigint;
+  prunedBeforeBlock: bigint | null;
+  estimatedKeptBytes: bigint | null;
+  lowWaterBytes: bigint | null;
+  highWaterBytes: bigint | null;
+  hardEmergencyBytes: bigint | null;
   totalSubmitted: bigint;
   totalIncluded: bigint;
   totalDropped: bigint;
@@ -424,18 +429,28 @@ export async function getRecentOpsMetricsSamples(limit: number): Promise<OpsMetr
     sampled_at_ms: string | number;
     queue_len: string | number;
     cycles: string | number;
+    pruned_before_block: string | number | null;
+    estimated_kept_bytes: string | number | null;
+    low_water_bytes: string | number | null;
+    high_water_bytes: string | number | null;
+    hard_emergency_bytes: string | number | null;
     total_submitted: string | number;
     total_included: string | number;
     total_dropped: string | number;
     drop_counts_json: string;
   }>(
-    "SELECT sampled_at_ms, queue_len, cycles, total_submitted, total_included, total_dropped, drop_counts_json FROM ops_metrics_samples ORDER BY sampled_at_ms DESC LIMIT $1",
+    "SELECT sampled_at_ms, queue_len, cycles, pruned_before_block, estimated_kept_bytes, low_water_bytes, high_water_bytes, hard_emergency_bytes, total_submitted, total_included, total_dropped, drop_counts_json FROM ops_metrics_samples ORDER BY sampled_at_ms DESC LIMIT $1",
     [limit]
   );
   return rows.rows.map((row) => ({
     sampledAtMs: BigInt(row.sampled_at_ms),
     queueLen: BigInt(row.queue_len),
     cycles: BigInt(row.cycles),
+    prunedBeforeBlock: row.pruned_before_block === null ? null : BigInt(row.pruned_before_block),
+    estimatedKeptBytes: row.estimated_kept_bytes === null ? null : BigInt(row.estimated_kept_bytes),
+    lowWaterBytes: row.low_water_bytes === null ? null : BigInt(row.low_water_bytes),
+    highWaterBytes: row.high_water_bytes === null ? null : BigInt(row.high_water_bytes),
+    hardEmergencyBytes: row.hard_emergency_bytes === null ? null : BigInt(row.hard_emergency_bytes),
     totalSubmitted: BigInt(row.total_submitted),
     totalIncluded: BigInt(row.total_included),
     totalDropped: BigInt(row.total_dropped),
@@ -449,18 +464,28 @@ export async function getOpsMetricsSamplesSince(sinceMs: bigint): Promise<OpsMet
     sampled_at_ms: string | number;
     queue_len: string | number;
     cycles: string | number;
+    pruned_before_block: string | number | null;
+    estimated_kept_bytes: string | number | null;
+    low_water_bytes: string | number | null;
+    high_water_bytes: string | number | null;
+    hard_emergency_bytes: string | number | null;
     total_submitted: string | number;
     total_included: string | number;
     total_dropped: string | number;
     drop_counts_json: string;
   }>(
-    "SELECT sampled_at_ms, queue_len, cycles, total_submitted, total_included, total_dropped, drop_counts_json FROM ops_metrics_samples WHERE sampled_at_ms >= $1 ORDER BY sampled_at_ms DESC",
+    "SELECT sampled_at_ms, queue_len, cycles, pruned_before_block, estimated_kept_bytes, low_water_bytes, high_water_bytes, hard_emergency_bytes, total_submitted, total_included, total_dropped, drop_counts_json FROM ops_metrics_samples WHERE sampled_at_ms >= $1 ORDER BY sampled_at_ms DESC",
     [sinceMs.toString()]
   );
   return rows.rows.map((row) => ({
     sampledAtMs: BigInt(row.sampled_at_ms),
     queueLen: BigInt(row.queue_len),
     cycles: BigInt(row.cycles),
+    prunedBeforeBlock: row.pruned_before_block === null ? null : BigInt(row.pruned_before_block),
+    estimatedKeptBytes: row.estimated_kept_bytes === null ? null : BigInt(row.estimated_kept_bytes),
+    lowWaterBytes: row.low_water_bytes === null ? null : BigInt(row.low_water_bytes),
+    highWaterBytes: row.high_water_bytes === null ? null : BigInt(row.high_water_bytes),
+    hardEmergencyBytes: row.hard_emergency_bytes === null ? null : BigInt(row.hard_emergency_bytes),
     totalSubmitted: BigInt(row.total_submitted),
     totalIncluded: BigInt(row.total_included),
     totalDropped: BigInt(row.total_dropped),

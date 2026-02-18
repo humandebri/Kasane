@@ -29,6 +29,11 @@ export type OpsSeriesPoint = {
   failureRate: number;
 };
 
+export type PruneHistoryPoint = {
+  sampledAtMs: bigint;
+  prunedBeforeBlock: bigint;
+};
+
 export function buildOpsSeries(
   samples: Array<{ sampledAtMs: bigint; queueLen: bigint; cycles: bigint; totalSubmitted: bigint; totalIncluded: bigint; totalDropped: bigint }>
 ): OpsSeriesPoint[] {
@@ -49,6 +54,34 @@ export function buildOpsSeries(
       failureRate: numer / denom,
     };
   });
+}
+
+export function buildPruneHistory(
+  samples: Array<{ sampledAtMs: bigint; prunedBeforeBlock: bigint | null }>,
+  limit: number
+): PruneHistoryPoint[] {
+  if (limit < 1) {
+    return [];
+  }
+  const out: PruneHistoryPoint[] = [];
+  let lastValue: bigint | null = null;
+  for (const sample of samples) {
+    if (sample.prunedBeforeBlock === null) {
+      continue;
+    }
+    if (lastValue !== null && sample.prunedBeforeBlock === lastValue) {
+      continue;
+    }
+    out.push({
+      sampledAtMs: sample.sampledAtMs,
+      prunedBeforeBlock: sample.prunedBeforeBlock,
+    });
+    lastValue = sample.prunedBeforeBlock;
+    if (out.length >= limit) {
+      break;
+    }
+  }
+  return out;
 }
 
 export function detectPendingStall(series: OpsSeriesPoint[], windowMs: number): boolean {
