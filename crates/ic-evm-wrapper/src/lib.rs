@@ -174,8 +174,18 @@ fn post_upgrade() {
     init_tracing();
     apply_post_upgrade_migrations();
     observe_cycles();
+    reset_mining_schedule_after_upgrade();
     schedule_mining();
     schedule_cycle_observer();
+}
+
+fn reset_mining_schedule_after_upgrade() {
+    evm_db::stable_state::with_state_mut(|state| {
+        let mut chain_state = *state.chain_state.get();
+        // upgrade後はタイマー実体が失われるため、予約フラグを初期化して再登録可能にする。
+        chain_state.mining_scheduled = false;
+        state.chain_state.set(chain_state);
+    });
 }
 
 #[ic_cdk::pre_upgrade]
@@ -2052,6 +2062,20 @@ mod tests {
         assert!(should_schedule_mining_after_cycle_observer(OpsMode::Low, false));
         assert!(!should_schedule_mining_after_cycle_observer(OpsMode::Critical, false));
         assert!(!should_schedule_mining_after_cycle_observer(OpsMode::Normal, true));
+    }
+
+    #[test]
+    fn reset_mining_schedule_after_upgrade_clears_stale_flag() {
+        init_stable_state();
+        evm_db::stable_state::with_state_mut(|state| {
+            let mut chain_state = *state.chain_state.get();
+            chain_state.mining_scheduled = true;
+            state.chain_state.set(chain_state);
+        });
+        super::reset_mining_schedule_after_upgrade();
+        evm_db::stable_state::with_state(|state| {
+            assert!(!state.chain_state.get().mining_scheduled);
+        });
     }
 
     fn build_ic_synthetic_tx_bytes_for_test(
