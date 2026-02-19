@@ -100,9 +100,16 @@ export const idlFactory: IDL.InterfaceFactory = ({ IDL }) => {
     decode_failure_count: IDL.Nat64,
   });
   const ExportResult = IDL.Variant({ Ok: ExportResponse, Err: ExportError });
+  const RpcTxDecodedView = IDL.Record({
+    input: IDL.Vec(IDL.Nat8),
+  });
+  const RpcTxView = IDL.Record({
+    decoded: IDL.Opt(RpcTxDecodedView),
+  });
   return IDL.Service({
     rpc_eth_chain_id: IDL.Func([], [IDL.Nat64], ["query"]),
     export_blocks: IDL.Func([IDL.Opt(Cursor), IDL.Nat32], [ExportResult], ["query"]),
+    rpc_eth_get_transaction_by_tx_id: IDL.Func([IDL.Vec(IDL.Nat8)], [IDL.Opt(RpcTxView)], ["query"]),
     get_prune_status: IDL.Func([], [PruneStatusView], ["query"]),
     memory_breakdown: IDL.Func([], [MemoryBreakdownView], ["query"]),
     metrics: IDL.Func([IDL.Nat64], [MetricsView], ["query"]),

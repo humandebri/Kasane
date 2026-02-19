@@ -3,6 +3,9 @@
 export type ReceiptStatusInfo = {
   txHash: Buffer;
   status: 0 | 1;
+  contractAddress: Buffer | null;
+  blockNumber: bigint;
+  txIndex: number;
 };
 
 export type Erc20TransferInfo = {
@@ -50,7 +53,13 @@ export function decodeReceiptsPayload(payload: Uint8Array): DecodedReceiptsInfo 
     offset += receiptLen;
 
     const decoded = decodeReceipt(receipt);
-    statuses.push({ txHash, status: decoded.status });
+    statuses.push({
+      txHash,
+      status: decoded.status,
+      contractAddress: decoded.contractAddress,
+      blockNumber: decoded.blockNumber,
+      txIndex: decoded.txIndex,
+    });
     skippedTokenTransfers += decoded.skippedTokenTransfers;
 
     for (const transfer of decoded.tokenTransfers) {
@@ -73,6 +82,7 @@ function decodeReceipt(encoded: Buffer): {
   blockNumber: bigint;
   txIndex: number;
   status: 0 | 1;
+  contractAddress: Buffer | null;
   tokenTransfers: Array<{
     logIndex: number;
     tokenAddress: Buffer;
@@ -116,9 +126,9 @@ function decodeReceipt(encoded: Buffer): {
   readSlice(encoded, offset, returnDataLen, "receipt return_data missing");
   offset += returnDataLen;
 
-  readSlice(encoded, offset, 1, "receipt contract flag missing");
+  const contractFlag = readU8Safe(encoded, offset, "receipt contract flag missing");
   offset += 1;
-  readSlice(encoded, offset, ADDRESS_LEN, "receipt contract address bytes missing");
+  const contractAddressBytes = readSlice(encoded, offset, ADDRESS_LEN, "receipt contract address bytes missing");
   offset += ADDRESS_LEN;
 
   const logsLen = readU32Safe(encoded, offset, "receipt logs_len missing");
@@ -183,6 +193,7 @@ function decodeReceipt(encoded: Buffer): {
     blockNumber,
     txIndex,
     status: statusByte,
+    contractAddress: contractFlag === 1 ? contractAddressBytes : null,
     tokenTransfers,
     skippedTokenTransfers,
   };

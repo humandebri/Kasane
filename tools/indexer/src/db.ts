@@ -21,6 +21,7 @@ export type TxRow = {
   caller_principal: Buffer | null;
   from_address: Buffer;
   to_address: Buffer | null;
+  tx_input: Buffer | null;
   tx_selector: Buffer | null;
   receipt_status: number | null;
 };
@@ -140,8 +141,8 @@ export class IndexerDb {
 
   async upsertTx(row: TxRow): Promise<void> {
     await this.pool.query(
-      "INSERT INTO txs(tx_hash, block_number, tx_index, caller_principal, from_address, to_address, tx_selector, receipt_status) VALUES($1, $2, $3, $4, $5, $6, $7, $8) ON CONFLICT(tx_hash) DO UPDATE SET block_number = excluded.block_number, tx_index = excluded.tx_index, caller_principal = excluded.caller_principal, from_address = excluded.from_address, to_address = excluded.to_address, tx_selector = excluded.tx_selector, receipt_status = excluded.receipt_status",
-      [row.tx_hash, row.block_number, row.tx_index, row.caller_principal, row.from_address, row.to_address, row.tx_selector, row.receipt_status]
+      "INSERT INTO txs(tx_hash, block_number, tx_index, caller_principal, from_address, to_address, tx_input, tx_selector, receipt_status) VALUES($1, $2, $3, $4, $5, $6, $7, $8, $9) ON CONFLICT(tx_hash) DO UPDATE SET block_number = excluded.block_number, tx_index = excluded.tx_index, caller_principal = excluded.caller_principal, from_address = excluded.from_address, to_address = excluded.to_address, tx_input = COALESCE(excluded.tx_input, txs.tx_input), tx_selector = excluded.tx_selector, receipt_status = excluded.receipt_status",
+      [row.tx_hash, row.block_number, row.tx_index, row.caller_principal, row.from_address, row.to_address, row.tx_input, row.tx_selector, row.receipt_status]
     );
   }
 

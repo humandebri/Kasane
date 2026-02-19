@@ -23,6 +23,7 @@ export async function commitPending(params: {
   headNumber: bigint;
   pending: Pending;
   lastSizeDay: number | null;
+  getTxInputByTxId: (txId: Uint8Array) => Promise<Uint8Array | null>;
 }): Promise<{ lastSizeDay: number | null } | null> {
   let blockInfo: BlockInfo | null = null;
   let txIndex: TxIndexInfo[] | null = null;
@@ -75,9 +76,19 @@ export async function commitPending(params: {
     );
     process.exit(1);
   }
-  const receiptStatusByTxHash = new Map<string, number>();
+  const receiptStatusByTxHash = new Map<string, {
+    status: number;
+    contractAddress: Buffer | null;
+    blockNumber: bigint;
+    txIndex: number;
+  }>();
   for (const receipt of receiptStatuses) {
-    receiptStatusByTxHash.set(receipt.txHash.toString("hex"), receipt.status);
+    receiptStatusByTxHash.set(receipt.txHash.toString("hex"), {
+      status: receipt.status,
+      contractAddress: receipt.contractAddress,
+      blockNumber: receipt.blockNumber,
+      txIndex: receipt.txIndex,
+    });
   }
   const txHashes = new Set<string>();
   const txPositionByTxHash = new Map<string, { blockNumber: bigint; txIndex: number }>();
@@ -112,6 +123,7 @@ export async function commitPending(params: {
       process.exit(1);
     }
   }
+  const txInputByTxHash = await fetchTxInputsByHash(txIndex, params.getTxInputByTxId);
   for (const txHash of receiptStatusByTxHash.keys()) {
     if (!txHashes.has(txHash)) {
       logFatal(
@@ -196,11 +208,11 @@ export async function commitPending(params: {
       );
       for (const entry of txIndex) {
         const receiptStatus = receiptStatusByTxHash.get(entry.txHash.toString("hex"));
-        if (receiptStatus === undefined) {
+        if (!receiptStatus) {
           throw new Error(`receipt status missing after validation for tx_hash=${entry.txHash.toString("hex")}`);
         }
         await client.query(
-          "INSERT INTO txs(tx_hash, block_number, tx_index, caller_principal, from_address, to_address, tx_selector, receipt_status) VALUES($1, $2, $3, $4, $5, $6, $7, $8) ON CONFLICT(tx_hash) DO UPDATE SET block_number = excluded.block_number, tx_index = excluded.tx_index, caller_principal = excluded.caller_principal, from_address = excluded.from_address, to_address = excluded.to_address, tx_selector = excluded.tx_selector, receipt_status = excluded.receipt_status",
+          "INSERT INTO txs(tx_hash, block_number, tx_index, caller_principal, from_address, to_address, tx_input, tx_selector, receipt_status) VALUES($1, $2, $3, $4, $5, $6, $7, $8, $9) ON CONFLICT(tx_hash) DO UPDATE SET block_number = excluded.block_number, tx_index = excluded.tx_index, caller_principal = excluded.caller_principal, from_address = excluded.from_address, to_address = excluded.to_address, tx_input = COALESCE(excluded.tx_input, txs.tx_input), tx_selector = excluded.tx_selector, receipt_status = excluded.receipt_status",
           [
             entry.txHash,
             entry.blockNumber,
@@ -208,8 +220,19 @@ export async function commitPending(params: {
             entry.callerPrincipal,
             entry.fromAddress,
             entry.toAddress,
+            txInputByTxHash.get(entry.txHash.toString("hex")) ?? null,
             entry.txSelector,
-            receiptStatus,
+            receiptStatus.status,
+          ]
+        );
+        await client.query(
+          "INSERT INTO tx_receipts_index(tx_hash, contract_address, status, block_number, tx_index) VALUES($1, $2, $3, $4, $5) ON CONFLICT(tx_hash) DO UPDATE SET contract_address = excluded.contract_address, status = excluded.status, block_number = excluded.block_number, tx_index = excluded.tx_index",
+          [
+            entry.txHash,
+            receiptStatus.contractAddress,
+            receiptStatus.status,
+            receiptStatus.blockNumber,
+            receiptStatus.txIndex,
           ]
         );
       }
@@ -324,6 +347,26 @@ export async function commitPending(params: {
     }
   }
   return { lastSizeDay };
+}
+
+async function fetchTxInputsByHash(
+  txs: TxIndexInfo[],
+  getTxInputByTxId: (txId: Uint8Array) => Promise<Uint8Array | null>
+): Promise<Map<string, Buffer>> {
+  const out = new Map<string, Buffer>();
+  await Promise.all(
+    txs.map(async (tx) => {
+      try {
+        const input = await getTxInputByTxId(tx.txHash);
+        if (input && input.length > 0) {
+          out.set(tx.txHash.toString("hex"), Buffer.from(input));
+        }
+      } catch {
+        // tx_input は補助データ。失敗時は取り込み継続。
+      }
+    })
+  );
+  return out;
 }
 
 async function upsertTokenTransferRow(

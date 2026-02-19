@@ -18,6 +18,14 @@ export const MIGRATIONS = [
   "009_add_txs_selector.sql",
   "010_add_pruned_before_to_ops_metrics.sql",
   "011_add_capacity_metrics_to_ops_samples.sql",
+  "012_add_contract_verify_tables.sql",
+  "013_add_txs_input.sql",
+  "014_add_tx_receipts_index.sql",
+  "015_add_verify_auth_replay_table.sql",
+  "016_extend_verify_job_logs_audit.sql",
+  "017_add_verify_metrics_samples.sql",
+  "018_add_verify_metrics_indexes.sql",
+  "019_verify_requests_dedupe_per_user.sql",
 ] as const;
 
 export async function applyMigrations(pool: Pool, migrations: readonly string[]): Promise<void> {

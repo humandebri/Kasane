@@ -22,6 +22,7 @@ import {
 
 export type ExportClient = {
   exportBlocks: (cursor: Cursor | null, maxBytes: number) => Promise<Result<ExportResponse, ExportError>>;
+  getTxInputByTxId: (txId: Uint8Array) => Promise<Uint8Array | null>;
   getHeadNumber: () => Promise<bigint>;
   getPruneStatus: () => Promise<PruneStatusView>;
   getMetrics: (window: bigint) => Promise<MetricsView>;
@@ -60,6 +61,15 @@ export async function createClient(config: Config): Promise<ExportClient> {
           next_cursor: nextCursor,
         },
       };
+    },
+    getTxInputByTxId: async (txId: Uint8Array) => {
+      const out = await actor.rpc_eth_get_transaction_by_tx_id(txId);
+      const first = out[0];
+      if (!first || first.decoded.length === 0) {
+        return null;
+      }
+      const decoded = first.decoded[0];
+      return decoded ? decoded.input : null;
     },
     getHeadNumber: async () => toNat64BigInt(await actor.rpc_eth_block_number(), "rpc_eth_block_number"),
     getPruneStatus: async () => normalizePruneStatus(await actor.get_prune_status()),

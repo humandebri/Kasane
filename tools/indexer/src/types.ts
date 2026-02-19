@@ -140,8 +140,17 @@ export type CandidMetricsView = {
 
 export type ExportActorMethods = {
   export_blocks: (cursor: [] | [Cursor], max_bytes: number) => Promise<Result<CandidExportResponse, ExportError>>;
+  rpc_eth_get_transaction_by_tx_id: (txId: Uint8Array) => Promise<[] | [RpcTxView]>;
   rpc_eth_block_number: () => Promise<bigint>;
   get_prune_status: () => Promise<CandidPruneStatusView>;
   metrics: (window: bigint) => Promise<CandidMetricsView>;
   memory_breakdown: () => Promise<CandidMemoryBreakdownView>;
+};
+
+export type RpcTxDecodedView = {
+  input: Uint8Array;
+};
+
+export type RpcTxView = {
+  decoded: [] | [RpcTxDecodedView];
 };
