@@ -8,6 +8,8 @@ import { Input } from "../components/ui/input";
 import { TxValueFeeCells } from "../components/tx-value-fee-cells";
 import { getHomeView } from "../lib/data";
 import { toHexLower } from "../lib/hex";
+import { deriveTxDirection } from "../lib/tx_direction";
+import { inferMethodLabel } from "../lib/tx_method";
 
 export const dynamic = "force-dynamic";
 
@@ -126,12 +128,15 @@ export default async function HomePage({
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>Tx Hash</TableHead>
+                  <TableHead>Transaction Hash</TableHead>
+                  <TableHead>Method</TableHead>
                   <TableHead>Block</TableHead>
+                  <TableHead>Age</TableHead>
+                  <TableHead>From</TableHead>
+                  <TableHead>Direction</TableHead>
+                  <TableHead>To</TableHead>
                   <TableHead>Amount</TableHead>
                   <TableHead>Txn Fee</TableHead>
-                  <TableHead>From</TableHead>
-                  <TableHead>To</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -143,22 +148,29 @@ export default async function HomePage({
                           {shortPrefixHex(tx.txHashHex)}
                         </Link>
                       </TableCell>
+                      <TableCell>{inferMethodLabel(tx.toAddress ? toHexLower(tx.toAddress) : null, tx.txSelector)}</TableCell>
                       <TableCell>{tx.blockNumber.toString()}</TableCell>
-                      <TxValueFeeCells txHashHex={tx.txHashHex} canisterId={canisterId} icHost={icHost} />
+                      <TableCell>{formatAge(tx.blockTimestamp)}</TableCell>
                       <TableCell className="font-mono text-xs">
                         <Link href={`/address/${toHexLower(tx.fromAddress)}`} className="text-sky-700 hover:underline">
                           {headTailHex(toHexLower(tx.fromAddress))}
                         </Link>
                       </TableCell>
+                      <TableCell>{deriveTxDirection(tx.fromAddress, tx.toAddress)}</TableCell>
                       <TableCell className="font-mono text-xs">
                         {tx.toAddress ? (
                           <Link href={`/address/${toHexLower(tx.toAddress)}`} className="text-sky-700 hover:underline">
                             {headTailHex(toHexLower(tx.toAddress))}
                           </Link>
+                        ) : tx.createdContractAddress ? (
+                          <Link href={`/address/${toHexLower(tx.createdContractAddress)}`} className="text-sky-700 hover:underline">
+                            Contract Creation
+                          </Link>
                         ) : (
-                          "(create)"
+                          "Contract Creation"
                         )}
                       </TableCell>
+                      <TxValueFeeCells txHashHex={tx.txHashHex} canisterId={canisterId} icHost={icHost} />
                     </TableRow>
                   );
                 })}
@@ -192,6 +204,25 @@ function formatGasUsed(value: bigint | null): string {
     return "N/A";
   }
   return value.toString();
+}
+
+function formatAge(rawTimestamp: bigint | null): string {
+  if (rawTimestamp === null) {
+    return "N/A";
+  }
+  const nowSec = BigInt(Math.floor(Date.now() / 1000));
+  const tsSec = rawTimestamp > 10_000_000_000n ? rawTimestamp / 1000n : rawTimestamp;
+  const delta = nowSec > tsSec ? nowSec - tsSec : 0n;
+  if (delta < 60n) {
+    return `${delta.toString()}s ago`;
+  }
+  if (delta < 3600n) {
+    return `${(delta / 60n).toString()}m ago`;
+  }
+  if (delta < 86_400n) {
+    return `${(delta / 3600n).toString()}h ago`;
+  }
+  return `${(delta / 86_400n).toString()}d ago`;
 }
 
 function shortPrefixHex(value: string, keep: number = 10): string {
