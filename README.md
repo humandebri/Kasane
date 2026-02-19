@@ -5,6 +5,10 @@
 [![network](https://img.shields.io/badge/network-ic-2ea44f)](https://dashboard.internetcomputer.org/)
 ![chain_id](https://img.shields.io/badge/chain--id-4801360-f59e0b)
 
+## Disclaimer
+
+Azle stable mode is continuously subjected to intense scrutiny and testing, however it has not yet undergone intense security review.
+
 
 ## Chain / RPC情報（運用サマリ）
 
