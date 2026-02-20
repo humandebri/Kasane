@@ -4,6 +4,7 @@ pub mod base_fee;
 pub(crate) mod bytes;
 pub mod chain;
 pub mod commit;
+pub(crate) mod constants;
 pub mod db_adapter;
 pub mod export;
 pub mod hash;

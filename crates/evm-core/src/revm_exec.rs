@@ -2,6 +2,7 @@
 
 use crate::bytes::try_address_to_bytes;
 use crate::chain::{before_store_write_for_test, trap_store_err};
+use crate::constants::FEE_RECIPIENT;
 use crate::hash::keccak256;
 use crate::revm_db::RevmStableDb;
 use crate::tx_decode::DecodeError;
@@ -149,6 +150,7 @@ where
             block.timestamp = U256::from(exec_ctx.timestamp);
             block.gas_limit = exec_ctx.block_gas_limit;
             block.basefee = exec_ctx.base_fee;
+            block.beneficiary = FEE_RECIPIENT;
         })
         .build_mainnet_with_inspector(inspector);
 
@@ -156,9 +158,6 @@ where
     if evm.inspector.tripped {
         return Err(ExecError::InstructionBudgetExceeded);
     }
-    let state_diff = collect_state_diff(result.state);
-    commit_state_diff(&mut evm, state_diff.clone());
-
     let (status, gas_used, output, contract_address, logs, final_status, halt_reason) =
         match result.result {
             ExecutionResult::Success {
@@ -206,6 +205,10 @@ where
                 )
             }
         };
+
+    let mut state_diff = collect_state_diff(result.state);
+    add_base_fee_portion_to_recipient(&mut state_diff, gas_used, exec_ctx.base_fee);
+    commit_state_diff(&mut evm, state_diff.clone());
 
     validate_execution_result_sizes(&output, &logs)?;
 
@@ -315,6 +318,22 @@ pub(crate) fn commit_state_diff_to_db(state: StateDiff) {
 
 fn collect_state_diff(state: StateDiff) -> StateDiff {
     state
+}
+
+fn add_base_fee_portion_to_recipient(state: &mut StateDiff, gas_used: u64, base_fee: u64) {
+    if gas_used == 0 || base_fee == 0 {
+        return;
+    }
+    let reward = u128::from(gas_used).saturating_mul(u128::from(base_fee));
+    if reward == 0 {
+        return;
+    }
+    let recipient = FEE_RECIPIENT;
+    let Some(account) = state.get_mut(&recipient) else {
+        // beneficiaryは通常revm側でtouchされる。未touchケースは既存挙動を維持して上書き事故を避ける。
+        return;
+    };
+    account.info.balance = account.info.balance.saturating_add(U256::from(reward));
 }
 
 fn commit_state_diff(evm: &mut impl ExecuteCommitEvm<State = StateDiff>, state: StateDiff) {
