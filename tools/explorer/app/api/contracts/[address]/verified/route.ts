@@ -4,6 +4,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { getVerifiedContractByAddress, getVerifyBlobById } from "../../../../../lib/db";
 import { loadConfig } from "../../../../../lib/config";
 import { isAddressHex, normalizeHex } from "../../../../../lib/hex";
+import { MAX_CHAIN_ID_INT4 } from "../../../../../lib/verify/constants";
 import { decodeSourceBundleFromGzip } from "../../../../../lib/verify/source_bundle";
 
 export async function GET(
@@ -54,12 +55,9 @@ export function parseVerifiedAbi(abiJson: string): { abi: unknown | null; abiPar
   }
 }
 
-function parseChainId(value: string | null, fallback: number): number | null {
-  if (!value) {
-    return fallback;
-  }
-  const parsed = Number.parseInt(value, 10);
-  if (!Number.isInteger(parsed) || parsed < 0) {
+export function parseChainId(value: string | null, fallback: number): number | null {
+  const parsed = value ? Number.parseInt(value, 10) : fallback;
+  if (!Number.isInteger(parsed) || parsed < 0 || parsed > MAX_CHAIN_ID_INT4) {
     return null;
   }
   return parsed;

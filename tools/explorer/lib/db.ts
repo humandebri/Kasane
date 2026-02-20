@@ -1036,20 +1036,20 @@ export async function consumeVerifyReplayJti(params: {
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
-    const nowSec = params.consumedAtMs / 1000n;
+    const nowSec = BigInt(Math.floor(Date.now() / 1000));
     await client.query("DELETE FROM verify_auth_replay WHERE exp < $1", [nowSec.toString()]);
-    const existing = await client.query<{ jti: string }>(
-      "SELECT jti FROM verify_auth_replay WHERE jti = $1 LIMIT 1",
-      [params.jti]
-    );
-    if ((existing.rowCount ?? 0) > 0) {
-      await client.query("COMMIT");
-      return false;
+    try {
+      await client.query(
+        "INSERT INTO verify_auth_replay(jti, sub, scope, exp, consumed_at) VALUES($1, $2, $3, $4, $5)",
+        [params.jti, params.sub, params.scope, params.expSec.toString(), params.consumedAtMs.toString()]
+      );
+    } catch (err) {
+      if (isPgUniqueViolation(err)) {
+        await client.query("COMMIT");
+        return false;
+      }
+      throw err;
     }
-    await client.query(
-      "INSERT INTO verify_auth_replay(jti, sub, scope, exp, consumed_at) VALUES($1, $2, $3, $4, $5)",
-      [params.jti, params.sub, params.scope, params.expSec.toString(), params.consumedAtMs.toString()]
-    );
     await client.query("COMMIT");
     return true;
   } catch (err) {
@@ -1223,6 +1223,13 @@ function toOptionalBigInt(value: string | null | undefined): bigint | null {
   } catch {
     return null;
   }
+}
+
+function isPgUniqueViolation(err: unknown): boolean {
+  if (typeof err !== "object" || err === null || Array.isArray(err)) {
+    return false;
+  }
+  return (err as { code?: string }).code === "23505";
 }
 
 function mapVerifyRequestRow(row: {

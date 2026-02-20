@@ -36,6 +36,7 @@ import {
   markVerifyRequestSucceeded,
   requeueVerifyRequest,
   setExplorerPool,
+  consumeVerifyReplayJti,
 } from "../lib/db";
 import { getPrincipalView, opsDataTestHooks, parseCyclesTrendWindow, resolveHomeBlocksLimit } from "../lib/data";
 import { buildPruneHistory, parseStoredPruneStatusForTest } from "../lib/data_ops";
@@ -54,11 +55,12 @@ import {
 import { authenticateVerifyRequest } from "../lib/verify/auth";
 import { isRuntimeMatch } from "../lib/verify/compile";
 import { medianBigInt } from "../lib/verify/metrics";
+import { executeVerifyJob, isVerifyServiceError } from "../lib/verify/service";
 import { buildVerifyAuthToken } from "../lib/verify/token";
 import { getTokenMeta } from "../lib/token_meta";
 import { createOrGetVerifyRequest } from "../lib/verify/submit";
 import { runBackgroundTask, shouldRunPeriodicTask } from "../lib/verify/worker_tasks";
-import { parseVerifiedAbi } from "../app/api/contracts/[address]/verified/route";
+import { parseChainId, parseVerifiedAbi } from "../app/api/contracts/[address]/verified/route";
 import { verifyWorkerTestHooks } from "../scripts/verify-worker";
 import { tokenMetaTestHooks } from "../lib/token_meta";
 import { buildTimelineFromReceiptLogs } from "../lib/tx_timeline";
@@ -66,6 +68,7 @@ import { deriveTxDirection } from "../lib/tx_direction";
 import { inferMethodLabel } from "../lib/tx_method";
 import { txValueFeeCellsTestHooks } from "../components/tx-value-fee-cells";
 import type { ReceiptView } from "../lib/rpc";
+import type { VerifySubmitInput } from "../lib/verify/types";
 
 async function runHexTests(): Promise<void> {
   const bytes = parseHex("0x00aabb");
@@ -177,6 +180,20 @@ async function runConfigTests(): Promise<void> {
   assert.equal(fallback.verifyDefaultChainId, 0);
   assert.equal(fallback.verifyRequiredScope, "verify.submit");
   assert.equal(fallback.verifyMetricsRetentionDays, 30);
+  const maxInt4 = loadConfig({
+    ...process.env,
+    NODE_ENV: process.env.NODE_ENV ?? "test",
+    EXPLORER_DATABASE_URL: "postgres://localhost:5432/test",
+    EXPLORER_VERIFY_DEFAULT_CHAIN_ID: "2147483647",
+  });
+  assert.equal(maxInt4.verifyDefaultChainId, 2_147_483_647);
+  const outOfRange = loadConfig({
+    ...process.env,
+    NODE_ENV: process.env.NODE_ENV ?? "test",
+    EXPLORER_DATABASE_URL: "postgres://localhost:5432/test",
+    EXPLORER_VERIFY_DEFAULT_CHAIN_ID: "2147483648",
+  });
+  assert.equal(outOfRange.verifyDefaultChainId, 0);
 }
 
 async function runFormatTests(): Promise<void> {
@@ -226,6 +243,32 @@ async function runVerifyNormalizeTests(): Promise<void> {
       }),
     /out of range/
   );
+  assert.throws(
+    () =>
+      normalizeVerifySubmitInput({
+        ...input,
+        chainId: 2_147_483_648,
+      }),
+    /out of range/
+  );
+  assert.throws(
+    () =>
+      normalizeVerifySubmitInput({
+        ...input,
+        sourceBundle: {
+          "contracts\\A.sol": "contract A {}",
+        },
+      }),
+    /invalid path/
+  );
+  assert.throws(
+    () =>
+      normalizeVerifySubmitInput({
+        ...input,
+        contractName: "A\\B",
+      }),
+    /forbidden characters/
+  );
 }
 
 async function runVerifyRuntimeMatchTests(): Promise<void> {
@@ -236,6 +279,28 @@ async function runVerifyRuntimeMatchTests(): Promise<void> {
   assert.equal(isRuntimeMatch(withMetadata, op), true);
   assert.equal(isRuntimeMatch(op, withMetadata), true);
   assert.equal(isRuntimeMatch("6001600056", op), false);
+}
+
+async function runVerifyServiceInvalidInputMapTests(): Promise<void> {
+  const invalidInput: VerifySubmitInput = {
+    chainId: 0,
+    contractAddress: "0x" + "11".repeat(20),
+    compilerVersion: "0.8.30",
+    optimizerEnabled: true,
+    optimizerRuns: 200,
+    evmVersion: null,
+    sourceBundle: {
+      "contracts/A.sol": "contract A {}",
+    },
+    contractName: "A\\B",
+    constructorArgsHex: "0x",
+  };
+  await assert.rejects(async () => executeVerifyJob(invalidInput), (err: unknown) => {
+    if (!isVerifyServiceError(err)) {
+      return false;
+    }
+    return err.code === "invalid_input";
+  });
 }
 
 async function runVerifyAuthTests(): Promise<void> {
@@ -307,6 +372,22 @@ async function runVerifyAuthTests(): Promise<void> {
     });
     const auth4 = await authenticateVerifyRequest(expiredReq);
     assert.equal(auth4, null);
+    const replayFirst = await consumeVerifyReplayJti({
+      jti: "race-jti-1",
+      sub: "user-1",
+      scope: "verify.submit",
+      expSec: BigInt(Math.floor(Date.now() / 1000) + 600),
+      consumedAtMs: 1_000_000n,
+    });
+    const replaySecond = await consumeVerifyReplayJti({
+      jti: "race-jti-1",
+      sub: "user-1",
+      scope: "verify.submit",
+      expSec: BigInt(Math.floor(Date.now() / 1000) + 600),
+      consumedAtMs: 1_000_001n,
+    });
+    assert.equal(replayFirst, true);
+    assert.equal(replaySecond, false);
 
     await pool.query(
       "INSERT INTO verify_auth_replay(jti, sub, scope, exp, consumed_at) VALUES($1, $2, $3, $4, $5), ($6, $7, $8, $9, $10)",
@@ -557,6 +638,9 @@ async function runVerifyAbiParseFallbackTests(): Promise<void> {
   const bad = parseVerifiedAbi("{not-json");
   assert.equal(bad.abiParseError, true);
   assert.equal(bad.abi, null);
+  assert.equal(parseChainId("2147483647", 0), 2_147_483_647);
+  assert.equal(parseChainId("2147483648", 0), null);
+  assert.equal(parseChainId(null, 2_147_483_648), null);
 }
 
 async function runVerifyTokenBuildTests(): Promise<void> {
@@ -1223,6 +1307,7 @@ runHexTests()
   .then(runFormatTests)
   .then(runVerifyNormalizeTests)
   .then(runVerifyRuntimeMatchTests)
+  .then(runVerifyServiceInvalidInputMapTests)
   .then(runVerifyAuthTests)
   .then(runVerifyRequestLifecycleTests)
   .then(runVerifyMetricsTests)

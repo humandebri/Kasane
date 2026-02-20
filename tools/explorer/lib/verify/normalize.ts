@@ -3,18 +3,18 @@
 import { createHash } from "node:crypto";
 import { gzipSync, gunzipSync } from "node:zlib";
 import { isAddressHex, normalizeHex, parseHex } from "../hex";
+import { MAX_CHAIN_ID_INT4 } from "./constants";
 import type { VerifySourceBundle, VerifySubmitInput } from "./types";
 
 const EMPTY_CONSTRUCTOR_ARGS = "0x";
 const MAX_SOURCE_FILES = 100;
 const MAX_SOURCE_FILE_BYTES = 512 * 1024;
 const MAX_CONTRACT_NAME_BYTES = 240;
-
 export function normalizeVerifySubmitInput(raw: unknown): VerifySubmitInput {
   if (!isObject(raw)) {
     throw new Error("input must be an object");
   }
-  const chainId = parseInteger(raw.chainId, "chainId", 0, Number.MAX_SAFE_INTEGER);
+  const chainId = parseInteger(raw.chainId, "chainId", 0, MAX_CHAIN_ID_INT4);
   const contractAddress = parseAddress(raw.contractAddress);
   const compilerVersion = parseNonEmptyString(raw.compilerVersion, "compilerVersion");
   const optimizerEnabled = parseBoolean(raw.optimizerEnabled, "optimizerEnabled");
@@ -134,7 +134,7 @@ function isSafeSourcePath(filePath: string): boolean {
   if (filePath.includes("..") || filePath.startsWith("/") || filePath.startsWith("\\")) {
     return false;
   }
-  return /^[a-zA-Z0-9_./\\-]+$/.test(filePath);
+  return /^[a-zA-Z0-9_./-]+$/.test(filePath);
 }
 
 function parseAddress(raw: unknown): string {
@@ -176,7 +176,7 @@ function parseContractName(raw: unknown): string {
   if (Buffer.byteLength(value, "utf8") > MAX_CONTRACT_NAME_BYTES) {
     throw new Error("contractName too long");
   }
-  if (!/^[a-zA-Z0-9_./:\\-]+$/.test(value)) {
+  if (!/^[a-zA-Z0-9_./:\-]+$/.test(value)) {
     throw new Error("contractName has forbidden characters");
   }
   return value;

@@ -1,4 +1,5 @@
 // どこで: Explorer設定層 / 何を: 実行時パラメータを集約 / なぜ: 依存値の散在を防ぎ安全に変更するため
+import { MAX_CHAIN_ID_INT4 } from "./verify/constants";
 
 export type ExplorerConfig = {
   databaseUrl: string;
@@ -49,7 +50,7 @@ export function loadConfig(env: NodeJS.ProcessEnv): ExplorerConfig {
     principalTxsLimit: parseRangeInt(env.EXPLORER_PRINCIPAL_TXS, 50, 1, 500),
     verifyEnabled: parseBool(env.EXPLORER_VERIFY_ENABLED),
     verifyRawPayloadLimitBytes: parseRangeInt(env.EXPLORER_VERIFY_MAX_PAYLOAD_BYTES, 5_000_000, 1024, 20_000_000),
-    verifyDefaultChainId: parseRangeInt(env.EXPLORER_VERIFY_DEFAULT_CHAIN_ID, 0, 0, Number.MAX_SAFE_INTEGER),
+    verifyDefaultChainId: parseRangeInt(env.EXPLORER_VERIFY_DEFAULT_CHAIN_ID, 0, 0, MAX_CHAIN_ID_INT4),
     verifyWorkerConcurrency: parseRangeInt(env.EXPLORER_VERIFY_WORKER_CONCURRENCY, 2, 1, 8),
     verifyJobTimeoutMs: parseRangeInt(env.EXPLORER_VERIFY_JOB_TIMEOUT_MS, 120_000, 1_000, 600_000),
     verifyMaxRetries: parseRangeInt(env.EXPLORER_VERIFY_MAX_RETRIES, 2, 0, 10),

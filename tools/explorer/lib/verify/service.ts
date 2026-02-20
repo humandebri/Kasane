@@ -109,6 +109,9 @@ function mapError(err: unknown): VerifyServiceError {
   if (message.startsWith("compile_process_failed:")) {
     return mkVerifyError("compile_process_failed", message.replace("compile_process_failed:", "").trim());
   }
+  if (message.startsWith("invalid_input:")) {
+    return mkVerifyError("invalid_input", message.replace("invalid_input:", "").trim());
+  }
   if (message.startsWith("contract_not_found:")) {
     return mkVerifyError("contract_not_found", message.replace("contract_not_found:", "").trim());
   }
