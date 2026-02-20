@@ -7,6 +7,7 @@ import type {
   TxSummary,
 } from "./db";
 import { normalizeHex, parseHex, toHexLower } from "./hex";
+import { inferMethodLabel } from "./tx_method";
 
 export const ADDRESS_HISTORY_LIMIT = 50;
 
@@ -17,6 +18,7 @@ export type AddressHistoryItem = {
   txIndex: number;
   fromAddressHex: string;
   toAddressHex: string | null;
+  createdContractAddressHex: string | null;
   txSelectorHex: string | null;
   methodLabel: string;
   direction: "in" | "out" | "self";
@@ -27,8 +29,11 @@ export type AddressHistoryItem = {
 export type AddressTokenTransferItem = {
   txHashHex: string;
   blockNumber: bigint;
+  blockTimestamp: bigint | null;
   txIndex: number;
   logIndex: number;
+  txSelectorHex: string | null;
+  methodLabel: string;
   tokenAddressHex: string;
   fromAddressHex: string;
   toAddressHex: string;
@@ -39,7 +44,7 @@ export type AddressTokenTransferItem = {
 export type AddressView = {
   addressHex: string;
   providedPrincipal: string | null;
-  observedPrincipals: string[];
+  submitterPrincipals: string[];
   balance: bigint | null;
   nonce: bigint | null;
   codeBytes: number | null;
@@ -134,8 +139,11 @@ export function mapAddressTokenTransfers(
     return {
       txHashHex: row.txHashHex,
       blockNumber: row.blockNumber,
+      blockTimestamp: row.blockTimestamp ?? null,
       txIndex: row.txIndex,
       logIndex: row.logIndex,
+      txSelectorHex: row.txSelector ? toHexLower(row.txSelector) : null,
+      methodLabel: inferMethodLabel(tokenAddressHex, row.txSelector),
       tokenAddressHex,
       fromAddressHex,
       toAddressHex,
@@ -148,6 +156,7 @@ export function mapAddressTokenTransfers(
 function toAddressHistoryItem(tx: TxSummary, targetHex: string): AddressHistoryItem {
   const fromHex = toHexLower(tx.fromAddress);
   const toHex = tx.toAddress ? toHexLower(tx.toAddress) : null;
+  const createdContractAddressHex = tx.createdContractAddress ? toHexLower(tx.createdContractAddress) : null;
   if (fromHex === targetHex && toHex === targetHex) {
     return {
       txHashHex: tx.txHashHex,
@@ -156,6 +165,7 @@ function toAddressHistoryItem(tx: TxSummary, targetHex: string): AddressHistoryI
       txIndex: tx.txIndex,
       fromAddressHex: fromHex,
       toAddressHex: toHex,
+      createdContractAddressHex,
       txSelectorHex: toHex === null || !tx.txSelector ? null : toHexLower(tx.txSelector),
       methodLabel: inferMethodLabel(toHex, tx.txSelector),
       direction: "self",
@@ -171,6 +181,7 @@ function toAddressHistoryItem(tx: TxSummary, targetHex: string): AddressHistoryI
       txIndex: tx.txIndex,
       fromAddressHex: fromHex,
       toAddressHex: toHex,
+      createdContractAddressHex,
       txSelectorHex: toHex === null || !tx.txSelector ? null : toHexLower(tx.txSelector),
       methodLabel: inferMethodLabel(toHex, tx.txSelector),
       direction: "out",
@@ -185,34 +196,11 @@ function toAddressHistoryItem(tx: TxSummary, targetHex: string): AddressHistoryI
     txIndex: tx.txIndex,
     fromAddressHex: fromHex,
     toAddressHex: toHex,
+    createdContractAddressHex,
     txSelectorHex: toHex === null || !tx.txSelector ? null : toHexLower(tx.txSelector),
     methodLabel: inferMethodLabel(toHex, tx.txSelector),
     direction: "in",
     counterpartyHex: fromHex,
     receiptStatus: tx.receiptStatus,
   };
-}
-
-function inferMethodLabel(toHex: string | null, txSelector: Buffer | null): string {
-  if (toHex === null) {
-    return "create";
-  }
-  if (!txSelector || txSelector.length !== 4) {
-    return "call";
-  }
-  const selector = txSelector.toString("hex");
-  const known = selectorToMethodName(selector);
-  return known ?? `0x${selector}`;
-}
-
-function selectorToMethodName(selectorHex: string): string | null {
-  if (selectorHex === "a9059cbb") return "transfer";
-  if (selectorHex === "095ea7b3") return "approve";
-  if (selectorHex === "23b872dd") return "transferFrom";
-  if (selectorHex === "70a08231") return "balanceOf";
-  if (selectorHex === "dd62ed3e") return "allowance";
-  if (selectorHex === "313ce567") return "decimals";
-  if (selectorHex === "95d89b41") return "symbol";
-  if (selectorHex === "06fdde03") return "name";
-  return null;
 }

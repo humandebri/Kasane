@@ -54,7 +54,7 @@ export function formatEthFromWei(value: bigint, maxFractionDigits = 18): string 
   const fractionRaw = (abs % base).toString().padStart(18, "0");
   const fractionTrimmed = fractionRaw.replace(/0+$/, "").slice(0, maxFractionDigits);
   const fraction = fractionTrimmed.length === 0 ? "" : `.${fractionTrimmed}`;
-  return `${sign}${whole.toString()}${fraction} ETH`;
+  return `${sign}${whole.toString()}${fraction} ICP`;
 }
 
 export function formatGweiFromWei(value: bigint, maxFractionDigits = 9): string {

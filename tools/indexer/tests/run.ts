@@ -1788,6 +1788,11 @@ async function createTestIndexerDb(): Promise<IndexerDb> {
   const db = await IndexerDb.fromPool(pool, { migrations: MIGRATIONS.slice(0, 1) });
   await db.queryOne("alter table if exists blocks add column if not exists gas_used bigint");
   await db.queryOne("alter table if exists txs add column if not exists tx_selector bytea");
+  await db.queryOne("alter table if exists txs add column if not exists tx_input bytea");
+  await db.queryOne(
+    "create table if not exists tx_receipts_index(" +
+      "tx_hash bytea primary key, contract_address bytea, status smallint not null, block_number bigint not null, tx_index integer not null)"
+  );
   await db.queryOne("alter table if exists ops_metrics_samples add column if not exists cycles bigint not null default 0");
   await db.queryOne("alter table if exists ops_metrics_samples add column if not exists pruned_before_block bigint");
   await db.queryOne("alter table if exists ops_metrics_samples add column if not exists estimated_kept_bytes bigint");

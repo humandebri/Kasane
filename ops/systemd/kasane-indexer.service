@@ -1,0 +1,20 @@
+[Unit]
+Description=Kasane Indexer
+After=network-online.target postgresql.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/kasane/tools/indexer
+User=rpcgw
+Group=rpcgw
+EnvironmentFile=/etc/kasane/indexer.env
+ExecStart=/usr/bin/node dist/main.js
+Restart=always
+RestartSec=3
+NoNewPrivileges=true
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

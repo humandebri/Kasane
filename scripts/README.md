@@ -51,6 +51,7 @@ scripts/query_smoke.sh
 - `scripts/mainnet/ic_mainnet_preflight.sh`: 本番前の最小チェック
 - `scripts/mainnet/ic_mainnet_deploy.sh`: 本番デプロイ本体
 - `scripts/mainnet/ic_mainnet_post_upgrade_smoke.sh`: デプロイ後の最小RPC確認
+- `scripts/verify_submit_after_deploy.sh`: verify submit の手動/CIフック
 - `scripts/mainnet/mainnet_method_test.sh`: 本番メソッド検証（重い）
   - `MINING_IDLE_OBSERVE_SEC`: 冒頭の idle 観測秒数（既定: `6`）
   - `IDLE_MAX_CYCLE_DELTA`: idle 観測で許容する cycle 減少上限。`0` で閾値チェック無効（既定: `0`）
@@ -67,6 +68,26 @@ scripts/query_smoke.sh
 - `RUN_DEPLOY`（`predeploy_smoke.sh` で local deploy を有効化）
 - `RUN_INDEXER_SMOKE`（`predeploy_smoke.sh` で indexer smoke の有無）
 - `RUN_POST_SMOKE`（`ic_mainnet_deploy.sh` で post smoke を有効化）
+
+## verifyを自動投入する（任意）
+
+canister deployスクリプトとは独立で、必要なパイプラインから
+`scripts/verify_submit_after_deploy.sh` を直接呼び出してください。
+
+必要な環境変数:
+- `VERIFY_PAYLOAD_FILE`（verify submit payload JSON のパス）
+- `VERIFY_AUTH_KID`
+- `VERIFY_AUTH_SECRET`
+- 任意: `AUTO_VERIFY_SUBMIT`, `VERIFY_SUBMIT_URL`, `VERIFY_AUTH_SUB`, `VERIFY_AUTH_SCOPE`, `VERIFY_AUTH_TTL_SEC`
+
+例:
+```bash
+AUTO_VERIFY_SUBMIT=1 \
+VERIFY_PAYLOAD_FILE=/tmp/verify_payload.json \
+VERIFY_AUTH_KID=kid1 \
+VERIFY_AUTH_SECRET=replace_me \
+scripts/verify_submit_after_deploy.sh
+```
 
 ## 失敗時の切り分け
 1. まず `scripts/query_smoke.sh` が通るか確認する  

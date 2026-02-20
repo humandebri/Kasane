@@ -1,0 +1,21 @@
+[Unit]
+Description=Kasane Explorer
+After=network-online.target kasane-indexer.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/kasane/tools/explorer
+User=rpcgw
+Group=rpcgw
+EnvironmentFile=/etc/kasane/explorer.env
+Environment=NODE_ENV=production
+ExecStart=/usr/bin/npm run start -- --hostname 127.0.0.1 --port 3000
+Restart=always
+RestartSec=3
+NoNewPrivileges=true
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

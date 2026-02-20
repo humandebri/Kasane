@@ -91,7 +91,7 @@ scripts/query_smoke.sh
    - `1 ICP = 10^18`（EVM最小単位）
 7. 手動 `auto-mine` の権限エラー文字列を監視で確認する。
    - 現行仕様: controller 以外は `auth.controller_required`
-   - 旧仕様の `auth.producer_required` 前提アラートは更新する
+   - 監視アラートは `auth.controller_required` を前提に運用する
 
 ## 3.1 Contabo 運用ファイル配置（testnet共通）
 
@@ -113,6 +113,41 @@ cd /opt/kasane/tools/rpc-gateway
 1. `eth_sendRawTransaction` 戻り値の tx hash を保存
 2. 直後に `start_receipt_watch.sh` を実行
 3. 成否判定は `receipt.status==0x1` のみを成功条件にする
+
+### 3.1.1 systemd 定義の同期（kasane-indexer）
+
+Contabo 側で手作業差分が残らないよう、systemd 定義はリポジトリ管理のファイルを同期する。
+
+- `ops/systemd/kasane-indexer.service`
+- `ops/systemd/kasane-indexer.service.d/10-alert.conf`
+- `ops/systemd/kasane-alert@.service`
+- `ops/systemd/kasane-explorer.service`
+- `ops/systemd/systemd_webhook_alert.sh`
+
+適用手順（Contabo）:
+
+```bash
+ssh contabo-deployer
+cd /opt/kasane
+
+sudo install -d -m 755 /etc/systemd/system/kasane-indexer.service.d
+sudo cp ops/systemd/kasane-indexer.service /etc/systemd/system/kasane-indexer.service
+sudo cp ops/systemd/kasane-indexer.service.d/10-alert.conf /etc/systemd/system/kasane-indexer.service.d/10-alert.conf
+sudo cp ops/systemd/kasane-alert@.service /etc/systemd/system/kasane-alert@.service
+sudo cp ops/systemd/kasane-explorer.service /etc/systemd/system/kasane-explorer.service
+sudo cp ops/systemd/systemd_webhook_alert.sh /usr/local/bin/systemd_webhook_alert.sh
+sudo chmod 755 /usr/local/bin/systemd_webhook_alert.sh
+
+sudo systemctl daemon-reload
+sudo systemctl disable --now kasane-indexer.service || true
+sudo systemctl enable --now kasane-indexer.service
+sudo systemctl enable --now kasane-explorer.service
+sudo systemctl status --no-pager kasane-indexer.service
+```
+
+通知設定:
+- webhook URL は `/etc/default/receipt-watch` の `ALERT_WEBHOOK_URL` を使う。
+- `kasane-indexer.service` が失敗したとき、`OnFailure=kasane-alert@%n` で webhook 通知される。
 
 ## 3.2 Contabo: indexer migration再適用 + 再デプロイ手順
 
@@ -269,7 +304,6 @@ scripts/mainnet/mainnet_method_test.sh
 - 本番 canister (`4c52m-aiaaa-aaaam-agwwa-cai`) の read-only 確認結果:
   - `ci-local` Principal 由来 EVMアドレス: `2287ead6f2f95b19696e900face81857db2b701d`
   - 上記アドレスの残高: `1e18 wei`（`0x0de0b6b3a7640000`）
-  - これは旧デフォルト（`GENESIS_PRINCIPAL_AMOUNT=1000000000000000000`）時点の観測値。
   - 現在のデフォルトは `GENESIS_PRINCIPAL_AMOUNT=100000000000000000000000`（100,000倍）。
 - 制約:
   - canister から「genesisで配布された全アドレス一覧」や「対応秘密鍵」は取得できない。

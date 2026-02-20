@@ -1,0 +1,8 @@
+[Unit]
+Description=Kasane failure webhook notifier for %i
+After=network-online.target
+
+[Service]
+Type=oneshot
+EnvironmentFile=-/etc/default/receipt-watch
+ExecStart=/usr/local/bin/systemd_webhook_alert.sh %i

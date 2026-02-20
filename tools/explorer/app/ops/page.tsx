@@ -1,6 +1,5 @@
 // どこで: Opsダッシュボード / 何を: lag/メトリクス/prune/失敗率を表示 / なぜ: 運用監視を単一ページで完結させるため
 
-import { Badge } from "../../components/ui/badge";
 import { CapacityTrendChart } from "../../components/capacity-trend-chart";
 import { CyclesTrendChart } from "../../components/cycles-trend-chart";
 import { OpsTimeseriesTable } from "../../components/ops-timeseries-table";
@@ -19,11 +18,14 @@ export default async function OpsPage({
   const trend = parseCyclesTrendWindow(params.trend);
   const data = await getOpsView(trend);
   const prune = data.pruneStatus?.status;
+  const compactCardClass = "gap-4 py-4";
+  const compactHeaderClass = "px-4";
+  const compactContentClass = "px-4";
 
   return (
-    <>
-      <Card>
-        <CardHeader>
+    <div className="grid grid-cols-1 gap-4 xl:grid-cols-12">
+      <Card className={`${compactCardClass} xl:col-span-7`}>
+        <CardHeader className={compactHeaderClass}>
           <div className="flex items-center justify-between gap-2">
             <CardTitle>Cycles Trend</CardTitle>
             <div className="flex items-center gap-2 text-xs">
@@ -42,7 +44,7 @@ export default async function OpsPage({
             </div>
           </div>
         </CardHeader>
-        <CardContent>
+        <CardContent className={compactContentClass}>
           {data.cyclesTrendSeries.length === 0 ? (
             <p className="text-sm text-muted-foreground">No cycle samples in the selected window.</p>
           ) : (
@@ -62,78 +64,104 @@ export default async function OpsPage({
         </CardContent>
       </Card>
 
-      <Card>
-        <CardHeader>
+      <Card className={`${compactCardClass} xl:col-span-5`}>
+        <CardHeader className={compactHeaderClass}>
+          <CardTitle>Verify Metrics (15m / 24h)</CardTitle>
+        </CardHeader>
+        <CardContent className={compactContentClass}>
+          <dl className="grid grid-cols-1 gap-2 text-sm md:grid-cols-[190px_1fr]">
+            <dt className="text-muted-foreground">Current queue depth</dt>
+            <dd>{data.verify.currentQueueDepth.toString()}</dd>
+            <dt className="text-muted-foreground">15m success rate</dt>
+            <dd>{formatOptionalPercent(data.verify.last15m.successRate)}</dd>
+            <dt className="text-muted-foreground">15m p50/p95</dt>
+            <dd>{formatDurationPair(data.verify.last15m.p50DurationMs, data.verify.last15m.p95DurationMs)}</dd>
+            <dt className="text-muted-foreground">24h success rate</dt>
+            <dd>{formatOptionalPercent(data.verify.last24h.successRate)}</dd>
+            <dt className="text-muted-foreground">24h p50/p95</dt>
+            <dd>{formatDurationPair(data.verify.last24h.p50DurationMs, data.verify.last24h.p95DurationMs)}</dd>
+            <dt className="text-muted-foreground">24h fail top codes</dt>
+            <dd>
+              {data.verify.last24h.failTopCodes.length === 0
+                ? "none"
+                : data.verify.last24h.failTopCodes.map((row) => `${row.code}:${row.count.toString()}`).join(", ")}
+            </dd>
+          </dl>
+        </CardContent>
+      </Card>
+
+      <Card className={`${compactCardClass} xl:col-span-12`}>
+        <CardHeader className={compactHeaderClass}>
           <CardTitle>Ops Timeseries (latest 10)</CardTitle>
         </CardHeader>
-        <CardContent>
+        <CardContent className={compactContentClass}>
           {data.series.length === 0 ? (
             <p className="text-sm text-muted-foreground">No ops samples.</p>
           ) : (
-            <OpsTimeseriesTable
-              points={[...data.series].reverse().map((point) => ({
-                sampledAtMs: point.sampledAtMs.toString(),
-                queueLen: point.queueLen.toString(),
-                cycles: point.cycles.toString(),
-                totalSubmitted: point.totalSubmitted.toString(),
-                totalIncluded: point.totalIncluded.toString(),
-                totalDropped: point.totalDropped.toString(),
-                failureRate: point.failureRate,
-              }))}
-            />
+            <div className="overflow-x-auto">
+              <OpsTimeseriesTable
+                points={[...data.series].reverse().map((point) => ({
+                  sampledAtMs: point.sampledAtMs.toString(),
+                  queueLen: point.queueLen.toString(),
+                  cycles: point.cycles.toString(),
+                  totalSubmitted: point.totalSubmitted.toString(),
+                  totalIncluded: point.totalIncluded.toString(),
+                  totalDropped: point.totalDropped.toString(),
+                  failureRate: point.failureRate,
+                }))}
+              />
+            </div>
           )}
         </CardContent>
       </Card>
 
-      <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
-        <Card>
-          <CardHeader>
-            <CardTitle>Daily Metrics</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <dl className="grid grid-cols-1 gap-2 text-sm md:grid-cols-[220px_1fr]">
-              <dt className="text-muted-foreground">Latest day</dt>
-              <dd>{data.stats.latestDay ?? "N/A"}</dd>
-              <dt className="text-muted-foreground">Blocks ingested</dt>
-              <dd>{data.stats.latestDayBlocks.toString()}</dd>
-              <dt className="text-muted-foreground">Raw bytes</dt>
-              <dd>{data.stats.latestDayRawBytes.toString()}</dd>
-              <dt className="text-muted-foreground">Compressed bytes</dt>
-              <dd>{data.stats.latestDayCompressedBytes.toString()}</dd>
-            </dl>
-          </CardContent>
-        </Card>
+      <Card className={`${compactCardClass} xl:col-span-6 2xl:col-span-4`}>
+        <CardHeader className={compactHeaderClass}>
+          <CardTitle>Daily Metrics</CardTitle>
+        </CardHeader>
+        <CardContent className={compactContentClass}>
+          <dl className="grid grid-cols-1 gap-2 text-sm md:grid-cols-[190px_1fr]">
+            <dt className="text-muted-foreground">Latest day</dt>
+            <dd>{data.stats.latestDay ?? "N/A"}</dd>
+            <dt className="text-muted-foreground">Blocks ingested</dt>
+            <dd>{data.stats.latestDayBlocks.toString()}</dd>
+            <dt className="text-muted-foreground">Raw bytes</dt>
+            <dd>{data.stats.latestDayRawBytes.toString()}</dd>
+            <dt className="text-muted-foreground">Compressed bytes</dt>
+            <dd>{data.stats.latestDayCompressedBytes.toString()}</dd>
+          </dl>
+        </CardContent>
+      </Card>
 
-        <Card>
-          <CardHeader>
-            <CardTitle>Prune Status</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-3">
-            <dl className="grid grid-cols-1 gap-2 text-sm md:grid-cols-[220px_1fr]">
-              <dt className="text-muted-foreground">need_prune (live)</dt>
-              <dd>{formatOptionalBool(data.needPrune)}</dd>
-              <dt className="text-muted-foreground">Stored status</dt>
-              <dd>{data.pruneStatus ? "available" : "not available"}</dd>
-              <dt className="text-muted-foreground">Stored fetched_at</dt>
-              <dd>{formatTimestamp(data.pruneStatus?.fetchedAtMs ?? null)}</dd>
-              <dt className="text-muted-foreground">Stored pruning_enabled</dt>
-              <dd>{formatOptionalBool(prune ? prune.pruningEnabled : null)}</dd>
-              <dt className="text-muted-foreground">Stored prune_running</dt>
-              <dd>{formatOptionalBool(prune ? prune.pruneRunning : null)}</dd>
-              <dt className="text-muted-foreground">Stored pruned_before_block</dt>
-              <dd>{formatBigInt(prune ? prune.prunedBeforeBlock : null)}</dd>
-              <dt className="text-muted-foreground">Live prune status</dt>
-              <dd>{data.pruneStatusLive ? "available" : "not available"}</dd>
-            </dl>
-          </CardContent>
-        </Card>
-      </div>
+      <Card className={`${compactCardClass} xl:col-span-6 2xl:col-span-4`}>
+        <CardHeader className={compactHeaderClass}>
+          <CardTitle>Prune Status</CardTitle>
+        </CardHeader>
+        <CardContent className={`${compactContentClass} space-y-3`}>
+          <dl className="grid grid-cols-1 gap-2 text-sm md:grid-cols-[190px_1fr]">
+            <dt className="text-muted-foreground">need_prune (live)</dt>
+            <dd>{formatOptionalBool(data.needPrune)}</dd>
+            <dt className="text-muted-foreground">Stored status</dt>
+            <dd>{data.pruneStatus ? "available" : "not available"}</dd>
+            <dt className="text-muted-foreground">Stored fetched_at</dt>
+            <dd>{formatTimestamp(data.pruneStatus?.fetchedAtMs ?? null)}</dd>
+            <dt className="text-muted-foreground">Stored pruning_enabled</dt>
+            <dd>{formatOptionalBool(prune ? prune.pruningEnabled : null)}</dd>
+            <dt className="text-muted-foreground">Stored prune_running</dt>
+            <dd>{formatOptionalBool(prune ? prune.pruneRunning : null)}</dd>
+            <dt className="text-muted-foreground">Stored pruned_before_block</dt>
+            <dd>{formatBigInt(prune ? prune.prunedBeforeBlock : null)}</dd>
+            <dt className="text-muted-foreground">Live prune status</dt>
+            <dd>{data.pruneStatusLive ? "available" : "not available"}</dd>
+          </dl>
+        </CardContent>
+      </Card>
 
-      <Card>
-        <CardHeader>
+      <Card className={`${compactCardClass} xl:col-span-12 2xl:col-span-4`}>
+        <CardHeader className={compactHeaderClass}>
           <CardTitle>Prune History (latest 10 changes)</CardTitle>
         </CardHeader>
-        <CardContent>
+        <CardContent className={compactContentClass}>
           {data.pruneHistory.length === 0 ? (
             <p className="text-sm text-muted-foreground">No prune history yet.</p>
           ) : (
@@ -159,11 +187,11 @@ export default async function OpsPage({
         </CardContent>
       </Card>
 
-      <Card>
-        <CardHeader>
+      <Card className={`${compactCardClass} xl:col-span-7`}>
+        <CardHeader className={compactHeaderClass}>
           <CardTitle>Canister Capacity</CardTitle>
         </CardHeader>
-        <CardContent className="space-y-3">
+        <CardContent className={`${compactContentClass} space-y-3`}>
           {data.capacityTrendSeries.length === 0 ? (
             <p className="text-sm text-muted-foreground">No capacity trend samples yet.</p>
           ) : (
@@ -176,7 +204,7 @@ export default async function OpsPage({
               }))}
             />
           )}
-          <dl className="grid grid-cols-1 gap-2 text-sm md:grid-cols-[220px_1fr]">
+          <dl className="grid grid-cols-1 gap-2 text-sm md:grid-cols-[190px_1fr]">
             <dt className="text-muted-foreground">Estimated kept (MB)</dt>
             <dd>{formatMegaBytes(data.capacity.estimatedKeptBytes)}</dd>
             <dt className="text-muted-foreground">Low water (MB)</dt>
@@ -227,16 +255,16 @@ export default async function OpsPage({
         </CardContent>
       </Card>
 
-      <Card>
-        <CardHeader>
+      <Card className={`${compactCardClass} xl:col-span-5`}>
+        <CardHeader className={compactHeaderClass}>
           <CardTitle>Stable Memory Breakdown</CardTitle>
         </CardHeader>
-        <CardContent className="space-y-3">
+        <CardContent className={`${compactContentClass} space-y-3`}>
           {data.memoryBreakdown === null ? (
             <p className="text-sm text-muted-foreground">No memory breakdown snapshot yet.</p>
           ) : (
             <>
-              <dl className="grid grid-cols-1 gap-2 text-sm md:grid-cols-[220px_1fr]">
+              <dl className="grid grid-cols-1 gap-2 text-sm md:grid-cols-[170px_1fr]">
                 <dt className="text-muted-foreground">Fetched at</dt>
                 <dd>{formatTimestamp(data.memoryBreakdown.fetchedAtMs)}</dd>
                 <dt className="text-muted-foreground">Stable total</dt>
@@ -286,11 +314,11 @@ export default async function OpsPage({
       </Card>
 
       {data.warnings.length > 0 ? (
-        <Card>
-          <CardHeader>
+        <Card className={`${compactCardClass} xl:col-span-12`}>
+          <CardHeader className={compactHeaderClass}>
             <CardTitle>Warnings</CardTitle>
           </CardHeader>
-          <CardContent>
+          <CardContent className={compactContentClass}>
             <ul className="list-disc pl-5 text-sm">
               {data.warnings.map((warning) => (
                 <li key={warning}>{warning}</li>
@@ -299,7 +327,7 @@ export default async function OpsPage({
           </CardContent>
         </Card>
       ) : null}
-    </>
+    </div>
   );
 }
 
@@ -334,6 +362,17 @@ function formatPages(value: bigint | null): string {
 function formatPercent(ratio: number | null): string {
   if (ratio === null || !Number.isFinite(ratio)) return "N/A";
   return `${(ratio * 100).toFixed(2)}%`;
+}
+
+function formatOptionalPercent(percentValue: number | null): string {
+  if (percentValue === null || !Number.isFinite(percentValue)) return "N/A";
+  return `${percentValue.toFixed(2)}%`;
+}
+
+function formatDurationPair(p50Ms: bigint | null, p95Ms: bigint | null): string {
+  const left = p50Ms === null ? "N/A" : `${p50Ms.toString()}ms`;
+  const right = p95Ms === null ? "N/A" : `${p95Ms.toString()}ms`;
+  return `${left} / ${right}`;
 }
 
 function clampPercent(ratio: number | null): number {

@@ -56,4 +56,3 @@ function readWord(data: Uint8Array, wordIndex: number): bigint {
   }
   return out;
 }
-

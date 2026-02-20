@@ -13,6 +13,7 @@ import {
   getMaxBlockNumber,
   getMetaSnapshot,
   getOpsMetricsSamplesSince,
+  getVerifyMetricsSamplesSince,
   getOverviewStats,
   getRecentOpsMetricsSamples,
   getTokenTransfersByAddress,
@@ -57,6 +58,7 @@ import {
   type PruneStatusView,
   type ReceiptView,
 } from "./rpc";
+import { summarizeVerifyWindow, type VerifyWindowSummaryBigInt } from "./verify/metrics";
 
 type HomeView = {
   dbHead: bigint | null;
@@ -117,7 +119,14 @@ export type OpsView = {
   pendingStall: boolean;
   warnings: string[];
   memoryBreakdown: StoredMemoryBreakdown | null;
+  verify: {
+    currentQueueDepth: bigint;
+    last15m: VerifyWindowSummary;
+    last24h: VerifyWindowSummary;
+  };
 };
+
+type VerifyWindowSummary = VerifyWindowSummaryBigInt;
 
 type CapacityForecast = {
   growthBytesPerDay: number | null;
@@ -182,6 +191,7 @@ export type BlockGasView = {
 };
 
 const HOME_BLOCKS_LIMIT_MAX = 500;
+const HOME_LATEST_TXS_LIMIT_MAX = 10;
 const TXS_PAGE_LIMIT_DEFAULT = 50;
 const TXS_PAGE_LIMIT_MAX = 100;
 const BLOCKS_PAGE_LIMIT_MAX = 100;
@@ -221,12 +231,13 @@ export function resolveHomeBlocksLimit(rawValue: string | string[] | undefined, 
 export async function getHomeView(blocksLimitRaw?: string | string[]): Promise<HomeView> {
   const cfg = loadConfig(process.env);
   const blockLimit = resolveHomeBlocksLimit(blocksLimitRaw, cfg.latestBlocksLimit);
+  const latestTxsLimit = Math.min(cfg.latestTxsLimit, HOME_LATEST_TXS_LIMIT_MAX);
   const [rpcHead, dbHead, stats, blocks, txs] = await Promise.all([
     getRpcHeadNumber(),
     getMaxBlockNumber(),
     getOverviewStats(),
     getLatestBlocks(blockLimit),
-    getLatestTxs(cfg.latestTxsLimit),
+    getLatestTxs(latestTxsLimit),
   ]);
   return { rpcHead, dbHead, stats, blocks, txs: withCallerPrincipalText(txs), blockLimit };
 }
@@ -367,12 +378,12 @@ export async function getAddressView(
   const tokenNextCursorRow = tokenHasMore ? tokenPageRows[tokenPageRows.length - 1] : undefined;
   const tokenNextCursor = tokenNextCursorRow ? buildTokenTransferCursor(tokenNextCursorRow) : null;
   const tokenTransfers = mapAddressTokenTransfers(tokenPageRows, toHexLower(bytes));
-  const observedPrincipals = collectObservedPrincipals(pageRows);
+  const submitterPrincipals = collectSubmitterPrincipals(pageRows, bytes);
 
   return {
     addressHex: toHexLower(bytes),
     providedPrincipal: providedPrincipal ?? null,
-    observedPrincipals,
+    submitterPrincipals,
     balance,
     nonce,
     codeBytes,
@@ -395,7 +406,7 @@ export async function getOpsView(cyclesTrendWindow: CyclesTrendWindow = "24h"): 
   const nowMs = Date.now();
   const windowMs = cyclesTrendWindow === "7d" ? CYCLES_TREND_WINDOW_MS_7D : CYCLES_TREND_WINDOW_MS_24H;
   const cyclesTrendSinceMs = BigInt(nowMs - windowMs);
-  const [rpcHead, dbHead, stats, meta, pruneStatusLive, samples, cyclesTrendSamples, capacityForecastSamples] = await Promise.all([
+  const [rpcHead, dbHead, stats, meta, pruneStatusLive, samples, cyclesTrendSamples, capacityForecastSamples, verifySamples] = await Promise.all([
     tryRpc(() => getRpcHeadNumber(), "rpc head is unavailable", warnings),
     getMaxBlockNumber(),
     getOverviewStats(),
@@ -404,6 +415,7 @@ export async function getOpsView(cyclesTrendWindow: CyclesTrendWindow = "24h"): 
     getRecentOpsMetricsSamples(OPS_TIMESERIES_TABLE_LIMIT),
     getOpsMetricsSamplesSince(cyclesTrendSinceMs),
     getOpsMetricsSamplesSince(BigInt(nowMs - CYCLES_TREND_WINDOW_MS_7D)),
+    getVerifyMetricsSamplesSince(BigInt(nowMs - CYCLES_TREND_WINDOW_MS_24H)),
   ]);
 
   const effectiveNeedPrune = pruneStatusLive ? pruneStatusLive.need_prune : null;
@@ -414,6 +426,7 @@ export async function getOpsView(cyclesTrendWindow: CyclesTrendWindow = "24h"): 
   const series = buildOpsSeries(samples);
   const capacityTrendSeries = buildCapacityTrendSeries(cyclesTrendSamples);
   const pruneHistory = buildPruneHistory(samples, OPS_PRUNE_HISTORY_LIMIT);
+  const verify = buildVerifySummary(verifySamples, BigInt(nowMs));
 
   return {
     rpcHead,
@@ -433,6 +446,26 @@ export async function getOpsView(cyclesTrendWindow: CyclesTrendWindow = "24h"): 
     pendingStall: detectPendingStall(series, 15 * 60 * 1000),
     warnings,
     memoryBreakdown,
+    verify,
+  };
+}
+
+function buildVerifySummary(
+  samples: Array<{
+    sampledAtMs: bigint;
+    queueDepth: bigint;
+    successCount: bigint;
+    failedCount: bigint;
+    p50DurationMs: bigint | null;
+    p95DurationMs: bigint | null;
+    failByCodeJson: string;
+  }>,
+  nowMs: bigint
+): OpsView["verify"] {
+  return {
+    currentQueueDepth: samples[0]?.queueDepth ?? 0n,
+    last15m: summarizeVerifyWindow(samples, nowMs - 15n * 60n * 1000n),
+    last24h: summarizeVerifyWindow(samples, nowMs - 24n * 60n * 60n * 1000n),
   };
 }
 
@@ -746,10 +779,14 @@ function receiptStatusLabel(status: number | null): string {
   return status === 1 ? "success" : "failed";
 }
 
-function collectObservedPrincipals(rows: TxSummary[]): string[] {
+function collectSubmitterPrincipals(rows: TxSummary[], targetAddress: Uint8Array): string[] {
   const unique = new Set<string>();
+  const targetHex = toHexLower(targetAddress);
   for (const row of rows) {
     if (!row.callerPrincipal) {
+      continue;
+    }
+    if (toHexLower(row.fromAddress) !== targetHex) {
       continue;
     }
     try {

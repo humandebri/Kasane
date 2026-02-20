@@ -18,6 +18,16 @@ cp .env.example .env.local
 
 `.env.local` に最低限 `EXPLORER_DATABASE_URL` と `EVM_CANISTER_ID` を設定してください。
 
+Verifyを有効化する場合は以下も設定します。
+
+```env
+EXPLORER_VERIFY_ENABLED=1
+EXPLORER_VERIFY_AUTH_HMAC_KEYS=kid1:replace_me
+EXPLORER_VERIFY_ADMIN_USERS=user1
+EXPLORER_VERIFY_ALLOWED_COMPILER_VERSIONS=0.8.30
+EXPLORER_VERIFY_DEFAULT_CHAIN_ID=0
+```
+
 ## 起動
 
 ```bash
@@ -32,6 +42,7 @@ npm run dev
 - Principal: `/principal/:text`
 - Logs: `/logs`
 - Ops: `/ops`
+- Verify guide: `/verify`
 
 Block詳細ページは RPC が返す場合に `Gas Used / Gas Limit / Base Fee Per Gas / Burnt Fees / Gas vs Target` を表示します。
 
@@ -53,7 +64,7 @@ Search の入力判定:
 ## 既知の制約
 
 - Addressページは snapshot 情報（balance / nonce / code）に加えて tx履歴と ERC-20 Transfer 履歴を表示します。
-- Addressページの tx履歴は `Method(selector推定) / Block / Age / Amount / Txn Fee / From / To` を表示します（hashは先頭省略表示）。
+- Addressページの tx履歴は `Transaction Hash / Method(selector推定) / Block / Age / From / Direction / To / Amount / Txn Fee` を表示します。
 - address履歴は `Older`（50件単位カーソル）で継続取得します。
 - token transfer履歴も `Older`（50件単位カーソル）で継続取得します。
 - `/tx` の `Value / Transaction Fee` は wei由来の値を `ICP` 表記で、`Gas Price` は `effective_gas_price` を `Gwei` 表記で表示します。
@@ -65,6 +76,16 @@ Search の入力判定:
 - `Timeline` は raw単位表示です（token decimalsを使った正規化は未対応）。
 - Principalルートは導出EVM addressの `/address/:hex` へリダイレクトします（表示はAddressページに統合）。
 - Principal導出は `@dfinity/ic-pub-key@1.0.1` を固定利用しています（導出互換性の安定化）。
+- Verifyは `POST /api/verify/submit`（認証必須）で投入し、`GET /api/verify/status?id=...`（認証必須）で状態確認します。
+- `GET /api/verify/status` は同一Bearerトークンでポーリングできます（statusではJTIを消費しません）。
+- Verify重複判定は `submitted_by + input_hash` のユーザー単位です。同一入力でも別ユーザーは別requestになります。
+- 公開参照は `GET /api/contracts/:address/verified`（`chainId`クエリ任意）を利用します。
+- 公開参照APIは `abi_json` が壊れていても 200 を返し、`abi: null` と `abiParseError: true` を返します。
+- deploy直後の自動投入は `npm run verify:submit` を使います（`VERIFY_PAYLOAD_FILE` にJSONを渡す）。
+- Verifyワーカー起動前に `npm run verify:preflight` を実行し、allowlist全 `solc-<version>` の存在を確認します。
+- Verifyワーカーは `npm run verify:worker` で起動します（indexer同期処理とは分離）。
+- 運用手順（鍵ローテーション / preflight / jti掃除）は `/Users/0xhude/Desktop/ICP/Kasane/docs/ops/verify_runbook.md` を参照してください。
+- Verifyメトリクスは固定サンプル窓（`EXPLORER_VERIFY_METRICS_SAMPLE_INTERVAL_MS`）で集計します。ワーカー再起動直後は見え方が揺れるため、アラートは緩めの閾値から開始してください。
 - Logsページは canister を直接呼び出します。`topic1` / `topics OR配列` は未対応（指定時はURL正規化で除外）、`blockHash` は未対応です。
 - Logsページは未指定時に `window`（既定20）で最新ブロック範囲を自動検索します（例: `/logs?window=50`）。
 - Logsページの取得件数は1ページ100件固定です（`Older` で継続取得）。
@@ -89,6 +110,7 @@ Search の入力判定:
 - `lib/tx-monitor.ts`: `send受理` と `receipt.status` を分離した状態判定（`/tx` で利用）
 - `lib/principal.ts`: principal -> EVM address 導出（`@dfinity/ic-pub-key`）
 - `lib/search.ts`: Search入力のルーティング判定
+- `lib/verify/*`: verify入力正規化、コンパイル照合、Sourcify補助照合
 
 ## スクリプト
 
@@ -96,4 +118,34 @@ Search の入力判定:
 npm run test   # utility + db の単体テスト
 npm run lint   # TypeScript型検査
 npm run build  # Next.js本番ビルド
+npm run verify:preflight  # verify実行前のsolc可用性チェック
+npm run verify:submit  # deploy直後のverify submit
+npm run verify:worker  # verify非同期ワーカー
+```
+
+### deploy直後の自動verify submit（例）
+
+```bash
+cat > /tmp/verify_payload.json <<'JSON'
+{
+  "chainId": 0,
+  "contractAddress": "0x0123456789abcdef0123456789abcdef01234567",
+  "compilerVersion": "0.8.30",
+  "optimizerEnabled": true,
+  "optimizerRuns": 200,
+  "evmVersion": null,
+  "sourceBundle": {
+    "contracts/MyContract.sol": "pragma solidity ^0.8.30; contract MyContract {}"
+  },
+  "contractName": "MyContract",
+  "constructorArgsHex": "0x"
+}
+JSON
+
+VERIFY_SUBMIT_URL=http://localhost:3000/api/verify/submit \
+VERIFY_PAYLOAD_FILE=/tmp/verify_payload.json \
+VERIFY_AUTH_KID=kid1 \
+VERIFY_AUTH_SECRET='replace_me' \
+VERIFY_AUTH_SUB=deploy-bot \
+npm run verify:submit
 ```

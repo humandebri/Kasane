@@ -7,8 +7,11 @@ import { Card, CardContent, CardHeader, CardTitle } from "../../../components/ui
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../../../components/ui/table";
 import { TxValueFeeCells } from "../../../components/tx-value-fee-cells";
 import { getAddressView } from "../../../lib/data";
-import { receiptStatusLabel } from "../../../lib/format";
+import { getVerifiedContractByAddress, getVerifyBlobById } from "../../../lib/db";
+import { loadConfig } from "../../../lib/config";
+import { formatIcpAmountFromWei } from "../../../lib/format";
 import { isAddressHex, normalizeHex, shortHex } from "../../../lib/hex";
+import { decodeSourceBundleFromGzip } from "../../../lib/verify/source_bundle";
 
 export const dynamic = "force-dynamic";
 
@@ -28,7 +31,12 @@ export default async function AddressPage({
   }
   const normalizedHex = normalizeHex(hex);
   const currentTab: AddressTab = tab === "token" ? "token" : "tx";
-  const data = await getAddressView(normalizedHex, cursor, tokenCursor, principal ?? null);
+  const cfg = loadConfig(process.env);
+  const [data, verified] = await Promise.all([
+    getAddressView(normalizedHex, cursor, tokenCursor, principal ?? null),
+    getVerifiedContractByAddress(normalizedHex, cfg.verifyDefaultChainId),
+  ]);
+  const sourceBundle = verified ? await loadSourceBundle(verified.sourceBlobId) : null;
   const canisterId = process.env.EVM_CANISTER_ID ?? null;
   const icHost = process.env.EXPLORER_IC_HOST ?? process.env.INDEXER_IC_HOST ?? "https://icp-api.io";
 
@@ -48,26 +56,22 @@ export default async function AddressPage({
             </div>
           ) : null}
 
-          {data.observedPrincipals.length > 0 ? (
+          {data.submitterPrincipals.length > 0 ? (
             <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm">
-              <div className="mb-1 font-medium">Observed Principals</div>
+              <div className="mb-1 font-medium">submit_ic_tx Issuer Principals</div>
               <div className="flex flex-wrap gap-2">
-                {data.observedPrincipals.map((p) => (
-                  <Link
-                    key={p}
-                    href={`/principal/${encodeURIComponent(p)}`}
-                    className="rounded-full border border-slate-300 bg-white px-3 py-1 font-mono text-xs text-sky-700 hover:underline"
-                  >
+                {data.submitterPrincipals.map((p) => (
+                  <span key={p} className="rounded-full border border-slate-300 bg-white px-3 py-1 font-mono text-xs text-slate-800">
                     {p}
-                  </Link>
+                  </span>
                 ))}
               </div>
             </div>
           ) : null}
 
           <dl className="grid grid-cols-1 gap-y-2 text-sm md:grid-cols-[190px_1fr]">
-            <dt className="text-slate-500">Balance (wei)</dt>
-            <dd className="font-mono">{data.balance === null ? "N/A" : data.balance.toString()}</dd>
+            <dt className="text-slate-500">Balance (ICP)</dt>
+            <dd className="font-mono">{data.balance === null ? "N/A" : formatIcpAmountFromWei(data.balance)}</dd>
             <dt className="text-slate-500">Nonce</dt>
             <dd>{data.nonce === null ? "N/A" : data.nonce.toString()}</dd>
             <dt className="text-slate-500">Code Bytes</dt>
@@ -78,6 +82,47 @@ export default async function AddressPage({
                 {data.isContract === null ? "Unknown" : data.isContract ? "Contract" : "EOA"}
               </Badge>
             </dd>
+            <dt className="text-slate-500">Verification</dt>
+            <dd className="flex items-center gap-2">
+              <Badge variant={verified ? "secondary" : "outline"}>{verified ? "Verified" : "Not Verified"}</Badge>
+              {!verified ? (
+                <Link href={`/verify?address=${encodeURIComponent(normalizedHex)}`} className="text-sky-700 hover:underline">
+                  Submit
+                </Link>
+              ) : null}
+            </dd>
+            {verified ? (
+              <>
+                <dt className="text-slate-500">Contract Name</dt>
+                <dd>{verified.contractName}</dd>
+                <dt className="text-slate-500">Compiler</dt>
+                <dd className="font-mono text-xs">{verified.compilerVersion}</dd>
+                <dt className="text-slate-500">Optimization</dt>
+                <dd>{verified.optimizerEnabled ? `enabled (runs=${verified.optimizerRuns})` : "disabled"}</dd>
+                <dt className="text-slate-500">Verify Match</dt>
+                <dd>{`runtime=${verified.runtimeMatch ? "ok" : "ng"} / creation=${verified.creationMatch ? "ok" : "ng"}`}</dd>
+                <dt className="text-slate-500">Source Files</dt>
+                <dd>{sourceBundle ? Object.keys(sourceBundle).length : 0}</dd>
+                {sourceBundle ? (
+                  <>
+                    <dt className="text-slate-500">Source Preview</dt>
+                    <dd>
+                      <details className="rounded-md border border-slate-200 p-2">
+                        <summary className="cursor-pointer text-xs">open</summary>
+                        <div className="mt-2 space-y-3">
+                          {Object.entries(sourceBundle).map(([path, content]) => (
+                            <div key={path}>
+                              <div className="font-mono text-xs text-slate-600">{path}</div>
+                              <pre className="max-h-48 overflow-auto rounded bg-slate-50 p-2 text-xs">{content}</pre>
+                            </div>
+                          ))}
+                        </div>
+                      </details>
+                    </dd>
+                  </>
+                ) : null}
+              </>
+            ) : null}
           </dl>
 
           {data.warnings.length > 0 ? (
@@ -99,15 +144,17 @@ export default async function AddressPage({
           <div className="flex flex-wrap gap-2 text-sm">
             <Link
               href={buildAddressTabHref(normalizedHex, "tx", data.providedPrincipal)}
-              className={`rounded-full border px-3 py-1 ${currentTab === "tx" ? "border-sky-300 bg-sky-50 text-sky-700" : "border-slate-300 bg-white text-slate-700"}`}
+              scroll={false}
+              className={`rounded-md border px-3 py-1 ${currentTab === "tx" ? "border-sky-300 bg-sky-50 text-sky-700" : "border-slate-300 bg-white text-slate-700"}`}
             >
               Transactions
             </Link>
             <Link
               href={buildAddressTabHref(normalizedHex, "token", data.providedPrincipal)}
-              className={`rounded-full border px-3 py-1 ${currentTab === "token" ? "border-sky-300 bg-sky-50 text-sky-700" : "border-slate-300 bg-white text-slate-700"}`}
+              scroll={false}
+              className={`rounded-md border px-3 py-1 ${currentTab === "token" ? "border-sky-300 bg-sky-50 text-sky-700" : "border-slate-300 bg-white text-slate-700"}`}
             >
-              Token Transfers
+              Token Transfers (ERC-20)
             </Link>
           </div>
         </CardHeader>
@@ -122,22 +169,19 @@ export default async function AddressPage({
                 <Table>
                   <TableHeader>
                     <TableRow>
-                      <TableHead>Tx Hash</TableHead>
+                      <TableHead>Transaction Hash</TableHead>
                       <TableHead>Method</TableHead>
                       <TableHead>Block</TableHead>
                       <TableHead>Age</TableHead>
-                      <TableHead>Index</TableHead>
+                      <TableHead>From</TableHead>
+                      <TableHead>Direction</TableHead>
+                      <TableHead>To</TableHead>
                       <TableHead>Amount</TableHead>
                       <TableHead>Txn Fee</TableHead>
-                      <TableHead>Status</TableHead>
-                      <TableHead>Direction</TableHead>
-                      <TableHead>From</TableHead>
-                      <TableHead>To</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
                     {data.history.map((item) => {
-                      const status = receiptStatusLabel(item.receiptStatus);
                       return (
                         <TableRow key={item.txHashHex}>
                           <TableCell className="font-mono text-xs">
@@ -154,28 +198,32 @@ export default async function AddressPage({
                             </Link>
                           </TableCell>
                           <TableCell>{formatAge(item.blockTimestamp)}</TableCell>
-                          <TableCell>{item.txIndex}</TableCell>
-                          <TxValueFeeCells txHashHex={item.txHashHex} canisterId={canisterId} icHost={icHost} />
-                          <TableCell>
-                            <Badge variant={status === "success" ? "secondary" : status === "failed" ? "default" : "outline"}>{status}</Badge>
-                          </TableCell>
-                          <TableCell>
-                            <Badge variant={item.direction === "in" ? "secondary" : "outline"}>{item.direction}</Badge>
-                          </TableCell>
                           <TableCell className="font-mono text-xs">
                             <Link href={`/address/${item.fromAddressHex}`} className="text-sky-700 hover:underline" title={item.fromAddressHex}>
                               {shortHex(item.fromAddressHex)}
                             </Link>
+                          </TableCell>
+                          <TableCell>
+                            <Badge variant={item.direction === "in" ? "secondary" : "outline"}>{item.direction}</Badge>
                           </TableCell>
                           <TableCell className="font-mono text-xs">
                             {item.toAddressHex ? (
                               <Link href={`/address/${item.toAddressHex}`} className="text-sky-700 hover:underline" title={item.toAddressHex}>
                                 {shortHex(item.toAddressHex)}
                               </Link>
+                            ) : item.createdContractAddressHex ? (
+                              <Link
+                                href={`/address/${item.createdContractAddressHex}`}
+                                className="text-sky-700 hover:underline"
+                                title={item.createdContractAddressHex}
+                              >
+                                Contract Creation
+                              </Link>
                             ) : (
-                              "(create)"
+                              "Contract Creation"
                             )}
                           </TableCell>
+                          <TxValueFeeCells txHashHex={item.txHashHex} canisterId={canisterId} icHost={icHost} />
                         </TableRow>
                       );
                     })}
@@ -203,18 +251,18 @@ export default async function AddressPage({
                 <Table>
                   <TableHeader>
                     <TableRow>
-                      <TableHead>Tx Hash</TableHead>
+                      <TableHead>Transaction Hash</TableHead>
+                      <TableHead>Method</TableHead>
                       <TableHead>Block</TableHead>
-                      <TableHead>Log</TableHead>
-                      <TableHead>Direction</TableHead>
-                      <TableHead>Token</TableHead>
-                      <TableHead>Counterparty</TableHead>
+                      <TableHead>Age</TableHead>
+                      <TableHead>From</TableHead>
+                      <TableHead>To</TableHead>
                       <TableHead>Amount</TableHead>
+                      <TableHead>Token</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
                     {data.tokenTransfers.map((item) => {
-                      const counterparty = item.direction === "in" ? item.fromAddressHex : item.toAddressHex;
                       return (
                         <TableRow key={`${item.txHashHex}:${item.logIndex}`}>
                           <TableCell className="font-mono text-xs">
@@ -223,25 +271,30 @@ export default async function AddressPage({
                             </Link>
                           </TableCell>
                           <TableCell>
+                            <Badge variant="outline" title={item.txSelectorHex ?? undefined}>{item.methodLabel}</Badge>
+                          </TableCell>
+                          <TableCell>
                             <Link href={`/blocks/${item.blockNumber.toString()}`} className="text-sky-700 hover:underline">
                               {item.blockNumber.toString()}
                             </Link>
                           </TableCell>
-                          <TableCell>{item.logIndex}</TableCell>
-                          <TableCell>
-                            <Badge variant={item.direction === "in" ? "secondary" : "outline"}>{item.direction}</Badge>
+                          <TableCell>{formatAge(item.blockTimestamp)}</TableCell>
+                          <TableCell className="font-mono text-xs">
+                            <Link href={`/address/${item.fromAddressHex}`} className="text-sky-700 hover:underline" title={item.fromAddressHex}>
+                              {shortHex(item.fromAddressHex)}
+                            </Link>
                           </TableCell>
+                          <TableCell className="font-mono text-xs">
+                            <Link href={`/address/${item.toAddressHex}`} className="text-sky-700 hover:underline" title={item.toAddressHex}>
+                              {shortHex(item.toAddressHex)}
+                            </Link>
+                          </TableCell>
+                          <TableCell className="font-mono text-xs break-all">{item.amount.toString()}</TableCell>
                           <TableCell className="font-mono text-xs">
                             <Link href={`/address/${item.tokenAddressHex}`} className="text-sky-700 hover:underline" title={item.tokenAddressHex}>
                               {shortHex(item.tokenAddressHex)}
                             </Link>
                           </TableCell>
-                          <TableCell className="font-mono text-xs">
-                            <Link href={`/address/${counterparty}`} className="text-sky-700 hover:underline" title={counterparty}>
-                              {shortHex(counterparty)}
-                            </Link>
-                          </TableCell>
-                          <TableCell className="font-mono text-xs break-all">{item.amount.toString()}</TableCell>
                         </TableRow>
                       );
                     })}
@@ -262,48 +315,16 @@ export default async function AddressPage({
           )}
         </CardContent>
       </Card>
-
-      <Card className="border-slate-200 bg-white shadow-sm">
-        <CardHeader>
-          <CardTitle>Failed Transactions (status=0)</CardTitle>
-        </CardHeader>
-        <CardContent>
-          {data.failedHistory.length === 0 ? (
-            <div className="rounded-md border bg-slate-50 p-3 text-sm text-muted-foreground">
-              No failed transactions in this page.
-            </div>
-          ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Tx Hash</TableHead>
-                  <TableHead>Block</TableHead>
-                  <TableHead>Index</TableHead>
-                  <TableHead>Direction</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {data.failedHistory.map((item) => (
-                  <TableRow key={`failed:${item.txHashHex}`}>
-                    <TableCell className="font-mono text-xs">
-                      <Link href={`/tx/${item.txHashHex}`} className="text-sky-700 hover:underline" title={item.txHashHex}>
-                        {shortPrefixHex(item.txHashHex)}
-                      </Link>
-                    </TableCell>
-                    <TableCell>{item.blockNumber.toString()}</TableCell>
-                    <TableCell>{item.txIndex}</TableCell>
-                    <TableCell>
-                      <Badge variant={item.direction === "in" ? "secondary" : "outline"}>{item.direction}</Badge>
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          )}
-        </CardContent>
-      </Card>
     </div>
   );
+}
+
+async function loadSourceBundle(sourceBlobId: string): Promise<Record<string, string> | null> {
+  const sourceBlob = await getVerifyBlobById(sourceBlobId);
+  if (!sourceBlob) {
+    return null;
+  }
+  return decodeSourceBundleFromGzip(sourceBlob.blob);
 }
 
 function shortPrefixHex(value: string, keep: number = 10): string {
