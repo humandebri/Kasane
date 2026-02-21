@@ -24,7 +24,7 @@ export type LogsView = {
   items: Array<{
     txHashHex: string;
     ethTxHashHex: string | null;
-    blockNumber: bigint;
+    blockNumber: string;
     txIndex: number;
     logIndex: number;
     addressHex: string;
@@ -194,7 +194,7 @@ function encodeCursor(cursor?: EthLogsCursorView): string | null {
 function mapItem(item: EthLogItemView): {
   txHashHex: string;
   ethTxHashHex: string | null;
-  blockNumber: bigint;
+  blockNumber: string;
   txIndex: number;
   logIndex: number;
   addressHex: string;
@@ -206,7 +206,7 @@ function mapItem(item: EthLogItemView): {
   return {
     txHashHex: toHexLower(item.tx_hash),
     ethTxHashHex: item.eth_tx_hash.length === 0 ? null : toHexLower(item.eth_tx_hash[0]),
-    blockNumber: item.block_number,
+    blockNumber: item.block_number.toString(),
     txIndex: item.tx_index,
     logIndex: item.log_index,
     addressHex: toHexLower(item.address),

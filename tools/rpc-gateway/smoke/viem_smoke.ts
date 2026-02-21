@@ -21,7 +21,13 @@ async function main(): Promise<void> {
     return;
   }
 
-  const chain = { id: 0, name: "kasane", network: "kasane", nativeCurrency: { name: "ETH", symbol: "ETH", decimals: 18 }, rpcUrls: { default: { http: [rpcUrl] } } };
+  const chain = {
+    id: 0,
+    name: "kasane",
+    network: "kasane",
+    nativeCurrency: { name: "ICP", symbol: "ICP", decimals: 18 },
+    rpcUrls: { default: { http: [rpcUrl] } },
+  };
   const client = createPublicClient({ chain, transport: http(rpcUrl) }) as {
     getChainId: () => Promise<number>;
     getBlockNumber: () => Promise<bigint>;

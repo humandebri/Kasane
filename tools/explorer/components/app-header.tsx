@@ -40,14 +40,13 @@ export function AppHeader() {
         </nav>
       </div>
 
-      <div className="flex flex-col gap-2 bg-gradient-to-r from-sky-50 via-white to-blue-50 px-4 py-4 md:flex-row md:items-center">
-        <p className="text-sm text-slate-600">Search: block / tx / address / principal</p>
+      <div className="flex flex-col gap-2 bg-linear-to-r from-sky-50 via-white to-blue-50 px-4 py-4 md:flex-row md:items-center">
         <form action="/search" className="flex min-w-0 flex-1 gap-2">
           <Input
             name="q"
             required
-            placeholder="block / tx / address / principal"
-            className="h-10 rounded-full border-slate-300 bg-white font-mono"
+            placeholder="Search: block / tx / address / principal"
+            className="h-10 rounded-lg border-slate-300 bg-white font-mono"
           />
           <Button type="submit" className="rounded-full px-4">
             Search

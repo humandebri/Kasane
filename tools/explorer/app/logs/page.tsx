@@ -69,7 +69,7 @@ export default async function LogsPage({
               <TableBody>
                 {data.items.map((item) => (
                   <TableRow key={`${item.txHashHex}:${item.logIndex}`}>
-                    <TableCell>{item.blockNumber.toString()}</TableCell>
+                    <TableCell>{item.blockNumber}</TableCell>
                     <TableCell>{item.txIndex}</TableCell>
                     <TableCell>{item.logIndex}</TableCell>
                     <TableCell className="font-mono break-all">{item.addressHex}</TableCell>

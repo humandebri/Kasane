@@ -2,14 +2,14 @@
 
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import { Clock3 } from "lucide-react";
 import { Badge } from "../../../components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "../../../components/ui/card";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../../../components/ui/table";
 import { getBlockView } from "../../../lib/data";
-import { calcRoundedBps, formatEthFromWei, formatGweiFromWei, formatTimestampUtc, receiptStatusLabel } from "../../../lib/format";
-import { shortHex } from "../../../lib/hex";
+import { calcRoundedBps, formatEthFromWei, formatGweiFromWei, formatTimestampWithRelativeUtc } from "../../../lib/format";
 
 export const dynamic = "force-dynamic";
+const FEE_RECIPIENT = "0x6b9b5fd62cc66fc9fef74210c9298b1b6bcbfc52";
 
 function parseBlockNumber(input: string): bigint {
   if (!/^[0-9]+$/.test(input)) {
@@ -22,13 +22,14 @@ export default async function BlockPage({ params }: { params: Promise<{ number: 
   const { number } = await params;
   const blockNumber = parseBlockNumber(number);
   const data = await getBlockView(blockNumber);
+  const timestampView = formatTimestampWithRelativeUtc(data.db?.block.timestamp ?? null);
 
   if (!data.db) {
     notFound();
   }
 
   return (
-    <Card className="border-slate-200 bg-white shadow-sm">
+    <Card className=" bg-white shadow-sm">
       <CardHeader className="gap-3 border-b border-slate-200">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <CardTitle className="text-xl">Block {data.db.block.number.toString()}</CardTitle>
@@ -40,65 +41,45 @@ export default async function BlockPage({ params }: { params: Promise<{ number: 
         <dl className="grid grid-cols-1 gap-y-2 text-sm md:grid-cols-[190px_1fr]">
           <dt className="text-slate-500">Hash</dt>
           <dd className="font-mono text-xs break-all">{data.db.block.hashHex ?? "-"}</dd>
-          <dt className="text-slate-500">Timestamp (UTC)</dt>
-          <dd>{formatTimestampUtc(data.db.block.timestamp)}</dd>
-          <dt className="text-slate-500">Tx Count (DB)</dt>
-          <dd>{data.db.block.txCount}</dd>
+          <dt className="text-slate-500">Timestamp:</dt>
+          <dd>
+            {timestampView ? (
+              <span className="inline-flex items-center gap-1.5">
+                <Clock3 className="h-3.5 w-3.5 text-slate-500" />
+                <span>{`${timestampView.relative} (${timestampView.absolute})`}</span>
+              </span>
+            ) : (
+              "N/A"
+            )}
+          </dd>
+          <dt className="text-slate-500">Transactions:</dt>
+          <dd>
+            <Link href={`/txs?block=${data.db.block.number.toString()}`} className="text-sky-700 hover:underline">
+              {`${data.db.block.txCount} transactions`}
+            </Link>
+          </dd>
+          <dt className="text-slate-500">Fee Recipient:</dt>
+          <dd>
+            <Link href={`/address/${FEE_RECIPIENT}`} className="font-mono text-sky-700 hover:underline">
+              {FEE_RECIPIENT}
+            </Link>
+          </dd>
+          <dt className="text-slate-500">Block Reward:</dt>
+          <dd className="font-mono">
+            {formatBlockReward(data.rpcGas?.totalFeesWei, data.rpcGas?.burntFeesWei, data.rpcGas?.priorityFeesWei)}
+          </dd>
+          <dt className="text-slate-500">Size:</dt>
+          <dd>-</dd>
           <dt className="text-slate-500">Gas Used</dt>
           <dd>{formatGasUsed(data.rpcGas?.gasUsed, data.rpcGas?.gasLimit)}</dd>
           <dt className="text-slate-500">Gas Limit</dt>
           <dd>{formatInteger(data.rpcGas?.gasLimit)}</dd>
           <dt className="text-slate-500">Base Fee Per Gas</dt>
           <dd>{formatBaseFee(data.rpcGas?.baseFeePerGasWei)}</dd>
-          <dt className="text-slate-500">Burnt Fees</dt>
-          <dd>{formatBurntFees(data.rpcGas?.burntFeesWei)}</dd>
-          <dt className="text-slate-500">Gas vs Target</dt>
-          <dd>{formatGasTargetDelta(data.rpcGas?.gasUsed, data.rpcGas?.gasLimit)}</dd>
+          <dt className="text-slate-500">Base Fee</dt>
+          <dd>{formatBaseFeePortion(data.rpcGas?.burntFeesWei)}</dd>
         </dl>
 
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Tx Hash</TableHead>
-              <TableHead>Index</TableHead>
-              <TableHead>Status</TableHead>
-              <TableHead>Caller Principal</TableHead>
-              <TableHead>Details</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {data.db.txs.map((tx) => {
-              const status = receiptStatusLabel(tx.receiptStatus);
-              return (
-                <TableRow key={tx.txHashHex}>
-                  <TableCell className="font-mono text-xs">
-                    <Link href={`/tx/${tx.txHashHex}`} className="text-sky-700 hover:underline" title={tx.txHashHex}>
-                      {shortHex(tx.txHashHex)}
-                    </Link>
-                  </TableCell>
-                  <TableCell>{tx.txIndex}</TableCell>
-                  <TableCell>
-                    <Badge variant={status === "success" ? "secondary" : status === "failed" ? "default" : "outline"}>{status}</Badge>
-                  </TableCell>
-                  <TableCell className="font-mono text-xs">
-                    {tx.callerPrincipalText ? (
-                      <Link href={`/principal/${encodeURIComponent(tx.callerPrincipalText)}`} className="text-sky-700 hover:underline">
-                        {tx.callerPrincipalText}
-                      </Link>
-                    ) : (
-                      "-"
-                    )}
-                  </TableCell>
-                  <TableCell>
-                    <Link href={`/tx/${tx.txHashHex}`} className="text-sky-700 hover:underline">
-                      open
-                    </Link>
-                  </TableCell>
-                </TableRow>
-              );
-            })}
-          </TableBody>
-        </Table>
       </CardContent>
     </Card>
   );
@@ -134,28 +115,23 @@ function formatBaseFee(baseFeePerGasWei: bigint | null | undefined): string {
   return `${formatEthFromWei(baseFeePerGasWei)} (${formatGweiFromWei(baseFeePerGasWei)})`;
 }
 
-function formatBurntFees(burntFeesWei: bigint | null | undefined): string {
+function formatBaseFeePortion(burntFeesWei: bigint | null | undefined): string {
   if (burntFeesWei === null || burntFeesWei === undefined) {
     return "-";
   }
   return formatEthFromWei(burntFeesWei);
 }
 
-function formatGasTargetDelta(gasUsed: bigint | null | undefined, gasLimit: bigint | null | undefined): string {
-  if (gasUsed === null || gasUsed === undefined || gasLimit === null || gasLimit === undefined) {
+function formatBlockReward(
+  totalFeesWei: bigint | null | undefined,
+  baseFeePortionWei: bigint | null | undefined,
+  priorityFeesWei: bigint | null | undefined
+): string {
+  if (totalFeesWei === null || totalFeesWei === undefined || baseFeePortionWei === null || baseFeePortionWei === undefined) {
     return "-";
   }
-  const gasTarget = gasLimit / 2n;
-  if (gasTarget === 0n) {
-    return "-";
-  }
-  const deltaBps = calcRoundedBps(gasUsed - gasTarget, gasTarget);
-  if (deltaBps === null) {
-    return "-";
-  }
-  const sign = deltaBps > 0n ? "+" : "";
-  const abs = deltaBps < 0n ? -deltaBps : deltaBps;
-  const whole = abs / 100n;
-  const fraction = (abs % 100n).toString().padStart(2, "0");
-  return `${sign}${whole.toString()}.${fraction}% vs Gas Target`;
+  const totalText = formatEthFromWei(totalFeesWei);
+  const baseText = formatEthFromWei(baseFeePortionWei);
+  const priorityText = priorityFeesWei === null || priorityFeesWei === undefined ? "N/A" : formatEthFromWei(priorityFeesWei);
+  return `${totalText} (0 + ${baseText} + ${priorityText})`;
 }

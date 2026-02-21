@@ -5,6 +5,7 @@ import { notFound } from "next/navigation";
 import { Badge } from "../../../components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "../../../components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../../../components/ui/table";
+import { TxDirectionBadge } from "../../../components/tx-direction-badge";
 import { TxValueFeeCells } from "../../../components/tx-value-fee-cells";
 import { getAddressView } from "../../../lib/data";
 import { getVerifiedContractByAddress, getVerifyBlobById } from "../../../lib/db";
@@ -204,7 +205,7 @@ export default async function AddressPage({
                             </Link>
                           </TableCell>
                           <TableCell>
-                            <Badge variant={item.direction === "in" ? "secondary" : "outline"}>{item.direction}</Badge>
+                            <TxDirectionBadge direction={item.direction} />
                           </TableCell>
                           <TableCell className="font-mono text-xs">
                             {item.toAddressHex ? (

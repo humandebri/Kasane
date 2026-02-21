@@ -14,9 +14,12 @@
     "verify:worker": "tsx scripts/verify-worker.ts"
   },
   "dependencies": {
+    "@coreui/icons": "^3.0.1",
+    "@coreui/icons-react": "^2.3.0",
     "@dfinity/agent": "^3.4.3",
     "@dfinity/candid": "^3.4.3",
     "@dfinity/ic-pub-key": "1.0.1",
+    "@radix-ui/react-tabs": "^1.1.13",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "lightweight-charts": "^5.1.0",

@@ -4,8 +4,8 @@ import { NextResponse, type NextRequest } from "next/server";
 import { getVerifiedContractByAddress, getVerifyBlobById } from "../../../../../lib/db";
 import { loadConfig } from "../../../../../lib/config";
 import { isAddressHex, normalizeHex } from "../../../../../lib/hex";
-import { MAX_CHAIN_ID_INT4 } from "../../../../../lib/verify/constants";
 import { decodeSourceBundleFromGzip } from "../../../../../lib/verify/source_bundle";
+import { parseChainId, parseVerifiedAbi } from "../../../../../lib/verify/verified_contract_api";
 
 export async function GET(
   request: NextRequest,
@@ -45,20 +45,4 @@ export async function GET(
     creationMatch: found.creationMatch,
     runtimeMatch: found.runtimeMatch,
   });
-}
-
-export function parseVerifiedAbi(abiJson: string): { abi: unknown | null; abiParseError: boolean } {
-  try {
-    return { abi: JSON.parse(abiJson), abiParseError: false };
-  } catch {
-    return { abi: null, abiParseError: true };
-  }
-}
-
-export function parseChainId(value: string | null, fallback: number): number | null {
-  const parsed = value ? Number.parseInt(value, 10) : fallback;
-  if (!Number.isInteger(parsed) || parsed < 0 || parsed > MAX_CHAIN_ID_INT4) {
-    return null;
-  }
-  return parsed;
 }

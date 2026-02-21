@@ -13,7 +13,7 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
   return (
     <html lang="ja">
       <body>
-        <main className="relative mx-auto box-border min-h-dvh w-full max-w-7xl space-y-4 px-4 pb-8 pt-5 sm:px-6">
+        <main className="relative mx-auto box-border min-h-dvh w-full max-w-[96rem] space-y-4 px-4 pb-8 pt-5 sm:px-6">
           <AppHeader />
 
           <section className="space-y-4">{children}</section>
