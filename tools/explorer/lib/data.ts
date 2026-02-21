@@ -10,6 +10,7 @@ import {
   getLatestBlocksPage,
   getLatestTxs,
   getLatestTxsPage,
+  getLatestTxsPageByBlock,
   getMaxBlockNumber,
   getMetaSnapshot,
   getOpsMetricsSamplesSince,
@@ -17,6 +18,7 @@ import {
   getOverviewStats,
   getRecentOpsMetricsSamples,
   getTokenTransfersByAddress,
+  getTxCountByBlock,
   getTx,
   getTxsByAddress,
   getTxsByCallerPrincipal,
@@ -52,6 +54,7 @@ import {
   getRpcCode,
   getRpcExpectedNonce,
   getRpcHeadNumber,
+  getRpcReceiptWithStatus,
   getRpcPruneStatus,
   getRpcTxByTxId,
   type LookupError,
@@ -75,6 +78,8 @@ export type LatestTxsPageView = {
   limit: number;
   hasPrev: boolean;
   hasNext: boolean;
+  totalPages: number;
+  blockNumberFilter: bigint | null;
 };
 
 export type LatestBlocksPageView = {
@@ -173,6 +178,11 @@ export type TxDetailView = {
   valueWei: bigint | null;
   effectiveGasPriceWei: bigint | null;
   transactionFeeWei: bigint | null;
+  gasLimit: bigint | null;
+  gasUsed: bigint | null;
+  baseFeePerGasWei: bigint | null;
+  maxFeePerGasWei: bigint | null;
+  maxPriorityFeePerGasWei: bigint | null;
   receipt: ReceiptView | null;
   receiptLookupError: LookupError | null;
   erc20Transfers: Array<Erc20TransferView & { tokenSymbol: string | null; tokenDecimals: number | null }>;
@@ -188,6 +198,8 @@ export type BlockGasView = {
   gasUsed: bigint | null;
   baseFeePerGasWei: bigint | null;
   burntFeesWei: bigint | null;
+  totalFeesWei: bigint | null;
+  priorityFeesWei: bigint | null;
 };
 
 const HOME_BLOCKS_LIMIT_MAX = 500;
@@ -244,14 +256,32 @@ export async function getHomeView(blocksLimitRaw?: string | string[]): Promise<H
 
 export async function getLatestTxsPageView(
   pageRaw?: string | string[],
-  limitRaw?: string | string[]
+  limitRaw?: string | string[],
+  blockRaw?: string | string[]
 ): Promise<LatestTxsPageView> {
-  const page = parsePositiveInt(pageRaw, 1);
+  const requestedPage = parsePositiveInt(pageRaw, 1);
   const limitParsed = parsePositiveInt(limitRaw, TXS_PAGE_LIMIT_DEFAULT);
   const limit = Math.min(limitParsed, TXS_PAGE_LIMIT_MAX);
-  const offset = (page - 1) * limit;
-  const [txsRaw, stats] = await Promise.all([getLatestTxsPage(limit, offset), getOverviewStats()]);
-  const total = Number(stats.totalTxs);
+  const blockNumberFilter = parseOptionalBlockNumber(blockRaw);
+  const requestedOffset = (requestedPage - 1) * limit;
+  const [initialTxs, totalRaw] = await (blockNumberFilter === null
+    ? Promise.all([
+        getLatestTxsPage(limit, requestedOffset),
+        getOverviewStats().then((stats) => stats.totalTxs),
+      ])
+    : Promise.all([
+        getLatestTxsPageByBlock(limit, requestedOffset, blockNumberFilter),
+        getTxCountByBlock(blockNumberFilter),
+      ]));
+  const total = Number(totalRaw);
+  const totalPages = Number.isFinite(total) && total > 0 ? Math.ceil(total / limit) : 1;
+  const page = Math.min(requestedPage, totalPages);
+  const txsRaw =
+    page === requestedPage
+      ? initialTxs
+      : await (blockNumberFilter === null
+          ? getLatestTxsPage(limit, (page - 1) * limit)
+          : getLatestTxsPageByBlock(limit, (page - 1) * limit, blockNumberFilter));
   const nextOffset = page * limit;
   return {
     txs: withCallerPrincipalText(txsRaw),
@@ -259,7 +289,21 @@ export async function getLatestTxsPageView(
     limit,
     hasPrev: page > 1,
     hasNext: Number.isFinite(total) ? nextOffset < total : txsRaw.length === limit,
+    totalPages,
+    blockNumberFilter,
   };
+}
+
+function parseOptionalBlockNumber(rawValue: string | string[] | undefined): bigint | null {
+  const raw = Array.isArray(rawValue) ? rawValue[0] : rawValue;
+  if (!raw || !/^\d+$/.test(raw)) {
+    return null;
+  }
+  try {
+    return BigInt(raw);
+  } catch {
+    return null;
+  }
 }
 
 export async function getLatestBlocksPageView(
@@ -286,6 +330,8 @@ export async function getBlockView(
   blockNumber: bigint
 ): Promise<{ db: BlockDetailsWithPrincipal | null; rpcExists: boolean; rpcGas: BlockGasView | null }> {
   const [db, rpcBlock] = await Promise.all([getBlockDetails(blockNumber), getRpcBlock(blockNumber)]);
+  const txsWithPrincipal = db ? withCallerPrincipalText(db.txs) : [];
+  const feeBreakdown = await getBlockFeeBreakdown(txsWithPrincipal, rpcBlock?.base_fee_per_gas[0] ?? null);
   const rpcGas = rpcBlock
     ? {
         gasLimit: rpcBlock.gas_limit[0] ?? null,
@@ -295,6 +341,8 @@ export async function getBlockView(
           rpcBlock.gas_used[0] !== undefined && rpcBlock.base_fee_per_gas[0] !== undefined
             ? rpcBlock.gas_used[0] * rpcBlock.base_fee_per_gas[0]
             : null,
+        totalFeesWei: feeBreakdown.totalFeesWei,
+        priorityFeesWei: feeBreakdown.priorityFeesWei,
       }
     : null;
   if (!db) {
@@ -303,11 +351,57 @@ export async function getBlockView(
   return {
     db: {
       block: db.block,
-      txs: withCallerPrincipalText(db.txs),
+      txs: txsWithPrincipal,
     },
     rpcExists: rpcBlock !== null,
     rpcGas,
   };
+}
+
+async function getBlockFeeBreakdown(
+  txs: TxSummary[],
+  baseFeePerGasWei: bigint | null
+): Promise<{ totalFeesWei: bigint | null; priorityFeesWei: bigint | null }> {
+  if (txs.length === 0) {
+    return { totalFeesWei: 0n, priorityFeesWei: 0n };
+  }
+  const receipts = await Promise.all(
+    txs.map(async (tx) => {
+      try {
+        const status = await getRpcReceiptWithStatus(parseHex(tx.txHashHex));
+        if ("Found" in status) {
+          return status.Found;
+        }
+        return null;
+      } catch {
+        return null;
+      }
+    })
+  );
+  let totalFeesWei = 0n;
+  let foundCount = 0;
+  for (const receipt of receipts) {
+    if (!receipt) {
+      continue;
+    }
+    totalFeesWei += receipt.total_fee;
+    foundCount += 1;
+  }
+  if (foundCount === 0) {
+    return { totalFeesWei: null, priorityFeesWei: null };
+  }
+  if (baseFeePerGasWei === null) {
+    return { totalFeesWei, priorityFeesWei: null };
+  }
+  let priorityFeesWei = 0n;
+  for (const receipt of receipts) {
+    if (!receipt) {
+      continue;
+    }
+    const tipPerGas = receipt.effective_gas_price > baseFeePerGasWei ? receipt.effective_gas_price - baseFeePerGasWei : 0n;
+    priorityFeesWei += receipt.gas_used * tipPerGas;
+  }
+  return { totalFeesWei, priorityFeesWei };
 }
 
 export async function getTxView(txHashHex: string): Promise<TxSummary | null> {
@@ -328,9 +422,15 @@ export async function getTxDetailView(txHashHex: string): Promise<TxDetailView |
   if (!tx) {
     return null;
   }
+  const rpcBlock = await getRpcBlock(tx.blockNumber);
   const valueWei = rpcTx?.decoded[0] ? bytesToBigInt(rpcTx.decoded[0].value) : null;
   const effectiveGasPriceWei = "Ok" in receiptOut ? receiptOut.Ok.effective_gas_price : null;
   const transactionFeeWei = "Ok" in receiptOut ? receiptOut.Ok.total_fee : null;
+  const gasLimit = rpcTx?.decoded[0]?.gas_limit ?? null;
+  const gasUsed = "Ok" in receiptOut ? receiptOut.Ok.gas_used : null;
+  const baseFeePerGasWei = rpcBlock?.base_fee_per_gas[0] ?? null;
+  const maxFeePerGasWei = rpcTx?.decoded[0]?.gas_price ?? null;
+  const maxPriorityFeePerGasWei = null;
   const erc20TransfersRaw = "Ok" in receiptOut ? extractErc20TransfersFromReceipt(receiptOut.Ok) : [];
   const erc20Transfers = await withTokenMeta(erc20TransfersRaw);
   return {
@@ -339,6 +439,11 @@ export async function getTxDetailView(txHashHex: string): Promise<TxDetailView |
     valueWei,
     effectiveGasPriceWei,
     transactionFeeWei,
+    gasLimit,
+    gasUsed,
+    baseFeePerGasWei,
+    maxFeePerGasWei,
+    maxPriorityFeePerGasWei,
     receipt: "Ok" in receiptOut ? receiptOut.Ok : null,
     receiptLookupError: "Ok" in receiptOut ? null : receiptOut.Err,
     erc20Transfers,

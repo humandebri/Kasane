@@ -44,7 +44,7 @@ npm run dev
 - Ops: `/ops`
 - Verify guide: `/verify`
 
-Block詳細ページは RPC が返す場合に `Gas Used / Gas Limit / Base Fee Per Gas / Burnt Fees / Gas vs Target` を表示します。
+Block詳細ページは RPC が返す場合に `Gas Used / Gas Limit / Base Fee Per Gas / Base Fee` を表示します。
 
 Home の `Latest Blocks` は、`?blocks=<N>`（1-500）で表示件数を一時変更できます。
 例: `/?blocks=100`

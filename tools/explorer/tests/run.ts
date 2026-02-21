@@ -38,7 +38,7 @@ import {
   setExplorerPool,
   consumeVerifyReplayJti,
 } from "../lib/db";
-import { getPrincipalView, opsDataTestHooks, parseCyclesTrendWindow, resolveHomeBlocksLimit } from "../lib/data";
+import { getLatestTxsPageView, getPrincipalView, opsDataTestHooks, parseCyclesTrendWindow, resolveHomeBlocksLimit } from "../lib/data";
 import { buildPruneHistory, parseStoredPruneStatusForTest } from "../lib/data_ops";
 import { mapAddressHistory, mapAddressTokenTransfers } from "../lib/data_address";
 import { calcRoundedBps, formatEthFromWei, formatGweiFromWei } from "../lib/format";
@@ -60,7 +60,7 @@ import { buildVerifyAuthToken } from "../lib/verify/token";
 import { getTokenMeta } from "../lib/token_meta";
 import { createOrGetVerifyRequest } from "../lib/verify/submit";
 import { runBackgroundTask, shouldRunPeriodicTask } from "../lib/verify/worker_tasks";
-import { parseChainId, parseVerifiedAbi } from "../app/api/contracts/[address]/verified/route";
+import { parseChainId, parseVerifiedAbi } from "../lib/verify/verified_contract_api";
 import { verifyWorkerTestHooks } from "../scripts/verify-worker";
 import { tokenMetaTestHooks } from "../lib/token_meta";
 import { buildTimelineFromReceiptLogs } from "../lib/tx_timeline";
@@ -1095,11 +1095,21 @@ async function runDbTests(): Promise<void> {
   assert.equal(head, 12n);
   const latestBlock = (await getLatestBlocks(1))[0];
   const latestTx = (await getLatestTxs(1))[0];
+  const filteredOutOfRange = await getLatestTxsPageView("999", "2", "999999");
+  const filteredExistingOutOfRange = await getLatestTxsPageView("999", "1", "12");
   assert.ok(latestBlock);
   assert.ok(latestTx);
   assert.equal(latestBlock?.number, 12n);
   assert.equal(latestBlock?.gasUsed, 21000n);
   assert.equal(latestTx?.txHashHex, "0x1122");
+  assert.equal(filteredOutOfRange.page, 1);
+  assert.equal(filteredOutOfRange.totalPages, 1);
+  assert.equal(filteredOutOfRange.hasPrev, false);
+  assert.equal(filteredOutOfRange.hasNext, false);
+  assert.equal(filteredOutOfRange.txs.length, 0);
+  assert.equal(filteredExistingOutOfRange.page, 1);
+  assert.equal(filteredExistingOutOfRange.totalPages, 1);
+  assert.equal(filteredExistingOutOfRange.txs[0]?.txHashHex, "0x1122");
   assert.equal(latestTx?.createdContractAddress, null);
   assert.equal((await getBlockDetails(12n))?.txs.length, 1);
   assert.equal((await getTx(Uint8Array.from(Buffer.from("1122", "hex"))))?.blockNumber, 12n);
