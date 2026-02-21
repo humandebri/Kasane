@@ -2,7 +2,7 @@
 
 use crate::chain_data::codec::{encode_guarded, mark_decode_failure};
 use crate::chain_data::constants::{
-    HASH_LEN, HASH_LEN_U32, MAX_BLOCK_DATA_SIZE_U32, MAX_TXS_PER_BLOCK,
+    BLOCK_BENEFICIARY_LEN, HASH_LEN, HASH_LEN_U32, MAX_BLOCK_DATA_SIZE_U32, MAX_TXS_PER_BLOCK,
 };
 use crate::chain_data::tx::TxId;
 use crate::corrupt_log::record_corrupt;
@@ -21,6 +21,7 @@ pub struct BlockData {
     pub base_fee_per_gas: u64,
     pub block_gas_limit: u64,
     pub gas_used: u64,
+    pub beneficiary: [u8; BLOCK_BENEFICIARY_LEN],
     pub tx_ids: Vec<TxId>,
     pub tx_list_hash: [u8; HASH_LEN],
     pub state_root: [u8; HASH_LEN],
@@ -35,6 +36,7 @@ impl BlockData {
         base_fee_per_gas: u64,
         block_gas_limit: u64,
         gas_used: u64,
+        beneficiary: [u8; BLOCK_BENEFICIARY_LEN],
         tx_ids: Vec<TxId>,
         tx_list_hash: [u8; HASH_LEN],
         state_root: [u8; HASH_LEN],
@@ -47,6 +49,7 @@ impl BlockData {
             base_fee_per_gas,
             block_gas_limit,
             gas_used,
+            beneficiary,
             tx_ids,
             tx_list_hash,
             state_root,
@@ -64,6 +67,7 @@ impl Storable for BlockData {
         out.extend_from_slice(&self.base_fee_per_gas.to_be_bytes());
         out.extend_from_slice(&self.block_gas_limit.to_be_bytes());
         out.extend_from_slice(&self.gas_used.to_be_bytes());
+        out.extend_from_slice(&self.beneficiary);
         out.extend_from_slice(&self.tx_list_hash);
         out.extend_from_slice(&self.state_root);
         let len = match len_to_u32(self.tx_ids.len()) {
@@ -93,6 +97,7 @@ impl Storable for BlockData {
         out.extend_from_slice(&self.base_fee_per_gas.to_be_bytes());
         out.extend_from_slice(&self.block_gas_limit.to_be_bytes());
         out.extend_from_slice(&self.gas_used.to_be_bytes());
+        out.extend_from_slice(&self.beneficiary);
         out.extend_from_slice(&self.tx_list_hash);
         out.extend_from_slice(&self.state_root);
         let len = match len_to_u32(self.tx_ids.len()) {
@@ -108,7 +113,8 @@ impl Storable for BlockData {
 
     fn from_bytes(bytes: Cow<'_, [u8]>) -> Self {
         let data = bytes.as_ref();
-        let base_len = 8 + HASH_LEN + HASH_LEN + 8 + 8 + 8 + 8 + HASH_LEN + HASH_LEN + 4;
+        let base_len =
+            8 + HASH_LEN + HASH_LEN + 8 + 8 + 8 + 8 + BLOCK_BENEFICIARY_LEN + HASH_LEN + HASH_LEN + 4;
         if data.len() < base_len {
             mark_decode_failure(b"block_data", true);
             return BlockData {
@@ -119,6 +125,7 @@ impl Storable for BlockData {
                 base_fee_per_gas: 0,
                 block_gas_limit: 0,
                 gas_used: 0,
+                beneficiary: [0u8; BLOCK_BENEFICIARY_LEN],
                 tx_ids: Vec::new(),
                 tx_list_hash: [0u8; HASH_LEN],
                 state_root: [0u8; HASH_LEN],
@@ -146,6 +153,9 @@ impl Storable for BlockData {
         let mut gas_used = [0u8; 8];
         gas_used.copy_from_slice(&data[offset..offset + 8]);
         offset += 8;
+        let mut beneficiary = [0u8; BLOCK_BENEFICIARY_LEN];
+        beneficiary.copy_from_slice(&data[offset..offset + BLOCK_BENEFICIARY_LEN]);
+        offset += BLOCK_BENEFICIARY_LEN;
         let mut tx_list_hash = [0u8; HASH_LEN];
         tx_list_hash.copy_from_slice(&data[offset..offset + HASH_LEN]);
         offset += HASH_LEN;
@@ -167,6 +177,7 @@ impl Storable for BlockData {
                     base_fee_per_gas: 0,
                     block_gas_limit: 0,
                     gas_used: 0,
+                    beneficiary: [0u8; BLOCK_BENEFICIARY_LEN],
                     tx_ids: Vec::new(),
                     tx_list_hash: [0u8; HASH_LEN],
                     state_root: [0u8; HASH_LEN],
@@ -183,6 +194,7 @@ impl Storable for BlockData {
                 base_fee_per_gas: 0,
                 block_gas_limit: 0,
                 gas_used: 0,
+                beneficiary: [0u8; BLOCK_BENEFICIARY_LEN],
                 tx_ids: Vec::new(),
                 tx_list_hash: [0u8; HASH_LEN],
                 state_root: [0u8; HASH_LEN],
@@ -199,6 +211,7 @@ impl Storable for BlockData {
                 base_fee_per_gas: 0,
                 block_gas_limit: 0,
                 gas_used: 0,
+                beneficiary: [0u8; BLOCK_BENEFICIARY_LEN],
                 tx_ids: Vec::new(),
                 tx_list_hash: [0u8; HASH_LEN],
                 state_root: [0u8; HASH_LEN],
@@ -219,6 +232,7 @@ impl Storable for BlockData {
             base_fee_per_gas: u64::from_be_bytes(base_fee),
             block_gas_limit: u64::from_be_bytes(block_gas_limit),
             gas_used: u64::from_be_bytes(gas_used),
+            beneficiary,
             tx_ids,
             tx_list_hash,
             state_root,
@@ -322,7 +336,10 @@ fn len_to_u32(len: usize) -> Option<u32> {
 
 fn encode_fallback_block() -> Cow<'static, [u8]> {
     let mut out =
-        Vec::with_capacity(8 + HASH_LEN + HASH_LEN + 8 + 8 + 8 + 8 + HASH_LEN + HASH_LEN + 4);
+        Vec::with_capacity(
+            8 + HASH_LEN + HASH_LEN + 8 + 8 + 8 + 8 + BLOCK_BENEFICIARY_LEN + HASH_LEN + HASH_LEN
+                + 4,
+        );
     out.extend_from_slice(&0u64.to_be_bytes());
     out.extend_from_slice(&[0u8; HASH_LEN]);
     out.extend_from_slice(&[0u8; HASH_LEN]);
@@ -330,6 +347,7 @@ fn encode_fallback_block() -> Cow<'static, [u8]> {
     out.extend_from_slice(&0u64.to_be_bytes());
     out.extend_from_slice(&0u64.to_be_bytes());
     out.extend_from_slice(&0u64.to_be_bytes());
+    out.extend_from_slice(&[0u8; BLOCK_BENEFICIARY_LEN]);
     out.extend_from_slice(&[0u8; HASH_LEN]);
     out.extend_from_slice(&[0u8; HASH_LEN]);
     out.extend_from_slice(&0u32.to_be_bytes());

@@ -1,6 +1,6 @@
 //! どこで: wrapperのRPC補助層 / 何を: eth系参照ロジックを分離 / なぜ: canister entrypointの責務を薄くするため
 
-use evm_core::{chain, fee_recipient, hash};
+use evm_core::{chain, hash};
 use evm_db::chain_data::constants::CHAIN_ID;
 use evm_db::chain_data::{
     BlockData, ReceiptLike, StoredTx, StoredTxBytes, TxId, TxKind, TxLoc, TxLocKind,
@@ -723,7 +723,7 @@ fn block_to_eth_view(block: BlockData, full_tx: bool) -> EthBlockView {
         parent_hash: block.parent_hash.to_vec(),
         block_hash: block.block_hash.to_vec(),
         timestamp: block.timestamp,
-        beneficiary: fee_recipient().to_vec(),
+        beneficiary: block.beneficiary.to_vec(),
         txs,
         state_root: block.state_root.to_vec(),
         base_fee_per_gas: Some(block.base_fee_per_gas),

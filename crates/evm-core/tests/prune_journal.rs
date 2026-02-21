@@ -204,6 +204,7 @@ fn make_block(number: u64, tx_id: TxId) -> BlockData {
         1_000_000_000,
         3_000_000,
         0,
+        [0u8; 20],
         vec![tx_id],
         tx_list_hash,
         state_root,

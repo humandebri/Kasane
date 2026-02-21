@@ -513,6 +513,7 @@ fn get_block_by_number_hashes_prefers_eth_tx_hash_for_eth_signed() {
         1_000_000_000,
         3_000_000,
         21_000,
+        [0x44; 20],
         vec![tx_id],
         [2u8; 32],
         [3u8; 32],
@@ -532,10 +533,7 @@ fn get_block_by_number_hashes_prefers_eth_tx_hash_for_eth_signed() {
             ic_evm_rpc_types::EthTxListView::Hashes(items) => {
                 assert_eq!(items.len(), 1);
                 assert_eq!(items[0], hash::keccak256(&raw).to_vec());
-                assert_eq!(
-                    block_view.beneficiary,
-                    evm_core::fee_recipient().to_vec()
-                );
+                assert_eq!(block_view.beneficiary, vec![0x44; 20]);
             }
             other => panic!("unexpected tx list shape: {other:?}"),
         },
@@ -660,6 +658,7 @@ fn get_transaction_receipt_has_block_wide_log_index() {
         1_000_000_000,
         3_000_000,
         42_000,
+        [0u8; 20],
         vec![tx0, tx1],
         [8u8; 32],
         [9u8; 32],
