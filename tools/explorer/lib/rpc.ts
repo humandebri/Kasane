@@ -37,7 +37,9 @@ export type RpcTxDecodedView = {
   input: Uint8Array;
   nonce: bigint;
   gas_limit: bigint;
-  gas_price: bigint;
+  gas_price: [] | [bigint];
+  max_fee_per_gas: [] | [bigint];
+  max_priority_fee_per_gas: [] | [bigint];
   chain_id: [] | [bigint];
 };
 export type RpcTxView = {
@@ -58,6 +60,7 @@ export type EthBlockView = {
   state_root: Uint8Array;
   number: bigint;
   timestamp: bigint;
+  beneficiary: Uint8Array;
   gas_limit: [] | [bigint];
   gas_used: [] | [bigint];
   base_fee_per_gas: [] | [bigint];
@@ -343,7 +346,9 @@ const idlFactory: IDL.InterfaceFactory = ({ IDL }) => {
       input: IDL.Vec(IDL.Nat8),
       nonce: IDL.Nat64,
       gas_limit: IDL.Nat64,
-      gas_price: IDL.Nat,
+      gas_price: IDL.Opt(IDL.Nat),
+      max_fee_per_gas: IDL.Opt(IDL.Nat),
+      max_priority_fee_per_gas: IDL.Opt(IDL.Nat),
       chain_id: IDL.Opt(IDL.Nat64),
     })),
     raw: IDL.Vec(IDL.Nat8),
@@ -353,6 +358,7 @@ const idlFactory: IDL.InterfaceFactory = ({ IDL }) => {
     block_hash: IDL.Vec(IDL.Nat8),
     number: IDL.Nat64,
     timestamp: IDL.Nat64,
+    beneficiary: IDL.Vec(IDL.Nat8),
     state_root: IDL.Vec(IDL.Nat8),
     parent_hash: IDL.Vec(IDL.Nat8),
     gas_limit: IDL.Opt(IDL.Nat64),

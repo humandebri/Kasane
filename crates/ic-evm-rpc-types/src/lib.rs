@@ -200,6 +200,7 @@ pub struct EthBlockView {
     pub parent_hash: Vec<u8>,
     pub block_hash: Vec<u8>,
     pub timestamp: u64,
+    pub beneficiary: Vec<u8>,
     pub txs: EthTxListView,
     pub state_root: Vec<u8>,
     pub base_fee_per_gas: Option<u64>,
@@ -228,7 +229,9 @@ pub struct DecodedTxView {
     pub value: Vec<u8>,
     pub input: Vec<u8>,
     pub gas_limit: u64,
-    pub gas_price: u128,
+    pub gas_price: Option<u128>,
+    pub max_fee_per_gas: Option<u128>,
+    pub max_priority_fee_per_gas: Option<u128>,
     pub chain_id: Option<u64>,
 }
 

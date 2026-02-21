@@ -532,6 +532,10 @@ fn get_block_by_number_hashes_prefers_eth_tx_hash_for_eth_signed() {
             ic_evm_rpc_types::EthTxListView::Hashes(items) => {
                 assert_eq!(items.len(), 1);
                 assert_eq!(items[0], hash::keccak256(&raw).to_vec());
+                assert_eq!(
+                    block_view.beneficiary,
+                    evm_core::fee_recipient().to_vec()
+                );
             }
             other => panic!("unexpected tx list shape: {other:?}"),
         },

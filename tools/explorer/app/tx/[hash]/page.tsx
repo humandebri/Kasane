@@ -252,9 +252,9 @@ function TimelineRow({ step }: { step: TimelineStep }) {
               step.raw.topicsHex.map((topic, index) => (
                 <div key={`${step.index}:topic:${index.toString()}`} className="font-mono break-all text-slate-700">
                   <span className="mr-2 inline-flex min-w-5 justify-center rounded bg-slate-100 px-1 text-[10px] text-slate-500">
-                    {formatTopicLabel(index)}
+                    {formatTopicLabel(step.topic0Hex, index)}
                   </span>
-                  {renderTopicValue(topic, index)}
+                  {renderTopicValue(step.topic0Hex, index, topic)}
                 </div>
               ))
             )}
@@ -365,14 +365,12 @@ function formatGweiWithComma(value: bigint): string {
   return `${numericWithComma} ${unit}`;
 }
 
-function formatTopicLabel(index: number): string {
-  if (index === 1) {
-    return "1:from";
+function formatTopicLabel(topic0Hex: string | null, index: number): string {
+  const labels = topic0Hex ? ADDRESS_TOPIC_LABELS_BY_TOPIC0[topic0Hex] : null;
+  if (labels && labels[index]) {
+    return labels[index];
   }
-  if (index === 2) {
-    return "2:to";
-  }
-  return index.toString();
+  return `topic[${index.toString()}]`;
 }
 
 function formatEventName(step: TimelineStep): string {
@@ -412,18 +410,34 @@ const EVENT_NAME_BY_TOPIC0: Record<string, string> = {
   "0x8be0079c531659141344cd1fd0a4f28419497f9722a3daafe3b4186f6b6457e0": "OwnershipTransferred",
 };
 
-function renderTopicValue(topicHex: string, index: number): ReactNode {
-  if (index === 1 || index === 2) {
-    const addressHex = decodeIndexedAddressTopic(topicHex);
-    if (addressHex) {
-      return (
-        <Link href={`/address/${addressHex}`} className="text-sky-700 hover:underline">
-          {addressHex}
-        </Link>
-      );
-    }
+const ADDRESS_TOPIC_LABELS_BY_TOPIC0: Record<string, Record<number, string>> = {
+  // event Transfer(address indexed from, address indexed to, uint256 value)
+  "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef": {
+    1: "from",
+    2: "to",
+  },
+  // event Approval(address indexed owner, address indexed spender, uint256 value)
+  "0x8c5be1e5ebec7d5bd14f71427d1e84f3dd0314c0f7b2291e5b200ac8c7c3b925": {
+    1: "owner",
+    2: "spender",
+  },
+};
+
+function renderTopicValue(topic0Hex: string | null, index: number, topicHex: string): ReactNode {
+  const labels = topic0Hex ? ADDRESS_TOPIC_LABELS_BY_TOPIC0[topic0Hex] : null;
+  const expectsAddress = Boolean(labels && labels[index]);
+  if (!expectsAddress) {
+    return topicHex;
   }
-  return topicHex;
+  const addressHex = decodeIndexedAddressTopic(topicHex);
+  if (!addressHex) {
+    return topicHex;
+  }
+  return (
+    <Link href={`/address/${addressHex}`} className="text-sky-700 hover:underline">
+      {addressHex}
+    </Link>
+  );
 }
 
 function decodeIndexedAddressTopic(topicHex: string): string | null {

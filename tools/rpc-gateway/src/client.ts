@@ -14,7 +14,9 @@ export type DecodedTxView = {
   nonce: bigint;
   gas_limit: bigint;
   input: Uint8Array;
-  gas_price: bigint;
+  gas_price: [] | [bigint];
+  max_fee_per_gas: [] | [bigint];
+  max_priority_fee_per_gas: [] | [bigint];
 };
 
 export type EthTxView = {
@@ -48,6 +50,7 @@ export type EthBlockView = {
   block_hash: Uint8Array;
   number: bigint;
   timestamp: bigint;
+  beneficiary: Uint8Array;
   state_root: Uint8Array;
   parent_hash: Uint8Array;
   base_fee_per_gas: [] | [bigint];

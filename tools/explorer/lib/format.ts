@@ -88,8 +88,8 @@ export function formatTimestampWithRelativeUtc(raw: bigint | null): { relative: 
   const date = new Date(Number(millis));
   const nowSec = BigInt(Math.floor(Date.now() / 1000));
   const tsSec = raw > 10_000_000_000n ? raw / 1000n : raw;
-  const deltaSec = nowSec > tsSec ? nowSec - tsSec : 0n;
-  const relative = formatRelativeAge(deltaSec);
+  const diffSec = tsSec - nowSec;
+  const relative = formatRelativeAge(diffSec);
 
   const month = date.toLocaleString("en-US", { month: "short", timeZone: "UTC" });
   const day = String(date.getUTCDate()).padStart(2, "0");
@@ -105,18 +105,20 @@ export function formatTimestampWithRelativeUtc(raw: bigint | null): { relative: 
   return { relative, absolute };
 }
 
-function formatRelativeAge(deltaSec: bigint): string {
-  if (deltaSec < 60n) {
-    return `${deltaSec.toString()}s ago`;
+function formatRelativeAge(diffSec: bigint): string {
+  const isFuture = diffSec > 0n;
+  const absSec = diffSec < 0n ? -diffSec : diffSec;
+  if (absSec < 60n) {
+    return isFuture ? `in ${absSec.toString()}s` : `${absSec.toString()}s ago`;
   }
-  if (deltaSec < 3600n) {
-    const value = deltaSec / 60n;
-    return `${value.toString()} mins ago`;
+  if (absSec < 3600n) {
+    const value = absSec / 60n;
+    return isFuture ? `in ${value.toString()} mins` : `${value.toString()} mins ago`;
   }
-  if (deltaSec < 86_400n) {
-    const value = deltaSec / 3600n;
-    return `${value.toString()} hrs ago`;
+  if (absSec < 86_400n) {
+    const value = absSec / 3600n;
+    return isFuture ? `in ${value.toString()} hrs` : `${value.toString()} hrs ago`;
   }
-  const value = deltaSec / 86_400n;
-  return `${value.toString()} days ago`;
+  const value = absSec / 86_400n;
+  return isFuture ? `in ${value.toString()} days` : `${value.toString()} days ago`;
 }

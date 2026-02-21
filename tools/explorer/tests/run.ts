@@ -41,7 +41,7 @@ import {
 import { getLatestTxsPageView, getPrincipalView, opsDataTestHooks, parseCyclesTrendWindow, resolveHomeBlocksLimit } from "../lib/data";
 import { buildPruneHistory, parseStoredPruneStatusForTest } from "../lib/data_ops";
 import { mapAddressHistory, mapAddressTokenTransfers } from "../lib/data_address";
-import { calcRoundedBps, formatEthFromWei, formatGweiFromWei } from "../lib/format";
+import { calcRoundedBps, formatEthFromWei, formatGweiFromWei, formatTimestampWithRelativeUtc } from "../lib/format";
 import { deriveEvmAddressFromPrincipal } from "../lib/principal";
 import { logsTestHooks } from "../lib/logs";
 import { resolveSearchRoute } from "../lib/search";
@@ -204,6 +204,18 @@ async function runFormatTests(): Promise<void> {
   assert.equal(calcRoundedBps(8_000_000n, 10_000_000n), 8000n);
   assert.equal(calcRoundedBps(-5n, 2n), -25000n);
   assert.equal(calcRoundedBps(1n, 0n), null);
+
+  const originalNow = Date.now;
+  Date.now = () => 1_700_000_000_000;
+  try {
+    const past = formatTimestampWithRelativeUtc(1_699_999_970n);
+    assert.equal(past?.relative, "30s ago");
+
+    const future = formatTimestampWithRelativeUtc(1_700_000_090n);
+    assert.equal(future?.relative, "in 1 mins");
+  } finally {
+    Date.now = originalNow;
+  }
 }
 
 async function runVerifyNormalizeTests(): Promise<void> {
@@ -1214,6 +1226,13 @@ async function runDataTests(): Promise<void> {
   );
   assert.equal(invalid?.status, null);
   assert.equal(parseStoredPruneStatusForTest("{"), null);
+  assert.equal(
+    opsDataTestHooks.mapFeeRecipientHexFromRpcBlock({
+      beneficiary: Uint8Array.from(Buffer.from("ab".repeat(20), "hex")),
+    }),
+    "0x" + "ab".repeat(20)
+  );
+  assert.equal(opsDataTestHooks.mapFeeRecipientHexFromRpcBlock(null), null);
 }
 
 async function runAddressHistoryMappingTests(): Promise<void> {

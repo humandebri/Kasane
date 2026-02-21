@@ -328,10 +328,11 @@ export async function getLatestBlocksPageView(
 
 export async function getBlockView(
   blockNumber: bigint
-): Promise<{ db: BlockDetailsWithPrincipal | null; rpcExists: boolean; rpcGas: BlockGasView | null }> {
+): Promise<{ db: BlockDetailsWithPrincipal | null; rpcExists: boolean; rpcGas: BlockGasView | null; feeRecipientHex: string | null }> {
   const [db, rpcBlock] = await Promise.all([getBlockDetails(blockNumber), getRpcBlock(blockNumber)]);
   const txsWithPrincipal = db ? withCallerPrincipalText(db.txs) : [];
   const feeBreakdown = await getBlockFeeBreakdown(txsWithPrincipal, rpcBlock?.base_fee_per_gas[0] ?? null);
+  const feeRecipientHex = rpcBlock ? toHexLower(rpcBlock.beneficiary) : null;
   const rpcGas = rpcBlock
     ? {
         gasLimit: rpcBlock.gas_limit[0] ?? null,
@@ -346,7 +347,7 @@ export async function getBlockView(
       }
     : null;
   if (!db) {
-    return { db: null, rpcExists: rpcBlock !== null, rpcGas };
+    return { db: null, rpcExists: rpcBlock !== null, rpcGas, feeRecipientHex };
   }
   return {
     db: {
@@ -355,6 +356,7 @@ export async function getBlockView(
     },
     rpcExists: rpcBlock !== null,
     rpcGas,
+    feeRecipientHex,
   };
 }
 
@@ -429,8 +431,8 @@ export async function getTxDetailView(txHashHex: string): Promise<TxDetailView |
   const gasLimit = rpcTx?.decoded[0]?.gas_limit ?? null;
   const gasUsed = "Ok" in receiptOut ? receiptOut.Ok.gas_used : null;
   const baseFeePerGasWei = rpcBlock?.base_fee_per_gas[0] ?? null;
-  const maxFeePerGasWei = rpcTx?.decoded[0]?.gas_price ?? null;
-  const maxPriorityFeePerGasWei = null;
+  const maxFeePerGasWei = rpcTx?.decoded[0] ? rpcTx.decoded[0].max_fee_per_gas[0] ?? rpcTx.decoded[0].gas_price[0] ?? null : null;
+  const maxPriorityFeePerGasWei = rpcTx?.decoded[0]?.max_priority_fee_per_gas[0] ?? null;
   const erc20TransfersRaw = "Ok" in receiptOut ? extractErc20TransfersFromReceipt(receiptOut.Ok) : [];
   const erc20Transfers = await withTokenMeta(erc20TransfersRaw);
   return {
@@ -705,6 +707,8 @@ function ratioOrNull(numerator: bigint, denominator: bigint): number | null {
 
 export const opsDataTestHooks = {
   buildCapacityForecast,
+  mapFeeRecipientHexFromRpcBlock: (rpcBlock: { beneficiary: Uint8Array } | null): string | null =>
+    rpcBlock ? toHexLower(rpcBlock.beneficiary) : null,
 };
 
 export async function getPrincipalView(principalText: string): Promise<PrincipalView> {

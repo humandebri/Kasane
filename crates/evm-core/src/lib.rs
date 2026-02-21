@@ -16,3 +16,7 @@ pub(crate) mod time;
 pub(crate) mod trie_commit;
 pub mod tx_decode;
 pub mod tx_submit;
+
+pub fn fee_recipient() -> [u8; 20] {
+    constants::FEE_RECIPIENT.into_array()
+}

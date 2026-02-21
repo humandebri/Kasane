@@ -9,7 +9,6 @@ import { getBlockView } from "../../../lib/data";
 import { calcRoundedBps, formatEthFromWei, formatGweiFromWei, formatTimestampWithRelativeUtc } from "../../../lib/format";
 
 export const dynamic = "force-dynamic";
-const FEE_RECIPIENT = "0x6b9b5fd62cc66fc9fef74210c9298b1b6bcbfc52";
 
 function parseBlockNumber(input: string): bigint {
   if (!/^[0-9]+$/.test(input)) {
@@ -60,9 +59,13 @@ export default async function BlockPage({ params }: { params: Promise<{ number: 
           </dd>
           <dt className="text-slate-500">Fee Recipient:</dt>
           <dd>
-            <Link href={`/address/${FEE_RECIPIENT}`} className="font-mono text-sky-700 hover:underline">
-              {FEE_RECIPIENT}
-            </Link>
+            {data.feeRecipientHex ? (
+              <Link href={`/address/${data.feeRecipientHex}`} className="font-mono text-sky-700 hover:underline">
+                {data.feeRecipientHex}
+              </Link>
+            ) : (
+              "-"
+            )}
           </dd>
           <dt className="text-slate-500">Block Reward:</dt>
           <dd className="font-mono">

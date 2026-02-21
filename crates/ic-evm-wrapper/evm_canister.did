@@ -15,7 +15,9 @@ type DecodedTxView = record {
   nonce : nat64;
   gas_limit : nat64;
   input : blob;
-  gas_price : nat;
+  gas_price : opt nat;
+  max_fee_per_gas : opt nat;
+  max_priority_fee_per_gas : opt nat;
 };
 type DropCountView = record { code : nat16; count : nat64 };
 type EthBlockView = record {
@@ -24,6 +26,7 @@ type EthBlockView = record {
   block_hash : blob;
   number : nat64;
   timestamp : nat64;
+  beneficiary : blob;
   gas_limit : opt nat64;
   gas_used : opt nat64;
   state_root : blob;
