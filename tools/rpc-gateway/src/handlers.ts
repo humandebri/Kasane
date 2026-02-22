@@ -951,7 +951,7 @@ function mapBlock(
       transactionsRoot: ZERO_32,
       stateRoot: toDataHex(block.state_root),
       receiptsRoot: ZERO_32,
-      miner: ZERO_ADDR,
+      miner: toDataHex(block.beneficiary),
       difficulty: "0x0",
       totalDifficulty: "0x0",
       extraData: "0x",
@@ -966,7 +966,33 @@ function mapBlock(
   };
 }
 function mapBlockTxs(txs: { Full: EthTxView[] } | { Hashes: Uint8Array[] }, fullTx: boolean): unknown[] { if ("Hashes" in txs) return txs.Hashes.map((v) => toDataHex(v)); return fullTx ? txs.Full.map(mapTx) : txs.Full.map((v) => toDataHex(v.eth_tx_hash.length === 0 ? v.hash : v.eth_tx_hash[0])); }
-function mapTx(tx: EthTxView): Record<string, unknown> { const decoded = tx.decoded.length === 0 ? null : tx.decoded[0]; const txHash = tx.eth_tx_hash.length === 0 ? tx.hash : tx.eth_tx_hash[0]; const toAddr = decoded && decoded.to.length > 0 ? decoded.to[0] : undefined; return { hash: toDataHex(txHash), nonce: decoded ? toQuantityHex(decoded.nonce) : "0x0", blockHash: null, blockNumber: tx.block_number.length === 0 ? null : toQuantityHex(tx.block_number[0]), transactionIndex: tx.tx_index.length === 0 ? null : toQuantityHex(BigInt(tx.tx_index[0])), from: decoded ? toDataHex(decoded.from) : ZERO_ADDR, to: toAddr ? toDataHex(toAddr) : null, value: decoded ? toQuantityHex(bytesToQuantity(decoded.value)) : "0x0", gas: decoded ? toQuantityHex(decoded.gas_limit) : "0x0", gasPrice: decoded ? toQuantityHex(decoded.gas_price) : "0x0", input: decoded ? toDataHex(decoded.input) : "0x", type: "0x0", v: "0x0", r: "0x0", s: "0x0" }; }
+function mapTx(tx: EthTxView): Record<string, unknown> {
+  const decoded = tx.decoded.length === 0 ? null : tx.decoded[0];
+  const txHash = tx.eth_tx_hash.length === 0 ? tx.hash : tx.eth_tx_hash[0];
+  const toAddr = decoded && decoded.to.length > 0 ? decoded.to[0] : undefined;
+  const gasPrice = decoded?.gas_price[0] ?? decoded?.max_fee_per_gas[0];
+  const maxFeePerGas = decoded?.max_fee_per_gas[0];
+  const maxPriorityFeePerGas = decoded?.max_priority_fee_per_gas[0];
+  return {
+    hash: toDataHex(txHash),
+    nonce: decoded ? toQuantityHex(decoded.nonce) : "0x0",
+    blockHash: null,
+    blockNumber: tx.block_number.length === 0 ? null : toQuantityHex(tx.block_number[0]),
+    transactionIndex: tx.tx_index.length === 0 ? null : toQuantityHex(BigInt(tx.tx_index[0])),
+    from: decoded ? toDataHex(decoded.from) : ZERO_ADDR,
+    to: toAddr ? toDataHex(toAddr) : null,
+    value: decoded ? toQuantityHex(bytesToQuantity(decoded.value)) : "0x0",
+    gas: decoded ? toQuantityHex(decoded.gas_limit) : "0x0",
+    gasPrice: gasPrice === undefined ? "0x0" : toQuantityHex(gasPrice),
+    maxFeePerGas: maxFeePerGas === undefined ? null : toQuantityHex(maxFeePerGas),
+    maxPriorityFeePerGas: maxPriorityFeePerGas === undefined ? null : toQuantityHex(maxPriorityFeePerGas),
+    input: decoded ? toDataHex(decoded.input) : "0x",
+    type: "0x0",
+    v: "0x0",
+    r: "0x0",
+    s: "0x0",
+  };
+}
 function mapReceipt(receipt: EthReceiptView, fallbackTxHash: Uint8Array): Record<string, unknown> {
   const txHash = receipt.eth_tx_hash.length === 0 ? fallbackTxHash : receipt.eth_tx_hash[0];
   return {
@@ -1003,4 +1029,8 @@ export function __test_map_receipt(receipt: EthReceiptView, fallbackTxHash: Uint
 
 export function __test_map_block(block: EthBlockView, fullTx: boolean): { value: Record<string, unknown> } | { error: string } {
   return mapBlock(block, fullTx);
+}
+
+export function __test_map_tx(tx: EthTxView): Record<string, unknown> {
+  return mapTx(tx);
 }

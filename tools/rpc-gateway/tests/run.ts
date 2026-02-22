@@ -19,6 +19,7 @@ import {
   __test_parse_logs_filter,
   __test_tx_hash_readiness_error,
   __test_to_candid_call_object,
+  __test_map_tx,
 } from "../src/handlers";
 import { loadConfig } from "../src/config";
 import { identityFromPem } from "../src/identity";
@@ -227,12 +228,14 @@ function testReceiptLogMapping(): void {
 }
 
 function testBlockMappingWithFeeMetadata(): void {
+  const beneficiary = Uint8Array.from(Buffer.from("44".repeat(20), "hex"));
   const mapped = __test_map_block(
     {
       txs: { Hashes: [] },
       block_hash: Uint8Array.from(Buffer.from("11".repeat(32), "hex")),
       number: 7n,
       timestamp: 1_770_000_000n,
+      beneficiary,
       state_root: Uint8Array.from(Buffer.from("22".repeat(32), "hex")),
       parent_hash: Uint8Array.from(Buffer.from("33".repeat(32), "hex")),
       base_fee_per_gas: [250_000_000_000n],
@@ -248,6 +251,7 @@ function testBlockMappingWithFeeMetadata(): void {
   assert.equal(mapped.value.baseFeePerGas, "0x3a35294400");
   assert.equal(mapped.value.gasLimit, "0x2dc6c0");
   assert.equal(mapped.value.gasUsed, "0x5dc0");
+  assert.equal(mapped.value.miner, "0x" + "44".repeat(20));
 }
 
 function testBlockMappingRejectsLegacyMetadata(): void {
@@ -257,6 +261,7 @@ function testBlockMappingRejectsLegacyMetadata(): void {
       block_hash: Uint8Array.from(Buffer.from("11".repeat(32), "hex")),
       number: 7n,
       timestamp: 1_770_000_000n,
+      beneficiary: Uint8Array.from(Buffer.from("44".repeat(20), "hex")),
       state_root: Uint8Array.from(Buffer.from("22".repeat(32), "hex")),
       parent_hash: Uint8Array.from(Buffer.from("33".repeat(32), "hex")),
       base_fee_per_gas: [],
@@ -266,6 +271,35 @@ function testBlockMappingRejectsLegacyMetadata(): void {
     false
   );
   assert.ok("error" in mapped);
+}
+
+function testEip1559GasPriceFallback(): void {
+  const mapped = __test_map_tx({
+    raw: Uint8Array.from([]),
+    tx_index: [0],
+    decode_ok: true,
+    hash: Uint8Array.from(Buffer.from("11".repeat(32), "hex")),
+    kind: { EthSigned: null },
+    block_number: [7n],
+    eth_tx_hash: [Uint8Array.from(Buffer.from("22".repeat(32), "hex"))],
+    decoded: [
+      {
+        from: Uint8Array.from(Buffer.from("33".repeat(20), "hex")),
+        to: [Uint8Array.from(Buffer.from("44".repeat(20), "hex"))],
+        nonce: 1n,
+        value: Uint8Array.from(new Array(31).fill(0).concat([1])),
+        input: Uint8Array.from([]),
+        gas_limit: 21_000n,
+        gas_price: [],
+        max_fee_per_gas: [16n],
+        max_priority_fee_per_gas: [1n],
+        chain_id: [1n],
+      },
+    ],
+  });
+  assert.equal(mapped.gasPrice, "0x10");
+  assert.equal(mapped.maxFeePerGas, "0x10");
+  assert.equal(mapped.maxPriorityFeePerGas, "0x1");
 }
 
 function testSubmitEthHashResolutionPolicy(): void {
@@ -448,6 +482,7 @@ testCanisterErrorClassification();
 testReceiptLogMapping();
 testBlockMappingWithFeeMetadata();
 testBlockMappingRejectsLegacyMetadata();
+testEip1559GasPriceFallback();
 testSubmitEthHashResolutionPolicy();
 testTxHashReadinessPolicy();
 testGetLogsErrorMapping();

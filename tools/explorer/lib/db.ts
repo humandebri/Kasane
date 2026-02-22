@@ -263,6 +263,44 @@ export async function getLatestTxsPage(limit: number, offset: number): Promise<T
   }));
 }
 
+export async function getLatestTxsPageByBlock(limit: number, offset: number, blockNumber: bigint): Promise<TxSummary[]> {
+  const pool = getPool();
+  const rows = await pool.query<{
+    tx_hash: Buffer;
+    block_number: string | number;
+    block_timestamp: string | number | null;
+    tx_index: number;
+    caller_principal: Buffer | null;
+    from_address: Buffer;
+    to_address: Buffer | null;
+    contract_address: Buffer | null;
+    tx_selector: Buffer | null;
+    receipt_status: number | null;
+  }>(
+    "SELECT t.tx_hash, t.block_number, b.timestamp AS block_timestamp, t.tx_index, t.caller_principal, t.from_address, t.to_address, r.contract_address, t.tx_selector, t.receipt_status FROM txs t LEFT JOIN tx_receipts_index r ON r.tx_hash = t.tx_hash LEFT JOIN blocks b ON b.number = t.block_number WHERE t.block_number = $3 ORDER BY t.tx_index ASC LIMIT $1 OFFSET $2",
+    [limit, offset, blockNumber]
+  );
+
+  return rows.rows.map((row) => ({
+    txHashHex: `0x${row.tx_hash.toString("hex")}`,
+    blockNumber: BigInt(row.block_number),
+    blockTimestamp: row.block_timestamp === null ? null : BigInt(row.block_timestamp),
+    txIndex: row.tx_index,
+    callerPrincipal: row.caller_principal ?? null,
+    fromAddress: row.from_address,
+    toAddress: row.to_address ?? null,
+    createdContractAddress: row.contract_address ?? null,
+    txSelector: row.tx_selector ?? null,
+    receiptStatus: row.receipt_status ?? null,
+  }));
+}
+
+export async function getTxCountByBlock(blockNumber: bigint): Promise<bigint> {
+  const pool = getPool();
+  const rows = await pool.query<{ n: string | number }>("SELECT COUNT(*) AS n FROM txs WHERE block_number = $1", [blockNumber]);
+  return BigInt(rows.rows[0]?.n ?? 0);
+}
+
 export async function getBlockDetails(blockNumber: bigint): Promise<BlockDetails | null> {
   const pool = getPool();
   const blockRow = await pool.query<{

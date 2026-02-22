@@ -84,7 +84,7 @@ fn snapshot_tx_outcome_matrix_and_block_fields() {
     // - fee floor をテスト内で固定したことで block_hash/state_root が再計算された
     assert_eq!(
         block_outcome,
-        "number=3 block_hash=fe2bab5f965a7be9d7880d7a9d72394879987b1dfc70f406e306d2fe020c472c tx_list_hash=60e50781adb0b02f798fb14df878b982f864e81f3d2220e86e924a131e213ee0 state_root=4d2ba91fcb5fe0c9ee5a1a29dca4f5850ee13cff0e1e4035f762af2ed4e31620"
+        "number=3 block_hash=61c36c02b3480cfaf64c7abdbe6fb5fbc6f09ba6e398fa058bcf6b5ca156806f tx_list_hash=60e50781adb0b02f798fb14df878b982f864e81f3d2220e86e924a131e213ee0 state_root=ac1e8efa771a16af0af321e5850198ad043a0d8e4b13f0fcf9d8bb48e3182338"
     );
 }
 

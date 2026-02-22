@@ -19,9 +19,7 @@ type Props = {
 export function CapacityTrendChart({ points }: Props) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const chartData = useMemo(() => {
-    const estimated: Array<{ time: number; value: number }> = [];
-    const high: Array<{ time: number; value: number }> = [];
-    const hard: Array<{ time: number; value: number }> = [];
+    const byTime = new Map<number, { estimated: number; high: number; hard: number }>();
     for (const point of points) {
       const sampledAtMs = Number(point.sampledAtMs);
       const estimatedBytes = Number(point.estimatedKeptBytes);
@@ -31,9 +29,20 @@ export function CapacityTrendChart({ points }: Props) {
         continue;
       }
       const time = Math.floor(sampledAtMs / 1000);
-      estimated.push({ time, value: estimatedBytes });
-      high.push({ time, value: highBytes });
-      hard.push({ time, value: hardBytes });
+      byTime.set(time, { estimated: estimatedBytes, high: highBytes, hard: hardBytes });
+    }
+    const estimated: Array<{ time: number; value: number }> = [];
+    const high: Array<{ time: number; value: number }> = [];
+    const hard: Array<{ time: number; value: number }> = [];
+    const times = Array.from(byTime.keys()).sort((a, b) => a - b);
+    for (const time of times) {
+      const row = byTime.get(time);
+      if (!row) {
+        continue;
+      }
+      estimated.push({ time, value: row.estimated });
+      high.push({ time, value: row.high });
+      hard.push({ time, value: row.hard });
     }
     return { estimated, high, hard };
   }, [points]);

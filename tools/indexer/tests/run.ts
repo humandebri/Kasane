@@ -424,6 +424,7 @@ test("runWorkerWithDeps commits two blocks from one response and stores final cu
     let headCalls = 0;
     let exportCalls = 0;
     const client = {
+      getTxInputByTxId: async () => null,
       getHeadNumber: async (): Promise<bigint> => {
         headCalls += 1;
         if (headCalls === 2) {
@@ -529,6 +530,7 @@ test("runWorkerWithDeps recovers from Pruned by rebasing cursor and dropping pen
     let headCalls = 0;
     let exportCalls = 0;
     const client = {
+      getTxInputByTxId: async () => null,
       getHeadNumber: async (): Promise<bigint> => {
         headCalls += 1;
         if (headCalls === 5) {
@@ -655,6 +657,7 @@ test("runWorkerWithDeps clamps Pruned cursor to block 1 minimum", async () => {
     let headCalls = 0;
     let exportCalls = 0;
     const client = {
+      getTxInputByTxId: async () => null,
       getHeadNumber: async (): Promise<bigint> => {
         headCalls += 1;
         if (headCalls === 3) {
@@ -754,6 +757,7 @@ test("runWorkerWithDeps clamps Pruned cursor to head when prune floor is ahead",
     let headCalls = 0;
     let exportCalls = 0;
     const client = {
+      getTxInputByTxId: async () => null,
       getHeadNumber: async (): Promise<bigint> => {
         headCalls += 1;
         if (headCalls === 3) {
@@ -852,6 +856,7 @@ test("runWorkerWithDeps bootstraps MissingData at block 1 instead of head", asyn
     let headCalls = 0;
     let exportCalls = 0;
     const client = {
+      getTxInputByTxId: async () => null,
       getHeadNumber: async (): Promise<bigint> => {
         headCalls += 1;
         if (headCalls === 3) {
@@ -954,6 +959,7 @@ test("runWorkerWithDeps exits on final cursor mismatch", async () => {
         { segment: 2, start: 0, bytes: Buffer.alloc(0), payload_len: 0 },
       ];
       const client = {
+      getTxInputByTxId: async () => null,
         getHeadNumber: async (): Promise<bigint> => 1n,
         exportBlocks: async (): Promise<
           | {
@@ -1046,6 +1052,7 @@ test("runWorkerWithDeps exits when decoded block number mismatches cursor", asyn
         { segment: 2, start: 0, bytes: Buffer.alloc(0), payload_len: 0 },
       ];
       const client = {
+      getTxInputByTxId: async () => null,
         getHeadNumber: async (): Promise<bigint> => 20n,
         exportBlocks: async (): Promise<
           | {
@@ -1140,6 +1147,7 @@ test("runWorkerWithDeps exits when tx_index and receipts counts differ", async (
         { segment: 2, start: 0, bytes: txIndexPayload, payload_len: txIndexPayload.length },
       ];
       const client = {
+      getTxInputByTxId: async () => null,
         getHeadNumber: async (): Promise<bigint> => 1n,
         exportBlocks: async (): Promise<
           | {
@@ -1246,6 +1254,7 @@ test("runWorkerWithDeps stores token_transfers block/tx index from tx_index payl
     ];
     let headCalls = 0;
     const client = {
+      getTxInputByTxId: async () => null,
       getHeadNumber: async (): Promise<bigint> => {
         headCalls += 1;
         if (headCalls === 2) {
@@ -1350,6 +1359,7 @@ test("runWorkerWithDeps exits when stored cursor segment exceeds maxSegment", as
       };
       await db.setCursor({ block_number: 1n, segment: 3, byte_offset: 0 });
       const client = {
+      getTxInputByTxId: async () => null,
         getHeadNumber: async (): Promise<bigint> => 1n,
         exportBlocks: async (): Promise<{ Ok: never } | { Err: never }> => {
           throw new Error("exportBlocks should not be called");
@@ -1425,6 +1435,7 @@ test("runWorkerWithDeps exits when cursor is null and stream cursor is not estab
       };
       const chunkBytes = Buffer.from([1, 2, 3]);
       const client = {
+      getTxInputByTxId: async () => null,
         getHeadNumber: async (): Promise<bigint> => 10n,
         exportBlocks: async (): Promise<
           | {
@@ -1514,6 +1525,7 @@ test("runWorkerWithDeps does not leak signal listeners after stop", async () => 
       };
       let headCalls = 0;
       const client = {
+      getTxInputByTxId: async () => null,
         getHeadNumber: async (): Promise<bigint> => {
           headCalls += 1;
           if (headCalls === 1) {
@@ -1608,6 +1620,7 @@ test("db upsert and metrics aggregation", async () => {
       caller_principal: null,
       from_address: Buffer.alloc(20, 0x01),
       to_address: Buffer.alloc(20, 0x02),
+      tx_input: null,
       tx_selector: null,
       receipt_status: 1,
     });
@@ -1726,6 +1739,7 @@ test("retention cleanup dry-run and delete follow 90-day boundary", async () => 
       caller_principal: null,
       from_address: Buffer.alloc(20, 0x11),
       to_address: Buffer.alloc(20, 0x21),
+      tx_input: null,
       tx_selector: null,
       receipt_status: 1,
     });
@@ -1736,6 +1750,7 @@ test("retention cleanup dry-run and delete follow 90-day boundary", async () => 
       caller_principal: null,
       from_address: Buffer.alloc(20, 0x12),
       to_address: Buffer.alloc(20, 0x22),
+      tx_input: null,
       tx_selector: null,
       receipt_status: 0,
     });

@@ -159,6 +159,7 @@ fn make_block(number: u64) -> BlockData {
         1_000_000_000,
         3_000_000,
         0,
+        [0u8; 20],
         Vec::<TxId>::new(),
         tx_list_hash,
         state_root,

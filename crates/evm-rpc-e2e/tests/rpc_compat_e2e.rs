@@ -43,7 +43,9 @@ struct DecodedTxView {
     value: Vec<u8>,
     input: Vec<u8>,
     gas_limit: u64,
-    gas_price: u128,
+    gas_price: Option<u128>,
+    max_fee_per_gas: Option<u128>,
+    max_priority_fee_per_gas: Option<u128>,
     chain_id: Option<u64>,
 }
 

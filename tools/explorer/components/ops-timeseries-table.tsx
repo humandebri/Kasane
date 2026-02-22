@@ -52,5 +52,12 @@ function formatLocalDateTime(sampledAtMs: string): string {
   if (!Number.isFinite(value)) {
     return "N/A";
   }
-  return new Date(value).toLocaleString();
+  const date = new Date(value);
+  const year = date.getUTCFullYear();
+  const month = (date.getUTCMonth() + 1).toString().padStart(2, "0");
+  const day = date.getUTCDate().toString().padStart(2, "0");
+  const hours = date.getUTCHours().toString().padStart(2, "0");
+  const minutes = date.getUTCMinutes().toString().padStart(2, "0");
+  const seconds = date.getUTCSeconds().toString().padStart(2, "0");
+  return `${year}-${month}-${day} ${hours}:${minutes}:${seconds} UTC`;
 }

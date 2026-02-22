@@ -39,7 +39,9 @@ export const idlFactory: IDL.InterfaceFactory = ({ IDL }) => {
     nonce: IDL.Nat64,
     gas_limit: IDL.Nat64,
     input: IDL.Vec(IDL.Nat8),
-    gas_price: IDL.Nat,
+    gas_price: IDL.Opt(IDL.Nat),
+    max_fee_per_gas: IDL.Opt(IDL.Nat),
+    max_priority_fee_per_gas: IDL.Opt(IDL.Nat),
   });
   const EthTxView = IDL.Record({
     raw: IDL.Vec(IDL.Nat8),
@@ -77,6 +79,7 @@ export const idlFactory: IDL.InterfaceFactory = ({ IDL }) => {
     block_hash: IDL.Vec(IDL.Nat8),
     number: IDL.Nat64,
     timestamp: IDL.Nat64,
+    beneficiary: IDL.Vec(IDL.Nat8),
     state_root: IDL.Vec(IDL.Nat8),
     parent_hash: IDL.Vec(IDL.Nat8),
     base_fee_per_gas: IDL.Opt(IDL.Nat64),

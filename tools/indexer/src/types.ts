@@ -148,7 +148,16 @@ export type ExportActorMethods = {
 };
 
 export type RpcTxDecodedView = {
+  from: Uint8Array;
+  to: [] | [Uint8Array];
+  value: Uint8Array;
+  nonce: bigint;
+  gas_limit: bigint;
   input: Uint8Array;
+  gas_price: [] | [bigint];
+  max_fee_per_gas: [] | [bigint];
+  max_priority_fee_per_gas: [] | [bigint];
+  chain_id: [] | [bigint];
 };
 
 export type RpcTxView = {

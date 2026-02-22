@@ -135,7 +135,9 @@ pub struct DecodedTxView<'a> {
     pub value: [u8; 32],
     pub input: Cow<'a, [u8]>,
     pub gas_limit: u64,
-    pub gas_price: u128,
+    pub gas_price: Option<u128>,
+    pub max_fee_per_gas: Option<u128>,
+    pub max_priority_fee_per_gas: Option<u128>,
     pub chain_id: Option<u64>,
 }
 
@@ -154,7 +156,9 @@ pub fn decode_tx_view<'a>(
                 value: header.value,
                 input: Cow::Borrowed(header.data),
                 gas_limit: header.gas_limit,
-                gas_price: header.max_fee,
+                gas_price: None,
+                max_fee_per_gas: Some(header.max_fee),
+                max_priority_fee_per_gas: Some(header.max_priority),
                 chain_id: Some(CHAIN_ID),
             })
         }
@@ -177,7 +181,21 @@ pub fn decode_tx_view<'a>(
                 value: tx_env.value.to_be_bytes(),
                 input: Cow::Owned(tx_env.data.to_vec()),
                 gas_limit: tx_env.gas_limit,
-                gas_price: tx_env.gas_price,
+                gas_price: if tx_env.tx_type == 2 {
+                    None
+                } else {
+                    Some(tx_env.gas_price)
+                },
+                max_fee_per_gas: if tx_env.tx_type == 2 {
+                    Some(tx_env.gas_price)
+                } else {
+                    None
+                },
+                max_priority_fee_per_gas: if tx_env.tx_type == 2 {
+                    tx_env.gas_priority_fee
+                } else {
+                    None
+                },
                 chain_id: tx_env.chain_id,
             })
         }

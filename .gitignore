@@ -25,6 +25,7 @@ crates/evm-rpc-e2e/pocket-ic
 
 # frontend code
 node_modules/
+.pnpm-store/
 dist/
 .svelte-kit/
 **/tests/run.js

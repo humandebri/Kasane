@@ -1,10 +1,20 @@
 //! どこで: Phase1.3テスト / 何を: fee境界とbase_fee再評価 / なぜ: 有効手数料と順序の決定性を保証するため
 
 use alloy_eips::eip1559::{calc_next_block_base_fee, BaseFeeParams};
+use alloy_eips::eip2718::Encodable2718;
+use alloy_eips::eip2930::AccessList;
+use alloy_primitives::{Address, Bytes, TxKind as EthTxKind, U256 as AlloyU256};
+use alloy_signer::SignerSync;
+use alloy_signer_local::PrivateKeySigner;
+use alloy_consensus::{SignableTransaction, TxEip1559};
 use evm_core::base_fee::compute_next_base_fee;
 use evm_core::chain::{self, ChainError};
 use evm_core::hash;
+use evm_db::chain_data::constants::CHAIN_ID;
+use evm_db::chain_data::TxKind;
 use evm_db::stable_state::{init_stable_state, with_state, with_state_mut};
+use evm_db::types::keys::make_account_key;
+use revm::primitives::U256;
 
 mod common;
 
@@ -180,4 +190,108 @@ fn produce_block_base_fee_uses_configured_block_gas_limit() {
     let next_base_fee = with_state(|state| state.chain_state.get().base_fee);
     let expected = compute_next_base_fee(1_000_000_000, outcome.gas_used, 8_000_000);
     assert_eq!(next_base_fee, expected);
+}
+
+#[test]
+fn zero_tip_transaction_still_credits_base_fee_to_fee_recipient() {
+    init_stable_state();
+    let base_fee = 1_000_000_000u64;
+    with_state_mut(|state| {
+        let mut chain_state = *state.chain_state.get();
+        chain_state.base_fee = base_fee;
+        chain_state.min_priority_fee = 0;
+        state.chain_state.set(chain_state);
+    });
+
+    let recipient = evm_core::fee_recipient();
+    let before = with_state(|state| {
+        state
+            .accounts
+            .get(&make_account_key(recipient))
+            .map(|account| U256::from_be_bytes(account.balance()))
+            .unwrap_or(U256::ZERO)
+    });
+
+    let tx = common::build_zero_to_ic_tx_bytes(0, u128::from(base_fee), 0);
+    fund_principal(&[0x88]);
+    let tx_id = chain::submit_ic_tx(vec![0x88], vec![0x08], tx).expect("submit");
+    let _ = chain::produce_block(1).expect("produce");
+    let receipt = chain::get_receipt(&tx_id).expect("receipt");
+
+    let after = with_state(|state| {
+        state
+            .accounts
+            .get(&make_account_key(recipient))
+            .map(|account| U256::from_be_bytes(account.balance()))
+            .unwrap_or(U256::ZERO)
+    });
+
+    let expected_delta = u128::from(receipt.gas_used).saturating_mul(u128::from(base_fee));
+    assert_eq!(after, before.saturating_add(U256::from(expected_delta)));
+    assert_eq!(receipt.total_fee, expected_delta);
+}
+
+#[test]
+fn eth_signed_zero_tip_still_credits_base_fee_to_fee_recipient() {
+    init_stable_state();
+    let base_fee = 1_000_000_000u64;
+    with_state_mut(|state| {
+        let mut chain_state = *state.chain_state.get();
+        chain_state.base_fee = base_fee;
+        chain_state.min_priority_fee = 0;
+        chain_state.min_gas_price = 0;
+        state.chain_state.set(chain_state);
+    });
+
+    let recipient = evm_core::fee_recipient();
+    let before = with_state(|state| {
+        state
+            .accounts
+            .get(&make_account_key(recipient))
+            .map(|account| U256::from_be_bytes(account.balance()))
+            .unwrap_or(U256::ZERO)
+    });
+
+    let signer = test_signer();
+    common::fund_account(signer.address().into_array(), 1_000_000_000_000_000_000);
+    let raw = build_eth_signed_1559(0, u128::from(base_fee), 0);
+    let tx_id = chain::submit_tx(TxKind::EthSigned, raw, vec![0x89]).expect("submit eth");
+    let _ = chain::produce_block(1).expect("produce");
+    let receipt = chain::get_receipt(&tx_id).expect("receipt");
+
+    let after = with_state(|state| {
+        state
+            .accounts
+            .get(&make_account_key(recipient))
+            .map(|account| U256::from_be_bytes(account.balance()))
+            .unwrap_or(U256::ZERO)
+    });
+
+    let expected_delta = u128::from(receipt.gas_used).saturating_mul(u128::from(base_fee));
+    assert_eq!(after, before.saturating_add(U256::from(expected_delta)));
+    assert_eq!(receipt.total_fee, expected_delta);
+}
+
+fn test_signer() -> PrivateKeySigner {
+    "0x59c6995e998f97a5a0044966f094538e0d7f4f4e4d5d8dd6a8c4f9d5f8b1e8a1"
+        .parse()
+        .expect("signer")
+}
+
+fn build_eth_signed_1559(nonce: u64, max_fee_per_gas: u128, max_priority_fee_per_gas: u128) -> Vec<u8> {
+    let signer = test_signer();
+    let tx = TxEip1559 {
+        chain_id: CHAIN_ID,
+        nonce,
+        gas_limit: 50_000,
+        max_fee_per_gas,
+        max_priority_fee_per_gas,
+        to: EthTxKind::Call(Address::from([0x21u8; 20])),
+        value: AlloyU256::ZERO,
+        access_list: AccessList::default(),
+        input: Bytes::new(),
+    };
+    let hash = tx.signature_hash();
+    let signature = signer.sign_hash_sync(&hash).expect("sign");
+    tx.into_signed(signature).encoded_2718()
 }

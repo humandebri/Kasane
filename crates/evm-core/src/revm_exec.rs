@@ -2,6 +2,7 @@
 
 use crate::bytes::try_address_to_bytes;
 use crate::chain::{before_store_write_for_test, trap_store_err};
+use crate::constants::FEE_RECIPIENT;
 use crate::hash::keccak256;
 use crate::revm_db::RevmStableDb;
 use crate::tx_decode::DecodeError;
@@ -14,11 +15,12 @@ use evm_db::stable_state::with_state_mut;
 use evm_db::Storable;
 use revm::context::{Context, TxEnv};
 use revm::context_interface::result::{EVMError, ExecutionResult, HaltReason, InvalidTransaction};
-use revm::database_interface::DatabaseCommit;
+use revm::database_interface::{Database, DatabaseCommit};
 use revm::handler::{ExecuteCommitEvm, MainBuilder, MainContext};
 use revm::inspector::InspectEvm;
 use revm::interpreter::{InstructionResult, Interpreter, InterpreterTypes};
 use revm::primitives::{Address, U256};
+use revm::state::{Account, AccountInfo};
 
 pub(crate) type StateDiff = revm::primitives::HashMap<Address, revm::state::Account>;
 
@@ -149,6 +151,7 @@ where
             block.timestamp = U256::from(exec_ctx.timestamp);
             block.gas_limit = exec_ctx.block_gas_limit;
             block.basefee = exec_ctx.base_fee;
+            block.beneficiary = FEE_RECIPIENT;
         })
         .build_mainnet_with_inspector(inspector);
 
@@ -156,9 +159,6 @@ where
     if evm.inspector.tripped {
         return Err(ExecError::InstructionBudgetExceeded);
     }
-    let state_diff = collect_state_diff(result.state);
-    commit_state_diff(&mut evm, state_diff.clone());
-
     let (status, gas_used, output, contract_address, logs, final_status, halt_reason) =
         match result.result {
             ExecutionResult::Success {
@@ -206,6 +206,10 @@ where
                 )
             }
         };
+
+    let mut state_diff = collect_state_diff(result.state);
+    add_base_fee_portion_to_recipient(&mut state_diff, gas_used, exec_ctx.base_fee);
+    commit_state_diff(&mut evm, state_diff.clone());
 
     validate_execution_result_sizes(&output, &logs)?;
 
@@ -317,6 +321,30 @@ fn collect_state_diff(state: StateDiff) -> StateDiff {
     state
 }
 
+fn add_base_fee_portion_to_recipient(state: &mut StateDiff, gas_used: u64, base_fee: u64) {
+    if gas_used == 0 || base_fee == 0 {
+        return;
+    }
+    let reward = u128::from(gas_used).saturating_mul(u128::from(base_fee));
+    if reward == 0 {
+        return;
+    }
+    let recipient = FEE_RECIPIENT;
+    // beneficiary未touchでも会計整合性を維持するため、既存AccountInfoをDBから取り込んで加算する。
+    // これにより nonce/code_hash の上書き事故を避けつつ、base fee取りこぼしを防ぐ。
+    let account = state.entry(recipient).or_insert_with(|| {
+        let mut db = RevmStableDb;
+        let info = db
+            .basic(recipient)
+            .ok()
+            .flatten()
+            .unwrap_or_else(AccountInfo::default);
+        Account::from(info)
+    });
+    account.mark_touch();
+    account.info.balance = account.info.balance.saturating_add(U256::from(reward));
+}
+
 fn commit_state_diff(evm: &mut impl ExecuteCommitEvm<State = StateDiff>, state: StateDiff) {
     evm.commit(state);
 }
@@ -413,10 +441,15 @@ fn revm_log_to_receipt_log(log: revm::primitives::Log) -> LogEntry {
 #[cfg(test)]
 mod tests {
     use super::{
-        compute_effective_gas_price, map_halt_reason, validate_execution_result_sizes, ExecError,
-        LogEntry, OpHaltReason, MAX_RETURN_DATA,
+        add_base_fee_portion_to_recipient, compute_effective_gas_price, map_halt_reason,
+        validate_execution_result_sizes, AccountInfo, ExecError, LogEntry, OpHaltReason, StateDiff,
+        FEE_RECIPIENT, MAX_RETURN_DATA,
     };
+    use evm_db::stable_state::{init_stable_state, with_state_mut};
+    use evm_db::types::keys::make_account_key;
+    use evm_db::types::values::AccountVal;
     use revm::context_interface::result::{HaltReason, OutOfGasError};
+    use revm::primitives::{B256, U256};
 
     #[test]
     fn effective_price_uses_min_of_max_and_base_plus_priority() {
@@ -458,5 +491,60 @@ mod tests {
         let logs: Vec<LogEntry> = Vec::new();
         let err = validate_execution_result_sizes(&output, &logs).expect_err("should fail");
         assert_eq!(err, ExecError::ResultTooLarge);
+    }
+
+    #[test]
+    fn base_fee_credit_creates_recipient_when_missing_from_state_diff() {
+        init_stable_state();
+        let mut state = StateDiff::default();
+
+        add_base_fee_portion_to_recipient(&mut state, 21_000, 1_000_000_000);
+
+        let account = state.get(&FEE_RECIPIENT).expect("recipient must exist");
+        let expected = u128::from(21_000u64).saturating_mul(u128::from(1_000_000_000u64));
+        assert_eq!(account.info.balance, U256::from(expected));
+        assert!(account.is_touched());
+    }
+
+    #[test]
+    fn base_fee_credit_preserves_existing_nonce_and_code_hash() {
+        init_stable_state();
+        let recipient = FEE_RECIPIENT.into_array();
+        let nonce = 7u64;
+        let code_hash = [0xabu8; 32];
+        let starting_balance = 123u128;
+        with_state_mut(|state| {
+            state.accounts.insert(
+                make_account_key(recipient),
+                AccountVal::from_parts(nonce, U256::from(starting_balance).to_be_bytes(), code_hash),
+            );
+        });
+
+        let mut state = StateDiff::default();
+        add_base_fee_portion_to_recipient(&mut state, 30_000, 1_000_000_000);
+
+        let account = state.get(&FEE_RECIPIENT).expect("recipient must exist");
+        let reward = u128::from(30_000u64).saturating_mul(u128::from(1_000_000_000u64));
+        assert_eq!(
+            account.info.balance,
+            U256::from(starting_balance.saturating_add(reward))
+        );
+        assert_eq!(account.info.nonce, nonce);
+        assert_eq!(account.info.code_hash, B256::from(code_hash));
+        assert!(account.is_touched());
+    }
+
+    #[test]
+    fn base_fee_credit_keeps_selfdestruct_mark_on_recipient() {
+        init_stable_state();
+        let mut state = StateDiff::default();
+        let mut account = revm::state::Account::from(AccountInfo::default());
+        account.mark_selfdestruct();
+        state.insert(FEE_RECIPIENT, account);
+
+        add_base_fee_portion_to_recipient(&mut state, 21_000, 1_000_000_000);
+
+        let updated = state.get(&FEE_RECIPIENT).expect("recipient must exist");
+        assert!(updated.is_selfdestructed());
     }
 }

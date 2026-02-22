@@ -10,17 +10,20 @@ type BlockView = record {
 type DecodedTxView = record {
   to : opt blob;
   value : blob;
+  max_priority_fee_per_gas : opt nat;
   from : blob;
+  max_fee_per_gas : opt nat;
   chain_id : opt nat64;
   nonce : nat64;
   gas_limit : nat64;
   input : blob;
-  gas_price : nat;
+  gas_price : opt nat;
 };
 type DropCountView = record { code : nat16; count : nat64 };
 type EthBlockView = record {
   txs : EthTxListView;
   base_fee_per_gas : opt nat64;
+  beneficiary : blob;
   block_hash : blob;
   number : nat64;
   timestamp : nat64;

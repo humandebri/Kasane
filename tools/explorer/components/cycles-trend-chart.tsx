@@ -19,7 +19,7 @@ const CYCLES_TRILLION_DIVISOR = 1_000_000_000_000;
 export function CyclesTrendChart({ points }: Props) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const chartData = useMemo(() => {
-    const out: Array<{ time: number; value: number }> = [];
+    const byTime = new Map<number, number>();
     for (const point of points) {
       const sampledAtMs = Number(point.sampledAtMs);
       const value = Number(point.cycles);
@@ -27,7 +27,12 @@ export function CyclesTrendChart({ points }: Props) {
         continue;
       }
       // lightweight-charts は秒単位のUNIX timestampを期待する。
-      out.push({ time: Math.floor(sampledAtMs / 1000), value });
+      const unixSec = Math.floor(sampledAtMs / 1000);
+      byTime.set(unixSec, value);
+    }
+    const out: Array<{ time: number; value: number }> = [];
+    for (const [time, value] of byTime) {
+      out.push({ time, value });
     }
     out.sort((a, b) => a.time - b.time);
     return out;

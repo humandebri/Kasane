@@ -76,3 +76,49 @@ export function calcRoundedBps(numerator: bigint, denominator: bigint): bigint |
   const roundedAbs = (absNumerator * 10_000n + denominator / 2n) / denominator;
   return numerator < 0n ? -roundedAbs : roundedAbs;
 }
+
+export function formatTimestampWithRelativeUtc(raw: bigint | null): { relative: string; absolute: string } | null {
+  if (raw === null) {
+    return null;
+  }
+  const millis = raw > 10_000_000_000n ? raw : raw * 1000n;
+  if (millis > BigInt(Number.MAX_SAFE_INTEGER)) {
+    return { relative: "unknown", absolute: `${raw.toString()} UTC` };
+  }
+  const date = new Date(Number(millis));
+  const nowSec = BigInt(Math.floor(Date.now() / 1000));
+  const tsSec = raw > 10_000_000_000n ? raw / 1000n : raw;
+  const diffSec = tsSec - nowSec;
+  const relative = formatRelativeAge(diffSec);
+
+  const month = date.toLocaleString("en-US", { month: "short", timeZone: "UTC" });
+  const day = String(date.getUTCDate()).padStart(2, "0");
+  const year = date.getUTCFullYear().toString();
+  const hour24 = date.getUTCHours();
+  const hour12 = hour24 % 12 === 0 ? 12 : hour24 % 12;
+  const hour = String(hour12).padStart(2, "0");
+  const minute = String(date.getUTCMinutes()).padStart(2, "0");
+  const second = String(date.getUTCSeconds()).padStart(2, "0");
+  const ampm = hour24 < 12 ? "AM" : "PM";
+  const absolute = `${month}-${day}-${year} ${hour}:${minute}:${second} ${ampm} UTC`;
+
+  return { relative, absolute };
+}
+
+function formatRelativeAge(diffSec: bigint): string {
+  const isFuture = diffSec > 0n;
+  const absSec = diffSec < 0n ? -diffSec : diffSec;
+  if (absSec < 60n) {
+    return isFuture ? `in ${absSec.toString()}s` : `${absSec.toString()}s ago`;
+  }
+  if (absSec < 3600n) {
+    const value = absSec / 60n;
+    return isFuture ? `in ${value.toString()} mins` : `${value.toString()} mins ago`;
+  }
+  if (absSec < 86_400n) {
+    const value = absSec / 3600n;
+    return isFuture ? `in ${value.toString()} hrs` : `${value.toString()} hrs ago`;
+  }
+  const value = absSec / 86_400n;
+  return isFuture ? `in ${value.toString()} days` : `${value.toString()} days ago`;
+}

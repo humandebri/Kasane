@@ -114,7 +114,7 @@ fn decode_tx_view_ic_synthetic_uses_header_path() {
     assert_eq!(view.value, [0x22u8; 32]);
     assert_eq!(view.input.as_ref(), [4u8, 5, 6]);
     assert_eq!(view.gas_limit, 21_000);
-    assert_eq!(view.gas_price, 30);
+    assert_eq!(view.gas_price, None);
     assert_eq!(view.chain_id, Some(CHAIN_ID));
 }
 
@@ -128,7 +128,7 @@ fn decode_tx_view_ic_synthetic_borrows_input() {
     assert_eq!(view.nonce, 11);
     assert_eq!(view.value, [0x22u8; 32]);
     assert_eq!(view.gas_limit, 21_000);
-    assert_eq!(view.gas_price, 30);
+    assert_eq!(view.gas_price, None);
     assert_eq!(view.chain_id, Some(CHAIN_ID));
     assert_eq!(view.input.as_ref(), [7u8, 8, 9]);
     assert!(matches!(view.input, Cow::Borrowed(_)));

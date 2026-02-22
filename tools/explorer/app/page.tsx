@@ -8,8 +8,7 @@ import { Input } from "../components/ui/input";
 import { TxValueFeeCells } from "../components/tx-value-fee-cells";
 import { getHomeView } from "../lib/data";
 import { toHexLower } from "../lib/hex";
-import { deriveTxDirection } from "../lib/tx_direction";
-import { inferMethodLabel } from "../lib/tx_method";
+import { inferMethodLabel, shortenMethodLabel } from "../lib/tx_method";
 
 export const dynamic = "force-dynamic";
 
@@ -81,8 +80,8 @@ export default async function HomePage({
         </Card>
       </section>
 
-      <section className="grid gap-4 xl:grid-cols-5">
-        <Card className="fade-in gap-4 border-slate-200 bg-white py-4 shadow-sm xl:col-span-2">
+      <section className="grid gap-4 xl:grid-cols-3">
+        <Card className="fade-in gap-4 border-slate-200 bg-white py-4 shadow-sm xl:col-span-1">
           <CardHeader className="flex flex-row items-center justify-between gap-3">
             <CardTitle>Latest Blocks</CardTitle>
             <Link href="/blocks" className="text-sm text-sky-700 hover:underline">
@@ -108,7 +107,11 @@ export default async function HomePage({
                       </Link>
                     </TableCell>
                     <TableCell>{formatBlockAge(block.timestamp)}</TableCell>
-                    <TableCell>{block.txCount}</TableCell>
+                    <TableCell>
+                      <Link href={`/txs?block=${block.number.toString()}`} className="text-sky-700 hover:underline">
+                        {block.txCount}
+                      </Link>
+                    </TableCell>
                     <TableCell>{formatGasUsed(block.gasUsed)}</TableCell>
                   </TableRow>
                 ))}
@@ -117,12 +120,14 @@ export default async function HomePage({
           </CardContent>
         </Card>
 
-        <Card className="fade-in gap-4 border-slate-200 bg-white py-4 shadow-sm xl:col-span-3">
+        <Card className="fade-in gap-4 border-slate-200 bg-white py-4 shadow-sm xl:col-span-2">
           <CardHeader className="flex flex-row items-center justify-between gap-3">
             <CardTitle>Latest Transactions</CardTitle>
-            <Link href="/txs" className="text-sm text-sky-700 hover:underline">
-              View more
-            </Link>
+            <div className="flex items-center gap-2">
+              <Link href="/txs" className="text-sm text-sky-700 hover:underline">
+                View more
+              </Link>
+            </div>
           </CardHeader>
           <CardContent>
             <Table>
@@ -130,10 +135,8 @@ export default async function HomePage({
                 <TableRow>
                   <TableHead>Transaction Hash</TableHead>
                   <TableHead>Method</TableHead>
-                  <TableHead>Block</TableHead>
                   <TableHead>Age</TableHead>
                   <TableHead>From</TableHead>
-                  <TableHead>Direction</TableHead>
                   <TableHead>To</TableHead>
                   <TableHead>Amount</TableHead>
                   <TableHead>Txn Fee</TableHead>
@@ -148,15 +151,15 @@ export default async function HomePage({
                           {shortPrefixHex(tx.txHashHex)}
                         </Link>
                       </TableCell>
-                      <TableCell>{inferMethodLabel(tx.toAddress ? toHexLower(tx.toAddress) : null, tx.txSelector)}</TableCell>
-                      <TableCell>{tx.blockNumber.toString()}</TableCell>
+                      <TableCell className="text-xs">
+                        {shortenMethodLabel(inferMethodLabel(tx.toAddress ? toHexLower(tx.toAddress) : null, tx.txSelector), 10)}
+                      </TableCell>
                       <TableCell>{formatAge(tx.blockTimestamp)}</TableCell>
                       <TableCell className="font-mono text-xs">
                         <Link href={`/address/${toHexLower(tx.fromAddress)}`} className="text-sky-700 hover:underline">
                           {headTailHex(toHexLower(tx.fromAddress))}
                         </Link>
                       </TableCell>
-                      <TableCell>{deriveTxDirection(tx.fromAddress, tx.toAddress)}</TableCell>
                       <TableCell className="font-mono text-xs">
                         {tx.toAddress ? (
                           <Link href={`/address/${toHexLower(tx.toAddress)}`} className="text-sky-700 hover:underline">

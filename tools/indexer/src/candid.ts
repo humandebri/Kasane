@@ -101,7 +101,16 @@ export const idlFactory: IDL.InterfaceFactory = ({ IDL }) => {
   });
   const ExportResult = IDL.Variant({ Ok: ExportResponse, Err: ExportError });
   const RpcTxDecodedView = IDL.Record({
+    from: IDL.Vec(IDL.Nat8),
+    to: IDL.Opt(IDL.Vec(IDL.Nat8)),
+    value: IDL.Vec(IDL.Nat8),
+    nonce: IDL.Nat64,
+    gas_limit: IDL.Nat64,
     input: IDL.Vec(IDL.Nat8),
+    gas_price: IDL.Opt(IDL.Nat),
+    max_fee_per_gas: IDL.Opt(IDL.Nat),
+    max_priority_fee_per_gas: IDL.Opt(IDL.Nat),
+    chain_id: IDL.Opt(IDL.Nat64),
   });
   const RpcTxView = IDL.Record({
     decoded: IDL.Opt(RpcTxDecodedView),

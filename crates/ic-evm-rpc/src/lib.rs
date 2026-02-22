@@ -596,6 +596,8 @@ fn envelope_to_eth_view(
                 input: decoded.input.into_owned(),
                 gas_limit: decoded.gas_limit,
                 gas_price: decoded.gas_price,
+                max_fee_per_gas: decoded.max_fee_per_gas,
+                max_priority_fee_per_gas: decoded.max_priority_fee_per_gas,
                 chain_id: decoded.chain_id,
             })
         } else {
@@ -721,6 +723,7 @@ fn block_to_eth_view(block: BlockData, full_tx: bool) -> EthBlockView {
         parent_hash: block.parent_hash.to_vec(),
         block_hash: block.block_hash.to_vec(),
         timestamp: block.timestamp,
+        beneficiary: block.beneficiary.to_vec(),
         txs,
         state_root: block.state_root.to_vec(),
         base_fee_per_gas: Some(block.base_fee_per_gas),
