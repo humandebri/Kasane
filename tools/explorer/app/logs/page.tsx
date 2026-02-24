@@ -33,6 +33,7 @@ export default async function LogsPage({
   if (data.filters.toBlock) query.set("toBlock", data.filters.toBlock);
   if (data.filters.address) query.set("address", data.filters.address);
   if (data.filters.topic0) query.set("topic0", data.filters.topic0);
+  if (data.filters.blockHash) query.set("blockHash", data.filters.blockHash);
   if (data.filters.window) query.set("window", data.filters.window);
 
   return (
@@ -104,6 +105,7 @@ function buildCanonicalQuery(filters: {
   toBlock: string;
   address: string;
   topic0: string;
+  blockHash: string;
   window: string;
 }): URLSearchParams {
   const query = new URLSearchParams();
@@ -111,6 +113,7 @@ function buildCanonicalQuery(filters: {
   if (filters.toBlock) query.set("toBlock", filters.toBlock);
   if (filters.address) query.set("address", filters.address);
   if (filters.topic0) query.set("topic0", filters.topic0);
+  if (filters.blockHash) query.set("blockHash", filters.blockHash);
   if (filters.window) query.set("window", filters.window);
   return query;
 }
