@@ -15,6 +15,7 @@ import {
   __test_resolve_submitted_eth_hash_from_lookup,
   __test_as_call_params,
   __test_as_tx_count_params,
+  __test_is_latest_tag,
   __test_map_get_logs_error,
   __test_parse_logs_filter,
   __test_tx_hash_readiness_error,
@@ -125,6 +126,13 @@ function testTxCountParamsDefaultBlockTag(): void {
   assert.equal(explicitTag, "pending");
 
   assert.throws(() => __test_as_tx_count_params([]));
+}
+
+function testLatestTagNormalization(): void {
+  assert.equal(__test_is_latest_tag("latest"), true);
+  assert.equal(__test_is_latest_tag(" Latest "), true);
+  assert.equal(__test_is_latest_tag(new String("pending")), true);
+  assert.equal(__test_is_latest_tag("0x1"), false);
 }
 
 function testCallObjectParsing(): void {
@@ -513,6 +521,7 @@ testCorsAllowOriginResolution();
 testIdentityFromEd25519Pem();
 testCallParamsDefaultBlockTag();
 testTxCountParamsDefaultBlockTag();
+testLatestTagNormalization();
 testCallObjectParsing();
 testStorageSlotNormalization();
 testRevertDataFormat();

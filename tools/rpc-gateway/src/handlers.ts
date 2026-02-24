@@ -221,9 +221,9 @@ async function onGetBalance(id: string | number | null, params: unknown): Promis
   if (typeof addressRaw !== "string") {
     return makeError(id, ERR_INVALID_PARAMS, "address must be hex string");
   }
-  if (!isLatestTag(blockTagRaw)) {
-    return makeError(id, ERR_INVALID_PARAMS, "only latest blockTag is supported");
-  }
+  // Canister側が最新状態のみを返すため、wallet実装差分によるblockTagゆらぎは受け流す。
+  // blockTagは受理するが評価には使わない。
+  void blockTagRaw;
   let address: Uint8Array;
   try {
     address = ensureLen(parseDataHex(addressRaw), 20, "address");
@@ -577,17 +577,18 @@ async function resolveLogsBlockTag(
   if (blockTag === undefined || blockTag === null) {
     return { value: undefined };
   }
-  if (typeof blockTag !== "string") {
+  const normalized = normalizeBlockTag(blockTag);
+  if (normalized === undefined) {
     return { error: "blockTag must be latest/earliest/pending/safe/finalized or QUANTITY" };
   }
-  if (blockTag === "earliest") {
+  if (normalized === "earliest") {
     return { value: 0n };
   }
-  if (isLatestTag(blockTag)) {
+  if (isLatestTag(normalized)) {
     return { value: await getHead() };
   }
   try {
-    return { value: parseQuantityHex(blockTag) };
+    return { value: parseQuantityHex(normalized) };
   } catch {
     return { error: "blockTag must be latest/earliest/pending/safe/finalized or QUANTITY" };
   }
@@ -701,17 +702,37 @@ function mapLogItem(item: EthLogsPageView["items"][number]): Record<string, unkn
 }
 
 async function resolveBlockTag(blockTag: unknown, getHead: () => Promise<bigint>): Promise<bigint> {
-  if (typeof blockTag !== "string") {
+  const normalized = normalizeBlockTag(blockTag);
+  if (normalized === undefined) {
     throw new Error("blockTag must be latest or QUANTITY");
   }
-  if (isLatestTag(blockTag)) {
+  if (isLatestTag(normalized)) {
     return await getHead();
   }
-  return parseQuantityHex(blockTag);
+  return parseQuantityHex(normalized);
 }
 
 function isLatestTag(blockTag: unknown): boolean {
-  return blockTag === undefined || blockTag === null || blockTag === "latest" || blockTag === "pending" || blockTag === "safe" || blockTag === "finalized";
+  if (blockTag === undefined || blockTag === null) {
+    return true;
+  }
+  const normalized = normalizeBlockTag(blockTag);
+  return (
+    normalized === "latest" ||
+    normalized === "pending" ||
+    normalized === "safe" ||
+    normalized === "finalized"
+  );
+}
+
+function normalizeBlockTag(blockTag: unknown): string | undefined {
+  if (typeof blockTag === "string") {
+    return blockTag.trim().toLowerCase();
+  }
+  if (blockTag instanceof String) {
+    return blockTag.toString().trim().toLowerCase();
+  }
+  return undefined;
 }
 
 function parseCallObject(value: unknown): ParsedCallObject | { error: string } {
@@ -859,6 +880,10 @@ export function __test_revert_data_hex(revertData: [] | [Uint8Array]): string {
 
 export function __test_classify_call_object_err_code(code: number): number {
   return classifyCallObjectErrCode(code);
+}
+
+export function __test_is_latest_tag(blockTag: unknown): boolean {
+  return isLatestTag(blockTag);
 }
 
 function normalizeStorageSlot32(slot: string): Uint8Array {
