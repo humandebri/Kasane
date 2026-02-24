@@ -15,7 +15,7 @@ export type GatewayConfig = {
   maxHttpBodySize: number;
   maxBatchLen: number;
   maxJsonDepth: number;
-  corsOrigin: string;
+  corsOrigins: string[];
 };
 
 export function loadConfig(env: Record<string, string | undefined>): GatewayConfig {
@@ -30,7 +30,7 @@ export function loadConfig(env: Record<string, string | undefined>): GatewayConf
     maxHttpBodySize: parseRangeInt(env.RPC_GATEWAY_MAX_HTTP_BODY_SIZE, 256 * 1024, 1024, 10 * 1024 * 1024),
     maxBatchLen: parseRangeInt(env.RPC_GATEWAY_MAX_BATCH_LEN, 20, 1, 500),
     maxJsonDepth: parseRangeInt(env.RPC_GATEWAY_MAX_JSON_DEPTH, 20, 2, 100),
-    corsOrigin: env.RPC_GATEWAY_CORS_ORIGIN ?? "*",
+    corsOrigins: parseCorsOrigins(env.RPC_GATEWAY_CORS_ORIGIN),
   };
 }
 
@@ -65,6 +65,17 @@ function parseOptionalNonEmpty(value: string | undefined): string | null {
   }
   const trimmed = value.trim();
   return trimmed.length === 0 ? null : trimmed;
+}
+
+function parseCorsOrigins(value: string | undefined): string[] {
+  if (!value) {
+    return ["*"];
+  }
+  const out = value
+    .split(",")
+    .map((item) => item.trim())
+    .filter((item) => item.length > 0);
+  return out.length > 0 ? out : ["*"];
 }
 
 export const CONFIG = loadConfig(process.env);

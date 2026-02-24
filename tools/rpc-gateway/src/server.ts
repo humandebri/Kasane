@@ -22,7 +22,7 @@ export function startServer(): http.Server {
 }
 
 async function handleHttp(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
-  setCors(res);
+  setCors(req, res);
 
   if (req.method === "OPTIONS") {
     res.statusCode = 204;
@@ -135,11 +135,27 @@ function readBody(req: http.IncomingMessage, maxBytes: number): Promise<string> 
   });
 }
 
-function setCors(res: http.ServerResponse): void {
-  res.setHeader("access-control-allow-origin", CONFIG.corsOrigin);
+function setCors(req: http.IncomingMessage, res: http.ServerResponse): void {
+  const allowOrigin = resolveCorsAllowOrigin(req.headers.origin, CONFIG.corsOrigins);
+  if (allowOrigin) {
+    res.setHeader("access-control-allow-origin", allowOrigin);
+    res.setHeader("vary", "origin");
+  }
   res.setHeader("access-control-allow-methods", "POST, OPTIONS");
   res.setHeader("access-control-allow-headers", "content-type");
 }
+
+function resolveCorsAllowOrigin(requestOrigin: string | undefined, allowedOrigins: string[]): string | null {
+  if (allowedOrigins.includes("*")) {
+    return "*";
+  }
+  if (!requestOrigin) {
+    return null;
+  }
+  return allowedOrigins.includes(requestOrigin) ? requestOrigin : null;
+}
+
+export const __test_resolve_cors_allow_origin = resolveCorsAllowOrigin;
 
 function writeRpc(res: http.ServerResponse, payload: JsonRpcResponse | JsonRpcResponse[]): void {
   res.setHeader("content-type", "application/json");

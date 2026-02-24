@@ -23,6 +23,7 @@ import {
 } from "../src/handlers";
 import { loadConfig } from "../src/config";
 import { identityFromPem } from "../src/identity";
+import { __test_resolve_cors_allow_origin } from "../src/server";
 
 function testHex(): void {
   assert.equal(toDataHex(Uint8Array.from([0, 1, 255])), "0x0001ff");
@@ -55,6 +56,41 @@ function testConfigIdentityPemPath(): void {
     RPC_GATEWAY_IDENTITY_PEM_PATH: "   ",
   });
   assert.equal(withoutPem.identityPemPath, null);
+}
+
+function testConfigCorsOrigins(): void {
+  const defaults = loadConfig({
+    EVM_CANISTER_ID: "aaaaa-aa",
+  });
+  assert.deepEqual(defaults.corsOrigins, ["*"]);
+
+  const single = loadConfig({
+    EVM_CANISTER_ID: "aaaaa-aa",
+    RPC_GATEWAY_CORS_ORIGIN: "https://kasane.network",
+  });
+  assert.deepEqual(single.corsOrigins, ["https://kasane.network"]);
+
+  const multi = loadConfig({
+    EVM_CANISTER_ID: "aaaaa-aa",
+    RPC_GATEWAY_CORS_ORIGIN: "https://kasane.network, http://localhost:3000",
+  });
+  assert.deepEqual(multi.corsOrigins, ["https://kasane.network", "http://localhost:3000"]);
+}
+
+function testCorsAllowOriginResolution(): void {
+  assert.equal(__test_resolve_cors_allow_origin("http://localhost:3000", ["*"]), "*");
+  assert.equal(
+    __test_resolve_cors_allow_origin("http://localhost:3000", [
+      "https://kasane.network",
+      "http://localhost:3000",
+    ]),
+    "http://localhost:3000"
+  );
+  assert.equal(
+    __test_resolve_cors_allow_origin("http://localhost:3001", ["https://kasane.network", "http://localhost:3000"]),
+    null
+  );
+  assert.equal(__test_resolve_cors_allow_origin(undefined, ["https://kasane.network"]), null);
 }
 
 function testIdentityFromEd25519Pem(): void {
@@ -472,6 +508,8 @@ async function testInvalidTxHashReturnsInvalidParams(): Promise<void> {
 testHex();
 testJsonRpc();
 testConfigIdentityPemPath();
+testConfigCorsOrigins();
+testCorsAllowOriginResolution();
 testIdentityFromEd25519Pem();
 testCallParamsDefaultBlockTag();
 testTxCountParamsDefaultBlockTag();

@@ -158,6 +158,8 @@ npm run dev
 - `RPC_GATEWAY_MAX_HTTP_BODY_SIZE` (default: 262144)
 - `RPC_GATEWAY_MAX_BATCH_LEN` (default: 20)
 - `RPC_GATEWAY_MAX_JSON_DEPTH` (default: 20)
+- `RPC_GATEWAY_CORS_ORIGIN` (default: `*`)
+  - `*` もしくはカンマ区切りallowlist（例: `https://kasane.network,http://localhost:3000`）
 
 ## 検証
 
