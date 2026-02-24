@@ -174,7 +174,6 @@ export async function commitPending(params: {
     );
     process.exit(1);
   }
-  const blocksIngested = 1;
   const metricsDay = toDayKey();
   const updateSizes = params.lastSizeDay !== metricsDay;
   let lastSizeDay = params.lastSizeDay;
@@ -202,6 +201,14 @@ export async function commitPending(params: {
   }
   try {
     await params.db.transaction(async (client) => {
+      const existingBlock = await client.query(
+        "SELECT 1 FROM blocks WHERE number = $1 FOR UPDATE",
+        [blockInfo.number]
+      );
+      const isNewBlock = (existingBlock.rowCount ?? 0) === 0;
+      const metricRawBytes = isNewBlock ? archive.rawBytes : 0;
+      const metricCompressedBytes = isNewBlock ? archive.sizeBytes : 0;
+      const blocksIngested = isNewBlock ? 1 : 0;
       await client.query(
         "INSERT INTO blocks(number, hash, timestamp, tx_count, gas_used) VALUES($1, $2, $3, $4, $5) ON CONFLICT(number) DO UPDATE SET hash = excluded.hash, timestamp = excluded.timestamp, tx_count = excluded.tx_count, gas_used = excluded.gas_used",
         [blockInfo.number, blockInfo.blockHash, blockInfo.timestamp, blockInfo.txIds.length, blockInfo.gasUsed]
@@ -286,7 +293,7 @@ export async function commitPending(params: {
       await client.query(
         "INSERT INTO metrics_daily(day, raw_bytes, compressed_bytes, archive_bytes, blocks_ingested, errors) VALUES($1, $2, $3, $4, $5, $6) " +
           "ON CONFLICT(day) DO UPDATE SET raw_bytes = metrics_daily.raw_bytes + excluded.raw_bytes, compressed_bytes = metrics_daily.compressed_bytes + excluded.compressed_bytes, archive_bytes = COALESCE(excluded.archive_bytes, metrics_daily.archive_bytes), blocks_ingested = metrics_daily.blocks_ingested + excluded.blocks_ingested, errors = metrics_daily.errors + excluded.errors",
-        [metricsDay, archive.rawBytes, archive.sizeBytes, null, blocksIngested, 0]
+        [metricsDay, metricRawBytes, metricCompressedBytes, null, blocksIngested, 0]
       );
       await client.query(
         "INSERT INTO meta(key, value) VALUES($1, $2) ON CONFLICT(key) DO UPDATE SET value = excluded.value",

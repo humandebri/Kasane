@@ -59,6 +59,20 @@ export async function runWorkerWithDeps(
     );
     process.exit(1);
   }
+  if (cursor && cursor.segment > 0) {
+    const normalizedCursor: Cursor = {
+      block_number: cursor.block_number,
+      segment: 0,
+      byte_offset: 0,
+    };
+    logWarn(config.chainId, "normalize_cursor_to_block_start", {
+      from: `${cursor.block_number.toString()}:${cursor.segment}:${cursor.byte_offset}`,
+      to: `${normalizedCursor.block_number.toString()}:${normalizedCursor.segment}:${normalizedCursor.byte_offset}`,
+      reason: "pending state is not persisted across restart",
+    });
+    cursor = normalizedCursor;
+    await db.setCursor(normalizedCursor);
+  }
   let lastHead: bigint | null = null;
   let backoffMs = config.backoffInitialMs;
   let pending: Pending | null = null;
@@ -296,12 +310,66 @@ export async function runWorkerWithDeps(
           }
         }
 
+        const commitActivePending = async (): Promise<void> => {
+          if (!activePending) {
+            return;
+          }
+          let commitCursor: Cursor;
+          if (streamCursor) {
+            commitCursor = {
+              block_number: streamCursor.block_number + 1n,
+              segment: 0,
+              byte_offset: 0,
+            };
+          } else {
+            const payloads = finalizePayloads(activePending);
+            const blockInfo = decodeBlockPayload(payloads[0]);
+            commitCursor = {
+              block_number: blockInfo.number + 1n,
+              segment: 0,
+              byte_offset: 0,
+            };
+          }
+          const resultCommit = await commitPending({
+            config,
+            db,
+            response,
+            previousCursor: streamCursor,
+            cursor: commitCursor,
+            headNumber,
+            pending: activePending,
+            lastSizeDay,
+            getTxInputByTxId: client.getTxInputByTxId,
+          });
+          if (resultCommit) {
+            lastSizeDay = resultCommit.lastSizeDay;
+          }
+          activePending = null;
+          streamCursor = commitCursor;
+        };
+
         for (let i = 0; i < response.chunks.length; i += 1) {
           const chunk = response.chunks[i];
           if (!activePending) {
             activePending = newPendingFromChunk(chunk);
           }
           const isFirstChunk = i === 0;
+          if (
+            streamCursor &&
+            activePending &&
+            (chunk.segment !== streamCursor.segment || chunk.start !== streamCursor.byte_offset) &&
+            activePending.payloadLens[0] > 0 &&
+            activePending.segment > 0 &&
+            activePending.offset === 0 &&
+            chunk.segment === 0 &&
+            chunk.start === 0
+          ) {
+            // segment 0のみで完結するブロック（空receipts/tx_index）を明示チャンク無しで閉じる。
+            activePending.complete = true;
+            await commitActivePending();
+            i -= 1;
+            continue;
+          }
           if (streamCursor) {
             if (chunk.segment !== streamCursor.segment || chunk.start !== streamCursor.byte_offset) {
               logFatal(
@@ -345,51 +413,31 @@ export async function runWorkerWithDeps(
             process.exit(1);
           }
           if (activePending.complete) {
-            let commitCursor: Cursor;
-            if (streamCursor) {
-              commitCursor = {
-                block_number: streamCursor.block_number + 1n,
-                segment: 0,
-                byte_offset: 0,
-              };
-            } else {
-              const payloads = finalizePayloads(activePending);
-              const blockInfo = decodeBlockPayload(payloads[0]);
-              commitCursor = {
-                block_number: blockInfo.number + 1n,
-                segment: 0,
-                byte_offset: 0,
-              };
-            }
-            const resultCommit = await commitPending({
-              config,
-              db,
-              response,
-              previousCursor: streamCursor,
-              cursor: commitCursor,
-              headNumber,
-              pending: activePending,
-              lastSizeDay,
-              getTxInputByTxId: client.getTxInputByTxId,
-            });
-            if (resultCommit) {
-              lastSizeDay = resultCommit.lastSizeDay;
-            }
-            activePending = null;
+            await commitActivePending();
             const hasNextChunk = i + 1 < response.chunks.length;
             if (hasNextChunk) {
+              if (!streamCursor) {
+                logFatal(
+                  config.chainId,
+                  "InvalidCursor",
+                  previousCursor,
+                  headNumber,
+                  response,
+                  null,
+                  "missing stream cursor after commit"
+                );
+                process.exit(1);
+              }
               const nextChunk = response.chunks[i + 1];
               activePending = newPendingFromChunk(nextChunk);
               // multi-block response: 次のチャンクの実際のストリーム位置を streamCursor に反映。
               // commitCursor は常に segment=0, byte_offset=0 だが、
               // ストリーム内の実際のバイト位置はチャンクごとに異なる。
               streamCursor = {
-                block_number: commitCursor.block_number,
+                block_number: streamCursor.block_number,
                 segment: nextChunk.segment,
                 byte_offset: nextChunk.start,
               };
-            } else {
-              streamCursor = commitCursor;
             }
             continue;
           }
@@ -400,6 +448,21 @@ export async function runWorkerWithDeps(
               byte_offset: activePending.offset,
             };
           }
+        }
+        if (
+          streamCursor &&
+          activePending &&
+          !activePending.complete &&
+          activePending.payloadLens[0] > 0 &&
+          activePending.segment > 0 &&
+          activePending.offset === 0 &&
+          finalCursor.block_number === streamCursor.block_number + 1n &&
+          finalCursor.segment === 0 &&
+          finalCursor.byte_offset === 0
+        ) {
+          // レスポンス末尾で空セグメントが省略されるケースを許容する。
+          activePending.complete = true;
+          await commitActivePending();
         }
         pending = activePending;
 

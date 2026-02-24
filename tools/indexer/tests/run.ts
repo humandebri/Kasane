@@ -1461,6 +1461,118 @@ test("runWorkerWithDeps handles multi-block response without crash", async () =>
   await originalClose();
 });
 
+test("runWorkerWithDeps handles multi-block response with segment-0-only blocks", async () => {
+  const db = await createTestIndexerDb();
+  const originalClose = db.close.bind(db);
+  (db as unknown as { close: () => Promise<void> }).close = async () => { };
+  await withTempDir(async (dir) => {
+    const config: Config = {
+      canisterId: "test-canister",
+      icHost: "http://127.0.0.1:4943",
+      databaseUrl: "postgres://unused",
+      dbPoolMax: 1,
+      retentionDays: 90,
+      retentionEnabled: false,
+      retentionDryRun: false,
+      archiveGcDeleteOrphans: false,
+      maxBytes: 1_200_000,
+      backoffInitialMs: 1,
+      backoffMaxMs: 2,
+      idlePollMs: 1,
+      pruneStatusPollMs: 0,
+      opsMetricsPollMs: 0,
+      fetchRootKey: false,
+      archiveDir: dir,
+      chainId: "test",
+      zstdLevel: 1,
+      maxSegment: 2,
+    };
+    await db.setCursor({ block_number: 1n, segment: 0, byte_offset: 0 });
+    const block1 = buildBlockPayload(1n, 10n, []);
+    const block2 = buildBlockPayload(2n, 20n, []);
+    const chunks = [
+      { segment: 0, start: 0, bytes: block1, payload_len: block1.length },
+      { segment: 0, start: 0, bytes: block2, payload_len: block2.length },
+    ];
+    let headCalls = 0;
+    const client = {
+      getTxInputByTxId: async () => null,
+      getHeadNumber: async (): Promise<bigint> => {
+        headCalls += 1;
+        if (headCalls === 2) {
+          process.emit("SIGINT");
+        }
+        return 2n;
+      },
+      exportBlocks: async (
+        cursor: { block_number: bigint; segment: number; byte_offset: number } | null
+      ): Promise<
+        | {
+          Ok: {
+            chunks: Array<{ segment: number; start: number; bytes: Buffer; payload_len: number }>;
+            next_cursor: { block_number: bigint; segment: number; byte_offset: number };
+          };
+        }
+        | { Err: never }
+      > => {
+        if (headCalls === 1) {
+          return {
+            Ok: {
+              chunks,
+              next_cursor: { block_number: 3n, segment: 0, byte_offset: 0 },
+            },
+          };
+        }
+        return {
+          Ok: {
+            chunks: [],
+            next_cursor: cursor ?? { block_number: 3n, segment: 0, byte_offset: 0 },
+          },
+        };
+      },
+      getPruneStatus: async () => ({
+        pruning_enabled: false,
+        prune_running: false,
+        estimated_kept_bytes: 0n,
+        high_water_bytes: 0n,
+        low_water_bytes: 0n,
+        hard_emergency_bytes: 0n,
+        last_prune_at: 0n,
+        pruned_before_block: null,
+        oldest_kept_block: null,
+        oldest_kept_timestamp: null,
+        need_prune: false,
+      }),
+      getMetrics: async () => ({
+        txs: 0n,
+        ema_txs_per_block_x1000: 0n,
+        pruned_before_block: null,
+        ema_block_rate_per_sec_x1000: 0n,
+        total_submitted: 0n,
+        window: 128n,
+        avg_txs_per_block: 0n,
+        block_rate_per_sec_x1000: null,
+        cycles: 0n,
+        total_dropped: 0n,
+        blocks: 0n,
+        drop_counts: [],
+        queue_len: 0n,
+        total_included: 0n,
+      }),
+    };
+    await runWorkerWithDeps(config, db, client, { skipGc: true });
+    const block1Row = await db.queryOne<{ n: string }>("select count(*)::text as n from blocks where number = 1");
+    assert.equal(block1Row?.n, "1");
+    const block2Row = await db.queryOne<{ n: string }>("select count(*)::text as n from blocks where number = 2");
+    assert.equal(block2Row?.n, "1");
+    const cursor = await db.getCursor();
+    assert.equal(cursor?.block_number, 3n);
+    assert.equal(cursor?.segment, 0);
+    assert.equal(cursor?.byte_offset, 0);
+  });
+  await originalClose();
+});
+
 test("runWorkerWithDeps exits when stored cursor segment exceeds maxSegment", async () => {
   const db = await createTestIndexerDb();
   const originalClose = db.close.bind(db);
@@ -1535,6 +1647,332 @@ test("runWorkerWithDeps exits when stored cursor segment exceeds maxSegment", as
     process.exit = originalExit;
     await originalClose();
   }
+});
+
+test("runWorkerWithDeps normalizes stored mid-block cursor to block start on restart", async () => {
+  const db = await createTestIndexerDb();
+  const originalClose = db.close.bind(db);
+  (db as unknown as { close: () => Promise<void> }).close = async () => { };
+  await withTempDir(async (dir) => {
+    const config: Config = {
+      canisterId: "test-canister",
+      icHost: "http://127.0.0.1:4943",
+      databaseUrl: "postgres://unused",
+      dbPoolMax: 1,
+      retentionDays: 90,
+      retentionEnabled: false,
+      retentionDryRun: false,
+      archiveGcDeleteOrphans: false,
+      maxBytes: 1_200_000,
+      backoffInitialMs: 1,
+      backoffMaxMs: 2,
+      idlePollMs: 1,
+      pruneStatusPollMs: 0,
+      opsMetricsPollMs: 0,
+      fetchRootKey: false,
+      archiveDir: dir,
+      chainId: "test",
+      zstdLevel: 1,
+      maxSegment: 2,
+    };
+    await db.setCursor({ block_number: 24n, segment: 2, byte_offset: 0 });
+    let headCalls = 0;
+    let firstCursor: { block_number: bigint; segment: number; byte_offset: number } | null | undefined;
+    const client = {
+      getTxInputByTxId: async () => null,
+      getHeadNumber: async (): Promise<bigint> => {
+        headCalls += 1;
+        if (headCalls === 2) {
+          process.emit("SIGINT");
+        }
+        return 24n;
+      },
+      exportBlocks: async (
+        cursor: { block_number: bigint; segment: number; byte_offset: number } | null
+      ): Promise<
+        | {
+          Ok: {
+            chunks: Array<{ segment: number; start: number; bytes: Buffer; payload_len: number }>;
+            next_cursor: { block_number: bigint; segment: number; byte_offset: number };
+          };
+        }
+        | { Err: never }
+      > => {
+        if (firstCursor === undefined) {
+          firstCursor = cursor;
+        }
+        return {
+          Ok: {
+            chunks: [],
+            next_cursor: cursor ?? { block_number: 24n, segment: 0, byte_offset: 0 },
+          },
+        };
+      },
+      getPruneStatus: async () => ({
+        pruning_enabled: false,
+        prune_running: false,
+        estimated_kept_bytes: 0n,
+        high_water_bytes: 0n,
+        low_water_bytes: 0n,
+        hard_emergency_bytes: 0n,
+        last_prune_at: 0n,
+        pruned_before_block: null,
+        oldest_kept_block: null,
+        oldest_kept_timestamp: null,
+        need_prune: false,
+      }),
+      getMetrics: async () => ({
+        txs: 0n,
+        ema_txs_per_block_x1000: 0n,
+        pruned_before_block: null,
+        ema_block_rate_per_sec_x1000: 0n,
+        total_submitted: 0n,
+        window: 128n,
+        avg_txs_per_block: 0n,
+        block_rate_per_sec_x1000: null,
+        cycles: 0n,
+        total_dropped: 0n,
+        blocks: 0n,
+        drop_counts: [],
+        queue_len: 0n,
+        total_included: 0n,
+      }),
+    };
+    await runWorkerWithDeps(config, db, client, { skipGc: true });
+    assert.equal(firstCursor?.block_number, 24n);
+    assert.equal(firstCursor?.segment, 0);
+    assert.equal(firstCursor?.byte_offset, 0);
+    const persisted = await db.getCursor();
+    assert.equal(persisted?.block_number, 24n);
+    assert.equal(persisted?.segment, 0);
+    assert.equal(persisted?.byte_offset, 0);
+  });
+  await originalClose();
+});
+
+test("runWorkerWithDeps keeps segment-0 offset cursor on restart", async () => {
+  const db = await createTestIndexerDb();
+  const originalClose = db.close.bind(db);
+  (db as unknown as { close: () => Promise<void> }).close = async () => { };
+  await withTempDir(async (dir) => {
+    const config: Config = {
+      canisterId: "test-canister",
+      icHost: "http://127.0.0.1:4943",
+      databaseUrl: "postgres://unused",
+      dbPoolMax: 1,
+      retentionDays: 90,
+      retentionEnabled: false,
+      retentionDryRun: false,
+      archiveGcDeleteOrphans: false,
+      maxBytes: 1_200_000,
+      backoffInitialMs: 1,
+      backoffMaxMs: 2,
+      idlePollMs: 1,
+      pruneStatusPollMs: 0,
+      opsMetricsPollMs: 0,
+      fetchRootKey: false,
+      archiveDir: dir,
+      chainId: "test",
+      zstdLevel: 1,
+      maxSegment: 2,
+    };
+    await db.setCursor({ block_number: 24n, segment: 0, byte_offset: 12 });
+    let headCalls = 0;
+    let firstCursor: { block_number: bigint; segment: number; byte_offset: number } | null | undefined;
+    const client = {
+      getTxInputByTxId: async () => null,
+      getHeadNumber: async (): Promise<bigint> => {
+        headCalls += 1;
+        if (headCalls === 2) {
+          process.emit("SIGINT");
+        }
+        return 24n;
+      },
+      exportBlocks: async (
+        cursor: { block_number: bigint; segment: number; byte_offset: number } | null
+      ): Promise<
+        | {
+          Ok: {
+            chunks: Array<{ segment: number; start: number; bytes: Buffer; payload_len: number }>;
+            next_cursor: { block_number: bigint; segment: number; byte_offset: number };
+          };
+        }
+        | { Err: never }
+      > => {
+        if (firstCursor === undefined) {
+          firstCursor = cursor;
+        }
+        return {
+          Ok: {
+            chunks: [],
+            next_cursor: cursor ?? { block_number: 24n, segment: 0, byte_offset: 12 },
+          },
+        };
+      },
+      getPruneStatus: async () => ({
+        pruning_enabled: false,
+        prune_running: false,
+        estimated_kept_bytes: 0n,
+        high_water_bytes: 0n,
+        low_water_bytes: 0n,
+        hard_emergency_bytes: 0n,
+        last_prune_at: 0n,
+        pruned_before_block: null,
+        oldest_kept_block: null,
+        oldest_kept_timestamp: null,
+        need_prune: false,
+      }),
+      getMetrics: async () => ({
+        txs: 0n,
+        ema_txs_per_block_x1000: 0n,
+        pruned_before_block: null,
+        ema_block_rate_per_sec_x1000: 0n,
+        total_submitted: 0n,
+        window: 128n,
+        avg_txs_per_block: 0n,
+        block_rate_per_sec_x1000: null,
+        cycles: 0n,
+        total_dropped: 0n,
+        blocks: 0n,
+        drop_counts: [],
+        queue_len: 0n,
+        total_included: 0n,
+      }),
+    };
+    await runWorkerWithDeps(config, db, client, { skipGc: true });
+    assert.equal(firstCursor?.block_number, 24n);
+    assert.equal(firstCursor?.segment, 0);
+    assert.equal(firstCursor?.byte_offset, 12);
+    const persisted = await db.getCursor();
+    assert.equal(persisted?.block_number, 24n);
+    assert.equal(persisted?.segment, 0);
+    assert.equal(persisted?.byte_offset, 12);
+  });
+  await originalClose();
+});
+
+test("runWorkerWithDeps does not double count metrics_daily on block re-commit", async () => {
+  const db = await createTestIndexerDb();
+  const originalClose = db.close.bind(db);
+  (db as unknown as { close: () => Promise<void> }).close = async () => { };
+  await withTempDir(async (dir) => {
+    const config: Config = {
+      canisterId: "test-canister",
+      icHost: "http://127.0.0.1:4943",
+      databaseUrl: "postgres://unused",
+      dbPoolMax: 1,
+      retentionDays: 90,
+      retentionEnabled: false,
+      retentionDryRun: false,
+      archiveGcDeleteOrphans: false,
+      maxBytes: 1_200_000,
+      backoffInitialMs: 1,
+      backoffMaxMs: 2,
+      idlePollMs: 1,
+      pruneStatusPollMs: 0,
+      opsMetricsPollMs: 0,
+      fetchRootKey: false,
+      archiveDir: dir,
+      chainId: "test",
+      zstdLevel: 1,
+      maxSegment: 2,
+    };
+    const txHash = Buffer.alloc(32, 0xb1);
+    const block = buildBlockPayload(1n, 10n, [txHash]);
+    const receipts = buildReceiptsPayload([{ txHash, receipt: buildReceiptBytes(1, true) }]);
+    const txIndex = buildTxIndexPayload(1n, txHash, 0);
+    const chunks = [
+      { segment: 0, start: 0, bytes: block, payload_len: block.length },
+      { segment: 1, start: 0, bytes: receipts, payload_len: receipts.length },
+      { segment: 2, start: 0, bytes: txIndex, payload_len: txIndex.length },
+    ];
+    const runOnce = async (): Promise<void> => {
+      let headCalls = 0;
+      const client = {
+        getTxInputByTxId: async () => null,
+        getHeadNumber: async (): Promise<bigint> => {
+          headCalls += 1;
+          if (headCalls === 2) {
+            process.emit("SIGINT");
+          }
+          return 1n;
+        },
+        exportBlocks: async (
+          cursor: { block_number: bigint; segment: number; byte_offset: number } | null
+        ): Promise<
+          | {
+            Ok: {
+              chunks: Array<{ segment: number; start: number; bytes: Buffer; payload_len: number }>;
+              next_cursor: { block_number: bigint; segment: number; byte_offset: number };
+            };
+          }
+          | { Err: never }
+        > => {
+          if (headCalls === 1) {
+            return {
+              Ok: {
+                chunks,
+                next_cursor: { block_number: 2n, segment: 0, byte_offset: 0 },
+              },
+            };
+          }
+          return {
+            Ok: {
+              chunks: [],
+              next_cursor: cursor ?? { block_number: 2n, segment: 0, byte_offset: 0 },
+            },
+          };
+        },
+        getPruneStatus: async () => ({
+          pruning_enabled: false,
+          prune_running: false,
+          estimated_kept_bytes: 0n,
+          high_water_bytes: 0n,
+          low_water_bytes: 0n,
+          hard_emergency_bytes: 0n,
+          last_prune_at: 0n,
+          pruned_before_block: null,
+          oldest_kept_block: null,
+          oldest_kept_timestamp: null,
+          need_prune: false,
+        }),
+        getMetrics: async () => ({
+          txs: 0n,
+          ema_txs_per_block_x1000: 0n,
+          pruned_before_block: null,
+          ema_block_rate_per_sec_x1000: 0n,
+          total_submitted: 0n,
+          window: 128n,
+          avg_txs_per_block: 0n,
+          block_rate_per_sec_x1000: null,
+          cycles: 0n,
+          total_dropped: 0n,
+          blocks: 0n,
+          drop_counts: [],
+          queue_len: 0n,
+          total_included: 0n,
+        }),
+      };
+      await runWorkerWithDeps(config, db, client, { skipGc: true });
+    };
+
+    await db.setCursor({ block_number: 1n, segment: 0, byte_offset: 0 });
+    await runOnce();
+    const firstMetrics = await db.queryOne<{ raw_bytes: string; compressed_bytes: string; blocks_ingested: string }>(
+      "select raw_bytes::text as raw_bytes, compressed_bytes::text as compressed_bytes, blocks_ingested::text as blocks_ingested from metrics_daily limit 1"
+    );
+    assert.equal(firstMetrics?.blocks_ingested, "1");
+
+    await db.setCursor({ block_number: 1n, segment: 0, byte_offset: 0 });
+    await runOnce();
+    const secondMetrics = await db.queryOne<{ raw_bytes: string; compressed_bytes: string; blocks_ingested: string }>(
+      "select raw_bytes::text as raw_bytes, compressed_bytes::text as compressed_bytes, blocks_ingested::text as blocks_ingested from metrics_daily limit 1"
+    );
+    assert.equal(secondMetrics?.raw_bytes, firstMetrics?.raw_bytes);
+    assert.equal(secondMetrics?.compressed_bytes, firstMetrics?.compressed_bytes);
+    assert.equal(secondMetrics?.blocks_ingested, firstMetrics?.blocks_ingested);
+  });
+  await originalClose();
 });
 
 test("runWorkerWithDeps exits when cursor is null and stream cursor is not established", async () => {
