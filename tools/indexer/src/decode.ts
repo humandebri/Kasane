@@ -32,12 +32,25 @@ const ADDRESS_LEN = 20;
 
 export function decodeBlockPayload(payload: Uint8Array): BlockInfo {
   const data = Buffer.from(payload);
-  // BlockData v2: number, parent_hash, block_hash, timestamp,
-  // base_fee_per_gas, block_gas_limit, gas_used, beneficiary,
-  // tx_list_hash, state_root, tx_len
-  const baseLen = 8 + HASH_LEN + HASH_LEN + 8 + 8 + 8 + 8 + ADDRESS_LEN + HASH_LEN + HASH_LEN + 4;
+  // v2: ... gas_used, beneficiary, tx_list_hash, state_root, tx_len
+  // v1: ... gas_used, tx_list_hash, state_root, tx_len
+  // mainnetには旧形式が混在するため、両方を順に試す。
+  const parsedV2 = tryDecodeBlockPayload(data, true);
+  if (parsedV2) {
+    return parsedV2;
+  }
+  const parsedV1 = tryDecodeBlockPayload(data, false);
+  if (parsedV1) {
+    return parsedV1;
+  }
+  throw new Error("block payload length mismatch");
+}
+
+function tryDecodeBlockPayload(data: Buffer, hasBeneficiary: boolean): BlockInfo | null {
+  const baseLen =
+    8 + HASH_LEN + HASH_LEN + 8 + 8 + 8 + 8 + (hasBeneficiary ? ADDRESS_LEN : 0) + HASH_LEN + HASH_LEN + 4;
   if (data.length < baseLen) {
-    throw new Error("block payload too short");
+    return null;
   }
   let offset = 0;
   const number = readU64BE(data, offset);
@@ -51,7 +64,9 @@ export function decodeBlockPayload(payload: Uint8Array): BlockInfo {
   offset += 8;
   const gasUsed = readU64BE(data, offset);
   offset += 8;
-  offset += ADDRESS_LEN;
+  if (hasBeneficiary) {
+    offset += ADDRESS_LEN;
+  }
   offset += HASH_LEN;
   offset += HASH_LEN;
   const txLen = readU32BE(data, offset);
@@ -59,7 +74,7 @@ export function decodeBlockPayload(payload: Uint8Array): BlockInfo {
   const txCount = Number(txLen);
   const expected = baseLen + txCount * HASH_LEN;
   if (expected !== data.length) {
-    throw new Error("block payload length mismatch");
+    return null;
   }
   const txIds: Buffer[] = [];
   for (let i = 0; i < txCount; i += 1) {

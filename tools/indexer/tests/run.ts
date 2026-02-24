@@ -314,6 +314,46 @@ test("block payload decodes v2 layout", () => {
   assert.equal(out.txIds[0]?.toString("hex"), txId.toString("hex"));
 });
 
+test("block payload decodes v1 layout without beneficiary", () => {
+  const number = Buffer.alloc(8);
+  number.writeBigUInt64BE(8n, 0);
+  const parentHash = Buffer.alloc(32, 0x11);
+  const blockHash = Buffer.alloc(32, 0xcc);
+  const timestamp = Buffer.alloc(8);
+  timestamp.writeBigUInt64BE(456n, 0);
+  const baseFee = Buffer.alloc(8);
+  baseFee.writeBigUInt64BE(1_000_000_000n, 0);
+  const blockGasLimit = Buffer.alloc(8);
+  blockGasLimit.writeBigUInt64BE(10_000_000n, 0);
+  const gasUsed = Buffer.alloc(8);
+  gasUsed.writeBigUInt64BE(42_000n, 0);
+  const txListHash = Buffer.alloc(32, 0x22);
+  const stateRoot = Buffer.alloc(32, 0x33);
+  const txLen = Buffer.alloc(4);
+  txLen.writeUInt32BE(1, 0);
+  const txId = Buffer.alloc(32, 0xdd);
+  const payload = Buffer.concat([
+    number,
+    parentHash,
+    blockHash,
+    timestamp,
+    baseFee,
+    blockGasLimit,
+    gasUsed,
+    txListHash,
+    stateRoot,
+    txLen,
+    txId,
+  ]);
+  const out = decodeBlockPayload(payload);
+  assert.equal(out.number, 8n);
+  assert.equal(out.timestamp, 456n);
+  assert.equal(out.gasUsed, 42_000n);
+  assert.equal(out.blockHash.toString("hex"), blockHash.toString("hex"));
+  assert.equal(out.txIds.length, 1);
+  assert.equal(out.txIds[0]?.toString("hex"), txId.toString("hex"));
+});
+
 test("enforceNextCursor allows same-block forward progress", () => {
   const cursor = { block_number: 10n, segment: 1, byte_offset: 40 };
   const response = {
