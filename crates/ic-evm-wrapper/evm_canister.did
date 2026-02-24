@@ -250,8 +250,9 @@ type ReceiptView = record {
 };
 type Result = variant { Ok : nat64; Err : text };
 type Result_1 = variant { Ok : ExportResponseView; Err : ExportErrorView };
-type Result_10 = variant { Ok : blob; Err : SubmitTxError };
-type Result_11 = variant { Ok; Err : text };
+type Result_10 = variant { Ok : EthLogsPageView; Err : GetLogsErrorView };
+type Result_11 = variant { Ok : blob; Err : SubmitTxError };
+type Result_12 = variant { Ok; Err : text };
 type Result_2 = variant { Ok : BlockView; Err : LookupError };
 type Result_3 = variant { Ok : ReceiptView; Err : LookupError };
 type Result_4 = variant { Ok : text; Err : text };
@@ -259,8 +260,7 @@ type Result_5 = variant { Ok : PruneResultView; Err : ProduceBlockError };
 type Result_6 = variant { Ok : RpcCallResultView; Err : RpcErrorView };
 type Result_7 = variant { Ok : blob; Err : text };
 type Result_8 = variant { Ok : nat64; Err : RpcErrorView };
-type Result_9 = variant { Ok : EthLogsPageView; Err : GetLogsErrorView };
-type Result_12 = variant { Ok : opt nat64; Err : text };
+type Result_9 = variant { Ok : opt nat64; Err : text };
 type RpcAccessListItemView = record { storage_keys : vec blob; address : blob };
 type RpcBlockLookupView = variant {
   NotFound;
@@ -325,10 +325,10 @@ service : (opt InitArgs) -> {
   rpc_eth_get_block_by_number_with_status : (nat64, bool) -> (
       RpcBlockLookupView,
     ) query;
-  rpc_eth_get_block_number_by_hash : (blob, nat32) -> (Result_12) query;
+  rpc_eth_get_block_number_by_hash : (blob, nat32) -> (Result_9) query;
   rpc_eth_get_code : (blob) -> (Result_7) query;
   rpc_eth_get_logs_paged : (EthLogFilterView, opt EthLogsCursorView, nat32) -> (
-      Result_9,
+      Result_10,
     ) query;
   rpc_eth_get_storage_at : (blob, blob) -> (Result_7) query;
   rpc_eth_get_transaction_by_eth_hash : (blob) -> (opt EthTxView) query;
@@ -339,11 +339,11 @@ service : (opt InitArgs) -> {
   rpc_eth_get_transaction_receipt_with_status : (blob) -> (
       RpcReceiptLookupView,
     ) query;
-  rpc_eth_send_raw_transaction : (blob) -> (Result_10);
-  set_block_gas_limit : (nat64) -> (Result_11);
-  set_instruction_soft_limit : (nat64) -> (Result_11);
-  set_log_filter : (opt text) -> (Result_11);
-  set_prune_policy : (PrunePolicyView) -> (Result_11);
-  set_pruning_enabled : (bool) -> (Result_11);
-  submit_ic_tx : (blob) -> (Result_10);
+  rpc_eth_send_raw_transaction : (blob) -> (Result_11);
+  set_block_gas_limit : (nat64) -> (Result_12);
+  set_instruction_soft_limit : (nat64) -> (Result_12);
+  set_log_filter : (opt text) -> (Result_12);
+  set_prune_policy : (PrunePolicyView) -> (Result_12);
+  set_pruning_enabled : (bool) -> (Result_12);
+  submit_ic_tx : (blob) -> (Result_11);
 }
