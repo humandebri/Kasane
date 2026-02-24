@@ -700,18 +700,31 @@ async function runDependencyPinTests(): Promise<void> {
 }
 
 async function runLogsTests(): Promise<void> {
-  const blockHashUnsupported = logsTestHooks.parseFilter({
+  const blockHashFilter = logsTestHooks.parseFilter({
     fromBlock: "",
     toBlock: "",
     address: "",
     topic0: "",
     blockHash: "0x" + "22".repeat(32),
   });
-  assert.equal(blockHashUnsupported.ok, false);
-  if (blockHashUnsupported.ok) {
-    throw new Error("blockHash unsupported test expected error");
+  assert.equal(blockHashFilter.ok, true);
+  if (!blockHashFilter.ok) {
+    throw new Error("blockHash filter should be accepted");
   }
-  assert.equal(blockHashUnsupported.error, "blockHash filter is not supported. Use fromBlock/toBlock.");
+  assert.equal(blockHashFilter.filter.blockHash, "0x" + "22".repeat(32));
+
+  const blockHashWithRange = logsTestHooks.parseFilter({
+    fromBlock: "1",
+    toBlock: "",
+    address: "",
+    topic0: "",
+    blockHash: "0x" + "22".repeat(32),
+  });
+  assert.equal(blockHashWithRange.ok, false);
+  if (blockHashWithRange.ok) {
+    throw new Error("blockHash + range should fail");
+  }
+  assert.equal(blockHashWithRange.error, "blockHash cannot be combined with fromBlock/toBlock.");
 
   assert.equal(
     logsTestHooks.hasAnySearchInput({
@@ -719,6 +732,7 @@ async function runLogsTests(): Promise<void> {
       toBlock: "",
       address: "",
       topic0: "",
+      blockHash: "",
       window: "",
     }),
     false
@@ -729,21 +743,20 @@ async function runLogsTests(): Promise<void> {
       toBlock: "",
       address: "",
       topic0: "",
+      blockHash: "",
       window: "",
     }),
     true
   );
   assert.equal(
-    logsTestHooks.hasAnySearchInput(
-      {
-        fromBlock: "",
-        toBlock: "",
-        address: "",
-        topic0: "",
-        window: "",
-      },
-      "0x" + "22".repeat(32)
-    ),
+    logsTestHooks.hasAnySearchInput({
+      fromBlock: "",
+      toBlock: "",
+      address: "",
+      topic0: "",
+      blockHash: "0x" + "22".repeat(32),
+      window: "",
+    }),
     true
   );
 

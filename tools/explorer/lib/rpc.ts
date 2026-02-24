@@ -3,7 +3,7 @@
 import { Actor, HttpAgent } from "@dfinity/agent";
 import type { IDL } from "@dfinity/candid";
 import { loadConfig } from "./config";
-import { bytesToBigInt } from "./hex";
+import { bytesToBigInt, normalizeHex, parseHex } from "./hex";
 
 export type LookupError = { NotFound: null } | { Pending: null } | { Pruned: { pruned_before_block: bigint } };
 
@@ -88,6 +88,14 @@ export type EthLogFilterInput = {
   topic0?: Uint8Array;
   topic1?: Uint8Array;
   limit?: number;
+};
+
+export type EthJsonRpcLogsFilterInput = {
+  fromBlock?: bigint;
+  toBlock?: bigint;
+  address?: string;
+  topic0?: string;
+  blockHash?: string;
 };
 
 export type EthLogsCursorView = {
@@ -257,6 +265,72 @@ export async function getRpcLogsPaged(
   );
 }
 
+export async function getRpcLogsViaGateway(filter: EthJsonRpcLogsFilterInput): Promise<EthLogItemView[]> {
+  const cfg = loadConfig(process.env);
+  if (!cfg.rpcGatewayUrl) {
+    throw new Error("EXPLORER_RPC_GATEWAY_URL is required for logs query");
+  }
+  const payload: Record<string, unknown> = {};
+  if (filter.fromBlock !== undefined) {
+    payload.fromBlock = toQuantityHex(filter.fromBlock);
+  }
+  if (filter.toBlock !== undefined) {
+    payload.toBlock = toQuantityHex(filter.toBlock);
+  }
+  if (filter.address !== undefined) {
+    payload.address = normalizeHex(filter.address);
+  }
+  if (filter.topic0 !== undefined) {
+    payload.topics = [normalizeHex(filter.topic0)];
+  }
+  if (filter.blockHash !== undefined) {
+    payload.blockHash = normalizeHex(filter.blockHash);
+  }
+  const body = {
+    jsonrpc: "2.0",
+    id: 1,
+    method: "eth_getLogs",
+    params: [payload],
+  };
+  const response = await fetch(cfg.rpcGatewayUrl, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!response.ok) {
+    throw new Error(`gateway request failed: HTTP ${response.status}`);
+  }
+  const json = (await response.json()) as {
+    jsonrpc: string;
+    id: number | string | null;
+    result?: Array<{
+      address: string;
+      topics: string[];
+      data: string;
+      blockNumber: string;
+      transactionIndex: string;
+      logIndex: string;
+      transactionHash: string;
+    }>;
+    error?: { code: number; message: string; data?: unknown };
+  };
+  if (json.error) {
+    const detail = json.error.data === undefined ? "" : ` data=${JSON.stringify(json.error.data)}`;
+    throw new Error(`gateway error: ${json.error.code} ${json.error.message}${detail}`);
+  }
+  const result = json.result ?? [];
+  return result.map((item) => ({
+    tx_hash: parseHex(item.transactionHash),
+    eth_tx_hash: [parseHex(item.transactionHash)],
+    block_number: parseQuantityHex(item.blockNumber),
+    tx_index: Number(parseQuantityHex(item.transactionIndex)),
+    log_index: Number(parseQuantityHex(item.logIndex)),
+    address: parseHex(item.address),
+    topics: item.topics.map((topic) => parseHex(topic)),
+    data: parseDataHex(item.data),
+  }));
+}
+
 export async function getRpcPending(txId: Uint8Array): Promise<PendingStatusView> {
   return (await getActor()).get_pending(txId);
 }
@@ -291,6 +365,26 @@ export async function getRpcExpectedNonce(address: Uint8Array): Promise<bigint> 
 
 export async function getRpcCallObject(call: RpcCallObjectView): Promise<ResultRpcCall> {
   return (await getActor()).rpc_eth_call_object(call);
+}
+
+function toQuantityHex(value: bigint): string {
+  return `0x${value.toString(16)}`;
+}
+
+function parseQuantityHex(value: string): bigint {
+  const normalized = normalizeHex(value);
+  if (!/^0x[0-9a-f]+$/.test(normalized)) {
+    throw new Error(`invalid quantity hex: ${value}`);
+  }
+  return BigInt(normalized);
+}
+
+function parseDataHex(value: string): Uint8Array {
+  const normalized = normalizeHex(value);
+  if (normalized === "0x") {
+    return new Uint8Array();
+  }
+  return parseHex(normalized);
 }
 
 async function getActor(): Promise<ExplorerActorMethods> {

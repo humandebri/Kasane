@@ -328,7 +328,7 @@ RPCインターフェースは、Internet Computerのアーキテクチャに準
   - 実装見送り対象メソッド: 実装が複雑で、初期の開発サイクルにおいては必須ではないと判断されたメソッド群です。これらを意図的に除外することで、開発リソースをコア機能に集中させます。
     - pending/mempool関連: 本システムは即時実行モデルを基本とするため、pending状態の概念は適用しません。
     - filter/WebSocket関連: `eth_newFilter` / `eth_getFilterChanges` / `eth_subscribe` は現時点で非対応です。
-    - なお `eth_getLogs` は完全互換ではなく、制限付き実装です（`topic0` 中心、`blockHash`/OR条件は未対応）。
+    - なお `eth_getLogs` は完全互換ではなく、制限付き実装です（`topic0` 中心、`topics[1+]` は未対応）。
 
 ### 4.1.1 Ethereum JSON-RPC互換表（現行実装）
 
@@ -343,14 +343,16 @@ RPCインターフェースは、Internet Computerのアーキテクチャに準
 | `eth_getBlockByNumber` | Partially supported | ブロック参照を返す | `latest/pending/safe/finalized` は head 扱い。pruned範囲は `-32001` | `fullTx` の有無で返却形を切替 |
 | `eth_getTransactionByHash` | Supported | `eth_tx_hash` ベースで参照する | `tx_id` 直接参照ではない | canister側は `rpc_eth_get_transaction_by_eth_hash` |
 | `eth_getTransactionReceipt` | Partially supported | receipt を返す | migration/corrupt時 `-32000`、pruned範囲は `-32001` | canister側は `rpc_eth_get_transaction_receipt_with_status` |
-| `eth_getBalance` | Partially supported | 残高取得に対応 | `latest` のみ | canister query でも取得可能 |
+| `eth_getBalance` | Partially supported | 残高取得に対応 | `latest` 系のみ（文字列または `{ blockNumber: "latest|pending|safe|finalized" }`） | canister query でも取得可能 |
 | `eth_getTransactionCount` | Partially supported | nonce取得に対応 | `latest/pending/safe/finalized` のみ | canister側 `expected_nonce_by_address` |
 | `eth_getCode` | Partially supported | コード取得に対応 | `latest` のみ | canister query でも取得可能 |
 | `eth_getStorageAt` | Partially supported | ストレージ取得に対応 | `latest` のみ | `slot` は QUANTITY / DATA(32bytes) を受理 |
 | `eth_call` | Partially supported | 読み取り実行に対応 | `latest` のみ、入力制約あり | revert時は `-32000` + `error.data` |
 | `eth_estimateGas` | Partially supported | call相当で見積り | `latest` のみ、入力制約あり | canister側 `rpc_eth_estimate_gas_object` |
 | `eth_sendRawTransaction` | Supported | 署名済みtxを投入し、返却 `tx_id` から `eth_tx_hash` を解決して `0x...` を返す | `eth_tx_hash` 解決不能時は `-32000` エラー返却 | canister側投入実体は `rpc_eth_send_raw_transaction` |
-| `eth_getLogs` | Partially supported | `rpc_eth_get_logs_paged` を使って取得 | `blockHash` 非対応、単一address、`topics[0]` のみ、OR配列非対応 | 大きい範囲は `-32005` |
+| `eth_getLogs` | Partially supported | `rpc_eth_get_logs_paged` を使って取得（`topics[0]` OR配列はGatewayで展開） | 単一address、`topics[1+]` 未対応、`blockHash` は直近 `RPC_GATEWAY_LOGS_BLOCKHASH_SCAN_LIMIT` ブロック走査で解決（既定 `2000`） | 大きい範囲は `-32005` |
+
+注記: `eth_getLogs` で `blockHash` が見つからない場合は `code=-32000`, `message="Block not found."`, `data="0x..."` を返します。
 
 pending/mempool/filter WebSocket 系（例: `eth_newFilter`, `eth_getFilterChanges`, `eth_subscribe`）は、現行実装時点では `Not supported` です。理由は Phase 2 のスコープ（沼回避）による意図的な非対応です。
 

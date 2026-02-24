@@ -13,7 +13,7 @@ use evm_db::types::values::{AccountVal, U256Val};
 use evm_db::Storable;
 use ic_evm_rpc::{
     rpc_eth_call_object, rpc_eth_call_rawtx, rpc_eth_estimate_gas_object, rpc_eth_get_balance,
-    rpc_eth_get_block_by_number_with_status, rpc_eth_get_code, rpc_eth_get_storage_at,
+    rpc_eth_get_block_by_number_with_status, rpc_eth_get_block_number_by_hash, rpc_eth_get_code, rpc_eth_get_storage_at,
     rpc_eth_get_transaction_by_eth_hash, rpc_eth_get_transaction_receipt_by_eth_hash,
     rpc_eth_get_transaction_receipt_with_status, rpc_eth_send_raw_transaction,
     submit_tx_in_with_code,
@@ -539,6 +539,91 @@ fn get_block_by_number_hashes_prefers_eth_tx_hash_for_eth_signed() {
         },
         other => panic!("unexpected block lookup status: {other:?}"),
     }
+}
+
+#[test]
+fn get_block_number_by_hash_finds_block_within_scan_window() {
+    let _guard = test_lock().lock().expect("lock");
+    init_stable_state();
+
+    let block = BlockData::new(
+        3,
+        [0u8; 32],
+        [0x11u8; 32],
+        1_700_000_000,
+        1_000_000_000,
+        3_000_000,
+        21_000,
+        [0x44; 20],
+        vec![],
+        [2u8; 32],
+        [3u8; 32],
+    );
+    with_state_mut(|state| {
+        let ptr = state
+            .blob_store
+            .store_bytes(&block.clone().into_bytes())
+            .expect("store block");
+        state.blocks.insert(3, ptr);
+        state.head.set(evm_db::chain_data::Head {
+            number: 3,
+            block_hash: [0x11u8; 32],
+            timestamp: 1_700_000_000,
+        });
+    });
+
+    let found = rpc_eth_get_block_number_by_hash([0x11u8; 32].to_vec(), 10).expect("lookup");
+    assert_eq!(found, Some(3));
+}
+
+#[test]
+fn get_block_number_by_hash_respects_scan_window() {
+    let _guard = test_lock().lock().expect("lock");
+    init_stable_state();
+
+    for number in 1..=3u64 {
+        let block_hash = [number as u8; 32];
+        let block = BlockData::new(
+            number,
+            [0u8; 32],
+            block_hash,
+            1_700_000_000 + number,
+            1_000_000_000,
+            3_000_000,
+            21_000,
+            [0x44; 20],
+            vec![],
+            [2u8; 32],
+            [3u8; 32],
+        );
+        with_state_mut(|state| {
+            let ptr = state
+                .blob_store
+                .store_bytes(&block.clone().into_bytes())
+                .expect("store block");
+            state.blocks.insert(number, ptr);
+        });
+    }
+    with_state_mut(|state| {
+        state.head.set(evm_db::chain_data::Head {
+            number: 3,
+            block_hash: [3u8; 32],
+            timestamp: 1_700_000_003,
+        });
+    });
+
+    let not_found = rpc_eth_get_block_number_by_hash([1u8; 32].to_vec(), 2).expect("lookup");
+    assert_eq!(not_found, None);
+    let found = rpc_eth_get_block_number_by_hash([1u8; 32].to_vec(), 3).expect("lookup");
+    assert_eq!(found, Some(1));
+}
+
+#[test]
+fn get_block_number_by_hash_rejects_invalid_hash_length() {
+    let _guard = test_lock().lock().expect("lock");
+    init_stable_state();
+    let err = rpc_eth_get_block_number_by_hash(vec![0u8; 31], 10).expect_err("invalid hash");
+    assert_eq!(err, "block_hash must be 32 bytes");
 }
 
 #[test]
