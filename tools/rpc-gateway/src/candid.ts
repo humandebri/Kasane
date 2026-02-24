@@ -194,6 +194,11 @@ export const idlFactory: IDL.InterfaceFactory = ({ IDL }) => {
     rpc_eth_block_number: IDL.Func([], [IDL.Nat64], ["query"]),
     rpc_eth_get_block_by_number: IDL.Func([IDL.Nat64, IDL.Bool], [IDL.Opt(EthBlockView)], ["query"]),
     rpc_eth_get_block_by_number_with_status: IDL.Func([IDL.Nat64, IDL.Bool], [RpcBlockLookupView], ["query"]),
+    rpc_eth_get_block_number_by_hash: IDL.Func(
+      [IDL.Vec(IDL.Nat8), IDL.Nat32],
+      [IDL.Variant({ Ok: IDL.Opt(IDL.Nat64), Err: IDL.Text })],
+      ["query"]
+    ),
     rpc_eth_get_transaction_by_eth_hash: IDL.Func([IDL.Vec(IDL.Nat8)], [IDL.Opt(EthTxView)], ["query"]),
     rpc_eth_get_transaction_by_tx_id: IDL.Func([IDL.Vec(IDL.Nat8)], [IDL.Opt(EthTxView)], ["query"]),
     rpc_eth_get_transaction_receipt_by_eth_hash: IDL.Func([IDL.Vec(IDL.Nat8)], [IDL.Opt(EthReceiptView)], ["query"]),

@@ -6,6 +6,7 @@ export type ExplorerConfig = {
   dbPoolMax: number;
   canisterId: string | null;
   icHost: string;
+  rpcGatewayUrl: string | null;
   fetchRootKey: boolean;
   latestBlocksLimit: number;
   latestTxsLimit: number;
@@ -44,6 +45,7 @@ export function loadConfig(env: NodeJS.ProcessEnv): ExplorerConfig {
     dbPoolMax: parseRangeInt(env.EXPLORER_DB_POOL_MAX ?? env.INDEXER_DB_POOL_MAX, DEFAULT_DB_POOL_MAX, 1, 50),
     canisterId: env.EVM_CANISTER_ID ?? null,
     icHost: env.EXPLORER_IC_HOST ?? env.INDEXER_IC_HOST ?? DEFAULT_IC_HOST,
+    rpcGatewayUrl: parseOptionalNonEmpty(env.EXPLORER_RPC_GATEWAY_URL ?? env.RPC_GATEWAY_URL),
     fetchRootKey: parseBool(env.EXPLORER_FETCH_ROOT_KEY ?? env.INDEXER_FETCH_ROOT_KEY),
     latestBlocksLimit: parseRangeInt(env.EXPLORER_LATEST_BLOCKS, 10, 1, 500),
     latestTxsLimit: parseRangeInt(env.EXPLORER_LATEST_TXS, 20, 1, 200),
@@ -68,6 +70,14 @@ export function loadConfig(env: NodeJS.ProcessEnv): ExplorerConfig {
     verifyAuditHashSaltCurrent: env.AUDIT_HASH_SALT_CURRENT?.trim() || "",
     verifyAuditHashSaltPrevious: env.AUDIT_HASH_SALT_PREVIOUS?.trim() || null,
   };
+}
+
+function parseOptionalNonEmpty(value: string | undefined): string | null {
+  if (!value) {
+    return null;
+  }
+  const trimmed = value.trim();
+  return trimmed === "" ? null : trimmed;
 }
 
 function parseBool(value: string | undefined): boolean {

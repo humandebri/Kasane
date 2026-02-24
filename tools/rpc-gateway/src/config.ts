@@ -16,6 +16,7 @@ export type GatewayConfig = {
   maxHttpBodySize: number;
   maxBatchLen: number;
   maxJsonDepth: number;
+  logsBlockhashScanLimit: number;
   corsOrigins: string[];
 };
 
@@ -34,6 +35,7 @@ export function loadConfig(env: Record<string, string | undefined>): GatewayConf
     maxHttpBodySize: parseRangeInt(env.RPC_GATEWAY_MAX_HTTP_BODY_SIZE, 256 * 1024, 1024, 10 * 1024 * 1024),
     maxBatchLen: parseRangeInt(env.RPC_GATEWAY_MAX_BATCH_LEN, 20, 1, 500),
     maxJsonDepth: parseRangeInt(env.RPC_GATEWAY_MAX_JSON_DEPTH, 20, 2, 100),
+    logsBlockhashScanLimit: parseRangeInt(env.RPC_GATEWAY_LOGS_BLOCKHASH_SCAN_LIMIT, 2000, 100, 10000),
     corsOrigins: parseCorsOrigins(env.RPC_GATEWAY_CORS_ORIGIN),
   };
 }

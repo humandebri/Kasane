@@ -24,6 +24,7 @@ import {
   __test_parse_reward_percentiles,
   __test_parse_execution_block_tag,
   __test_map_rpc_error,
+  __test_sort_log_items,
   __test_tx_hash_readiness_error,
   __test_to_candid_call_object,
   __test_map_tx,
@@ -85,6 +86,25 @@ function testConfigCorsOrigins(): void {
   assert.deepEqual(multi.corsOrigins, ["https://kasane.network", "http://localhost:3000"]);
 }
 
+function testConfigLogsBlockhashScanLimit(): void {
+  const defaults = loadConfig({
+    EVM_CANISTER_ID: "aaaaa-aa",
+  });
+  assert.equal(defaults.logsBlockhashScanLimit, 2000);
+
+  const custom = loadConfig({
+    EVM_CANISTER_ID: "aaaaa-aa",
+    RPC_GATEWAY_LOGS_BLOCKHASH_SCAN_LIMIT: "1500",
+  });
+  assert.equal(custom.logsBlockhashScanLimit, 1500);
+
+  const invalidLow = loadConfig({
+    EVM_CANISTER_ID: "aaaaa-aa",
+    RPC_GATEWAY_LOGS_BLOCKHASH_SCAN_LIMIT: "50",
+  });
+  assert.equal(invalidLow.logsBlockhashScanLimit, 2000);
+}
+
 function testCorsAllowOriginResolution(): void {
   assert.equal(__test_resolve_cors_allow_origin("http://localhost:3000", ["*"]), "*");
   assert.equal(
@@ -139,7 +159,9 @@ function testLatestTagNormalization(): void {
   assert.equal(__test_is_latest_tag("latest"), true);
   assert.equal(__test_is_latest_tag(" Latest "), true);
   assert.equal(__test_is_latest_tag(new String("pending")), true);
+  assert.equal(__test_is_latest_tag({ blockNumber: "safe" }), true);
   assert.equal(__test_is_latest_tag("0x1"), false);
+  assert.equal(__test_is_latest_tag({ blockHash: `0x${"11".repeat(32)}` }), false);
 }
 
 function testExecutionTagNormalization(): void {
@@ -523,11 +545,13 @@ async function testGetLogsFilterParsing(): Promise<void> {
   if ("error" in parsed) {
     throw new Error(String(parsed.error));
   }
-  assert.equal(parsed.value.candid.from_block.length, 1);
-  assert.equal(parsed.value.candid.to_block.length, 1);
-  assert.equal(parsed.value.candid.address.length, 1);
-  assert.equal(parsed.value.candid.topic0.length, 1);
-  assert.equal(parsed.value.candid.topic1.length, 0);
+  assert.equal(parsed.value.blockHash.length, 0);
+  assert.equal(parsed.value.candidFilters.length, 1);
+  assert.equal(parsed.value.candidFilters[0]?.from_block.length, 1);
+  assert.equal(parsed.value.candidFilters[0]?.to_block.length, 1);
+  assert.equal(parsed.value.candidFilters[0]?.address.length, 1);
+  assert.equal(parsed.value.candidFilters[0]?.topic0.length, 1);
+  assert.equal(parsed.value.candidFilters[0]?.topic1.length, 0);
 
   const ng = await __test_parse_logs_filter({ topics: ["0x11"] }, 1n);
   assert.ok("error" in ng);
@@ -535,10 +559,10 @@ async function testGetLogsFilterParsing(): Promise<void> {
     assert.ok(ng.error.includes("topics[0]"));
   }
 
-  const ng2 = await __test_parse_logs_filter({ blockHash: `0x${"00".repeat(32)}` }, 1n);
-  assert.ok("error" in ng2);
-  if ("error" in ng2) {
-    assert.equal(ng2.error, "blockHash filter is not supported");
+  const withBlockHash = await __test_parse_logs_filter({ blockHash: `0x${"00".repeat(32)}` }, 1n);
+  assert.ok(!("error" in withBlockHash));
+  if (!("error" in withBlockHash)) {
+    assert.equal(withBlockHash.value.blockHash.length, 1);
   }
 
   const ng3 = await __test_parse_logs_filter(
@@ -554,6 +578,46 @@ async function testGetLogsFilterParsing(): Promise<void> {
   if ("error" in ng3) {
     assert.equal(ng3.error, "only topics[0] is supported");
   }
+
+  const ng4 = await __test_parse_logs_filter(
+    {
+      blockHash: `0x${"00".repeat(32)}`,
+      fromBlock: "0x1",
+    },
+    1n
+  );
+  assert.ok("error" in ng4);
+  if ("error" in ng4) {
+    assert.equal(ng4.error, "blockHash cannot be combined with fromBlock/toBlock");
+  }
+
+  const withBlockHashAndNullRange = await __test_parse_logs_filter(
+    {
+      blockHash: `0x${"00".repeat(32)}`,
+      fromBlock: null,
+      toBlock: null,
+    },
+    1n
+  );
+  assert.ok(!("error" in withBlockHashAndNullRange));
+
+  const withOrTopic = await __test_parse_logs_filter(
+    {
+      topics: [
+        [
+          `0x${"11".repeat(32)}`,
+          `0x${"22".repeat(32)}`,
+        ],
+      ],
+    },
+    1n
+  );
+  assert.ok(!("error" in withOrTopic));
+  if (!("error" in withOrTopic)) {
+    assert.equal(withOrTopic.value.candidFilters.length, 2);
+    assert.equal(withOrTopic.value.candidFilters[0]?.topic0.length, 1);
+    assert.equal(withOrTopic.value.candidFilters[1]?.topic0.length, 1);
+  }
 }
 
 function testGetLogsErrorMapping(): void {
@@ -563,6 +627,44 @@ function testGetLogsErrorMapping(): void {
   const range = __test_map_get_logs_error({ RangeTooLarge: null });
   assert.equal(range.code, -32005);
   assert.equal(range.message, "limit exceeded");
+}
+
+function testLogSortOrder(): void {
+  const sorted = __test_sort_log_items([
+    {
+      tx_index: 2,
+      log_index: 1,
+      data: Uint8Array.from([0x02]),
+      block_number: 10n,
+      topics: [],
+      address: Uint8Array.from(new Array(20).fill(0x11)),
+      eth_tx_hash: [],
+      tx_hash: Uint8Array.from(new Array(32).fill(0xaa)),
+    },
+    {
+      tx_index: 0,
+      log_index: 0,
+      data: Uint8Array.from([0x00]),
+      block_number: 9n,
+      topics: [],
+      address: Uint8Array.from(new Array(20).fill(0x11)),
+      eth_tx_hash: [],
+      tx_hash: Uint8Array.from(new Array(32).fill(0xbb)),
+    },
+    {
+      tx_index: 2,
+      log_index: 0,
+      data: Uint8Array.from([0x01]),
+      block_number: 10n,
+      topics: [],
+      address: Uint8Array.from(new Array(20).fill(0x11)),
+      eth_tx_hash: [],
+      tx_hash: Uint8Array.from(new Array(32).fill(0xcc)),
+    },
+  ]);
+  assert.equal(sorted[0]?.block_number, 9n);
+  assert.equal(sorted[1]?.log_index, 0);
+  assert.equal(sorted[2]?.log_index, 1);
 }
 
 async function testInvalidTxHashReturnsInvalidParams(): Promise<void> {
@@ -653,6 +755,7 @@ testHex();
 testJsonRpc();
 testConfigIdentityPemPath();
 testConfigCorsOrigins();
+testConfigLogsBlockhashScanLimit();
 testCorsAllowOriginResolution();
 testIdentityFromEd25519Pem();
 testCallParamsDefaultBlockTag();
@@ -674,6 +777,7 @@ testEip1559GasPriceFallback();
 testSubmitEthHashResolutionPolicy();
 testTxHashReadinessPolicy();
 testGetLogsErrorMapping();
+testLogSortOrder();
 
 async function main(): Promise<void> {
   await testInvalidTxHashReturnsInvalidParams();

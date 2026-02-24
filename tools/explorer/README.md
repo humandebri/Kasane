@@ -86,9 +86,10 @@ Search の入力判定:
 - Verifyワーカーは `npm run verify:worker` で起動します（indexer同期処理とは分離）。
 - 運用手順（鍵ローテーション / preflight / jti掃除）は `/Users/0xhude/Desktop/ICP/Kasane/docs/ops/verify_runbook.md` を参照してください。
 - Verifyメトリクスは固定サンプル窓（`EXPLORER_VERIFY_METRICS_SAMPLE_INTERVAL_MS`）で集計します。ワーカー再起動直後は見え方が揺れるため、アラートは緩めの閾値から開始してください。
-- Logsページは canister を直接呼び出します。`topic1` / `topics OR配列` は未対応（指定時はURL正規化で除外）、`blockHash` は未対応です。
+- Logsページは `EXPLORER_RPC_GATEWAY_URL` で指定した RPC gateway を `eth_getLogs` で呼び出します。`topic1` / `topics OR配列` は未対応です。
+- Logsページは `blockHash` 検索に対応します（`fromBlock/toBlock` との併用は不可）。
 - Logsページは未指定時に `window`（既定20）で最新ブロック範囲を自動検索します（例: `/logs?window=50`）。
-- Logsページの取得件数は1ページ100件固定です（`Older` で継続取得）。
+- Logsページの取得件数上限は gateway 側の制限に従います（`Older` ページングは無効）。
 - Logs検索条件は Enter または入力欄フォーカスアウト時にURLクエリへ反映されます（入力中は反映しません）。
 - `rpc_eth_get_logs_paged` の制約により、`from/to` span 上限・cursor継続が必要なケースがあります。
 - Tx詳細ページは `Monitor State` を内包し、`send受理` と `receipt.status` の差を明示します。
@@ -104,8 +105,8 @@ Search の入力判定:
 - `lib/data_address.ts`: address履歴の変換・方向判定・カーソル処理
 - `lib/data_ops.ts`: prune_statusパース、ops時系列計算、stall判定
 - `lib/db.ts`: Postgres読み取りクエリ（txs/token_transfers/blocks/meta/metrics/ops_samples）
-- `lib/rpc.ts`: canister queryのIDL定義とRPC呼び出し
-- `lib/logs.ts`: `/logs` 用のフィルタ解釈・cursor処理・エラー正規化
+- `lib/rpc.ts`: canister queryのIDL定義とRPC呼び出し（Logsはgateway JSON-RPCも利用）
+- `lib/logs.ts`: `/logs` 用のフィルタ解釈・gateway呼び出し・エラー正規化
 - `lib/tx_timeline.ts`: receipt logs のイベント再構成（Aave/Uniswap/ERC20）
 - `lib/tx-monitor.ts`: `send受理` と `receipt.status` を分離した状態判定（`/tx` で利用）
 - `lib/principal.ts`: principal -> EVM address 導出（`@dfinity/ic-pub-key`）

@@ -23,6 +23,7 @@ const LOGS_MAX_PAGES = 20;
 const MAX_FEE_HISTORY_BLOCKS = 256;
 const EIP1559_BASE_FEE_MAX_CHANGE_DENOM = 8n;
 const EIP1559_ELASTICITY_MULTIPLIER = 2n;
+const LOGS_MAX_TOPIC0_OR_TERMS = 16;
 const SUPPORTED_CALL_KEYS = new Set([
   "to",
   "from",
@@ -54,7 +55,8 @@ type ParsedCallObject = {
   type?: string;
 };
 type ParsedLogsFilter = {
-  candid: EthLogFilterView;
+  candidFilters: EthLogFilterView[];
+  blockHash: [] | [Uint8Array];
 };
 type FeeHistoryParams = {
   blockCount: number;
@@ -379,11 +381,41 @@ async function onGetLogs(id: string | number | null, params: unknown): Promise<J
   if ("error" in parsed) {
     return makeError(id, ERR_INVALID_PARAMS, parsed.error);
   }
-  const logs = await collectLogs(actor, parsed.value);
-  if ("error" in logs) {
-    return makeError(id, logs.error.code, logs.error.message, logs.error.data);
+  let filters = parsed.value.candidFilters;
+  if (parsed.value.blockHash.length > 0) {
+    const blockHash = parsed.value.blockHash[0];
+    if (blockHash === undefined) {
+      return makeError(id, ERR_INTERNAL, "internal error", { detail: "blockHash parse mismatch" });
+    }
+    const blockNumber = await resolveBlockNumberByHash(actor, blockHash);
+    if (blockNumber === null) {
+      return makeError(id, -32000, "Block not found.", toDataHex(blockHash));
+    }
+    filters = filters.map((filter) => ({
+      ...filter,
+      from_block: [blockNumber],
+      to_block: [blockNumber],
+    }));
   }
-  return makeSuccess(id, logs.value.map(mapLogItem));
+  const out: EthLogsPageView["items"] = [];
+  const dedupeKeys = new Set<string>();
+  for (const candid of filters) {
+    const logs = await collectLogs(actor, candid);
+    if ("error" in logs) {
+      return makeError(id, logs.error.code, logs.error.message, logs.error.data);
+    }
+    for (const item of logs.value) {
+      const txHash = item.eth_tx_hash.length === 0 ? item.tx_hash : item.eth_tx_hash[0];
+      const dedupeKey = `${item.block_number}:${item.tx_index}:${item.log_index}:${toDataHex(txHash)}`;
+      if (dedupeKeys.has(dedupeKey)) {
+        continue;
+      }
+      dedupeKeys.add(dedupeKey);
+      out.push(item);
+    }
+  }
+  const sorted = sortLogItems(out);
+  return makeSuccess(id, sorted.map((item) => mapLogItem(item, parsed.value.blockHash)));
 }
 
 async function onEthCall(id: string | number | null, params: unknown): Promise<JsonRpcResponse> {
@@ -532,6 +564,10 @@ export function __test_map_get_logs_error(
   data: unknown;
 } {
   return mapGetLogsError(err);
+}
+
+export function __test_sort_log_items(items: EthLogsPageView["items"]): EthLogsPageView["items"] {
+  return sortLogItems(items);
 }
 
 function makeInvalidParams(id: string | number | null, error: unknown): JsonRpcResponse {
@@ -872,8 +908,22 @@ async function parseLogsFilter(
       return { error: `${key} is not a supported filter field` };
     }
   }
+  let blockHash: [] | [Uint8Array] = [];
   if ("blockHash" in filterRaw && filterRaw.blockHash !== undefined) {
-    return { error: "blockHash filter is not supported" };
+    if (typeof filterRaw.blockHash !== "string") {
+      return { error: "blockHash must be hex string" };
+    }
+    if (
+      (filterRaw.fromBlock !== undefined && filterRaw.fromBlock !== null) ||
+      (filterRaw.toBlock !== undefined && filterRaw.toBlock !== null)
+    ) {
+      return { error: "blockHash cannot be combined with fromBlock/toBlock" };
+    }
+    try {
+      blockHash = [ensureLen(parseDataHex(filterRaw.blockHash), 32, "blockHash")];
+    } catch (error) {
+      return { error: toErrorMessage(error) };
+    }
   }
   if ("address" in filterRaw && filterRaw.address !== undefined) {
     if (typeof filterRaw.address !== "string") {
@@ -903,18 +953,15 @@ async function parseLogsFilter(
       return { error: toErrorMessage(error) };
     }
   }
-  return {
-    value: {
-      candid: {
-        limit: [],
-        topic0: topicsOut.value.topic0,
-        topic1: topicsOut.value.topic1,
-        address,
-        from_block: fromBlock.value === undefined ? [] : [fromBlock.value],
-        to_block: toBlock.value === undefined ? [] : [toBlock.value],
-      },
-    },
-  };
+  const candidFilters: EthLogFilterView[] = topicsOut.value.topic0Candidates.map((topic0) => ({
+    limit: [],
+    topic0,
+    topic1: [],
+    address,
+    from_block: fromBlock.value === undefined ? [] : [fromBlock.value],
+    to_block: toBlock.value === undefined ? [] : [toBlock.value],
+  }));
+  return { value: { candidFilters, blockHash } };
 }
 
 async function resolveLogsBlockTag(
@@ -943,9 +990,9 @@ async function resolveLogsBlockTag(
 
 function parseTopicsFilter(
   topicsRaw: unknown
-): { value: { topic0: [] | [Uint8Array]; topic1: [] | [Uint8Array] } } | { error: string } {
+): { value: { topic0Candidates: Array<[] | [Uint8Array]> } } | { error: string } {
   if (topicsRaw === undefined) {
-    return { value: { topic0: [], topic1: [] } };
+    return { value: { topic0Candidates: [[]] } };
   }
   if (!Array.isArray(topicsRaw)) {
     return { error: "topics must be array" };
@@ -957,7 +1004,7 @@ function parseTopicsFilter(
       }
     }
   }
-  const topic0 = parseTopicAt(topicsRaw[0], 0);
+  const topic0 = parseTopic0Candidates(topicsRaw[0], 0);
   if ("error" in topic0) {
     return topic0;
   }
@@ -968,7 +1015,7 @@ function parseTopicsFilter(
   if (topic1.value.length > 0) {
     return { error: "only topics[0] is supported" };
   }
-  return { value: { topic0: topic0.value, topic1: topic1.value } };
+  return { value: { topic0Candidates: topic0.value } };
 }
 
 function parseTopicAt(value: unknown, index: number): { value: [] | [Uint8Array] } | { error: string } {
@@ -988,15 +1035,60 @@ function parseTopicAt(value: unknown, index: number): { value: [] | [Uint8Array]
   }
 }
 
+function parseTopic0Candidates(
+  value: unknown,
+  index: number
+): { value: Array<[] | [Uint8Array]> } | { error: string } {
+  if (value === undefined || value === null) {
+    return { value: [[]] };
+  }
+  if (Array.isArray(value)) {
+    if (value.length === 0) {
+      return { error: `topics[${index}] OR条件(array)は1件以上必要です` };
+    }
+    if (value.length > LOGS_MAX_TOPIC0_OR_TERMS) {
+      return {
+        error: `topics[${index}] OR条件(array)は最大${LOGS_MAX_TOPIC0_OR_TERMS}件までです`,
+      };
+    }
+    const candidates: Array<[] | [Uint8Array]> = [];
+    const dedupe = new Set<string>();
+    for (const item of value) {
+      if (item === null) {
+        return { error: `topics[${index}] OR条件(array)にnullは指定できません` };
+      }
+      const parsed = parseTopicAt(item, index);
+      if ("error" in parsed) {
+        return parsed;
+      }
+      if (parsed.value.length === 0) {
+        return { error: `topics[${index}] OR条件(array)にnullは指定できません` };
+      }
+      const candidate = toDataHex(parsed.value[0]);
+      if (dedupe.has(candidate)) {
+        continue;
+      }
+      dedupe.add(candidate);
+      candidates.push(parsed.value);
+    }
+    return { value: candidates };
+  }
+  const parsed = parseTopicAt(value, index);
+  if ("error" in parsed) {
+    return parsed;
+  }
+  return { value: [parsed.value] };
+}
+
 async function collectLogs(
   actor: Awaited<ReturnType<typeof getActor>>,
-  filter: ParsedLogsFilter
+  filter: EthLogFilterView
 ): Promise<{ value: EthLogsPageView["items"] } | { error: { code: number; message: string; data: unknown } }> {
   let cursor: [] | [EthLogsCursorView] = [];
   let pages = 0;
   const items: EthLogsPageView["items"] = [];
   while (pages < LOGS_MAX_PAGES) {
-    const page = await actor.rpc_eth_get_logs_paged(filter.candid, cursor, LOGS_PAGE_LIMIT);
+    const page = await actor.rpc_eth_get_logs_paged(filter, cursor, LOGS_PAGE_LIMIT);
     if ("Err" in page) {
       return { error: mapGetLogsError(page.Err) };
     }
@@ -1033,19 +1125,44 @@ function mapGetLogsError(err: { TooManyResults: null } | { RangeTooLarge: null }
   return { code: -32005, message: "limit exceeded", data: { reason: "logs.too_many_results" } };
 }
 
-function mapLogItem(item: EthLogsPageView["items"][number]): Record<string, unknown> {
+async function resolveBlockNumberByHash(
+  actor: Awaited<ReturnType<typeof getActor>>,
+  blockHash: Uint8Array
+): Promise<bigint | null> {
+  const out = await actor.rpc_eth_get_block_number_by_hash(blockHash, CONFIG.logsBlockhashScanLimit);
+  if ("Err" in out) {
+    throw new Error(out.Err);
+  }
+  return out.Ok.length === 0 ? null : out.Ok[0];
+}
+
+function mapLogItem(item: EthLogsPageView["items"][number], blockHash: [] | [Uint8Array]): Record<string, unknown> {
   const txHash = item.eth_tx_hash.length === 0 ? item.tx_hash : item.eth_tx_hash[0];
   return {
     address: toDataHex(item.address),
     topics: item.topics.map((topic) => toDataHex(topic)),
     data: toDataHex(item.data),
     blockNumber: toQuantityHex(item.block_number),
-    blockHash: null,
+    blockHash: blockHash.length === 0 ? null : toDataHex(blockHash[0]),
     transactionHash: toDataHex(txHash),
     transactionIndex: toQuantityHex(BigInt(item.tx_index)),
     logIndex: toQuantityHex(BigInt(item.log_index)),
     removed: false,
   };
+}
+
+function sortLogItems(items: EthLogsPageView["items"]): EthLogsPageView["items"] {
+  const copied = [...items];
+  copied.sort((a, b) => {
+    if (a.block_number !== b.block_number) {
+      return a.block_number < b.block_number ? -1 : 1;
+    }
+    if (a.tx_index !== b.tx_index) {
+      return a.tx_index - b.tx_index;
+    }
+    return a.log_index - b.log_index;
+  });
+  return copied;
 }
 
 async function resolveBlockTag(blockTag: unknown, getHead: () => Promise<bigint>): Promise<bigint> {
@@ -1070,16 +1187,6 @@ function isLatestTag(blockTag: unknown): boolean {
     normalized === "safe" ||
     normalized === "finalized"
   );
-}
-
-function normalizeBlockTag(blockTag: unknown): string | undefined {
-  if (typeof blockTag === "string") {
-    return blockTag.trim().toLowerCase();
-  }
-  if (blockTag instanceof String) {
-    return blockTag.toString().trim().toLowerCase();
-  }
-  return undefined;
 }
 
 function parseCallObject(value: unknown): ParsedCallObject | { error: string } {
@@ -1270,7 +1377,6 @@ export function __test_map_rpc_error(
 ): JsonRpcResponse {
   return mapRpcError(id, err, fallbackMessage);
 }
-
 function normalizeStorageSlot32(slot: string): Uint8Array {
   if (slot.startsWith("0x") && slot.length === 66) {
     return ensureLen(parseDataHex(slot), 32, "slot");
@@ -1306,6 +1412,25 @@ function isRecord(value: unknown): value is Record<string, unknown> {
     return false;
   }
   return true;
+}
+
+function normalizeBlockTag(blockTag: unknown): string | undefined {
+  let normalizedInput: unknown = blockTag;
+  if (isRecord(blockTag)) {
+    if ("blockHash" in blockTag) {
+      return undefined;
+    }
+    if ("blockNumber" in blockTag) {
+      normalizedInput = blockTag.blockNumber;
+    }
+  }
+  if (typeof normalizedInput === "string") {
+    return normalizedInput.trim().toLowerCase();
+  }
+  if (normalizedInput instanceof String) {
+    return normalizedInput.toString().trim().toLowerCase();
+  }
+  return undefined;
 }
 
 function parseAccessList(value: unknown): ParsedAccessListItem[] | { error: string } {

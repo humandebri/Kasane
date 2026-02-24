@@ -73,6 +73,32 @@ pub fn rpc_eth_get_transaction_receipt_with_status(tx_hash_or_id: Vec<u8>) -> Rp
     receipt_lookup_status(tx_id)
 }
 
+pub fn rpc_eth_get_block_number_by_hash(
+    block_hash: Vec<u8>,
+    max_scan: u32,
+) -> Result<Option<u64>, String> {
+    let target =
+        parse_hash_32(block_hash).ok_or_else(|| "block_hash must be 32 bytes".to_string())?;
+    if max_scan == 0 {
+        return Ok(None);
+    }
+    let mut number = chain::get_head_number();
+    let mut scanned = 0u32;
+    while scanned < max_scan {
+        if let Some(block) = chain::get_block(number) {
+            if block.block_hash == target {
+                return Ok(Some(number));
+            }
+        }
+        scanned = scanned.saturating_add(1);
+        if number == 0 {
+            break;
+        }
+        number = number.saturating_sub(1);
+    }
+    Ok(None)
+}
+
 pub fn rpc_eth_get_balance(address: Vec<u8>) -> Result<Vec<u8>, String> {
     let addr = parse_address_20_with_label(address, "address")?;
     let key = make_account_key(addr);

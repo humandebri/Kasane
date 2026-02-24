@@ -89,12 +89,12 @@ npm run dev
 | `eth_getTransactionByHash` | Supported | `eth_tx_hash` で取引を参照する | `tx_id` 直接参照なし。migration未完了/critical corrupt時は `-32000 state unavailable` | canister では `rpc_eth_get_transaction_by_eth_hash` |
 | `eth_getTransactionReceipt` | Partially supported | `eth_tx_hash` で receipt を参照する | `tx_id` 直接参照なし。migration未完了/critical corrupt時は `-32000`、pruned範囲は `-32001` | canister では `rpc_eth_get_transaction_receipt_with_status` |
 | `eth_getBalance` | Partially supported | 残高取得を返す | blockTag は受理するが評価には使わない（常に最新） | 不正入力は `-32602` |
-| `eth_getTransactionCount` | Partially supported | canister `rpc_eth_get_transaction_count_at(address, tag)` を返す | `pending` は pending nonce。`earliest/QUANTITY` は out-of-window なら `invalid.block_range.out_of_window`、範囲内でも historical nonce 未提供のため `exec.state.unavailable` | `earliest` は block `0` として評価 |
-| `eth_getCode` | Partially supported | コードを返す | `blockTag` は `latest/pending/safe/finalized` のみ | 不正入力は `-32602` |
-| `eth_getStorageAt` | Partially supported | ストレージ値を返す | `blockTag` は `latest/pending/safe/finalized` のみ | `slot` は QUANTITY/DATA(32bytes) の両対応 |
-| `eth_getLogs` | Partially supported | `rpc_eth_get_logs_paged` で収集して返す | `blockHash` 非対応、`address` は単一のみ、`topics` は `topics[0]` のみ、OR配列非対応 | 大きすぎる範囲は `-32005 limit exceeded` |
-| `eth_call` | Partially supported | callObject + tag を canister `rpc_eth_call_object_at` に委譲 | 歴史状態実行は未提供。保持範囲内でも `exec.state.unavailable` があり得る | revert は `-32000` + `error.data` |
-| `eth_estimateGas` | Partially supported | callObject + tag を canister `rpc_eth_estimate_gas_object_at` に委譲 | 歴史状態実行は未提供。保持範囲内でも `exec.state.unavailable` があり得る | canister `Err` を `-32602`/`-32000` にマップ |
+| `eth_getTransactionCount` | Partially supported | canister `rpc_eth_get_transaction_count_at(address, tag)` を返す | `pending` は pending nonce。`earliest/QUANTITY` は out-of-window なら `invalid.block_range.out_of_window`、範囲内は latest nonce 同義 | `earliest` は block `0` として評価 |
+| `eth_getCode` | Partially supported | コードを返す | `blockTag` は `latest` 系のみ（文字列または `{ blockNumber: "latest|pending|safe|finalized" }`） | 不正入力は `-32602` |
+| `eth_getStorageAt` | Partially supported | ストレージ値を返す | `blockTag` は `latest` 系のみ（文字列または `{ blockNumber: "latest|pending|safe|finalized" }`） | `slot` は QUANTITY/DATA(32bytes) の両対応 |
+| `eth_getLogs` | Partially supported | `rpc_eth_get_logs_paged` で収集して返す（`topics[0]` OR配列はGatewayで展開してマージ） | `address` は単一のみ、`topics[1+]` は未対応、`blockHash` は直近 `RPC_GATEWAY_LOGS_BLOCKHASH_SCAN_LIMIT` ブロック走査で解決（既定 `2000`） | 大きすぎる範囲は `-32005 limit exceeded` |
+| `eth_call` | Partially supported | callObject + tag を canister `rpc_eth_call_object_at` に委譲 | 歴史状態実行は未提供。範囲外は `invalid.block_range.out_of_window`、範囲内でも `exec.state.unavailable` があり得る | revert は `-32000` + `error.data` |
+| `eth_estimateGas` | Partially supported | callObject + tag を canister `rpc_eth_estimate_gas_object_at` に委譲 | 歴史状態実行は未提供。範囲外は `invalid.block_range.out_of_window`、範囲内でも `exec.state.unavailable` があり得る | canister `Err` を `-32602`/`-32000` にマップ |
 | `eth_sendRawTransaction` | Supported | 生txを canister submit API に委譲し、返却 `tx_id` から `eth_tx_hash` を解決して `0x...` を返す | submit失敗はJSON-RPCエラーへマップ。`eth_tx_hash` 解決不能時は `-32000` を返す | canister では `rpc_eth_send_raw_transaction` |
 | `eth_newFilter` / `eth_getFilterChanges` / `eth_uninstallFilter` | Not supported | filter系は未実装 | Phase2スコープ外 | `rpc_eth_get_logs_paged` を利用 |
 | `eth_subscribe` / `eth_unsubscribe` | Not supported | WebSocket購読は未実装 | Phase2スコープ外 | `eth_blockNumber` ポーリング運用 |
@@ -136,7 +136,9 @@ npm run dev
   - 残す: `gasLimit` -> `gas`、QUANTITY の 10進文字列正規化、`String` オブジェクト/空白付き tag 正規化
   - 削除: `earliest/0x...` の `latest` 暗黙丸め、メソッド別の隠れ fallback
 - 起動時に canister API probe（`rpc_eth_history_window`）を実行し、互換不一致なら `incompatible.canister.api` として fail-fast します。
-- `eth_getLogs` は canister 側制約に合わせ、`blockHash` / topics OR配列 / `topics[2+]` を未対応としています。
+- `eth_getLogs` は canister 側制約（`topic1`未対応）に合わせ、Gatewayで `topics[0]` OR配列を展開してマージします。`topics[1+]` は未対応です。
+- `eth_getLogs` の `blockHash` は Gateway で直近 `RPC_GATEWAY_LOGS_BLOCKHASH_SCAN_LIMIT` ブロックを走査して `blockNumber` に解決します（既定 `2000`）。`fromBlock/toBlock` との併用は `-32602` で拒否します。
+- `eth_getLogs` の `blockHash` 未解決時は `code=-32000`, `message=\"Block not found.\"`, `data=\"0x...\"` を返します（EIP-234/Geth互換寄り）。
 - 入力不正は `-32602 invalid params` を返します（hex不正/長さ不正/callObject不整合を含む）。
 - `eth_call` の revert は `error.code = -32000` で、`error.data` に hex 文字列（`0x...`）を返します。
 - canister `Err` は `RpcErrorView { code, message, error_prefix? }` の構造化形式です。
@@ -154,14 +156,14 @@ npm run dev
 
 実フロント実装前に、次の方針を前提にしてください。
 
-1. 単一 address + `topics[0]` のみを使う（OR配列は使わない）
-2. `blockHash` 指定は使わず、`fromBlock/toBlock` で範囲を絞る
+1. 単一 address + `topics[0]` を使う（OR配列は最大16件まで）
+2. `blockHash` は使えるが、古いブロックは解決できない場合があるため `fromBlock/toBlock` 優先
 3. 範囲は短く分割して取得する（`-32005 limit exceeded` 回避）
 
 この制限で不足が出る条件:
 - 複数コントラクトを同時検索したい
-- topics の OR 検索（例: `topics[0]=[A,B]`）が必要
-- blockHash 固定で1ブロック厳密検索したい
+- `topics[1+]` の条件検索が必要
+- 走査上限（`RPC_GATEWAY_LOGS_BLOCKHASH_SCAN_LIMIT`）より古い `blockHash` 固定検索が必要
 
 不足が出たら、次段で `address[]` / OR topics / `blockHash` を順次実装します。
 
@@ -170,6 +172,7 @@ npm run dev
 - `RPC_GATEWAY_MAX_HTTP_BODY_SIZE` (default: 262144)
 - `RPC_GATEWAY_MAX_BATCH_LEN` (default: 20)
 - `RPC_GATEWAY_MAX_JSON_DEPTH` (default: 20)
+- `RPC_GATEWAY_LOGS_BLOCKHASH_SCAN_LIMIT` (default: 2000)
 - `RPC_GATEWAY_CORS_ORIGIN` (default: `*`)
   - `*` もしくはカンマ区切りallowlist（例: `https://kasane.network,http://localhost:3000`）
 - `RPC_SEMANTICS_VERSION` (default: `kasane-rpc-semantics/v1`)

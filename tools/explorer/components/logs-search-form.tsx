@@ -10,6 +10,7 @@ type LogsFilters = {
   toBlock: string;
   address: string;
   topic0: string;
+  blockHash: string;
   window: string;
 };
 
@@ -49,7 +50,7 @@ export function LogsSearchForm({ initialFilters }: Props) {
 
   return (
     <form
-      className="grid grid-cols-1 gap-2 md:grid-cols-5"
+      className="grid grid-cols-1 gap-2 md:grid-cols-6"
       onSubmit={(event) => {
         event.preventDefault();
         commit();
@@ -120,6 +121,22 @@ export function LogsSearchForm({ initialFilters }: Props) {
         className="h-9 rounded-md border px-3 text-sm font-mono"
       />
       <input
+        name="blockHash"
+        placeholder="blockHash"
+        value={filters.blockHash}
+        onChange={(event) => {
+          setFilters((prev) => ({ ...prev, blockHash: event.target.value }));
+        }}
+        onBlur={commit}
+        onKeyDown={(event) => {
+          if (event.key === "Enter") {
+            event.preventDefault();
+            commit();
+          }
+        }}
+        className="h-9 rounded-md border px-3 text-sm font-mono"
+      />
+      <input
         name="window"
         placeholder="window"
         value={filters.window}
@@ -145,11 +162,13 @@ function buildQuery(filters: LogsFilters): URLSearchParams {
   const toBlock = filters.toBlock.trim();
   const address = filters.address.trim();
   const topic0 = filters.topic0.trim();
+  const blockHash = filters.blockHash.trim();
   const window = filters.window.trim();
   if (fromBlock !== "") query.set("fromBlock", fromBlock);
   if (toBlock !== "") query.set("toBlock", toBlock);
   if (address !== "") query.set("address", address);
   if (topic0 !== "") query.set("topic0", topic0);
+  if (blockHash !== "") query.set("blockHash", blockHash);
   if (window !== "") query.set("window", window);
   return query;
 }
