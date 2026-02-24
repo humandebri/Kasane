@@ -206,12 +206,12 @@ async function onFeeHistory(id: string | number | null, params: unknown): Promis
     reward?: string[][];
   } = {
     oldestBlock: toQuantityHex(fee.oldest_block),
-    baseFeePerGas: fee.base_fee_per_gas.map((value) => toQuantityHex(value)),
-    gasUsedRatio: fee.gas_used_ratio,
+    baseFeePerGas: Array.from(fee.base_fee_per_gas, (value) => toQuantityHex(value)),
+    gasUsedRatio: Array.from(fee.gas_used_ratio),
   };
   const rewardRows = fee.reward[0];
   if (rewardRows !== undefined) {
-    result.reward = rewardRows.map((row) => row.map((value) => toQuantityHex(value)));
+    result.reward = Array.from(rewardRows, (row) => Array.from(row, (value) => toQuantityHex(value)));
   }
   return makeSuccess(id, result);
 }
