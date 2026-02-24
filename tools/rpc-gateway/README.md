@@ -89,7 +89,7 @@ npm run dev
 | `eth_getTransactionByHash` | Supported | `eth_tx_hash` で取引を参照する | `tx_id` 直接参照なし。migration未完了/critical corrupt時は `-32000 state unavailable` | canister では `rpc_eth_get_transaction_by_eth_hash` |
 | `eth_getTransactionReceipt` | Partially supported | `eth_tx_hash` で receipt を参照する | `tx_id` 直接参照なし。migration未完了/critical corrupt時は `-32000`、pruned範囲は `-32001` | canister では `rpc_eth_get_transaction_receipt_with_status` |
 | `eth_getBalance` | Partially supported | 残高取得を返す | blockTag は受理するが評価には使わない（常に最新） | 不正入力は `-32602` |
-| `eth_getTransactionCount` | Partially supported | canister `rpc_eth_get_transaction_count_at(address, tag)` を返す | `pending` は pending nonce。`earliest/QUANTITY` は out-of-window なら `invalid.block_range.out_of_window`、範囲内は latest nonce 同義 | `earliest` は block `0` として評価 |
+| `eth_getTransactionCount` | Partially supported | canister `rpc_eth_get_transaction_count_at(address, tag)` を返す | `pending` は pending nonce。`earliest/QUANTITY` は out-of-window なら `invalid.block_range.out_of_window`、範囲内でも historical nonce 未提供のため `exec.state.unavailable` | `earliest` は block `0` として評価 |
 | `eth_getCode` | Partially supported | コードを返す | `blockTag` は `latest` 系のみ（文字列または `{ blockNumber: "latest|pending|safe|finalized" }`） | 不正入力は `-32602` |
 | `eth_getStorageAt` | Partially supported | ストレージ値を返す | `blockTag` は `latest` 系のみ（文字列または `{ blockNumber: "latest|pending|safe|finalized" }`） | `slot` は QUANTITY/DATA(32bytes) の両対応 |
 | `eth_getLogs` | Partially supported | `rpc_eth_get_logs_paged` で収集して返す（`topics[0]` OR配列はGatewayで展開してマージ） | `address` は単一のみ、`topics[1+]` は未対応、`blockHash` は直近 `RPC_GATEWAY_LOGS_BLOCKHASH_SCAN_LIMIT` ブロック走査で解決（既定 `2000`） | 大きすぎる範囲は `-32005 limit exceeded` |
