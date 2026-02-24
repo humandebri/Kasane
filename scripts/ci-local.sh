@@ -20,6 +20,9 @@ trap phase_fail ERR
 run_github_equivalent_phase() {
   CURRENT_PHASE="github"
   echo "[phase=${CURRENT_PHASE}] start"
+  local snapshot_dir
+  snapshot_dir="$(mktemp -d "${TMPDIR:-/tmp}/kasane-supply-chain.XXXXXX")"
+  trap 'rm -rf "${snapshot_dir}"' RETURN
 
   scripts/check_rng_paths.sh
   scripts/check_getrandom_wasm_features.sh
@@ -53,9 +56,9 @@ run_github_equivalent_phase() {
   cargo deny check
   cargo audit --deny warnings --ignore RUSTSEC-2024-0388 --ignore RUSTSEC-2024-0436
 
-  cargo metadata --locked --format-version 1 > cargo-metadata.sbom.json
-  find vendor/revm -type f -print0 | sort -z | xargs -0 sha256sum > vendor-revm.sha256
-  find vendor/ark-relations -type f -print0 | sort -z | xargs -0 sha256sum > vendor-ark-relations.sha256
+  cargo metadata --locked --format-version 1 > "${snapshot_dir}/cargo-metadata.sbom.json"
+  find vendor/revm -type f -print0 | sort -z | xargs -0 sha256sum > "${snapshot_dir}/vendor-revm.sha256"
+  find vendor/ark-relations -type f -print0 | sort -z | xargs -0 sha256sum > "${snapshot_dir}/vendor-ark-relations.sha256"
 
   cargo test -p evm-db -p ic-evm-core -p ic-evm-wrapper --locked --lib --tests
   cargo test --manifest-path crates/evm-rpc-e2e/Cargo.toml --no-run --locked

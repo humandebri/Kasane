@@ -35,3 +35,7 @@ dist/
 
 # ops reports
 docs/ops/reports/
+
+# local ci supply-chain snapshots
+/cargo-metadata.sbom.json
+/vendor-revm.sha256
