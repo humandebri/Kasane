@@ -9,17 +9,17 @@ use evm_db::chain_data::constants::{MAX_QUEUE_SNAPSHOT_LIMIT, MAX_RETURN_DATA, M
 #[cfg(test)]
 use evm_db::chain_data::StoredTx;
 use evm_db::chain_data::DEFAULT_MINING_INTERVAL_MS;
+use evm_db::chain_data::MIN_PRUNE_MAX_OPS_PER_TICK;
 use evm_db::chain_data::{
     BlockData, MigrationPhase, OpsMode, ReceiptLike, TxId, TxKind, TxLoc, TxLocKind,
     LOG_CONFIG_FILTER_MAX,
 };
-use evm_db::chain_data::MIN_PRUNE_MAX_OPS_PER_TICK;
+use evm_db::memory::{all_memory_regions, memory_size_pages, WASM_PAGE_SIZE_BYTES};
 use evm_db::meta::{
     current_schema_version, ensure_meta_initialized, get_meta, mark_migration_applied,
     schema_migration_state, set_needs_migration, set_schema_migration_state, set_tx_locs_v3_active,
     SchemaMigrationPhase, SchemaMigrationState,
 };
-use evm_db::memory::{all_memory_regions, memory_size_pages, WASM_PAGE_SIZE_BYTES};
 use evm_db::stable_state::{init_stable_state, with_state};
 use evm_db::upgrade;
 use ic_cdk::api::{
@@ -313,10 +313,9 @@ fn chain_submit_error_to_code(err: &chain::ChainError) -> Option<(TxApiErrorKind
         chain::ChainError::DecodeFailed => {
             Some((TxApiErrorKind::InvalidArgument, CODE_ARG_DECODE_FAILED))
         }
-        chain::ChainError::AddressDerivationFailed => Some((
-            TxApiErrorKind::InvalidArgument,
-            CODE_ARG_DERIVATION_FAILED,
-        )),
+        chain::ChainError::AddressDerivationFailed => {
+            Some((TxApiErrorKind::InvalidArgument, CODE_ARG_DERIVATION_FAILED))
+        }
         chain::ChainError::UnsupportedTxKind => Some((
             TxApiErrorKind::InvalidArgument,
             CODE_ARG_UNSUPPORTED_TX_KIND,
@@ -599,8 +598,51 @@ fn rpc_eth_call_object(call: RpcCallObjectView) -> Result<RpcCallResultView, Rpc
 }
 
 #[ic_cdk::query]
+fn rpc_eth_call_object_at(
+    call: RpcCallObjectView,
+    tag: RpcBlockTagView,
+) -> Result<RpcCallResultView, RpcErrorView> {
+    ic_evm_rpc::rpc_eth_call_object_at(call, tag)
+}
+
+#[ic_cdk::query]
 fn rpc_eth_estimate_gas_object(call: RpcCallObjectView) -> Result<u64, RpcErrorView> {
     ic_evm_rpc::rpc_eth_estimate_gas_object(call)
+}
+
+#[ic_cdk::query]
+fn rpc_eth_estimate_gas_object_at(
+    call: RpcCallObjectView,
+    tag: RpcBlockTagView,
+) -> Result<u64, RpcErrorView> {
+    ic_evm_rpc::rpc_eth_estimate_gas_object_at(call, tag)
+}
+
+#[ic_cdk::query]
+fn rpc_eth_get_transaction_count_at(
+    address: Vec<u8>,
+    tag: RpcBlockTagView,
+) -> Result<u64, RpcErrorView> {
+    ic_evm_rpc::rpc_eth_get_transaction_count_at(address, tag)
+}
+
+#[ic_cdk::query]
+fn rpc_eth_max_priority_fee_per_gas() -> Result<candid::Nat, RpcErrorView> {
+    ic_evm_rpc::rpc_eth_max_priority_fee_per_gas().map(candid::Nat::from)
+}
+
+#[ic_cdk::query]
+fn rpc_eth_fee_history(
+    block_count: u64,
+    newest: RpcBlockTagView,
+    reward_percentiles: Option<Vec<f64>>,
+) -> Result<RpcFeeHistoryView, RpcErrorView> {
+    ic_evm_rpc::rpc_eth_fee_history(block_count, newest, reward_percentiles)
+}
+
+#[ic_cdk::query]
+fn rpc_eth_history_window() -> RpcHistoryWindowView {
+    ic_evm_rpc::rpc_eth_history_window()
 }
 
 #[ic_cdk::query]
@@ -838,8 +880,12 @@ fn memory_breakdown() -> MemoryBreakdownView {
             }
         })
         .collect();
-    let regions_pages_total = regions.iter().fold(0u64, |acc, r| acc.saturating_add(r.pages));
-    let regions_bytes_total = regions.iter().fold(0u64, |acc, r| acc.saturating_add(r.bytes));
+    let regions_pages_total = regions
+        .iter()
+        .fold(0u64, |acc, r| acc.saturating_add(r.pages));
+    let regions_bytes_total = regions
+        .iter()
+        .fold(0u64, |acc, r| acc.saturating_add(r.bytes));
     let unattributed_stable_pages = stable_pages_total.saturating_sub(regions_pages_total);
     let unattributed_stable_bytes = stable_bytes_total.saturating_sub(regions_bytes_total);
     MemoryBreakdownView {
@@ -1084,9 +1130,9 @@ fn current_stable_memory_pages() -> u64 {
 
 #[cfg(not(target_arch = "wasm32"))]
 fn current_stable_memory_pages() -> u64 {
-    all_memory_regions()
-        .iter()
-        .fold(0u64, |acc, region| acc.saturating_add(memory_size_pages(region.id)))
+    all_memory_regions().iter().fold(0u64, |acc, region| {
+        acc.saturating_add(memory_size_pages(region.id))
+    })
 }
 
 #[cfg(test)]
@@ -1571,7 +1617,8 @@ fn run_cycle_observer_once() -> CycleObserverTickOutcome {
     }
     let migration_pending = migration_pending();
     let mode = observe_cycles();
-    let schedule_mining_called = should_schedule_mining_after_cycle_observer(mode, migration_pending);
+    let schedule_mining_called =
+        should_schedule_mining_after_cycle_observer(mode, migration_pending);
     if schedule_mining_called {
         schedule_mining();
     }
@@ -1601,10 +1648,7 @@ fn schedule_mining() {
     schedule_mining_with_timer(install_mining_timer, reject_write_reason);
 }
 
-fn schedule_mining_with_timer(
-    timer_scheduler: fn(u64),
-    reject_provider: fn() -> Option<String>,
-) {
+fn schedule_mining_with_timer(timer_scheduler: fn(u64), reject_provider: fn() -> Option<String>) {
     if reject_provider().is_some() {
         return;
     }
@@ -1650,10 +1694,7 @@ fn mining_tick() {
     mining_tick_with_timer(install_mining_timer, reject_write_reason);
 }
 
-fn mining_tick_with_timer(
-    timer_scheduler: fn(u64),
-    reject_provider: fn() -> Option<String>,
-) {
+fn mining_tick_with_timer(timer_scheduler: fn(u64), reject_provider: fn() -> Option<String>) {
     if reject_provider().is_some() {
         evm_db::stable_state::with_state_mut(|state| {
             let mut chain_state = *state.chain_state.get();
@@ -1743,11 +1784,10 @@ mod tests {
         inspect_lightweight_tx_guard, inspect_payload_limit_for_method, inspect_policy_for_method,
         map_execute_chain_result, map_submit_chain_error, migration_pending,
         prune_boundary_for_number, receipt_lookup_status, reject_anonymous_principal,
-        reject_write_reason,
-        should_run_cycle_observer_migration_tick, should_schedule_mining_after_cycle_observer,
-        tx_id_from_bytes, validate_prune_policy_input, EthLogFilterView,
-        ExecuteTxError, GetLogsErrorView, PrunePolicyView, INSPECT_METHOD_POLICIES,
-        MINING_ERROR_COUNT, PRUNE_ERROR_COUNT,
+        reject_write_reason, should_run_cycle_observer_migration_tick,
+        should_schedule_mining_after_cycle_observer, tx_id_from_bytes, validate_prune_policy_input,
+        EthLogFilterView, ExecuteTxError, GetLogsErrorView, PrunePolicyView,
+        INSPECT_METHOD_POLICIES, MINING_ERROR_COUNT, PRUNE_ERROR_COUNT,
     };
     use candid::{encode_one, Principal};
     use evm_core::chain::{ChainError, ExecResult};
@@ -2022,8 +2062,9 @@ mod tests {
 
     #[test]
     fn producer_gate_cycle_critical_reason_is_stable() {
-        let reason = ic_evm_ops::reject_write_reason_with_mode_provider(false, || OpsMode::Critical)
-            .expect("critical mode must reject");
+        let reason =
+            ic_evm_ops::reject_write_reason_with_mode_provider(false, || OpsMode::Critical)
+                .expect("critical mode must reject");
         assert_eq!(reason, "ops.write.cycle_critical");
     }
 
@@ -2058,10 +2099,22 @@ mod tests {
 
     #[test]
     fn cycle_observer_schedule_mining_condition_is_explicit() {
-        assert!(should_schedule_mining_after_cycle_observer(OpsMode::Normal, false));
-        assert!(should_schedule_mining_after_cycle_observer(OpsMode::Low, false));
-        assert!(!should_schedule_mining_after_cycle_observer(OpsMode::Critical, false));
-        assert!(!should_schedule_mining_after_cycle_observer(OpsMode::Normal, true));
+        assert!(should_schedule_mining_after_cycle_observer(
+            OpsMode::Normal,
+            false
+        ));
+        assert!(should_schedule_mining_after_cycle_observer(
+            OpsMode::Low,
+            false
+        ));
+        assert!(!should_schedule_mining_after_cycle_observer(
+            OpsMode::Critical,
+            false
+        ));
+        assert!(!should_schedule_mining_after_cycle_observer(
+            OpsMode::Normal,
+            true
+        ));
     }
 
     #[test]
@@ -2126,17 +2179,15 @@ mod tests {
 
         let caller = Principal::self_authenticating(b"mining-tick-resume-caller");
         let canister = Principal::self_authenticating(b"mining-tick-resume-canister");
-        let (max_fee_per_gas, max_priority_fee_per_gas) = evm_db::stable_state::with_state(|state| {
-            let chain_state = *state.chain_state.get();
-            let min_priority = u128::from(chain_state.min_priority_fee);
-            let base_fee = u128::from(chain_state.base_fee);
-            let min_gas_price = u128::from(chain_state.min_gas_price);
-            let required_max_fee = base_fee.saturating_add(min_priority).max(min_gas_price);
-            (
-                required_max_fee,
-                min_priority,
-            )
-        });
+        let (max_fee_per_gas, max_priority_fee_per_gas) =
+            evm_db::stable_state::with_state(|state| {
+                let chain_state = *state.chain_state.get();
+                let min_priority = u128::from(chain_state.min_priority_fee);
+                let base_fee = u128::from(chain_state.base_fee);
+                let min_gas_price = u128::from(chain_state.min_gas_price);
+                let required_max_fee = base_fee.saturating_add(min_priority).max(min_gas_price);
+                (required_max_fee, min_priority)
+            });
         let tx_id = evm_core::chain::submit_ic_tx(
             caller.as_slice().to_vec(),
             canister.as_slice().to_vec(),
@@ -2169,14 +2220,15 @@ mod tests {
 
         let caller = Principal::self_authenticating(b"mining-drop-caller");
         let canister = Principal::self_authenticating(b"mining-drop-canister");
-        let (max_fee_per_gas, max_priority_fee_per_gas) = evm_db::stable_state::with_state(|state| {
-            let chain_state = *state.chain_state.get();
-            let min_priority = u128::from(chain_state.min_priority_fee);
-            let base_fee = u128::from(chain_state.base_fee);
-            let min_gas_price = u128::from(chain_state.min_gas_price);
-            let required_max_fee = base_fee.saturating_add(min_priority).max(min_gas_price);
-            (required_max_fee, min_priority)
-        });
+        let (max_fee_per_gas, max_priority_fee_per_gas) =
+            evm_db::stable_state::with_state(|state| {
+                let chain_state = *state.chain_state.get();
+                let min_priority = u128::from(chain_state.min_priority_fee);
+                let base_fee = u128::from(chain_state.base_fee);
+                let min_gas_price = u128::from(chain_state.min_gas_price);
+                let required_max_fee = base_fee.saturating_add(min_priority).max(min_gas_price);
+                (required_max_fee, min_priority)
+            });
         let tx_id = evm_core::chain::submit_ic_tx(
             caller.as_slice().to_vec(),
             canister.as_slice().to_vec(),
@@ -2428,7 +2480,8 @@ mod tests {
         );
         assert_eq!(
             view.regions_bytes_total,
-            view.regions_pages_total.saturating_mul(WASM_PAGE_SIZE_BYTES)
+            view.regions_pages_total
+                .saturating_mul(WASM_PAGE_SIZE_BYTES)
         );
         assert_eq!(
             view.unattributed_stable_bytes,
@@ -2437,11 +2490,13 @@ mod tests {
         );
         assert_eq!(
             view.unattributed_stable_pages,
-            view.stable_pages_total.saturating_sub(view.regions_pages_total)
+            view.stable_pages_total
+                .saturating_sub(view.regions_pages_total)
         );
         assert_eq!(
             view.unattributed_stable_bytes,
-            view.stable_bytes_total.saturating_sub(view.regions_bytes_total)
+            view.stable_bytes_total
+                .saturating_sub(view.regions_bytes_total)
         );
         for pair in view.regions.windows(2) {
             assert!(pair[0].id <= pair[1].id, "regions must be sorted by id");
@@ -2451,7 +2506,10 @@ mod tests {
         let mut sum_pages = 0u64;
         let mut sum_bytes = 0u64;
         for region in &view.regions {
-            assert_eq!(region.bytes, region.pages.saturating_mul(WASM_PAGE_SIZE_BYTES));
+            assert_eq!(
+                region.bytes,
+                region.pages.saturating_mul(WASM_PAGE_SIZE_BYTES)
+            );
             sum_pages = sum_pages.saturating_add(region.pages);
             sum_bytes = sum_bytes.saturating_add(region.bytes);
             if region.name == "TxStore" {

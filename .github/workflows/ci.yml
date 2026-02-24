@@ -92,6 +92,22 @@ jobs:
       - name: Check evm-rpc-e2e manifest builds
         run: cargo test --manifest-path crates/evm-rpc-e2e/Cargo.toml --no-run --locked
 
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: tools/rpc-gateway/package-lock.json
+
+      - name: RPC gateway tests and build
+        working-directory: tools/rpc-gateway
+        env:
+          EVM_CANISTER_ID: aaaaa-aa
+        run: |
+          npm ci
+          npm test
+          npm run build
+
       - name: Canbench regression guard
         env:
           CANBENCH_MAX_REGRESSION_PCT: "2.0"

@@ -19,6 +19,8 @@ scripts/mainnet/ic_mainnet_preflight.sh
 
 ## 2. デプロイ実行
 
+RPC互換変更を含むリリースは **canister → gateway** の順序を固定し、逆順デプロイを禁止する。
+
 既存 canister の通常更新（推奨）:
 
 ```bash
@@ -45,6 +47,7 @@ scripts/mainnet/ic_mainnet_deploy.sh
 2. query は `icp canister call` ではなく `scripts/query_smoke.sh`（`agent.query` 経路）で確認する。
 3. `get_ops_status` で `needs_migration=false` を確認する。
 4. read 系 RPC（`rpc_eth_chain_id`, `rpc_eth_block_number`）を確認する。
+5. `rpc_eth_history_window` が応答することを確認する（gateway起動fail-fast条件）。
 
 ```bash
 NETWORK=ic \
@@ -52,7 +55,7 @@ CANISTER_ID=<canister_id> \
 ICP_IDENTITY_NAME=ci-local \
 scripts/query_smoke.sh
 ```
-5. `scripts/query_smoke.sh` の出力をチェックする。必ずこのようなログが出ることを確認:
+6. `scripts/query_smoke.sh` の出力をチェックする。必ずこのようなログが出ることを確認:
    - `[query-smoke] chain_id=...` → 本番 chain_id（0 以外）で IC につながっていること。
    - `[query-smoke] ops_status needs_migration=false mode=<Low|Normal|Critical> block_gas_limit=... instruction_soft_limit=... last_cycle_balance=...`
      → `needs_migration=false` を確認し、`mode` が `Low`/`Normal` であること、gas 上限や soft limit も妥当な値を取ること。
@@ -64,6 +67,14 @@ scripts/query_smoke.sh
    - `total_submitted - total_included` が増え続けていないこと。
    - `effectiveGasPrice` が想定レンジ（運用値）に収まっていること。
    - `queue_len` が平常値に戻ること。
+
+### RPC意味論バージョン運用
+- `safe/finalized` は当面 `latest` 同義の暫定実装。
+- `earliest` は block `0` 固定で評価し、`oldest_available > 0` なら必ず `invalid.block_range.out_of_window` を返す。
+- `eth_getTransactionCount` の `earliest/QUANTITY` は、保持範囲内でも historical nonce 未提供のため `exec.state.unavailable` を返す。
+- `eth_maxPriorityFeePerGas` は観測データ不足時に `0x0` へフォールバックせず、`exec.state.unavailable` を返す。
+- 意味論変更時は `RPC_SEMANTICS_VERSION` を更新し、`web3_clientVersion` で識別可能にする。
+- エラー監視は JSON-RPC `error.data.error_prefix` 集計を基準にし、`invalid.block_range.out_of_window` / `invalid.fee_history.*` / `exec.state.unavailable` を主要キーとして扱う。
 
 ### Dropped code 対応表
 - `1`: `decode`

@@ -5,6 +5,7 @@ import {
   type EthLogsCursorView,
   type EthLogsPageView,
   getActor,
+  type BlockTag,
   type CallObject,
   type EthBlockView,
   type EthReceiptView,
@@ -19,10 +20,14 @@ const ZERO_8 = `0x${"0".repeat(16)}`;
 const ZERO_256 = `0x${"0".repeat(512)}`;
 const LOGS_PAGE_LIMIT = 500;
 const LOGS_MAX_PAGES = 20;
+const MAX_FEE_HISTORY_BLOCKS = 256;
+const EIP1559_BASE_FEE_MAX_CHANGE_DENOM = 8n;
+const EIP1559_ELASTICITY_MULTIPLIER = 2n;
 const SUPPORTED_CALL_KEYS = new Set([
   "to",
   "from",
   "gas",
+  "gasLimit",
   "gasPrice",
   "value",
   "data",
@@ -51,6 +56,18 @@ type ParsedCallObject = {
 type ParsedLogsFilter = {
   candid: EthLogFilterView;
 };
+type FeeHistoryParams = {
+  blockCount: number;
+  newestBlock: bigint;
+  rewardPercentiles: number[] | null;
+};
+type FeeHistoryBlockSample = {
+  number: bigint;
+  baseFeePerGas: bigint;
+  gasUsed: bigint;
+  gasLimit: bigint;
+  txTips: Array<{ tip: bigint; gasLimit: bigint }>;
+};
 
 export async function handleRpc(req: JsonRpcRequest): Promise<JsonRpcResponse | null> {
   const id = req.id ?? null;
@@ -74,6 +91,10 @@ export async function handleRpc(req: JsonRpcRequest): Promise<JsonRpcResponse | 
       }
       case "eth_gasPrice":
         return await onGasPrice(id);
+      case "eth_maxPriorityFeePerGas":
+        return await onMaxPriorityFeePerGas(id);
+      case "eth_feeHistory":
+        return await onFeeHistory(id, req.params);
       case "eth_getBlockByNumber":
         return await onGetBlockByNumber(id, req.params);
       case "eth_getTransactionByHash":
@@ -143,6 +164,54 @@ async function onGasPrice(id: string | number | null): Promise<JsonRpcResponse> 
     return makeError(id, -32000, "state unavailable", { detail: "base_fee_per_gas is unavailable" });
   }
   return makeSuccess(id, toQuantityHex(blockLookup.Found.base_fee_per_gas[0]));
+}
+
+async function onMaxPriorityFeePerGas(id: string | number | null): Promise<JsonRpcResponse> {
+  const actor = await getActor();
+  const out = await actor.rpc_eth_max_priority_fee_per_gas();
+  if ("Err" in out) {
+    return mapRpcError(id, out.Err, "state unavailable");
+  }
+  return makeSuccess(id, toQuantityHex(out.Ok));
+}
+
+async function onFeeHistory(id: string | number | null, params: unknown): Promise<JsonRpcResponse> {
+  let parsedParams: {
+    blockCount: bigint;
+    newestTag: BlockTag;
+    rewardPercentiles: [] | [number[]];
+  };
+  try {
+    parsedParams = parseFeeHistoryParams(params);
+  } catch (error) {
+    return makeInvalidParams(id, error);
+  }
+
+  const actor = await getActor();
+  const out = await actor.rpc_eth_fee_history(
+    parsedParams.blockCount,
+    parsedParams.newestTag,
+    parsedParams.rewardPercentiles
+  );
+  if ("Err" in out) {
+    return mapRpcError(id, out.Err, "state unavailable");
+  }
+  const fee = out.Ok;
+  const result: {
+    oldestBlock: string;
+    baseFeePerGas: string[];
+    gasUsedRatio: number[];
+    reward?: string[][];
+  } = {
+    oldestBlock: toQuantityHex(fee.oldest_block),
+    baseFeePerGas: fee.base_fee_per_gas.map((value) => toQuantityHex(value)),
+    gasUsedRatio: fee.gas_used_ratio,
+  };
+  const rewardRows = fee.reward[0];
+  if (rewardRows !== undefined) {
+    result.reward = rewardRows.map((row) => row.map((value) => toQuantityHex(value)));
+  }
+  return makeSuccess(id, result);
 }
 
 async function onGetTransactionByHash(id: string | number | null, params: unknown): Promise<JsonRpcResponse> {
@@ -242,8 +311,11 @@ async function onGetTransactionCount(id: string | number | null, params: unknown
   if (typeof addressRaw !== "string") {
     return makeError(id, ERR_INVALID_PARAMS, "address must be hex string");
   }
-  if (!isLatestTag(blockTagRaw)) {
-    return makeError(id, ERR_INVALID_PARAMS, "only latest/pending/safe/finalized blockTag is supported");
+  let tag: BlockTag;
+  try {
+    tag = parseExecutionBlockTag(blockTagRaw);
+  } catch (error) {
+    return makeInvalidParams(id, error);
   }
   let address: Uint8Array;
   try {
@@ -252,10 +324,8 @@ async function onGetTransactionCount(id: string | number | null, params: unknown
     return makeInvalidParams(id, error);
   }
   const actor = await getActor();
-  const out = await actor.expected_nonce_by_address(address);
-  return "Err" in out
-    ? makeError(id, -32000, "state unavailable", { detail: out.Err })
-    : makeSuccess(id, toQuantityHex(out.Ok));
+  const out = await actor.rpc_eth_get_transaction_count_at(address, tag);
+  return "Err" in out ? mapRpcError(id, out.Err, "state unavailable") : makeSuccess(id, toQuantityHex(out.Ok));
 }
 
 async function onGetCode(id: string | number | null, params: unknown): Promise<JsonRpcResponse> {
@@ -264,7 +334,7 @@ async function onGetCode(id: string | number | null, params: unknown): Promise<J
     return makeError(id, ERR_INVALID_PARAMS, "address must be hex string");
   }
   if (!isLatestTag(blockTagRaw)) {
-    return makeError(id, ERR_INVALID_PARAMS, "only latest blockTag is supported");
+    return makeError(id, ERR_INVALID_PARAMS, "only latest/pending/safe/finalized blockTag is supported");
   }
   let address: Uint8Array;
   try {
@@ -285,7 +355,7 @@ async function onGetStorageAt(id: string | number | null, params: unknown): Prom
     return makeError(id, ERR_INVALID_PARAMS, "address/slot must be hex string");
   }
   if (!isLatestTag(blockTagRaw)) {
-    return makeError(id, ERR_INVALID_PARAMS, "only latest blockTag is supported");
+    return makeError(id, ERR_INVALID_PARAMS, "only latest/pending/safe/finalized blockTag is supported");
   }
   let address: Uint8Array;
   let slot: Uint8Array;
@@ -318,8 +388,11 @@ async function onGetLogs(id: string | number | null, params: unknown): Promise<J
 
 async function onEthCall(id: string | number | null, params: unknown): Promise<JsonRpcResponse> {
   const [callRaw, blockTagRaw] = asCallParams(params);
-  if (!isLatestTag(blockTagRaw)) {
-    return makeError(id, ERR_INVALID_PARAMS, "only latest blockTag is supported");
+  let tag: BlockTag;
+  try {
+    tag = parseExecutionBlockTag(blockTagRaw);
+  } catch (error) {
+    return makeInvalidParams(id, error);
   }
   const call = parseCallObject(callRaw);
   if ("error" in call) {
@@ -332,12 +405,9 @@ async function onEthCall(id: string | number | null, params: unknown): Promise<J
     return makeInvalidParams(id, error);
   }
   const actor = await getActor();
-  const out = await actor.rpc_eth_call_object(candidCall);
+  const out = await actor.rpc_eth_call_object_at(candidCall, tag);
   if ("Err" in out) {
-    const code = classifyCallObjectErrCode(out.Err.code);
-    return code === ERR_INVALID_PARAMS
-      ? makeError(id, code, "invalid params", { detail: out.Err.message, rpc_code: out.Err.code })
-      : makeError(id, code, "execution failed", { detail: out.Err.message, rpc_code: out.Err.code });
+    return mapRpcError(id, out.Err, "execution failed");
   }
   if (out.Ok.status === 0) {
     return makeError(id, -32000, "execution reverted", revertDataToHex(out.Ok.revert_data));
@@ -347,8 +417,11 @@ async function onEthCall(id: string | number | null, params: unknown): Promise<J
 
 async function onEstimateGas(id: string | number | null, params: unknown): Promise<JsonRpcResponse> {
   const [callRaw, blockTagRaw] = asCallParams(params);
-  if (!isLatestTag(blockTagRaw)) {
-    return makeError(id, ERR_INVALID_PARAMS, "only latest blockTag is supported");
+  let tag: BlockTag;
+  try {
+    tag = parseExecutionBlockTag(blockTagRaw);
+  } catch (error) {
+    return makeInvalidParams(id, error);
   }
   const call = parseCallObject(callRaw);
   if ("error" in call) {
@@ -361,16 +434,8 @@ async function onEstimateGas(id: string | number | null, params: unknown): Promi
     return makeInvalidParams(id, error);
   }
   const actor = await getActor();
-  const out = await actor.rpc_eth_estimate_gas_object(candidCall);
-  const errCode = "Err" in out ? classifyCallObjectErrCode(out.Err.code) : -32000;
-  return "Err" in out
-    ? makeError(
-        id,
-        errCode,
-        errCode === ERR_INVALID_PARAMS ? "invalid params" : "estimate failed",
-        { detail: out.Err.message, rpc_code: out.Err.code }
-      )
-    : makeSuccess(id, toQuantityHex(out.Ok));
+  const out = await actor.rpc_eth_estimate_gas_object_at(candidCall, tag);
+  return "Err" in out ? mapRpcError(id, out.Err, "estimate failed") : makeSuccess(id, toQuantityHex(out.Ok));
 }
 
 async function onSendRawTransaction(id: string | number | null, params: unknown): Promise<JsonRpcResponse> {
@@ -510,6 +575,288 @@ function asTxCountParams(params: unknown): [unknown, unknown] {
   const addressRaw = params[0];
   const blockTagRaw = params.length >= 2 ? params[1] : "latest";
   return [addressRaw, blockTagRaw];
+}
+
+function mapRpcError(
+  id: string | number | null,
+  err: { code: number; message: string; error_prefix: [] | [string] },
+  fallbackMessage: string
+): JsonRpcResponse {
+  const code = classifyCallObjectErrCode(err.code);
+  const errorPrefix = err.error_prefix[0];
+  return makeError(
+    id,
+    code,
+    code === ERR_INVALID_PARAMS ? "invalid params" : fallbackMessage,
+    {
+      detail: err.message,
+      rpc_code: err.code,
+      error_prefix: errorPrefix ?? null,
+    }
+  );
+}
+
+function parseExecutionBlockTag(blockTag: unknown): BlockTag {
+  const normalized = normalizeBlockTag(blockTag);
+  if (normalized === undefined) {
+    throw new Error("blockTag must be latest/pending/safe/finalized/earliest or QUANTITY");
+  }
+  if (normalized === "latest") {
+    return { Latest: null };
+  }
+  if (normalized === "pending") {
+    return { Pending: null };
+  }
+  if (normalized === "safe") {
+    return { Safe: null };
+  }
+  if (normalized === "finalized") {
+    return { Finalized: null };
+  }
+  if (normalized === "earliest") {
+    return { Earliest: null };
+  }
+  return { Number: parseQuantityHex(normalized) };
+}
+
+function parseFeeHistoryParams(params: unknown): {
+  blockCount: bigint;
+  newestTag: BlockTag;
+  rewardPercentiles: [] | [number[]];
+} {
+  const arr = asParams(params, 2);
+  const blockCountRaw = arr[0];
+  const newestBlockRaw = arr[1];
+  const rewardPercentilesRaw = arr.length >= 3 ? arr[2] : undefined;
+
+  if (typeof blockCountRaw !== "string") {
+    throw new Error("blockCount must be QUANTITY");
+  }
+  const blockCountBig = parseQuantityHex(blockCountRaw);
+  if (blockCountBig < 1n) {
+    throw new Error("blockCount must be >= 1");
+  }
+  if (blockCountBig > BigInt(MAX_FEE_HISTORY_BLOCKS)) {
+    throw new Error(`blockCount must be <= ${MAX_FEE_HISTORY_BLOCKS}`);
+  }
+  const newestTag = parseExecutionBlockTag(newestBlockRaw);
+  const rewardPercentiles = parseRewardPercentiles(rewardPercentilesRaw);
+  return {
+    blockCount: blockCountBig,
+    newestTag,
+    rewardPercentiles: rewardPercentiles === null ? [] : [rewardPercentiles],
+  };
+}
+
+function parseRewardPercentiles(value: unknown): number[] | null {
+  if (value === undefined) {
+    return null;
+  }
+  if (!Array.isArray(value)) {
+    throw new Error("rewardPercentiles must be array");
+  }
+  const out: number[] = [];
+  let prev = -1;
+  for (const item of value) {
+    if (typeof item !== "number" || !Number.isFinite(item)) {
+      throw new Error("rewardPercentiles[] must be finite number");
+    }
+    if (item < 0 || item > 100) {
+      throw new Error("rewardPercentiles[] must be between 0 and 100");
+    }
+    if (item < prev) {
+      throw new Error("rewardPercentiles[] must be monotonically increasing");
+    }
+    out.push(item);
+    prev = item;
+  }
+  return out;
+}
+
+async function collectFeeHistorySamples(
+  actor: Awaited<ReturnType<typeof getActor>>,
+  newestBlock: bigint,
+  blockCount: number
+): Promise<FeeHistoryBlockSample[]> {
+  const out: FeeHistoryBlockSample[] = [];
+  for (let i = 0; i < blockCount; i += 1) {
+    const number = newestBlock - BigInt(i);
+    if (number < 0n) {
+      break;
+    }
+    const lookup = await actor.rpc_eth_get_block_by_number_with_status(number, true);
+    if (!("Found" in lookup)) {
+      break;
+    }
+    const sample = toFeeHistoryBlockSample(lookup.Found);
+    if (sample !== null) {
+      out.push(sample);
+    }
+  }
+  return out;
+}
+
+function toFeeHistoryBlockSample(block: EthBlockView): FeeHistoryBlockSample | null {
+  if (block.base_fee_per_gas.length === 0 || block.gas_limit.length === 0 || block.gas_used.length === 0) {
+    return null;
+  }
+  const txTips = extractEffectiveTips(block.txs, block.base_fee_per_gas[0]);
+  return {
+    number: block.number,
+    baseFeePerGas: block.base_fee_per_gas[0],
+    gasUsed: block.gas_used[0],
+    gasLimit: block.gas_limit[0],
+    txTips,
+  };
+}
+
+function extractEffectiveTips(
+  txs: { Full: EthTxView[] } | { Hashes: Uint8Array[] },
+  baseFeePerGas: bigint
+): Array<{ tip: bigint; gasLimit: bigint }> {
+  if (!("Full" in txs)) {
+    return [];
+  }
+  const out: Array<{ tip: bigint; gasLimit: bigint }> = [];
+  for (const tx of txs.Full) {
+    if (tx.decoded.length === 0) {
+      continue;
+    }
+    const decoded = tx.decoded[0];
+    if (!decoded) {
+      continue;
+    }
+    const gasLimit = decoded.gas_limit;
+    if (gasLimit <= 0n) {
+      continue;
+    }
+    const tip = computeEffectivePriorityFee(decoded, baseFeePerGas);
+    out.push({ tip, gasLimit });
+  }
+  return out;
+}
+
+function computeEffectivePriorityFee(
+  decoded: EthTxView["decoded"][number],
+  baseFeePerGas: bigint
+): bigint {
+  const maxFeePerGas = decoded.max_fee_per_gas[0];
+  if (maxFeePerGas !== undefined) {
+    const capByBase = maxFeePerGas > baseFeePerGas ? maxFeePerGas - baseFeePerGas : 0n;
+    const maxPriority = decoded.max_priority_fee_per_gas[0];
+    if (maxPriority !== undefined) {
+      return maxPriority < capByBase ? maxPriority : capByBase;
+    }
+    return capByBase;
+  }
+  const gasPrice = decoded.gas_price[0];
+  if (gasPrice !== undefined) {
+    return gasPrice > baseFeePerGas ? gasPrice - baseFeePerGas : 0n;
+  }
+  return 0n;
+}
+
+function computePriorityFeeFromSample(sample: FeeHistoryBlockSample): bigint {
+  const median = computeWeightedPercentile(sample.txTips, 50);
+  if (median > 0n) {
+    return median;
+  }
+  let minPositive: bigint | null = null;
+  for (const item of sample.txTips) {
+    if (item.tip <= 0n) {
+      continue;
+    }
+    if (minPositive === null || item.tip < minPositive) {
+      minPositive = item.tip;
+    }
+  }
+  return minPositive ?? 0n;
+}
+
+function computeRewardPercentiles(
+  txTips: Array<{ tip: bigint; gasLimit: bigint }>,
+  rewardPercentiles: number[]
+): bigint[] {
+  if (rewardPercentiles.length === 0) {
+    return [];
+  }
+  if (txTips.length === 0) {
+    return rewardPercentiles.map(() => 0n);
+  }
+  return rewardPercentiles.map((p) => computeWeightedPercentile(txTips, p));
+}
+
+function computeWeightedPercentile(
+  values: Array<{ tip: bigint; gasLimit: bigint }>,
+  percentile: number
+): bigint {
+  if (values.length === 0) {
+    return 0n;
+  }
+  const sorted = [...values].sort((a, b) => {
+    if (a.tip < b.tip) return -1;
+    if (a.tip > b.tip) return 1;
+    if (a.gasLimit < b.gasLimit) return -1;
+    if (a.gasLimit > b.gasLimit) return 1;
+    return 0;
+  });
+  const totalWeight = sorted.reduce((acc, v) => acc + v.gasLimit, 0n);
+  if (totalWeight <= 0n) {
+    return 0n;
+  }
+  const threshold = percentileToThreshold(totalWeight, percentile);
+  let cumulative = 0n;
+  for (const item of sorted) {
+    cumulative += item.gasLimit;
+    if (cumulative >= threshold) {
+      return item.tip;
+    }
+  }
+  return sorted[sorted.length - 1]?.tip ?? 0n;
+}
+
+function percentileToThreshold(totalWeight: bigint, percentile: number): bigint {
+  if (percentile <= 0) {
+    return 1n;
+  }
+  if (percentile >= 100) {
+    return totalWeight;
+  }
+  const SCALE = 1_000_000n;
+  const scaled = BigInt(Math.round(percentile * Number(SCALE)));
+  const divisor = 100n * SCALE;
+  const numerator = totalWeight * scaled;
+  const ceil = (numerator + divisor - 1n) / divisor;
+  return ceil > 0n ? ceil : 1n;
+}
+
+function computeNextBaseFee(baseFeePerGas: bigint, gasUsed: bigint, gasLimit: bigint): bigint {
+  if (gasLimit <= 0n) {
+    return baseFeePerGas;
+  }
+  const targetGas = gasLimit / EIP1559_ELASTICITY_MULTIPLIER;
+  if (targetGas <= 0n) {
+    return baseFeePerGas;
+  }
+  if (gasUsed === targetGas) {
+    return baseFeePerGas;
+  }
+  if (gasUsed > targetGas) {
+    const gasDelta = gasUsed - targetGas;
+    const baseDelta = (baseFeePerGas * gasDelta) / targetGas / EIP1559_BASE_FEE_MAX_CHANGE_DENOM;
+    const minStep = 1n;
+    return baseFeePerGas + (baseDelta > minStep ? baseDelta : minStep);
+  }
+  const gasDelta = targetGas - gasUsed;
+  const baseDelta = (baseFeePerGas * gasDelta) / targetGas / EIP1559_BASE_FEE_MAX_CHANGE_DENOM;
+  return baseFeePerGas > baseDelta ? baseFeePerGas - baseDelta : 0n;
+}
+
+function toGasUsedRatio(gasUsed: bigint, gasLimit: bigint): number {
+  if (gasLimit <= 0n) {
+    return 0;
+  }
+  return Number(gasUsed) / Number(gasLimit);
 }
 
 async function parseLogsFilter(
@@ -754,6 +1101,9 @@ function parseCallObject(value: unknown): ParsedCallObject | { error: string } {
   if ("gas" in value && value.gas !== undefined && typeof value.gas !== "string") {
     return { error: "gas must be QUANTITY hex string" };
   }
+  if ("gasLimit" in value && value.gasLimit !== undefined && typeof value.gasLimit !== "string") {
+    return { error: "gasLimit must be QUANTITY string" };
+  }
   if ("gasPrice" in value && value.gasPrice !== undefined && typeof value.gasPrice !== "string") {
     return { error: "gasPrice must be QUANTITY hex string" };
   }
@@ -788,6 +1138,7 @@ function parseCallObject(value: unknown): ParsedCallObject | { error: string } {
   if (typeof value.to === "string") parsed.to = value.to;
   if (typeof value.from === "string") parsed.from = value.from;
   if (typeof value.gas === "string") parsed.gas = value.gas;
+  if (parsed.gas === undefined && typeof value.gasLimit === "string") parsed.gas = value.gasLimit;
   if (typeof value.gasPrice === "string") parsed.gasPrice = value.gasPrice;
   if (typeof value.value === "string") parsed.value = value.value;
   if (typeof value.data === "string") parsed.data = value.data;
@@ -838,14 +1189,14 @@ function toCandidCallObject(call: ParsedCallObject): CallObject {
   return {
     to: call.to === undefined ? [] : [ensureLen(parseDataHex(call.to), 20, "to")],
     from: call.from === undefined ? [] : [ensureLen(parseDataHex(call.from), 20, "from")],
-    gas: call.gas === undefined ? [] : [parseQuantityHex(call.gas)],
-    gas_price: call.gasPrice === undefined ? [] : [parseQuantityHex(call.gasPrice)],
-    nonce: call.nonce === undefined ? [] : [parseQuantityHex(call.nonce)],
-    max_fee_per_gas: call.maxFeePerGas === undefined ? [] : [parseQuantityHex(call.maxFeePerGas)],
+    gas: call.gas === undefined ? [] : [parseQuantityCompat(call.gas)],
+    gas_price: call.gasPrice === undefined ? [] : [parseQuantityCompat(call.gasPrice)],
+    nonce: call.nonce === undefined ? [] : [parseQuantityCompat(call.nonce)],
+    max_fee_per_gas: call.maxFeePerGas === undefined ? [] : [parseQuantityCompat(call.maxFeePerGas)],
     max_priority_fee_per_gas:
-      call.maxPriorityFeePerGas === undefined ? [] : [parseQuantityHex(call.maxPriorityFeePerGas)],
-    chain_id: call.chainId === undefined ? [] : [parseQuantityHex(call.chainId)],
-    tx_type: call.type === undefined ? [] : [parseQuantityHex(call.type)],
+      call.maxPriorityFeePerGas === undefined ? [] : [parseQuantityCompat(call.maxPriorityFeePerGas)],
+    chain_id: call.chainId === undefined ? [] : [parseQuantityCompat(call.chainId)],
+    tx_type: call.type === undefined ? [] : [parseQuantityCompat(call.type)],
     access_list:
       call.accessList === undefined
         ? []
@@ -857,7 +1208,7 @@ function toCandidCallObject(call: ParsedCallObject): CallObject {
               ),
             })),
           ],
-    value: call.value === undefined ? [] : [quantityToWord32(parseQuantityHex(call.value))],
+    value: call.value === undefined ? [] : [quantityToWord32(parseQuantityCompat(call.value))],
     data: call.data === undefined ? [] : [parseDataHex(call.data)],
   };
 }
@@ -884,6 +1235,40 @@ export function __test_classify_call_object_err_code(code: number): number {
 
 export function __test_is_latest_tag(blockTag: unknown): boolean {
   return isLatestTag(blockTag);
+}
+
+export function __test_parse_execution_block_tag(blockTag: unknown): BlockTag {
+  return parseExecutionBlockTag(blockTag);
+}
+
+export function __test_compute_effective_priority_fee(
+  decoded: EthTxView["decoded"][number],
+  baseFeePerGas: bigint
+): bigint {
+  return computeEffectivePriorityFee(decoded, baseFeePerGas);
+}
+
+export function __test_compute_weighted_percentile(
+  values: Array<{ tip: bigint; gasLimit: bigint }>,
+  percentile: number
+): bigint {
+  return computeWeightedPercentile(values, percentile);
+}
+
+export function __test_compute_next_base_fee(baseFeePerGas: bigint, gasUsed: bigint, gasLimit: bigint): bigint {
+  return computeNextBaseFee(baseFeePerGas, gasUsed, gasLimit);
+}
+
+export function __test_parse_reward_percentiles(value: unknown): number[] | null {
+  return parseRewardPercentiles(value);
+}
+
+export function __test_map_rpc_error(
+  id: string | number | null,
+  err: { code: number; message: string; error_prefix: [] | [string] },
+  fallbackMessage: string
+): JsonRpcResponse {
+  return mapRpcError(id, err, fallbackMessage);
 }
 
 function normalizeStorageSlot32(slot: string): Uint8Array {
@@ -952,10 +1337,21 @@ function parseAccessList(value: unknown): ParsedAccessListItem[] | { error: stri
 
 function parseQuantityHexSafe(value: string, label: string): { value: bigint } | { error: string } {
   try {
-    return { value: parseQuantityHex(value) };
+    return { value: parseQuantityCompat(value) };
   } catch {
-    return { error: `${label} must be QUANTITY hex string` };
+    return { error: `${label} must be QUANTITY string` };
   }
+}
+
+function parseQuantityCompat(value: string): bigint {
+  const trimmed = value.trim();
+  if (trimmed.startsWith("0x") || trimmed.startsWith("0X")) {
+    return parseQuantityHex(trimmed.toLowerCase());
+  }
+  if (!/^[0-9]+$/.test(trimmed)) {
+    throw new Error("quantity must be hex or decimal string");
+  }
+  return BigInt(trimmed);
 }
 
 function mapBlock(

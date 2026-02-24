@@ -250,8 +250,10 @@ type ReceiptView = record {
 };
 type Result = variant { Ok : nat64; Err : text };
 type Result_1 = variant { Ok : ExportResponseView; Err : ExportErrorView };
-type Result_10 = variant { Ok : blob; Err : SubmitTxError };
-type Result_11 = variant { Ok; Err : text };
+type Result_10 = variant { Ok : EthLogsPageView; Err : GetLogsErrorView };
+type Result_11 = variant { Ok : nat; Err : RpcErrorView };
+type Result_12 = variant { Ok : blob; Err : SubmitTxError };
+type Result_13 = variant { Ok; Err : text };
 type Result_2 = variant { Ok : BlockView; Err : LookupError };
 type Result_3 = variant { Ok : ReceiptView; Err : LookupError };
 type Result_4 = variant { Ok : text; Err : text };
@@ -259,12 +261,20 @@ type Result_5 = variant { Ok : PruneResultView; Err : ProduceBlockError };
 type Result_6 = variant { Ok : RpcCallResultView; Err : RpcErrorView };
 type Result_7 = variant { Ok : blob; Err : text };
 type Result_8 = variant { Ok : nat64; Err : RpcErrorView };
-type Result_9 = variant { Ok : EthLogsPageView; Err : GetLogsErrorView };
+type Result_9 = variant { Ok : RpcFeeHistoryView; Err : RpcErrorView };
 type RpcAccessListItemView = record { storage_keys : vec blob; address : blob };
 type RpcBlockLookupView = variant {
   NotFound;
   Found : EthBlockView;
   Pruned : record { pruned_before_block : nat64 };
+};
+type RpcBlockTagView = variant {
+  Earliest;
+  Safe;
+  Finalized;
+  Latest;
+  Number : nat64;
+  Pending;
 };
 type RpcCallObjectView = record {
   to : opt blob;
@@ -286,7 +296,18 @@ type RpcCallResultView = record {
   gas_used : nat64;
   revert_data : opt blob;
 };
-type RpcErrorView = record { code : nat32; message : text };
+type RpcErrorView = record {
+  error_prefix : opt text;
+  code : nat32;
+  message : text;
+};
+type RpcFeeHistoryView = record {
+  reward : opt vec vec nat;
+  base_fee_per_gas : vec nat64;
+  oldest_block : nat64;
+  gas_used_ratio : vec float64;
+};
+type RpcHistoryWindowView = record { latest : nat64; oldest_available : nat64 };
 type RpcReceiptLookupView = variant {
   NotFound;
   Found : EthReceiptView;
@@ -316,9 +337,18 @@ service : (opt InitArgs) -> {
   prune_blocks : (nat64, nat32) -> (Result_5);
   rpc_eth_block_number : () -> (nat64) query;
   rpc_eth_call_object : (RpcCallObjectView) -> (Result_6) query;
+  rpc_eth_call_object_at : (RpcCallObjectView, RpcBlockTagView) -> (
+      Result_6,
+    ) query;
   rpc_eth_call_rawtx : (blob) -> (Result_7) query;
   rpc_eth_chain_id : () -> (nat64) query;
   rpc_eth_estimate_gas_object : (RpcCallObjectView) -> (Result_8) query;
+  rpc_eth_estimate_gas_object_at : (RpcCallObjectView, RpcBlockTagView) -> (
+      Result_8,
+    ) query;
+  rpc_eth_fee_history : (nat64, RpcBlockTagView, opt vec float64) -> (
+      Result_9,
+    ) query;
   rpc_eth_get_balance : (blob) -> (Result_7) query;
   rpc_eth_get_block_by_number : (nat64, bool) -> (opt EthBlockView) query;
   rpc_eth_get_block_by_number_with_status : (nat64, bool) -> (
@@ -326,22 +356,27 @@ service : (opt InitArgs) -> {
     ) query;
   rpc_eth_get_code : (blob) -> (Result_7) query;
   rpc_eth_get_logs_paged : (EthLogFilterView, opt EthLogsCursorView, nat32) -> (
-      Result_9,
+      Result_10,
     ) query;
   rpc_eth_get_storage_at : (blob, blob) -> (Result_7) query;
   rpc_eth_get_transaction_by_eth_hash : (blob) -> (opt EthTxView) query;
   rpc_eth_get_transaction_by_tx_id : (blob) -> (opt EthTxView) query;
+  rpc_eth_get_transaction_count_at : (blob, RpcBlockTagView) -> (
+      Result_8,
+    ) query;
   rpc_eth_get_transaction_receipt_by_eth_hash : (blob) -> (
       opt EthReceiptView,
     ) query;
   rpc_eth_get_transaction_receipt_with_status : (blob) -> (
       RpcReceiptLookupView,
     ) query;
-  rpc_eth_send_raw_transaction : (blob) -> (Result_10);
-  set_block_gas_limit : (nat64) -> (Result_11);
-  set_instruction_soft_limit : (nat64) -> (Result_11);
-  set_log_filter : (opt text) -> (Result_11);
-  set_prune_policy : (PrunePolicyView) -> (Result_11);
-  set_pruning_enabled : (bool) -> (Result_11);
-  submit_ic_tx : (blob) -> (Result_10);
+  rpc_eth_history_window : () -> (RpcHistoryWindowView) query;
+  rpc_eth_max_priority_fee_per_gas : () -> (Result_11) query;
+  rpc_eth_send_raw_transaction : (blob) -> (Result_12);
+  set_block_gas_limit : (nat64) -> (Result_13);
+  set_instruction_soft_limit : (nat64) -> (Result_13);
+  set_log_filter : (opt text) -> (Result_13);
+  set_prune_policy : (PrunePolicyView) -> (Result_13);
+  set_pruning_enabled : (bool) -> (Result_13);
+  submit_ic_tx : (blob) -> (Result_12);
 }

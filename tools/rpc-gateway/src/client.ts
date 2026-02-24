@@ -97,8 +97,9 @@ export type RpcReceiptLookupView =
 
 type TextResult = { Ok: Uint8Array } | { Err: string };
 type NonceResult = { Ok: bigint } | { Err: string };
-export type RpcErrorView = { code: number; message: string };
+export type RpcErrorView = { code: number; message: string; error_prefix: [] | [string] };
 type Nat64Result = { Ok: bigint } | { Err: RpcErrorView };
+type NatResult = { Ok: bigint } | { Err: RpcErrorView };
 type LogsPageResult = { Ok: EthLogsPageView } | { Err: GetLogsErrorView };
 type SendErr = { Internal: string } | { Rejected: string } | { InvalidArgument: string };
 type SendResult = { Ok: Uint8Array } | { Err: SendErr };
@@ -128,6 +129,20 @@ export type OpsStatusView = {
   schema_version: number;
 };
 type CallResult = { Ok: CallObjectResult } | { Err: RpcErrorView };
+export type BlockTag =
+  | { Latest: null }
+  | { Pending: null }
+  | { Safe: null }
+  | { Finalized: null }
+  | { Earliest: null }
+  | { Number: bigint };
+export type HistoryWindowView = { oldest_available: bigint; latest: bigint };
+export type FeeHistoryView = {
+  oldest_block: bigint;
+  base_fee_per_gas: bigint[];
+  gas_used_ratio: number[];
+  reward: [] | [bigint[][]];
+};
 
 type Methods = {
   expected_nonce_by_address: (address: Uint8Array) => Promise<NonceResult>;
@@ -147,8 +162,18 @@ type Methods = {
   rpc_eth_get_balance: (address: Uint8Array) => Promise<TextResult>;
   rpc_eth_get_code: (address: Uint8Array) => Promise<TextResult>;
   rpc_eth_get_storage_at: (address: Uint8Array, slot: Uint8Array) => Promise<TextResult>;
+  rpc_eth_get_transaction_count_at: (address: Uint8Array, tag: BlockTag) => Promise<Nat64Result>;
   rpc_eth_call_object: (call: CallObject) => Promise<CallResult>;
+  rpc_eth_call_object_at: (call: CallObject, tag: BlockTag) => Promise<CallResult>;
   rpc_eth_estimate_gas_object: (call: CallObject) => Promise<Nat64Result>;
+  rpc_eth_estimate_gas_object_at: (call: CallObject, tag: BlockTag) => Promise<Nat64Result>;
+  rpc_eth_max_priority_fee_per_gas: () => Promise<NatResult>;
+  rpc_eth_fee_history: (
+    blockCount: bigint,
+    newest: BlockTag,
+    rewardPercentiles: [] | [number[]]
+  ) => Promise<{ Ok: FeeHistoryView } | { Err: RpcErrorView }>;
+  rpc_eth_history_window: () => Promise<HistoryWindowView>;
   rpc_eth_call_rawtx: (rawTx: Uint8Array) => Promise<TextResult>;
   rpc_eth_send_raw_transaction: (rawTx: Uint8Array) => Promise<SendResult>;
   get_ops_status: () => Promise<OpsStatusView>;
@@ -158,9 +183,28 @@ let actorPromise: Promise<Methods> | null = null;
 
 export async function getActor(): Promise<Methods> {
   if (!actorPromise) {
-    actorPromise = createActor();
+    actorPromise = withRetryablePromiseCache(createActor, () => actorPromise, (next) => {
+      actorPromise = next;
+    });
   }
   return actorPromise;
+}
+
+function withRetryablePromiseCache<T>(
+  factory: () => Promise<T>,
+  getCached: () => Promise<T> | null,
+  setCached: (next: Promise<T> | null) => void
+): Promise<T> {
+  const cached = getCached();
+  if (cached) {
+    return cached;
+  }
+  const started = factory().catch((error: unknown) => {
+    setCached(null);
+    throw error;
+  });
+  setCached(started);
+  return started;
 }
 
 async function createActor(): Promise<Methods> {
@@ -173,9 +217,38 @@ async function createActor(): Promise<Methods> {
   if (CONFIG.fetchRootKey) {
     await agent.fetchRootKey();
   }
-  return Actor.createActor<Methods>(idlFactory, {
+  const actor = Actor.createActor<Methods>(idlFactory, {
     agent,
     canisterId: CONFIG.canisterId,
+  });
+  await assertCanisterCompatibility(actor);
+  return actor;
+}
+
+type HistoryWindowProbe = {
+  rpc_eth_history_window?: () => Promise<unknown>;
+};
+
+async function assertCanisterCompatibility(actor: HistoryWindowProbe): Promise<void> {
+  if (typeof actor.rpc_eth_history_window !== "function") {
+    throw new Error("incompatible.canister.api rpc_eth_history_window unavailable: method not found");
+  }
+  try {
+    await actor.rpc_eth_history_window();
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    throw new Error(`incompatible.canister.api rpc_eth_history_window unavailable: ${detail}`);
+  }
+}
+
+export async function __test_assert_canister_compatibility(actor: HistoryWindowProbe): Promise<void> {
+  await assertCanisterCompatibility(actor);
+}
+
+export function __test_create_retryable_promise_cache<T>(factory: () => Promise<T>): () => Promise<T> {
+  let cached: Promise<T> | null = null;
+  return () => withRetryablePromiseCache(factory, () => cached, (next) => {
+    cached = next;
   });
 }
 

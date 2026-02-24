@@ -27,9 +27,28 @@ export const idlFactory: IDL.InterfaceFactory = ({ IDL }) => {
     return_data: IDL.Vec(IDL.Nat8),
     revert_data: IDL.Opt(IDL.Vec(IDL.Nat8)),
   });
+  const RpcBlockTagView = IDL.Variant({
+    Latest: IDL.Null,
+    Pending: IDL.Null,
+    Safe: IDL.Null,
+    Finalized: IDL.Null,
+    Earliest: IDL.Null,
+    Number: IDL.Nat64,
+  });
   const RpcErrorView = IDL.Record({
     code: IDL.Nat32,
     message: IDL.Text,
+    error_prefix: IDL.Opt(IDL.Text),
+  });
+  const RpcFeeHistoryView = IDL.Record({
+    oldest_block: IDL.Nat64,
+    base_fee_per_gas: IDL.Vec(IDL.Nat64),
+    gas_used_ratio: IDL.Vec(IDL.Float64),
+    reward: IDL.Opt(IDL.Vec(IDL.Vec(IDL.Nat))),
+  });
+  const RpcHistoryWindowView = IDL.Record({
+    oldest_available: IDL.Nat64,
+    latest: IDL.Nat64,
   });
   const DecodedTxView = IDL.Record({
     to: IDL.Opt(IDL.Vec(IDL.Nat8)),
@@ -191,8 +210,18 @@ export const idlFactory: IDL.InterfaceFactory = ({ IDL }) => {
       [IDL.Variant({ Ok: IDL.Vec(IDL.Nat8), Err: IDL.Text })],
       ["query"]
     ),
+    rpc_eth_get_transaction_count_at: IDL.Func(
+      [IDL.Vec(IDL.Nat8), RpcBlockTagView],
+      [IDL.Variant({ Ok: IDL.Nat64, Err: RpcErrorView })],
+      ["query"]
+    ),
     rpc_eth_call_object: IDL.Func(
       [RpcCallObjectView],
+      [IDL.Variant({ Ok: RpcCallResultView, Err: RpcErrorView })],
+      ["query"]
+    ),
+    rpc_eth_call_object_at: IDL.Func(
+      [RpcCallObjectView, RpcBlockTagView],
       [IDL.Variant({ Ok: RpcCallResultView, Err: RpcErrorView })],
       ["query"]
     ),
@@ -201,6 +230,22 @@ export const idlFactory: IDL.InterfaceFactory = ({ IDL }) => {
       [IDL.Variant({ Ok: IDL.Nat64, Err: RpcErrorView })],
       ["query"]
     ),
+    rpc_eth_estimate_gas_object_at: IDL.Func(
+      [RpcCallObjectView, RpcBlockTagView],
+      [IDL.Variant({ Ok: IDL.Nat64, Err: RpcErrorView })],
+      ["query"]
+    ),
+    rpc_eth_max_priority_fee_per_gas: IDL.Func(
+      [],
+      [IDL.Variant({ Ok: IDL.Nat, Err: RpcErrorView })],
+      ["query"]
+    ),
+    rpc_eth_fee_history: IDL.Func(
+      [IDL.Nat64, RpcBlockTagView, IDL.Opt(IDL.Vec(IDL.Float64))],
+      [IDL.Variant({ Ok: RpcFeeHistoryView, Err: RpcErrorView })],
+      ["query"]
+    ),
+    rpc_eth_history_window: IDL.Func([], [RpcHistoryWindowView], ["query"]),
     rpc_eth_call_rawtx: IDL.Func([IDL.Vec(IDL.Nat8)], [IDL.Variant({ Ok: IDL.Vec(IDL.Nat8), Err: IDL.Text })], ["query"]),
     rpc_eth_send_raw_transaction: IDL.Func(
       [IDL.Vec(IDL.Nat8)],

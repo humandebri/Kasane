@@ -35,25 +35,27 @@ npm run dev
 - `eth_chainId`
 - `eth_blockNumber`
 - `eth_gasPrice`
+- `eth_maxPriorityFeePerGas`
+- `eth_feeHistory`
 - `eth_syncing`
 - `eth_getBlockByNumber`
 - `eth_getTransactionByHash`
 - `eth_getTransactionReceipt`
-- `eth_getBalance` (`latest` のみ)
-- `eth_getTransactionCount` (`latest/pending/safe/finalized` のみ)
-- `eth_getCode` (`latest` のみ)
-- `eth_getStorageAt` (`latest` のみ)
+- `eth_getBalance`（blockTag は受理するが最新扱い）
+- `eth_getTransactionCount`（`latest/pending/safe/finalized/earliest/QUANTITY` を受理）
+- `eth_getCode` (`latest/pending/safe/finalized` のみ)
+- `eth_getStorageAt` (`latest/pending/safe/finalized` のみ)
 - `eth_getLogs`（制限あり）
-- `eth_call(callObject, blockTag)` (`latest` のみ)
-- `eth_estimateGas(callObject, blockTag)` (`latest` のみ)
+- `eth_call(callObject, blockTag)`（`latest/pending/safe/finalized/earliest/QUANTITY` を受理）
+- `eth_estimateGas(callObject, blockTag)`（`latest/pending/safe/finalized/earliest/QUANTITY` を受理）
 - `eth_sendRawTransaction`
 
 ## 対応状況サマリ
 
 | 区分 | メソッド |
 | --- | --- |
-| 対応済み | `web3_clientVersion`, `net_version`, `eth_chainId`, `eth_blockNumber`, `eth_gasPrice`, `eth_syncing`, `eth_getBlockByNumber`, `eth_getTransactionByHash`, `eth_getTransactionReceipt`, `eth_getBalance`, `eth_getTransactionCount`, `eth_getCode`, `eth_getStorageAt`, `eth_getLogs`, `eth_call`, `eth_estimateGas`, `eth_sendRawTransaction` |
-| 未対応 | `eth_getBlockByHash`, `eth_getTransactionByBlockHashAndIndex`, `eth_getTransactionByBlockNumberAndIndex`, `eth_getBlockTransactionCountByHash`, `eth_getBlockTransactionCountByNumber`, `eth_feeHistory`, `eth_maxPriorityFeePerGas`, `eth_newFilter`, `eth_getFilterChanges`, `eth_uninstallFilter`, `eth_subscribe`, `eth_unsubscribe`, `eth_pendingTransactions` |
+| 対応済み | `web3_clientVersion`, `net_version`, `eth_chainId`, `eth_blockNumber`, `eth_gasPrice`, `eth_maxPriorityFeePerGas`, `eth_feeHistory`, `eth_syncing`, `eth_getBlockByNumber`, `eth_getTransactionByHash`, `eth_getTransactionReceipt`, `eth_getBalance`, `eth_getTransactionCount`, `eth_getCode`, `eth_getStorageAt`, `eth_getLogs`, `eth_call`, `eth_estimateGas`, `eth_sendRawTransaction` |
+| 未対応 | `eth_getBlockByHash`, `eth_getTransactionByBlockHashAndIndex`, `eth_getTransactionByBlockNumberAndIndex`, `eth_getBlockTransactionCountByHash`, `eth_getBlockTransactionCountByNumber`, `eth_newFilter`, `eth_getFilterChanges`, `eth_uninstallFilter`, `eth_subscribe`, `eth_unsubscribe`, `eth_pendingTransactions` |
 
 注: `対応済み` でも一部は制限付きです。詳細は下の互換表を参照してください。
 
@@ -80,17 +82,19 @@ npm run dev
 | `eth_chainId` | Supported | canister の `rpc_eth_chain_id` を返す | なし | `net_version` は10進文字列で同値を返す |
 | `eth_blockNumber` | Supported | canister の `rpc_eth_block_number` を返す | なし | - |
 | `eth_gasPrice` | Partially supported | 最新ブロックの `base_fee_per_gas` を返す | canister側の tip block metadata 依存 | EIP-1559環境の簡易gas priceとして提供 |
+| `eth_maxPriorityFeePerGas` | Partially supported | canister `rpc_eth_max_priority_fee_per_gas` を返す | 観測データ不足時は `-32000 state unavailable` | EIP-1559簡易推定 |
+| `eth_feeHistory` | Partially supported | canister `rpc_eth_fee_history` を返す | `blockCount` は最大 256、`pending` は現状 `latest` 同義 | reward は gasUsed 重みで推定 |
 | `eth_syncing` | Supported | 常に `false` を返す | 同期進捗オブジェクト非対応 | 即時実行モデル前提 |
 | `eth_getBlockByNumber` | Partially supported | `blockTag` を解決してブロックを返す | `latest/pending/safe/finalized` は head 扱い。pruned範囲は `-32001` | canister では `rpc_eth_get_block_by_number_with_status` |
 | `eth_getTransactionByHash` | Supported | `eth_tx_hash` で取引を参照する | `tx_id` 直接参照なし。migration未完了/critical corrupt時は `-32000 state unavailable` | canister では `rpc_eth_get_transaction_by_eth_hash` |
 | `eth_getTransactionReceipt` | Partially supported | `eth_tx_hash` で receipt を参照する | `tx_id` 直接参照なし。migration未完了/critical corrupt時は `-32000`、pruned範囲は `-32001` | canister では `rpc_eth_get_transaction_receipt_with_status` |
-| `eth_getBalance` | Partially supported | 残高取得を返す | `blockTag` は `latest` 系のみ | 不正入力は `-32602` |
-| `eth_getTransactionCount` | Partially supported | canister `expected_nonce_by_address` を返す | `blockTag` は `latest/pending/safe/finalized` のみ。`earliest`/過去ブロック指定は未対応 | nonce参照専用。履歴nonceは提供しない |
-| `eth_getCode` | Partially supported | コードを返す | `blockTag` は `latest` 系のみ | 不正入力は `-32602` |
-| `eth_getStorageAt` | Partially supported | ストレージ値を返す | `blockTag` は `latest` 系のみ | `slot` は QUANTITY/DATA(32bytes) の両対応 |
+| `eth_getBalance` | Partially supported | 残高取得を返す | blockTag は受理するが評価には使わない（常に最新） | 不正入力は `-32602` |
+| `eth_getTransactionCount` | Partially supported | canister `rpc_eth_get_transaction_count_at(address, tag)` を返す | `pending` は pending nonce。`earliest/QUANTITY` は out-of-window なら `invalid.block_range.out_of_window`、範囲内でも historical nonce 未提供のため `exec.state.unavailable` | `earliest` は block `0` として評価 |
+| `eth_getCode` | Partially supported | コードを返す | `blockTag` は `latest/pending/safe/finalized` のみ | 不正入力は `-32602` |
+| `eth_getStorageAt` | Partially supported | ストレージ値を返す | `blockTag` は `latest/pending/safe/finalized` のみ | `slot` は QUANTITY/DATA(32bytes) の両対応 |
 | `eth_getLogs` | Partially supported | `rpc_eth_get_logs_paged` で収集して返す | `blockHash` 非対応、`address` は単一のみ、`topics` は `topics[0]` のみ、OR配列非対応 | 大きすぎる範囲は `-32005 limit exceeded` |
-| `eth_call` | Partially supported | callObject を canister に委譲 | `blockTag` は `latest` 系のみ、未対応フィールド拒否 | revert は `-32000` + `error.data` |
-| `eth_estimateGas` | Partially supported | callObject を使って見積り | `blockTag` は `latest` 系のみ、未対応フィールド拒否 | canister `Err` を `-32602`/`-32000` にマップ |
+| `eth_call` | Partially supported | callObject + tag を canister `rpc_eth_call_object_at` に委譲 | 歴史状態実行は未提供。保持範囲内でも `exec.state.unavailable` があり得る | revert は `-32000` + `error.data` |
+| `eth_estimateGas` | Partially supported | callObject + tag を canister `rpc_eth_estimate_gas_object_at` に委譲 | 歴史状態実行は未提供。保持範囲内でも `exec.state.unavailable` があり得る | canister `Err` を `-32602`/`-32000` にマップ |
 | `eth_sendRawTransaction` | Supported | 生txを canister submit API に委譲し、返却 `tx_id` から `eth_tx_hash` を解決して `0x...` を返す | submit失敗はJSON-RPCエラーへマップ。`eth_tx_hash` 解決不能時は `-32000` を返す | canister では `rpc_eth_send_raw_transaction` |
 | `eth_newFilter` / `eth_getFilterChanges` / `eth_uninstallFilter` | Not supported | filter系は未実装 | Phase2スコープ外 | `rpc_eth_get_logs_paged` を利用 |
 | `eth_subscribe` / `eth_unsubscribe` | Not supported | WebSocket購読は未実装 | Phase2スコープ外 | `eth_blockNumber` ポーリング運用 |
@@ -125,10 +129,18 @@ npm run dev
 ## 互換ノート
 
 - `eth_getStorageAt` の `slot` は `QUANTITY`（例: `0x0`）と `DATA(32bytes)` の両方を受理します。
+- `eth_call` / `eth_estimateGas` の callObject は `gasLimit` を `gas` として受理します。
+- `eth_call` / `eth_estimateGas` の QUANTITY は 16進 (`0x...`) と 10進文字列を受理します。
+- `rpc_eth_history_window` と `earliest` の関係: `earliest` は block `0` を意味し、`oldest_available > 0` なら必ず `invalid.block_range.out_of_window`。
+- 互換吸収の明示リスト（Gateway）:
+  - 残す: `gasLimit` -> `gas`、QUANTITY の 10進文字列正規化、`String` オブジェクト/空白付き tag 正規化
+  - 削除: `earliest/0x...` の `latest` 暗黙丸め、メソッド別の隠れ fallback
+- 起動時に canister API probe（`rpc_eth_history_window`）を実行し、互換不一致なら `incompatible.canister.api` として fail-fast します。
 - `eth_getLogs` は canister 側制約に合わせ、`blockHash` / topics OR配列 / `topics[2+]` を未対応としています。
 - 入力不正は `-32602 invalid params` を返します（hex不正/長さ不正/callObject不整合を含む）。
 - `eth_call` の revert は `error.code = -32000` で、`error.data` に hex 文字列（`0x...`）を返します。
-- canister `Err` は `RpcErrorView { code, message }` の構造化形式です。
+- canister `Err` は `RpcErrorView { code, message, error_prefix? }` の構造化形式です。
+  - Gateway は `error_prefix` を JSON-RPC `error.data.error_prefix` に透過して返します。
   - `1000-1999` は入力不正として `-32602`
   - `2000+` は実行失敗として `-32000`
 - `RpcErrorView.code` 固定値（Phase2.2）:
@@ -160,6 +172,8 @@ npm run dev
 - `RPC_GATEWAY_MAX_JSON_DEPTH` (default: 20)
 - `RPC_GATEWAY_CORS_ORIGIN` (default: `*`)
   - `*` もしくはカンマ区切りallowlist（例: `https://kasane.network,http://localhost:3000`）
+- `RPC_SEMANTICS_VERSION` (default: `kasane-rpc-semantics/v1`)
+  - `web3_clientVersion` に含まれます。`safe/finalized` の意味論変更時は更新してください。
 
 ## 検証
 

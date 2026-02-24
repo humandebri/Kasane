@@ -10,8 +10,9 @@ use evm_db::types::keys::{make_account_key, make_code_key, make_storage_key};
 use ic_evm_rpc_types::{
     DecodedTxView, EthBlockView, EthLogFilterView, EthLogItemView, EthLogsCursorView,
     EthLogsPageView, EthReceiptLogView, EthReceiptView, EthTxListView, EthTxView, GetLogsErrorView,
-    RpcAccessListItemView, RpcBlockLookupView, RpcCallObjectView, RpcCallResultView, RpcErrorView,
-    RpcReceiptLookupView, SubmitTxError, TxKindView,
+    RpcAccessListItemView, RpcBlockLookupView, RpcBlockTagView, RpcCallObjectView,
+    RpcCallResultView, RpcErrorView, RpcFeeHistoryView, RpcHistoryWindowView, RpcReceiptLookupView,
+    SubmitTxError, TxKindView,
 };
 use tracing::{error, warn};
 
@@ -121,16 +122,31 @@ pub fn rpc_eth_get_storage_at(address: Vec<u8>, slot: Vec<u8>) -> Result<Vec<u8>
 
 const RPC_ERR_INVALID_PARAMS: u32 = 1001;
 const RPC_ERR_EXECUTION_FAILED: u32 = 2001;
+const MAX_FEE_HISTORY_BLOCKS: u64 = 256;
+const EIP1559_BASE_FEE_MAX_CHANGE_DENOM: u128 = 8;
+const EIP1559_ELASTICITY_MULTIPLIER: u128 = 2;
+
+fn rpc_error(code: u32, prefix: Option<&str>, message: impl Into<String>) -> RpcErrorView {
+    RpcErrorView {
+        code,
+        message: message.into(),
+        error_prefix: prefix.map(str::to_string),
+    }
+}
+
+fn invalid_error(prefix: &str, message: impl Into<String>) -> RpcErrorView {
+    rpc_error(RPC_ERR_INVALID_PARAMS, Some(prefix), message)
+}
+
+fn execution_error(prefix: &str, message: impl Into<String>) -> RpcErrorView {
+    rpc_error(RPC_ERR_EXECUTION_FAILED, Some(prefix), message)
+}
 
 pub fn rpc_eth_call_object(call: RpcCallObjectView) -> Result<RpcCallResultView, RpcErrorView> {
-    let input = call_object_to_input(call).map_err(|message| RpcErrorView {
-        code: RPC_ERR_INVALID_PARAMS,
-        message,
-    })?;
-    let out = chain::eth_call_object(input).map_err(|err| RpcErrorView {
-        code: RPC_ERR_EXECUTION_FAILED,
-        message: format!("eth_call_object failed: {err:?}"),
-    })?;
+    let input =
+        call_object_to_input(call).map_err(|message| invalid_error("invalid.call_object", message))?;
+    let out = chain::eth_call_object(input)
+        .map_err(|err| execution_error("exec.eth_call_object.failed", format!("eth_call_object failed: {err:?}")))?;
     Ok(RpcCallResultView {
         status: out.status,
         gas_used: out.gas_used,
@@ -140,14 +156,184 @@ pub fn rpc_eth_call_object(call: RpcCallObjectView) -> Result<RpcCallResultView,
 }
 
 pub fn rpc_eth_estimate_gas_object(call: RpcCallObjectView) -> Result<u64, RpcErrorView> {
-    let input = call_object_to_input(call).map_err(|message| RpcErrorView {
-        code: RPC_ERR_INVALID_PARAMS,
-        message,
-    })?;
-    chain::eth_estimate_gas_object(input).map_err(|err| RpcErrorView {
-        code: RPC_ERR_EXECUTION_FAILED,
-        message: format!("eth_estimate_gas_object failed: {err:?}"),
+    let input =
+        call_object_to_input(call).map_err(|message| invalid_error("invalid.call_object", message))?;
+    chain::eth_estimate_gas_object(input).map_err(|err| {
+        execution_error(
+            "exec.eth_estimate_gas_object.failed",
+            format!("eth_estimate_gas_object failed: {err:?}"),
+        )
     })
+}
+
+pub fn rpc_eth_get_transaction_count_at(
+    address: Vec<u8>,
+    tag: RpcBlockTagView,
+) -> Result<u64, RpcErrorView> {
+    let sender = parse_address_20_with_label(address, "address")
+        .map_err(|message| invalid_error("invalid.address", message))?;
+    let latest_nonce = || {
+        let key = make_account_key(sender);
+        with_state(|state| {
+            state
+                .accounts
+                .get(&key)
+                .map(|value| value.nonce())
+                .unwrap_or(0)
+        })
+    };
+    match tag {
+        RpcBlockTagView::Pending => Ok(chain::expected_nonce_for_sender_view(sender)),
+        RpcBlockTagView::Latest | RpcBlockTagView::Safe | RpcBlockTagView::Finalized => {
+            Ok(latest_nonce())
+        }
+        RpcBlockTagView::Earliest => {
+            let window = rpc_eth_history_window();
+            if window.oldest_available > 0 {
+                return Err(out_of_window_error(0, window));
+            }
+            Err(execution_error(
+                "exec.state.unavailable",
+                "exec.state.unavailable historical nonce is unavailable for earliest",
+            ))
+        }
+        RpcBlockTagView::Number(number) => {
+            let window = rpc_eth_history_window();
+            if number < window.oldest_available || number > window.latest {
+                return Err(out_of_window_error(number, window));
+            }
+            Err(execution_error(
+                "exec.state.unavailable",
+                format!(
+                    "exec.state.unavailable historical nonce is unavailable requested={number}"
+                ),
+            ))
+        }
+    }
+}
+
+pub fn rpc_eth_call_object_at(
+    call: RpcCallObjectView,
+    tag: RpcBlockTagView,
+) -> Result<RpcCallResultView, RpcErrorView> {
+    match tag {
+        RpcBlockTagView::Latest
+        | RpcBlockTagView::Pending
+        | RpcBlockTagView::Safe
+        | RpcBlockTagView::Finalized => rpc_eth_call_object(call),
+        RpcBlockTagView::Earliest => unsupported_historical_exec_call(0),
+        RpcBlockTagView::Number(number) => unsupported_historical_exec_call(number),
+    }
+}
+
+pub fn rpc_eth_estimate_gas_object_at(
+    call: RpcCallObjectView,
+    tag: RpcBlockTagView,
+) -> Result<u64, RpcErrorView> {
+    match tag {
+        RpcBlockTagView::Latest
+        | RpcBlockTagView::Pending
+        | RpcBlockTagView::Safe
+        | RpcBlockTagView::Finalized => rpc_eth_estimate_gas_object(call),
+        RpcBlockTagView::Earliest => unsupported_historical_exec_gas(0),
+        RpcBlockTagView::Number(number) => unsupported_historical_exec_gas(number),
+    }
+}
+
+pub fn rpc_eth_max_priority_fee_per_gas() -> Result<u128, RpcErrorView> {
+    let head = chain::get_head_number();
+    let sample = load_fee_history_sample(head).ok_or_else(|| {
+        execution_error("exec.state.unavailable", "exec.state.unavailable fee sample is unavailable")
+    })?;
+    let median = compute_weighted_percentile(&sample.tx_tips, 50.0);
+    if median > 0 {
+        return Ok(median);
+    }
+    let min_positive = sample
+        .tx_tips
+        .iter()
+        .filter(|item| item.tip > 0)
+        .map(|item| item.tip)
+        .min()
+        .unwrap_or(0);
+    Ok(min_positive)
+}
+
+pub fn rpc_eth_fee_history(
+    block_count: u64,
+    newest: RpcBlockTagView,
+    reward_percentiles: Option<Vec<f64>>,
+) -> Result<RpcFeeHistoryView, RpcErrorView> {
+    if block_count == 0 || block_count > MAX_FEE_HISTORY_BLOCKS {
+        return Err(invalid_error(
+            "invalid.fee_history.block_count",
+            format!("invalid.fee_history.block_count block_count must be within [1, {MAX_FEE_HISTORY_BLOCKS}]"),
+        ));
+    }
+    let percentiles = validate_reward_percentiles(reward_percentiles)?;
+    let newest_number = resolve_newest_number(newest)?;
+    let mut samples = Vec::new();
+    for offset in 0..block_count {
+        let number = newest_number.saturating_sub(offset);
+        let Some(sample) = load_fee_history_sample(number) else {
+            break;
+        };
+        samples.push(sample);
+        if number == 0 {
+            break;
+        }
+    }
+    samples.sort_by_key(|item| item.number);
+    if samples.is_empty() {
+        return Err(execution_error(
+            "exec.state.unavailable",
+            "exec.state.unavailable fee history is unavailable",
+        ));
+    }
+    let last = samples.last().ok_or_else(|| {
+        execution_error("exec.state.unavailable", "exec.state.unavailable fee history is unavailable")
+    })?;
+    let mut base_fee_per_gas: Vec<u64> = samples.iter().map(|item| item.base_fee_per_gas).collect();
+    base_fee_per_gas.push(compute_next_base_fee(
+        last.base_fee_per_gas,
+        last.gas_used,
+        last.gas_limit,
+    ));
+    let gas_used_ratio = samples
+        .iter()
+        .map(|item| {
+            if item.gas_limit == 0 {
+                0.0
+            } else {
+                item.gas_used as f64 / item.gas_limit as f64
+            }
+        })
+        .collect();
+    let reward = percentiles.map(|ps| {
+        samples
+            .iter()
+            .map(|item| {
+                ps.iter()
+                    .map(|p| compute_weighted_percentile(&item.tx_tips, *p))
+                    .collect()
+            })
+            .collect()
+    });
+    Ok(RpcFeeHistoryView {
+        oldest_block: samples[0].number,
+        base_fee_per_gas,
+        gas_used_ratio,
+        reward,
+    })
+}
+
+pub fn rpc_eth_history_window() -> RpcHistoryWindowView {
+    let latest = chain::get_head_number();
+    let pruned_before = with_state(|state| state.prune_state.get().pruned_before());
+    RpcHistoryWindowView {
+        oldest_available: pruned_before.map(|v| v.saturating_add(1)).unwrap_or(0),
+        latest,
+    }
 }
 
 pub fn rpc_eth_call_rawtx(raw_tx: Vec<u8>) -> Result<Vec<u8>, String> {
@@ -730,6 +916,209 @@ fn block_to_eth_view(block: BlockData, full_tx: bool) -> EthBlockView {
         gas_limit: Some(block.block_gas_limit),
         gas_used: Some(block.gas_used),
     }
+}
+
+#[derive(Clone, Debug)]
+struct FeeTipSample {
+    tip: u128,
+    gas_used: u64,
+}
+
+#[derive(Clone, Debug)]
+struct FeeHistorySample {
+    number: u64,
+    base_fee_per_gas: u64,
+    gas_used: u64,
+    gas_limit: u64,
+    tx_tips: Vec<FeeTipSample>,
+}
+
+fn load_fee_history_sample(number: u64) -> Option<FeeHistorySample> {
+    let block = chain::get_block(number)?;
+    let mut tx_tips = Vec::new();
+    for tx_id in &block.tx_ids {
+        let Some(tx) = tx_to_view(*tx_id) else {
+            continue;
+        };
+        let Some(decoded) = tx.decoded else {
+            continue;
+        };
+        let gas_used = chain::get_receipt(tx_id)
+            .map(|r| r.gas_used)
+            .unwrap_or(decoded.gas_limit);
+        if gas_used == 0 {
+            continue;
+        }
+        let tip = effective_priority_fee(&decoded, block.base_fee_per_gas as u128);
+        tx_tips.push(FeeTipSample { tip, gas_used });
+    }
+    Some(FeeHistorySample {
+        number: block.number,
+        base_fee_per_gas: block.base_fee_per_gas,
+        gas_used: block.gas_used,
+        gas_limit: block.block_gas_limit,
+        tx_tips,
+    })
+}
+
+fn effective_priority_fee(decoded: &DecodedTxView, base_fee: u128) -> u128 {
+    if let Some(max_fee) = decoded.max_fee_per_gas {
+        let cap_by_base = max_fee.saturating_sub(base_fee);
+        if let Some(max_priority) = decoded.max_priority_fee_per_gas {
+            return max_priority.min(cap_by_base);
+        }
+        return cap_by_base;
+    }
+    if let Some(gas_price) = decoded.gas_price {
+        return gas_price.saturating_sub(base_fee);
+    }
+    0
+}
+
+fn compute_weighted_percentile(items: &[FeeTipSample], percentile: f64) -> u128 {
+    if items.is_empty() {
+        return 0;
+    }
+    let mut sorted = items.to_vec();
+    sorted.sort_by(|a, b| a.tip.cmp(&b.tip).then(a.gas_used.cmp(&b.gas_used)));
+    let total_weight = sorted
+        .iter()
+        .fold(0u128, |acc, item| acc.saturating_add(item.gas_used as u128));
+    if total_weight == 0 {
+        return 0;
+    }
+    let threshold = percentile_to_threshold(total_weight, percentile);
+    let mut cumulative = 0u128;
+    for item in sorted {
+        cumulative = cumulative.saturating_add(item.gas_used as u128);
+        if cumulative >= threshold {
+            return item.tip;
+        }
+    }
+    0
+}
+
+fn percentile_to_threshold(total_weight: u128, percentile: f64) -> u128 {
+    if percentile <= 0.0 {
+        return 1;
+    }
+    if percentile >= 100.0 {
+        return total_weight;
+    }
+    let scaled = (percentile * 1_000_000.0).round() as u128;
+    let divisor = 100_000_000u128;
+    let numerator = total_weight.saturating_mul(scaled);
+    let ceil = numerator.saturating_add(divisor - 1) / divisor;
+    ceil.max(1)
+}
+
+fn compute_next_base_fee(base_fee: u64, gas_used: u64, gas_limit: u64) -> u64 {
+    if gas_limit == 0 {
+        return base_fee;
+    }
+    let target_gas = gas_limit as u128 / EIP1559_ELASTICITY_MULTIPLIER;
+    if target_gas == 0 {
+        return base_fee;
+    }
+    let base = base_fee as u128;
+    let used = gas_used as u128;
+    if used == target_gas {
+        return base_fee;
+    }
+    if used > target_gas {
+        let gas_delta = used - target_gas;
+        let base_delta = base
+            .saturating_mul(gas_delta)
+            .saturating_div(target_gas)
+            .saturating_div(EIP1559_BASE_FEE_MAX_CHANGE_DENOM);
+        return (base.saturating_add(base_delta.max(1))).min(u64::MAX as u128) as u64;
+    }
+    let gas_delta = target_gas - used;
+    let base_delta = base
+        .saturating_mul(gas_delta)
+        .saturating_div(target_gas)
+        .saturating_div(EIP1559_BASE_FEE_MAX_CHANGE_DENOM);
+    base.saturating_sub(base_delta).min(u64::MAX as u128) as u64
+}
+
+fn validate_reward_percentiles(
+    reward_percentiles: Option<Vec<f64>>,
+) -> Result<Option<Vec<f64>>, RpcErrorView> {
+    let Some(percentiles) = reward_percentiles else {
+        return Ok(None);
+    };
+    let mut prev = -1.0f64;
+    for value in &percentiles {
+        if !value.is_finite() || *value < 0.0 || *value > 100.0 {
+            return Err(invalid_error(
+                "invalid.fee_history.percentiles",
+                "invalid.fee_history.percentiles percentile must be within [0,100]",
+            ));
+        }
+        if *value < prev {
+            return Err(invalid_error(
+                "invalid.fee_history.percentiles",
+                "invalid.fee_history.percentiles percentiles must be monotonically increasing",
+            ));
+        }
+        prev = *value;
+    }
+    Ok(Some(percentiles))
+}
+
+fn resolve_newest_number(tag: RpcBlockTagView) -> Result<u64, RpcErrorView> {
+    let window = rpc_eth_history_window();
+    let head = window.latest;
+    match tag {
+        RpcBlockTagView::Latest
+        | RpcBlockTagView::Pending
+        | RpcBlockTagView::Safe
+        | RpcBlockTagView::Finalized => Ok(head),
+        RpcBlockTagView::Earliest => {
+            if window.oldest_available > 0 {
+                return Err(out_of_window_error(0, window));
+            }
+            Ok(0)
+        }
+        RpcBlockTagView::Number(number) => {
+            if number < window.oldest_available || number > head {
+                return Err(out_of_window_error(number, window));
+            }
+            Ok(number)
+        }
+    }
+}
+
+fn unsupported_historical_exec_err(number: u64) -> RpcErrorView {
+    let window = rpc_eth_history_window();
+    if number < window.oldest_available || number > window.latest {
+        return out_of_window_error(number, window);
+    }
+    execution_error(
+        "exec.state.unavailable",
+        format!(
+            "exec.state.unavailable historical execution is unavailable requested={} oldest_available={} latest={}",
+            number, window.oldest_available, window.latest
+        ),
+    )
+}
+
+fn unsupported_historical_exec_call(number: u64) -> Result<RpcCallResultView, RpcErrorView> {
+    Err(unsupported_historical_exec_err(number))
+}
+
+fn unsupported_historical_exec_gas(number: u64) -> Result<u64, RpcErrorView> {
+    Err(unsupported_historical_exec_err(number))
+}
+
+fn out_of_window_error(requested: u64, window: RpcHistoryWindowView) -> RpcErrorView {
+    invalid_error(
+        "invalid.block_range.out_of_window",
+        format!(
+            "invalid.block_range.out_of_window requested={} oldest_available={} latest={}",
+            requested, window.oldest_available, window.latest
+        ),
+    )
 }
 
 fn prune_boundary_for_number(number: u64) -> Option<u64> {
