@@ -79,7 +79,7 @@ export async function runWorkerWithDeps(
   });
 
   try {
-    for (;;) {
+    for (; ;) {
       if (stopRequested) {
         logInfo(config.chainId, "stop_requested", { message: "exiting loop" });
         break;
@@ -265,45 +265,73 @@ export async function runWorkerWithDeps(
           process.exit(1);
         }
 
-      if (cursor) {
-        try {
-          enforceNextCursor(response, cursor, config.maxSegment);
-        } catch (err) {
-          logFatal(
-            config.chainId,
-            "InvalidCursor",
-            cursor,
-            headNumber,
-            response,
-            null,
-            errMessage(err),
-            err
-          );
-          process.exit(1);
+        if (cursor) {
+          try {
+            enforceNextCursor(response, cursor, config.maxSegment);
+          } catch (err) {
+            logFatal(
+              config.chainId,
+              "InvalidCursor",
+              cursor,
+              headNumber,
+              response,
+              null,
+              errMessage(err),
+              err
+            );
+            process.exit(1);
+          }
         }
-      }
 
-      const previousCursor = cursor;
-      const finalCursor = response.next_cursor;
-      let streamCursor = previousCursor;
-      let activePending: Pending | null = pending;
+        const previousCursor = cursor;
+        const finalCursor = response.next_cursor;
+        let streamCursor = previousCursor;
+        let activePending: Pending | null = pending;
 
-      if (!activePending) {
-        if (previousCursor) {
-          activePending = newPending(previousCursor);
-        } else {
-          activePending = newPendingFromChunk(response.chunks[0]);
-        }
-      }
-
-      for (let i = 0; i < response.chunks.length; i += 1) {
-        const chunk = response.chunks[i];
         if (!activePending) {
-          activePending = newPendingFromChunk(chunk);
+          if (previousCursor) {
+            activePending = newPending(previousCursor);
+          } else {
+            activePending = newPendingFromChunk(response.chunks[0]);
+          }
         }
-        const isFirstChunk = i === 0;
-        if (streamCursor) {
-          if (chunk.segment !== streamCursor.segment || chunk.start !== streamCursor.byte_offset) {
+
+        for (let i = 0; i < response.chunks.length; i += 1) {
+          const chunk = response.chunks[i];
+          if (!activePending) {
+            activePending = newPendingFromChunk(chunk);
+          }
+          const isFirstChunk = i === 0;
+          if (streamCursor) {
+            if (chunk.segment !== streamCursor.segment || chunk.start !== streamCursor.byte_offset) {
+              logFatal(
+                config.chainId,
+                "InvalidCursor",
+                previousCursor,
+                headNumber,
+                response,
+                null,
+                "cursor and chunk stream mismatch"
+              );
+              process.exit(1);
+            }
+          } else if (isFirstChunk) {
+            if (chunk.segment !== activePending.segment || chunk.start !== activePending.offset) {
+              logFatal(
+                config.chainId,
+                "InvalidCursor",
+                previousCursor,
+                headNumber,
+                response,
+                null,
+                "initial chunk mismatch without cursor"
+              );
+              process.exit(1);
+            }
+          }
+          try {
+            applyChunk(activePending, chunk);
+          } catch (err) {
             logFatal(
               config.chainId,
               "InvalidCursor",
@@ -311,27 +339,72 @@ export async function runWorkerWithDeps(
               headNumber,
               response,
               null,
-              "cursor and chunk stream mismatch"
+              errMessage(err),
+              err
             );
             process.exit(1);
           }
-        } else if (isFirstChunk) {
-          if (chunk.segment !== activePending.segment || chunk.start !== activePending.offset) {
-            logFatal(
-              config.chainId,
-              "InvalidCursor",
-              previousCursor,
-              headNumber,
+          if (activePending.complete) {
+            let commitCursor: Cursor;
+            if (streamCursor) {
+              commitCursor = {
+                block_number: streamCursor.block_number + 1n,
+                segment: 0,
+                byte_offset: 0,
+              };
+            } else {
+              const payloads = finalizePayloads(activePending);
+              const blockInfo = decodeBlockPayload(payloads[0]);
+              commitCursor = {
+                block_number: blockInfo.number + 1n,
+                segment: 0,
+                byte_offset: 0,
+              };
+            }
+            const resultCommit = await commitPending({
+              config,
+              db,
               response,
-              null,
-              "initial chunk mismatch without cursor"
-            );
-            process.exit(1);
+              previousCursor: streamCursor,
+              cursor: commitCursor,
+              headNumber,
+              pending: activePending,
+              lastSizeDay,
+              getTxInputByTxId: client.getTxInputByTxId,
+            });
+            if (resultCommit) {
+              lastSizeDay = resultCommit.lastSizeDay;
+            }
+            activePending = null;
+            const hasNextChunk = i + 1 < response.chunks.length;
+            if (hasNextChunk) {
+              const nextChunk = response.chunks[i + 1];
+              activePending = newPendingFromChunk(nextChunk);
+              // multi-block response: 次のチャンクの実際のストリーム位置を streamCursor に反映。
+              // commitCursor は常に segment=0, byte_offset=0 だが、
+              // ストリーム内の実際のバイト位置はチャンクごとに異なる。
+              streamCursor = {
+                block_number: commitCursor.block_number,
+                segment: nextChunk.segment,
+                byte_offset: nextChunk.start,
+              };
+            } else {
+              streamCursor = commitCursor;
+            }
+            continue;
+          }
+          if (streamCursor) {
+            streamCursor = {
+              block_number: streamCursor.block_number,
+              segment: activePending.segment,
+              byte_offset: activePending.offset,
+            };
           }
         }
-        try {
-          applyChunk(activePending, chunk);
-        } catch (err) {
+        pending = activePending;
+
+        cursor = finalCursor;
+        if (!streamCursor) {
           logFatal(
             config.chainId,
             "InvalidCursor",
@@ -339,91 +412,28 @@ export async function runWorkerWithDeps(
             headNumber,
             response,
             null,
-            errMessage(err),
-            err
+            "unable to establish consumed stream cursor without initial cursor"
           );
           process.exit(1);
         }
-        if (activePending.complete) {
-          let commitCursor: Cursor;
-          if (streamCursor) {
-            commitCursor = {
-              block_number: streamCursor.block_number + 1n,
-              segment: 0,
-              byte_offset: 0,
-            };
-          } else {
-            const payloads = finalizePayloads(activePending);
-            const blockInfo = decodeBlockPayload(payloads[0]);
-            commitCursor = {
-              block_number: blockInfo.number + 1n,
-              segment: 0,
-              byte_offset: 0,
-            };
-          }
-          const resultCommit = await commitPending({
-            config,
-            db,
-            response,
-            previousCursor: streamCursor,
-            cursor: commitCursor,
+        if (
+          streamCursor.block_number !== finalCursor.block_number ||
+          streamCursor.segment !== finalCursor.segment ||
+          streamCursor.byte_offset !== finalCursor.byte_offset
+        ) {
+          // next_cursorの正当性は「chunk streamの実消費結果と一致するか」で最終保証する。
+          // これにより、複数block同梱レスポンス(+N進行)も欠落なく安全に許容できる。
+          logFatal(
+            config.chainId,
+            "InvalidCursor",
+            previousCursor,
             headNumber,
-            pending: activePending,
-            lastSizeDay,
-            getTxInputByTxId: client.getTxInputByTxId,
-          });
-          if (resultCommit) {
-            lastSizeDay = resultCommit.lastSizeDay;
-            streamCursor = commitCursor;
-          }
-          activePending = null;
-          const hasNextChunk = i + 1 < response.chunks.length;
-          if (hasNextChunk) {
-            activePending = newPendingFromChunk(response.chunks[i + 1]);
-          }
-          continue;
+            response,
+            null,
+            "response next_cursor does not match consumed chunk stream"
+          );
+          process.exit(1);
         }
-        if (streamCursor) {
-          streamCursor = {
-            block_number: streamCursor.block_number,
-            segment: activePending.segment,
-            byte_offset: activePending.offset,
-          };
-        }
-      }
-      pending = activePending;
-
-      cursor = finalCursor;
-      if (!streamCursor) {
-        logFatal(
-          config.chainId,
-          "InvalidCursor",
-          previousCursor,
-          headNumber,
-          response,
-          null,
-          "unable to establish consumed stream cursor without initial cursor"
-        );
-        process.exit(1);
-      }
-      if (
-        streamCursor.block_number !== finalCursor.block_number ||
-        streamCursor.segment !== finalCursor.segment ||
-        streamCursor.byte_offset !== finalCursor.byte_offset
-      ) {
-        // next_cursorの正当性は「chunk streamの実消費結果と一致するか」で最終保証する。
-        // これにより、複数block同梱レスポンス(+N進行)も欠落なく安全に許容できる。
-        logFatal(
-          config.chainId,
-          "InvalidCursor",
-          previousCursor,
-          headNumber,
-          response,
-          null,
-          "response next_cursor does not match consumed chunk stream"
-        );
-        process.exit(1);
-      }
       }
     }
   } finally {

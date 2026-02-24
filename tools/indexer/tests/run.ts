@@ -285,6 +285,7 @@ test("block payload decodes v2 layout", () => {
   blockGasLimit.writeBigUInt64BE(3_000_000n, 0);
   const gasUsed = Buffer.alloc(8);
   gasUsed.writeBigUInt64BE(21_000n, 0);
+  const beneficiary = Buffer.alloc(20, 0x04);
   const txListHash = Buffer.alloc(32, 0x02);
   const stateRoot = Buffer.alloc(32, 0x03);
   const txLen = Buffer.alloc(4);
@@ -298,6 +299,7 @@ test("block payload decodes v2 layout", () => {
     baseFee,
     blockGasLimit,
     gasUsed,
+    beneficiary,
     txListHash,
     stateRoot,
     txLen,
@@ -387,7 +389,7 @@ test("applyChunk can process multiple blocks in one chunk stream", () => {
 test("runWorkerWithDeps commits two blocks from one response and stores final cursor", async () => {
   const db = await createTestIndexerDb();
   const originalClose = db.close.bind(db);
-  (db as unknown as { close: () => Promise<void> }).close = async () => {};
+  (db as unknown as { close: () => Promise<void> }).close = async () => { };
   await withTempDir(async (dir) => {
     const config: Config = {
       canisterId: "test-canister",
@@ -436,11 +438,11 @@ test("runWorkerWithDeps commits two blocks from one response and stores final cu
         cursor: { block_number: bigint; segment: number; byte_offset: number } | null
       ): Promise<
         | {
-            Ok: {
-              chunks: Array<{ segment: number; start: number; bytes: Buffer; payload_len: number }>;
-              next_cursor: { block_number: bigint; segment: number; byte_offset: number };
-            };
-          }
+          Ok: {
+            chunks: Array<{ segment: number; start: number; bytes: Buffer; payload_len: number }>;
+            next_cursor: { block_number: bigint; segment: number; byte_offset: number };
+          };
+        }
         | { Err: never }
       > => {
         exportCalls += 1;
@@ -501,7 +503,7 @@ test("runWorkerWithDeps commits two blocks from one response and stores final cu
 test("runWorkerWithDeps recovers from Pruned by rebasing cursor and dropping pending", async () => {
   const db = await createTestIndexerDb();
   const originalClose = db.close.bind(db);
-  (db as unknown as { close: () => Promise<void> }).close = async () => {};
+  (db as unknown as { close: () => Promise<void> }).close = async () => { };
   await withTempDir(async (dir) => {
     const config: Config = {
       canisterId: "test-canister",
@@ -542,11 +544,11 @@ test("runWorkerWithDeps recovers from Pruned by rebasing cursor and dropping pen
         cursor: { block_number: bigint; segment: number; byte_offset: number } | null
       ): Promise<
         | {
-            Ok: {
-              chunks: Array<{ segment: number; start: number; bytes: Buffer; payload_len: number }>;
-              next_cursor: { block_number: bigint; segment: number; byte_offset: number };
-            };
-          }
+          Ok: {
+            chunks: Array<{ segment: number; start: number; bytes: Buffer; payload_len: number }>;
+            next_cursor: { block_number: bigint; segment: number; byte_offset: number };
+          };
+        }
         | { Err: ExportError }
       > => {
         exportCalls += 1;
@@ -629,7 +631,7 @@ test("runWorkerWithDeps recovers from Pruned by rebasing cursor and dropping pen
 test("runWorkerWithDeps clamps Pruned cursor to block 1 minimum", async () => {
   const db = await createTestIndexerDb();
   const originalClose = db.close.bind(db);
-  (db as unknown as { close: () => Promise<void> }).close = async () => {};
+  (db as unknown as { close: () => Promise<void> }).close = async () => { };
   await withTempDir(async (dir) => {
     const config: Config = {
       canisterId: "test-canister",
@@ -669,11 +671,11 @@ test("runWorkerWithDeps clamps Pruned cursor to block 1 minimum", async () => {
         cursor: { block_number: bigint; segment: number; byte_offset: number } | null
       ): Promise<
         | {
-            Ok: {
-              chunks: Array<{ segment: number; start: number; bytes: Buffer; payload_len: number }>;
-              next_cursor: { block_number: bigint; segment: number; byte_offset: number };
-            };
-          }
+          Ok: {
+            chunks: Array<{ segment: number; start: number; bytes: Buffer; payload_len: number }>;
+            next_cursor: { block_number: bigint; segment: number; byte_offset: number };
+          };
+        }
         | { Err: ExportError }
       > => {
         exportCalls += 1;
@@ -729,7 +731,7 @@ test("runWorkerWithDeps clamps Pruned cursor to block 1 minimum", async () => {
 test("runWorkerWithDeps clamps Pruned cursor to head when prune floor is ahead", async () => {
   const db = await createTestIndexerDb();
   const originalClose = db.close.bind(db);
-  (db as unknown as { close: () => Promise<void> }).close = async () => {};
+  (db as unknown as { close: () => Promise<void> }).close = async () => { };
   await withTempDir(async (dir) => {
     const config: Config = {
       canisterId: "test-canister",
@@ -769,11 +771,11 @@ test("runWorkerWithDeps clamps Pruned cursor to head when prune floor is ahead",
         cursor: { block_number: bigint; segment: number; byte_offset: number } | null
       ): Promise<
         | {
-            Ok: {
-              chunks: Array<{ segment: number; start: number; bytes: Buffer; payload_len: number }>;
-              next_cursor: { block_number: bigint; segment: number; byte_offset: number };
-            };
-          }
+          Ok: {
+            chunks: Array<{ segment: number; start: number; bytes: Buffer; payload_len: number }>;
+            next_cursor: { block_number: bigint; segment: number; byte_offset: number };
+          };
+        }
         | { Err: ExportError }
       > => {
         exportCalls += 1;
@@ -829,7 +831,7 @@ test("runWorkerWithDeps clamps Pruned cursor to head when prune floor is ahead",
 test("runWorkerWithDeps bootstraps MissingData at block 1 instead of head", async () => {
   const db = await createTestIndexerDb();
   const originalClose = db.close.bind(db);
-  (db as unknown as { close: () => Promise<void> }).close = async () => {};
+  (db as unknown as { close: () => Promise<void> }).close = async () => { };
   await withTempDir(async (dir) => {
     const config: Config = {
       canisterId: "test-canister",
@@ -868,11 +870,11 @@ test("runWorkerWithDeps bootstraps MissingData at block 1 instead of head", asyn
         cursor: { block_number: bigint; segment: number; byte_offset: number } | null
       ): Promise<
         | {
-            Ok: {
-              chunks: Array<{ segment: number; start: number; bytes: Buffer; payload_len: number }>;
-              next_cursor: { block_number: bigint; segment: number; byte_offset: number };
-            };
-          }
+          Ok: {
+            chunks: Array<{ segment: number; start: number; bytes: Buffer; payload_len: number }>;
+            next_cursor: { block_number: bigint; segment: number; byte_offset: number };
+          };
+        }
         | { Err: ExportError }
       > => {
         exportCalls += 1;
@@ -926,7 +928,7 @@ test("runWorkerWithDeps bootstraps MissingData at block 1 instead of head", asyn
 test("runWorkerWithDeps exits on final cursor mismatch", async () => {
   const db = await createTestIndexerDb();
   const originalClose = db.close.bind(db);
-  (db as unknown as { close: () => Promise<void> }).close = async () => {};
+  (db as unknown as { close: () => Promise<void> }).close = async () => { };
   const originalExit = process.exit;
   try {
     await withTempDir(async (dir) => {
@@ -959,15 +961,15 @@ test("runWorkerWithDeps exits on final cursor mismatch", async () => {
         { segment: 2, start: 0, bytes: Buffer.alloc(0), payload_len: 0 },
       ];
       const client = {
-      getTxInputByTxId: async () => null,
+        getTxInputByTxId: async () => null,
         getHeadNumber: async (): Promise<bigint> => 1n,
         exportBlocks: async (): Promise<
           | {
-              Ok: {
-                chunks: Array<{ segment: number; start: number; bytes: Buffer; payload_len: number }>;
-                next_cursor: { block_number: bigint; segment: number; byte_offset: number };
-              };
-            }
+            Ok: {
+              chunks: Array<{ segment: number; start: number; bytes: Buffer; payload_len: number }>;
+              next_cursor: { block_number: bigint; segment: number; byte_offset: number };
+            };
+          }
           | { Err: never }
         > => ({
           Ok: {
@@ -1019,7 +1021,7 @@ test("runWorkerWithDeps exits on final cursor mismatch", async () => {
 test("runWorkerWithDeps exits when decoded block number mismatches cursor", async () => {
   const db = await createTestIndexerDb();
   const originalClose = db.close.bind(db);
-  (db as unknown as { close: () => Promise<void> }).close = async () => {};
+  (db as unknown as { close: () => Promise<void> }).close = async () => { };
   const originalExit = process.exit;
   try {
     await withTempDir(async (dir) => {
@@ -1052,15 +1054,15 @@ test("runWorkerWithDeps exits when decoded block number mismatches cursor", asyn
         { segment: 2, start: 0, bytes: Buffer.alloc(0), payload_len: 0 },
       ];
       const client = {
-      getTxInputByTxId: async () => null,
+        getTxInputByTxId: async () => null,
         getHeadNumber: async (): Promise<bigint> => 20n,
         exportBlocks: async (): Promise<
           | {
-              Ok: {
-                chunks: Array<{ segment: number; start: number; bytes: Buffer; payload_len: number }>;
-                next_cursor: { block_number: bigint; segment: number; byte_offset: number };
-              };
-            }
+            Ok: {
+              chunks: Array<{ segment: number; start: number; bytes: Buffer; payload_len: number }>;
+              next_cursor: { block_number: bigint; segment: number; byte_offset: number };
+            };
+          }
           | { Err: never }
         > => ({
           Ok: {
@@ -1112,7 +1114,7 @@ test("runWorkerWithDeps exits when decoded block number mismatches cursor", asyn
 test("runWorkerWithDeps exits when tx_index and receipts counts differ", async () => {
   const db = await createTestIndexerDb();
   const originalClose = db.close.bind(db);
-  (db as unknown as { close: () => Promise<void> }).close = async () => {};
+  (db as unknown as { close: () => Promise<void> }).close = async () => { };
   const originalExit = process.exit;
   try {
     await withTempDir(async (dir) => {
@@ -1147,15 +1149,15 @@ test("runWorkerWithDeps exits when tx_index and receipts counts differ", async (
         { segment: 2, start: 0, bytes: txIndexPayload, payload_len: txIndexPayload.length },
       ];
       const client = {
-      getTxInputByTxId: async () => null,
+        getTxInputByTxId: async () => null,
         getHeadNumber: async (): Promise<bigint> => 1n,
         exportBlocks: async (): Promise<
           | {
-              Ok: {
-                chunks: Array<{ segment: number; start: number; bytes: Buffer; payload_len: number }>;
-                next_cursor: { block_number: bigint; segment: number; byte_offset: number };
-              };
-            }
+            Ok: {
+              chunks: Array<{ segment: number; start: number; bytes: Buffer; payload_len: number }>;
+              next_cursor: { block_number: bigint; segment: number; byte_offset: number };
+            };
+          }
           | { Err: never }
         > => ({
           Ok: {
@@ -1207,7 +1209,7 @@ test("runWorkerWithDeps exits when tx_index and receipts counts differ", async (
 test("runWorkerWithDeps stores token_transfers block/tx index from tx_index payload", async () => {
   const db = await createTestIndexerDb();
   const originalClose = db.close.bind(db);
-  (db as unknown as { close: () => Promise<void> }).close = async () => {};
+  (db as unknown as { close: () => Promise<void> }).close = async () => { };
   await withTempDir(async (dir) => {
     const config: Config = {
       canisterId: "test-canister",
@@ -1266,11 +1268,11 @@ test("runWorkerWithDeps stores token_transfers block/tx index from tx_index payl
         cursor: { block_number: bigint; segment: number; byte_offset: number } | null
       ): Promise<
         | {
-            Ok: {
-              chunks: Array<{ segment: number; start: number; bytes: Buffer; payload_len: number }>;
-              next_cursor: { block_number: bigint; segment: number; byte_offset: number };
-            };
-          }
+          Ok: {
+            chunks: Array<{ segment: number; start: number; bytes: Buffer; payload_len: number }>;
+            next_cursor: { block_number: bigint; segment: number; byte_offset: number };
+          };
+        }
         | { Err: never }
       > => {
         if (headCalls === 1) {
@@ -1329,10 +1331,140 @@ test("runWorkerWithDeps stores token_transfers block/tx index from tx_index payl
   await originalClose();
 });
 
+test("runWorkerWithDeps handles multi-block response without crash", async () => {
+  const db = await createTestIndexerDb();
+  const originalClose = db.close.bind(db);
+  (db as unknown as { close: () => Promise<void> }).close = async () => { };
+  await withTempDir(async (dir) => {
+    const config: Config = {
+      canisterId: "test-canister",
+      icHost: "http://127.0.0.1:4943",
+      databaseUrl: "postgres://unused",
+      dbPoolMax: 1,
+      retentionDays: 90,
+      retentionEnabled: false,
+      retentionDryRun: false,
+      archiveGcDeleteOrphans: false,
+      maxBytes: 1_200_000,
+      backoffInitialMs: 1,
+      backoffMaxMs: 2,
+      idlePollMs: 1,
+      pruneStatusPollMs: 0,
+      opsMetricsPollMs: 0,
+      fetchRootKey: false,
+      archiveDir: dir,
+      chainId: "test",
+      zstdLevel: 1,
+      maxSegment: 2,
+    };
+    await db.setCursor({ block_number: 1n, segment: 0, byte_offset: 0 });
+    // Block 1
+    const txHash1 = Buffer.alloc(32, 0xa1);
+    const block1 = buildBlockPayload(1n, 10n, [txHash1]);
+    const receipts1 = buildReceiptsPayload([{ txHash: txHash1, receipt: buildReceiptBytes(1, true) }]);
+    const txIndex1 = buildTxIndexPayload(1n, txHash1, 0);
+    // Block 2
+    const txHash2 = Buffer.alloc(32, 0xa2);
+    const block2 = buildBlockPayload(2n, 20n, [txHash2]);
+    const receipts2 = buildReceiptsPayload([{ txHash: txHash2, receipt: buildReceiptBytes(1, true) }]);
+    const txIndex2 = buildTxIndexPayload(2n, txHash2, 0);
+    // Pack both blocks into one response.
+    // Each block has independent segment payloads (segment 0→1→2, each starting at offset 0).
+    const chunks = [
+      { segment: 0, start: 0, bytes: block1, payload_len: block1.length },
+      { segment: 1, start: 0, bytes: receipts1, payload_len: receipts1.length },
+      { segment: 2, start: 0, bytes: txIndex1, payload_len: txIndex1.length },
+      { segment: 0, start: 0, bytes: block2, payload_len: block2.length },
+      { segment: 1, start: 0, bytes: receipts2, payload_len: receipts2.length },
+      { segment: 2, start: 0, bytes: txIndex2, payload_len: txIndex2.length },
+    ];
+    let headCalls = 0;
+    const client = {
+      getTxInputByTxId: async () => null,
+      getHeadNumber: async (): Promise<bigint> => {
+        headCalls += 1;
+        if (headCalls === 2) {
+          process.emit("SIGINT");
+        }
+        return 2n;
+      },
+      exportBlocks: async (
+        cursor: { block_number: bigint; segment: number; byte_offset: number } | null
+      ): Promise<
+        | {
+          Ok: {
+            chunks: Array<{ segment: number; start: number; bytes: Buffer; payload_len: number }>;
+            next_cursor: { block_number: bigint; segment: number; byte_offset: number };
+          };
+        }
+        | { Err: never }
+      > => {
+        if (headCalls === 1) {
+          return {
+            Ok: {
+              chunks,
+              next_cursor: { block_number: 3n, segment: 0, byte_offset: 0 },
+            },
+          };
+        }
+        return {
+          Ok: {
+            chunks: [],
+            next_cursor: cursor ?? { block_number: 3n, segment: 0, byte_offset: 0 },
+          },
+        };
+      },
+      getPruneStatus: async () => ({
+        pruning_enabled: false,
+        prune_running: false,
+        estimated_kept_bytes: 0n,
+        high_water_bytes: 0n,
+        low_water_bytes: 0n,
+        hard_emergency_bytes: 0n,
+        last_prune_at: 0n,
+        pruned_before_block: null,
+        oldest_kept_block: null,
+        oldest_kept_timestamp: null,
+        need_prune: false,
+      }),
+      getMetrics: async () => ({
+        txs: 0n,
+        ema_txs_per_block_x1000: 0n,
+        pruned_before_block: null,
+        ema_block_rate_per_sec_x1000: 0n,
+        total_submitted: 0n,
+        window: 128n,
+        avg_txs_per_block: 0n,
+        block_rate_per_sec_x1000: null,
+        cycles: 0n,
+        total_dropped: 0n,
+        blocks: 0n,
+        drop_counts: [],
+        queue_len: 0n,
+        total_included: 0n,
+      }),
+    };
+    await runWorkerWithDeps(config, db, client, { skipGc: true });
+    // Both blocks should be committed
+    const block1Row = await db.queryOne<{ n: string }>(
+      "select count(*)::text as n from blocks where number = 1"
+    );
+    assert.equal(block1Row?.n, "1");
+    const block2Row = await db.queryOne<{ n: string }>(
+      "select count(*)::text as n from blocks where number = 2"
+    );
+    assert.equal(block2Row?.n, "1");
+    // Cursor should be at block 3
+    const cursor = await db.getCursor();
+    assert.equal(cursor?.block_number, 3n);
+  });
+  await originalClose();
+});
+
 test("runWorkerWithDeps exits when stored cursor segment exceeds maxSegment", async () => {
   const db = await createTestIndexerDb();
   const originalClose = db.close.bind(db);
-  (db as unknown as { close: () => Promise<void> }).close = async () => {};
+  (db as unknown as { close: () => Promise<void> }).close = async () => { };
   const originalExit = process.exit;
   try {
     await withTempDir(async (dir) => {
@@ -1359,7 +1491,7 @@ test("runWorkerWithDeps exits when stored cursor segment exceeds maxSegment", as
       };
       await db.setCursor({ block_number: 1n, segment: 3, byte_offset: 0 });
       const client = {
-      getTxInputByTxId: async () => null,
+        getTxInputByTxId: async () => null,
         getHeadNumber: async (): Promise<bigint> => 1n,
         exportBlocks: async (): Promise<{ Ok: never } | { Err: never }> => {
           throw new Error("exportBlocks should not be called");
@@ -1408,7 +1540,7 @@ test("runWorkerWithDeps exits when stored cursor segment exceeds maxSegment", as
 test("runWorkerWithDeps exits when cursor is null and stream cursor is not established", async () => {
   const db = await createTestIndexerDb();
   const originalClose = db.close.bind(db);
-  (db as unknown as { close: () => Promise<void> }).close = async () => {};
+  (db as unknown as { close: () => Promise<void> }).close = async () => { };
   const originalExit = process.exit;
   try {
     await withTempDir(async (dir) => {
@@ -1435,15 +1567,15 @@ test("runWorkerWithDeps exits when cursor is null and stream cursor is not estab
       };
       const chunkBytes = Buffer.from([1, 2, 3]);
       const client = {
-      getTxInputByTxId: async () => null,
+        getTxInputByTxId: async () => null,
         getHeadNumber: async (): Promise<bigint> => 10n,
         exportBlocks: async (): Promise<
           | {
-              Ok: {
-                chunks: Array<{ segment: number; start: number; bytes: Buffer; payload_len: number }>;
-                next_cursor: { block_number: bigint; segment: number; byte_offset: number };
-              };
-            }
+            Ok: {
+              chunks: Array<{ segment: number; start: number; bytes: Buffer; payload_len: number }>;
+              next_cursor: { block_number: bigint; segment: number; byte_offset: number };
+            };
+          }
           | { Err: never }
         > => ({
           Ok: {
@@ -1495,7 +1627,7 @@ test("runWorkerWithDeps exits when cursor is null and stream cursor is not estab
 test("runWorkerWithDeps does not leak signal listeners after stop", async () => {
   const db = await createTestIndexerDb();
   const originalClose = db.close.bind(db);
-  (db as unknown as { close: () => Promise<void> }).close = async () => {};
+  (db as unknown as { close: () => Promise<void> }).close = async () => { };
   const beforeSigInt = process.listenerCount("SIGINT");
   const beforeSigTerm = process.listenerCount("SIGTERM");
   const beforeUncaught = process.listenerCount("uncaughtException");
@@ -1525,7 +1657,7 @@ test("runWorkerWithDeps does not leak signal listeners after stop", async () => 
       };
       let headCalls = 0;
       const client = {
-      getTxInputByTxId: async () => null,
+        getTxInputByTxId: async () => null,
         getHeadNumber: async (): Promise<bigint> => {
           headCalls += 1;
           if (headCalls === 1) {
@@ -1537,11 +1669,11 @@ test("runWorkerWithDeps does not leak signal listeners after stop", async () => 
           cursor: { block_number: bigint; segment: number; byte_offset: number } | null
         ): Promise<
           | {
-              Ok: {
-                chunks: Array<{ segment: number; start: number; bytes: Buffer; payload_len: number }>;
-                next_cursor: { block_number: bigint; segment: number; byte_offset: number };
-              };
-            }
+            Ok: {
+              chunks: Array<{ segment: number; start: number; bytes: Buffer; payload_len: number }>;
+              next_cursor: { block_number: bigint; segment: number; byte_offset: number };
+            };
+          }
           | { Err: never }
         > => ({
           Ok: {
@@ -1806,7 +1938,7 @@ async function createTestIndexerDb(): Promise<IndexerDb> {
   await db.queryOne("alter table if exists txs add column if not exists tx_input bytea");
   await db.queryOne(
     "create table if not exists tx_receipts_index(" +
-      "tx_hash bytea primary key, contract_address bytea, status smallint not null, block_number bigint not null, tx_index integer not null)"
+    "tx_hash bytea primary key, contract_address bytea, status smallint not null, block_number bigint not null, tx_index integer not null)"
   );
   await db.queryOne("alter table if exists ops_metrics_samples add column if not exists cycles bigint not null default 0");
   await db.queryOne("alter table if exists ops_metrics_samples add column if not exists pruned_before_block bigint");
@@ -1816,7 +1948,7 @@ async function createTestIndexerDb(): Promise<IndexerDb> {
   await db.queryOne("alter table if exists ops_metrics_samples add column if not exists hard_emergency_bytes bigint");
   await db.queryOne(
     "create table if not exists retention_runs(" +
-      "id text primary key, started_at bigint not null, finished_at bigint not null, retention_days integer not null, dry_run boolean not null, deleted_blocks bigint not null, deleted_txs bigint not null, deleted_metrics_daily bigint not null, deleted_archive_parts bigint not null, status text not null, error_message text)"
+    "id text primary key, started_at bigint not null, finished_at bigint not null, retention_days integer not null, dry_run boolean not null, deleted_blocks bigint not null, deleted_txs bigint not null, deleted_metrics_daily bigint not null, deleted_archive_parts bigint not null, status text not null, error_message text)"
   );
   return db;
 }
@@ -1855,7 +1987,8 @@ async function withTempDir(fn: (dir: string) => Promise<void>): Promise<void> {
 
 function buildBlockPayload(number: bigint, timestamp: bigint, txIds: Buffer[]): Buffer {
   const hashLen = 32;
-  const base = 8 + hashLen + hashLen + 8 + 8 + 8 + 8 + hashLen + hashLen + 4;
+  const beneficiaryLen = 20;
+  const base = 8 + hashLen + hashLen + 8 + 8 + 8 + 8 + beneficiaryLen + hashLen + hashLen + 4;
   const total = base + txIds.length * hashLen;
   const out = Buffer.alloc(total);
   let offset = 0;
@@ -1866,6 +1999,7 @@ function buildBlockPayload(number: bigint, timestamp: bigint, txIds: Buffer[]): 
   offset = writeU64BE(out, offset, 1_000_000_000n); // base_fee_per_gas
   offset = writeU64BE(out, offset, 3_000_000n); // block_gas_limit
   offset = writeU64BE(out, offset, 0n); // gas_used
+  offset = writeZeros(out, offset, beneficiaryLen);
   offset = writeZeros(out, offset, hashLen);
   offset = writeZeros(out, offset, hashLen);
   out.writeUInt32BE(txIds.length, offset);
