@@ -623,6 +623,11 @@ fn rpc_eth_get_block_by_number_with_status(number: u64, full_tx: bool) -> RpcBlo
 }
 
 #[ic_cdk::query]
+fn rpc_eth_get_block_number_by_hash(block_hash: Vec<u8>, max_scan: u32) -> Result<Option<u64>, String> {
+    ic_evm_rpc::rpc_eth_get_block_number_by_hash(block_hash, max_scan)
+}
+
+#[ic_cdk::query]
 fn rpc_eth_get_transaction_receipt_with_status(tx_hash_or_id: Vec<u8>) -> RpcReceiptLookupView {
     ic_evm_rpc::rpc_eth_get_transaction_receipt_with_status(tx_hash_or_id)
 }
