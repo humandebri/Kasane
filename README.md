@@ -343,10 +343,10 @@ RPCインターフェースは、Internet Computerのアーキテクチャに準
 | `eth_getBlockByNumber` | Partially supported | ブロック参照を返す | `latest/pending/safe/finalized` は head 扱い。pruned範囲は `-32001` | `fullTx` の有無で返却形を切替 |
 | `eth_getTransactionByHash` | Supported | `eth_tx_hash` ベースで参照する | `tx_id` 直接参照ではない | canister側は `rpc_eth_get_transaction_by_eth_hash` |
 | `eth_getTransactionReceipt` | Partially supported | receipt を返す | migration/corrupt時 `-32000`、pruned範囲は `-32001` | canister側は `rpc_eth_get_transaction_receipt_with_status_by_eth_hash` |
-| `eth_getBalance` | Partially supported | 残高取得に対応 | `latest` 系のみ（文字列または `{ blockNumber: "latest|pending|safe|finalized" }`） | canister query でも取得可能 |
-| `eth_getTransactionCount` | Partially supported | nonce取得に対応 | `latest/pending/safe/finalized` のみ | canister側 `expected_nonce_by_address` |
-| `eth_getCode` | Partially supported | コード取得に対応 | `latest` のみ | canister query でも取得可能 |
-| `eth_getStorageAt` | Partially supported | ストレージ取得に対応 | `latest` のみ | `slot` は QUANTITY / DATA(32bytes) を受理 |
+| `eth_getBalance` | Partially supported | 残高取得に対応 | `latest/pending/safe/finalized/earliest/QUANTITY` を受理。`QUANTITY` は `head` と同値のみ成功、`head` 未満は `exec.state.unavailable`、範囲外は `invalid.block_range.out_of_window` | canister query でも取得可能 |
+| `eth_getTransactionCount` | Partially supported | nonce取得に対応 | `latest/pending/safe/finalized/earliest/QUANTITY` を受理。`earliest` は historical nonce 未提供で `exec.state.unavailable`（`oldest_available>0` は out-of-window）。`QUANTITY` は `head` と同値のみ成功、`head` 未満は `exec.state.unavailable`、範囲外は `invalid.block_range.out_of_window` | canister側 `rpc_eth_get_transaction_count_at` |
+| `eth_getCode` | Partially supported | コード取得に対応 | `latest/pending/safe/finalized/earliest/QUANTITY` を受理。`QUANTITY` は `head` と同値のみ成功、`head` 未満は `exec.state.unavailable`、範囲外は `invalid.block_range.out_of_window` | canister query でも取得可能 |
+| `eth_getStorageAt` | Partially supported | ストレージ取得に対応 | `latest/pending/safe/finalized/earliest/QUANTITY` を受理。`QUANTITY` は `head` と同値のみ成功、`head` 未満は `exec.state.unavailable`、範囲外は `invalid.block_range.out_of_window` | `slot` は QUANTITY / DATA(32bytes) を受理 |
 | `eth_call` | Partially supported | 読み取り実行に対応 | `latest` のみ、入力制約あり | revert時は `-32000` + `error.data` |
 | `eth_estimateGas` | Partially supported | call相当で見積り | `latest` のみ、入力制約あり | canister側 `rpc_eth_estimate_gas_object` |
 | `eth_sendRawTransaction` | Supported | 署名済みtxを投入し、返却 `tx_id` から `eth_tx_hash` を解決して `0x...` を返す | `eth_tx_hash` 解決不能時は `-32000` エラー返却 | canister側投入実体は `rpc_eth_send_raw_transaction` |

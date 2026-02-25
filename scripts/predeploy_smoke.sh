@@ -1,15 +1,13 @@
 #!/usr/bin/env bash
 # where: pre-deploy smoke orchestration
-# what: run canister build + rpc smoke + indexer smoke in one command
-# why: keep release gating repeatable and easy to audit
+# what: run canister build + PocketIC RPC e2e (+ optional local indexer smoke)
+# why: keep release gating repeatable and avoid local deploy dependencies
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT_DIR"
 
-RUN_DEPLOY="${RUN_DEPLOY:-0}"
-RUN_INDEXER_SMOKE="${RUN_INDEXER_SMOKE:-1}"
-NETWORK="${NETWORK:-local}"
+RUN_INDEXER_SMOKE="${RUN_INDEXER_SMOKE:-0}"
 
 echo "[predeploy] cargo check"
 cargo check --workspace
@@ -17,16 +15,11 @@ cargo check --workspace
 echo "[predeploy] build wasm release"
 cargo build -p ic-evm-wrapper --target wasm32-unknown-unknown --release
 
-if [[ "$RUN_DEPLOY" == "1" ]]; then
-  echo "[predeploy] local deploy"
-  scripts/playground_manual_deploy.sh
-fi
-
-echo "[predeploy] rpc smoke"
-NETWORK="$NETWORK" scripts/rpc_compat_smoke.sh
+echo "[predeploy] rpc compat e2e (PocketIC)"
+scripts/run_rpc_compat_e2e.sh
 
 if [[ "$RUN_INDEXER_SMOKE" == "1" ]]; then
-  echo "[predeploy] indexer smoke"
+  echo "[predeploy] indexer smoke (local network)"
   scripts/local_indexer_smoke.sh
 fi
 

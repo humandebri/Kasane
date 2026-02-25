@@ -100,6 +100,7 @@ export type RpcReceiptLookupView =
   | { Pruned: { pruned_before_block: bigint } };
 
 type TextResult = { Ok: Uint8Array } | { Err: string };
+type RpcBytesResult = { Ok: Uint8Array } | { Err: RpcErrorView };
 type NonceResult = { Ok: bigint } | { Err: string };
 export type RpcErrorView = { code: number; message: string; error_prefix: [] | [string] };
 type Nat64Result = { Ok: bigint } | { Err: RpcErrorView };
@@ -166,9 +167,9 @@ type Methods = {
     cursor: [] | [EthLogsCursorView],
     limit: number
   ) => Promise<LogsPageResult>;
-  rpc_eth_get_balance: (address: Uint8Array) => Promise<TextResult>;
-  rpc_eth_get_code: (address: Uint8Array) => Promise<TextResult>;
-  rpc_eth_get_storage_at: (address: Uint8Array, slot: Uint8Array) => Promise<TextResult>;
+  rpc_eth_get_balance: (address: Uint8Array, tag: BlockTag) => Promise<RpcBytesResult>;
+  rpc_eth_get_code: (address: Uint8Array, tag: BlockTag) => Promise<RpcBytesResult>;
+  rpc_eth_get_storage_at: (address: Uint8Array, slot: Uint8Array, tag: BlockTag) => Promise<RpcBytesResult>;
   rpc_eth_get_transaction_count_at: (address: Uint8Array, tag: BlockTag) => Promise<Nat64Result>;
   rpc_eth_call_object: (call: CallObject) => Promise<CallResult>;
   rpc_eth_call_object_at: (call: CallObject, tag: BlockTag) => Promise<CallResult>;

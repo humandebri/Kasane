@@ -299,9 +299,12 @@ async function onGetBalance(id: string | number | null, params: unknown): Promis
   if (typeof addressRaw !== "string") {
     return makeError(id, ERR_INVALID_PARAMS, "address must be hex string");
   }
-  // Canister側が最新状態のみを返すため、wallet実装差分によるblockTagゆらぎは受け流す。
-  // blockTagは受理するが評価には使わない。
-  void blockTagRaw;
+  let tag: BlockTag;
+  try {
+    tag = parseExecutionBlockTag(blockTagRaw);
+  } catch (error) {
+    return makeInvalidParams(id, error);
+  }
   let address: Uint8Array;
   try {
     address = ensureLen(parseDataHex(addressRaw), 20, "address");
@@ -309,10 +312,8 @@ async function onGetBalance(id: string | number | null, params: unknown): Promis
     return makeInvalidParams(id, error);
   }
   const actor = await getActor();
-  const out = await actor.rpc_eth_get_balance(address);
-  return "Err" in out
-    ? makeError(id, -32000, "state unavailable", { detail: out.Err })
-    : makeSuccess(id, toQuantityHex(bytesToQuantity(out.Ok)));
+  const out = await actor.rpc_eth_get_balance(address, tag);
+  return "Err" in out ? mapRpcError(id, out.Err, "state unavailable") : makeSuccess(id, toQuantityHex(bytesToQuantity(out.Ok)));
 }
 
 async function onGetTransactionCount(id: string | number | null, params: unknown): Promise<JsonRpcResponse> {
@@ -342,8 +343,11 @@ async function onGetCode(id: string | number | null, params: unknown): Promise<J
   if (typeof addressRaw !== "string") {
     return makeError(id, ERR_INVALID_PARAMS, "address must be hex string");
   }
-  if (!isLatestTag(blockTagRaw)) {
-    return makeError(id, ERR_INVALID_PARAMS, "only latest/pending/safe/finalized blockTag is supported");
+  let tag: BlockTag;
+  try {
+    tag = parseExecutionBlockTag(blockTagRaw);
+  } catch (error) {
+    return makeInvalidParams(id, error);
   }
   let address: Uint8Array;
   try {
@@ -352,10 +356,8 @@ async function onGetCode(id: string | number | null, params: unknown): Promise<J
     return makeInvalidParams(id, error);
   }
   const actor = await getActor();
-  const out = await actor.rpc_eth_get_code(address);
-  return "Err" in out
-    ? makeError(id, -32000, "state unavailable", { detail: out.Err })
-    : makeSuccess(id, toDataHex(out.Ok));
+  const out = await actor.rpc_eth_get_code(address, tag);
+  return "Err" in out ? mapRpcError(id, out.Err, "state unavailable") : makeSuccess(id, toDataHex(out.Ok));
 }
 
 async function onGetStorageAt(id: string | number | null, params: unknown): Promise<JsonRpcResponse> {
@@ -363,8 +365,11 @@ async function onGetStorageAt(id: string | number | null, params: unknown): Prom
   if (typeof addressRaw !== "string" || typeof slotRaw !== "string") {
     return makeError(id, ERR_INVALID_PARAMS, "address/slot must be hex string");
   }
-  if (!isLatestTag(blockTagRaw)) {
-    return makeError(id, ERR_INVALID_PARAMS, "only latest/pending/safe/finalized blockTag is supported");
+  let tag: BlockTag;
+  try {
+    tag = parseExecutionBlockTag(blockTagRaw);
+  } catch (error) {
+    return makeInvalidParams(id, error);
   }
   let address: Uint8Array;
   let slot: Uint8Array;
@@ -375,10 +380,8 @@ async function onGetStorageAt(id: string | number | null, params: unknown): Prom
     return makeInvalidParams(id, error);
   }
   const actor = await getActor();
-  const out = await actor.rpc_eth_get_storage_at(address, slot);
-  return "Err" in out
-    ? makeError(id, -32000, "state unavailable", { detail: out.Err })
-    : makeSuccess(id, toDataHex(out.Ok));
+  const out = await actor.rpc_eth_get_storage_at(address, slot, tag);
+  return "Err" in out ? mapRpcError(id, out.Err, "state unavailable") : makeSuccess(id, toDataHex(out.Ok));
 }
 
 async function onGetLogs(id: string | number | null, params: unknown): Promise<JsonRpcResponse> {

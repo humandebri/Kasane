@@ -11,6 +11,15 @@ type Result<T, E> = { Ok: T } | { Err: E };
 type ResultBytes = Result<Uint8Array, string>;
 type ResultNonce = Result<bigint, string>;
 type ResultRpcCall = Result<RpcCallResultView, RpcErrorView>;
+type ResultRpcBytes = Result<Uint8Array, RpcErrorView>;
+
+type RpcBlockTagView =
+  | { Latest: null }
+  | { Pending: null }
+  | { Safe: null }
+  | { Finalized: null }
+  | { Earliest: null }
+  | { Number: bigint };
 
 export type LogView = { address: Uint8Array; topics: Uint8Array[]; data: Uint8Array };
 export type ReceiptView = {
@@ -207,8 +216,8 @@ type ExplorerActorMethods = {
   ) => Promise<Result<EthLogsPageView, GetLogsErrorView>>;
   get_pending: (txId: Uint8Array) => Promise<PendingStatusView>;
   get_prune_status: () => Promise<PruneStatusView>;
-  rpc_eth_get_balance: (address: Uint8Array) => Promise<ResultBytes>;
-  rpc_eth_get_code: (address: Uint8Array) => Promise<ResultBytes>;
+  rpc_eth_get_balance: (address: Uint8Array, tag: RpcBlockTagView) => Promise<ResultRpcBytes>;
+  rpc_eth_get_code: (address: Uint8Array, tag: RpcBlockTagView) => Promise<ResultRpcBytes>;
   expected_nonce_by_address: (address: Uint8Array) => Promise<ResultNonce>;
   rpc_eth_call_object: (call: RpcCallObjectView) => Promise<ResultRpcCall>;
 };
@@ -345,17 +354,17 @@ export async function getRpcPruneStatus(): Promise<PruneStatusView> {
 }
 
 export async function getRpcBalance(address: Uint8Array): Promise<bigint> {
-  const out = await (await getActor()).rpc_eth_get_balance(address);
+  const out = await (await getActor()).rpc_eth_get_balance(address, { Latest: null });
   if ("Err" in out) {
-    throw new Error(out.Err);
+    throw new Error(out.Err.message);
   }
   return bytesToBigInt(out.Ok);
 }
 
 export async function getRpcCode(address: Uint8Array): Promise<Uint8Array> {
-  const out = await (await getActor()).rpc_eth_get_code(address);
+  const out = await (await getActor()).rpc_eth_get_code(address, { Latest: null });
   if ("Err" in out) {
-    throw new Error(out.Err);
+    throw new Error(out.Err.message);
   }
   return out.Ok;
 }
@@ -553,6 +562,14 @@ const idlFactory: IDL.InterfaceFactory = ({ IDL }) => {
     gas_used: IDL.Nat64,
     revert_data: IDL.Opt(IDL.Vec(IDL.Nat8)),
   });
+  const rpcBlockTagView = IDL.Variant({
+    Earliest: IDL.Null,
+    Safe: IDL.Null,
+    Finalized: IDL.Null,
+    Latest: IDL.Null,
+    Number: IDL.Nat64,
+    Pending: IDL.Null,
+  });
   const rpcErrorView = IDL.Record({ code: IDL.Nat32, message: IDL.Text });
 
   return IDL.Service({
@@ -561,9 +578,17 @@ const idlFactory: IDL.InterfaceFactory = ({ IDL }) => {
     get_receipt: IDL.Func([IDL.Vec(IDL.Nat8)], [IDL.Variant({ Ok: receiptView, Err: lookupError })], ["query"]),
     get_prune_status: IDL.Func([], [pruneStatusView], ["query"]),
     get_pending: IDL.Func([IDL.Vec(IDL.Nat8)], [pendingStatusView], ["query"]),
-    rpc_eth_get_balance: IDL.Func([IDL.Vec(IDL.Nat8)], [IDL.Variant({ Ok: IDL.Vec(IDL.Nat8), Err: IDL.Text })], ["query"]),
+    rpc_eth_get_balance: IDL.Func(
+      [IDL.Vec(IDL.Nat8), rpcBlockTagView],
+      [IDL.Variant({ Ok: IDL.Vec(IDL.Nat8), Err: rpcErrorView })],
+      ["query"]
+    ),
     rpc_eth_get_block_by_number: IDL.Func([IDL.Nat64, IDL.Bool], [IDL.Opt(ethBlockView)], ["query"]),
-    rpc_eth_get_code: IDL.Func([IDL.Vec(IDL.Nat8)], [IDL.Variant({ Ok: IDL.Vec(IDL.Nat8), Err: IDL.Text })], ["query"]),
+    rpc_eth_get_code: IDL.Func(
+      [IDL.Vec(IDL.Nat8), rpcBlockTagView],
+      [IDL.Variant({ Ok: IDL.Vec(IDL.Nat8), Err: rpcErrorView })],
+      ["query"]
+    ),
     rpc_eth_get_logs_paged: IDL.Func([ethLogFilterView, IDL.Opt(ethLogsCursorView), IDL.Nat32], [IDL.Variant({ Ok: ethLogsPageView, Err: getLogsErrorView })], ["query"]),
     rpc_eth_call_object: IDL.Func([rpcCallObjectView], [IDL.Variant({ Ok: rpcCallResultView, Err: rpcErrorView })], ["query"]),
     rpc_eth_get_transaction_by_tx_id: IDL.Func([IDL.Vec(IDL.Nat8)], [IDL.Opt(rpcTxView)], ["query"]),

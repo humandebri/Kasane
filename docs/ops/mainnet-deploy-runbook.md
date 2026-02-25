@@ -92,7 +92,7 @@ scripts/query_smoke.sh
 
 ### `exec_precheck` 発生時の再同期手順
 1. `expected_nonce_by_address(sender)` で canister 側 expected nonce を取得する。
-2. `rpc_eth_get_balance(sender)` で `gas_limit * max_fee_per_gas + value` を満たすか確認する。
+2. `rpc_eth_get_balance(sender, Latest)` で `gas_limit * max_fee_per_gas + value` を満たすか確認する。
 3. fee が `baseFee + priority` を満たすことを確認する（不足なら再見積り）。
 4. 上記を満たした tx を同 sender の最新 nonce で再送し、`get_pending` が `Dropped` でないことを確認する。
 5. `rebuild_pending_runtime_indexes` 実行時の挙動を理解しておく。
