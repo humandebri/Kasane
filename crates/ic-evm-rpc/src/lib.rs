@@ -106,8 +106,10 @@ pub fn rpc_eth_get_block_number_by_hash(
     Ok(None)
 }
 
-pub fn rpc_eth_get_balance(address: Vec<u8>) -> Result<Vec<u8>, String> {
-    let addr = parse_address_20_with_label(address, "address")?;
+pub fn rpc_eth_get_balance(address: Vec<u8>, tag: RpcBlockTagView) -> Result<Vec<u8>, RpcErrorView> {
+    let addr = parse_address_20_with_label(address, "address")
+        .map_err(|message| invalid_error("invalid.address", message))?;
+    resolve_latest_state_read_tag(tag, "balance")?;
     let key = make_account_key(addr);
     let balance = with_state(|state| {
         state
@@ -119,8 +121,10 @@ pub fn rpc_eth_get_balance(address: Vec<u8>) -> Result<Vec<u8>, String> {
     Ok(balance)
 }
 
-pub fn rpc_eth_get_code(address: Vec<u8>) -> Result<Vec<u8>, String> {
-    let addr = parse_address_20_with_label(address, "address")?;
+pub fn rpc_eth_get_code(address: Vec<u8>, tag: RpcBlockTagView) -> Result<Vec<u8>, RpcErrorView> {
+    let addr = parse_address_20_with_label(address, "address")
+        .map_err(|message| invalid_error("invalid.address", message))?;
+    resolve_latest_state_read_tag(tag, "code")?;
     let key = make_account_key(addr);
     let code = with_state(|state| {
         let Some(account) = state.accounts.get(&key) else {
@@ -139,9 +143,16 @@ pub fn rpc_eth_get_code(address: Vec<u8>) -> Result<Vec<u8>, String> {
     Ok(code)
 }
 
-pub fn rpc_eth_get_storage_at(address: Vec<u8>, slot: Vec<u8>) -> Result<Vec<u8>, String> {
-    let addr = parse_address_20_with_label(address, "address")?;
-    let slot32 = parse_hash_32(slot).ok_or_else(|| "slot must be 32 bytes".to_string())?;
+pub fn rpc_eth_get_storage_at(
+    address: Vec<u8>,
+    slot: Vec<u8>,
+    tag: RpcBlockTagView,
+) -> Result<Vec<u8>, RpcErrorView> {
+    let addr = parse_address_20_with_label(address, "address")
+        .map_err(|message| invalid_error("invalid.address", message))?;
+    let slot32 = parse_hash_32(slot)
+        .ok_or_else(|| invalid_error("invalid.slot", "slot must be 32 bytes"))?;
+    resolve_latest_state_read_tag(tag, "storage")?;
     let key = make_storage_key(addr, slot32);
     let value = with_state(|state| {
         state
@@ -1186,6 +1197,43 @@ fn unsupported_historical_exec_call(number: u64) -> Result<RpcCallResultView, Rp
 
 fn unsupported_historical_exec_gas(number: u64) -> Result<u64, RpcErrorView> {
     Err(unsupported_historical_exec_err(number))
+}
+
+fn resolve_latest_state_read_tag(tag: RpcBlockTagView, target: &str) -> Result<(), RpcErrorView> {
+    let window = rpc_eth_history_window();
+    match tag {
+        RpcBlockTagView::Latest
+        | RpcBlockTagView::Pending
+        | RpcBlockTagView::Safe
+        | RpcBlockTagView::Finalized => Ok(()),
+        RpcBlockTagView::Earliest => {
+            if window.oldest_available > 0 {
+                return Err(out_of_window_error(0, window));
+            }
+            Err(execution_error(
+                "exec.state.unavailable",
+                format!(
+                    "exec.state.unavailable historical {} is unavailable for earliest",
+                    target
+                ),
+            ))
+        }
+        RpcBlockTagView::Number(number) => {
+            if number < window.oldest_available || number > window.latest {
+                return Err(out_of_window_error(number, window));
+            }
+            if number == window.latest {
+                return Ok(());
+            }
+            Err(execution_error(
+                "exec.state.unavailable",
+                format!(
+                    "exec.state.unavailable historical {} is unavailable requested={}",
+                    target, number
+                ),
+            ))
+        }
+    }
 }
 
 fn out_of_window_error(requested: u64, window: RpcHistoryWindowView) -> RpcErrorView {

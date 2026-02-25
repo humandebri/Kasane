@@ -578,18 +578,22 @@ fn rpc_eth_get_transaction_receipt_by_eth_hash(eth_tx_hash: Vec<u8>) -> Option<E
 }
 
 #[ic_cdk::query]
-fn rpc_eth_get_balance(address: Vec<u8>) -> Result<Vec<u8>, String> {
-    ic_evm_rpc::rpc_eth_get_balance(address)
+fn rpc_eth_get_balance(address: Vec<u8>, tag: RpcBlockTagView) -> Result<Vec<u8>, RpcErrorView> {
+    ic_evm_rpc::rpc_eth_get_balance(address, tag)
 }
 
 #[ic_cdk::query]
-fn rpc_eth_get_code(address: Vec<u8>) -> Result<Vec<u8>, String> {
-    ic_evm_rpc::rpc_eth_get_code(address)
+fn rpc_eth_get_code(address: Vec<u8>, tag: RpcBlockTagView) -> Result<Vec<u8>, RpcErrorView> {
+    ic_evm_rpc::rpc_eth_get_code(address, tag)
 }
 
 #[ic_cdk::query]
-fn rpc_eth_get_storage_at(address: Vec<u8>, slot: Vec<u8>) -> Result<Vec<u8>, String> {
-    ic_evm_rpc::rpc_eth_get_storage_at(address, slot)
+fn rpc_eth_get_storage_at(
+    address: Vec<u8>,
+    slot: Vec<u8>,
+    tag: RpcBlockTagView,
+) -> Result<Vec<u8>, RpcErrorView> {
+    ic_evm_rpc::rpc_eth_get_storage_at(address, slot, tag)
 }
 
 #[ic_cdk::query]
@@ -2729,7 +2733,12 @@ mod tests {
     #[test]
     fn rpc_eth_get_storage_at_returns_zero_for_missing_slot() {
         init_stable_state();
-        let out = super::rpc_eth_get_storage_at(vec![0u8; 20], vec![0u8; 32]).expect("storage");
+        let out = super::rpc_eth_get_storage_at(
+            vec![0u8; 20],
+            vec![0u8; 32],
+            super::RpcBlockTagView::Latest,
+        )
+        .expect("storage");
         assert_eq!(out, vec![0u8; 32]);
     }
 
@@ -2743,19 +2752,34 @@ mod tests {
                 .storage
                 .insert(make_storage_key(addr, slot), U256Val([0x33u8; 32]));
         });
-        let out = super::rpc_eth_get_storage_at(addr.to_vec(), slot.to_vec()).expect("storage");
+        let out = super::rpc_eth_get_storage_at(
+            addr.to_vec(),
+            slot.to_vec(),
+            super::RpcBlockTagView::Latest,
+        )
+        .expect("storage");
         assert_eq!(out, vec![0x33u8; 32]);
     }
 
     #[test]
     fn rpc_eth_get_storage_at_rejects_bad_length() {
         init_stable_state();
-        let err =
-            super::rpc_eth_get_storage_at(vec![0u8; 19], vec![0u8; 32]).expect_err("bad address");
-        assert_eq!(err, "address must be 20 bytes");
-        let err =
-            super::rpc_eth_get_storage_at(vec![0u8; 20], vec![0u8; 31]).expect_err("bad slot");
-        assert_eq!(err, "slot must be 32 bytes");
+        let err = super::rpc_eth_get_storage_at(
+            vec![0u8; 19],
+            vec![0u8; 32],
+            super::RpcBlockTagView::Latest,
+        )
+        .expect_err("bad address");
+        assert_eq!(err.code, 1001);
+        assert_eq!(err.message, "address must be 20 bytes");
+        let err = super::rpc_eth_get_storage_at(
+            vec![0u8; 20],
+            vec![0u8; 31],
+            super::RpcBlockTagView::Latest,
+        )
+        .expect_err("bad slot");
+        assert_eq!(err.code, 1001);
+        assert_eq!(err.message, "slot must be 32 bytes");
     }
 
     #[test]

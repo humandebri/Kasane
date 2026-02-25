@@ -213,11 +213,19 @@ export const idlFactory: IDL.InterfaceFactory = ({ IDL }) => {
       [IDL.Variant({ Ok: EthLogsPageView, Err: GetLogsErrorView })],
       ["query"]
     ),
-    rpc_eth_get_balance: IDL.Func([IDL.Vec(IDL.Nat8)], [IDL.Variant({ Ok: IDL.Vec(IDL.Nat8), Err: IDL.Text })], ["query"]),
-    rpc_eth_get_code: IDL.Func([IDL.Vec(IDL.Nat8)], [IDL.Variant({ Ok: IDL.Vec(IDL.Nat8), Err: IDL.Text })], ["query"]),
+    rpc_eth_get_balance: IDL.Func(
+      [IDL.Vec(IDL.Nat8), RpcBlockTagView],
+      [IDL.Variant({ Ok: IDL.Vec(IDL.Nat8), Err: RpcErrorView })],
+      ["query"]
+    ),
+    rpc_eth_get_code: IDL.Func(
+      [IDL.Vec(IDL.Nat8), RpcBlockTagView],
+      [IDL.Variant({ Ok: IDL.Vec(IDL.Nat8), Err: RpcErrorView })],
+      ["query"]
+    ),
     rpc_eth_get_storage_at: IDL.Func(
-      [IDL.Vec(IDL.Nat8), IDL.Vec(IDL.Nat8)],
-      [IDL.Variant({ Ok: IDL.Vec(IDL.Nat8), Err: IDL.Text })],
+      [IDL.Vec(IDL.Nat8), IDL.Vec(IDL.Nat8), RpcBlockTagView],
+      [IDL.Variant({ Ok: IDL.Vec(IDL.Nat8), Err: RpcErrorView })],
       ["query"]
     ),
     rpc_eth_get_transaction_count_at: IDL.Func(

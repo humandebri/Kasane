@@ -39,12 +39,21 @@ fn test_lock() -> &'static Mutex<()> {
 fn rpc_eth_get_balance_rejects_invalid_address_length() {
     let _guard = test_lock().lock().expect("lock");
     init_stable_state();
-    let err = rpc_eth_get_balance(vec![0u8; 19]).expect_err("invalid address should fail");
-    assert_eq!(err, "address must be 20 bytes");
-    let err = rpc_eth_get_balance(vec![0u8; 32]).expect_err("bytes32-like address should fail");
+    let err = rpc_eth_get_balance(vec![0u8; 19], RpcBlockTagView::Latest)
+        .expect_err("invalid address should fail");
+    assert_eq!(err.code, 1001);
+    assert_eq!(err.message, "address must be 20 bytes");
+    let err = rpc_eth_get_balance(vec![0u8; 32], RpcBlockTagView::Latest)
+        .expect_err("bytes32-like address should fail");
+    assert_eq!(err.code, 1001);
     assert_eq!(
         err,
-        "address must be 20 bytes (got 32; this looks like bytes32-encoded principal)"
+        ic_evm_rpc_types::RpcErrorView {
+            code: 1001,
+            message: "address must be 20 bytes (got 32; this looks like bytes32-encoded principal)"
+                .to_string(),
+            error_prefix: Some("invalid.address".to_string()),
+        }
     );
 }
 
@@ -52,7 +61,8 @@ fn rpc_eth_get_balance_rejects_invalid_address_length() {
 fn rpc_eth_get_balance_returns_zero_for_unknown_account() {
     let _guard = test_lock().lock().expect("lock");
     init_stable_state();
-    let out = rpc_eth_get_balance(vec![0u8; 20]).expect("query should succeed");
+    let out = rpc_eth_get_balance(vec![0u8; 20], RpcBlockTagView::Latest)
+        .expect("query should succeed");
     assert_eq!(out, vec![0u8; 32]);
 }
 
@@ -60,15 +70,17 @@ fn rpc_eth_get_balance_returns_zero_for_unknown_account() {
 fn rpc_eth_get_code_rejects_invalid_address_length() {
     let _guard = test_lock().lock().expect("lock");
     init_stable_state();
-    let err = rpc_eth_get_code(vec![0u8; 21]).expect_err("invalid address should fail");
-    assert_eq!(err, "address must be 20 bytes");
+    let err = rpc_eth_get_code(vec![0u8; 21], RpcBlockTagView::Latest)
+        .expect_err("invalid address should fail");
+    assert_eq!(err.code, 1001);
+    assert_eq!(err.message, "address must be 20 bytes");
 }
 
 #[test]
 fn rpc_eth_get_code_returns_empty_for_unknown_account() {
     let _guard = test_lock().lock().expect("lock");
     init_stable_state();
-    let out = rpc_eth_get_code(vec![0u8; 20]).expect("query should succeed");
+    let out = rpc_eth_get_code(vec![0u8; 20], RpcBlockTagView::Latest).expect("query should succeed");
     assert!(out.is_empty());
 }
 
@@ -76,12 +88,14 @@ fn rpc_eth_get_code_returns_empty_for_unknown_account() {
 fn rpc_eth_get_storage_at_rejects_invalid_lengths() {
     let _guard = test_lock().lock().expect("lock");
     init_stable_state();
-    let err = rpc_eth_get_storage_at(vec![0u8; 19], vec![0u8; 32])
+    let err = rpc_eth_get_storage_at(vec![0u8; 19], vec![0u8; 32], RpcBlockTagView::Latest)
         .expect_err("invalid address should fail");
-    assert_eq!(err, "address must be 20 bytes");
-    let err =
-        rpc_eth_get_storage_at(vec![0u8; 20], vec![0u8; 31]).expect_err("invalid slot should fail");
-    assert_eq!(err, "slot must be 32 bytes");
+    assert_eq!(err.code, 1001);
+    assert_eq!(err.message, "address must be 20 bytes");
+    let err = rpc_eth_get_storage_at(vec![0u8; 20], vec![0u8; 31], RpcBlockTagView::Latest)
+        .expect_err("invalid slot should fail");
+    assert_eq!(err.code, 1001);
+    assert_eq!(err.message, "slot must be 32 bytes");
 }
 
 #[test]
@@ -89,8 +103,8 @@ fn rpc_eth_get_storage_at_returns_zero_and_reads_existing_value() {
     let _guard = test_lock().lock().expect("lock");
     init_stable_state();
 
-    let missing =
-        rpc_eth_get_storage_at(vec![0u8; 20], vec![0u8; 32]).expect("query should succeed");
+    let missing = rpc_eth_get_storage_at(vec![0u8; 20], vec![0u8; 32], RpcBlockTagView::Latest)
+        .expect("query should succeed");
     assert_eq!(missing, vec![0u8; 32]);
 
     let addr = [0x11u8; 20];
@@ -100,7 +114,8 @@ fn rpc_eth_get_storage_at_returns_zero_and_reads_existing_value() {
             .storage
             .insert(make_storage_key(addr, slot), U256Val([0x33u8; 32]));
     });
-    let out = rpc_eth_get_storage_at(addr.to_vec(), slot.to_vec()).expect("query should succeed");
+    let out = rpc_eth_get_storage_at(addr.to_vec(), slot.to_vec(), RpcBlockTagView::Latest)
+        .expect("query should succeed");
     assert_eq!(out, vec![0x33u8; 32]);
 }
 
@@ -214,9 +229,6 @@ fn rpc_eth_txcount_at_respects_latest_and_pending_semantics() {
             block_hash: [0x22u8; 32],
             timestamp: 1_700_000_002,
         });
-        let mut prune = *state.prune_state.get();
-        prune.set_pruned_before(0);
-        state.prune_state.set(prune);
     });
     let latest = rpc_eth_get_transaction_count_at(sender.to_vec(), RpcBlockTagView::Latest)
         .expect("latest nonce");
@@ -237,13 +249,86 @@ fn rpc_eth_txcount_at_respects_latest_and_pending_semantics() {
         .starts_with("invalid.block_range.out_of_window"));
     let earliest = rpc_eth_get_transaction_count_at(sender.to_vec(), RpcBlockTagView::Earliest)
         .expect_err("historical nonce should be unavailable for earliest");
+    assert_eq!(earliest.code, 2001);
+    assert!(earliest.message.starts_with("exec.state.unavailable"));
+    let pending = rpc_eth_get_transaction_count_at(sender.to_vec(), RpcBlockTagView::Pending)
+        .expect("pending nonce");
+    assert_eq!(pending, 7);
+}
+
+#[test]
+fn rpc_eth_state_reads_at_respect_blocktag_window() {
+    let _guard = test_lock().lock().expect("lock");
+    init_stable_state();
+    let addr = [0x11u8; 20];
+    let slot = [0x22u8; 32];
+    let code = vec![0x60, 0x00, 0x56];
+    let code_hash = hash::keccak256(&code);
+    with_state_mut(|state| {
+        state.accounts.insert(
+            make_account_key(addr),
+            AccountVal::from_parts(0, [0x44u8; 32], code_hash),
+        );
+        state.codes.insert(make_code_key(code_hash), CodeVal(code.clone()));
+        state
+            .storage
+            .insert(make_storage_key(addr, slot), U256Val([0x55u8; 32]));
+        state.head.set(Head {
+            number: 2,
+            block_hash: [0x22u8; 32],
+            timestamp: 1_700_000_002,
+        });
+        let mut prune = *state.prune_state.get();
+        prune.set_pruned_before(0);
+        state.prune_state.set(prune);
+    });
+
+    let bal_latest =
+        rpc_eth_get_balance(addr.to_vec(), RpcBlockTagView::Latest).expect("latest balance");
+    assert_eq!(bal_latest, [0x44u8; 32].to_vec());
+    let code_head =
+        rpc_eth_get_code(addr.to_vec(), RpcBlockTagView::Number(2)).expect("head-number code");
+    assert_eq!(code_head, code);
+    let storage_head = rpc_eth_get_storage_at(addr.to_vec(), slot.to_vec(), RpcBlockTagView::Number(2))
+        .expect("head-number storage");
+    assert_eq!(storage_head, [0x55u8; 32].to_vec());
+
+    let bal_past = rpc_eth_get_balance(addr.to_vec(), RpcBlockTagView::Number(1))
+        .expect_err("historical balance should be unavailable");
+    assert_eq!(bal_past.code, 2001);
+    assert!(bal_past.message.starts_with("exec.state.unavailable"));
+    let code_past = rpc_eth_get_code(addr.to_vec(), RpcBlockTagView::Number(1))
+        .expect_err("historical code should be unavailable");
+    assert_eq!(code_past.code, 2001);
+    assert!(code_past.message.starts_with("exec.state.unavailable"));
+    let storage_past = rpc_eth_get_storage_at(addr.to_vec(), slot.to_vec(), RpcBlockTagView::Number(1))
+        .expect_err("historical storage should be unavailable");
+    assert_eq!(storage_past.code, 2001);
+    assert!(storage_past.message.starts_with("exec.state.unavailable"));
+
+    let bal_oow = rpc_eth_get_balance(addr.to_vec(), RpcBlockTagView::Number(3))
+        .expect_err("out-of-window number should fail");
+    assert_eq!(bal_oow.code, 1001);
+    assert!(bal_oow.message.starts_with("invalid.block_range.out_of_window"));
+
+    let earliest = rpc_eth_get_code(addr.to_vec(), RpcBlockTagView::Earliest)
+        .expect_err("earliest should be out-of-window when pruned");
     assert_eq!(earliest.code, 1001);
     assert!(earliest
         .message
         .starts_with("invalid.block_range.out_of_window"));
-    let pending = rpc_eth_get_transaction_count_at(sender.to_vec(), RpcBlockTagView::Pending)
-        .expect("pending nonce");
-    assert_eq!(pending, 7);
+
+    with_state_mut(|state| {
+        let mut prune = *state.prune_state.get();
+        prune.set_pruned_before(10);
+        state.prune_state.set(prune);
+    });
+    let earliest_oow = rpc_eth_get_storage_at(addr.to_vec(), slot.to_vec(), RpcBlockTagView::Earliest)
+        .expect_err("earliest should be out-of-window when pruned");
+    assert_eq!(earliest_oow.code, 1001);
+    assert!(earliest_oow
+        .message
+        .starts_with("invalid.block_range.out_of_window"));
 }
 
 #[test]

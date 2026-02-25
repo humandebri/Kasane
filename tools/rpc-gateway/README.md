@@ -41,10 +41,10 @@ npm run dev
 - `eth_getBlockByNumber`
 - `eth_getTransactionByHash`
 - `eth_getTransactionReceipt`
-- `eth_getBalance`（blockTag は受理するが最新扱い）
+- `eth_getBalance`（`latest/pending/safe/finalized/earliest/QUANTITY` を受理）
 - `eth_getTransactionCount`（`latest/pending/safe/finalized/earliest/QUANTITY` を受理）
-- `eth_getCode` (`latest/pending/safe/finalized` のみ)
-- `eth_getStorageAt` (`latest/pending/safe/finalized` のみ)
+- `eth_getCode`（`latest/pending/safe/finalized/earliest/QUANTITY` を受理）
+- `eth_getStorageAt`（`latest/pending/safe/finalized/earliest/QUANTITY` を受理）
 - `eth_getLogs`（制限あり）
 - `eth_call(callObject, blockTag)`（`latest/pending/safe/finalized/earliest/QUANTITY` を受理）
 - `eth_estimateGas(callObject, blockTag)`（`latest/pending/safe/finalized/earliest/QUANTITY` を受理）
@@ -88,10 +88,10 @@ npm run dev
 | `eth_getBlockByNumber` | Partially supported | `blockTag` を解決してブロックを返す | `latest/pending/safe/finalized` は head 扱い。pruned範囲は `-32001` | canister では `rpc_eth_get_block_by_number_with_status` |
 | `eth_getTransactionByHash` | Supported | `eth_tx_hash` で取引を参照する | `tx_id` 直接参照なし。migration未完了/critical corrupt時は `-32000 state unavailable` | canister では `rpc_eth_get_transaction_by_eth_hash` |
 | `eth_getTransactionReceipt` | Partially supported | `eth_tx_hash` で receipt を参照する | `transactionHash` が要求hashと一致しない `Found` は `null` として扱う（誤配防止）。migration未完了/critical corrupt時は `-32000`、pruned範囲は `-32001` | canister では `rpc_eth_get_transaction_receipt_with_status_by_eth_hash` |
-| `eth_getBalance` | Partially supported | 残高取得を返す | blockTag は受理するが評価には使わない（常に最新） | 不正入力は `-32602` |
+| `eth_getBalance` | Partially supported | 残高取得を返す | `QUANTITY` は `head` と同値なら成功。`head` 未満は `exec.state.unavailable`、範囲外は `invalid.block_range.out_of_window` | canister `Err` を `-32602`/`-32000` にマップ |
 | `eth_getTransactionCount` | Partially supported | canister `rpc_eth_get_transaction_count_at(address, tag)` を返す | `pending` は pending nonce。`earliest` は historical nonce 未提供で `exec.state.unavailable`（`oldest_available>0` は out-of-window）。`QUANTITY` は `head` と同値なら成功、`head` 未満は `exec.state.unavailable`、範囲外は `invalid.block_range.out_of_window` | `earliest` は block `0` として評価 |
-| `eth_getCode` | Partially supported | コードを返す | `blockTag` は `latest` 系のみ（文字列または `{ blockNumber: "latest|pending|safe|finalized" }`） | 不正入力は `-32602` |
-| `eth_getStorageAt` | Partially supported | ストレージ値を返す | `blockTag` は `latest` 系のみ（文字列または `{ blockNumber: "latest|pending|safe|finalized" }`） | `slot` は QUANTITY/DATA(32bytes) の両対応 |
+| `eth_getCode` | Partially supported | コードを返す | `QUANTITY` は `head` と同値なら成功。`head` 未満は `exec.state.unavailable`、範囲外は `invalid.block_range.out_of_window` | canister `Err` を `-32602`/`-32000` にマップ |
+| `eth_getStorageAt` | Partially supported | ストレージ値を返す | `QUANTITY` は `head` と同値なら成功。`head` 未満は `exec.state.unavailable`、範囲外は `invalid.block_range.out_of_window` | `slot` は QUANTITY/DATA(32bytes) の両対応 |
 | `eth_getLogs` | Partially supported | `rpc_eth_get_logs_paged` で収集して返す（`topics[0]` OR配列はGatewayで展開してマージ） | `address` は単一のみ、`topics[1+]` は未対応、`blockHash` は直近 `RPC_GATEWAY_LOGS_BLOCKHASH_SCAN_LIMIT` ブロック走査で解決（既定 `2000`） | 大きすぎる範囲は `-32005 limit exceeded` |
 | `eth_call` | Partially supported | callObject + tag を canister `rpc_eth_call_object_at` に委譲 | `QUANTITY` は `head` と同値なら成功。`head` 未満は `exec.state.unavailable`、範囲外は `invalid.block_range.out_of_window` | revert は `-32000` + `error.data` |
 | `eth_estimateGas` | Partially supported | callObject + tag を canister `rpc_eth_estimate_gas_object_at` に委譲 | `QUANTITY` は `head` と同値なら成功。`head` 未満は `exec.state.unavailable`、範囲外は `invalid.block_range.out_of_window` | canister `Err` を `-32602`/`-32000` にマップ |
