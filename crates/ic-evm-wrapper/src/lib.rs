@@ -1152,20 +1152,34 @@ fn tx_id_from_bytes(tx_id: Vec<u8>) -> Option<TxId> {
 
 #[cfg(test)]
 fn receipt_to_eth_view(receipt: ReceiptLike) -> EthReceiptView {
-    let eth_tx_hash = chain::get_tx_envelope(&receipt.tx_id)
+    let (eth_tx_hash, from, to) = chain::get_tx_envelope(&receipt.tx_id)
         .and_then(|envelope| StoredTx::try_from(envelope).ok())
-        .and_then(|stored| {
-            if stored.kind == TxKind::EthSigned {
+        .map(|stored| {
+            let kind = stored.kind;
+            let caller = match kind {
+                TxKind::IcSynthetic => stored.caller_evm.unwrap_or([0u8; 20]),
+                TxKind::EthSigned => [0u8; 20],
+            };
+            let decoded = evm_core::tx_decode::decode_tx_view(kind, caller, &stored.raw).ok();
+            let eth_hash = if kind == TxKind::EthSigned {
                 Some(hash::keccak256(&stored.raw).to_vec())
             } else {
                 None
-            }
-        });
+            };
+            let from = decoded.as_ref().map(|v| v.from.to_vec());
+            let to = decoded.as_ref().and_then(|v| v.to.map(|addr| addr.to_vec()));
+            (eth_hash, from, to)
+        })
+        .unwrap_or((None, None, None));
+    let block_hash = chain::get_block(receipt.block_number).map(|block| block.block_hash.to_vec());
     EthReceiptView {
         tx_hash: receipt.tx_id.0.to_vec(),
         eth_tx_hash,
+        block_hash,
         block_number: receipt.block_number,
         tx_index: receipt.tx_index,
+        from,
+        to,
         status: receipt.status,
         gas_used: receipt.gas_used,
         effective_gas_price: receipt.effective_gas_price,

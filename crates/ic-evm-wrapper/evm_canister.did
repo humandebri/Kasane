@@ -66,10 +66,13 @@ type EthReceiptLogView = record {
   address : blob;
 };
 type EthReceiptView = record {
+  to : opt blob;
   effective_gas_price : nat64;
   status : nat8;
   l1_data_fee : nat;
   tx_index : nat32;
+  block_hash : opt blob;
+  from : opt blob;
   logs : vec EthReceiptLogView;
   total_fee : nat;
   block_number : nat64;
@@ -83,6 +86,7 @@ type EthTxListView = variant { Full : vec EthTxView; Hashes : vec blob };
 type EthTxView = record {
   raw : blob;
   tx_index : opt nat32;
+  block_hash : opt blob;
   decode_ok : bool;
   hash : blob;
   kind : TxKindView;

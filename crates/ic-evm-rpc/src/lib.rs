@@ -228,6 +228,9 @@ pub fn rpc_eth_get_transaction_count_at(
             if number < window.oldest_available || number > window.latest {
                 return Err(out_of_window_error(number, window));
             }
+            if number == window.latest {
+                return Ok(latest_nonce());
+            }
             Err(execution_error(
                 "exec.state.unavailable",
                 format!(
@@ -248,7 +251,13 @@ pub fn rpc_eth_call_object_at(
         | RpcBlockTagView::Safe
         | RpcBlockTagView::Finalized => rpc_eth_call_object(call),
         RpcBlockTagView::Earliest => unsupported_historical_exec_call(0),
-        RpcBlockTagView::Number(number) => unsupported_historical_exec_call(number),
+        RpcBlockTagView::Number(number) => {
+            let window = rpc_eth_history_window();
+            if number == window.latest {
+                return rpc_eth_call_object(call);
+            }
+            unsupported_historical_exec_call(number)
+        }
     }
 }
 
@@ -262,7 +271,13 @@ pub fn rpc_eth_estimate_gas_object_at(
         | RpcBlockTagView::Safe
         | RpcBlockTagView::Finalized => rpc_eth_estimate_gas_object(call),
         RpcBlockTagView::Earliest => unsupported_historical_exec_gas(0),
-        RpcBlockTagView::Number(number) => unsupported_historical_exec_gas(number),
+        RpcBlockTagView::Number(number) => {
+            let window = rpc_eth_history_window();
+            if number == window.latest {
+                return rpc_eth_estimate_gas_object(call);
+            }
+            unsupported_historical_exec_gas(number)
+        }
     }
 }
 
@@ -754,24 +769,36 @@ fn find_eth_tx_id_by_eth_hash_bytes(eth_tx_hash: &[u8]) -> Option<TxId> {
     if eth_tx_hash.len() != 32 {
         return None;
     }
-    let mut hash_buf = [0u8; 32];
-    hash_buf.copy_from_slice(eth_tx_hash);
-    let hash_key = TxId(hash_buf);
-    with_state(|state| state.eth_tx_hash_index.get(&hash_key))
+    let mut requested_hash = [0u8; 32];
+    requested_hash.copy_from_slice(eth_tx_hash);
+    let indexed_tx_id = with_state(|state| state.eth_tx_hash_index.get(&TxId(requested_hash)))?;
+    let envelope = chain::get_tx_envelope(&indexed_tx_id)?;
+    let stored = StoredTx::try_from(envelope).ok()?;
+    if stored.kind != TxKind::EthSigned {
+        return None;
+    }
+    if hash::keccak256(&stored.raw) != requested_hash {
+        return None;
+    }
+    Some(indexed_tx_id)
 }
 
 fn tx_to_view(tx_id: TxId) -> Option<EthTxView> {
     let envelope = chain::get_tx_envelope(&tx_id)?;
-    let (block_number, tx_index) = match chain::get_tx_loc(&tx_id) {
+    let (block_number, tx_index, block_hash) = match chain::get_tx_loc(&tx_id) {
         Some(TxLoc {
             kind: TxLocKind::Included,
             block_number,
             tx_index,
             ..
-        }) => (Some(block_number), Some(tx_index)),
-        _ => (None, None),
+        }) => (
+            Some(block_number),
+            Some(tx_index),
+            chain::get_block(block_number).map(|block| block.block_hash.to_vec()),
+        ),
+        _ => (None, None, None),
     };
-    envelope_to_eth_view(envelope, block_number, tx_index)
+    envelope_to_eth_view(envelope, block_number, tx_index, block_hash)
 }
 
 fn eth_hash_or_tx_id(tx_id: TxId) -> Vec<u8> {
@@ -791,6 +818,7 @@ fn envelope_to_eth_view(
     envelope: StoredTxBytes,
     block_number: Option<u64>,
     tx_index: Option<u32>,
+    block_hash: Option<Vec<u8>>,
 ) -> Option<EthTxView> {
     let stored = StoredTx::try_from(envelope).ok()?;
     let kind = stored.kind;
@@ -832,27 +860,43 @@ fn envelope_to_eth_view(
         raw: stored.raw.clone(),
         decode_ok: decoded.is_some(),
         decoded,
+        block_hash,
         block_number,
         tx_index,
     })
 }
 
 fn receipt_to_eth_view(receipt: ReceiptLike) -> EthReceiptView {
-    let eth_tx_hash = chain::get_tx_envelope(&receipt.tx_id)
+    let (eth_tx_hash, from, to) = chain::get_tx_envelope(&receipt.tx_id)
         .and_then(|envelope| StoredTx::try_from(envelope).ok())
-        .and_then(|stored| {
-            if stored.kind == TxKind::EthSigned {
+        .map(|stored| {
+            let kind = stored.kind;
+            let caller = match kind {
+                TxKind::IcSynthetic => stored.caller_evm.unwrap_or([0u8; 20]),
+                TxKind::EthSigned => [0u8; 20],
+            };
+            let decoded =
+                evm_core::tx_decode::decode_tx_view(kind, caller, &stored.raw).ok();
+            let eth_hash = if kind == TxKind::EthSigned {
                 Some(hash::keccak256(&stored.raw).to_vec())
             } else {
                 None
-            }
-        });
+            };
+            let from = decoded.as_ref().map(|v| v.from.to_vec());
+            let to = decoded.as_ref().and_then(|v| v.to.map(|addr| addr.to_vec()));
+            (eth_hash, from, to)
+        })
+        .unwrap_or((None, None, None));
+    let block_hash = chain::get_block(receipt.block_number).map(|block| block.block_hash.to_vec());
     let base_log_index = base_log_index_for_receipt(&receipt);
     EthReceiptView {
         tx_hash: receipt.tx_id.0.to_vec(),
         eth_tx_hash,
+        block_hash,
         block_number: receipt.block_number,
         tx_index: receipt.tx_index,
+        from,
+        to,
         status: receipt.status,
         gas_used: receipt.gas_used,
         effective_gas_price: receipt.effective_gas_price,

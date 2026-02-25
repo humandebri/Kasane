@@ -217,6 +217,7 @@ pub struct EthTxView {
     pub raw: Vec<u8>,
     pub decoded: Option<DecodedTxView>,
     pub decode_ok: bool,
+    pub block_hash: Option<Vec<u8>>,
     pub block_number: Option<u64>,
     pub tx_index: Option<u32>,
 }
@@ -239,8 +240,11 @@ pub struct DecodedTxView {
 pub struct EthReceiptView {
     pub tx_hash: Vec<u8>,
     pub eth_tx_hash: Option<Vec<u8>>,
+    pub block_hash: Option<Vec<u8>>,
     pub block_number: u64,
     pub tx_index: u32,
+    pub from: Option<Vec<u8>>,
+    pub to: Option<Vec<u8>>,
     pub status: u8,
     pub gas_used: u64,
     pub effective_gas_price: u64,

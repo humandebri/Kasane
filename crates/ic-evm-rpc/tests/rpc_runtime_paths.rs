@@ -149,19 +149,38 @@ fn rpc_eth_txcount_at_respects_latest_and_pending_semantics() {
         state
             .sender_expected_nonce
             .insert(SenderKey::new(sender), 7);
+        state.head.set(Head {
+            number: 2,
+            block_hash: [0x22u8; 32],
+            timestamp: 1_700_000_002,
+        });
+        let mut prune = *state.prune_state.get();
+        prune.set_pruned_before(0);
+        state.prune_state.set(prune);
     });
     let latest = rpc_eth_get_transaction_count_at(sender.to_vec(), RpcBlockTagView::Latest)
         .expect("latest nonce");
     assert_eq!(latest, 3);
     let by_number =
-        rpc_eth_get_transaction_count_at(sender.to_vec(), RpcBlockTagView::Number(0))
-            .expect_err("historical nonce should be unavailable for number");
-    assert_eq!(by_number.code, 2001);
-    assert!(by_number.message.starts_with("exec.state.unavailable"));
+        rpc_eth_get_transaction_count_at(sender.to_vec(), RpcBlockTagView::Number(2))
+            .expect("head-number nonce should be available");
+    assert_eq!(by_number, latest);
+    let past = rpc_eth_get_transaction_count_at(sender.to_vec(), RpcBlockTagView::Number(1))
+        .expect_err("historical nonce should be unavailable for in-window number");
+    assert_eq!(past.code, 2001);
+    assert!(past.message.starts_with("exec.state.unavailable"));
+    let out_of_window = rpc_eth_get_transaction_count_at(sender.to_vec(), RpcBlockTagView::Number(3))
+        .expect_err("out-of-window number should fail");
+    assert_eq!(out_of_window.code, 1001);
+    assert!(out_of_window
+        .message
+        .starts_with("invalid.block_range.out_of_window"));
     let earliest = rpc_eth_get_transaction_count_at(sender.to_vec(), RpcBlockTagView::Earliest)
         .expect_err("historical nonce should be unavailable for earliest");
-    assert_eq!(earliest.code, 2001);
-    assert!(earliest.message.starts_with("exec.state.unavailable"));
+    assert_eq!(earliest.code, 1001);
+    assert!(earliest
+        .message
+        .starts_with("invalid.block_range.out_of_window"));
     let pending = rpc_eth_get_transaction_count_at(sender.to_vec(), RpcBlockTagView::Pending)
         .expect("pending nonce");
     assert_eq!(pending, 7);
@@ -203,6 +222,44 @@ fn rpc_eth_call_and_estimate_at_reject_out_of_window_block() {
     assert!(est_err
         .message
         .starts_with("invalid.block_range.out_of_window"));
+}
+
+#[test]
+fn rpc_eth_call_and_estimate_at_accept_head_number_tag() {
+    let _guard = test_lock().lock().expect("lock");
+    init_stable_state();
+    let from = [0x77u8; 20];
+    with_state_mut(|state| {
+        state.accounts.insert(
+            make_account_key(from),
+            AccountVal::from_parts(0, [0xffu8; 32], [0u8; 32]),
+        );
+        state.head.set(Head {
+            number: 5,
+            block_hash: [0x55u8; 32],
+            timestamp: 1_700_000_005,
+        });
+    });
+    let call = RpcCallObjectView {
+        to: Some(vec![0u8; 20]),
+        from: Some(from.to_vec()),
+        gas: Some(30_000),
+        gas_price: None,
+        nonce: None,
+        max_fee_per_gas: None,
+        max_priority_fee_per_gas: None,
+        chain_id: None,
+        tx_type: None,
+        access_list: None,
+        value: Some(vec![0u8; 32]),
+        data: Some(Vec::new()),
+    };
+    let call_out = rpc_eth_call_object_at(call.clone(), RpcBlockTagView::Number(5))
+        .expect("head number call should succeed");
+    assert_eq!(call_out.status, 1);
+    let gas = rpc_eth_estimate_gas_object_at(call, RpcBlockTagView::Number(5))
+        .expect("head number estimate should succeed");
+    assert!(gas > 0);
 }
 
 #[test]
@@ -840,6 +897,41 @@ fn get_transaction_by_hash_returns_none_on_index_miss() {
 }
 
 #[test]
+fn get_transaction_by_hash_returns_none_on_index_hash_mismatch() {
+    let _guard = test_lock().lock().expect("lock");
+    init_stable_state();
+
+    let raw_a = vec![0x02, 0xa1];
+    let raw_b = vec![0x02, 0xb2];
+    let tx_id_b = TxId(hash::stored_tx_id(
+        TxKind::EthSigned,
+        &raw_b,
+        None,
+        None,
+        None,
+    ));
+    let hash_a = hash::keccak256(&raw_a);
+    let stored_b = StoredTxBytes::new_with_fees(
+        tx_id_b,
+        TxKind::EthSigned,
+        raw_b,
+        None,
+        Vec::new(),
+        Vec::new(),
+        0,
+        0,
+        false,
+    );
+    with_state_mut(|state| {
+        state.tx_store.insert(tx_id_b, stored_b);
+        state.eth_tx_hash_index.insert(TxId(hash_a), tx_id_b);
+    });
+
+    let out = rpc_eth_get_transaction_by_eth_hash(hash_a.to_vec());
+    assert!(out.is_none());
+}
+
+#[test]
 fn get_transaction_receipt_has_block_wide_log_index() {
     let _guard = test_lock().lock().expect("lock");
     init_stable_state();
@@ -1043,4 +1135,62 @@ fn get_transaction_receipt_with_status_accepts_eth_hash() {
         }
         _ => panic!("expected Found for eth hash input"),
     }
+}
+
+#[test]
+fn get_transaction_receipt_by_hash_returns_none_on_index_hash_mismatch() {
+    let _guard = test_lock().lock().expect("lock");
+    init_stable_state();
+
+    let raw_a = vec![0x02, 0xc1];
+    let raw_b = vec![0x02, 0xd2];
+    let tx_id_b = TxId(hash::stored_tx_id(
+        TxKind::EthSigned,
+        &raw_b,
+        None,
+        None,
+        None,
+    ));
+    let hash_a = hash::keccak256(&raw_a);
+    let stored_b = StoredTxBytes::new_with_fees(
+        tx_id_b,
+        TxKind::EthSigned,
+        raw_b,
+        None,
+        Vec::new(),
+        Vec::new(),
+        0,
+        0,
+        false,
+    );
+    let receipt_b = ReceiptLike {
+        tx_id: tx_id_b,
+        block_number: 10,
+        tx_index: 0,
+        status: 1,
+        gas_used: 21_000,
+        effective_gas_price: 1,
+        l1_data_fee: 0,
+        operator_fee: 0,
+        total_fee: 0,
+        return_data_hash: [0u8; 32],
+        return_data: Vec::new(),
+        contract_address: None,
+        logs: vec![],
+    };
+    with_state_mut(|state| {
+        state.tx_store.insert(tx_id_b, stored_b);
+        state.eth_tx_hash_index.insert(TxId(hash_a), tx_id_b);
+        let receipt_ptr = state
+            .blob_store
+            .store_bytes(&receipt_b.into_bytes())
+            .expect("store receipt");
+        state.receipts.insert(tx_id_b, receipt_ptr);
+    });
+
+    assert!(rpc_eth_get_transaction_receipt_by_eth_hash(hash_a.to_vec()).is_none());
+    assert!(matches!(
+        rpc_eth_get_transaction_receipt_with_status(hash_a.to_vec()),
+        RpcReceiptLookupView::NotFound
+    ));
 }
