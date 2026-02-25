@@ -12,6 +12,7 @@ export type GatewayConfig = {
   host: string;
   port: number;
   clientVersion: string;
+  rpcSemanticsVersion: string;
   maxHttpBodySize: number;
   maxBatchLen: number;
   maxJsonDepth: number;
@@ -20,6 +21,8 @@ export type GatewayConfig = {
 };
 
 export function loadConfig(env: Record<string, string | undefined>): GatewayConfig {
+  const rpcSemanticsVersion = parseOptionalNonEmpty(env.RPC_SEMANTICS_VERSION) ?? "kasane-rpc-semantics/v1";
+  const baseClientVersion = env.RPC_GATEWAY_CLIENT_VERSION ?? "kasane/phase2-gateway/v0.1.0";
   return {
     canisterId: required(env.EVM_CANISTER_ID, "EVM_CANISTER_ID is required"),
     icHost: env.RPC_GATEWAY_IC_HOST ?? "https://icp-api.io",
@@ -27,7 +30,8 @@ export function loadConfig(env: Record<string, string | undefined>): GatewayConf
     identityPemPath: parseOptionalNonEmpty(env.RPC_GATEWAY_IDENTITY_PEM_PATH),
     host: env.RPC_GATEWAY_HOST ?? "127.0.0.1",
     port: parseRangeInt(env.RPC_GATEWAY_PORT, 8545, 1, 65535),
-    clientVersion: env.RPC_GATEWAY_CLIENT_VERSION ?? "kasane/phase2-gateway/v0.1.0",
+    clientVersion: `${baseClientVersion} ${rpcSemanticsVersion}`,
+    rpcSemanticsVersion,
     maxHttpBodySize: parseRangeInt(env.RPC_GATEWAY_MAX_HTTP_BODY_SIZE, 256 * 1024, 1024, 10 * 1024 * 1024),
     maxBatchLen: parseRangeInt(env.RPC_GATEWAY_MAX_BATCH_LEN, 20, 1, 500),
     maxJsonDepth: parseRangeInt(env.RPC_GATEWAY_MAX_JSON_DEPTH, 20, 2, 100),

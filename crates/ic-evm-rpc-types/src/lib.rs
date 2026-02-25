@@ -325,9 +325,34 @@ pub struct RpcCallResultView {
 }
 
 #[derive(Clone, Debug, CandidType, Deserialize, Eq, PartialEq)]
+pub enum RpcBlockTagView {
+    Latest,
+    Pending,
+    Safe,
+    Finalized,
+    Earliest,
+    Number(u64),
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize)]
+pub struct RpcFeeHistoryView {
+    pub oldest_block: u64,
+    pub base_fee_per_gas: Vec<u64>,
+    pub gas_used_ratio: Vec<f64>,
+    pub reward: Option<Vec<Vec<u128>>>,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize, Eq, PartialEq)]
+pub struct RpcHistoryWindowView {
+    pub oldest_available: u64,
+    pub latest: u64,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize, Eq, PartialEq)]
 pub struct RpcErrorView {
     pub code: u32,
     pub message: String,
+    pub error_prefix: Option<String>,
 }
 
 #[derive(Clone, Debug, CandidType, Deserialize, Eq, PartialEq)]

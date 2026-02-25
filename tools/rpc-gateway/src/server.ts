@@ -159,10 +159,19 @@ export const __test_resolve_cors_allow_origin = resolveCorsAllowOrigin;
 
 function writeRpc(res: http.ServerResponse, payload: JsonRpcResponse | JsonRpcResponse[]): void {
   res.setHeader("content-type", "application/json");
-  res.end(JSON.stringify(payload));
+  res.end(stringifyJson(payload));
 }
 
 function writeJson(res: http.ServerResponse, payload: unknown): void {
   res.setHeader("content-type", "application/json");
-  res.end(JSON.stringify(payload));
+  res.end(stringifyJson(payload));
+}
+
+function stringifyJson(payload: unknown): string {
+  return JSON.stringify(payload, (_key: string, value: unknown) => {
+    if (typeof value === "bigint") {
+      return value.toString(10);
+    }
+    return value;
+  });
 }

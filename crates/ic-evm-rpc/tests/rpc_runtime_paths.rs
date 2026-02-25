@@ -6,19 +6,26 @@ use evm_core::hash;
 use evm_db::chain_data::constants::MAX_TX_SIZE;
 use evm_db::chain_data::receipt::log_entry_from_parts;
 use evm_db::chain_data::runtime_defaults::{DEFAULT_BASE_FEE, DEFAULT_MIN_GAS_PRICE};
-use evm_db::chain_data::{BlockData, ReceiptLike, StoredTxBytes, TxId, TxIndexEntry, TxKind};
+use evm_db::chain_data::{
+    BlockData, Head, ReceiptLike, SenderKey, StoredTxBytes, TxId, TxIndexEntry, TxKind,
+};
 use evm_db::stable_state::{init_stable_state, with_state_mut};
 use evm_db::types::keys::{make_account_key, make_storage_key};
 use evm_db::types::values::{AccountVal, U256Val};
 use evm_db::Storable;
 use ic_evm_rpc::{
-    rpc_eth_call_object, rpc_eth_call_rawtx, rpc_eth_estimate_gas_object, rpc_eth_get_balance,
-    rpc_eth_get_block_by_number_with_status, rpc_eth_get_block_number_by_hash, rpc_eth_get_code, rpc_eth_get_storage_at,
-    rpc_eth_get_transaction_by_eth_hash, rpc_eth_get_transaction_receipt_by_eth_hash,
-    rpc_eth_get_transaction_receipt_with_status, rpc_eth_send_raw_transaction,
+    rpc_eth_call_object, rpc_eth_call_object_at, rpc_eth_call_rawtx, rpc_eth_estimate_gas_object,
+    rpc_eth_estimate_gas_object_at, rpc_eth_fee_history, rpc_eth_get_balance,
+    rpc_eth_get_block_by_number_with_status, rpc_eth_get_block_number_by_hash, rpc_eth_get_code,
+    rpc_eth_get_storage_at,
+    rpc_eth_get_transaction_by_eth_hash, rpc_eth_get_transaction_count_at,
+    rpc_eth_get_transaction_receipt_by_eth_hash, rpc_eth_get_transaction_receipt_with_status,
+    rpc_eth_history_window, rpc_eth_max_priority_fee_per_gas, rpc_eth_send_raw_transaction,
     submit_tx_in_with_code,
 };
-use ic_evm_rpc_types::{RpcBlockLookupView, RpcCallObjectView, RpcReceiptLookupView};
+use ic_evm_rpc_types::{
+    RpcBlockLookupView, RpcBlockTagView, RpcCallObjectView, RpcReceiptLookupView,
+};
 use std::sync::{Mutex, OnceLock};
 
 fn test_lock() -> &'static Mutex<()> {
@@ -127,6 +134,146 @@ fn rpc_eth_call_object_and_estimate_gas_work() {
 
     let gas = rpc_eth_estimate_gas_object(call).expect("estimate should succeed");
     assert!(gas > 0);
+}
+
+#[test]
+fn rpc_eth_txcount_at_respects_latest_and_pending_semantics() {
+    let _guard = test_lock().lock().expect("lock");
+    init_stable_state();
+    let sender = [0x42u8; 20];
+    with_state_mut(|state| {
+        state.accounts.insert(
+            make_account_key(sender),
+            AccountVal::from_parts(3, [0u8; 32], [0u8; 32]),
+        );
+        state
+            .sender_expected_nonce
+            .insert(SenderKey::new(sender), 7);
+    });
+    let latest = rpc_eth_get_transaction_count_at(sender.to_vec(), RpcBlockTagView::Latest)
+        .expect("latest nonce");
+    assert_eq!(latest, 3);
+    let by_number =
+        rpc_eth_get_transaction_count_at(sender.to_vec(), RpcBlockTagView::Number(0))
+            .expect_err("historical nonce should be unavailable for number");
+    assert_eq!(by_number.code, 2001);
+    assert!(by_number.message.starts_with("exec.state.unavailable"));
+    let earliest = rpc_eth_get_transaction_count_at(sender.to_vec(), RpcBlockTagView::Earliest)
+        .expect_err("historical nonce should be unavailable for earliest");
+    assert_eq!(earliest.code, 2001);
+    assert!(earliest.message.starts_with("exec.state.unavailable"));
+    let pending = rpc_eth_get_transaction_count_at(sender.to_vec(), RpcBlockTagView::Pending)
+        .expect("pending nonce");
+    assert_eq!(pending, 7);
+}
+
+#[test]
+fn rpc_eth_call_and_estimate_at_reject_out_of_window_block() {
+    let _guard = test_lock().lock().expect("lock");
+    init_stable_state();
+    with_state_mut(|state| {
+        let mut prune = *state.prune_state.get();
+        prune.set_pruned_before(10);
+        state.prune_state.set(prune);
+    });
+    let call = RpcCallObjectView {
+        to: Some(vec![0u8; 20]),
+        from: None,
+        gas: Some(30_000),
+        gas_price: None,
+        nonce: None,
+        max_fee_per_gas: None,
+        max_priority_fee_per_gas: None,
+        chain_id: None,
+        tx_type: None,
+        access_list: None,
+        value: Some(vec![0u8; 32]),
+        data: Some(Vec::new()),
+    };
+    let call_err = rpc_eth_call_object_at(call.clone(), RpcBlockTagView::Number(1))
+        .expect_err("out of window call should fail");
+    assert_eq!(call_err.code, 1001);
+    assert!(call_err
+        .message
+        .starts_with("invalid.block_range.out_of_window"));
+
+    let est_err = rpc_eth_estimate_gas_object_at(call, RpcBlockTagView::Earliest)
+        .expect_err("out of window estimate should fail");
+    assert_eq!(est_err.code, 1001);
+    assert!(est_err
+        .message
+        .starts_with("invalid.block_range.out_of_window"));
+}
+
+#[test]
+fn rpc_eth_fee_methods_validate_and_window_is_exposed() {
+    let _guard = test_lock().lock().expect("lock");
+    init_stable_state();
+    with_state_mut(|state| {
+        let mut prune = *state.prune_state.get();
+        prune.set_pruned_before(5);
+        state.prune_state.set(prune);
+    });
+    let window = rpc_eth_history_window();
+    assert_eq!(window.oldest_available, 6);
+
+    let fee_count_err = rpc_eth_fee_history(0, RpcBlockTagView::Latest, None)
+        .expect_err("invalid block count should fail");
+    assert_eq!(fee_count_err.code, 1001);
+    assert!(fee_count_err
+        .message
+        .starts_with("invalid.fee_history.block_count"));
+
+    let fee_pct_err = rpc_eth_fee_history(1, RpcBlockTagView::Latest, Some(vec![90.0, 10.0]))
+        .expect_err("invalid percentiles should fail");
+    assert_eq!(fee_pct_err.code, 1001);
+    assert!(fee_pct_err
+        .message
+        .starts_with("invalid.fee_history.percentiles"));
+
+    let tip_err = rpc_eth_max_priority_fee_per_gas()
+        .expect_err("empty chain should return state unavailable");
+    assert_eq!(tip_err.code, 2001);
+    assert!(tip_err.message.starts_with("exec.state.unavailable"));
+}
+
+#[test]
+fn rpc_eth_fee_history_is_deterministic_for_same_head() {
+    let _guard = test_lock().lock().expect("lock");
+    init_stable_state();
+    let block = BlockData::new(
+        1,
+        [0u8; 32],
+        [1u8; 32],
+        1_700_000_000,
+        1_000_000_000,
+        3_000_000,
+        0,
+        [0x44; 20],
+        Vec::new(),
+        [2u8; 32],
+        [3u8; 32],
+    );
+    with_state_mut(|state| {
+        let ptr = state
+            .blob_store
+            .store_bytes(&block.clone().into_bytes())
+            .expect("store block");
+        state.blocks.insert(1, ptr);
+        state.head.set(Head {
+            number: 1,
+            block_hash: block.block_hash,
+            timestamp: block.timestamp,
+        });
+    });
+    let a = rpc_eth_fee_history(1, RpcBlockTagView::Latest, Some(vec![50.0]))
+        .expect("first fee history call");
+    let b = rpc_eth_fee_history(1, RpcBlockTagView::Latest, Some(vec![50.0]))
+        .expect("second fee history call");
+    assert_eq!(a.oldest_block, b.oldest_block);
+    assert_eq!(a.base_fee_per_gas, b.base_fee_per_gas);
+    assert_eq!(a.gas_used_ratio, b.gas_used_ratio);
+    assert_eq!(a.reward, b.reward);
 }
 
 #[test]

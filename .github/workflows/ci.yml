@@ -68,29 +68,48 @@ jobs:
         run: cargo audit --deny warnings --ignore RUSTSEC-2024-0388 --ignore RUSTSEC-2024-0436
 
       - name: Generate dependency SBOM snapshot
-        run: cargo metadata --locked --format-version 1 > cargo-metadata.sbom.json
+        run: |
+          mkdir -p /tmp/kasane-supply-chain
+          cargo metadata --locked --format-version 1 > /tmp/kasane-supply-chain/cargo-metadata.sbom.json
 
       - name: Generate vendor digest snapshot
         shell: bash
         run: |
           set -euo pipefail
-          find vendor/revm -type f -print0 | sort -z | xargs -0 sha256sum > vendor-revm.sha256
-          find vendor/ark-relations -type f -print0 | sort -z | xargs -0 sha256sum > vendor-ark-relations.sha256
+          mkdir -p /tmp/kasane-supply-chain
+          find vendor/revm -type f -print0 | sort -z | xargs -0 sha256sum > /tmp/kasane-supply-chain/vendor-revm.sha256
+          find vendor/ark-relations -type f -print0 | sort -z | xargs -0 sha256sum > /tmp/kasane-supply-chain/vendor-ark-relations.sha256
 
       - name: Upload supply-chain snapshots
         uses: actions/upload-artifact@v4
         with:
           name: supply-chain-snapshots
           path: |
-            cargo-metadata.sbom.json
-            vendor-revm.sha256
-            vendor-ark-relations.sha256
+            /tmp/kasane-supply-chain/cargo-metadata.sbom.json
+            /tmp/kasane-supply-chain/vendor-revm.sha256
+            /tmp/kasane-supply-chain/vendor-ark-relations.sha256
 
       - name: Run workspace tests
         run: cargo test -p evm-db -p ic-evm-core -p ic-evm-wrapper --locked --lib --tests
 
       - name: Check evm-rpc-e2e manifest builds
         run: cargo test --manifest-path crates/evm-rpc-e2e/Cargo.toml --no-run --locked
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: tools/rpc-gateway/package-lock.json
+
+      - name: RPC gateway tests and build
+        working-directory: tools/rpc-gateway
+        env:
+          EVM_CANISTER_ID: aaaaa-aa
+        run: |
+          npm ci
+          npm test
+          npm run build
 
       - name: Canbench regression guard
         env:

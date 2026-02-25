@@ -15,15 +15,22 @@ import {
   __test_resolve_submitted_eth_hash_from_lookup,
   __test_as_call_params,
   __test_as_tx_count_params,
-  __test_map_get_logs_error,
+  __test_compute_effective_priority_fee,
+  __test_compute_next_base_fee,
+  __test_compute_weighted_percentile,
   __test_is_latest_tag,
+  __test_map_get_logs_error,
   __test_parse_logs_filter,
+  __test_parse_reward_percentiles,
+  __test_parse_execution_block_tag,
+  __test_map_rpc_error,
   __test_sort_log_items,
   __test_tx_hash_readiness_error,
   __test_to_candid_call_object,
   __test_map_tx,
 } from "../src/handlers";
 import { loadConfig } from "../src/config";
+import { __test_assert_canister_compatibility, __test_create_retryable_promise_cache } from "../src/client";
 import { identityFromPem } from "../src/identity";
 import { __test_resolve_cors_allow_origin } from "../src/server";
 
@@ -148,14 +155,82 @@ function testTxCountParamsDefaultBlockTag(): void {
   assert.throws(() => __test_as_tx_count_params([]));
 }
 
-function testLatestTagCompatibility(): void {
+function testLatestTagNormalization(): void {
   assert.equal(__test_is_latest_tag("latest"), true);
-  assert.equal(__test_is_latest_tag({ blockNumber: "latest" }), true);
-  assert.equal(__test_is_latest_tag({ blockNumber: "pending" }), true);
+  assert.equal(__test_is_latest_tag(" Latest "), true);
+  assert.equal(__test_is_latest_tag(new String("pending")), true);
   assert.equal(__test_is_latest_tag({ blockNumber: "safe" }), true);
-  assert.equal(__test_is_latest_tag({ blockNumber: "finalized" }), true);
-  assert.equal(__test_is_latest_tag({ blockNumber: "0x1" }), false);
+  assert.equal(__test_is_latest_tag("0x1"), false);
   assert.equal(__test_is_latest_tag({ blockHash: `0x${"11".repeat(32)}` }), false);
+}
+
+function testExecutionTagNormalization(): void {
+  assert.deepEqual(__test_parse_execution_block_tag("latest"), { Latest: null });
+  assert.deepEqual(__test_parse_execution_block_tag("pending"), { Pending: null });
+  assert.deepEqual(__test_parse_execution_block_tag("safe"), { Safe: null });
+  assert.deepEqual(__test_parse_execution_block_tag("finalized"), { Finalized: null });
+  assert.deepEqual(__test_parse_execution_block_tag("earliest"), { Earliest: null });
+  assert.deepEqual(__test_parse_execution_block_tag("0x10"), { Number: 16n });
+  assert.throws(() => __test_parse_execution_block_tag("final"));
+  assert.throws(() => __test_parse_execution_block_tag(1));
+}
+
+function testPriorityFeeComputation(): void {
+  const eip1559Tip = __test_compute_effective_priority_fee(
+    {
+      from: Uint8Array.from(Buffer.from("11".repeat(20), "hex")),
+      to: [],
+      value: Uint8Array.from(new Array(32).fill(0)),
+      chain_id: [],
+      nonce: 1n,
+      gas_limit: 21_000n,
+      input: Uint8Array.from([]),
+      gas_price: [],
+      max_fee_per_gas: [100n],
+      max_priority_fee_per_gas: [5n],
+    },
+    97n
+  );
+  assert.equal(eip1559Tip, 3n);
+
+  const legacyTip = __test_compute_effective_priority_fee(
+    {
+      from: Uint8Array.from(Buffer.from("11".repeat(20), "hex")),
+      to: [],
+      value: Uint8Array.from(new Array(32).fill(0)),
+      chain_id: [],
+      nonce: 1n,
+      gas_limit: 21_000n,
+      input: Uint8Array.from([]),
+      gas_price: [120n],
+      max_fee_per_gas: [],
+      max_priority_fee_per_gas: [],
+    },
+    100n
+  );
+  assert.equal(legacyTip, 20n);
+}
+
+function testWeightedPercentileAndNextBaseFee(): void {
+  const p50 = __test_compute_weighted_percentile(
+    [
+      { tip: 1n, gasLimit: 1n },
+      { tip: 5n, gasLimit: 10n },
+      { tip: 9n, gasLimit: 1n },
+    ],
+    50
+  );
+  assert.equal(p50, 5n);
+
+  const next = __test_compute_next_base_fee(100n, 12_000n, 20_000n);
+  assert.equal(next, 102n);
+}
+
+function testRewardPercentilesValidation(): void {
+  assert.deepEqual(__test_parse_reward_percentiles(undefined), null);
+  assert.deepEqual(__test_parse_reward_percentiles([10, 50, 90]), [10, 50, 90]);
+  assert.throws(() => __test_parse_reward_percentiles([50, 10]));
+  assert.throws(() => __test_parse_reward_percentiles([101]));
 }
 
 function testCallObjectParsing(): void {
@@ -187,8 +262,9 @@ function testCallObjectParsing(): void {
 
   const eip1559 = __test_parse_call_object({
     to: "0x0000000000000000000000000000000000000000",
+    gasLimit: "21000",
     maxFeePerGas: "0x10",
-    maxPriorityFeePerGas: "0x1",
+    maxPriorityFeePerGas: "1",
     type: "0x2",
     accessList: [
       {
@@ -206,6 +282,7 @@ function testCallObjectParsing(): void {
   assert.equal(eipOut.max_priority_fee_per_gas.length, 1);
   assert.equal(eipOut.tx_type.length, 1);
   assert.equal(eipOut.access_list.length, 1);
+  assert.equal(eipOut.gas.length, 1);
 
   const ng = __test_parse_call_object({ gasPrice: "0x1", maxFeePerGas: "0x2" });
   assert.ok("error" in ng);
@@ -616,6 +693,64 @@ async function testInvalidTxHashReturnsInvalidParams(): Promise<void> {
   assert.equal(receiptRes.error.code, -32602);
 }
 
+async function testCanisterCompatibilityProbe(): Promise<void> {
+  await __test_assert_canister_compatibility({
+    rpc_eth_history_window: async () => ({ oldest_available: 0n, latest: 0n }),
+  });
+
+  await assert.rejects(
+    __test_assert_canister_compatibility({}),
+    /incompatible\.canister\.api/
+  );
+
+  await assert.rejects(
+    __test_assert_canister_compatibility({
+      rpc_eth_history_window: async () => {
+        throw new Error("Method does not exist");
+      },
+    }),
+    /incompatible\.canister\.api/
+  );
+}
+
+async function testRetryablePromiseCache(): Promise<void> {
+  let attempts = 0;
+  const cached = __test_create_retryable_promise_cache(async () => {
+    attempts += 1;
+    if (attempts === 1) {
+      throw new Error("first-failure");
+    }
+    return "ok";
+  });
+  await assert.rejects(cached(), /first-failure/);
+  const second = await cached();
+  assert.equal(second, "ok");
+  assert.equal(attempts, 2);
+}
+
+function testRpcErrorPrefixPassthrough(): void {
+  const mapped = __test_map_rpc_error(
+    1,
+    {
+      code: 2001,
+      message: "exec.state.unavailable historical nonce is unavailable",
+      error_prefix: ["exec.state.unavailable"],
+    },
+    "state unavailable"
+  );
+  assert.ok("error" in mapped);
+  if (!("error" in mapped)) {
+    throw new Error("rpc error mapping should return error response");
+  }
+  assert.equal(mapped.error.code, -32000);
+  assert.equal(mapped.error.message, "state unavailable");
+  assert.deepEqual(mapped.error.data, {
+    detail: "exec.state.unavailable historical nonce is unavailable",
+    rpc_code: 2001,
+    error_prefix: "exec.state.unavailable",
+  });
+}
+
 testHex();
 testJsonRpc();
 testConfigIdentityPemPath();
@@ -625,11 +760,16 @@ testCorsAllowOriginResolution();
 testIdentityFromEd25519Pem();
 testCallParamsDefaultBlockTag();
 testTxCountParamsDefaultBlockTag();
-testLatestTagCompatibility();
+testLatestTagNormalization();
+testExecutionTagNormalization();
 testCallObjectParsing();
 testStorageSlotNormalization();
 testRevertDataFormat();
 testCanisterErrorClassification();
+testPriorityFeeComputation();
+testWeightedPercentileAndNextBaseFee();
+testRewardPercentilesValidation();
+testRpcErrorPrefixPassthrough();
 testReceiptLogMapping();
 testBlockMappingWithFeeMetadata();
 testBlockMappingRejectsLegacyMetadata();
@@ -642,6 +782,8 @@ testLogSortOrder();
 async function main(): Promise<void> {
   await testInvalidTxHashReturnsInvalidParams();
   await testGetLogsFilterParsing();
+  await testCanisterCompatibilityProbe();
+  await testRetryablePromiseCache();
   console.log("ok");
 }
 
