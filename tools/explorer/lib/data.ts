@@ -20,6 +20,7 @@ import {
   getTokenTransfersByAddress,
   getTxCountByBlock,
   getTx,
+  getTxByHashOrEthHash,
   getTxsByAddress,
   getTxsByCallerPrincipal,
   type BlockSummary,
@@ -175,6 +176,9 @@ export type TxSummaryWithPrincipal = TxSummary & {
 
 export type TxDetailView = {
   tx: TxSummaryWithPrincipal;
+  displayTxHashHex: string;
+  internalTxIdHex: string;
+  redirectToHashHex: string | null;
   statusLabel: string;
   valueWei: bigint | null;
   effectiveGasPriceWei: bigint | null;
@@ -413,7 +417,13 @@ export async function getTxView(txHashHex: string): Promise<TxSummary | null> {
 }
 
 export async function getTxDetailView(txHashHex: string): Promise<TxDetailView | null> {
-  const txId = parseHex(txHashHex);
+  const requestedHashHex = normalizeHex(txHashHex);
+  const requestedBytes = parseHex(requestedHashHex);
+  const txLookup = await getTxByHashOrEthHash(requestedBytes);
+  if (!txLookup) {
+    return null;
+  }
+  const txId = parseHex(txLookup.txHashHex);
   const [txRaw, receiptOut, rpcTx] = await Promise.all([
     getTx(txId),
     getReceiptByTxId(txId),
@@ -437,8 +447,15 @@ export async function getTxDetailView(txHashHex: string): Promise<TxDetailView |
   const maxPriorityFeePerGasWei = rpcTx?.decoded[0]?.max_priority_fee_per_gas[0] ?? null;
   const erc20TransfersRaw = "Ok" in receiptOut ? extractErc20TransfersFromReceipt(receiptOut.Ok) : [];
   const erc20Transfers = await withTokenMeta(erc20TransfersRaw);
+  const internalTxIdHex = tx.txHashHex;
+  const ethTxHashHex = txLookup.ethTxHashHex ?? (rpcTx?.eth_tx_hash[0] ? toHexLower(rpcTx.eth_tx_hash[0]) : null);
+  const displayTxHashHex = ethTxHashHex ?? internalTxIdHex;
+  const redirectToHashHex = ethTxHashHex && requestedHashHex !== ethTxHashHex ? ethTxHashHex : null;
   return {
     tx,
+    displayTxHashHex,
+    internalTxIdHex,
+    redirectToHashHex,
     statusLabel: receiptStatusLabel(tx.receiptStatus),
     valueWei,
     effectiveGasPriceWei,

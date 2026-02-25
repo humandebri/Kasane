@@ -26,6 +26,7 @@ export const MIGRATIONS = [
   "017_add_verify_metrics_samples.sql",
   "018_add_verify_metrics_indexes.sql",
   "019_verify_requests_dedupe_per_user.sql",
+  "020_add_txs_eth_tx_hash.sql",
 ] as const;
 
 export async function applyMigrations(pool: Pool, migrations: readonly string[]): Promise<void> {

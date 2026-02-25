@@ -1,7 +1,7 @@
 // どこで: Tx詳細ページ / 何を: ブロック/価値/手数料/ガス価格/ERC-20 transferを表示 / なぜ: Etherscan風の主要確認項目を揃えるため
 
 import Link from "next/link";
-import { notFound } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 import { AlertTriangle, Clock3 } from "lucide-react";
 import type { ReactNode } from "react";
 import { Badge } from "../../../components/ui/badge";
@@ -38,6 +38,14 @@ export default async function TxPage({
   if (!detail) {
     notFound();
   }
+  if (detail.redirectToHashHex) {
+    const query = new URLSearchParams();
+    if (tab === "logs") {
+      query.set("tab", "logs");
+    }
+    const suffix = query.size > 0 ? `?${query.toString()}` : "";
+    redirect(`/tx/${detail.redirectToHashHex}${suffix}`);
+  }
   const tx = detail.tx;
   const receiptTab: ReceiptTab = tab === "logs" ? "logs" : "overview";
   const statusLabel = receiptStatusLabel(tx.receiptStatus);
@@ -62,14 +70,14 @@ export default async function TxPage({
       {detail.receipt ? (
         <div className="flex flex-wrap gap-2 text-xs">
           <Link
-            href={buildReceiptTabHref(tx.txHashHex, "overview")}
+            href={buildReceiptTabHref(detail.displayTxHashHex, "overview")}
             scroll={false}
             className={`rounded-md border px-3 py-1 ${receiptTab === "overview" ? "border-sky-300 bg-sky-50 text-sky-700" : "border-slate-300 bg-white text-slate-700"}`}
           >
             Overview
           </Link>
           <Link
-            href={buildReceiptTabHref(tx.txHashHex, "logs")}
+            href={buildReceiptTabHref(detail.displayTxHashHex, "logs")}
             scroll={false}
             className={`rounded-md border px-3 py-1 ${receiptTab === "logs" ? "border-sky-300 bg-sky-50 text-sky-700" : "border-slate-300 bg-white text-slate-700"}`}
           >
@@ -83,7 +91,14 @@ export default async function TxPage({
         <CardContent className="space-y-4 py-4">
         <dl className="grid grid-cols-1 gap-y-4 text-sm md:grid-cols-[240px_1fr]">
           <dt className="text-slate-500">Transaction Hash:</dt>
-          <dd className="font-mono break-all">{tx.txHashHex}</dd>
+          <dd className="font-mono break-all">{detail.displayTxHashHex}</dd>
+
+          {detail.displayTxHashHex !== detail.internalTxIdHex ? (
+            <>
+              <dt className="text-slate-500">Internal Tx ID:</dt>
+              <dd className="font-mono break-all">{detail.internalTxIdHex}</dd>
+            </>
+          ) : null}
 
           <dt className="text-slate-500">Status:</dt>
           <dd>

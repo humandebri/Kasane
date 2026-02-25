@@ -40,7 +40,7 @@ export async function runWorkerWithDeps(
   client: {
     getHeadNumber: () => Promise<bigint>;
     exportBlocks: (cursor: Cursor | null, maxBytes: number) => Promise<Result<ExportResponse, ExportError>>;
-    getTxInputByTxId: (txId: Uint8Array) => Promise<Uint8Array | null>;
+    getTxMetaByTxId: (txId: Uint8Array) => Promise<{ input: Uint8Array | null; ethTxHash: Uint8Array | null }>;
     getPruneStatus: () => Promise<PruneStatusView>;
     getMetrics: (window: bigint) => Promise<MetricsView>;
     getMemoryBreakdown?: () => Promise<MemoryBreakdownView>;

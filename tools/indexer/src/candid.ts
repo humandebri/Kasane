@@ -113,6 +113,8 @@ export const idlFactory: IDL.InterfaceFactory = ({ IDL }) => {
     chain_id: IDL.Opt(IDL.Nat64),
   });
   const RpcTxView = IDL.Record({
+    hash: IDL.Vec(IDL.Nat8),
+    eth_tx_hash: IDL.Opt(IDL.Vec(IDL.Nat8)),
     decoded: IDL.Opt(RpcTxDecodedView),
   });
   return IDL.Service({

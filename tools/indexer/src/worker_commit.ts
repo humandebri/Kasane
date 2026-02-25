@@ -8,7 +8,7 @@ import { IndexerDb } from "./db";
 import { Config } from "./config";
 import { Cursor, ExportResponse } from "./types";
 import { finalizePayloads, Pending } from "./worker_pending";
-import { errMessage, logFatal, logInfo } from "./worker_log";
+import { errMessage, logFatal, logInfo, logWarn } from "./worker_log";
 import { isTokenTransferAmountSupported } from "./worker_commit_guard";
 import { toDayKey } from "./worker_utils";
 import type { ArchiveResult } from "./archiver";
@@ -23,7 +23,7 @@ export async function commitPending(params: {
   headNumber: bigint;
   pending: Pending;
   lastSizeDay: number | null;
-  getTxInputByTxId: (txId: Uint8Array) => Promise<Uint8Array | null>;
+  getTxMetaByTxId: (txId: Uint8Array) => Promise<{ input: Uint8Array | null; ethTxHash: Uint8Array | null }>;
 }): Promise<{ lastSizeDay: number | null } | null> {
   let blockInfo: BlockInfo | null = null;
   let txIndex: TxIndexInfo[] | null = null;
@@ -123,7 +123,7 @@ export async function commitPending(params: {
       process.exit(1);
     }
   }
-  const txInputByTxHash = await fetchTxInputsByHash(txIndex, params.getTxInputByTxId);
+  const txMetaByTxHash = await fetchTxMetaByHash(txIndex, params.getTxMetaByTxId, params.config.chainId);
   for (const txHash of receiptStatusByTxHash.keys()) {
     if (!txHashes.has(txHash)) {
       logFatal(
@@ -219,15 +219,16 @@ export async function commitPending(params: {
           throw new Error(`receipt status missing after validation for tx_hash=${entry.txHash.toString("hex")}`);
         }
         await client.query(
-          "INSERT INTO txs(tx_hash, block_number, tx_index, caller_principal, from_address, to_address, tx_input, tx_selector, receipt_status) VALUES($1, $2, $3, $4, $5, $6, $7, $8, $9) ON CONFLICT(tx_hash) DO UPDATE SET block_number = excluded.block_number, tx_index = excluded.tx_index, caller_principal = excluded.caller_principal, from_address = excluded.from_address, to_address = excluded.to_address, tx_input = COALESCE(excluded.tx_input, txs.tx_input), tx_selector = excluded.tx_selector, receipt_status = excluded.receipt_status",
+          "INSERT INTO txs(tx_hash, eth_tx_hash, block_number, tx_index, caller_principal, from_address, to_address, tx_input, tx_selector, receipt_status) VALUES($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) ON CONFLICT(tx_hash) DO UPDATE SET eth_tx_hash = COALESCE(excluded.eth_tx_hash, txs.eth_tx_hash), block_number = excluded.block_number, tx_index = excluded.tx_index, caller_principal = excluded.caller_principal, from_address = excluded.from_address, to_address = excluded.to_address, tx_input = COALESCE(excluded.tx_input, txs.tx_input), tx_selector = excluded.tx_selector, receipt_status = excluded.receipt_status",
           [
             entry.txHash,
+            txMetaByTxHash.get(entry.txHash.toString("hex"))?.ethTxHash ?? null,
             entry.blockNumber,
             entry.txIndex,
             entry.callerPrincipal,
             entry.fromAddress,
             entry.toAddress,
-            txInputByTxHash.get(entry.txHash.toString("hex")) ?? null,
+            txMetaByTxHash.get(entry.txHash.toString("hex"))?.input ?? null,
             entry.txSelector,
             receiptStatus.status,
           ]
@@ -356,24 +357,58 @@ export async function commitPending(params: {
   return { lastSizeDay };
 }
 
-async function fetchTxInputsByHash(
+async function fetchTxMetaByHash(
   txs: TxIndexInfo[],
-  getTxInputByTxId: (txId: Uint8Array) => Promise<Uint8Array | null>
-): Promise<Map<string, Buffer>> {
-  const out = new Map<string, Buffer>();
+  getTxMetaByTxId: (txId: Uint8Array) => Promise<{ input: Uint8Array | null; ethTxHash: Uint8Array | null }>,
+  chainId: string
+): Promise<Map<string, { input: Buffer | null; ethTxHash: Buffer | null }>> {
+  const retryBackoffMs = [20, 60];
+  const out = new Map<string, { input: Buffer | null; ethTxHash: Buffer | null }>();
   await Promise.all(
     txs.map(async (tx) => {
+      let lastErr: unknown = null;
       try {
-        const input = await getTxInputByTxId(tx.txHash);
-        if (input && input.length > 0) {
-          out.set(tx.txHash.toString("hex"), Buffer.from(input));
+        for (let attempt = 0; attempt <= retryBackoffMs.length; attempt += 1) {
+          try {
+            const meta = await getTxMetaByTxId(tx.txHash);
+            out.set(tx.txHash.toString("hex"), {
+              input: meta.input && meta.input.length > 0 ? Buffer.from(meta.input) : null,
+              ethTxHash: meta.ethTxHash && meta.ethTxHash.length > 0 ? Buffer.from(meta.ethTxHash) : null,
+            });
+            return;
+          } catch (err) {
+            lastErr = err;
+            if (attempt >= retryBackoffMs.length) {
+              break;
+            }
+            const backoffMs = retryBackoffMs[attempt];
+            logWarn(chainId, "tx_meta_retry", {
+              tx_hash: tx.txHash.toString("hex"),
+              retry_count: attempt + 1,
+              backoff_ms: backoffMs,
+              err: errMessage(err),
+            });
+            await sleep(backoffMs);
+          }
         }
       } catch {
-        // tx_input は補助データ。失敗時は取り込み継続。
+        // no-op: below warning logs on final failure.
+      }
+      if (lastErr) {
+        logWarn(chainId, "tx_meta_unavailable", {
+          tx_hash: tx.txHash.toString("hex"),
+          err: errMessage(lastErr),
+        });
       }
     })
   );
   return out;
+}
+
+async function sleep(ms: number): Promise<void> {
+  await new Promise<void>((resolve) => {
+    setTimeout(resolve, ms);
+  });
 }
 
 async function upsertTokenTransferRow(
