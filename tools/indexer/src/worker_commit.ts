@@ -8,7 +8,7 @@ import { IndexerDb } from "./db";
 import { Config } from "./config";
 import { Cursor, ExportResponse } from "./types";
 import { finalizePayloads, Pending } from "./worker_pending";
-import { errMessage, logFatal, logInfo } from "./worker_log";
+import { errMessage, logFatal, logInfo, logWarn } from "./worker_log";
 import { isTokenTransferAmountSupported } from "./worker_commit_guard";
 import { toDayKey } from "./worker_utils";
 import type { ArchiveResult } from "./archiver";
@@ -123,7 +123,7 @@ export async function commitPending(params: {
       process.exit(1);
     }
   }
-  const txMetaByTxHash = await fetchTxMetaByHash(txIndex, params.getTxMetaByTxId);
+  const txMetaByTxHash = await fetchTxMetaByHash(txIndex, params.getTxMetaByTxId, params.config.chainId);
   for (const txHash of receiptStatusByTxHash.keys()) {
     if (!txHashes.has(txHash)) {
       logFatal(
@@ -359,23 +359,56 @@ export async function commitPending(params: {
 
 async function fetchTxMetaByHash(
   txs: TxIndexInfo[],
-  getTxMetaByTxId: (txId: Uint8Array) => Promise<{ input: Uint8Array | null; ethTxHash: Uint8Array | null }>
+  getTxMetaByTxId: (txId: Uint8Array) => Promise<{ input: Uint8Array | null; ethTxHash: Uint8Array | null }>,
+  chainId: string
 ): Promise<Map<string, { input: Buffer | null; ethTxHash: Buffer | null }>> {
+  const retryBackoffMs = [20, 60];
   const out = new Map<string, { input: Buffer | null; ethTxHash: Buffer | null }>();
   await Promise.all(
     txs.map(async (tx) => {
+      let lastErr: unknown = null;
       try {
-        const meta = await getTxMetaByTxId(tx.txHash);
-        out.set(tx.txHash.toString("hex"), {
-          input: meta.input && meta.input.length > 0 ? Buffer.from(meta.input) : null,
-          ethTxHash: meta.ethTxHash && meta.ethTxHash.length > 0 ? Buffer.from(meta.ethTxHash) : null,
-        });
+        for (let attempt = 0; attempt <= retryBackoffMs.length; attempt += 1) {
+          try {
+            const meta = await getTxMetaByTxId(tx.txHash);
+            out.set(tx.txHash.toString("hex"), {
+              input: meta.input && meta.input.length > 0 ? Buffer.from(meta.input) : null,
+              ethTxHash: meta.ethTxHash && meta.ethTxHash.length > 0 ? Buffer.from(meta.ethTxHash) : null,
+            });
+            return;
+          } catch (err) {
+            lastErr = err;
+            if (attempt >= retryBackoffMs.length) {
+              break;
+            }
+            const backoffMs = retryBackoffMs[attempt];
+            logWarn(chainId, "tx_meta_retry", {
+              tx_hash: tx.txHash.toString("hex"),
+              retry_count: attempt + 1,
+              backoff_ms: backoffMs,
+              err: errMessage(err),
+            });
+            await sleep(backoffMs);
+          }
+        }
       } catch {
-        // tx_input/eth_tx_hash は補助データ。失敗時は取り込み継続。
+        // no-op: below warning logs on final failure.
+      }
+      if (lastErr) {
+        logWarn(chainId, "tx_meta_unavailable", {
+          tx_hash: tx.txHash.toString("hex"),
+          err: errMessage(lastErr),
+        });
       }
     })
   );
   return out;
+}
+
+async function sleep(ms: number): Promise<void> {
+  await new Promise<void>((resolve) => {
+    setTimeout(resolve, ms);
+  });
 }
 
 async function upsertTokenTransferRow(

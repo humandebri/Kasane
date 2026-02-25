@@ -1371,6 +1371,128 @@ test("runWorkerWithDeps stores token_transfers block/tx index from tx_index payl
   await originalClose();
 });
 
+test("runWorkerWithDeps retries tx meta fetch and stores eth tx hash", async () => {
+  const db = await createTestIndexerDb();
+  const originalClose = db.close.bind(db);
+  (db as unknown as { close: () => Promise<void> }).close = async () => { };
+  await withTempDir(async (dir) => {
+    const config: Config = {
+      canisterId: "test-canister",
+      icHost: "http://127.0.0.1:4943",
+      databaseUrl: "postgres://unused",
+      dbPoolMax: 1,
+      retentionDays: 90,
+      retentionEnabled: false,
+      retentionDryRun: false,
+      archiveGcDeleteOrphans: false,
+      maxBytes: 1_200_000,
+      backoffInitialMs: 1,
+      backoffMaxMs: 2,
+      idlePollMs: 1,
+      pruneStatusPollMs: 0,
+      opsMetricsPollMs: 0,
+      fetchRootKey: false,
+      archiveDir: dir,
+      chainId: "test",
+      zstdLevel: 1,
+      maxSegment: 2,
+    };
+    await db.setCursor({ block_number: 1n, segment: 0, byte_offset: 0 });
+    const txHash = Buffer.alloc(32, 0xb1);
+    const ethTxHash = Buffer.alloc(32, 0xe1);
+    const txInput = Buffer.from("a9059cbb0000000000000000000000000000000000000000000000000000000000000001", "hex");
+    const block = buildBlockPayload(1n, 10n, [txHash]);
+    const receipts = buildReceiptsPayload([{ txHash, receipt: buildReceiptBytes(1, true) }]);
+    const txIndex = buildTxIndexPayload(1n, txHash, 0);
+    const chunks = [
+      { segment: 0, start: 0, bytes: block, payload_len: block.length },
+      { segment: 1, start: 0, bytes: receipts, payload_len: receipts.length },
+      { segment: 2, start: 0, bytes: txIndex, payload_len: txIndex.length },
+    ];
+    let headCalls = 0;
+    let metaCalls = 0;
+    const client = {
+      getTxMetaByTxId: async () => {
+        metaCalls += 1;
+        if (metaCalls === 1) {
+          throw new Error("temporary rpc failure");
+        }
+        return { input: txInput, ethTxHash };
+      },
+      getHeadNumber: async (): Promise<bigint> => {
+        headCalls += 1;
+        if (headCalls === 2) {
+          process.emit("SIGINT");
+        }
+        return 1n;
+      },
+      exportBlocks: async (
+        cursor: { block_number: bigint; segment: number; byte_offset: number } | null
+      ): Promise<
+        | {
+          Ok: {
+            chunks: Array<{ segment: number; start: number; bytes: Buffer; payload_len: number }>;
+            next_cursor: { block_number: bigint; segment: number; byte_offset: number };
+          };
+        }
+        | { Err: never }
+      > => {
+        if (headCalls === 1) {
+          return {
+            Ok: {
+              chunks,
+              next_cursor: { block_number: 2n, segment: 0, byte_offset: 0 },
+            },
+          };
+        }
+        return {
+          Ok: {
+            chunks: [],
+            next_cursor: cursor ?? { block_number: 2n, segment: 0, byte_offset: 0 },
+          },
+        };
+      },
+      getPruneStatus: async () => ({
+        pruning_enabled: false,
+        prune_running: false,
+        estimated_kept_bytes: 0n,
+        high_water_bytes: 0n,
+        low_water_bytes: 0n,
+        hard_emergency_bytes: 0n,
+        last_prune_at: 0n,
+        pruned_before_block: null,
+        oldest_kept_block: null,
+        oldest_kept_timestamp: null,
+        need_prune: false,
+      }),
+      getMetrics: async () => ({
+        txs: 0n,
+        ema_txs_per_block_x1000: 0n,
+        pruned_before_block: null,
+        ema_block_rate_per_sec_x1000: 0n,
+        total_submitted: 0n,
+        window: 128n,
+        avg_txs_per_block: 0n,
+        block_rate_per_sec_x1000: null,
+        cycles: 0n,
+        total_dropped: 0n,
+        blocks: 0n,
+        drop_counts: [],
+        queue_len: 0n,
+        total_included: 0n,
+      }),
+    };
+    await runWorkerWithDeps(config, db, client, { skipGc: true });
+    assert.equal(metaCalls, 2);
+    const row = await db.queryOne<{ n: string }>(
+      "select count(*)::text as n from txs where tx_hash = $1 and eth_tx_hash is not null and tx_input is not null",
+      [txHash]
+    );
+    assert.equal(row?.n, "1");
+  });
+  await originalClose();
+});
+
 test("runWorkerWithDeps handles multi-block response without crash", async () => {
   const db = await createTestIndexerDb();
   const originalClose = db.close.bind(db);
