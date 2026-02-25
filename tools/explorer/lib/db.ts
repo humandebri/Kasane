@@ -24,6 +24,10 @@ export type TxSummary = {
   receiptStatus: number | null;
 };
 
+export type TxLookup = TxSummary & {
+  ethTxHashHex: string | null;
+};
+
 export type BlockDetails = {
   block: BlockSummary;
   txs: TxSummary[];
@@ -389,6 +393,46 @@ export async function getTx(txHash: Uint8Array): Promise<TxSummary | null> {
   }
   return {
     txHashHex: `0x${hit.tx_hash.toString("hex")}`,
+    blockNumber: BigInt(hit.block_number),
+    blockTimestamp: hit.block_timestamp === null ? null : BigInt(hit.block_timestamp),
+    txIndex: hit.tx_index,
+    callerPrincipal: hit.caller_principal ?? null,
+    fromAddress: hit.from_address,
+    toAddress: hit.to_address ?? null,
+    createdContractAddress: hit.contract_address ?? null,
+    txSelector: hit.tx_selector ?? null,
+    receiptStatus: hit.receipt_status ?? null,
+  };
+}
+
+export async function getTxByHashOrEthHash(hash: Uint8Array): Promise<TxLookup | null> {
+  const pool = getPool();
+  const row = await pool.query<{
+    tx_hash: Buffer;
+    eth_tx_hash: Buffer | null;
+    block_number: string | number;
+    block_timestamp: string | number | null;
+    tx_index: number;
+    caller_principal: Buffer | null;
+    from_address: Buffer;
+    to_address: Buffer | null;
+    contract_address: Buffer | null;
+    tx_selector: Buffer | null;
+    receipt_status: number | null;
+  }>(
+    "SELECT t.tx_hash, t.eth_tx_hash, t.block_number, b.timestamp AS block_timestamp, t.tx_index, t.caller_principal, t.from_address, t.to_address, r.contract_address, t.tx_selector, t.receipt_status FROM txs t LEFT JOIN tx_receipts_index r ON r.tx_hash = t.tx_hash LEFT JOIN blocks b ON b.number = t.block_number WHERE t.tx_hash = $1 OR t.eth_tx_hash = $1 ORDER BY t.block_number DESC, t.tx_index DESC LIMIT 1",
+    [Buffer.from(hash)]
+  );
+  if (row.rowCount === 0) {
+    return null;
+  }
+  const hit = row.rows[0];
+  if (!hit) {
+    return null;
+  }
+  return {
+    txHashHex: `0x${hit.tx_hash.toString("hex")}`,
+    ethTxHashHex: hit.eth_tx_hash ? `0x${hit.eth_tx_hash.toString("hex")}` : null,
     blockNumber: BigInt(hit.block_number),
     blockTimestamp: hit.block_timestamp === null ? null : BigInt(hit.block_timestamp),
     txIndex: hit.tx_index,

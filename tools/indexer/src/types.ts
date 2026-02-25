@@ -161,5 +161,7 @@ export type RpcTxDecodedView = {
 };
 
 export type RpcTxView = {
+  hash: Uint8Array;
+  eth_tx_hash: [] | [Uint8Array];
   decoded: [] | [RpcTxDecodedView];
 };

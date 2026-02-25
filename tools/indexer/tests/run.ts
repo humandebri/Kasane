@@ -466,7 +466,7 @@ test("runWorkerWithDeps commits two blocks from one response and stores final cu
     let headCalls = 0;
     let exportCalls = 0;
     const client = {
-      getTxInputByTxId: async () => null,
+      getTxMetaByTxId: async () => ({ input: null, ethTxHash: null }),
       getHeadNumber: async (): Promise<bigint> => {
         headCalls += 1;
         if (headCalls === 2) {
@@ -572,7 +572,7 @@ test("runWorkerWithDeps recovers from Pruned by rebasing cursor and dropping pen
     let headCalls = 0;
     let exportCalls = 0;
     const client = {
-      getTxInputByTxId: async () => null,
+      getTxMetaByTxId: async () => ({ input: null, ethTxHash: null }),
       getHeadNumber: async (): Promise<bigint> => {
         headCalls += 1;
         if (headCalls === 5) {
@@ -699,7 +699,7 @@ test("runWorkerWithDeps clamps Pruned cursor to block 1 minimum", async () => {
     let headCalls = 0;
     let exportCalls = 0;
     const client = {
-      getTxInputByTxId: async () => null,
+      getTxMetaByTxId: async () => ({ input: null, ethTxHash: null }),
       getHeadNumber: async (): Promise<bigint> => {
         headCalls += 1;
         if (headCalls === 3) {
@@ -799,7 +799,7 @@ test("runWorkerWithDeps clamps Pruned cursor to head when prune floor is ahead",
     let headCalls = 0;
     let exportCalls = 0;
     const client = {
-      getTxInputByTxId: async () => null,
+      getTxMetaByTxId: async () => ({ input: null, ethTxHash: null }),
       getHeadNumber: async (): Promise<bigint> => {
         headCalls += 1;
         if (headCalls === 3) {
@@ -898,7 +898,7 @@ test("runWorkerWithDeps bootstraps MissingData at block 1 instead of head", asyn
     let headCalls = 0;
     let exportCalls = 0;
     const client = {
-      getTxInputByTxId: async () => null,
+      getTxMetaByTxId: async () => ({ input: null, ethTxHash: null }),
       getHeadNumber: async (): Promise<bigint> => {
         headCalls += 1;
         if (headCalls === 3) {
@@ -1001,7 +1001,7 @@ test("runWorkerWithDeps exits on final cursor mismatch", async () => {
         { segment: 2, start: 0, bytes: Buffer.alloc(0), payload_len: 0 },
       ];
       const client = {
-        getTxInputByTxId: async () => null,
+        getTxMetaByTxId: async () => ({ input: null, ethTxHash: null }),
         getHeadNumber: async (): Promise<bigint> => 1n,
         exportBlocks: async (): Promise<
           | {
@@ -1094,7 +1094,7 @@ test("runWorkerWithDeps exits when decoded block number mismatches cursor", asyn
         { segment: 2, start: 0, bytes: Buffer.alloc(0), payload_len: 0 },
       ];
       const client = {
-        getTxInputByTxId: async () => null,
+        getTxMetaByTxId: async () => ({ input: null, ethTxHash: null }),
         getHeadNumber: async (): Promise<bigint> => 20n,
         exportBlocks: async (): Promise<
           | {
@@ -1189,7 +1189,7 @@ test("runWorkerWithDeps exits when tx_index and receipts counts differ", async (
         { segment: 2, start: 0, bytes: txIndexPayload, payload_len: txIndexPayload.length },
       ];
       const client = {
-        getTxInputByTxId: async () => null,
+        getTxMetaByTxId: async () => ({ input: null, ethTxHash: null }),
         getHeadNumber: async (): Promise<bigint> => 1n,
         exportBlocks: async (): Promise<
           | {
@@ -1296,7 +1296,7 @@ test("runWorkerWithDeps stores token_transfers block/tx index from tx_index payl
     ];
     let headCalls = 0;
     const client = {
-      getTxInputByTxId: async () => null,
+      getTxMetaByTxId: async () => ({ input: null, ethTxHash: null }),
       getHeadNumber: async (): Promise<bigint> => {
         headCalls += 1;
         if (headCalls === 2) {
@@ -1420,7 +1420,7 @@ test("runWorkerWithDeps handles multi-block response without crash", async () =>
     ];
     let headCalls = 0;
     const client = {
-      getTxInputByTxId: async () => null,
+      getTxMetaByTxId: async () => ({ input: null, ethTxHash: null }),
       getHeadNumber: async (): Promise<bigint> => {
         headCalls += 1;
         if (headCalls === 2) {
@@ -1536,7 +1536,7 @@ test("runWorkerWithDeps handles multi-block response with segment-0-only blocks"
     ];
     let headCalls = 0;
     const client = {
-      getTxInputByTxId: async () => null,
+      getTxMetaByTxId: async () => ({ input: null, ethTxHash: null }),
       getHeadNumber: async (): Promise<bigint> => {
         headCalls += 1;
         if (headCalls === 2) {
@@ -1643,7 +1643,7 @@ test("runWorkerWithDeps exits when stored cursor segment exceeds maxSegment", as
       };
       await db.setCursor({ block_number: 1n, segment: 3, byte_offset: 0 });
       const client = {
-        getTxInputByTxId: async () => null,
+        getTxMetaByTxId: async () => ({ input: null, ethTxHash: null }),
         getHeadNumber: async (): Promise<bigint> => 1n,
         exportBlocks: async (): Promise<{ Ok: never } | { Err: never }> => {
           throw new Error("exportBlocks should not be called");
@@ -1719,7 +1719,7 @@ test("runWorkerWithDeps normalizes stored mid-block cursor to block start on res
     let headCalls = 0;
     let firstCursor: { block_number: bigint; segment: number; byte_offset: number } | null | undefined;
     const client = {
-      getTxInputByTxId: async () => null,
+      getTxMetaByTxId: async () => ({ input: null, ethTxHash: null }),
       getHeadNumber: async (): Promise<bigint> => {
         headCalls += 1;
         if (headCalls === 2) {
@@ -1820,7 +1820,7 @@ test("runWorkerWithDeps keeps segment-0 offset cursor on restart", async () => {
     let headCalls = 0;
     let firstCursor: { block_number: bigint; segment: number; byte_offset: number } | null | undefined;
     const client = {
-      getTxInputByTxId: async () => null,
+      getTxMetaByTxId: async () => ({ input: null, ethTxHash: null }),
       getHeadNumber: async (): Promise<bigint> => {
         headCalls += 1;
         if (headCalls === 2) {
@@ -1929,7 +1929,7 @@ test("runWorkerWithDeps does not double count metrics_daily on block re-commit",
     const runOnce = async (): Promise<void> => {
       let headCalls = 0;
       const client = {
-        getTxInputByTxId: async () => null,
+        getTxMetaByTxId: async () => ({ input: null, ethTxHash: null }),
         getHeadNumber: async (): Promise<bigint> => {
           headCalls += 1;
           if (headCalls === 2) {
@@ -2045,7 +2045,7 @@ test("runWorkerWithDeps exits when cursor is null and stream cursor is not estab
       };
       const chunkBytes = Buffer.from([1, 2, 3]);
       const client = {
-        getTxInputByTxId: async () => null,
+        getTxMetaByTxId: async () => ({ input: null, ethTxHash: null }),
         getHeadNumber: async (): Promise<bigint> => 10n,
         exportBlocks: async (): Promise<
           | {
@@ -2135,7 +2135,7 @@ test("runWorkerWithDeps does not leak signal listeners after stop", async () => 
       };
       let headCalls = 0;
       const client = {
-        getTxInputByTxId: async () => null,
+        getTxMetaByTxId: async () => ({ input: null, ethTxHash: null }),
         getHeadNumber: async (): Promise<bigint> => {
           headCalls += 1;
           if (headCalls === 1) {
@@ -2225,6 +2225,7 @@ test("db upsert and metrics aggregation", async () => {
     await db.upsertBlock({ number: 10n, hash: Buffer.alloc(32, 1), timestamp: 123n, tx_count: 1, gas_used: 0n });
     await db.upsertTx({
       tx_hash: Buffer.alloc(32, 2),
+      eth_tx_hash: null,
       block_number: 10n,
       tx_index: 0,
       caller_principal: null,
@@ -2344,6 +2345,7 @@ test("retention cleanup dry-run and delete follow 90-day boundary", async () => 
     await db.upsertBlock({ number: 2n, hash: Buffer.alloc(32, 2), timestamp: freshSec, tx_count: 1, gas_used: 0n });
     await db.upsertTx({
       tx_hash: Buffer.alloc(32, 11),
+      eth_tx_hash: null,
       block_number: 1n,
       tx_index: 0,
       caller_principal: null,
@@ -2355,6 +2357,7 @@ test("retention cleanup dry-run and delete follow 90-day boundary", async () => 
     });
     await db.upsertTx({
       tx_hash: Buffer.alloc(32, 22),
+      eth_tx_hash: null,
       block_number: 2n,
       tx_index: 0,
       caller_principal: null,
@@ -2414,6 +2417,7 @@ async function createTestIndexerDb(): Promise<IndexerDb> {
   await db.queryOne("alter table if exists blocks add column if not exists gas_used bigint");
   await db.queryOne("alter table if exists txs add column if not exists tx_selector bytea");
   await db.queryOne("alter table if exists txs add column if not exists tx_input bytea");
+  await db.queryOne("alter table if exists txs add column if not exists eth_tx_hash bytea");
   await db.queryOne(
     "create table if not exists tx_receipts_index(" +
     "tx_hash bytea primary key, contract_address bytea, status smallint not null, block_number bigint not null, tx_index integer not null)"
