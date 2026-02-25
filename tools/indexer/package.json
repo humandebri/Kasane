@@ -6,6 +6,7 @@
   "main": "dist/main.js",
   "scripts": {
     "dev": "tsx src/main.ts",
+    "backfill:eth-hash": "tsx src/backfill_eth_tx_hash.ts",
     "build": "tsc -p tsconfig.json",
     "start": "node dist/main.js",
     "lint": "tsc -p tsconfig.lint.json --noEmit",
