@@ -148,7 +148,8 @@ async function main() {
     ["rpc_eth_get_transaction_by_eth_hash", [zero32]],
     ["rpc_eth_get_transaction_by_tx_id", [zero32]],
     ["rpc_eth_get_transaction_receipt_by_eth_hash", [zero32]],
-    ["rpc_eth_get_transaction_receipt_with_status", [zero32]],
+    ["rpc_eth_get_transaction_receipt_with_status_by_eth_hash", [zero32]],
+    ["rpc_eth_get_transaction_receipt_with_status_by_tx_id", [zero32]],
   ];
 
   const rows = [];
@@ -164,6 +165,7 @@ async function main() {
     rows.push(await callQuery(actor, "get_pending", [txId], txMeta));
     rows.push(await callQuery(actor, "get_receipt", [txId], txMeta));
     rows.push(await callQuery(actor, "rpc_eth_get_transaction_by_tx_id", [txId], txMeta));
+    rows.push(await callQuery(actor, "rpc_eth_get_transaction_receipt_with_status_by_tx_id", [txId], txMeta));
   }
 
   const extraEthHashHex = process.env.EXTRA_ETH_HASH_HEX || "";
@@ -171,7 +173,7 @@ async function main() {
     const ethHash = Uint8Array.from(Buffer.from(extraEthHashHex, "hex"));
     rows.push(await callQuery(actor, "rpc_eth_get_transaction_by_eth_hash", [ethHash]));
     rows.push(await callQuery(actor, "rpc_eth_get_transaction_receipt_by_eth_hash", [ethHash]));
-    rows.push(await callQuery(actor, "rpc_eth_get_transaction_receipt_with_status", [ethHash]));
+    rows.push(await callQuery(actor, "rpc_eth_get_transaction_receipt_with_status_by_eth_hash", [ethHash]));
   }
 
   const extraAddressHex = process.env.EXTRA_ADDRESS_HEX || "";

@@ -12,7 +12,7 @@ OUTPUT_WASM="${2:-${REPO_ROOT}/target/wasm32-unknown-unknown/release/ic_evm_wrap
 DID_FILE="${DID_FILE:-${REPO_ROOT}/crates/ic-evm-wrapper/evm_canister.did}"
 OPT_LEVEL="${OPT_LEVEL:-O3}"
 ENABLE_STUB_WASI="${ENABLE_STUB_WASI:-0}"
-CHECK_ENDPOINTS_EXCLUDE="${CHECK_ENDPOINTS_EXCLUDE:-rpc_eth_get_block_by_number_with_status,rpc_eth_get_transaction_receipt_with_status}"
+CHECK_ENDPOINTS_EXCLUDE="${CHECK_ENDPOINTS_EXCLUDE:-rpc_eth_get_block_by_number_with_status,rpc_eth_get_transaction_receipt_with_status_by_eth_hash,rpc_eth_get_transaction_receipt_with_status_by_tx_id}"
 CHECK_ENDPOINTS_HIDDEN="${CHECK_ENDPOINTS_HIDDEN:-canister_update:<ic-cdk internal> timer_executor,__getrandom_custom,canister_global_timer,canister_init,canister_inspect_message,canister_post_upgrade,canister_pre_upgrade,get_candid_pointer}"
 
 if [[ ! -f "${INPUT_WASM}" ]]; then

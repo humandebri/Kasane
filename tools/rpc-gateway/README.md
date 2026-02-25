@@ -87,7 +87,7 @@ npm run dev
 | `eth_syncing` | Supported | 常に `false` を返す | 同期進捗オブジェクト非対応 | 即時実行モデル前提 |
 | `eth_getBlockByNumber` | Partially supported | `blockTag` を解決してブロックを返す | `latest/pending/safe/finalized` は head 扱い。pruned範囲は `-32001` | canister では `rpc_eth_get_block_by_number_with_status` |
 | `eth_getTransactionByHash` | Supported | `eth_tx_hash` で取引を参照する | `tx_id` 直接参照なし。migration未完了/critical corrupt時は `-32000 state unavailable` | canister では `rpc_eth_get_transaction_by_eth_hash` |
-| `eth_getTransactionReceipt` | Partially supported | `eth_tx_hash` で receipt を参照する | `tx_id` 直接参照なし。migration未完了/critical corrupt時は `-32000`、pruned範囲は `-32001` | canister では `rpc_eth_get_transaction_receipt_with_status` |
+| `eth_getTransactionReceipt` | Partially supported | `eth_tx_hash` で receipt を参照する | `transactionHash` が要求hashと一致しない `Found` は `null` として扱う（誤配防止）。migration未完了/critical corrupt時は `-32000`、pruned範囲は `-32001` | canister では `rpc_eth_get_transaction_receipt_with_status_by_eth_hash` |
 | `eth_getBalance` | Partially supported | 残高取得を返す | blockTag は受理するが評価には使わない（常に最新） | 不正入力は `-32602` |
 | `eth_getTransactionCount` | Partially supported | canister `rpc_eth_get_transaction_count_at(address, tag)` を返す | `pending` は pending nonce。`earliest` は historical nonce 未提供で `exec.state.unavailable`（`oldest_available>0` は out-of-window）。`QUANTITY` は `head` と同値なら成功、`head` 未満は `exec.state.unavailable`、範囲外は `invalid.block_range.out_of_window` | `earliest` は block `0` として評価 |
 | `eth_getCode` | Partially supported | コードを返す | `blockTag` は `latest` 系のみ（文字列または `{ blockNumber: "latest|pending|safe|finalized" }`） | 不正入力は `-32602` |
@@ -103,7 +103,7 @@ npm run dev
 本ドキュメントの互換表は JSON-RPC 層を対象とし、opcode 実行意味論の差分整理は現時点の対象外です。
 
 従来のEVMチェーンと異なる運用上の注意（現行実装時点）:
-- Pruning: canister は履歴を prune するため、古い範囲は `rpc_eth_get_block_by_number_with_status` / `rpc_eth_get_transaction_receipt_with_status` で `Pruned` / `PossiblyPruned` が返り得ます。
+- Pruning: canister は履歴を prune するため、古い範囲は `rpc_eth_get_block_by_number_with_status` / `rpc_eth_get_transaction_receipt_with_status_by_eth_hash` で `Pruned` / `PossiblyPruned` が返り得ます。
 - Timer駆動: canister 側で timer により mining を実行します。mining は `set_timer` の単発予約を毎tickで再設定する方式で、`mining_scheduled` フラグにより多重予約を防ぎます。
 - Timer駆動（mining詳細）: 採掘は自動実行のみを提供します。`ready_queue` が空のときは次回予約のみ行います。
 - Timer駆動（停止条件）: 採掘失敗時は基本間隔で再試行します。cycle critical または migration 中は write 拒否により採掘を停止し、復帰後は cycle observer tick（60s）が再スケジュールを補助します。prune は block event 駆動（`block_number % 84 == 0`）でのみ試行されます。
@@ -112,6 +112,7 @@ npm run dev
 - `eth_sendRawTransaction` 戻り値: Gateway は canister `rpc_eth_send_raw_transaction` の返却 `tx_id` から `rpc_eth_get_transaction_by_tx_id` で `eth_tx_hash` を解決して返します。解決不能時は `-32000` エラーを返します。
 - `eth_getTransactionReceipt.logs[].logIndex`: ブロック内通番で返します。
 - Hash semantics: canister内部では `tx_id` を保持し、Ethereum互換参照は `eth_tx_hash` を使用します。Gateway は `eth_*ByHash` を `eth_tx_hash` 系に接続します。
+- API split: receipt status は `rpc_eth_get_transaction_receipt_with_status_by_eth_hash`（外部向け）と `rpc_eth_get_transaction_receipt_with_status_by_tx_id`（内部運用向け）に分離され、Gateway は前者のみを使用します。
 - Finality assumptions: 単一シーケンサ前提で reorg 前提の挙動は提供しません。
 - `expected_nonce_by_address` は query メソッドです。`icp canister call` 直叩き時は `--query` を付けないと `IC0406` になります。
 

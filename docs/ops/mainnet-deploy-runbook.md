@@ -246,6 +246,12 @@ sudo journalctl -u kasane-explorer.service -n 200 --no-pager
 2. 障害時は snapshot を load し、直前安定 wasm を reinstall する。
 3. 復旧後に `get_ops_status` と read 系 RPC を再確認する。
 
+### 4.1 Receipt API分離リリース時の同世代ロールバック
+- 破壊的変更として `rpc_eth_get_transaction_receipt_with_status` を削除済みの場合、`canister/gateway/explorer/indexer` は同世代で揃えて戻す。
+- 手順は「gateway/explorer/indexer 停止 -> canister downgrade -> gateway/explorer/indexer downgrade 起動」の順で実施する。
+- 外部 JSON-RPC の receipt 参照は `eth_tx_hash` 専用（canister は `rpc_eth_get_transaction_receipt_with_status_by_eth_hash`）で確認する。
+- 内部運用の `submit_ic_tx` 追跡は `tx_id` 系（`get_pending`/`get_receipt`）で確認する。
+
 ## 5. Full Method Test（任意）
 `scripts/mainnet/mainnet_method_test.sh` で本番向け総合テストを実行できる。  
 `FULL_METHOD_REQUIRED=1`（既定）では次が必須:

@@ -159,7 +159,8 @@ type Methods = {
   rpc_eth_get_transaction_by_eth_hash: (ethTxHash: Uint8Array) => Promise<[] | [EthTxView]>;
   rpc_eth_get_transaction_by_tx_id: (txId: Uint8Array) => Promise<[] | [EthTxView]>;
   rpc_eth_get_transaction_receipt_by_eth_hash: (ethTxHash: Uint8Array) => Promise<[] | [EthReceiptView]>;
-  rpc_eth_get_transaction_receipt_with_status: (ethTxHash: Uint8Array) => Promise<RpcReceiptLookupView>;
+  rpc_eth_get_transaction_receipt_with_status_by_eth_hash: (ethTxHash: Uint8Array) => Promise<RpcReceiptLookupView>;
+  rpc_eth_get_transaction_receipt_with_status_by_tx_id: (txId: Uint8Array) => Promise<RpcReceiptLookupView>;
   rpc_eth_get_logs_paged: (
     filter: EthLogFilterView,
     cursor: [] | [EthLogsCursorView],

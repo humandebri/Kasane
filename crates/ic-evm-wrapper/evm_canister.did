@@ -373,7 +373,10 @@ service : (opt InitArgs) -> {
   rpc_eth_get_transaction_receipt_by_eth_hash : (blob) -> (
       opt EthReceiptView,
     ) query;
-  rpc_eth_get_transaction_receipt_with_status : (blob) -> (
+  rpc_eth_get_transaction_receipt_with_status_by_eth_hash : (blob) -> (
+      RpcReceiptLookupView,
+    ) query;
+  rpc_eth_get_transaction_receipt_with_status_by_tx_id : (blob) -> (
       RpcReceiptLookupView,
     ) query;
   rpc_eth_history_window : () -> (RpcHistoryWindowView) query;

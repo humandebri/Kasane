@@ -670,8 +670,13 @@ fn rpc_eth_get_block_number_by_hash(block_hash: Vec<u8>, max_scan: u32) -> Resul
 }
 
 #[ic_cdk::query]
-fn rpc_eth_get_transaction_receipt_with_status(tx_hash_or_id: Vec<u8>) -> RpcReceiptLookupView {
-    ic_evm_rpc::rpc_eth_get_transaction_receipt_with_status(tx_hash_or_id)
+fn rpc_eth_get_transaction_receipt_with_status_by_eth_hash(eth_tx_hash: Vec<u8>) -> RpcReceiptLookupView {
+    ic_evm_rpc::rpc_eth_get_transaction_receipt_with_status_by_eth_hash(eth_tx_hash)
+}
+
+#[ic_cdk::query]
+fn rpc_eth_get_transaction_receipt_with_status_by_tx_id(tx_id: Vec<u8>) -> RpcReceiptLookupView {
+    ic_evm_rpc::rpc_eth_get_transaction_receipt_with_status_by_tx_id(tx_id)
 }
 
 #[ic_cdk::update]

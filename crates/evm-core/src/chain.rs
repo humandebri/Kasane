@@ -1711,8 +1711,58 @@ pub fn eth_call_object(input: CallObjectInput) -> Result<CallObjectResult, Chain
 }
 
 pub fn eth_estimate_gas_object(input: CallObjectInput) -> Result<u64, ChainError> {
-    let out = eth_call_object(input)?;
-    Ok(out.gas_used)
+    let upper_bound = input.gas_limit.unwrap_or_else(|| {
+        with_state(|state| {
+            let chain = *state.chain_state.get();
+            chain.block_gas_limit
+        })
+    });
+
+    let upper_outcome = eth_call_object_with_gas_limit(&input, upper_bound)?;
+    if upper_outcome.status != 1 {
+        return Err(ChainError::ExecFailed(Some(ExecError::TxError(
+            OpTransactionError::TxExecutionFailed,
+        ))));
+    }
+
+    let mut low = 0u64;
+    let mut high = upper_bound;
+    while high.saturating_sub(low) > 1 {
+        let mid = low.saturating_add(high.saturating_sub(low) / 2);
+        match eth_call_object_with_gas_limit(&input, mid) {
+            Ok(outcome) if outcome.status == 1 => {
+                high = mid;
+            }
+            Ok(_) => {
+                low = mid;
+            }
+            Err(err) if is_estimate_candidate_failure(&err) => {
+                low = mid;
+            }
+            Err(err) => {
+                return Err(err);
+            }
+        }
+    }
+    Ok(high)
+}
+
+fn eth_call_object_with_gas_limit(
+    input: &CallObjectInput,
+    gas_limit: u64,
+) -> Result<CallObjectResult, ChainError> {
+    let mut bounded = input.clone();
+    bounded.gas_limit = Some(gas_limit);
+    eth_call_object(bounded)
+}
+
+fn is_estimate_candidate_failure(err: &ChainError) -> bool {
+    matches!(
+        err,
+        ChainError::ExecFailed(Some(ExecError::TxError(
+            OpTransactionError::TxPrecheckFailed | OpTransactionError::TxExecutionFailed
+        )))
+    )
 }
 
 fn call_object_tx_id(input: &CallObjectInput) -> TxId {

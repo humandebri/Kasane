@@ -54,11 +54,12 @@ import {
   getRpcCode,
   getRpcExpectedNonce,
   getRpcHeadNumber,
-  getRpcReceiptWithStatus,
+  getRpcReceiptWithStatusByTxId,
   getRpcPruneStatus,
   getRpcTxByTxId,
   type LookupError,
   type PruneStatusView,
+  type RpcReceiptLookupView,
   type ReceiptView,
 } from "./rpc";
 import { summarizeVerifyWindow, type VerifyWindowSummaryBigInt } from "./verify/metrics";
@@ -362,7 +363,8 @@ export async function getBlockView(
 
 async function getBlockFeeBreakdown(
   txs: TxSummary[],
-  baseFeePerGasWei: bigint | null
+  baseFeePerGasWei: bigint | null,
+  getReceiptWithStatusByTxId: (txId: Uint8Array) => Promise<RpcReceiptLookupView> = getRpcReceiptWithStatusByTxId
 ): Promise<{ totalFeesWei: bigint | null; priorityFeesWei: bigint | null }> {
   if (txs.length === 0) {
     return { totalFeesWei: 0n, priorityFeesWei: 0n };
@@ -370,7 +372,7 @@ async function getBlockFeeBreakdown(
   const receipts = await Promise.all(
     txs.map(async (tx) => {
       try {
-        const status = await getRpcReceiptWithStatus(parseHex(tx.txHashHex));
+        const status = await getReceiptWithStatusByTxId(parseHex(tx.txHashHex));
         if ("Found" in status) {
           return status.Found;
         }
@@ -709,6 +711,30 @@ export const opsDataTestHooks = {
   buildCapacityForecast,
   mapFeeRecipientHexFromRpcBlock: (rpcBlock: { beneficiary: Uint8Array } | null): string | null =>
     rpcBlock ? toHexLower(rpcBlock.beneficiary) : null,
+};
+
+export const dataTestHooks = {
+  getBlockFeeBreakdownWithLookup: (
+    txIdsHex: string[],
+    baseFeePerGasWei: bigint | null,
+    lookupByTxId: (txId: Uint8Array) => Promise<RpcReceiptLookupView>
+  ): Promise<{ totalFeesWei: bigint | null; priorityFeesWei: bigint | null }> =>
+    getBlockFeeBreakdown(
+      txIdsHex.map((txIdHex) => ({
+        txHashHex: txIdHex,
+        blockNumber: 0n,
+        blockTimestamp: null,
+        txIndex: 0,
+        callerPrincipal: null,
+        fromAddress: Buffer.alloc(20),
+        toAddress: null,
+        createdContractAddress: null,
+        txSelector: null,
+        receiptStatus: null,
+      })),
+      baseFeePerGasWei,
+      lookupByTxId
+    ),
 };
 
 export async function getPrincipalView(principalText: string): Promise<PrincipalView> {

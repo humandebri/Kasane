@@ -16,7 +16,8 @@
 - `rpc_eth_get_transaction_by_eth_hash`
 - `rpc_eth_get_transaction_by_tx_id`
 - `rpc_eth_get_transaction_receipt_by_eth_hash`
-- `rpc_eth_get_transaction_receipt_with_status`
+- `rpc_eth_get_transaction_receipt_with_status_by_eth_hash`
+- `rpc_eth_get_transaction_receipt_with_status_by_tx_id`
 - `rpc_eth_get_balance`
 - `rpc_eth_get_code`
 - `rpc_eth_get_storage_at`
