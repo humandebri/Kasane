@@ -10,8 +10,8 @@ use evm_db::chain_data::{
     BlockData, Head, ReceiptLike, SenderKey, StoredTxBytes, TxId, TxIndexEntry, TxKind,
 };
 use evm_db::stable_state::{init_stable_state, with_state_mut};
-use evm_db::types::keys::{make_account_key, make_storage_key};
-use evm_db::types::values::{AccountVal, U256Val};
+use evm_db::types::keys::{make_account_key, make_code_key, make_storage_key};
+use evm_db::types::values::{AccountVal, CodeVal, U256Val};
 use evm_db::Storable;
 use ic_evm_rpc::{
     rpc_eth_call_object, rpc_eth_call_object_at, rpc_eth_call_rawtx, rpc_eth_estimate_gas_object,
@@ -136,6 +136,64 @@ fn rpc_eth_call_object_and_estimate_gas_work() {
 
     let gas = rpc_eth_estimate_gas_object(call).expect("estimate should succeed");
     assert!(gas > 0);
+}
+
+#[test]
+fn rpc_eth_estimate_gas_object_returns_minimum_successful_gas_limit() {
+    let _guard = test_lock().lock().expect("lock");
+    init_stable_state();
+
+    let from = [0x55u8; 20];
+    let to = [0x66u8; 20];
+    let code = vec![
+        0x5a, 0x62, 0x02, 0x49, 0xf0, 0x11, 0x60, 0x13, 0x57, 0x60, 0x01, 0x60, 0x00, 0x52,
+        0x60, 0x20, 0x60, 0x00, 0xf3, 0x5b, 0x60, 0x00, 0x60, 0x00, 0xfd,
+    ];
+    let code_hash = hash::keccak256(&code);
+    with_state_mut(|state| {
+        state.accounts.insert(
+            make_account_key(from),
+            AccountVal::from_parts(0, [0xffu8; 32], [0u8; 32]),
+        );
+        state.accounts.insert(
+            make_account_key(to),
+            AccountVal::from_parts(0, [0u8; 32], code_hash),
+        );
+        state.codes.insert(make_code_key(code_hash), CodeVal(code.clone()));
+    });
+
+    let call = RpcCallObjectView {
+        to: Some(to.to_vec()),
+        from: Some(from.to_vec()),
+        gas: None,
+        gas_price: None,
+        nonce: None,
+        max_fee_per_gas: None,
+        max_priority_fee_per_gas: None,
+        chain_id: None,
+        tx_type: None,
+        access_list: None,
+        value: Some(vec![0u8; 32]),
+        data: Some(Vec::new()),
+    };
+
+    let estimate = rpc_eth_estimate_gas_object(call.clone()).expect("estimate should succeed");
+    assert!(estimate >= 150_000);
+
+    let fail = rpc_eth_call_object(RpcCallObjectView {
+        gas: Some(estimate.saturating_sub(1)),
+        ..call.clone()
+    })
+    .expect("call with insufficient gas should execute");
+    assert_eq!(fail.status, 0);
+
+    let success = rpc_eth_call_object(RpcCallObjectView {
+        gas: Some(estimate),
+        ..call
+    })
+    .expect("call with estimated gas should execute");
+    assert_eq!(success.status, 1);
+    assert!(success.gas_used < estimate);
 }
 
 #[test]

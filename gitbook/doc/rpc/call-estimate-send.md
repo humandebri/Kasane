@@ -2,6 +2,7 @@
 
 ## TL;DR
 - `eth_call` / `eth_estimateGas` は callObject制約あり。
+- `eth_estimateGas` は `gas_used` ではなく、成功する最小 `gas` を返す。
 - `eth_sendRawTransaction` は canister submit API委譲。
 
 ## メソッド
