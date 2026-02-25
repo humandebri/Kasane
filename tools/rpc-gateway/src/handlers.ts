@@ -255,7 +255,7 @@ async function onGetTransactionReceipt(id: string | number | null, params: unkno
   if (readinessError !== null) {
     return readinessError;
   }
-  const receiptLookup = await actor.rpc_eth_get_transaction_receipt_with_status(txHash);
+  const receiptLookup = await actor.rpc_eth_get_transaction_receipt_with_status_by_eth_hash(txHash);
   if ("NotFound" in receiptLookup) {
     return makeSuccess(id, null);
   }
@@ -271,7 +271,11 @@ async function onGetTransactionReceipt(id: string | number | null, params: unkno
       pruned_before_block: toQuantityHex(receiptLookup.Pruned.pruned_before_block),
     });
   }
-  return makeSuccess(id, mapReceipt(receiptLookup.Found, txHash));
+  const mapped = mapReceipt(receiptLookup.Found, txHash);
+  if (!receiptMatchesRequestedHash(mapped, txHash)) {
+    return makeSuccess(id, null);
+  }
+  return makeSuccess(id, mapped);
 }
 
 function txHashReadinessError(id: string | number | null, status: OpsStatusView): JsonRpcResponse | null {
@@ -1591,6 +1595,14 @@ function mapReceipt(receipt: EthReceiptView, fallbackTxHash: Uint8Array): Record
   };
 }
 
+function receiptMatchesRequestedHash(receipt: Record<string, unknown>, requestedTxHash: Uint8Array): boolean {
+  const transactionHash = receipt.transactionHash;
+  if (typeof transactionHash !== "string") {
+    return false;
+  }
+  return transactionHash.toLowerCase() === toDataHex(requestedTxHash);
+}
+
 export function __test_map_receipt(
   receipt: EthReceiptView,
   fallbackTxHash: Uint8Array
@@ -1604,4 +1616,11 @@ export function __test_map_block(block: EthBlockView, fullTx: boolean): { value:
 
 export function __test_map_tx(tx: EthTxView): Record<string, unknown> {
   return mapTx(tx);
+}
+
+export function __test_receipt_hash_matches(
+  receipt: Record<string, unknown>,
+  requestedTxHash: Uint8Array
+): boolean {
+  return receiptMatchesRequestedHash(receipt, requestedTxHash);
 }

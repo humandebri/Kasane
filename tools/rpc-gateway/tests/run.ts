@@ -9,6 +9,7 @@ import {
   __test_classify_call_object_err_code,
   __test_map_receipt,
   __test_map_block,
+  __test_receipt_hash_matches,
   __test_normalize_storage_slot32,
   __test_parse_call_object,
   __test_revert_data_hex,
@@ -376,6 +377,53 @@ function testReceiptLogMapping(): void {
   assert.equal(log0.blockHash, `0x${"88".repeat(32)}`);
   assert.equal(log0.transactionIndex, "0x2");
   assert.equal(log0.logIndex, "0x7");
+}
+
+function testReceiptHashStrictMatch(): void {
+  const requested = Uint8Array.from(Buffer.from("aa".repeat(32), "hex"));
+  const mappedMatch = __test_map_receipt(
+    {
+      to: [Uint8Array.from(Buffer.from("77".repeat(20), "hex"))],
+      effective_gas_price: 1n,
+      status: 1,
+      l1_data_fee: 0n,
+      tx_index: 2,
+      block_hash: [Uint8Array.from(Buffer.from("88".repeat(32), "hex"))],
+      from: [Uint8Array.from(Buffer.from("66".repeat(20), "hex"))],
+      logs: [],
+      total_fee: 0n,
+      block_number: 5n,
+      operator_fee: 0n,
+      eth_tx_hash: [requested],
+      gas_used: 21_000n,
+      contract_address: [],
+      tx_hash: Uint8Array.from(Buffer.from("44".repeat(32), "hex")),
+    },
+    Uint8Array.from(Buffer.from("55".repeat(32), "hex"))
+  );
+  assert.equal(__test_receipt_hash_matches(mappedMatch, requested), true);
+
+  const mappedMismatch = __test_map_receipt(
+    {
+      to: [Uint8Array.from(Buffer.from("77".repeat(20), "hex"))],
+      effective_gas_price: 1n,
+      status: 1,
+      l1_data_fee: 0n,
+      tx_index: 2,
+      block_hash: [Uint8Array.from(Buffer.from("88".repeat(32), "hex"))],
+      from: [Uint8Array.from(Buffer.from("66".repeat(20), "hex"))],
+      logs: [],
+      total_fee: 0n,
+      block_number: 5n,
+      operator_fee: 0n,
+      eth_tx_hash: [Uint8Array.from(Buffer.from("bb".repeat(32), "hex"))],
+      gas_used: 21_000n,
+      contract_address: [],
+      tx_hash: Uint8Array.from(Buffer.from("44".repeat(32), "hex")),
+    },
+    Uint8Array.from(Buffer.from("55".repeat(32), "hex"))
+  );
+  assert.equal(__test_receipt_hash_matches(mappedMismatch, requested), false);
 }
 
 function testBlockMappingWithFeeMetadata(): void {
@@ -778,6 +826,7 @@ testRevertDataFormat();
 testCanisterErrorClassification();
 testPriorityFeeComputation();
 testWeightedPercentileAndNextBaseFee();
+testReceiptHashStrictMatch();
 testRewardPercentilesValidation();
 testRpcErrorPrefixPassthrough();
 testReceiptLogMapping();

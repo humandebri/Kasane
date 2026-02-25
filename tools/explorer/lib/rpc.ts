@@ -191,7 +191,8 @@ type ExplorerActorMethods = {
   rpc_eth_get_block_by_number: (number: bigint, fullTx: boolean) => Promise<[] | [EthBlockView]>;
   rpc_eth_get_transaction_by_tx_id: (txId: Uint8Array) => Promise<[] | [RpcTxView]>;
   rpc_eth_get_transaction_by_eth_hash: (ethTxHash: Uint8Array) => Promise<[] | [RpcTxView]>;
-  rpc_eth_get_transaction_receipt_with_status: (txHashOrId: Uint8Array) => Promise<RpcReceiptLookupView>;
+  rpc_eth_get_transaction_receipt_with_status_by_eth_hash: (ethTxHash: Uint8Array) => Promise<RpcReceiptLookupView>;
+  rpc_eth_get_transaction_receipt_with_status_by_tx_id: (txId: Uint8Array) => Promise<RpcReceiptLookupView>;
   rpc_eth_get_logs_paged: (
     filter: {
       from_block: [] | [bigint];
@@ -241,8 +242,12 @@ export async function getRpcTxByEthHash(ethTxHash: Uint8Array): Promise<RpcTxVie
   return out.length === 0 ? null : out[0];
 }
 
-export async function getRpcReceiptWithStatus(txHashOrId: Uint8Array): Promise<RpcReceiptLookupView> {
-  return (await getActor()).rpc_eth_get_transaction_receipt_with_status(txHashOrId);
+export async function getRpcReceiptWithStatusByEthHash(ethTxHash: Uint8Array): Promise<RpcReceiptLookupView> {
+  return (await getActor()).rpc_eth_get_transaction_receipt_with_status_by_eth_hash(ethTxHash);
+}
+
+export async function getRpcReceiptWithStatusByTxId(txId: Uint8Array): Promise<RpcReceiptLookupView> {
+  return (await getActor()).rpc_eth_get_transaction_receipt_with_status_by_tx_id(txId);
 }
 
 export async function getRpcLogsPaged(
@@ -563,6 +568,7 @@ const idlFactory: IDL.InterfaceFactory = ({ IDL }) => {
     rpc_eth_call_object: IDL.Func([rpcCallObjectView], [IDL.Variant({ Ok: rpcCallResultView, Err: rpcErrorView })], ["query"]),
     rpc_eth_get_transaction_by_tx_id: IDL.Func([IDL.Vec(IDL.Nat8)], [IDL.Opt(rpcTxView)], ["query"]),
     rpc_eth_get_transaction_by_eth_hash: IDL.Func([IDL.Vec(IDL.Nat8)], [IDL.Opt(rpcTxView)], ["query"]),
-    rpc_eth_get_transaction_receipt_with_status: IDL.Func([IDL.Vec(IDL.Nat8)], [rpcReceiptLookupView], ["query"]),
+    rpc_eth_get_transaction_receipt_with_status_by_eth_hash: IDL.Func([IDL.Vec(IDL.Nat8)], [rpcReceiptLookupView], ["query"]),
+    rpc_eth_get_transaction_receipt_with_status_by_tx_id: IDL.Func([IDL.Vec(IDL.Nat8)], [rpcReceiptLookupView], ["query"]),
   });
 };

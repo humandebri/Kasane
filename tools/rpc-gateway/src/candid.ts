@@ -206,7 +206,8 @@ export const idlFactory: IDL.InterfaceFactory = ({ IDL }) => {
     rpc_eth_get_transaction_by_eth_hash: IDL.Func([IDL.Vec(IDL.Nat8)], [IDL.Opt(EthTxView)], ["query"]),
     rpc_eth_get_transaction_by_tx_id: IDL.Func([IDL.Vec(IDL.Nat8)], [IDL.Opt(EthTxView)], ["query"]),
     rpc_eth_get_transaction_receipt_by_eth_hash: IDL.Func([IDL.Vec(IDL.Nat8)], [IDL.Opt(EthReceiptView)], ["query"]),
-    rpc_eth_get_transaction_receipt_with_status: IDL.Func([IDL.Vec(IDL.Nat8)], [RpcReceiptLookupView], ["query"]),
+    rpc_eth_get_transaction_receipt_with_status_by_eth_hash: IDL.Func([IDL.Vec(IDL.Nat8)], [RpcReceiptLookupView], ["query"]),
+    rpc_eth_get_transaction_receipt_with_status_by_tx_id: IDL.Func([IDL.Vec(IDL.Nat8)], [RpcReceiptLookupView], ["query"]),
     rpc_eth_get_logs_paged: IDL.Func(
       [EthLogFilterView, IDL.Opt(EthLogsCursorView), IDL.Nat32],
       [IDL.Variant({ Ok: EthLogsPageView, Err: GetLogsErrorView })],

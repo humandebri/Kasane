@@ -342,7 +342,7 @@ RPCインターフェースは、Internet Computerのアーキテクチャに準
 | `eth_syncing` | Supported | `false` を返す | 同期進捗オブジェクトは返さない | 即時実行モデル前提 |
 | `eth_getBlockByNumber` | Partially supported | ブロック参照を返す | `latest/pending/safe/finalized` は head 扱い。pruned範囲は `-32001` | `fullTx` の有無で返却形を切替 |
 | `eth_getTransactionByHash` | Supported | `eth_tx_hash` ベースで参照する | `tx_id` 直接参照ではない | canister側は `rpc_eth_get_transaction_by_eth_hash` |
-| `eth_getTransactionReceipt` | Partially supported | receipt を返す | migration/corrupt時 `-32000`、pruned範囲は `-32001` | canister側は `rpc_eth_get_transaction_receipt_with_status` |
+| `eth_getTransactionReceipt` | Partially supported | receipt を返す | migration/corrupt時 `-32000`、pruned範囲は `-32001` | canister側は `rpc_eth_get_transaction_receipt_with_status_by_eth_hash` |
 | `eth_getBalance` | Partially supported | 残高取得に対応 | `latest` 系のみ（文字列または `{ blockNumber: "latest|pending|safe|finalized" }`） | canister query でも取得可能 |
 | `eth_getTransactionCount` | Partially supported | nonce取得に対応 | `latest/pending/safe/finalized` のみ | canister側 `expected_nonce_by_address` |
 | `eth_getCode` | Partially supported | コード取得に対応 | `latest` のみ | canister query でも取得可能 |
@@ -368,6 +368,7 @@ pending/mempool/filter WebSocket 系（例: `eth_newFilter`, `eth_getFilterChang
 - `eth_sendRawTransaction` 戻り値: Gateway は canister `rpc_eth_send_raw_transaction` の返却 `tx_id` から `rpc_eth_get_transaction_by_tx_id` で `eth_tx_hash` を解決して返します。解決不能時は `-32000` エラーを返します。
 - `eth_getTransactionReceipt.logs[].logIndex`: ブロック内通番で返します。
 - ハッシュ運用: 内部主キー `tx_id` と外部互換 `eth_tx_hash` は別物です。外部連携は `eth_tx_hash` 系参照を使用してください。
+- API分離: receipt status は `rpc_eth_get_transaction_receipt_with_status_by_eth_hash`（外部）と `rpc_eth_get_transaction_receipt_with_status_by_tx_id`（内部運用）を使い分けます。
 
 関連定数（現行実装値）:
 - mining 基本間隔: `DEFAULT_MINING_INTERVAL_MS = 2_000`（`crates/evm-db/src/chain_data/runtime_defaults.rs`）

@@ -38,7 +38,7 @@ import {
   setExplorerPool,
   consumeVerifyReplayJti,
 } from "../lib/db";
-import { getLatestTxsPageView, getPrincipalView, opsDataTestHooks, parseCyclesTrendWindow, resolveHomeBlocksLimit } from "../lib/data";
+import { dataTestHooks, getLatestTxsPageView, getPrincipalView, opsDataTestHooks, parseCyclesTrendWindow, resolveHomeBlocksLimit } from "../lib/data";
 import { buildPruneHistory, parseStoredPruneStatusForTest } from "../lib/data_ops";
 import { mapAddressHistory, mapAddressTokenTransfers } from "../lib/data_address";
 import { calcRoundedBps, formatEthFromWei, formatGweiFromWei, formatTimestampWithRelativeUtc } from "../lib/format";
@@ -1338,6 +1338,39 @@ async function runAddressTokenTransferMappingTests(): Promise<void> {
   assert.equal(mapped[0]?.methodLabel, "approve");
 }
 
+async function runBlockFeeBreakdownLookupTests(): Promise<void> {
+  const txIdHex = "0x" + "11".repeat(32);
+  const txIdBytes = parseHex(txIdHex);
+  let lookupCalls = 0;
+  const out = await dataTestHooks.getBlockFeeBreakdownWithLookup(
+    [txIdHex],
+    10n,
+    async (txId) => {
+      lookupCalls += 1;
+      assert.equal(toHexLower(txId), toHexLower(txIdBytes));
+      return {
+        Found: {
+          tx_hash: txId,
+          eth_tx_hash: [],
+          block_number: 1n,
+          tx_index: 0,
+          status: 1,
+          gas_used: 100n,
+          effective_gas_price: 15n,
+          l1_data_fee: 0n,
+          operator_fee: 0n,
+          total_fee: 1500n,
+          contract_address: [],
+          logs: [],
+        },
+      };
+    }
+  );
+  assert.equal(lookupCalls, 1);
+  assert.equal(out.totalFeesWei, 1500n);
+  assert.equal(out.priorityFeesWei, 500n);
+}
+
 runHexTests()
   .then(runTxMetricsInputValidationTests)
   .then(runSearchTests)
@@ -1371,6 +1404,7 @@ runHexTests()
   .then(runTxMethodTests)
   .then(runTxDirectionTests)
   .then(runAddressTokenTransferMappingTests)
+  .then(runBlockFeeBreakdownLookupTests)
   .then(() => {
     console.log("ok");
   })
