@@ -5,6 +5,7 @@ import { redirect } from "next/navigation";
 import { Card, CardContent, CardHeader, CardTitle } from "../../components/ui/card";
 import { LogsSearchForm } from "../../components/logs-search-form";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../../components/ui/table";
+import { TxHashLink } from "../../components/tx-hash-link";
 import { getLogsView } from "../../lib/logs";
 
 export const dynamic = "force-dynamic";
@@ -76,7 +77,14 @@ export default async function LogsPage({
                     <TableCell className="font-mono break-all">{item.addressHex}</TableCell>
                     <TableCell className="font-mono break-all">{item.topic0Hex ?? "-"}</TableCell>
                     <TableCell className="font-mono">
-                      <Link href={`/tx/${item.txHashHex}`} className="text-sky-700 hover:underline break-all">{item.txHashHex}</Link>
+                      <TxHashLink
+                        txHashHex={item.txHashHex}
+                        receiptStatus={item.receiptStatus}
+                        className="text-sky-700 hover:underline break-all"
+                        title={item.txHashHex}
+                      >
+                        {item.txHashHex}
+                      </TxHashLink>
                     </TableCell>
                   </TableRow>
                 ))}

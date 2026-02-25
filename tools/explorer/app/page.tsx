@@ -5,6 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../components/ui/table";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
+import { TxHashLink } from "../components/tx-hash-link";
 import { TxValueFeeCells } from "../components/tx-value-fee-cells";
 import { getHomeView } from "../lib/data";
 import { toHexLower } from "../lib/hex";
@@ -147,9 +148,9 @@ export default async function HomePage({
                   return (
                     <TableRow key={tx.txHashHex}>
                       <TableCell className="font-mono text-xs">
-                        <Link href={`/tx/${tx.txHashHex}`} className="text-sky-700 hover:underline">
+                        <TxHashLink txHashHex={tx.txHashHex} receiptStatus={tx.receiptStatus}>
                           {shortPrefixHex(tx.txHashHex)}
-                        </Link>
+                        </TxHashLink>
                       </TableCell>
                       <TableCell className="text-xs">
                         {shortenMethodLabel(inferMethodLabel(tx.toAddress ? toHexLower(tx.toAddress) : null, tx.txSelector), 10)}

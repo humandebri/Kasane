@@ -1129,11 +1129,13 @@ async function runDbTests(): Promise<void> {
   assert.equal(latestTx?.txHashHex, "0x1122");
   assert.equal(filteredOutOfRange.page, 1);
   assert.equal(filteredOutOfRange.totalPages, 1);
+  assert.equal(filteredOutOfRange.totalTxs, 0n);
   assert.equal(filteredOutOfRange.hasPrev, false);
   assert.equal(filteredOutOfRange.hasNext, false);
   assert.equal(filteredOutOfRange.txs.length, 0);
   assert.equal(filteredExistingOutOfRange.page, 1);
   assert.equal(filteredExistingOutOfRange.totalPages, 1);
+  assert.equal(filteredExistingOutOfRange.totalTxs, 1n);
   assert.equal(filteredExistingOutOfRange.txs[0]?.txHashHex, "0x1122");
   assert.equal(latestTx?.createdContractAddress, null);
   assert.equal((await getBlockDetails(12n))?.txs.length, 1);
@@ -1322,6 +1324,7 @@ async function runAddressTokenTransferMappingTests(): Promise<void> {
         blockTimestamp: 1100n,
         txIndex: 0,
         logIndex: 2,
+        receiptStatus: 0,
         txSelector: Buffer.from("095ea7b3", "hex"),
         tokenAddress: Buffer.from("99".repeat(20), "hex"),
         fromAddress: Buffer.from("11".repeat(20), "hex"),

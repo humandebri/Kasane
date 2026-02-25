@@ -91,7 +91,12 @@ export default async function TxPage({
         <CardContent className="space-y-4 py-4">
         <dl className="grid grid-cols-1 gap-y-4 text-sm md:grid-cols-[240px_1fr]">
           <dt className="text-slate-500">Transaction Hash:</dt>
-          <dd className="font-mono break-all">{detail.displayTxHashHex}</dd>
+          <dd className="font-mono break-all">
+            <span className="inline-flex items-center gap-1">
+              {tx.receiptStatus === 0 ? <AlertTriangle className="h-3.5 w-3.5 text-rose-600" aria-label="failed transaction" /> : null}
+              <span>{detail.displayTxHashHex}</span>
+            </span>
+          </dd>
 
           {detail.displayTxHashHex !== detail.internalTxIdHex ? (
             <>

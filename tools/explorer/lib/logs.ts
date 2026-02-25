@@ -1,6 +1,7 @@
 // どこで: Logsビュー取得 / 何を: query文字列をRPC filterへ変換して結果を返す / なぜ: /logs ページの責務を単純化するため
 
 import { isAddressHex, isTxHashHex, normalizeHex, toHexLower } from "./hex";
+import { getReceiptStatusByTxHashes } from "./db";
 import {
   getRpcHeadNumber,
   getRpcLogsViaGateway,
@@ -29,6 +30,7 @@ export type LogsView = {
     topic0Hex: string | null;
     topicsCount: number;
     dataHex: string;
+    receiptStatus: number | null;
   }>;
   nextCursor: string | null;
   error: string | null;
@@ -74,10 +76,15 @@ export async function getLogsView(searchParams: {
     return { filters, items: [], nextCursor: null, error: rpcFilter.error };
   }
   try {
-    const items = await getRpcLogsViaGateway(rpcFilter.filter);
+    const rpcItems = await getRpcLogsViaGateway(rpcFilter.filter);
+    const mappedItems = rpcItems.map(mapItem);
+    const statusByTxHash = await getReceiptStatusByTxHashes(mappedItems.map((item) => item.txHashHex));
     return {
       filters,
-      items: items.map(mapItem),
+      items: mappedItems.map((item) => ({
+        ...item,
+        receiptStatus: statusByTxHash.get(item.txHashHex) ?? null,
+      })),
       nextCursor: null,
       error: null,
     };
@@ -180,6 +187,7 @@ function mapItem(item: EthLogItemView): {
   topic0Hex: string | null;
   topicsCount: number;
   dataHex: string;
+  receiptStatus: number | null;
 } {
   const topic0 = item.topics[0];
   return {
@@ -192,6 +200,7 @@ function mapItem(item: EthLogItemView): {
     topic0Hex: topic0 ? toHexLower(topic0) : null,
     topicsCount: item.topics.length,
     dataHex: toHexLower(item.data),
+    receiptStatus: null,
   };
 }
 

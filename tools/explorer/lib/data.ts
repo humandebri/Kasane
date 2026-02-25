@@ -78,6 +78,7 @@ export type LatestTxsPageView = {
   txs: TxSummaryWithPrincipal[];
   page: number;
   limit: number;
+  totalTxs: bigint;
   hasPrev: boolean;
   hasNext: boolean;
   totalPages: number;
@@ -292,6 +293,7 @@ export async function getLatestTxsPageView(
     txs: withCallerPrincipalText(txsRaw),
     page,
     limit,
+    totalTxs: totalRaw,
     hasPrev: page > 1,
     hasNext: Number.isFinite(total) ? nextOffset < total : txsRaw.length === limit,
     totalPages,

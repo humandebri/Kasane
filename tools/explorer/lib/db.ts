@@ -69,6 +69,7 @@ export type TokenTransferSummary = {
   blockTimestamp: bigint | null;
   txIndex: number;
   logIndex: number;
+  receiptStatus: number | null;
   txSelector: Buffer | null;
   tokenAddress: Buffer;
   fromAddress: Buffer;
@@ -560,13 +561,14 @@ export async function getTokenTransfersByAddress(
       block_timestamp: string | number | null;
       tx_index: number;
       log_index: number;
+      receipt_status: number | null;
       tx_selector: Buffer | null;
       token_address: Buffer;
       from_address: Buffer;
       to_address: Buffer;
       amount_numeric: string | number;
     }>(
-      "SELECT tt.tx_hash, tt.block_number, b.timestamp AS block_timestamp, tt.tx_index, tt.log_index, t.tx_selector, tt.token_address, tt.from_address, tt.to_address, tt.amount_numeric FROM token_transfers tt LEFT JOIN txs t ON t.tx_hash = tt.tx_hash LEFT JOIN blocks b ON b.number = tt.block_number WHERE tt.from_address = $1 OR tt.to_address = $1 ORDER BY tt.block_number DESC, tt.tx_index DESC, tt.log_index DESC, tt.tx_hash DESC LIMIT $2",
+      "SELECT tt.tx_hash, tt.block_number, b.timestamp AS block_timestamp, tt.tx_index, tt.log_index, t.receipt_status, t.tx_selector, tt.token_address, tt.from_address, tt.to_address, tt.amount_numeric FROM token_transfers tt LEFT JOIN txs t ON t.tx_hash = tt.tx_hash LEFT JOIN blocks b ON b.number = tt.block_number WHERE tt.from_address = $1 OR tt.to_address = $1 ORDER BY tt.block_number DESC, tt.tx_index DESC, tt.log_index DESC, tt.tx_hash DESC LIMIT $2",
       [addressBuf, fetchLimit]
     );
     return rows.rows.map((row) => ({
@@ -575,6 +577,7 @@ export async function getTokenTransfersByAddress(
       blockTimestamp: row.block_timestamp === null ? null : BigInt(row.block_timestamp),
       txIndex: row.tx_index,
       logIndex: row.log_index,
+      receiptStatus: row.receipt_status ?? null,
       txSelector: row.tx_selector ?? null,
       tokenAddress: row.token_address,
       fromAddress: row.from_address,
@@ -588,13 +591,14 @@ export async function getTokenTransfersByAddress(
     block_timestamp: string | number | null;
     tx_index: number;
     log_index: number;
+    receipt_status: number | null;
     tx_selector: Buffer | null;
     token_address: Buffer;
     from_address: Buffer;
     to_address: Buffer;
     amount_numeric: string | number;
   }>(
-    "SELECT tt.tx_hash, tt.block_number, b.timestamp AS block_timestamp, tt.tx_index, tt.log_index, t.tx_selector, tt.token_address, tt.from_address, tt.to_address, tt.amount_numeric FROM token_transfers tt LEFT JOIN txs t ON t.tx_hash = tt.tx_hash LEFT JOIN blocks b ON b.number = tt.block_number WHERE (tt.from_address = $1 OR tt.to_address = $1) AND (tt.block_number < $2 OR (tt.block_number = $2 AND tt.tx_index < $3) OR (tt.block_number = $2 AND tt.tx_index = $3 AND tt.log_index < $4) OR (tt.block_number = $2 AND tt.tx_index = $3 AND tt.log_index = $4 AND tt.tx_hash < $5)) ORDER BY tt.block_number DESC, tt.tx_index DESC, tt.log_index DESC, tt.tx_hash DESC LIMIT $6",
+    "SELECT tt.tx_hash, tt.block_number, b.timestamp AS block_timestamp, tt.tx_index, tt.log_index, t.receipt_status, t.tx_selector, tt.token_address, tt.from_address, tt.to_address, tt.amount_numeric FROM token_transfers tt LEFT JOIN txs t ON t.tx_hash = tt.tx_hash LEFT JOIN blocks b ON b.number = tt.block_number WHERE (tt.from_address = $1 OR tt.to_address = $1) AND (tt.block_number < $2 OR (tt.block_number = $2 AND tt.tx_index < $3) OR (tt.block_number = $2 AND tt.tx_index = $3 AND tt.log_index < $4) OR (tt.block_number = $2 AND tt.tx_index = $3 AND tt.log_index = $4 AND tt.tx_hash < $5)) ORDER BY tt.block_number DESC, tt.tx_index DESC, tt.log_index DESC, tt.tx_hash DESC LIMIT $6",
     [addressBuf, cursor.blockNumber, cursor.txIndex, cursor.logIndex, Buffer.from(cursor.txHash), fetchLimit]
   );
   return rows.rows.map((row) => ({
@@ -603,12 +607,33 @@ export async function getTokenTransfersByAddress(
     blockTimestamp: row.block_timestamp === null ? null : BigInt(row.block_timestamp),
     txIndex: row.tx_index,
     logIndex: row.log_index,
+    receiptStatus: row.receipt_status ?? null,
     txSelector: row.tx_selector ?? null,
     tokenAddress: row.token_address,
     fromAddress: row.from_address,
     toAddress: row.to_address,
     amount: BigInt(row.amount_numeric),
   }));
+}
+
+export async function getReceiptStatusByTxHashes(txHashes: string[]): Promise<Map<string, number | null>> {
+  const normalized = txHashes
+    .map((value) => value.trim().toLowerCase())
+    .filter((value) => /^0x[0-9a-f]{64}$/.test(value));
+  const unique = [...new Set(normalized)];
+  if (unique.length === 0) {
+    return new Map();
+  }
+  const pool = getPool();
+  const rows = await pool.query<{ tx_hash: Buffer; receipt_status: number | null }>(
+    "SELECT tx_hash, receipt_status FROM txs WHERE tx_hash = ANY($1::bytea[])",
+    [unique.map((hashHex) => Buffer.from(hashHex.slice(2), "hex"))]
+  );
+  const out = new Map<string, number | null>();
+  for (const row of rows.rows) {
+    out.set(`0x${row.tx_hash.toString("hex")}`, row.receipt_status ?? null);
+  }
+  return out;
 }
 
 export async function getRecentOpsMetricsSamples(limit: number): Promise<OpsMetricsSample[]> {

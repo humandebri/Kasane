@@ -32,6 +32,7 @@ export type AddressTokenTransferItem = {
   blockTimestamp: bigint | null;
   txIndex: number;
   logIndex: number;
+  receiptStatus: number | null;
   txSelectorHex: string | null;
   methodLabel: string;
   tokenAddressHex: string;
@@ -142,6 +143,7 @@ export function mapAddressTokenTransfers(
       blockTimestamp: row.blockTimestamp ?? null,
       txIndex: row.txIndex,
       logIndex: row.logIndex,
+      receiptStatus: row.receiptStatus,
       txSelectorHex: row.txSelector ? toHexLower(row.txSelector) : null,
       methodLabel: inferMethodLabel(tokenAddressHex, row.txSelector),
       tokenAddressHex,
