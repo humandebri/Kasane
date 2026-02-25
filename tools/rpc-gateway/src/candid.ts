@@ -68,6 +68,7 @@ export const idlFactory: IDL.InterfaceFactory = ({ IDL }) => {
     decode_ok: IDL.Bool,
     hash: IDL.Vec(IDL.Nat8),
     kind: IDL.Variant({ EthSigned: IDL.Null, IcSynthetic: IDL.Null }),
+    block_hash: IDL.Opt(IDL.Vec(IDL.Nat8)),
     block_number: IDL.Opt(IDL.Nat64),
     eth_tx_hash: IDL.Opt(IDL.Vec(IDL.Nat8)),
     decoded: IDL.Opt(DecodedTxView),
@@ -77,6 +78,8 @@ export const idlFactory: IDL.InterfaceFactory = ({ IDL }) => {
     status: IDL.Nat8,
     l1_data_fee: IDL.Nat,
     tx_index: IDL.Nat32,
+    from: IDL.Opt(IDL.Vec(IDL.Nat8)),
+    to: IDL.Opt(IDL.Vec(IDL.Nat8)),
     logs: IDL.Vec(
       IDL.Record({
         log_index: IDL.Nat32,
@@ -86,6 +89,7 @@ export const idlFactory: IDL.InterfaceFactory = ({ IDL }) => {
       })
     ),
     total_fee: IDL.Nat,
+    block_hash: IDL.Opt(IDL.Vec(IDL.Nat8)),
     block_number: IDL.Nat64,
     operator_fee: IDL.Nat,
     eth_tx_hash: IDL.Opt(IDL.Vec(IDL.Nat8)),

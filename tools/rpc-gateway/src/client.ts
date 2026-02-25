@@ -25,6 +25,7 @@ export type EthTxView = {
   decode_ok: boolean;
   hash: Uint8Array;
   kind: { EthSigned: null } | { IcSynthetic: null };
+  block_hash: [] | [Uint8Array];
   block_number: [] | [bigint];
   eth_tx_hash: [] | [Uint8Array];
   decoded: [] | [DecodedTxView];
@@ -35,8 +36,11 @@ export type EthReceiptView = {
   status: number;
   l1_data_fee: bigint;
   tx_index: number;
+  from: [] | [Uint8Array];
+  to: [] | [Uint8Array];
   logs: Array<{ data: Uint8Array; topics: Uint8Array[]; address: Uint8Array; log_index: number }>;
   total_fee: bigint;
+  block_hash: [] | [Uint8Array];
   block_number: bigint;
   operator_fee: bigint;
   eth_tx_hash: [] | [Uint8Array];

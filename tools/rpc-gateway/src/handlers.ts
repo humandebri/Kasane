@@ -233,7 +233,10 @@ async function onGetTransactionByHash(id: string | number | null, params: unknow
     return readinessError;
   }
   const txOpt = await actor.rpc_eth_get_transaction_by_eth_hash(txHash);
-  return makeSuccess(id, txOpt.length === 0 ? null : mapTx(txOpt[0]));
+  if (txOpt.length === 0) {
+    return makeSuccess(id, null);
+  }
+  return makeSuccess(id, mapTx(txOpt[0]));
 }
 
 async function onGetTransactionReceipt(id: string | number | null, params: unknown): Promise<JsonRpcResponse> {
@@ -1505,24 +1508,37 @@ function mapBlock(
       gasLimit: toQuantityHex(block.gas_limit[0]),
       gasUsed: toQuantityHex(block.gas_used[0]),
       timestamp: toQuantityHex(block.timestamp),
-      transactions: mapBlockTxs(block.txs, fullTx),
+      transactions: mapBlockTxs(block.txs, fullTx, block.block_hash),
       uncles: [],
       baseFeePerGas: toQuantityHex(block.base_fee_per_gas[0]),
     },
   };
 }
-function mapBlockTxs(txs: { Full: EthTxView[] } | { Hashes: Uint8Array[] }, fullTx: boolean): unknown[] { if ("Hashes" in txs) return txs.Hashes.map((v) => toDataHex(v)); return fullTx ? txs.Full.map(mapTx) : txs.Full.map((v) => toDataHex(v.eth_tx_hash.length === 0 ? v.hash : v.eth_tx_hash[0])); }
-function mapTx(tx: EthTxView): Record<string, unknown> {
+function mapBlockTxs(
+  txs: { Full: EthTxView[] } | { Hashes: Uint8Array[] },
+  fullTx: boolean,
+  blockHash: Uint8Array
+): unknown[] {
+  if ("Hashes" in txs) {
+    return txs.Hashes.map((v) => toDataHex(v));
+  }
+  return fullTx
+    ? txs.Full.map((v) => mapTx(v, blockHash))
+    : txs.Full.map((v) => toDataHex(v.eth_tx_hash.length === 0 ? v.hash : v.eth_tx_hash[0]));
+}
+function mapTx(tx: EthTxView, fallbackBlockHash: Uint8Array | null = null): Record<string, unknown> {
   const decoded = tx.decoded.length === 0 ? null : tx.decoded[0];
   const txHash = tx.eth_tx_hash.length === 0 ? tx.hash : tx.eth_tx_hash[0];
   const toAddr = decoded && decoded.to.length > 0 ? decoded.to[0] : undefined;
   const gasPrice = decoded?.gas_price[0] ?? decoded?.max_fee_per_gas[0];
   const maxFeePerGas = decoded?.max_fee_per_gas[0];
   const maxPriorityFeePerGas = decoded?.max_priority_fee_per_gas[0];
+  const blockHashOpt = tx.block_hash ?? [];
+  const blockHash = blockHashOpt.length === 0 ? fallbackBlockHash : blockHashOpt[0];
   return {
     hash: toDataHex(txHash),
     nonce: decoded ? toQuantityHex(decoded.nonce) : "0x0",
-    blockHash: null,
+    blockHash: blockHash === null ? null : toDataHex(blockHash),
     blockNumber: tx.block_number.length === 0 ? null : toQuantityHex(tx.block_number[0]),
     transactionIndex: tx.tx_index.length === 0 ? null : toQuantityHex(BigInt(tx.tx_index[0])),
     from: decoded ? toDataHex(decoded.from) : ZERO_ADDR,
@@ -1541,13 +1557,19 @@ function mapTx(tx: EthTxView): Record<string, unknown> {
 }
 function mapReceipt(receipt: EthReceiptView, fallbackTxHash: Uint8Array): Record<string, unknown> {
   const txHash = receipt.eth_tx_hash.length === 0 ? fallbackTxHash : receipt.eth_tx_hash[0];
+  const fromOpt = receipt.from ?? [];
+  const toOpt = receipt.to ?? [];
+  const blockHashOpt = receipt.block_hash ?? [];
+  const from = fromOpt.length === 0 ? ZERO_ADDR : toDataHex(fromOpt[0]);
+  const to = toOpt.length === 0 ? null : toDataHex(toOpt[0]);
+  const blockHash = blockHashOpt.length === 0 ? null : toDataHex(blockHashOpt[0]);
   return {
     transactionHash: toDataHex(txHash),
     transactionIndex: toQuantityHex(BigInt(receipt.tx_index)),
-    blockHash: null,
+    blockHash,
     blockNumber: toQuantityHex(receipt.block_number),
-    from: ZERO_ADDR,
-    to: null,
+    from,
+    to,
     cumulativeGasUsed: toQuantityHex(receipt.gas_used),
     gasUsed: toQuantityHex(receipt.gas_used),
     contractAddress: receipt.contract_address.length === 0 ? null : toDataHex(receipt.contract_address[0]),
@@ -1556,7 +1578,7 @@ function mapReceipt(receipt: EthReceiptView, fallbackTxHash: Uint8Array): Record
       topics: log.topics.map((topic) => toDataHex(topic)),
       data: toDataHex(log.data),
       blockNumber: toQuantityHex(receipt.block_number),
-      blockHash: null,
+      blockHash,
       transactionHash: toDataHex(txHash),
       transactionIndex: toQuantityHex(BigInt(receipt.tx_index)),
       logIndex: toQuantityHex(BigInt(log.log_index)),
@@ -1569,7 +1591,10 @@ function mapReceipt(receipt: EthReceiptView, fallbackTxHash: Uint8Array): Record
   };
 }
 
-export function __test_map_receipt(receipt: EthReceiptView, fallbackTxHash: Uint8Array): Record<string, unknown> {
+export function __test_map_receipt(
+  receipt: EthReceiptView,
+  fallbackTxHash: Uint8Array
+): Record<string, unknown> {
   return mapReceipt(receipt, fallbackTxHash);
 }
 

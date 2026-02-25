@@ -339,10 +339,13 @@ function testCanisterErrorClassification(): void {
 function testReceiptLogMapping(): void {
   const mapped = __test_map_receipt(
     {
+      to: [Uint8Array.from(Buffer.from("77".repeat(20), "hex"))],
       effective_gas_price: 1n,
       status: 1,
       l1_data_fee: 0n,
       tx_index: 2,
+      block_hash: [Uint8Array.from(Buffer.from("88".repeat(32), "hex"))],
+      from: [Uint8Array.from(Buffer.from("66".repeat(20), "hex"))],
       logs: [
         {
           log_index: 7,
@@ -361,12 +364,16 @@ function testReceiptLogMapping(): void {
     },
     Uint8Array.from(Buffer.from("55".repeat(32), "hex"))
   );
+  assert.equal(mapped.blockHash, `0x${"88".repeat(32)}`);
+  assert.equal(mapped.from, `0x${"66".repeat(20)}`);
+  assert.equal(mapped.to, `0x${"77".repeat(20)}`);
   const logs = mapped.logs as Array<Record<string, unknown>>;
   assert.equal(logs.length, 1);
   const log0 = logs[0];
   assert.ok(log0);
   assert.equal(log0.address, `0x${"11".repeat(20)}`);
   assert.equal(log0.blockNumber, "0x5");
+  assert.equal(log0.blockHash, `0x${"88".repeat(32)}`);
   assert.equal(log0.transactionIndex, "0x2");
   assert.equal(log0.logIndex, "0x7");
 }
@@ -421,6 +428,7 @@ function testEip1559GasPriceFallback(): void {
   const mapped = __test_map_tx({
     raw: Uint8Array.from([]),
     tx_index: [0],
+    block_hash: [],
     decode_ok: true,
     hash: Uint8Array.from(Buffer.from("11".repeat(32), "hex")),
     kind: { EthSigned: null },
@@ -457,6 +465,7 @@ function testSubmitEthHashResolutionPolicy(): void {
     {
       raw: Uint8Array.from([]),
       tx_index: [],
+      block_hash: [],
       decode_ok: false,
       hash: Uint8Array.from(Buffer.from("44".repeat(32), "hex")),
       kind: { EthSigned: null },
@@ -474,6 +483,7 @@ function testSubmitEthHashResolutionPolicy(): void {
     {
       raw: Uint8Array.from([]),
       tx_index: [],
+      block_hash: [],
       decode_ok: false,
       hash: Uint8Array.from(Buffer.from("55".repeat(32), "hex")),
       kind: { EthSigned: null },

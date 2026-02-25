@@ -49,6 +49,25 @@ print(result)
 PY
 }
 
+assert_data_result() {
+  local response="$1"
+  local method="$2"
+  python - "${response}" "${method}" <<'PY'
+import json
+import re
+import sys
+
+response = json.loads(sys.argv[1])
+method = sys.argv[2]
+if "error" in response:
+    raise SystemExit(f"[ic-post-smoke] {method} returned error: {response['error']}")
+result = response.get("result")
+if not isinstance(result, str) or re.fullmatch(r"0x[0-9a-fA-F]*", result) is None:
+    raise SystemExit(f"[ic-post-smoke] {method} invalid result: {result!r}")
+print(result)
+PY
+}
+
 assert_getlogs_topic1_rejected() {
   local response="$1"
   python - "${response}" <<'PY'
@@ -103,10 +122,30 @@ BLOCK_RESP="$(rpc "eth_blockNumber" "[]")"
 BLOCK_HEX="$(assert_hex_result "${BLOCK_RESP}" "eth_blockNumber")"
 log "eth_blockNumber=${BLOCK_HEX}"
 
+log "eth_maxPriorityFeePerGas"
+MAX_PRIORITY_RESP="$(rpc "eth_maxPriorityFeePerGas" "[]")"
+MAX_PRIORITY_HEX="$(assert_hex_result "${MAX_PRIORITY_RESP}" "eth_maxPriorityFeePerGas")"
+log "eth_maxPriorityFeePerGas=${MAX_PRIORITY_HEX}"
+
 log "eth_getTransactionCount"
 NONCE_RESP="$(rpc "eth_getTransactionCount" "[\"${CHECK_ADDR}\",\"latest\"]")"
 NONCE_HEX="$(assert_hex_result "${NONCE_RESP}" "eth_getTransactionCount")"
 log "eth_getTransactionCount=${NONCE_HEX} addr=${CHECK_ADDR}"
+
+log "eth_getTransactionCount(head block number)"
+NONCE_BY_HEAD_RESP="$(rpc "eth_getTransactionCount" "[\"${CHECK_ADDR}\",\"${BLOCK_HEX}\"]")"
+NONCE_BY_HEAD_HEX="$(assert_hex_result "${NONCE_BY_HEAD_RESP}" "eth_getTransactionCount(head)")"
+log "eth_getTransactionCount(head)=${NONCE_BY_HEAD_HEX} addr=${CHECK_ADDR} block=${BLOCK_HEX}"
+
+log "eth_call(head block number)"
+CALL_HEAD_RESP="$(rpc "eth_call" "[{\"to\":\"${CHECK_ADDR}\",\"data\":\"0x\"},\"${BLOCK_HEX}\"]")"
+CALL_HEAD_DATA="$(assert_data_result "${CALL_HEAD_RESP}" "eth_call(head)")"
+log "eth_call(head)=${CALL_HEAD_DATA} addr=${CHECK_ADDR} block=${BLOCK_HEX}"
+
+log "eth_estimateGas(head block number)"
+ESTIMATE_HEAD_RESP="$(rpc "eth_estimateGas" "[{\"from\":\"${CHECK_ADDR}\",\"to\":\"${CHECK_ADDR}\",\"value\":\"0x0\"},\"${BLOCK_HEX}\"]")"
+ESTIMATE_HEAD_GAS="$(assert_hex_result "${ESTIMATE_HEAD_RESP}" "eth_estimateGas(head)")"
+log "eth_estimateGas(head)=${ESTIMATE_HEAD_GAS} addr=${CHECK_ADDR} block=${BLOCK_HEX}"
 
 log "eth_getLogs topic1 probe (expect -32602)"
 GETLOGS_RESP="$(rpc "eth_getLogs" '[{"fromBlock":"latest","toBlock":"latest","topics":[null,"0x0000000000000000000000000000000000000000000000000000000000000000"]}]')"

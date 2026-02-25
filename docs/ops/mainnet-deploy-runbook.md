@@ -71,7 +71,9 @@ scripts/query_smoke.sh
 ### RPC意味論バージョン運用
 - `safe/finalized` は当面 `latest` 同義の暫定実装。
 - `earliest` は block `0` 固定で評価し、`oldest_available > 0` なら必ず `invalid.block_range.out_of_window` を返す。
-- `eth_getTransactionCount` の `earliest/QUANTITY` は、保持範囲内でも historical nonce 未提供のため `exec.state.unavailable` を返す。
+- `eth_getTransactionCount` の `earliest` は、保持範囲内でも historical nonce 未提供のため `exec.state.unavailable` を返す。
+- `eth_getTransactionCount` の `QUANTITY` は、`head` と同値なら `latest` と同値で成功し、`head` 未満は `exec.state.unavailable`、保持範囲外は `invalid.block_range.out_of_window` を返す。
+- `eth_call` / `eth_estimateGas` の `QUANTITY` は、`head` と同値なら `latest` と同値で成功し、`head` 未満は `exec.state.unavailable`、保持範囲外は `invalid.block_range.out_of_window` を返す。
 - `eth_maxPriorityFeePerGas` は観測データ不足時に `0x0` へフォールバックせず、`exec.state.unavailable` を返す。
 - 意味論変更時は `RPC_SEMANTICS_VERSION` を更新し、`web3_clientVersion` で識別可能にする。
 - エラー監視は JSON-RPC `error.data.error_prefix` 集計を基準にし、`invalid.block_range.out_of_window` / `invalid.fee_history.*` / `exec.state.unavailable` を主要キーとして扱う。
