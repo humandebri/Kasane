@@ -4,6 +4,7 @@ import Link from "next/link";
 import { Button } from "../../components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "../../components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../../components/ui/table";
+import { TxHashLink } from "../../components/tx-hash-link";
 import { TxValueFeeCells } from "../../components/tx-value-fee-cells";
 import { getLatestTxsPageView } from "../../lib/data";
 import { shortHex, toHexLower } from "../../lib/hex";
@@ -55,6 +56,9 @@ export default async function LatestTxsPage({
           <Button type="button" variant="secondary" className="rounded-sm" disabled>
             {`Page ${data.page} of ${data.totalPages}`}
           </Button>
+          <Button type="button" variant="secondary" className="rounded-sm" disabled>
+            {`Showing ${data.txs.length} / ${data.totalTxs.toString()} txs (limit ${data.limit})`}
+          </Button>
           {data.hasNext ? (
             <Link href={nextHref} className="inline-flex">
               <Button type="button" variant="secondary" className="rounded-sm">
@@ -95,11 +99,11 @@ export default async function LatestTxsPage({
           </TableHeader>
           <TableBody>
             {data.txs.map((tx) => (
-              <TableRow key={tx.txHashHex}>
+                <TableRow key={tx.txHashHex}>
                 <TableCell className="font-mono text-xs">
-                  <Link href={`/tx/${tx.txHashHex}`} className="text-sky-700 hover:underline">
+                  <TxHashLink txHashHex={tx.txHashHex} receiptStatus={tx.receiptStatus}>
                     {shortHex(tx.txHashHex)}
-                  </Link>
+                  </TxHashLink>
                 </TableCell>
                 <TableCell className="text-xs">
                   {shortenMethodLabel(inferMethodLabel(tx.toAddress ? toHexLower(tx.toAddress) : null, tx.txSelector), 10)}

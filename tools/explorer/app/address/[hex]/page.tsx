@@ -5,6 +5,7 @@ import { notFound } from "next/navigation";
 import { Badge } from "../../../components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "../../../components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../../../components/ui/table";
+import { TxHashLink } from "../../../components/tx-hash-link";
 import { TxDirectionBadge } from "../../../components/tx-direction-badge";
 import { TxValueFeeCells } from "../../../components/tx-value-fee-cells";
 import { getAddressView } from "../../../lib/data";
@@ -186,9 +187,9 @@ export default async function AddressPage({
                       return (
                         <TableRow key={item.txHashHex}>
                           <TableCell className="font-mono text-xs">
-                            <Link href={`/tx/${item.txHashHex}`} className="text-sky-700 hover:underline" title={item.txHashHex}>
+                            <TxHashLink txHashHex={item.txHashHex} receiptStatus={item.receiptStatus} title={item.txHashHex}>
                               {shortPrefixHex(item.txHashHex)}
-                            </Link>
+                            </TxHashLink>
                           </TableCell>
                           <TableCell>
                             <Badge variant="outline" title={item.txSelectorHex ?? undefined}>{item.methodLabel}</Badge>
@@ -267,9 +268,9 @@ export default async function AddressPage({
                       return (
                         <TableRow key={`${item.txHashHex}:${item.logIndex}`}>
                           <TableCell className="font-mono text-xs">
-                            <Link href={`/tx/${item.txHashHex}`} className="text-sky-700 hover:underline" title={item.txHashHex}>
+                            <TxHashLink txHashHex={item.txHashHex} receiptStatus={item.receiptStatus} title={item.txHashHex}>
                               {shortPrefixHex(item.txHashHex)}
-                            </Link>
+                            </TxHashLink>
                           </TableCell>
                           <TableCell>
                             <Badge variant="outline" title={item.txSelectorHex ?? undefined}>{item.methodLabel}</Badge>
