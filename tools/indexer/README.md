@@ -94,14 +94,30 @@ npm run dev
 
 segment `2` の各エントリは以下の固定順序:
 
-`[tx_hash:32][entry_len:4][block_number:8][tx_index:4][caller_principal_len:2][caller_principal:caller_principal_len][from:20][to_len:1][to:to_len][selector_len:1][selector:selector_len]`
+`[tx_hash:32][entry_len:4][block_number:8][tx_index:4][caller_principal_len:2][caller_principal:caller_principal_len][from:20][to_len:1][to:to_len][selector_len:1][selector:selector_len][eth_hash_len:1][eth_hash:eth_hash_len]`
 
 - すべて Big Endian
-- `entry_len = 12 + 2 + caller_principal_len + 20 + 1 + to_len (+ 1 + selector_len)`
+- `entry_len = 12 + 2 + caller_principal_len + 20 + 1 + to_len + 1 + selector_len + 1 + eth_hash_len`
 - `to_len` は `0`（contract creation）または `20` のみ許可
 - `selector_len` は `0` または `4` のみ許可（必須）
+- `eth_hash_len` は `0` または `32` のみ許可（必須）
 - 旧形式（selector_len未付与）は reject
 - `caller_principal_len=0` の場合は principal なしとして扱う
+
+## 既存 `eth_tx_hash` 欠損の手動補完
+
+運用で一度だけ実行する補完CLI:
+
+```bash
+cd tools/indexer
+npm run backfill:eth-hash
+```
+
+任意パラメータ:
+- `INDEXER_BACKFILL_BATCH_SIZE` (既定: 200)
+- `INDEXER_BACKFILL_MAX_BATCHES` (既定: 0=無制限)
+- `INDEXER_BACKFILL_RETRY_MAX` (既定: 2)
+- `INDEXER_BACKFILL_RETRY_SLEEP_MS` (既定: 100)
 
 ## マイグレーション（Postgres）
 

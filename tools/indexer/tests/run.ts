@@ -111,7 +111,7 @@ test("tx_index payload decodes caller principal", () => {
   const principal = Buffer.from([1, 2, 3, 4]);
   const fromAddress = Buffer.alloc(20, 0x11);
   const toAddress = Buffer.alloc(20, 0x22);
-  const body = Buffer.alloc(12 + 2 + principal.length + 20 + 1 + toAddress.length + 1);
+  const body = Buffer.alloc(12 + 2 + principal.length + 20 + 1 + toAddress.length + 1 + 1);
   body.writeUInt32BE(0, 0);
   body.writeUInt32BE(7, 4);
   body.writeUInt32BE(3, 8);
@@ -121,6 +121,7 @@ test("tx_index payload decodes caller principal", () => {
   body.writeUInt8(toAddress.length, 14 + principal.length + fromAddress.length);
   toAddress.copy(body, 14 + principal.length + fromAddress.length + 1);
   body.writeUInt8(0, 14 + principal.length + fromAddress.length + 1 + toAddress.length);
+  body.writeUInt8(0, 14 + principal.length + fromAddress.length + 1 + toAddress.length + 1);
   const len = Buffer.alloc(4);
   len.writeUInt32BE(body.length, 0);
   const payload = Buffer.concat([txHash, len, body]);
@@ -132,9 +133,10 @@ test("tx_index payload decodes caller principal", () => {
   assert.equal(out[0]?.fromAddress.toString("hex"), fromAddress.toString("hex"));
   assert.equal(out[0]?.toAddress?.toString("hex"), toAddress.toString("hex"));
   assert.equal(out[0]?.txSelector, null);
+  assert.equal(out[0]?.ethTxHash, null);
 });
 
-test("tx_index payload rejects missing selector_len in legacy body", () => {
+test("tx_index payload rejects missing eth_hash_len in entry body", () => {
   const txHash = Buffer.alloc(32, 0xce);
   const principal = Buffer.alloc(0);
   const fromAddress = Buffer.alloc(20, 0x11);
@@ -160,6 +162,23 @@ test("tx_index payload decodes selector when present", () => {
   const out = decodeTxIndexPayload(payload);
   assert.equal(out.length, 1);
   assert.equal(out[0]?.txSelector?.toString("hex"), selector.toString("hex"));
+  assert.equal(out[0]?.ethTxHash, null);
+});
+
+test("tx_index payload decodes eth tx hash when present", () => {
+  const txHash = Buffer.alloc(32, 0xcf);
+  const ethTxHash = Buffer.alloc(32, 0xee);
+  const payload = buildTxIndexPayload(7n, txHash, 3, null, ethTxHash);
+  const out = decodeTxIndexPayload(payload);
+  assert.equal(out.length, 1);
+  assert.equal(out[0]?.ethTxHash?.toString("hex"), ethTxHash.toString("hex"));
+});
+
+test("tx_index payload rejects invalid eth_hash_len", () => {
+  const txHash = Buffer.alloc(32, 0xd0);
+  const payload = buildTxIndexPayload(7n, txHash, 3);
+  payload[payload.length - 1] = 1;
+  assert.throws(() => decodeTxIndexPayload(payload), /eth_hash_len must be 0 or 32/);
 });
 
 test("receipts payload decodes status", () => {
@@ -1371,7 +1390,7 @@ test("runWorkerWithDeps stores token_transfers block/tx index from tx_index payl
   await originalClose();
 });
 
-test("runWorkerWithDeps retries tx meta fetch and stores eth tx hash", async () => {
+test("runWorkerWithDeps retries tx meta fetch and stores tx input while using payload eth tx hash", async () => {
   const db = await createTestIndexerDb();
   const originalClose = db.close.bind(db);
   (db as unknown as { close: () => Promise<void> }).close = async () => { };
@@ -1403,7 +1422,7 @@ test("runWorkerWithDeps retries tx meta fetch and stores eth tx hash", async () 
     const txInput = Buffer.from("a9059cbb0000000000000000000000000000000000000000000000000000000000000001", "hex");
     const block = buildBlockPayload(1n, 10n, [txHash]);
     const receipts = buildReceiptsPayload([{ txHash, receipt: buildReceiptBytes(1, true) }]);
-    const txIndex = buildTxIndexPayload(1n, txHash, 0);
+    const txIndex = buildTxIndexPayload(1n, txHash, 0, null, ethTxHash);
     const chunks = [
       { segment: 0, start: 0, bytes: block, payload_len: block.length },
       { segment: 1, start: 0, bytes: receipts, payload_len: receipts.length },
@@ -2678,12 +2697,21 @@ function buildRawLog(params: { tokenAddress: Buffer; topics: Buffer[]; data: Buf
   return Buffer.concat([params.tokenAddress, topicsLen, ...params.topics, dataLen, params.data]);
 }
 
-function buildTxIndexPayload(blockNumber: bigint, txHash: Buffer, txIndex = 0, selector: Buffer | null = null): Buffer {
+function buildTxIndexPayload(
+  blockNumber: bigint,
+  txHash: Buffer,
+  txIndex = 0,
+  selector: Buffer | null = null,
+  ethTxHash: Buffer | null = null
+): Buffer {
   const fromAddress = Buffer.alloc(20, 0x11);
   const toAddress = Buffer.alloc(20, 0x22);
   const principalLen = 0;
   const selectorLen = selector ? selector.length : 0;
-  const body = Buffer.alloc(12 + 2 + principalLen + fromAddress.length + 1 + toAddress.length + 1 + selectorLen);
+  const ethHashLen = ethTxHash ? ethTxHash.length : 0;
+  const body = Buffer.alloc(
+    12 + 2 + principalLen + fromAddress.length + 1 + toAddress.length + 1 + selectorLen + 1 + ethHashLen
+  );
   body.writeBigUInt64BE(blockNumber, 0);
   body.writeUInt32BE(txIndex, 8);
   body.writeUInt16BE(principalLen, 12);
@@ -2693,6 +2721,11 @@ function buildTxIndexPayload(blockNumber: bigint, txHash: Buffer, txIndex = 0, s
   body.writeUInt8(selectorLen, 14 + fromAddress.length + 1 + toAddress.length);
   if (selector) {
     selector.copy(body, 14 + fromAddress.length + 1 + toAddress.length + 1);
+  }
+  const ethHashLenOffset = 14 + fromAddress.length + 1 + toAddress.length + 1 + selectorLen;
+  body.writeUInt8(ethHashLen, ethHashLenOffset);
+  if (ethTxHash) {
+    ethTxHash.copy(body, ethHashLenOffset + 1);
   }
   const entryLen = Buffer.alloc(4);
   entryLen.writeUInt32BE(body.length, 0);

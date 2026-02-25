@@ -1,10 +1,16 @@
 //! どこで: export API のテスト / 何を: cursor整合・max_bytes・Pruned / なぜ: 仕様の逸脱を防ぐため
 
+use alloy_consensus::{SignableTransaction, TxLegacy};
+use alloy_eips::eip2718::Encodable2718;
 use alloy_primitives::keccak256;
+use alloy_primitives::{Address, Bytes, Signature, TxKind as EthTxKind, U256};
+use alloy_signer::SignerSync;
+use alloy_signer_local::PrivateKeySigner;
 use evm_core::export::{export_blocks, ExportCursor, ExportError};
 use evm_db::chain_data::{
     BlockData, ReceiptLike, StoredTxBytes, TxId, TxIndexEntry, TxKind, TxLoc,
 };
+use evm_db::chain_data::constants::CHAIN_ID;
 use evm_db::stable_state::{init_stable_state, with_state_mut};
 use evm_db::Storable;
 use ic_evm_address::derive_evm_address_from_principal;
@@ -246,6 +252,57 @@ fn export_tx_index_payload_contains_from_and_to() {
     );
     assert_eq!(decoded.to, Some([0x10; 20]));
     assert_eq!(decoded.selector, None);
+    assert_eq!(decoded.eth_tx_hash, None);
+}
+
+#[test]
+fn export_tx_index_payload_contains_eth_hash_for_eth_signed() {
+    init_stable_state();
+    let raw = build_eth_signed_tx(0);
+    let tx_id = TxId(evm_core::hash::stored_tx_id(
+        TxKind::EthSigned,
+        &raw,
+        None,
+        None,
+        None,
+    ));
+    let envelope = StoredTxBytes::new_with_fees(
+        tx_id,
+        TxKind::EthSigned,
+        raw.clone(),
+        None,
+        Vec::new(),
+        Vec::new(),
+        1,
+        1,
+        false,
+    );
+    let block = make_block(1, tx_id);
+    with_state_mut(|state| {
+        state.tx_store.insert(tx_id, envelope);
+        insert_block(state, 1, &block);
+        insert_receipt(state, tx_id, 1);
+        insert_tx_index(state, tx_id, 1);
+        state.tx_locs.insert(tx_id, TxLoc::included(1, 0));
+        let mut head = *state.head.get();
+        head.number = 1;
+        state.head.set(head);
+    });
+
+    let result = export_blocks(
+        Some(ExportCursor {
+            block_number: 1,
+            segment: 0,
+            byte_offset: 0,
+        }),
+        1_000_000,
+    )
+    .expect("export should succeed");
+    let segment2 = collect_segment_bytes(&result, 2);
+    assert!(!segment2.is_empty());
+    let decoded = decode_single_tx_index_entry(&segment2).expect("decode entry");
+    assert_eq!(decoded.tx_hash, tx_id.0.to_vec());
+    assert_eq!(decoded.eth_tx_hash, Some(keccak256(&raw).0));
 }
 
 #[test]
@@ -432,6 +489,7 @@ struct DecodedEntry {
     from: [u8; 20],
     to: Option<[u8; 20]>,
     selector: Option<[u8; 4]>,
+    eth_tx_hash: Option<[u8; 32]>,
 }
 
 fn decode_single_tx_index_entry(payload: &[u8]) -> Result<DecodedEntry, &'static str> {
@@ -496,6 +554,23 @@ fn decode_single_tx_index_entry(payload: &[u8]) -> Result<DecodedEntry, &'static
     } else {
         return Err("invalid selector_len");
     };
+    if payload.len() < offset + 1 {
+        return Err("missing eth_hash_len");
+    }
+    let eth_hash_len = payload[offset] as usize;
+    offset += 1;
+    let eth_tx_hash = if eth_hash_len == 0 {
+        None
+    } else if eth_hash_len == 32 {
+        if payload.len() < offset + 32 {
+            return Err("eth hash bytes missing");
+        }
+        let bytes = <[u8; 32]>::try_from(&payload[offset..offset + 32]).map_err(|_| "eth hash")?;
+        offset += 32;
+        Some(bytes)
+    } else {
+        return Err("invalid eth_hash_len");
+    };
     if offset != payload.len() {
         return Err("trailing bytes");
     }
@@ -506,5 +581,36 @@ fn decode_single_tx_index_entry(payload: &[u8]) -> Result<DecodedEntry, &'static
         from,
         to,
         selector,
+        eth_tx_hash,
     })
+}
+
+fn build_eth_signed_tx(nonce: u64) -> Vec<u8> {
+    let signer: PrivateKeySigner =
+        "0x59c6995e998f97a5a0044966f094538e0d7f4f4e4d5d8dd6a8c4f9d5f8b1e8a1"
+            .parse()
+            .expect("signer");
+    let tx = TxLegacy {
+        chain_id: Some(CHAIN_ID),
+        nonce,
+        gas_price: 2_000_000_000,
+        gas_limit: 21_000,
+        to: EthTxKind::Call(Address::from([0x11u8; 20])),
+        value: U256::ZERO,
+        input: Bytes::new(),
+    };
+    sign_encoded(tx, &signer)
+}
+
+fn sign_encoded<T>(tx: T, signer: &PrivateKeySigner) -> Vec<u8>
+where
+    T: alloy_consensus::transaction::RlpEcdsaEncodableTx
+        + alloy_eips::Typed2718
+        + SignableTransaction<Signature>
+        + Send
+        + Sync,
+{
+    let hash = tx.signature_hash();
+    let signature = signer.sign_hash_sync(&hash).expect("sign");
+    tx.into_signed(signature).encoded_2718()
 }

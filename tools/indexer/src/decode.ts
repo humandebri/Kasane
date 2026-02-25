@@ -17,6 +17,7 @@ export type BlockInfo = {
 
 export type TxIndexInfo = {
   txHash: Buffer;
+  ethTxHash: Buffer | null;
   blockNumber: bigint;
   txIndex: number;
   callerPrincipal: Buffer | null;
@@ -155,8 +156,8 @@ export function decodeTxIndexPayload(payload: Uint8Array): TxIndexInfo[] {
     if (selectorLen !== 0 && selectorLen !== 4) {
       throw new Error("tx_index entry size mismatch: selector_len must be 0 or 4");
     }
-    if (extraLen !== 1 + selectorLen) {
-      throw new Error("tx_index entry size mismatch: selector length mismatch");
+    if (extraLen < 1 + selectorLen + 1) {
+      throw new Error("tx_index entry size mismatch: selector/eth hash length mismatch");
     }
     let txSelector: Buffer | null = null;
     if (selectorLen > 0) {
@@ -166,8 +167,25 @@ export function decodeTxIndexPayload(payload: Uint8Array): TxIndexInfo[] {
       txSelector = Buffer.from(data.subarray(offset, offset + selectorLen));
       offset += selectorLen;
     }
+    if (data.length - offset < 1) {
+      throw new Error("tx_index entry size mismatch: missing eth_hash_len");
+    }
+    const ethHashLen = data.readUInt8(offset);
+    offset += 1;
+    if (ethHashLen !== 0 && ethHashLen !== HASH_LEN) {
+      throw new Error("tx_index entry size mismatch: eth_hash_len must be 0 or 32");
+    }
+    if (extraLen !== 1 + selectorLen + 1 + ethHashLen) {
+      throw new Error("tx_index entry size mismatch: entry_len does not match eth_hash_len");
+    }
+    if (data.length - offset < ethHashLen) {
+      throw new Error("tx_index entry size mismatch: eth hash bytes missing");
+    }
+    const ethTxHash = ethHashLen === 0 ? null : Buffer.from(data.subarray(offset, offset + ethHashLen));
+    offset += ethHashLen;
     out.push({
       txHash: Buffer.from(txHash),
+      ethTxHash,
       blockNumber,
       txIndex,
       callerPrincipal,

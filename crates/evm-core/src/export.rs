@@ -1,5 +1,6 @@
 //! どこで: export APIの実体 / 何を: cursor→chunks生成 / なぜ: lib.rsを薄く保つため
 
+use crate::hash::keccak256;
 use crate::tx_decode::decode_tx_view;
 use evm_db::chain_data::{BlockData, ReceiptLike, StoredTx, TxId, TxIndexEntry, TxKind};
 use evm_db::stable_state::with_state;
@@ -306,7 +307,13 @@ fn build_tx_index_payload(
         } else {
             None
         };
+        let eth_hash = if stored.kind == TxKind::EthSigned {
+            Some(keccak256(&stored.raw))
+        } else {
+            None
+        };
         let selector_len: u8 = if selector.is_some() { 4 } else { 0 };
+        let eth_hash_len: u8 = if eth_hash.is_some() { 32 } else { 0 };
         let to_len: u8 = if to.is_some() { 20 } else { 0 };
         let caller_principal_len = u16::try_from(caller_principal.len())
             .map_err(|_| ExportError::InvalidCursor("principal too large"))?;
@@ -318,7 +325,9 @@ fn build_tx_index_payload(
             .saturating_add(1)
             .saturating_add(usize::from(to_len))
             .saturating_add(1)
-            .saturating_add(usize::from(selector_len));
+            .saturating_add(usize::from(selector_len))
+            .saturating_add(1)
+            .saturating_add(usize::from(eth_hash_len));
         let len = u32::try_from(total_len)
             .map_err(|_| ExportError::InvalidCursor("tx_index too large"))?;
         out.extend_from_slice(&tx_id.0);
@@ -334,6 +343,10 @@ fn build_tx_index_payload(
         out.push(selector_len);
         if let Some(bytes) = selector {
             out.extend_from_slice(bytes);
+        }
+        out.push(eth_hash_len);
+        if let Some(hash) = eth_hash {
+            out.extend_from_slice(&hash);
         }
     }
     Ok(out)
