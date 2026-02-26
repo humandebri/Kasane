@@ -30,6 +30,7 @@ SEED_TX_MAX_FEE_WEI="${SEED_TX_MAX_FEE_WEI:-1000000000000}"
 SEED_TX_MAX_PRIORITY_FEE_WEI="${SEED_TX_MAX_PRIORITY_FEE_WEI:-250000000000}"
 
 ICP_CANISTER_CALL=(icp canister call -e "${NETWORK}" --identity "${ICP_IDENTITY_NAME}")
+RESOLVED_CANISTER_ID=""
 
 log() {
   echo "[local-indexer-smoke] $*"
@@ -56,6 +57,19 @@ if isinstance(port, int) and port > 0:
 else:
     print("http://127.0.0.1:4943")
 PY
+}
+
+resolve_canister_id() {
+  icp canister status -e "${NETWORK}" --identity "${ICP_IDENTITY_NAME}" --id-only "${CANISTER_NAME}"
+}
+
+get_canister_id() {
+  if [[ -n "${RESOLVED_CANISTER_ID}" ]]; then
+    echo "${RESOLVED_CANISTER_ID}"
+    return
+  fi
+  RESOLVED_CANISTER_ID="$(resolve_canister_id)"
+  echo "${RESOLVED_CANISTER_ID}"
 }
 
 cleanup() {
@@ -158,6 +172,7 @@ build_and_install() {
   local init_args
   init_args="$(build_init_args_for_current_identity 1000000000000000000)"
   icp canister install -e "${NETWORK}" --identity "${ICP_IDENTITY_NAME}" --mode "${MODE}" --wasm "${wasm_out}" --args "${init_args}" "${CANISTER_NAME}"
+  RESOLVED_CANISTER_ID="$(resolve_canister_id)"
 }
 
 build_ic_tx_hex() {
@@ -254,6 +269,7 @@ query_head_block() {
   local out
   out=$(
     NETWORK="${NETWORK}" \
+    CANISTER_ID="$(get_canister_id)" \
     CANISTER_NAME="${CANISTER_NAME}" \
     ICP_IDENTITY_NAME="${ICP_IDENTITY_NAME}" \
     QUERY_SMOKE_ALLOW_EXPORT_MISSING_DATA="true" \
@@ -293,6 +309,7 @@ wait_for_head_advance() {
 run_query_smoke_strict() {
   log "run strict query smoke (required_head_min=${SEED_REQUIRED_HEAD_MIN})"
   NETWORK="${NETWORK}" \
+  CANISTER_ID="$(get_canister_id)" \
   CANISTER_NAME="${CANISTER_NAME}" \
   ICP_IDENTITY_NAME="${ICP_IDENTITY_NAME}" \
   QUERY_SMOKE_ALLOW_EXPORT_MISSING_DATA="false" \
@@ -308,7 +325,7 @@ start_indexer() {
 
   local canister_id
   local ic_host
-  canister_id=$(icp canister status -e "${NETWORK}" --identity "${ICP_IDENTITY_NAME}" --id-only "${CANISTER_NAME}")
+  canister_id="$(get_canister_id)"
   ic_host=$(replica_api_host)
   log "start indexer (canister_id=${canister_id})"
   mkdir -p "${INDEXER_ARCHIVE_DIR}"
@@ -413,7 +430,7 @@ ensure_icp_identity
 ensure_database_exists
 start_network
 build_and_install
-NETWORK="${NETWORK}" CANISTER_NAME="${CANISTER_NAME}" ICP_IDENTITY_NAME="${ICP_IDENTITY_NAME}" scripts/query_smoke.sh
+NETWORK="${NETWORK}" CANISTER_ID="$(get_canister_id)" CANISTER_NAME="${CANISTER_NAME}" ICP_IDENTITY_NAME="${ICP_IDENTITY_NAME}" scripts/query_smoke.sh
 "${ICP_CANISTER_CALL[@]}" "${CANISTER_NAME}" set_pruning_enabled '(false)' >/dev/null
 seed_blocks
 run_query_smoke_strict

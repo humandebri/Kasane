@@ -81,9 +81,9 @@ npm run dev
 | --- | --- | --- | --- | --- |
 | `eth_chainId` | Supported | canister の `rpc_eth_chain_id` を返す | なし | `net_version` は10進文字列で同値を返す |
 | `eth_blockNumber` | Supported | canister の `rpc_eth_block_number` を返す | なし | - |
-| `eth_gasPrice` | Partially supported | 最新ブロックの `base_fee_per_gas` を返す | canister側の tip block metadata 依存 | EIP-1559環境の簡易gas priceとして提供 |
+| `eth_gasPrice` | Partially supported | canister `rpc_eth_gas_price` を返す（`max(base_fee + max(推定priority,min_priority), min_gas_price)`） | 観測データ不足時は `-32000 state unavailable` | 受理条件に寄せた推定値を返す |
 | `eth_maxPriorityFeePerGas` | Partially supported | canister `rpc_eth_max_priority_fee_per_gas` を返す | 観測データ不足時は `-32000 state unavailable` | EIP-1559簡易推定 |
-| `eth_feeHistory` | Partially supported | canister `rpc_eth_fee_history` を返す | `blockCount` は最大 256、`pending` は現状 `latest` 同義 | reward は gasUsed 重みで推定 |
+| `eth_feeHistory` | Partially supported | canister `rpc_eth_fee_history` を返す | `blockCount` は number / QUANTITY(16進) / 10進文字列を受理、最大 256。`pending` は現状 `latest` 同義 | reward は gasUsed 重みで推定 |
 | `eth_syncing` | Supported | 常に `false` を返す | 同期進捗オブジェクト非対応 | 即時実行モデル前提 |
 | `eth_getBlockByNumber` | Partially supported | `blockTag` を解決してブロックを返す | `latest/pending/safe/finalized` は head 扱い。pruned範囲は `-32001` | canister では `rpc_eth_get_block_by_number_with_status` |
 | `eth_getTransactionByHash` | Supported | `eth_tx_hash` で取引を参照する | `tx_id` 直接参照なし。migration未完了/critical corrupt時は `-32000 state unavailable` | canister では `rpc_eth_get_transaction_by_eth_hash` |

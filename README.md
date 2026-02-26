@@ -338,7 +338,7 @@ RPCインターフェースは、Internet Computerのアーキテクチャに準
 | --- | --- | --- | --- | --- |
 | `eth_chainId` | Supported | チェーンIDを返す | なし | 固定値はヘッダーバッジ参照 |
 | `eth_blockNumber` | Supported | 最新ブロック番号を返す | なし | - |
-| `eth_gasPrice` | Partially supported | 最新ブロックの `base_fee_per_gas` を返す | tip block metadata 依存 | 簡易gas priceとして提供 |
+| `eth_gasPrice` | Partially supported | canister `rpc_eth_gas_price` を返す（`max(base_fee + max(推定priority,min_priority), min_gas_price)`） | 観測データ不足時は `state unavailable` | 受理条件に寄せた推定値を返す |
 | `eth_syncing` | Supported | `false` を返す | 同期進捗オブジェクトは返さない | 即時実行モデル前提 |
 | `eth_getBlockByNumber` | Partially supported | ブロック参照を返す | `latest/pending/safe/finalized` は head 扱い。pruned範囲は `-32001` | `fullTx` の有無で返却形を切替 |
 | `eth_getTransactionByHash` | Supported | `eth_tx_hash` ベースで参照する | `tx_id` 直接参照ではない | canister側は `rpc_eth_get_transaction_by_eth_hash` |

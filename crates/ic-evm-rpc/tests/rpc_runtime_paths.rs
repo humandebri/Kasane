@@ -15,7 +15,7 @@ use evm_db::types::values::{AccountVal, CodeVal, U256Val};
 use evm_db::Storable;
 use ic_evm_rpc::{
     rpc_eth_call_object, rpc_eth_call_object_at, rpc_eth_call_rawtx, rpc_eth_estimate_gas_object,
-    rpc_eth_estimate_gas_object_at, rpc_eth_fee_history, rpc_eth_get_balance,
+    rpc_eth_estimate_gas_object_at, rpc_eth_fee_history, rpc_eth_gas_price, rpc_eth_get_balance,
     rpc_eth_get_block_by_number_with_status, rpc_eth_get_block_number_by_hash, rpc_eth_get_code,
     rpc_eth_get_storage_at,
     rpc_eth_get_transaction_by_eth_hash, rpc_eth_get_transaction_count_at,
@@ -437,6 +437,10 @@ fn rpc_eth_fee_methods_validate_and_window_is_exposed() {
         .expect_err("empty chain should return state unavailable");
     assert_eq!(tip_err.code, 2001);
     assert!(tip_err.message.starts_with("exec.state.unavailable"));
+
+    let gas_price_err = rpc_eth_gas_price().expect_err("empty chain should return state unavailable");
+    assert_eq!(gas_price_err.code, 2001);
+    assert!(gas_price_err.message.starts_with("exec.state.unavailable"));
 }
 
 #[test]
@@ -476,6 +480,80 @@ fn rpc_eth_fee_history_is_deterministic_for_same_head() {
     assert_eq!(a.base_fee_per_gas, b.base_fee_per_gas);
     assert_eq!(a.gas_used_ratio, b.gas_used_ratio);
     assert_eq!(a.reward, b.reward);
+}
+
+#[test]
+fn rpc_eth_gas_price_respects_min_gas_price_floor() {
+    let _guard = test_lock().lock().expect("lock");
+    init_stable_state();
+    let block = BlockData::new(
+        1,
+        [0u8; 32],
+        [1u8; 32],
+        1_700_000_000,
+        1_000_000_000,
+        3_000_000,
+        0,
+        [0x44; 20],
+        Vec::new(),
+        [2u8; 32],
+        [3u8; 32],
+    );
+    with_state_mut(|state| {
+        let ptr = state
+            .blob_store
+            .store_bytes(&block.clone().into_bytes())
+            .expect("store block");
+        state.blocks.insert(1, ptr);
+        state.head.set(Head {
+            number: 1,
+            block_hash: block.block_hash,
+            timestamp: block.timestamp,
+        });
+        let mut chain_state = *state.chain_state.get();
+        chain_state.min_priority_fee = 2_000_000_000;
+        chain_state.min_gas_price = 10_000_000_000;
+        state.chain_state.set(chain_state);
+    });
+    let gas_price = rpc_eth_gas_price().expect("gas price should be available");
+    assert_eq!(gas_price, 10_000_000_000);
+}
+
+#[test]
+fn rpc_eth_gas_price_respects_base_plus_min_priority_floor() {
+    let _guard = test_lock().lock().expect("lock");
+    init_stable_state();
+    let block = BlockData::new(
+        1,
+        [0u8; 32],
+        [1u8; 32],
+        1_700_000_000,
+        3_000_000_000,
+        3_000_000,
+        0,
+        [0x44; 20],
+        Vec::new(),
+        [2u8; 32],
+        [3u8; 32],
+    );
+    with_state_mut(|state| {
+        let ptr = state
+            .blob_store
+            .store_bytes(&block.clone().into_bytes())
+            .expect("store block");
+        state.blocks.insert(1, ptr);
+        state.head.set(Head {
+            number: 1,
+            block_hash: block.block_hash,
+            timestamp: block.timestamp,
+        });
+        let mut chain_state = *state.chain_state.get();
+        chain_state.min_priority_fee = 2_000_000_000;
+        chain_state.min_gas_price = 1_000_000_000;
+        state.chain_state.set(chain_state);
+    });
+    let gas_price = rpc_eth_gas_price().expect("gas price should be available");
+    assert_eq!(gas_price, 5_000_000_000);
 }
 
 #[test]

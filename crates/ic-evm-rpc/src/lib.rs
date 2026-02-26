@@ -304,18 +304,24 @@ pub fn rpc_eth_max_priority_fee_per_gas() -> Result<u128, RpcErrorView> {
     let sample = load_fee_history_sample(head).ok_or_else(|| {
         execution_error("exec.state.unavailable", "exec.state.unavailable fee sample is unavailable")
     })?;
-    let median = compute_weighted_percentile(&sample.tx_tips, 50.0);
-    if median > 0 {
-        return Ok(median);
-    }
-    let min_positive = sample
-        .tx_tips
-        .iter()
-        .filter(|item| item.tip > 0)
-        .map(|item| item.tip)
-        .min()
-        .unwrap_or(0);
-    Ok(min_positive)
+    Ok(estimate_priority_fee_from_sample(&sample))
+}
+
+pub fn rpc_eth_gas_price() -> Result<u128, RpcErrorView> {
+    let head = chain::get_head_number();
+    let sample = load_fee_history_sample(head).ok_or_else(|| {
+        execution_error("exec.state.unavailable", "exec.state.unavailable fee sample is unavailable")
+    })?;
+    let (min_gas_price, min_priority_fee) = with_state(|state| {
+        let chain_state = *state.chain_state.get();
+        (
+            u128::from(chain_state.min_gas_price),
+            u128::from(chain_state.min_priority_fee),
+        )
+    });
+    let estimated_priority = estimate_priority_fee_from_sample(&sample).max(min_priority_fee);
+    let suggested_by_base = u128::from(sample.base_fee_per_gas).saturating_add(estimated_priority);
+    Ok(suggested_by_base.max(min_gas_price))
 }
 
 pub fn rpc_eth_fee_history(
@@ -1047,6 +1053,20 @@ fn load_fee_history_sample(number: u64) -> Option<FeeHistorySample> {
         gas_limit: block.block_gas_limit,
         tx_tips,
     })
+}
+
+fn estimate_priority_fee_from_sample(sample: &FeeHistorySample) -> u128 {
+    let median = compute_weighted_percentile(&sample.tx_tips, 50.0);
+    if median > 0 {
+        return median;
+    }
+    sample
+        .tx_tips
+        .iter()
+        .filter(|item| item.tip > 0)
+        .map(|item| item.tip)
+        .min()
+        .unwrap_or(0)
 }
 
 fn effective_priority_fee(decoded: &DecodedTxView, base_fee: u128) -> u128 {

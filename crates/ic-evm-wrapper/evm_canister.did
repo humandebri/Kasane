@@ -254,10 +254,10 @@ type ReceiptView = record {
 };
 type Result = variant { Ok : nat64; Err : text };
 type Result_1 = variant { Ok : ExportResponseView; Err : ExportErrorView };
-type Result_10 = variant { Ok : blob; Err : RpcErrorView };
-type Result_11 = variant { Ok : opt nat64; Err : text };
-type Result_12 = variant { Ok : EthLogsPageView; Err : GetLogsErrorView };
-type Result_13 = variant { Ok : nat; Err : RpcErrorView };
+type Result_10 = variant { Ok : nat; Err : RpcErrorView };
+type Result_11 = variant { Ok : blob; Err : RpcErrorView };
+type Result_12 = variant { Ok : opt nat64; Err : text };
+type Result_13 = variant { Ok : EthLogsPageView; Err : GetLogsErrorView };
 type Result_14 = variant { Ok : blob; Err : SubmitTxError };
 type Result_15 = variant { Ok; Err : text };
 type Result_2 = variant { Ok : BlockView; Err : LookupError };
@@ -355,17 +355,18 @@ service : (opt InitArgs) -> {
   rpc_eth_fee_history : (nat64, RpcBlockTagView, opt vec float64) -> (
       Result_9,
     ) query;
-  rpc_eth_get_balance : (blob, RpcBlockTagView) -> (Result_10) query;
+  rpc_eth_gas_price : () -> (Result_10) query;
+  rpc_eth_get_balance : (blob, RpcBlockTagView) -> (Result_11) query;
   rpc_eth_get_block_by_number : (nat64, bool) -> (opt EthBlockView) query;
   rpc_eth_get_block_by_number_with_status : (nat64, bool) -> (
       RpcBlockLookupView,
     ) query;
-  rpc_eth_get_block_number_by_hash : (blob, nat32) -> (Result_11) query;
-  rpc_eth_get_code : (blob, RpcBlockTagView) -> (Result_10) query;
+  rpc_eth_get_block_number_by_hash : (blob, nat32) -> (Result_12) query;
+  rpc_eth_get_code : (blob, RpcBlockTagView) -> (Result_11) query;
   rpc_eth_get_logs_paged : (EthLogFilterView, opt EthLogsCursorView, nat32) -> (
-      Result_12,
+      Result_13,
     ) query;
-  rpc_eth_get_storage_at : (blob, blob, RpcBlockTagView) -> (Result_10) query;
+  rpc_eth_get_storage_at : (blob, blob, RpcBlockTagView) -> (Result_11) query;
   rpc_eth_get_transaction_by_eth_hash : (blob) -> (opt EthTxView) query;
   rpc_eth_get_transaction_by_tx_id : (blob) -> (opt EthTxView) query;
   rpc_eth_get_transaction_count_at : (blob, RpcBlockTagView) -> (
@@ -381,7 +382,7 @@ service : (opt InitArgs) -> {
       RpcReceiptLookupView,
     ) query;
   rpc_eth_history_window : () -> (RpcHistoryWindowView) query;
-  rpc_eth_max_priority_fee_per_gas : () -> (Result_13) query;
+  rpc_eth_max_priority_fee_per_gas : () -> (Result_10) query;
   rpc_eth_send_raw_transaction : (blob) -> (Result_14);
   set_block_gas_limit : (nat64) -> (Result_15);
   set_instruction_soft_limit : (nat64) -> (Result_15);
