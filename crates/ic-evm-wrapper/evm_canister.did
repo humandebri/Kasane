@@ -342,6 +342,7 @@ service : (opt InitArgs) -> {
   metrics_prometheus : () -> (Result_4) query;
   prune_blocks : (nat64, nat32) -> (Result_5);
   rpc_eth_block_number : () -> (nat64) query;
+  rpc_eth_gas_price : () -> (Result_13) query;
   rpc_eth_call_object : (RpcCallObjectView) -> (Result_6) query;
   rpc_eth_call_object_at : (RpcCallObjectView, RpcBlockTagView) -> (
       Result_6,

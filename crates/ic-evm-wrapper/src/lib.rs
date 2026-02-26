@@ -636,6 +636,11 @@ fn rpc_eth_max_priority_fee_per_gas() -> Result<candid::Nat, RpcErrorView> {
 }
 
 #[ic_cdk::query]
+fn rpc_eth_gas_price() -> Result<candid::Nat, RpcErrorView> {
+    ic_evm_rpc::rpc_eth_gas_price().map(candid::Nat::from)
+}
+
+#[ic_cdk::query]
 fn rpc_eth_fee_history(
     block_count: u64,
     newest: RpcBlockTagView,

@@ -5,6 +5,8 @@
 - `eth_getLogs` は filter制約が強い。
 - blockTagはメソッドごとに制約があり、`latest` 系のみのものが多い。
 - `eth_sendRawTransaction` は submit API委譲で、実行成功は receipt で確認する。
+- `eth_feeHistory` は対応済み（`blockCount` は number/QUANTITY/10進文字列を受理）。
+- `eth_gasPrice` は `base_fee` 単体ではなく、受理条件に寄せた推定値を返す。
 
 ## メソッド別差分（要点）
 - `eth_getBalance`
@@ -25,11 +27,17 @@
   - `address` 単一のみ
   - `topics` OR配列非対応
   - 範囲超過は `-32005`
+- `eth_feeHistory`
+  - `blockCount` は `number` / `QUANTITY` / 10進文字列を受理
+  - `blockCount <= 256`
+  - `pending` は現状 `latest` 同義
+- `eth_maxPriorityFeePerGas`
+  - 観測データ不足時は `-32000`（`state unavailable`）
+- `eth_gasPrice`
+  - `max(base_fee + max(推定priority,min_priority), min_gas_price)` を返す
 
 ## 未対応メソッド
 - `eth_getBlockByHash`
-- `eth_feeHistory`
-- `eth_maxPriorityFeePerGas`
 - `eth_newFilter` / `eth_getFilterChanges` / `eth_uninstallFilter`
 - `eth_subscribe` / `eth_unsubscribe`
 - `eth_pendingTransactions`

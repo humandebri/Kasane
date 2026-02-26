@@ -29,7 +29,7 @@
 ## feeモデル差分
 - `base_fee` は保持され、`compute_next_base_fee` で更新される。
 - `effective_gas_price` は `max_fee`, `max_priority_fee`, `base_fee` から計算。
-- `eth_gasPrice` は `base_fee_per_gas` を返す簡易実装。
+- `eth_gasPrice` は `max(base_fee + max(推定priority,min_priority), min_gas_price)` を返す。
 
 ## finality/reorg差分
 - 単一シーケンサ前提

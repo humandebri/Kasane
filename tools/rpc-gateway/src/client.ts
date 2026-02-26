@@ -154,6 +154,7 @@ type Methods = {
   expected_nonce_by_address: (address: Uint8Array) => Promise<NonceResult>;
   rpc_eth_chain_id: () => Promise<bigint>;
   rpc_eth_block_number: () => Promise<bigint>;
+  rpc_eth_gas_price: () => Promise<NatResult>;
   rpc_eth_get_block_by_number: (number: bigint, fullTx: boolean) => Promise<[] | [EthBlockView]>;
   rpc_eth_get_block_by_number_with_status: (number: bigint, fullTx: boolean) => Promise<RpcBlockLookupView>;
   rpc_eth_get_block_number_by_hash: (blockHash: Uint8Array, maxScan: number) => Promise<OptionalNat64Result>;
@@ -235,17 +236,27 @@ async function createActor(): Promise<Methods> {
 
 type HistoryWindowProbe = {
   rpc_eth_history_window?: () => Promise<unknown>;
+  rpc_eth_gas_price?: () => Promise<unknown>;
 };
 
 async function assertCanisterCompatibility(actor: HistoryWindowProbe): Promise<void> {
   if (typeof actor.rpc_eth_history_window !== "function") {
     throw new Error("incompatible.canister.api rpc_eth_history_window unavailable: method not found");
   }
+  if (typeof actor.rpc_eth_gas_price !== "function") {
+    throw new Error("incompatible.canister.api rpc_eth_gas_price unavailable: method not found");
+  }
   try {
     await actor.rpc_eth_history_window();
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
     throw new Error(`incompatible.canister.api rpc_eth_history_window unavailable: ${detail}`);
+  }
+  try {
+    await actor.rpc_eth_gas_price();
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    throw new Error(`incompatible.canister.api rpc_eth_gas_price unavailable: ${detail}`);
   }
 }
 

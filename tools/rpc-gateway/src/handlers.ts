@@ -157,15 +157,11 @@ async function onGetBlockByNumber(id: string | number | null, params: unknown): 
 
 async function onGasPrice(id: string | number | null): Promise<JsonRpcResponse> {
   const actor = await getActor();
-  const head = await actor.rpc_eth_block_number();
-  const blockLookup = await actor.rpc_eth_get_block_by_number_with_status(head, false);
-  if (!("Found" in blockLookup)) {
-    return makeError(id, -32000, "state unavailable", { detail: "latest block is unavailable" });
+  const out = await actor.rpc_eth_gas_price();
+  if ("Err" in out) {
+    return mapRpcError(id, out.Err, "state unavailable");
   }
-  if (blockLookup.Found.base_fee_per_gas.length === 0) {
-    return makeError(id, -32000, "state unavailable", { detail: "base_fee_per_gas is unavailable" });
-  }
-  return makeSuccess(id, toQuantityHex(blockLookup.Found.base_fee_per_gas[0]));
+  return makeSuccess(id, toQuantityHex(out.Ok));
 }
 
 async function onMaxPriorityFeePerGas(id: string | number | null): Promise<JsonRpcResponse> {
@@ -675,10 +671,7 @@ function parseFeeHistoryParams(params: unknown): {
   const newestBlockRaw = arr[1];
   const rewardPercentilesRaw = arr.length >= 3 ? arr[2] : undefined;
 
-  if (typeof blockCountRaw !== "string") {
-    throw new Error("blockCount must be QUANTITY");
-  }
-  const blockCountBig = parseQuantityHex(blockCountRaw);
+  const blockCountBig = parseFeeHistoryBlockCount(blockCountRaw);
   if (blockCountBig < 1n) {
     throw new Error("blockCount must be >= 1");
   }
@@ -692,6 +685,19 @@ function parseFeeHistoryParams(params: unknown): {
     newestTag,
     rewardPercentiles: rewardPercentiles === null ? [] : [rewardPercentiles],
   };
+}
+
+function parseFeeHistoryBlockCount(value: unknown): bigint {
+  if (typeof value === "number") {
+    if (!Number.isFinite(value) || !Number.isSafeInteger(value) || value < 0) {
+      throw new Error("blockCount must be non-negative integer number or QUANTITY/decimal string");
+    }
+    return BigInt(value);
+  }
+  if (typeof value === "string") {
+    return parseQuantityCompat(value);
+  }
+  throw new Error("blockCount must be non-negative integer number or QUANTITY/decimal string");
 }
 
 function parseRewardPercentiles(value: unknown): number[] | null {
@@ -1356,6 +1362,14 @@ export function __test_is_latest_tag(blockTag: unknown): boolean {
 
 export function __test_parse_execution_block_tag(blockTag: unknown): BlockTag {
   return parseExecutionBlockTag(blockTag);
+}
+
+export function __test_parse_fee_history_params(params: unknown): {
+  blockCount: bigint;
+  newestTag: BlockTag;
+  rewardPercentiles: [] | [number[]];
+} {
+  return parseFeeHistoryParams(params);
 }
 
 export function __test_compute_effective_priority_fee(

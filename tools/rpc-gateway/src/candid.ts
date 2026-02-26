@@ -196,6 +196,7 @@ export const idlFactory: IDL.InterfaceFactory = ({ IDL }) => {
     ),
     rpc_eth_chain_id: IDL.Func([], [IDL.Nat64], ["query"]),
     rpc_eth_block_number: IDL.Func([], [IDL.Nat64], ["query"]),
+    rpc_eth_gas_price: IDL.Func([], [IDL.Variant({ Ok: IDL.Nat, Err: RpcErrorView })], ["query"]),
     rpc_eth_get_block_by_number: IDL.Func([IDL.Nat64, IDL.Bool], [IDL.Opt(EthBlockView)], ["query"]),
     rpc_eth_get_block_by_number_with_status: IDL.Func([IDL.Nat64, IDL.Bool], [RpcBlockLookupView], ["query"]),
     rpc_eth_get_block_number_by_hash: IDL.Func(

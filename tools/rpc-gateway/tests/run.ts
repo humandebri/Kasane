@@ -24,6 +24,7 @@ import {
   __test_parse_logs_filter,
   __test_parse_reward_percentiles,
   __test_parse_execution_block_tag,
+  __test_parse_fee_history_params,
   __test_map_rpc_error,
   __test_sort_log_items,
   __test_tx_hash_readiness_error,
@@ -232,6 +233,24 @@ function testRewardPercentilesValidation(): void {
   assert.deepEqual(__test_parse_reward_percentiles([10, 50, 90]), [10, 50, 90]);
   assert.throws(() => __test_parse_reward_percentiles([50, 10]));
   assert.throws(() => __test_parse_reward_percentiles([101]));
+}
+
+function testFeeHistoryBlockCountCompatibility(): void {
+  const fromNumber = __test_parse_fee_history_params([5, "latest"]);
+  assert.equal(fromNumber.blockCount, 5n);
+  assert.deepEqual(fromNumber.newestTag, { Latest: null });
+
+  const fromHex = __test_parse_fee_history_params(["0x5", "latest"]);
+  assert.equal(fromHex.blockCount, 5n);
+
+  const fromDecimal = __test_parse_fee_history_params(["5", "latest"]);
+  assert.equal(fromDecimal.blockCount, 5n);
+
+  assert.throws(() => __test_parse_fee_history_params([0, "latest"]));
+  assert.throws(() => __test_parse_fee_history_params([-1, "latest"]));
+  assert.throws(() => __test_parse_fee_history_params([1.5, "latest"]));
+  assert.throws(() => __test_parse_fee_history_params([Number.NaN, "latest"]));
+  assert.throws(() => __test_parse_fee_history_params([Number.POSITIVE_INFINITY, "latest"]));
 }
 
 function testCallObjectParsing(): void {
@@ -754,6 +773,7 @@ async function testInvalidTxHashReturnsInvalidParams(): Promise<void> {
 async function testCanisterCompatibilityProbe(): Promise<void> {
   await __test_assert_canister_compatibility({
     rpc_eth_history_window: async () => ({ oldest_available: 0n, latest: 0n }),
+    rpc_eth_gas_price: async () => ({ Ok: 1n }),
   });
 
   await assert.rejects(
@@ -764,6 +784,17 @@ async function testCanisterCompatibilityProbe(): Promise<void> {
   await assert.rejects(
     __test_assert_canister_compatibility({
       rpc_eth_history_window: async () => {
+        throw new Error("Method does not exist");
+      },
+      rpc_eth_gas_price: async () => ({ Ok: 1n }),
+    }),
+    /incompatible\.canister\.api/
+  );
+
+  await assert.rejects(
+    __test_assert_canister_compatibility({
+      rpc_eth_history_window: async () => ({ oldest_available: 0n, latest: 0n }),
+      rpc_eth_gas_price: async () => {
         throw new Error("Method does not exist");
       },
     }),
@@ -828,6 +859,7 @@ testPriorityFeeComputation();
 testWeightedPercentileAndNextBaseFee();
 testReceiptHashStrictMatch();
 testRewardPercentilesValidation();
+testFeeHistoryBlockCountCompatibility();
 testRpcErrorPrefixPassthrough();
 testReceiptLogMapping();
 testBlockMappingWithFeeMetadata();
