@@ -259,7 +259,7 @@ fn build_ic_tx_bytes_with_custom_gas(gas_limit: u64, max_fee: u128, max_priority
     let data: Vec<u8> = Vec::new();
     let data_len = u32::try_from(data.len()).unwrap_or(0).to_be_bytes();
     let mut out = Vec::new();
-    out.push(2u8);
+    out.push(1u8);
     out.extend_from_slice(&to);
     out.extend_from_slice(&value);
     out.extend_from_slice(&gas_limit);

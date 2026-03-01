@@ -458,7 +458,7 @@ fn build_ic_tx_bytes(to: [u8; 20], nonce: u64) -> Vec<u8> {
     let data = Vec::new();
     let data_len = u32::try_from(data.len()).unwrap_or(0).to_be_bytes();
     let mut out = Vec::new();
-    out.push(2u8);
+    out.push(1u8);
     out.extend_from_slice(&to);
     out.extend_from_slice(&value);
     out.extend_from_slice(&gas_limit);

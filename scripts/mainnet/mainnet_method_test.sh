@@ -158,10 +158,10 @@ submit_ic_tx_with_retry_standard() {
   local max_attempts="${2:-3}"
   local attempt=1
   while (( attempt <= max_attempts )); do
-    local nonce tx_bytes
+    local nonce tx_args
     nonce="$(query_nonce_for_address "${CALLER_EVM_HEX}")"
-    tx_bytes="$(generate_submit_ic_tx_bytes "${nonce}")"
-    run_update_with_cycles "submit_ic_tx" "(vec { ${tx_bytes} })" "${note} attempt=${attempt} nonce=${nonce}" "1" >/dev/null
+    tx_args="$(generate_submit_ic_tx_bytes "${nonce}")"
+    run_update_with_cycles "submit_ic_tx" "${tx_args}" "${note} attempt=${attempt} nonce=${nonce}" "1" >/dev/null
     if candid_is_ok "${RUN_UPDATE_LAST_OUT:-}" >/dev/null 2>&1; then
       return 0
     fi
@@ -201,10 +201,10 @@ submit_ic_tx_with_retry_custom() {
   local max_attempts="${8:-3}"
   local attempt=1
   while (( attempt <= max_attempts )); do
-    local nonce tx_bytes
+    local nonce tx_args
     nonce="$(query_nonce_for_address "${CALLER_EVM_HEX}")"
-    tx_bytes="$(generate_submit_ic_tx_bytes_custom "${nonce}" "${to_hex}" "${value_wei}" "${gas_limit}" "${max_fee}" "${max_priority}" "${data_hex}")"
-    run_update_with_cycles "submit_ic_tx" "(vec { ${tx_bytes} })" "${note} attempt=${attempt} nonce=${nonce}" "1" >/dev/null
+    tx_args="$(generate_submit_ic_tx_bytes_custom "${nonce}" "${to_hex}" "${value_wei}" "${gas_limit}" "${max_fee}" "${max_priority}" "${data_hex}")"
+    run_update_with_cycles "submit_ic_tx" "${tx_args}" "${note} attempt=${attempt} nonce=${nonce}" "1" >/dev/null
     if candid_is_ok "${RUN_UPDATE_LAST_OUT:-}" >/dev/null 2>&1; then
       return 0
     fi
@@ -415,8 +415,8 @@ PY
       TEST_ETH_PRIVKEY="$(cargo run -q -p ic-evm-core --features local-signer-bin --bin eth_raw_tx -- --mode genkey)"
       TEST_ETH_SENDER_HEX="$(eth_sender_hex_from_privkey "${TEST_ETH_PRIVKEY}" | tr -d '\n\r')"
       FUND_NONCE="$(query_nonce_for_address "${CALLER_EVM_HEX}")"
-      FUND_TX_BYTES="$(generate_submit_ic_tx_bytes_custom "${FUND_NONCE}" "${TEST_ETH_SENDER_HEX}" "${FUND_AMOUNT_WEI}")"
-      run_update_with_cycles "submit_ic_tx" "(vec { ${FUND_TX_BYTES} })" "auto-fund test ETH key ${TEST_ETH_SENDER_HEX}" "0" >/dev/null
+      FUND_TX_ARGS="$(generate_submit_ic_tx_bytes_custom "${FUND_NONCE}" "${TEST_ETH_SENDER_HEX}" "${FUND_AMOUNT_WEI}")"
+      run_update_with_cycles "submit_ic_tx" "${FUND_TX_ARGS}" "auto-fund test ETH key ${TEST_ETH_SENDER_HEX}" "0" >/dev/null
       wait_for_auto_production_block "auto-fund block production"
       record_method_row "auto_fund_test_key" "update" "ok" "funded test sender=${TEST_ETH_SENDER_HEX} amount=${FUND_AMOUNT_WEI} caller_balance_before=${CALLER_BALANCE_WEI}"
     fi

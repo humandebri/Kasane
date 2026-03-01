@@ -27,8 +27,8 @@ fn decode_ic_tx_roundtrip() {
 #[test]
 fn decode_ic_tx_rejects_version() {
     let caller = address!("0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb");
-    let mut bytes = vec![0u8; 1 + 20 + 32 + 8 + 8 + 16 + 16 + 4];
-    bytes[0] = 1;
+    let mut bytes = vec![0u8; 1 + 32 + 8 + 8 + 16 + 16 + 4];
+    bytes[0] = 2;
     let err = decode_ic_synthetic(caller, &bytes).err();
     assert_eq!(err, Some(DecodeError::InvalidVersion));
 }
@@ -63,7 +63,7 @@ fn decode_ic_tx_rejects_oversized_data() {
 fn decode_ic_tx_header_roundtrip() {
     let bytes = build_ic_tx(7, vec![1, 2, 3]);
     let header = decode_ic_synthetic_header(&bytes).expect("header decode");
-    assert_eq!(header.to, [0x11u8; 20]);
+    assert_eq!(header.to, Some([0x11u8; 20]));
     assert_eq!(header.value, [0x22u8; 32]);
     assert_eq!(header.gas_limit, 21_000);
     assert_eq!(header.nonce, 7);
@@ -74,8 +74,8 @@ fn decode_ic_tx_header_roundtrip() {
 
 #[test]
 fn decode_ic_tx_header_rejects_version() {
-    let mut bytes = vec![0u8; 1 + 20 + 32 + 8 + 8 + 16 + 16 + 4];
-    bytes[0] = 1;
+    let mut bytes = vec![0u8; 1 + 32 + 8 + 8 + 16 + 16 + 4];
+    bytes[0] = 2;
     let err = decode_ic_synthetic_header(&bytes).err();
     assert_eq!(err, Some(DecodeError::InvalidVersion));
 }
@@ -144,7 +144,7 @@ fn build_ic_tx(nonce: u64, data: Vec<u8>) -> Vec<u8> {
     let data_len = (data.len() as u32).to_be_bytes();
 
     let mut bytes = Vec::with_capacity(1 + 20 + 32 + 8 + 8 + 16 + 16 + 4 + data.len());
-    bytes.push(2u8);
+    bytes.push(1u8);
     bytes.extend_from_slice(&to);
     bytes.extend_from_slice(&value);
     bytes.extend_from_slice(&gas);

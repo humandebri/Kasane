@@ -5,6 +5,7 @@
 use canbench_rs::{bench, bench_fn, BenchResult};
 use candid::Principal;
 use evm_core::chain;
+use evm_core::tx_decode::IcSyntheticTxInput;
 use evm_core::tx_decode::{decode_eth_raw_tx, decode_ic_synthetic_header};
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -79,7 +80,7 @@ fn submit_synthetic_tx() -> Result<evm_db::chain_data::TxId, chain::ChainError> 
     chain::submit_tx_in(chain::TxIn::IcSynthetic {
         caller_principal: caller.as_slice().to_vec(),
         canister_id: canister.as_slice().to_vec(),
-        tx_bytes: build_ic_tx_bytes(nonce),
+        tx: build_ic_tx_input(nonce),
     })
 }
 
@@ -89,21 +90,32 @@ fn warm_submit_caller_cache() {
     let _ = chain::submit_tx_in(chain::TxIn::IcSynthetic {
         caller_principal: caller.as_slice().to_vec(),
         canister_id: canister.as_slice().to_vec(),
-        tx_bytes: vec![0x02],
+        tx: IcSyntheticTxInput {
+            to: Some([0u8; 20]),
+            value: [0u8; 32],
+            gas_limit: 500_000,
+            nonce: 0,
+            max_fee_per_gas: 2_000_000_000,
+            max_priority_fee_per_gas: 1_000_000_000,
+            data: Vec::new(),
+        },
     });
 }
 
 fn build_ic_tx_bytes(nonce: u64) -> Vec<u8> {
-    let mut out = Vec::with_capacity(105);
-    out.push(0x02);
-    out.extend_from_slice(&[
-        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x10,
-    ]);
-    out.extend_from_slice(&[0u8; 32]);
-    out.extend_from_slice(&500_000u64.to_be_bytes());
-    out.extend_from_slice(&nonce.to_be_bytes());
-    out.extend_from_slice(&2_000_000_000u128.to_be_bytes());
-    out.extend_from_slice(&1_000_000_000u128.to_be_bytes());
-    out.extend_from_slice(&0u32.to_be_bytes());
-    out
+    evm_core::tx_decode::encode_ic_synthetic_input(&build_ic_tx_input(nonce))
+}
+
+fn build_ic_tx_input(nonce: u64) -> IcSyntheticTxInput {
+    IcSyntheticTxInput {
+        to: Some([
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x10,
+        ]),
+        value: [0u8; 32],
+        gas_limit: 500_000,
+        nonce,
+        max_fee_per_gas: 2_000_000_000,
+        max_priority_fee_per_gas: 1_000_000_000,
+        data: Vec::new(),
+    }
 }

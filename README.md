@@ -60,15 +60,17 @@ Explorer の実装詳細（ルート一覧・lib層責務）は `tools/explorer/
   | pre-submit guard（`rpc_eth_send_raw_transaction` のみ） | `rpc.state_unavailable.corrupt_or_migrating` |
   | execute path（wrapper 側） | `exec.*` |
 - `submit_ic_tx` の入力仕様（README要約）:
-  - 引数: `vec nat8`（以下の固定バイトレイアウト）
-  - レイアウト（Big Endian）:
-    - `[version:1][to:20][value:32][gas_limit:8][nonce:8][max_fee_per_gas:16][max_priority_fee_per_gas:16][data_len:4][data:data_len]`
-  - 必須条件:
-    - `version = 2`
-    - `data_len` と `data` 実長が一致
+  - 引数: `record`
+    - `to: opt vec nat8`（`Some`時は20 bytes、`None`はcontract create）
+    - `value: nat`（uint256）
+    - `gas_limit: nat64`
+    - `nonce: nat64`
+    - `max_fee_per_gas: nat`（u128上限）
+    - `max_priority_fee_per_gas: nat`（u128上限）
+    - `data: vec nat8`
   - 戻り値: `tx_id`（32 bytes, internal id）
 - `submit_ic_tx` の全体フロー（実装準拠）:
-  - フロントが `submit_ic_tx(blob)` を update call で呼ぶ。
+  - フロントが `submit_ic_tx(record)` を update call で呼ぶ。
   - wrapper が `msg_caller()` と `canister_self()` を付与して core の `TxIn::IcSynthetic` に渡す。
   - core が `IcSynthetic` としてデコード/fee/nonce を検証し、`tx_store`/queue/index に保存する。
   - 戻り値は `tx_id` のみ（この時点では未実行）。
@@ -76,7 +78,7 @@ Explorer の実装詳細（ルート一覧・lib層責務）は `tools/explorer/
 
 ```mermaid
 flowchart TD
-  A["Frontend / Wallet"] -->|"update call: submit_ic_tx(blob)"| B["Wrapper (ic-evm-wrapper)"]
+  A["Frontend / Wallet"] -->|"update call: submit_ic_tx(record)"| B["Wrapper (ic-evm-wrapper)"]
   B -->|"attach: msg_caller + canister_self"| C["Core (evm-core::submit_ic_tx)"]
   C -->|"decode + fee/nonce validation"| D["Persist: tx_store + queue + indexes"]
   D -->|"return tx_id"| A
@@ -85,19 +87,17 @@ flowchart TD
   A -->|"query get_pending/get_receipt"| F
 ```
 
-- `submit_ic_tx` blob の詳細（IcSynthetic v2, Big Endian）:
+- `submit_ic_tx` record の詳細:
 
   | Field | Size (bytes) | 説明 |
   | --- | ---: | --- |
-  | `version` | 1 | 固定 `2` |
-  | `to` | 20 | 宛先EVMアドレス |
-  | `value` | 32 | 送金量 (`uint256`) |
-  | `gas_limit` | 8 | gas上限 (`uint64`) |
-  | `nonce` | 8 | sender nonce (`uint64`) |
-  | `max_fee_per_gas` | 16 | EIP-1559 max fee (`uint128`) |
-  | `max_priority_fee_per_gas` | 16 | EIP-1559 tip (`uint128`) |
-  | `data_len` | 4 | `data` バイト長 (`uint32`) |
-  | `data` | `data_len` | calldata |
+  | `to` | opt `vec nat8` | 宛先EVMアドレス（20 bytes）/ `null` で create |
+  | `value` | `nat` | 送金量 (`uint256`) |
+  | `gas_limit` | `nat64` | gas上限 |
+  | `nonce` | `nat64` | sender nonce |
+  | `max_fee_per_gas` | `nat` | EIP-1559 max fee（u128上限） |
+  | `max_priority_fee_per_gas` | `nat` | EIP-1559 tip（u128上限） |
+  | `data` | `vec nat8` | calldata |
 
 - `from`（送信者）決定方法:
   - `submit_ic_tx` では `from` を payload に含めない。
@@ -137,7 +137,7 @@ sequenceDiagram
   UI->>C: query rpc_eth_estimate_gas_object(call)
   C-->>UI: gas_limit estimate
   UI->>UI: set max_fee/max_priority (+buffer)
-  UI->>C: update submit_ic_tx(blob)
+  UI->>C: update submit_ic_tx(record)
   C-->>UI: tx_id
 ```
 
@@ -150,25 +150,21 @@ sequenceDiagram
 CANISTER_ID=4c52m-aiaaa-aaaam-agwwa-cai
 IDENTITY=ci-local
 
-TX_HEX=$(python - <<'PY'
-version = b'\x02'
+TO_BYTES=$(python - <<'PY'
 to = bytes.fromhex('0000000000000000000000000000000000000001')
-value = (0).to_bytes(32, 'big')
-gas_limit = (500000).to_bytes(8, 'big')
-nonce = (0).to_bytes(8, 'big')
-max_fee = (2_000_000_000).to_bytes(16, 'big')
-max_priority = (1_000_000_000).to_bytes(16, 'big')
-data = b''
-data_len = len(data).to_bytes(4, 'big')
-print((version + to + value + gas_limit + nonce + max_fee + max_priority + data_len + data).hex())
+print('; '.join(str(b) for b in to))
 PY
 )
 
-icp canister call -e ic --identity "$IDENTITY" "$CANISTER_ID" submit_ic_tx "(vec { $(python - <<PY
-tx = bytes.fromhex('$TX_HEX')
-print('; '.join(str(b) for b in tx))
-PY
-) })"
+icp canister call -e ic --identity "$IDENTITY" "$CANISTER_ID" submit_ic_tx "(record {
+  to = opt vec { $TO_BYTES };
+  value = 0 : nat;
+  gas_limit = 500000 : nat64;
+  nonce = 0 : nat64;
+  max_fee_per_gas = 2000000000 : nat;
+  max_priority_fee_per_gas = 1000000000 : nat;
+  data = vec { };
+})"
 ```
 - `rpc_eth_send_raw_transaction` の入力仕様（README要約）:
   - 引数: `blob`（署名済み Ethereum raw transaction の生バイト列）

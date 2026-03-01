@@ -320,6 +320,15 @@ type RpcReceiptLookupView = variant {
   PossiblyPruned : record { pruned_before_block : nat64 };
   Pruned : record { pruned_before_block : nat64 };
 };
+type SubmitIcTxArgsDto = record {
+  to : opt blob;
+  value : nat;
+  max_priority_fee_per_gas : nat;
+  data : blob;
+  max_fee_per_gas : nat;
+  nonce : nat64;
+  gas_limit : nat64;
+};
 type SubmitTxError = variant {
   Internal : text;
   Rejected : text;
@@ -389,5 +398,5 @@ service : (opt InitArgs) -> {
   set_log_filter : (opt text) -> (Result_15);
   set_prune_policy : (PrunePolicyView) -> (Result_15);
   set_pruning_enabled : (bool) -> (Result_15);
-  submit_ic_tx : (blob) -> (Result_14);
+  submit_ic_tx : (SubmitIcTxArgsDto) -> (Result_14);
 }

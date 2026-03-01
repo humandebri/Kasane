@@ -34,11 +34,10 @@ fn submit_tx_in_ic_synthetic_enqueues_tx() {
     relax_fee_floor_for_tests();
     let caller_principal = vec![0x42];
     let canister_id = vec![0x99];
-    let tx_bytes = common::build_ic_tx_bytes([0x11u8; 20], 0, 2_000_000_000, 1_000_000_000);
     let tx_id = chain::submit_tx_in(TxIn::IcSynthetic {
         caller_principal: caller_principal.clone(),
         canister_id: canister_id.clone(),
-        tx_bytes,
+        tx: common::build_ic_tx_input([0x11u8; 20], 0, 2_000_000_000, 1_000_000_000),
     })
     .expect("submit ic tx");
 
@@ -75,7 +74,7 @@ fn submit_ic_tx_seen_duplicate_precedes_decode_failure() {
     let caller_principal = vec![0x51];
     let canister_id = vec![0x71];
     let mut malformed = common::build_ic_tx_bytes([0x11u8; 20], 0, 2_000_000_000, 1_000_000_000);
-    malformed[0] = 1;
+    malformed[0] = 2;
 
     let caller_evm =
         hash::derive_evm_address_from_principal(&caller_principal).expect("must derive");

@@ -1,6 +1,6 @@
 //! どこで: canister内の共有DTO層 / 何を: Candid公開型を集約 / なぜ: wrapper分割時もAPI互換を保つため
 
-use candid::CandidType;
+use candid::{CandidType, Nat};
 use serde::Deserialize;
 
 #[derive(Clone, Debug, CandidType, Deserialize)]
@@ -66,6 +66,17 @@ pub enum SubmitTxError {
     InvalidArgument(String),
     Rejected(String),
     Internal(String),
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize)]
+pub struct SubmitIcTxArgsDto {
+    pub to: Option<Vec<u8>>,
+    pub value: Nat,
+    pub gas_limit: u64,
+    pub nonce: u64,
+    pub max_fee_per_gas: Nat,
+    pub max_priority_fee_per_gas: Nat,
+    pub data: Vec<u8>,
 }
 
 #[derive(Clone, Debug, CandidType, Deserialize)]
