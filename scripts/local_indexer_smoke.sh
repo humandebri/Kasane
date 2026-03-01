@@ -175,21 +175,12 @@ build_and_install() {
   RESOLVED_CANISTER_ID="$(resolve_canister_id)"
 }
 
-build_ic_tx_hex() {
+build_ic_tx_arg() {
   local nonce="$1"
   python - <<PY
-version = b'\\x02'
 to = bytes.fromhex('0000000000000000000000000000000000000010')
-value = (0).to_bytes(32, 'big')
-gas = (500000).to_bytes(8, 'big')
-nonce = (${nonce}).to_bytes(8, 'big')
-max_fee = (2_000_000_000).to_bytes(16, 'big')
-max_fee = (${SEED_TX_MAX_FEE_WEI}).to_bytes(16, 'big')
-max_priority = (${SEED_TX_MAX_PRIORITY_FEE_WEI}).to_bytes(16, 'big')
-data = b''
-data_len = len(data).to_bytes(4, 'big')
-tx = version + to + value + gas + nonce + max_fee + max_priority + data_len + data
-print(tx.hex())
+to_csv = '; '.join(str(b) for b in to)
+print(f"(record {{ to = opt vec {{ {to_csv} }}; value = 0 : nat; gas_limit = 500000 : nat64; nonce = {int('${nonce}')} : nat64; max_fee_per_gas = {int('${SEED_TX_MAX_FEE_WEI}')} : nat; max_priority_fee_per_gas = {int('${SEED_TX_MAX_PRIORITY_FEE_WEI}')} : nat; data = vec {{ }}; }})")
 PY
 }
 
@@ -215,10 +206,8 @@ seed_blocks() {
 
 submit_ic_tx_with_retry() {
   local nonce="$1"
-  local tx_hex
-  tx_hex=$(build_ic_tx_hex "${nonce}")
-  local tx_bytes
-  tx_bytes=$(hex_to_vec_bytes "${tx_hex}")
+  local tx_arg
+  tx_arg=$(build_ic_tx_arg "${nonce}")
 
   local attempt=1
   while [[ "${attempt}" -le "${SEED_RETRY_MAX}" ]]; do
@@ -226,7 +215,7 @@ submit_ic_tx_with_retry() {
     local out
     local rc
     set +e
-    out=$("${ICP_CANISTER_CALL[@]}" "${CANISTER_NAME}" submit_ic_tx "(vec { ${tx_bytes} })" 2>&1)
+    out=$("${ICP_CANISTER_CALL[@]}" "${CANISTER_NAME}" submit_ic_tx "${tx_arg}" 2>&1)
     rc=$?
     set -e
 

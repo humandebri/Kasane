@@ -1,6 +1,7 @@
 //! どこで: dropped管理テスト / 何を: 固定長リングの上限維持 / なぜ: tx_locsメモリリークを防ぐため
 
-use evm_core::chain;
+use evm_core::chain::{self, TxIn};
+use evm_core::tx_decode::IcSyntheticTxInput;
 use evm_core::hash;
 use evm_db::chain_data::constants::DROPPED_RING_CAPACITY;
 use evm_db::chain_data::TxLocKind;
@@ -28,9 +29,13 @@ fn dropped_ring_keeps_tx_locs_bounded() {
 
     for i in 0..(DROPPED_RING_CAPACITY + 5) {
         let max_fee = 2_000_000_000u128 + (u128::from(i) * 1_000_000_000u128);
-        let tx = build_ic_tx_bytes_with_fee(max_fee, max_fee, 0);
-        let tx_id = chain::submit_ic_tx(caller_principal.clone(), canister_id.clone(), tx)
-            .unwrap_or_else(|_| panic!("submit failed at {i}"));
+        let tx = build_ic_tx_input_with_fee(max_fee, max_fee, 0);
+        let tx_id = chain::submit_tx_in(TxIn::IcSynthetic {
+            caller_principal: caller_principal.clone(),
+            canister_id: canister_id.clone(),
+            tx,
+        })
+        .unwrap_or_else(|_| panic!("submit failed at {i}"));
         submitted.push(tx_id);
     }
 
@@ -54,26 +59,16 @@ fn dropped_ring_keeps_tx_locs_bounded() {
     assert_eq!(newest_loc.kind, TxLocKind::Dropped);
 }
 
-fn build_ic_tx_bytes_with_fee(max_fee: u128, max_priority: u128, nonce: u64) -> Vec<u8> {
-    let to = [0u8; 20];
-    let value = [0u8; 32];
-    let gas_limit = 50_000u64.to_be_bytes();
-    let nonce = nonce.to_be_bytes();
-    let max_fee = max_fee.to_be_bytes();
-    let max_priority = max_priority.to_be_bytes();
-    let data: Vec<u8> = Vec::new();
-    let data_len = u32::try_from(data.len()).unwrap_or(0).to_be_bytes();
-    let mut out = Vec::new();
-    out.push(2u8);
-    out.extend_from_slice(&to);
-    out.extend_from_slice(&value);
-    out.extend_from_slice(&gas_limit);
-    out.extend_from_slice(&nonce);
-    out.extend_from_slice(&max_fee);
-    out.extend_from_slice(&max_priority);
-    out.extend_from_slice(&data_len);
-    out.extend_from_slice(&data);
-    out
+fn build_ic_tx_input_with_fee(max_fee: u128, max_priority: u128, nonce: u64) -> IcSyntheticTxInput {
+    IcSyntheticTxInput {
+        to: Some([0u8; 20]),
+        value: [0u8; 32],
+        gas_limit: 50_000,
+        nonce,
+        max_fee_per_gas: max_fee,
+        max_priority_fee_per_gas: max_priority,
+        data: Vec::new(),
+    }
 }
 
 #[test]
@@ -86,11 +81,11 @@ fn dropped_ring_does_not_remove_included_or_queued() {
         hash::derive_evm_address_from_principal(&caller_principal).expect("must derive"),
         1_000_000_000_000_000_000,
     );
-    let included_tx = chain::submit_ic_tx(
-        caller_principal.clone(),
-        canister_id.clone(),
-        build_ic_tx_bytes_with_fee(3_000_000_000, 3_000_000_000, 0),
-    )
+    let included_tx = chain::submit_tx_in(TxIn::IcSynthetic {
+        caller_principal: caller_principal.clone(),
+        canister_id: canister_id.clone(),
+        tx: build_ic_tx_input_with_fee(3_000_000_000, 3_000_000_000, 0),
+    })
     .expect("submit included");
     let _ = chain::produce_block(1).expect("produce block");
     assert_eq!(
@@ -99,12 +94,16 @@ fn dropped_ring_does_not_remove_included_or_queued() {
     );
 
     for i in 0..(DROPPED_RING_CAPACITY + 2) {
-        let tx = build_ic_tx_bytes_with_fee(
+        let tx = build_ic_tx_input_with_fee(
             4_000_000_000u128 + (u128::from(i) * 1_000_000_000u128),
             4_000_000_000u128 + (u128::from(i) * 1_000_000_000u128),
             1,
         );
-        let _ = chain::submit_ic_tx(caller_principal.clone(), canister_id.clone(), tx);
+        let _ = chain::submit_tx_in(TxIn::IcSynthetic {
+            caller_principal: caller_principal.clone(),
+            canister_id: canister_id.clone(),
+            tx,
+        });
     }
 
     let after = chain::get_tx_loc(&included_tx).expect("included must remain");

@@ -10,19 +10,15 @@ generate_submit_ic_tx_bytes() {
   local max_fee="${TX_MAX_FEE_PER_GAS_WEI:-500000000000}"
   local max_priority="${TX_MAX_PRIORITY_FEE_PER_GAS_WEI:-250000000000}"
   local gas_limit="${TX_GAS_LIMIT:-21000}"
-  python - <<PY
-version = b'\\x02'
+  local candid_text
+  candid_text="$(python - <<PY
 to = bytes.fromhex('0000000000000000000000000000000000000001')
-value = (0).to_bytes(32, 'big')
-gas = (int("${gas_limit}")).to_bytes(8, 'big')
-nonce = (${nonce}).to_bytes(8, 'big')
-max_fee = (int("${max_fee}")).to_bytes(16, 'big')
-max_priority = (int("${max_priority}")).to_bytes(16, 'big')
-data = b''
-data_len = len(data).to_bytes(4, 'big')
-tx = version + to + value + gas + nonce + max_fee + max_priority + data_len + data
-print('; '.join(str(b) for b in tx))
+to_csv = '; '.join(str(b) for b in to)
+print(f"(record {{ to = opt vec {{ {to_csv} }}; value = 0 : nat; gas_limit = {int('${gas_limit}')} : nat64; nonce = {int('${nonce}')} : nat64; max_fee_per_gas = {int('${max_fee}')} : nat; max_priority_fee_per_gas = {int('${max_priority}')} : nat; data = vec {{ }}; }})")
 PY
+)"
+  validate_candid_arg_text "submit_ic_tx args" "${candid_text}"
+  printf '%s\n' "${candid_text}"
 }
 
 generate_submit_ic_tx_bytes_custom() {
@@ -33,19 +29,17 @@ generate_submit_ic_tx_bytes_custom() {
   local max_fee="${5:-${TX_MAX_FEE_PER_GAS_WEI:-500000000000}}"
   local max_priority="${6:-${TX_MAX_PRIORITY_FEE_PER_GAS_WEI:-250000000000}}"
   local data_hex="${7:-}"
-  python - <<PY
-version = b'\\x02'
+  local candid_text
+  candid_text="$(python - <<PY
 to = bytes.fromhex("${to_hex}")
-value = (int("${value_wei}")).to_bytes(32, 'big')
-gas = (int("${gas_limit}")).to_bytes(8, 'big')
-nonce = (int("${nonce}")).to_bytes(8, 'big')
-max_fee = (int("${max_fee}")).to_bytes(16, 'big')
-max_priority = (int("${max_priority}")).to_bytes(16, 'big')
 data = bytes.fromhex("${data_hex}")
-data_len = len(data).to_bytes(4, 'big')
-tx = version + to + value + gas + nonce + max_fee + max_priority + data_len + data
-print('; '.join(str(b) for b in tx))
+to_csv = '; '.join(str(b) for b in to)
+data_csv = '; '.join(str(b) for b in data)
+print(f"(record {{ to = opt vec {{ {to_csv} }}; value = {int('${value_wei}')} : nat; gas_limit = {int('${gas_limit}')} : nat64; nonce = {int('${nonce}')} : nat64; max_fee_per_gas = {int('${max_fee}')} : nat; max_priority_fee_per_gas = {int('${max_priority}')} : nat; data = vec {{ {data_csv} }}; }})")
 PY
+)"
+  validate_candid_arg_text "submit_ic_tx custom args" "${candid_text}"
+  printf '%s\n' "${candid_text}"
 }
 
 bytes_csv_to_hex() {

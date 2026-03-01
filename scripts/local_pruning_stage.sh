@@ -29,13 +29,27 @@ require_cmd() {
 require_cmd icp
 require_cmd python
 require_cmd npm
+require_cmd didc
+
+validate_candid_arg_text() {
+  local label="$1"
+  local candid_text="$2"
+  if [[ -z "${candid_text}" ]]; then
+    echo "[local-pruning-stage] ${label} is empty" >&2
+    exit 1
+  fi
+  if ! didc encode "${candid_text}" >/dev/null 2>&1; then
+    echo "[local-pruning-stage] ${label} is not valid candid text" >&2
+    exit 1
+  fi
+}
 
 submit_ic_tx_with_timeout() {
-  local tx_bytes="$1"
+  local tx_arg="$1"
   NETWORK="${NETWORK}" \
   ICP_IDENTITY_NAME="${ICP_IDENTITY_NAME}" \
   CANISTER_NAME="${CANISTER_NAME}" \
-  TX_BYTES="${tx_bytes}" \
+  TX_ARG="${tx_arg}" \
   SEED_SUBMIT_TIMEOUT_SEC="${SEED_SUBMIT_TIMEOUT_SEC}" \
   python - <<'PY'
 import os
@@ -52,7 +66,7 @@ cmd = [
     os.environ["ICP_IDENTITY_NAME"],
     os.environ["CANISTER_NAME"],
     "submit_ic_tx",
-    f"(vec {{ {os.environ['TX_BYTES']} }})",
+    os.environ["TX_ARG"],
 ]
 timeout = int(os.environ["SEED_SUBMIT_TIMEOUT_SEC"])
 try:
@@ -112,26 +126,23 @@ ensure_canister_ready() {
   fi
 }
 
-build_ic_tx_hex() {
+build_ic_tx_arg() {
   local nonce="$1"
-  python - <<PY
-version = b'\\x02'
+  local candid_text
+  candid_text="$(python - <<PY
 to = bytes.fromhex('0000000000000000000000000000000000000010')
-value = (0).to_bytes(32, 'big')
-gas = (500000).to_bytes(8, 'big')
-nonce = (${nonce}).to_bytes(8, 'big')
-max_fee = (2_000_000_000).to_bytes(16, 'big')
-max_fee = (${SEED_TX_MAX_FEE_WEI}).to_bytes(16, 'big')
-max_priority = (${SEED_TX_MAX_PRIORITY_FEE_WEI}).to_bytes(16, 'big')
+to_csv = '; '.join(str(b) for b in to)
 try:
     import time
     data = int(time.time_ns()).to_bytes(8, 'big')
 except Exception:
     data = b'\x01'
-data_len = len(data).to_bytes(4, 'big')
-tx = version + to + value + gas + nonce + max_fee + max_priority + data_len + data
-print(tx.hex())
+data_csv = '; '.join(str(b) for b in data)
+print(f"(record {{ to = opt vec {{ {to_csv} }}; value = 0 : nat; gas_limit = 500000 : nat64; nonce = {int('${nonce}')} : nat64; max_fee_per_gas = {int('${SEED_TX_MAX_FEE_WEI}')} : nat; max_priority_fee_per_gas = {int('${SEED_TX_MAX_PRIORITY_FEE_WEI}')} : nat; data = vec {{ {data_csv} }}; }})")
 PY
+)"
+  validate_candid_arg_text "submit_ic_tx args" "${candid_text}"
+  printf '%s\n' "${candid_text}"
 }
 
 hex_to_vec_bytes() {
@@ -257,12 +268,10 @@ seed_blocks() {
     local accepted=0
     local attempts=0
     while [[ "${accepted}" -ne 1 && "${attempts}" -lt 128 ]]; do
-      local tx_hex
-      tx_hex=$(build_ic_tx_hex "${next_nonce}")
-      local tx_bytes
-      tx_bytes=$(hex_to_vec_bytes "${tx_hex}")
+      local tx_arg
+      tx_arg=$(build_ic_tx_arg "${next_nonce}")
       local out
-      out="$(submit_ic_tx_with_timeout "${tx_bytes}" || true)"
+      out="$(submit_ic_tx_with_timeout "${tx_arg}" || true)"
       if grep -qi "timed out" <<<"${out}" || [[ -z "${out}" ]]; then
         attempts=$((attempts + 1))
         if (( attempts % 16 == 0 )); then

@@ -31,10 +31,10 @@ Phase1でどっちを採るかを明確化しておくのが重要です。
 A案（採用）：submit系 + auto-mine だけ（同期即時レーンを廃止）
 
 rpc_eth_send_raw_transaction(raw_tx) -> tx_id
-submit_ic_tx(tx_bytes) -> tx_id
+submit_ic_tx(record) -> tx_id
 （旧案・廃止）手動採掘API -> ProduceBlockStatus
 
-submit_ic_tx(...) -> tx_id
+submit_ic_tx(record) -> tx_id
 
 自動採掘（timer）で block が進行
 
@@ -78,16 +78,27 @@ nonce? 指定があるなら 一致しなければ reject（同期API向け）
 
 ※ 以前出てた nonce_ic: Map<principal,u64> は不要にできる。簡単で壊れにくい。
 
-2.3 ICSynthetic bytes（Phase1の暫定フォーマット）
-version: u8 (=2)
-to: [u8;20]
-value: [u8;32] (big-endian)
-gas_limit: u64 (big-endian)
-nonce: u64 (big-endian)
-max_fee_per_gas: u128 (big-endian)
-max_priority_fee_per_gas: u128 (big-endian)
-data_len: u32 (big-endian)
-data: [u8; data_len]
+2.3 `submit_ic_tx` 入力と IcSynthetic canonical bytes（現行）
+
+公開入力（Candid record）:
+
+to: opt vec nat8 （Some時は20 bytes、Noneはcontract create）
+value: nat （uint256）
+gas_limit: nat64
+nonce: nat64
+max_fee_per_gas: nat （u128上限）
+max_priority_fee_per_gas: nat （u128上限）
+data: vec nat8
+
+内部canonical bytes（stable保存用、big-endian）:
+
+[to_flag:1][to?:20][value:32][gas_limit:8][nonce:8]
+[max_fee_per_gas:16][max_priority_fee_per_gas:16][data_len:4][data]
+
+to_flag:
+- 0 = toなし（contract create）
+- 1 = toあり（20 bytes）
+
 chain_id: 4801360 (0x494350, "ICP") をTxEnv/CHAINIDに固定
 
 caller は ic-pub-key 準拠（Chain Fusion Signerの `[0x01, principal_bytes]` 導出パス）で得たEVMアドレス（20 bytes）

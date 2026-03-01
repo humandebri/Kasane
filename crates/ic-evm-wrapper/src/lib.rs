@@ -1,6 +1,6 @@
 //! どこで: canister入口 / 何を: Phase1のAPI公開 / なぜ: submit中心の安全な運用導線を提供するため
 
-use candid::{CandidType, Principal};
+use candid::{CandidType, Nat, Principal};
 use evm_core::chain;
 #[cfg(test)]
 use evm_core::hash;
@@ -377,18 +377,19 @@ fn map_execute_chain_result(
 }
 
 #[ic_cdk::update]
-fn submit_ic_tx(tx_bytes: Vec<u8>) -> Result<Vec<u8>, SubmitTxError> {
+fn submit_ic_tx(args: SubmitIcTxArgsDto) -> Result<Vec<u8>, SubmitTxError> {
     if let Some(reason) = reject_anonymous_update() {
         return Err(SubmitTxError::Rejected(reason));
     }
     if let Some(reason) = reject_write_reason() {
         return Err(SubmitTxError::Rejected(reason));
     }
+    let tx = parse_submit_ic_tx_args(args)?;
     let out = ic_evm_rpc::submit_tx_in_with_code(
         chain::TxIn::IcSynthetic {
             caller_principal: ic_cdk::api::msg_caller().as_slice().to_vec(),
             canister_id: ic_cdk::api::canister_self().as_slice().to_vec(),
-            tx_bytes,
+            tx,
         },
         "submit_ic_tx",
     );
@@ -396,6 +397,59 @@ fn submit_ic_tx(tx_bytes: Vec<u8>) -> Result<Vec<u8>, SubmitTxError> {
         schedule_mining();
     }
     out
+}
+
+fn parse_submit_ic_tx_args(
+    args: SubmitIcTxArgsDto,
+) -> Result<evm_core::tx_decode::IcSyntheticTxInput, SubmitTxError> {
+    let to = match args.to {
+        Some(bytes) => {
+            if bytes.len() != 20 {
+                return Err(SubmitTxError::InvalidArgument(
+                    "arg.to_invalid_length".to_string(),
+                ));
+            }
+            let mut out = [0u8; 20];
+            out.copy_from_slice(&bytes);
+            Some(out)
+        }
+        None => None,
+    };
+    let value = nat_to_fixed_be::<32>(&args.value)
+        .ok_or_else(|| SubmitTxError::InvalidArgument("arg.value_out_of_range".to_string()))?;
+    let max_fee_per_gas = nat_to_u128(&args.max_fee_per_gas)
+        .ok_or_else(|| SubmitTxError::InvalidArgument("arg.fee_out_of_range".to_string()))?;
+    let max_priority_fee_per_gas = nat_to_u128(&args.max_priority_fee_per_gas)
+        .ok_or_else(|| SubmitTxError::InvalidArgument("arg.fee_out_of_range".to_string()))?;
+    Ok(evm_core::tx_decode::IcSyntheticTxInput {
+        to,
+        value,
+        gas_limit: args.gas_limit,
+        nonce: args.nonce,
+        max_fee_per_gas,
+        max_priority_fee_per_gas,
+        data: args.data,
+    })
+}
+
+fn nat_to_u128(value: &Nat) -> Option<u128> {
+    let bytes = value.0.to_bytes_be();
+    if bytes.len() > 16 {
+        return None;
+    }
+    let mut out = [0u8; 16];
+    out[16 - bytes.len()..].copy_from_slice(&bytes);
+    Some(u128::from_be_bytes(out))
+}
+
+fn nat_to_fixed_be<const N: usize>(value: &Nat) -> Option<[u8; N]> {
+    let bytes = value.0.to_bytes_be();
+    if bytes.len() > N {
+        return None;
+    }
+    let mut out = [0u8; N];
+    out[N - bytes.len()..].copy_from_slice(&bytes);
+    Some(out)
 }
 
 #[ic_cdk::query]
@@ -1816,15 +1870,16 @@ mod tests {
         chain_submit_error_to_code, clamp_return_data, exec_error_to_code,
         inspect_lightweight_tx_guard, inspect_payload_limit_for_method, inspect_policy_for_method,
         map_execute_chain_result, map_submit_chain_error, migration_pending,
-        prune_boundary_for_number, receipt_lookup_status, reject_anonymous_principal,
-        reject_write_reason, should_run_cycle_observer_migration_tick,
+        parse_submit_ic_tx_args, prune_boundary_for_number, receipt_lookup_status,
+        reject_anonymous_principal, reject_write_reason, should_run_cycle_observer_migration_tick,
         should_schedule_mining_after_cycle_observer, tx_id_from_bytes, validate_prune_policy_input,
-        EthLogFilterView, ExecuteTxError, GetLogsErrorView, PrunePolicyView,
+        EthLogFilterView, ExecuteTxError, GetLogsErrorView, PrunePolicyView, SubmitIcTxArgsDto,
         INSPECT_METHOD_POLICIES, MINING_ERROR_COUNT, PRUNE_ERROR_COUNT,
     };
-    use candid::{encode_one, Principal};
-    use evm_core::chain::{ChainError, ExecResult};
+    use candid::{encode_one, Nat, Principal};
+    use evm_core::chain::{ChainError, ExecResult, TxIn};
     use evm_core::revm_exec::{ExecError, OpHaltReason, OpTransactionError};
+    use evm_core::tx_decode::IcSyntheticTxInput;
     use evm_db::chain_data::constants::MAX_RETURN_DATA;
     use evm_db::chain_data::{MigrationPhase, OpsMode, TxId, TxLoc};
     use evm_db::memory::WASM_PAGE_SIZE_BYTES;
@@ -1836,6 +1891,31 @@ mod tests {
     use evm_db::types::keys::{make_account_key, make_storage_key};
     use evm_db::types::values::{AccountVal, U256Val};
     use std::collections::BTreeSet;
+    use std::str::FromStr;
+
+    #[test]
+    fn parse_submit_ic_tx_args_rejects_value_out_of_range() {
+        let too_large = Nat::from_str(
+            "115792089237316195423570985008687907853269984665640564039457584007913129639936",
+        )
+        .expect("nat parse");
+        let err = parse_submit_ic_tx_args(SubmitIcTxArgsDto {
+            to: Some(vec![0x11; 20]),
+            value: too_large,
+            gas_limit: 50_000,
+            nonce: 0,
+            max_fee_per_gas: Nat::from(2_000_000_000u64),
+            max_priority_fee_per_gas: Nat::from(1_000_000_000u64),
+            data: Vec::new(),
+        })
+        .expect_err("value out of range");
+        match err {
+            super::SubmitTxError::InvalidArgument(code) => {
+                assert_eq!(code, "arg.value_out_of_range")
+            }
+            _ => panic!("unexpected error"),
+        }
+    }
 
     #[test]
     fn clamp_return_data_rejects_oversize() {
@@ -2164,25 +2244,20 @@ mod tests {
         });
     }
 
-    fn build_ic_synthetic_tx_bytes_for_test(
+    fn build_ic_synthetic_tx_input_for_test(
         nonce: u64,
         max_fee_per_gas: u128,
         max_priority_fee_per_gas: u128,
-    ) -> Vec<u8> {
-        let mut out = Vec::with_capacity(105);
-        let to = [0x11u8; 20];
-        let value = [0u8; 32];
-        let gas_limit = 21_000u64;
-        let data_len = 0u32;
-        out.push(0x02);
-        out.extend_from_slice(&to);
-        out.extend_from_slice(&value);
-        out.extend_from_slice(&gas_limit.to_be_bytes());
-        out.extend_from_slice(&nonce.to_be_bytes());
-        out.extend_from_slice(&max_fee_per_gas.to_be_bytes());
-        out.extend_from_slice(&max_priority_fee_per_gas.to_be_bytes());
-        out.extend_from_slice(&data_len.to_be_bytes());
-        out
+    ) -> IcSyntheticTxInput {
+        IcSyntheticTxInput {
+            to: Some([0x11u8; 20]),
+            value: [0u8; 32],
+            gas_limit: 21_000,
+            nonce,
+            max_fee_per_gas,
+            max_priority_fee_per_gas,
+            data: Vec::new(),
+        }
     }
 
     fn no_timer_for_test(_interval_ms: u64) {}
@@ -2221,11 +2296,11 @@ mod tests {
                 let required_max_fee = base_fee.saturating_add(min_priority).max(min_gas_price);
                 (required_max_fee, min_priority)
             });
-        let tx_id = evm_core::chain::submit_ic_tx(
-            caller.as_slice().to_vec(),
-            canister.as_slice().to_vec(),
-            build_ic_synthetic_tx_bytes_for_test(0, max_fee_per_gas, max_priority_fee_per_gas),
-        )
+        let tx_id = evm_core::chain::submit_tx_in(TxIn::IcSynthetic {
+            caller_principal: caller.as_slice().to_vec(),
+            canister_id: canister.as_slice().to_vec(),
+            tx: build_ic_synthetic_tx_input_for_test(0, max_fee_per_gas, max_priority_fee_per_gas),
+        })
         .expect("submit_ic_tx should succeed");
         evm_db::stable_state::with_state(|state| {
             assert!(state.seen_tx.get(&tx_id).is_some());
@@ -2262,11 +2337,11 @@ mod tests {
                 let required_max_fee = base_fee.saturating_add(min_priority).max(min_gas_price);
                 (required_max_fee, min_priority)
             });
-        let tx_id = evm_core::chain::submit_ic_tx(
-            caller.as_slice().to_vec(),
-            canister.as_slice().to_vec(),
-            build_ic_synthetic_tx_bytes_for_test(0, max_fee_per_gas, max_priority_fee_per_gas),
-        )
+        let tx_id = evm_core::chain::submit_tx_in(TxIn::IcSynthetic {
+            caller_principal: caller.as_slice().to_vec(),
+            canister_id: canister.as_slice().to_vec(),
+            tx: build_ic_synthetic_tx_input_for_test(0, max_fee_per_gas, max_priority_fee_per_gas),
+        })
         .expect("submit_ic_tx should succeed");
 
         // 直前に最低ガス価格を引き上げ、queue内txを「実行不能」にする。

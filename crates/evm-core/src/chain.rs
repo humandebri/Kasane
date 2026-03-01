@@ -9,7 +9,7 @@ use crate::revm_exec::{
 };
 use crate::state_root::TouchedSummary;
 use crate::trie_commit;
-use crate::tx_decode::{decode_ic_synthetic_header_trusted_size, decode_tx};
+use crate::tx_decode::{decode_tx, encode_ic_synthetic_input, IcSyntheticTxInput};
 use crate::tx_submit;
 use evm_db::chain_data::constants::{
     DROPPED_RING_CAPACITY, DROP_CODE_BLOCK_GAS_EXCEEDED, DROP_CODE_CALLER_MISSING,
@@ -223,7 +223,7 @@ pub enum TxIn {
     IcSynthetic {
         caller_principal: Vec<u8>,
         canister_id: Vec<u8>,
-        tx_bytes: Vec<u8>,
+        tx: IcSyntheticTxInput,
     },
 }
 
@@ -236,8 +236,8 @@ pub fn submit_tx_in(tx_in: TxIn) -> Result<TxId, ChainError> {
         TxIn::IcSynthetic {
             caller_principal,
             canister_id,
-            tx_bytes,
-        } => submit_ic_tx(caller_principal, canister_id, tx_bytes),
+            tx,
+        } => submit_ic_tx_input(caller_principal, canister_id, tx),
     }
 }
 
@@ -791,15 +791,16 @@ pub fn submit_tx(
     })
 }
 
-pub fn submit_ic_tx(
+pub fn submit_ic_tx_input(
     caller_principal: Vec<u8>,
     canister_id: Vec<u8>,
-    tx_bytes: Vec<u8>,
+    tx: IcSyntheticTxInput,
 ) -> Result<TxId, ChainError> {
     if is_principal_decode_suppressed(caller_principal.as_slice(), crate::time::now_sec()) {
         return Err(ChainError::DecodeRateLimited);
     }
     with_state_mut(|state| {
+        let tx_bytes = encode_ic_synthetic_input(&tx);
         if tx_bytes.len() > MAX_TX_SIZE {
             return Err(ChainError::TxTooLarge);
         }
@@ -815,11 +816,9 @@ pub fn submit_ic_tx(
         if state.seen_tx.get(&tx_id).is_some() {
             return Err(ChainError::TxAlreadySeen);
         }
-        let header = decode_ic_synthetic_header_trusted_size(&tx_bytes)
-            .map_err(|_| ChainError::DecodeFailed)?;
-        let nonce = header.nonce;
-        let max_fee_per_gas = header.max_fee;
-        let max_priority_fee_per_gas = header.max_priority;
+        let nonce = tx.nonce;
+        let max_fee_per_gas = tx.max_fee_per_gas;
+        let max_priority_fee_per_gas = tx.max_priority_fee_per_gas;
         let is_dynamic_fee = true;
         let envelope = StoredTxBytes::new_with_fees(
             tx_id,

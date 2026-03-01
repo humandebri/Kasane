@@ -251,11 +251,21 @@ min fee 条件だけ入れる（submitで弾く）
 
 ## IC Synthetic 仕様まとめ（Phase1.3）
 
-### 1) IcSynthetic payload 形式（v2固定）
+### 1) `submit_ic_tx` 入力と IcSynthetic canonical bytes（現行）
 
 ```
-[version:1=0x02]
-[to:20]
+submit_ic_tx args (Candid record):
+- to: opt vec nat8（Some時は20 bytes、Noneはcontract create）
+- value: nat（uint256）
+- gas_limit: nat64
+- nonce: nat64
+- max_fee_per_gas: nat（u128上限）
+- max_priority_fee_per_gas: nat（u128上限）
+- data: vec nat8
+
+IcSynthetic canonical bytes（stable保存用）:
+[to_flag:1]
+[to?:20]
 [value:32]
 [gas_limit:8]
 [nonce:8]
@@ -267,6 +277,7 @@ min fee 条件だけ入れる（submitで弾く）
 
 * 数値は **big-endian**。
 * `data_len` は `u32(be)`、`data_len <= MAX_TX_SIZE`。
+* `to_flag` は `0=None(create)` / `1=Some(call)`。
 
 ### 2) 保存構造（stable）
 

@@ -23,16 +23,30 @@ pub enum DecodeError {
     TrailingBytes,
 }
 
-// IcSynthetic v2: [version:1][to:20][value:32][gas_limit:8][nonce:8]
-//                [max_fee_per_gas:16][max_priority_fee_per_gas:16][data_len:4][data]
-const IC_TX_VERSION: u8 = 2;
-const IC_TX_HEADER_LEN: usize = 1 + 20 + 32 + 8 + 8 + 16 + 16 + 4;
+// IcSynthetic canonical bytes:
+// [to_flag:1][to?:20][value:32][gas_limit:8][nonce:8]
+// [max_fee_per_gas:16][max_priority_fee_per_gas:16][data_len:4][data]
+const IC_TX_TO_FLAG_NONE: u8 = 0;
+const IC_TX_TO_FLAG_SOME: u8 = 1;
+const IC_TX_BASE_HEADER_LEN: usize = 1 + 32 + 8 + 8 + 16 + 16 + 4;
+const IC_TX_TO_LEN: usize = 20;
 const TX_TYPE_EIP4844: u8 = 0x03;
 const TX_TYPE_EIP7702: u8 = 0x04;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct IcSyntheticTxInput {
+    pub to: Option<[u8; 20]>,
+    pub value: [u8; 32],
+    pub gas_limit: u64,
+    pub nonce: u64,
+    pub max_fee_per_gas: u128,
+    pub max_priority_fee_per_gas: u128,
+    pub data: Vec<u8>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct IcTxHeader<'a> {
-    pub to: [u8; 20],
+    pub to: Option<[u8; 20]>,
     pub value: [u8; 32],
     pub gas_limit: u64,
     pub nonce: u64,
@@ -42,29 +56,34 @@ pub struct IcTxHeader<'a> {
 }
 
 pub fn decode_ic_synthetic_header(bytes: &[u8]) -> Result<IcTxHeader<'_>, DecodeError> {
-    decode_ic_synthetic_header_impl(bytes, true)
+    decode_ic_synthetic_header_impl::<true>(bytes)
 }
 
-pub(crate) fn decode_ic_synthetic_header_trusted_size(
+fn decode_ic_synthetic_header_impl<const ENFORCE_DATA_SIZE_LIMIT: bool>(
     bytes: &[u8],
 ) -> Result<IcTxHeader<'_>, DecodeError> {
-    decode_ic_synthetic_header_impl(bytes, false)
-}
-
-fn decode_ic_synthetic_header_impl(
-    bytes: &[u8],
-    enforce_data_size_limit: bool,
-) -> Result<IcTxHeader<'_>, DecodeError> {
-    if bytes.len() < IC_TX_HEADER_LEN {
+    if bytes.len() < IC_TX_BASE_HEADER_LEN {
         return Err(DecodeError::InvalidLength);
     }
-    if bytes[0] != IC_TX_VERSION {
-        return Err(DecodeError::InvalidVersion);
+    let to_len = match bytes.first().copied() {
+        Some(IC_TX_TO_FLAG_NONE) => 0usize,
+        Some(IC_TX_TO_FLAG_SOME) => IC_TX_TO_LEN,
+        Some(_) => return Err(DecodeError::InvalidVersion),
+        None => unreachable!("base header length check guarantees first byte"),
+    };
+    let fixed_len = IC_TX_BASE_HEADER_LEN + to_len;
+    if bytes.len() < fixed_len {
+        return Err(DecodeError::InvalidLength);
     }
-    let mut offset = 1;
-    let mut to = [0u8; 20];
-    to.copy_from_slice(&bytes[offset..offset + 20]);
-    offset += 20;
+    let mut offset = 1usize;
+    let to = if to_len == 0 {
+        None
+    } else {
+        let mut to = [0u8; IC_TX_TO_LEN];
+        to.copy_from_slice(&bytes[offset..offset + IC_TX_TO_LEN]);
+        offset += IC_TX_TO_LEN;
+        Some(to)
+    };
     let mut value = [0u8; 32];
     value.copy_from_slice(&bytes[offset..offset + 32]);
     offset += 32;
@@ -76,16 +95,12 @@ fn decode_ic_synthetic_header_impl(
     offset += 16;
     let max_priority = BigEndian::read_u128(&bytes[offset..offset + 16]);
     offset += 16;
-    let data_len = usize::try_from(BigEndian::read_u32(&bytes[offset..offset + 4]))
-        .map_err(|_| DecodeError::InvalidLength)?;
+    let data_len = BigEndian::read_u32(&bytes[offset..offset + 4]) as usize;
     offset += 4;
-    let expected = IC_TX_HEADER_LEN
-        .checked_add(data_len)
-        .ok_or(DecodeError::InvalidLength)?;
-    if expected != bytes.len() {
+    if bytes.len() - offset != data_len {
         return Err(DecodeError::InvalidLength);
     }
-    if enforce_data_size_limit && data_len > MAX_TX_SIZE {
+    if ENFORCE_DATA_SIZE_LIMIT && data_len > MAX_TX_SIZE {
         return Err(DecodeError::DataTooLarge);
     }
     Ok(IcTxHeader {
@@ -99,13 +114,39 @@ fn decode_ic_synthetic_header_impl(
     })
 }
 
+pub fn encode_ic_synthetic_input(input: &IcSyntheticTxInput) -> Vec<u8> {
+    let mut out = Vec::with_capacity(
+        IC_TX_BASE_HEADER_LEN + input.data.len() + if input.to.is_some() { IC_TX_TO_LEN } else { 0 },
+    );
+    match input.to {
+        Some(to) => {
+            out.push(IC_TX_TO_FLAG_SOME);
+            out.extend_from_slice(&to);
+        }
+        None => {
+            out.push(IC_TX_TO_FLAG_NONE);
+        }
+    }
+    out.extend_from_slice(&input.value);
+    out.extend_from_slice(&input.gas_limit.to_be_bytes());
+    out.extend_from_slice(&input.nonce.to_be_bytes());
+    out.extend_from_slice(&input.max_fee_per_gas.to_be_bytes());
+    out.extend_from_slice(&input.max_priority_fee_per_gas.to_be_bytes());
+    out.extend_from_slice(&u32::try_from(input.data.len()).unwrap_or(u32::MAX).to_be_bytes());
+    out.extend_from_slice(&input.data);
+    out
+}
+
 pub fn decode_ic_synthetic(caller: RevmAddress, bytes: &[u8]) -> Result<TxEnv, DecodeError> {
     let header = decode_ic_synthetic_header(bytes)?;
     let tx = TxEnv {
         caller,
         gas_limit: header.gas_limit,
         gas_price: header.max_fee,
-        kind: RevmTxKind::Call(RevmAddress::from(header.to)),
+        kind: match header.to {
+            Some(to) => RevmTxKind::Call(RevmAddress::from(to)),
+            None => RevmTxKind::Create,
+        },
         value: RevmU256::from_be_bytes(header.value),
         data: RevmBytes::from(header.data.to_vec()),
         nonce: header.nonce,
@@ -151,7 +192,7 @@ pub fn decode_tx_view<'a>(
             let header = decode_ic_synthetic_header(bytes)?;
             Ok(DecodedTxView {
                 from: caller,
-                to: Some(header.to),
+                to: header.to,
                 nonce: header.nonce,
                 value: header.value,
                 input: Cow::Borrowed(header.data),

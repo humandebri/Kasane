@@ -60,7 +60,8 @@ scripts/query_smoke.sh
 - `scripts/ops/apply_prune_policy.sh`: policy適用 + pruning有効化 + status確認
 - `scripts/ops/tune_prune_max_ops.sh`: need_prune/error counters に基づく段階調整
 - `scripts/ops/test_prune_ops_scripts.sh`: 上記2スクリプトのモック検証
-- `scripts/ops/contabo_deploy_tools.sh`: Contabo上のgit作業ツリーから `tools/indexer` / `tools/explorer` を同期して build+restart
+- `scripts/ops/contabo_deploy_tools.sh`: Contabo上のgit作業ツリーから `tools/indexer` / `tools/explorer` を同期して build+restart（git ref指定運用）
+- `scripts/ops/contabo_deploy_gateway.sh`: Contabo上のgit作業ツリーから `tools/rpc-gateway` を同期して build+restart（git ref指定運用）
 
 ## 主要環境変数（よく使うもの）
 - `CANISTER_NAME` / `CANISTER_ID`

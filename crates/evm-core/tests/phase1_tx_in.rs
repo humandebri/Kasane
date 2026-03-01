@@ -1,8 +1,8 @@
 //! どこで: Phase1テスト / 何を: TxIn入口の最小検証 / なぜ: submit経路の統一で退行を防ぐため
 
 use evm_core::chain::{self, ChainError, TxIn};
-use evm_core::hash;
-use evm_db::chain_data::{TxId, TxKind, TxLocKind};
+use evm_core::tx_decode::IcSyntheticTxInput;
+use evm_db::chain_data::{TxKind, TxLocKind};
 use evm_db::stable_state::{init_stable_state, with_state_mut};
 
 mod common;
@@ -34,11 +34,10 @@ fn submit_tx_in_ic_synthetic_enqueues_tx() {
     relax_fee_floor_for_tests();
     let caller_principal = vec![0x42];
     let canister_id = vec![0x99];
-    let tx_bytes = common::build_ic_tx_bytes([0x11u8; 20], 0, 2_000_000_000, 1_000_000_000);
     let tx_id = chain::submit_tx_in(TxIn::IcSynthetic {
         caller_principal: caller_principal.clone(),
         canister_id: canister_id.clone(),
-        tx_bytes,
+        tx: common::build_ic_tx_input([0x11u8; 20], 0, 2_000_000_000, 1_000_000_000),
     })
     .expect("submit ic tx");
 
@@ -56,40 +55,40 @@ fn submit_ic_tx_duplicate_returns_tx_already_seen() {
     relax_fee_floor_for_tests();
     let caller_principal = vec![0x42];
     let canister_id = vec![0x99];
-    let tx_bytes = common::build_ic_tx_bytes([0x11u8; 20], 0, 2_000_000_000, 1_000_000_000);
+    let tx = common::build_ic_tx_input([0x11u8; 20], 0, 2_000_000_000, 1_000_000_000);
 
-    let _ = chain::submit_ic_tx(
-        caller_principal.clone(),
-        canister_id.clone(),
-        tx_bytes.clone(),
-    )
+    let _ = chain::submit_tx_in(TxIn::IcSynthetic {
+        caller_principal: caller_principal.clone(),
+        canister_id: canister_id.clone(),
+        tx: tx.clone(),
+    })
     .expect("first submit");
-    let err = chain::submit_ic_tx(caller_principal, canister_id, tx_bytes).expect_err("duplicate");
+    let err = chain::submit_tx_in(TxIn::IcSynthetic {
+        caller_principal,
+        canister_id,
+        tx,
+    })
+    .expect_err("duplicate");
     assert_eq!(err, ChainError::TxAlreadySeen);
 }
 
 #[test]
-fn submit_ic_tx_seen_duplicate_precedes_decode_failure() {
+fn submit_tx_in_ic_synthetic_rejects_oversized_payload() {
     init_stable_state();
     relax_fee_floor_for_tests();
-    let caller_principal = vec![0x51];
-    let canister_id = vec![0x71];
-    let mut malformed = common::build_ic_tx_bytes([0x11u8; 20], 0, 2_000_000_000, 1_000_000_000);
-    malformed[0] = 1;
-
-    let caller_evm =
-        hash::derive_evm_address_from_principal(&caller_principal).expect("must derive");
-    let tx_id = TxId(hash::stored_tx_id(
-        TxKind::IcSynthetic,
-        &malformed,
-        Some(caller_evm),
-        Some(&canister_id),
-        Some(&caller_principal),
-    ));
-    with_state_mut(|state| {
-        state.seen_tx.insert(tx_id, 1);
-    });
-
-    let err = chain::submit_ic_tx(caller_principal, canister_id, malformed).expect_err("submit");
-    assert_eq!(err, ChainError::TxAlreadySeen);
+    let err = chain::submit_tx_in(TxIn::IcSynthetic {
+        caller_principal: vec![0x51],
+        canister_id: vec![0x71],
+        tx: IcSyntheticTxInput {
+            to: Some([0x11u8; 20]),
+            value: [0u8; 32],
+            gas_limit: 21_000,
+            nonce: 0,
+            max_fee_per_gas: 2_000_000_000,
+            max_priority_fee_per_gas: 1_000_000_000,
+            data: vec![0u8; evm_db::chain_data::constants::MAX_TX_SIZE.saturating_add(1)],
+        },
+    })
+    .expect_err("oversized payload must fail");
+    assert_eq!(err, ChainError::TxTooLarge);
 }

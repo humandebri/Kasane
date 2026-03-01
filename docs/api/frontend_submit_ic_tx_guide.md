@@ -16,7 +16,7 @@
 
 ## 2. フロントで使うAPI
 
-- `submit_ic_tx(blob) -> Result<blob, SubmitTxError>`
+- `submit_ic_tx(record) -> Result<blob, SubmitTxError>`
 - `get_pending(blob tx_id) -> PendingStatusView`（query）
 - `get_receipt(blob tx_id) -> Result<ReceiptView, LookupError>`（query）
 
@@ -48,13 +48,17 @@ export async function createEvmActor() {
 }
 ```
 
-## 4. `submit_ic_tx` の入力バイトを作る
+## 4. `submit_ic_tx` の入力recordを作る
 
-`submit_ic_tx` の payload は固定レイアウトです。
+`submit_ic_tx` の payload は Candid record です。
 
-- `[version:1][to:20][value:32][gas_limit:8][nonce:8][max_fee_per_gas:16][max_priority_fee_per_gas:16][data_len:4][data]`
-- Big Endian
-- `version = 2`
+- `to: [] | [Uint8Array]`
+- `value: bigint`
+- `gas_limit: bigint`
+- `nonce: bigint`
+- `max_fee_per_gas: bigint`
+- `max_priority_fee_per_gas: bigint`
+- `data: Uint8Array`
 
 ```ts
 function hexToBytes(hex: string): Uint8Array {
@@ -82,46 +86,15 @@ function beBytes(value: bigint, length: number): Uint8Array {
   return out;
 }
 
-export type IcSyntheticTxInput = {
-  toHex20: string;
+export type SubmitIcTxArgs = {
+  to: [] | [Uint8Array];
   value: bigint;
-  gasLimit: bigint;
+  gas_limit: bigint;
   nonce: bigint;
-  maxFeePerGas: bigint;
-  maxPriorityFeePerGas: bigint;
+  max_fee_per_gas: bigint;
+  max_priority_fee_per_gas: bigint;
   data: Uint8Array;
 };
-
-export function encodeSubmitIcTx(input: IcSyntheticTxInput): Uint8Array {
-  const to = hexToBytes(input.toHex20);
-  if (to.length !== 20) {
-    throw new Error('to must be 20 bytes');
-  }
-
-  const dataLen = beBytes(BigInt(input.data.length), 4);
-  const out = new Uint8Array(1 + 20 + 32 + 8 + 8 + 16 + 16 + 4 + input.data.length);
-
-  let o = 0;
-  out[o] = 2; // version
-  o += 1;
-  out.set(to, o);
-  o += 20;
-  out.set(beBytes(input.value, 32), o);
-  o += 32;
-  out.set(beBytes(input.gasLimit, 8), o);
-  o += 8;
-  out.set(beBytes(input.nonce, 8), o);
-  o += 8;
-  out.set(beBytes(input.maxFeePerGas, 16), o);
-  o += 16;
-  out.set(beBytes(input.maxPriorityFeePerGas, 16), o);
-  o += 16;
-  out.set(dataLen, o);
-  o += 4;
-  out.set(input.data, o);
-
-  return out;
-}
 ```
 
 ## 5. 送信前チェック（nonce / gas / fee）
@@ -244,7 +217,7 @@ export async function preflightIcSynthetic(actor: {
 ```ts
 // principal は `const principal = (await authClient.getIdentity()).getPrincipal();` で取得する。
 export async function submitAndTrack(actor: {
-  submit_ic_tx: (arg: Uint8Array) => Promise<{ Ok?: Uint8Array; Err?: unknown }>;
+  submit_ic_tx: (arg: SubmitIcTxArgs) => Promise<{ Ok?: Uint8Array; Err?: unknown }>;
   expected_nonce_by_address: (addr: Uint8Array) => Promise<{ Ok?: bigint; Err?: string }>;
   rpc_eth_estimate_gas_object: (call: {
     to: [] | [Uint8Array];
@@ -274,15 +247,15 @@ export async function submitAndTrack(actor: {
     feeHintPriority: 1_000_000_000n,
   });
 
-  const payload = encodeSubmitIcTx({
-    toHex20: '0x0000000000000000000000000000000000000001',
+  const payload: SubmitIcTxArgs = {
+    to: [hexToBytes('0x0000000000000000000000000000000000000001')],
     value: 0n,
-    gasLimit: preflight.gasLimit,
+    gas_limit: preflight.gasLimit,
     nonce: preflight.nonce,
-    maxFeePerGas: preflight.maxFeePerGas,
-    maxPriorityFeePerGas: preflight.maxPriorityFeePerGas,
+    max_fee_per_gas: preflight.maxFeePerGas,
+    max_priority_fee_per_gas: preflight.maxPriorityFeePerGas,
     data: new Uint8Array(),
-  });
+  };
 
   const submit = await actor.submit_ic_tx(payload);
   if (!submit.Ok) {

@@ -195,26 +195,20 @@ print(str(int(m.group(1).replace("_", ""))) if m else "0")
 PY
 )
 for nonce_val in "$IC_NONCE"; do
-  IC_BYTES=$(python - <<PY
-version = b'\x02'
+  IC_ARGS=$(python - <<PY
 to = bytes.fromhex('0000000000000000000000000000000000000001')
-value = (0).to_bytes(32, 'big')
-gas = (500000).to_bytes(8, 'big')
-nonce = (${nonce_val}).to_bytes(8, 'big')
-max_fee = (2_000_000_000).to_bytes(16, 'big')
-max_priority = (1_000_000_000).to_bytes(16, 'big')
+to_csv = '; '.join(str(b) for b in to)
 data = b''
 try:
     import time
     data = int(time.time()).to_bytes(8, 'big')
 except Exception:
     data = b'\x01'
-data_len = len(data).to_bytes(4, 'big')
-tx = version + to + value + gas + nonce + max_fee + max_priority + data_len + data
-print('; '.join(str(b) for b in tx))
+data_csv = '; '.join(str(b) for b in data)
+print(f"(record {{ to = opt vec {{ {to_csv} }}; value = 0 : nat; gas_limit = 500000 : nat64; nonce = {int('${nonce_val}')} : nat64; max_fee_per_gas = 2000000000 : nat; max_priority_fee_per_gas = 1000000000 : nat; data = vec {{ {data_csv} }}; }})")
 PY
 )
-  EXEC_OUT=$(icp canister call -n "${NETWORK}" "$CANISTER_ID" submit_ic_tx "(vec { $IC_BYTES })")
+  EXEC_OUT=$(icp canister call -n "${NETWORK}" "$CANISTER_ID" submit_ic_tx "${IC_ARGS}")
   if EXEC_OUT="$EXEC_OUT" is_ok_variant; then
     SELECTED_NONCE="$nonce_val"
     break

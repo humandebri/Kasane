@@ -46,7 +46,7 @@ stable state versioning（upgrade耐性）
 
 同期即時実行レーンは廃止し、書き込みは submit_* + auto-mine に統一する。
 
-update submit_ic_tx(...) -> tx_id
+update submit_ic_tx(record) -> tx_id
 update rpc_eth_send_raw_transaction(raw_tx) -> tx_id
 （旧案・廃止）update 手動採掘API(max_txs) -> ProduceBlockStatus
 

@@ -47,17 +47,17 @@ fn snapshot_tx_outcome_matrix_and_block_fields() {
     let (_, success) = common::execute_ic_tx_via_produce(
         caller_principal.clone(),
         vec![0xaa],
-        common::build_ic_tx_bytes(success_target, 0, 2_000_000_000, 1_000_000_000),
+        common::build_ic_tx_input(success_target, 0, 2_000_000_000, 1_000_000_000),
     );
     let (_, revert) = common::execute_ic_tx_via_produce(
         caller_principal.clone(),
         vec![0xbb],
-        common::build_ic_tx_bytes(revert_target, 1, 2_000_000_000, 1_000_000_000),
+        common::build_ic_tx_input(revert_target, 1, 2_000_000_000, 1_000_000_000),
     );
     let (_, halt) = common::execute_ic_tx_via_produce(
         caller_principal,
         vec![0xcc],
-        common::build_ic_tx_bytes(halt_target, 2, 2_000_000_000, 1_000_000_000),
+        common::build_ic_tx_input(halt_target, 2, 2_000_000_000, 1_000_000_000),
     );
 
     let matrix = format!(
@@ -84,7 +84,7 @@ fn snapshot_tx_outcome_matrix_and_block_fields() {
     // - fee floor をテスト内で固定したことで block_hash/state_root が再計算された
     assert_eq!(
         block_outcome,
-        "number=3 block_hash=61c36c02b3480cfaf64c7abdbe6fb5fbc6f09ba6e398fa058bcf6b5ca156806f tx_list_hash=60e50781adb0b02f798fb14df878b982f864e81f3d2220e86e924a131e213ee0 state_root=ac1e8efa771a16af0af321e5850198ad043a0d8e4b13f0fcf9d8bb48e3182338"
+        "number=3 block_hash=dfddec10a5060930f4104d2cc359525d3048b44ce889d6affed5b7e62ab016bb tx_list_hash=349ef37b0407a760b6f296ffa67c8b32f140114094735d13e55832efb48d9bca state_root=ac1e8efa771a16af0af321e5850198ad043a0d8e4b13f0fcf9d8bb48e3182338"
     );
 }
 
