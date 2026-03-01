@@ -8,7 +8,7 @@ use alloy_signer::SignerSync;
 use alloy_signer_local::PrivateKeySigner;
 use alloy_consensus::{SignableTransaction, TxEip1559};
 use evm_core::base_fee::compute_next_base_fee;
-use evm_core::chain::{self, ChainError};
+use evm_core::chain::{self, ChainError, TxIn};
 use evm_core::hash;
 use evm_db::chain_data::constants::CHAIN_ID;
 use evm_db::chain_data::TxKind;
@@ -35,9 +35,13 @@ fn min_priority_fee_rejects_low_tip() {
         state.chain_state.set(chain_state);
     });
 
-    let tx_bytes = common::build_zero_to_ic_tx_bytes(0, 3_000_000_000, 1_000_000_000);
-    let err =
-        chain::submit_ic_tx(vec![0x11], vec![0x01], tx_bytes).expect_err("submit should fail");
+    let tx = common::build_zero_to_ic_tx_input(0, 3_000_000_000, 1_000_000_000);
+    let err = chain::submit_tx_in(TxIn::IcSynthetic {
+        caller_principal: vec![0x11],
+        canister_id: vec![0x01],
+        tx,
+    })
+    .expect_err("submit should fail");
     assert_eq!(err, ChainError::InvalidFee);
 }
 
@@ -51,8 +55,13 @@ fn base_fee_rekey_drops_unaffordable_tx() {
         state.chain_state.set(chain_state);
     });
 
-    let tx_bytes = common::build_zero_to_ic_tx_bytes(0, 2_000_000_000, 1_000_000_000);
-    let tx_id = chain::submit_ic_tx(vec![0x22], vec![0x02], tx_bytes).expect("submit");
+    let tx = common::build_zero_to_ic_tx_input(0, 2_000_000_000, 1_000_000_000);
+    let tx_id = chain::submit_tx_in(TxIn::IcSynthetic {
+        caller_principal: vec![0x22],
+        canister_id: vec![0x02],
+        tx,
+    })
+    .expect("submit");
 
     with_state_mut(|state| {
         let mut chain_state = *state.chain_state.get();
@@ -81,13 +90,23 @@ fn base_fee_rekey_reorders_by_effective_fee() {
         state.chain_state.set(chain_state);
     });
 
-    let tx_a = common::build_zero_to_ic_tx_bytes(0, 6_000_000_000, 3_000_000_000);
-    let tx_b = common::build_zero_to_ic_tx_bytes(0, 10_000_000_000, 2_000_000_000);
+    let tx_a = common::build_zero_to_ic_tx_input(0, 6_000_000_000, 3_000_000_000);
+    let tx_b = common::build_zero_to_ic_tx_input(0, 10_000_000_000, 2_000_000_000);
 
     fund_principal(&[0x33]);
     fund_principal(&[0x44]);
-    let a_id = chain::submit_ic_tx(vec![0x33], vec![0x03], tx_a).expect("submit a");
-    let b_id = chain::submit_ic_tx(vec![0x44], vec![0x04], tx_b).expect("submit b");
+    let a_id = chain::submit_tx_in(TxIn::IcSynthetic {
+        caller_principal: vec![0x33],
+        canister_id: vec![0x03],
+        tx: tx_a,
+    })
+    .expect("submit a");
+    let b_id = chain::submit_tx_in(TxIn::IcSynthetic {
+        caller_principal: vec![0x44],
+        canister_id: vec![0x04],
+        tx: tx_b,
+    })
+    .expect("submit b");
 
     with_state_mut(|state| {
         let mut chain_state = *state.chain_state.get();
@@ -112,13 +131,23 @@ fn equal_fee_uses_seq_order() {
         state.chain_state.set(chain_state);
     });
 
-    let tx_a = common::build_zero_to_ic_tx_bytes(0, 2_000_000_000, 1_000_000_000);
-    let tx_b = common::build_zero_to_ic_tx_bytes(0, 2_000_000_000, 1_000_000_000);
+    let tx_a = common::build_zero_to_ic_tx_input(0, 2_000_000_000, 1_000_000_000);
+    let tx_b = common::build_zero_to_ic_tx_input(0, 2_000_000_000, 1_000_000_000);
 
     fund_principal(&[0x55]);
     fund_principal(&[0x66]);
-    let a_id = chain::submit_ic_tx(vec![0x55], vec![0x05], tx_a).expect("submit a");
-    let b_id = chain::submit_ic_tx(vec![0x66], vec![0x06], tx_b).expect("submit b");
+    let a_id = chain::submit_tx_in(TxIn::IcSynthetic {
+        caller_principal: vec![0x55],
+        canister_id: vec![0x05],
+        tx: tx_a,
+    })
+    .expect("submit a");
+    let b_id = chain::submit_tx_in(TxIn::IcSynthetic {
+        caller_principal: vec![0x66],
+        canister_id: vec![0x06],
+        tx: tx_b,
+    })
+    .expect("submit b");
 
     let outcome = chain::produce_block(2).expect("produce");
     let block = outcome.block;
@@ -183,9 +212,14 @@ fn produce_block_base_fee_uses_configured_block_gas_limit() {
         state.chain_state.set(chain_state);
     });
 
-    let tx = common::build_zero_to_ic_tx_bytes(0, 2_000_000_000, 1_000_000_000);
+    let tx = common::build_zero_to_ic_tx_input(0, 2_000_000_000, 1_000_000_000);
     fund_principal(&[0x77]);
-    let _ = chain::submit_ic_tx(vec![0x77], vec![0x07], tx).expect("submit");
+    let _ = chain::submit_tx_in(TxIn::IcSynthetic {
+        caller_principal: vec![0x77],
+        canister_id: vec![0x07],
+        tx,
+    })
+    .expect("submit");
     let outcome = chain::produce_block(1).expect("produce");
     let next_base_fee = with_state(|state| state.chain_state.get().base_fee);
     let expected = compute_next_base_fee(1_000_000_000, outcome.gas_used, 8_000_000);
@@ -212,9 +246,14 @@ fn zero_tip_transaction_still_credits_base_fee_to_fee_recipient() {
             .unwrap_or(U256::ZERO)
     });
 
-    let tx = common::build_zero_to_ic_tx_bytes(0, u128::from(base_fee), 0);
+    let tx = common::build_zero_to_ic_tx_input(0, u128::from(base_fee), 0);
     fund_principal(&[0x88]);
-    let tx_id = chain::submit_ic_tx(vec![0x88], vec![0x08], tx).expect("submit");
+    let tx_id = chain::submit_tx_in(TxIn::IcSynthetic {
+        caller_principal: vec![0x88],
+        canister_id: vec![0x08],
+        tx,
+    })
+    .expect("submit");
     let _ = chain::produce_block(1).expect("produce");
     let receipt = chain::get_receipt(&tx_id).expect("receipt");
 

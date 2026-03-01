@@ -1,6 +1,7 @@
 //! どこで: Phase1テスト / 何を: produce_block の drop_code / なぜ: 失敗理由の可視化を固定するため
 
-use evm_core::chain::{self, ChainError};
+use evm_core::chain::{self, ChainError, TxIn};
+use evm_core::tx_decode::IcSyntheticTxInput;
 use evm_db::chain_data::constants::{
     DROP_CODE_BLOCK_GAS_EXCEEDED, DROP_CODE_CALLER_MISSING, DROP_CODE_DECODE,
     DROP_CODE_EXEC_PRECHECK, DROP_CODE_MISSING,
@@ -125,8 +126,13 @@ fn produce_block_marks_caller_missing() {
 fn produce_block_marks_exec_drop() {
     init_stable_state();
 
-    let tx_bytes = build_ic_tx_bytes_with_fee(TEST_MAX_FEE_PER_GAS, TEST_MAX_PRIORITY_FEE_PER_GAS);
-    let tx_id = chain::submit_ic_tx(vec![0x11], vec![0x22], tx_bytes).expect("submit");
+    let tx = build_ic_tx_input_with_fee(TEST_MAX_FEE_PER_GAS, TEST_MAX_PRIORITY_FEE_PER_GAS);
+    let tx_id = chain::submit_tx_in(TxIn::IcSynthetic {
+        caller_principal: vec![0x11],
+        canister_id: vec![0x22],
+        tx,
+    })
+    .expect("submit");
     let err = chain::produce_block(1).expect_err("precheck should drop and not produce");
     assert_eq!(err, ChainError::NoExecutableTx);
 
@@ -139,15 +145,15 @@ fn produce_block_marks_exec_drop() {
 fn produce_block_marks_precheck_drop_without_nonce_bump() {
     init_stable_state();
 
-    let tx_id = chain::submit_ic_tx(
-        vec![0x99],
-        vec![0xaa],
-        build_ic_tx_bytes_with_custom_gas(
+    let tx_id = chain::submit_tx_in(TxIn::IcSynthetic {
+        caller_principal: vec![0x99],
+        canister_id: vec![0xaa],
+        tx: build_ic_tx_input_with_custom_gas(
             50_000,
             TEST_MAX_FEE_PER_GAS,
             TEST_MAX_PRIORITY_FEE_PER_GAS,
         ),
-    )
+    })
     .expect("submit");
 
     let sender = with_state_mut(|state| {
@@ -227,15 +233,15 @@ fn produce_block_marks_block_gas_exceeded_drop() {
         state.chain_state.set(chain_state);
     });
 
-    let tx_id = chain::submit_ic_tx(
-        vec![0x77],
-        vec![0x88],
-        build_ic_tx_bytes_with_custom_gas(
+    let tx_id = chain::submit_tx_in(TxIn::IcSynthetic {
+        caller_principal: vec![0x77],
+        canister_id: vec![0x88],
+        tx: build_ic_tx_input_with_custom_gas(
             50_000,
             TEST_MAX_FEE_PER_GAS,
             TEST_MAX_PRIORITY_FEE_PER_GAS,
         ),
-    )
+    })
     .expect("submit");
 
     let err = chain::produce_block(1).expect_err("should drop oversized tx");
@@ -247,6 +253,10 @@ fn produce_block_marks_block_gas_exceeded_drop() {
 
 fn build_ic_tx_bytes_with_fee(max_fee: u128, max_priority: u128) -> Vec<u8> {
     build_ic_tx_bytes_with_custom_gas(50_000, max_fee, max_priority)
+}
+
+fn build_ic_tx_input_with_fee(max_fee: u128, max_priority: u128) -> IcSyntheticTxInput {
+    build_ic_tx_input_with_custom_gas(50_000, max_fee, max_priority)
 }
 
 fn build_ic_tx_bytes_with_custom_gas(gas_limit: u64, max_fee: u128, max_priority: u128) -> Vec<u8> {
@@ -269,4 +279,20 @@ fn build_ic_tx_bytes_with_custom_gas(gas_limit: u64, max_fee: u128, max_priority
     out.extend_from_slice(&data_len);
     out.extend_from_slice(&data);
     out
+}
+
+fn build_ic_tx_input_with_custom_gas(
+    gas_limit: u64,
+    max_fee: u128,
+    max_priority: u128,
+) -> IcSyntheticTxInput {
+    IcSyntheticTxInput {
+        to: Some([0u8; 20]),
+        value: [0u8; 32],
+        gas_limit,
+        nonce: 0,
+        max_fee_per_gas: max_fee,
+        max_priority_fee_per_gas: max_priority,
+        data: Vec::new(),
+    }
 }

@@ -1,6 +1,6 @@
 //! どこで: Phase1永続化境界テスト / 何を: storage write失敗時のtrapロールバック検証 / なぜ: 部分コミットを防ぐため
 
-use evm_core::chain;
+use evm_core::chain::{self, TxIn};
 use evm_core::hash;
 use evm_db::stable_state::{init_stable_state, with_state, with_state_mut};
 use std::panic::{self, AssertUnwindSafe};
@@ -42,8 +42,12 @@ fn produce_block_traps_and_rolls_back_when_receipt_store_fails_after_tx_index() 
         hash::derive_evm_address_from_principal(&[0x11]).expect("must derive"),
         1_000_000_000_000_000_000,
     );
-    let tx_id = chain::submit_ic_tx(vec![0x11], vec![0x21], common::build_default_ic_tx_bytes(0))
-        .expect("submit");
+    let tx_id = chain::submit_tx_in(TxIn::IcSynthetic {
+        caller_principal: vec![0x11],
+        canister_id: vec![0x21],
+        tx: common::build_default_ic_tx_input(0),
+    })
+    .expect("submit");
     let before = snapshot();
     assert!(with_state(|state| state.tx_locs.get(&tx_id).is_some()));
 
@@ -63,8 +67,12 @@ fn produce_block_traps_and_rolls_back_when_block_store_fails_after_receipt() {
         hash::derive_evm_address_from_principal(&[0x12]).expect("must derive"),
         1_000_000_000_000_000_000,
     );
-    let tx_id = chain::submit_ic_tx(vec![0x12], vec![0x22], common::build_default_ic_tx_bytes(0))
-        .expect("submit");
+    let tx_id = chain::submit_tx_in(TxIn::IcSynthetic {
+        caller_principal: vec![0x12],
+        canister_id: vec![0x22],
+        tx: common::build_default_ic_tx_input(0),
+    })
+    .expect("submit");
     let before = snapshot();
     assert!(with_state(|state| state.tx_locs.get(&tx_id).is_some()));
 
@@ -85,11 +93,11 @@ fn execute_and_seal_traps_and_rolls_back_when_tx_index_store_fails_after_block()
     let caller_evm =
         hash::derive_evm_address_from_principal(&caller_principal).expect("must derive");
     common::fund_account(caller_evm, 1_000_000_000_000_000_000);
-    let tx_id = chain::submit_ic_tx(
-        caller_principal.clone(),
-        canister_id.clone(),
-        common::build_default_ic_tx_bytes(0),
-    )
+    let tx_id = chain::submit_tx_in(TxIn::IcSynthetic {
+        caller_principal: caller_principal.clone(),
+        canister_id: canister_id.clone(),
+        tx: common::build_default_ic_tx_input(0),
+    })
     .expect("submit");
     let before = snapshot();
     assert!(with_state(|state| state.tx_locs.get(&tx_id).is_some()));
@@ -111,11 +119,11 @@ fn execute_and_seal_traps_and_rolls_back_when_receipt_store_fails_after_tx_index
     let caller_evm =
         hash::derive_evm_address_from_principal(&caller_principal).expect("must derive");
     common::fund_account(caller_evm, 1_000_000_000_000_000_000);
-    let tx_id = chain::submit_ic_tx(
-        caller_principal.clone(),
-        canister_id.clone(),
-        common::build_default_ic_tx_bytes(0),
-    )
+    let tx_id = chain::submit_tx_in(TxIn::IcSynthetic {
+        caller_principal: caller_principal.clone(),
+        canister_id: canister_id.clone(),
+        tx: common::build_default_ic_tx_input(0),
+    })
     .expect("submit");
     let before = snapshot();
     assert!(with_state(|state| state.tx_locs.get(&tx_id).is_some()));

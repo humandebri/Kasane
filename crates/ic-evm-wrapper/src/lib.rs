@@ -1877,8 +1877,9 @@ mod tests {
         INSPECT_METHOD_POLICIES, MINING_ERROR_COUNT, PRUNE_ERROR_COUNT,
     };
     use candid::{encode_one, Nat, Principal};
-    use evm_core::chain::{ChainError, ExecResult};
+    use evm_core::chain::{ChainError, ExecResult, TxIn};
     use evm_core::revm_exec::{ExecError, OpHaltReason, OpTransactionError};
+    use evm_core::tx_decode::IcSyntheticTxInput;
     use evm_db::chain_data::constants::MAX_RETURN_DATA;
     use evm_db::chain_data::{MigrationPhase, OpsMode, TxId, TxLoc};
     use evm_db::memory::WASM_PAGE_SIZE_BYTES;
@@ -2243,25 +2244,20 @@ mod tests {
         });
     }
 
-    fn build_ic_synthetic_tx_bytes_for_test(
+    fn build_ic_synthetic_tx_input_for_test(
         nonce: u64,
         max_fee_per_gas: u128,
         max_priority_fee_per_gas: u128,
-    ) -> Vec<u8> {
-        let mut out = Vec::with_capacity(105);
-        let to = [0x11u8; 20];
-        let value = [0u8; 32];
-        let gas_limit = 21_000u64;
-        let data_len = 0u32;
-        out.push(0x01);
-        out.extend_from_slice(&to);
-        out.extend_from_slice(&value);
-        out.extend_from_slice(&gas_limit.to_be_bytes());
-        out.extend_from_slice(&nonce.to_be_bytes());
-        out.extend_from_slice(&max_fee_per_gas.to_be_bytes());
-        out.extend_from_slice(&max_priority_fee_per_gas.to_be_bytes());
-        out.extend_from_slice(&data_len.to_be_bytes());
-        out
+    ) -> IcSyntheticTxInput {
+        IcSyntheticTxInput {
+            to: Some([0x11u8; 20]),
+            value: [0u8; 32],
+            gas_limit: 21_000,
+            nonce,
+            max_fee_per_gas,
+            max_priority_fee_per_gas,
+            data: Vec::new(),
+        }
     }
 
     fn no_timer_for_test(_interval_ms: u64) {}
@@ -2300,11 +2296,11 @@ mod tests {
                 let required_max_fee = base_fee.saturating_add(min_priority).max(min_gas_price);
                 (required_max_fee, min_priority)
             });
-        let tx_id = evm_core::chain::submit_ic_tx(
-            caller.as_slice().to_vec(),
-            canister.as_slice().to_vec(),
-            build_ic_synthetic_tx_bytes_for_test(0, max_fee_per_gas, max_priority_fee_per_gas),
-        )
+        let tx_id = evm_core::chain::submit_tx_in(TxIn::IcSynthetic {
+            caller_principal: caller.as_slice().to_vec(),
+            canister_id: canister.as_slice().to_vec(),
+            tx: build_ic_synthetic_tx_input_for_test(0, max_fee_per_gas, max_priority_fee_per_gas),
+        })
         .expect("submit_ic_tx should succeed");
         evm_db::stable_state::with_state(|state| {
             assert!(state.seen_tx.get(&tx_id).is_some());
@@ -2341,11 +2337,11 @@ mod tests {
                 let required_max_fee = base_fee.saturating_add(min_priority).max(min_gas_price);
                 (required_max_fee, min_priority)
             });
-        let tx_id = evm_core::chain::submit_ic_tx(
-            caller.as_slice().to_vec(),
-            canister.as_slice().to_vec(),
-            build_ic_synthetic_tx_bytes_for_test(0, max_fee_per_gas, max_priority_fee_per_gas),
-        )
+        let tx_id = evm_core::chain::submit_tx_in(TxIn::IcSynthetic {
+            caller_principal: caller.as_slice().to_vec(),
+            canister_id: canister.as_slice().to_vec(),
+            tx: build_ic_synthetic_tx_input_for_test(0, max_fee_per_gas, max_priority_fee_per_gas),
+        })
         .expect("submit_ic_tx should succeed");
 
         // 直前に最低ガス価格を引き上げ、queue内txを「実行不能」にする。

@@ -5,7 +5,7 @@ use alloy_eips::eip2718::Encodable2718;
 use alloy_primitives::{Address, Bytes, Signature, TxKind as EthTxKind, U256};
 use alloy_signer::SignerSync;
 use alloy_signer_local::PrivateKeySigner;
-use evm_core::chain::{self, ChainError};
+use evm_core::chain::{self, ChainError, TxIn};
 use evm_core::hash;
 use evm_db::chain_data::constants::{
     CHAIN_ID, DROP_CODE_DECODE, DROP_CODE_EXEC_PRECHECK, DROP_CODE_REPLACED, MAX_PENDING_GLOBAL,
@@ -47,8 +47,12 @@ fn submit_ic_tx_rejects_when_global_pending_cap_is_reached() {
         }
     });
 
-    let err = chain::submit_ic_tx(vec![0x01], vec![0x02], common::build_default_ic_tx_bytes(0))
-        .expect_err("global cap should reject submit");
+    let err = chain::submit_tx_in(TxIn::IcSynthetic {
+        caller_principal: vec![0x01],
+        canister_id: vec![0x02],
+        tx: common::build_default_ic_tx_input(0),
+    })
+    .expect_err("global cap should reject submit");
     assert_eq!(err, ChainError::QueueFull);
 }
 
@@ -58,9 +62,13 @@ fn replacement_is_allowed_even_when_global_pending_cap_is_reached() {
     relax_fee_floor_for_tests();
     let caller = vec![0x42];
     let canister = vec![0x77];
-    let first_tx = common::build_default_ic_tx_bytes(0);
-    let first_tx_id =
-        chain::submit_ic_tx(caller.clone(), canister.clone(), first_tx).expect("first submit");
+    let first_tx = common::build_default_ic_tx_input(0);
+    let first_tx_id = chain::submit_tx_in(TxIn::IcSynthetic {
+        caller_principal: caller.clone(),
+        canister_id: canister.clone(),
+        tx: first_tx,
+    })
+    .expect("first submit");
 
     with_state_mut(|state| {
         // Keep the original sender entry, then fill up to the global cap with distinct senders.
@@ -78,9 +86,13 @@ fn replacement_is_allowed_even_when_global_pending_cap_is_reached() {
         }
     });
 
-    let replacement_tx = common::build_ic_tx_bytes([0x10u8; 20], 0, 3_000_000_000, 2_000_000_000);
-    let replacement_tx_id = chain::submit_ic_tx(caller, canister, replacement_tx)
-        .expect("replacement should be accepted");
+    let replacement_tx = common::build_ic_tx_input([0x10u8; 20], 0, 3_000_000_000, 2_000_000_000);
+    let replacement_tx_id = chain::submit_tx_in(TxIn::IcSynthetic {
+        caller_principal: caller,
+        canister_id: canister,
+        tx: replacement_tx,
+    })
+    .expect("replacement should be accepted");
     assert_ne!(replacement_tx_id, first_tx_id);
     let old_loc = chain::get_tx_loc(&first_tx_id).expect("old tx loc");
     assert_eq!(old_loc.kind, TxLocKind::Dropped);
@@ -94,49 +106,12 @@ fn higher_fee_tx_evicts_lowest_fee_when_global_pending_cap_is_reached() {
     let caller_low = vec![0x42];
     let caller_high = vec![0x43];
     let canister = vec![0x77];
-    let low_fee_tx = common::build_default_ic_tx_bytes(0);
-    let low_fee_tx_id =
-        chain::submit_ic_tx(caller_low, canister.clone(), low_fee_tx).expect("seed low fee tx");
-
-    with_state_mut(|state| {
-        for i in 1..MAX_PENDING_GLOBAL {
-            let mut sender = [0u8; 20];
-            sender[18] = ((i >> 8) & 0xff) as u8;
-            sender[19] = (i & 0xff) as u8;
-            let key = SenderNonceKey::new(sender, 0);
-            let mut tx_id = [0u8; 32];
-            tx_id[28] = ((i >> 24) & 0xff) as u8;
-            tx_id[29] = ((i >> 16) & 0xff) as u8;
-            tx_id[30] = ((i >> 8) & 0xff) as u8;
-            tx_id[31] = (i & 0xff) as u8;
-            state.pending_by_sender_nonce.insert(key, TxId(tx_id));
-        }
-    });
-
-    let accepted = chain::submit_ic_tx(
-        caller_high,
-        canister,
-        common::build_ic_tx_bytes([0x10u8; 20], 0, 10_000_000_000, 5_000_000_000),
-    )
-    .expect("higher fee tx should evict and be accepted");
-    assert_ne!(accepted, low_fee_tx_id);
-    let dropped = chain::get_tx_loc(&low_fee_tx_id).expect("evicted tx loc");
-    assert_eq!(dropped.kind, TxLocKind::Dropped);
-    assert_eq!(dropped.drop_code, DROP_CODE_REPLACED);
-}
-
-#[test]
-fn lower_or_equal_fee_tx_is_rejected_when_global_pending_cap_is_reached() {
-    init_stable_state();
-    relax_fee_floor_for_tests();
-    let caller_low = vec![0x52];
-    let caller_same = vec![0x53];
-    let canister = vec![0x88];
-    let _ = chain::submit_ic_tx(
-        caller_low,
-        canister.clone(),
-        common::build_default_ic_tx_bytes(0),
-    )
+    let low_fee_tx = common::build_default_ic_tx_input(0);
+    let low_fee_tx_id = chain::submit_tx_in(TxIn::IcSynthetic {
+        caller_principal: caller_low,
+        canister_id: canister.clone(),
+        tx: low_fee_tx,
+    })
     .expect("seed low fee tx");
 
     with_state_mut(|state| {
@@ -154,8 +129,53 @@ fn lower_or_equal_fee_tx_is_rejected_when_global_pending_cap_is_reached() {
         }
     });
 
-    let err = chain::submit_ic_tx(caller_same, canister, common::build_default_ic_tx_bytes(0))
-        .expect_err("same fee should be rejected under full global cap");
+    let accepted = chain::submit_tx_in(TxIn::IcSynthetic {
+        caller_principal: caller_high,
+        canister_id: canister,
+        tx: common::build_ic_tx_input([0x10u8; 20], 0, 10_000_000_000, 5_000_000_000),
+    })
+    .expect("higher fee tx should evict and be accepted");
+    assert_ne!(accepted, low_fee_tx_id);
+    let dropped = chain::get_tx_loc(&low_fee_tx_id).expect("evicted tx loc");
+    assert_eq!(dropped.kind, TxLocKind::Dropped);
+    assert_eq!(dropped.drop_code, DROP_CODE_REPLACED);
+}
+
+#[test]
+fn lower_or_equal_fee_tx_is_rejected_when_global_pending_cap_is_reached() {
+    init_stable_state();
+    relax_fee_floor_for_tests();
+    let caller_low = vec![0x52];
+    let caller_same = vec![0x53];
+    let canister = vec![0x88];
+    let _ = chain::submit_tx_in(TxIn::IcSynthetic {
+        caller_principal: caller_low,
+        canister_id: canister.clone(),
+        tx: common::build_default_ic_tx_input(0),
+    })
+    .expect("seed low fee tx");
+
+    with_state_mut(|state| {
+        for i in 1..MAX_PENDING_GLOBAL {
+            let mut sender = [0u8; 20];
+            sender[18] = ((i >> 8) & 0xff) as u8;
+            sender[19] = (i & 0xff) as u8;
+            let key = SenderNonceKey::new(sender, 0);
+            let mut tx_id = [0u8; 32];
+            tx_id[28] = ((i >> 24) & 0xff) as u8;
+            tx_id[29] = ((i >> 16) & 0xff) as u8;
+            tx_id[30] = ((i >> 8) & 0xff) as u8;
+            tx_id[31] = (i & 0xff) as u8;
+            state.pending_by_sender_nonce.insert(key, TxId(tx_id));
+        }
+    });
+
+    let err = chain::submit_tx_in(TxIn::IcSynthetic {
+        caller_principal: caller_same,
+        canister_id: canister,
+        tx: common::build_default_ic_tx_input(0),
+    })
+    .expect_err("same fee should be rejected under full global cap");
     assert_eq!(err, ChainError::QueueFull);
     with_state(|state| {
         assert_eq!(
@@ -310,8 +330,12 @@ fn submit_ic_tx_nonce_conflict_is_atomic() {
         Some(&canister_id),
         Some(&caller_principal),
     ));
-    let err = chain::submit_ic_tx(caller_principal.clone(), canister_id, tx_bytes)
-        .expect_err("nonce conflict expected");
+    let err = chain::submit_tx_in(TxIn::IcSynthetic {
+        caller_principal: caller_principal.clone(),
+        canister_id,
+        tx: common::build_default_ic_tx_input(0),
+    })
+    .expect_err("nonce conflict expected");
     assert_eq!(err, ChainError::NonceConflict);
 
     with_state(|state| {

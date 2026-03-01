@@ -59,12 +59,6 @@ pub fn decode_ic_synthetic_header(bytes: &[u8]) -> Result<IcTxHeader<'_>, Decode
     decode_ic_synthetic_header_impl::<true>(bytes)
 }
 
-pub(crate) fn decode_ic_synthetic_header_trusted_size(
-    bytes: &[u8],
-) -> Result<IcTxHeader<'_>, DecodeError> {
-    decode_ic_synthetic_header_impl::<false>(bytes)
-}
-
 fn decode_ic_synthetic_header_impl<const ENFORCE_DATA_SIZE_LIMIT: bool>(
     bytes: &[u8],
 ) -> Result<IcTxHeader<'_>, DecodeError> {

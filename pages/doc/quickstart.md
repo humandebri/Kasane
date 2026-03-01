@@ -127,6 +127,25 @@ dfx canister call --network "$NETWORK" "$CANISTER_ID" submit_ic_tx "(record {
 })"
 ```
 
+### 2.0) `submit_ic_tx` 送信手順
+運用は次の順で固定すると事故を減らせます。
+
+1. 送信前に chain/network を確認する  
+   - `rpc_eth_chain_id` が `4801360` であること
+2. 送信元nonceを確認する  
+   - `expected_nonce_by_address(20 bytes)` を呼び、現在nonceを取得
+3. fee/gasを決める  
+   - `rpc_eth_gas_price` / `rpc_eth_max_priority_fee_per_gas` を参照し、下限以上を設定
+4. `submit_ic_tx(record)` を1回送る  
+   - 返り値 `tx_id` を保存
+5. 実行結果を追跡する  
+   - `get_pending(tx_id)` で状態確認
+   - `get_receipt(tx_id)` が取得できたら `status` で成功/失敗判定
+
+注意:
+- `submit_ic_tx` の成功は「受付成功」です。実行成功は `receipt.status` で判定してください。
+- `tx_id` は内部キーであり、`eth_tx_hash` とは別です。
+
 ### 2.1) `submit_ic_tx` 検証フロー（重要）
 - pre-submit guard
   - anonymous拒否（`auth.anonymous_forbidden`）

@@ -22,7 +22,8 @@
   - sender導出失敗は `AddressDerivationFailed` 系エラーになる
 
 ## `IcSynthetic` で必ず押さえる点
-- 入力フォーマットは IcSynthetic v2（version=2）
+- `submit_ic_tx` の入力は Candid `record`（`to/value/gas_limit/nonce/max_fee_per_gas/max_priority_fee_per_gas/data`）
+- 内部保存時の canonical bytes は `to_flag(0/1)` 形式
 - nonce参照は `expected_nonce_by_address` を使う
 - 戻り値は `eth_tx_hash` ではなく `tx_id`
 - 実行確定は submit時点ではなく、後続blockで receipt 参照して判断する

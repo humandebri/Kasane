@@ -1,6 +1,7 @@
 //! どこで: Phase1.4テスト / 何を: runtimeインデックス整合性 / なぜ: submit性能最適化後の不変条件を守るため
 
-use evm_core::{chain, hash};
+use evm_core::chain::{self, TxIn};
+use evm_core::hash;
 use evm_db::chain_data::constants::DROP_CODE_DECODE;
 use evm_db::chain_data::{
     CallerKey, ReadyKey, ReadySeqKey, SenderNonceKey, StoredTxBytes, TxId, TxKind, TxLocKind,
@@ -23,12 +24,24 @@ fn relax_fee_floor_for_tests() {
 fn queue_snapshot_cursor_is_seq_exclusive() {
     init_stable_state();
     relax_fee_floor_for_tests();
-    let _ = chain::submit_ic_tx(vec![0x01], vec![0x11], common::build_default_ic_tx_bytes(0))
-        .expect("submit 1");
-    let _ = chain::submit_ic_tx(vec![0x02], vec![0x12], common::build_default_ic_tx_bytes(0))
-        .expect("submit 2");
-    let _ = chain::submit_ic_tx(vec![0x03], vec![0x13], common::build_default_ic_tx_bytes(0))
-        .expect("submit 3");
+    let _ = chain::submit_tx_in(TxIn::IcSynthetic {
+        caller_principal: vec![0x01],
+        canister_id: vec![0x11],
+        tx: common::build_default_ic_tx_input(0),
+    })
+    .expect("submit 1");
+    let _ = chain::submit_tx_in(TxIn::IcSynthetic {
+        caller_principal: vec![0x02],
+        canister_id: vec![0x12],
+        tx: common::build_default_ic_tx_input(0),
+    })
+    .expect("submit 2");
+    let _ = chain::submit_tx_in(TxIn::IcSynthetic {
+        caller_principal: vec![0x03],
+        canister_id: vec![0x13],
+        tx: common::build_default_ic_tx_input(0),
+    })
+    .expect("submit 3");
 
     let page1 = chain::get_queue_snapshot(1, None);
     assert_eq!(page1.items.len(), 1);
@@ -56,11 +69,11 @@ fn principal_pending_and_fee_indexes_track_lifecycle() {
         hash::derive_evm_address_from_principal(&principal).expect("must derive"),
         1_000_000_000_000_000_000,
     );
-    let tx_id = chain::submit_ic_tx(
-        principal.clone(),
-        vec![0x99],
-        common::build_default_ic_tx_bytes(0),
-    )
+    let tx_id = chain::submit_tx_in(TxIn::IcSynthetic {
+        caller_principal: principal.clone(),
+        canister_id: vec![0x99],
+        tx: common::build_default_ic_tx_input(0),
+    })
     .expect("submit");
     with_state(|state| {
         let key = CallerKey::from_principal_bytes(&principal);
@@ -83,10 +96,18 @@ fn principal_pending_and_fee_indexes_track_lifecycle() {
 fn rebuild_runtime_indexes_recovers_from_empty_indexes() {
     init_stable_state();
     relax_fee_floor_for_tests();
-    let _ = chain::submit_ic_tx(vec![0x10], vec![0x20], common::build_default_ic_tx_bytes(0))
-        .expect("submit a");
-    let _ = chain::submit_ic_tx(vec![0x11], vec![0x21], common::build_default_ic_tx_bytes(0))
-        .expect("submit b");
+    let _ = chain::submit_tx_in(TxIn::IcSynthetic {
+        caller_principal: vec![0x10],
+        canister_id: vec![0x20],
+        tx: common::build_default_ic_tx_input(0),
+    })
+    .expect("submit a");
+    let _ = chain::submit_tx_in(TxIn::IcSynthetic {
+        caller_principal: vec![0x11],
+        canister_id: vec![0x21],
+        tx: common::build_default_ic_tx_input(0),
+    })
+    .expect("submit b");
 
     with_state_mut(|state| {
         clear_map(&mut state.principal_pending_count);
@@ -114,8 +135,12 @@ fn rebuild_runtime_indexes_recovers_from_empty_indexes() {
 fn rebuild_fee_index_keeps_entries_even_when_unaffordable() {
     init_stable_state();
     relax_fee_floor_for_tests();
-    let _ = chain::submit_ic_tx(vec![0x50], vec![0x60], common::build_default_ic_tx_bytes(0))
-        .expect("submit");
+    let _ = chain::submit_tx_in(TxIn::IcSynthetic {
+        caller_principal: vec![0x50],
+        canister_id: vec![0x60],
+        tx: common::build_default_ic_tx_input(0),
+    })
+    .expect("submit");
     with_state_mut(|state| {
         let mut chain_state = *state.chain_state.get();
         chain_state.base_fee = u64::MAX;
@@ -141,11 +166,11 @@ fn produce_block_outcome_reports_dropped_count() {
         hash::derive_evm_address_from_principal(&good_principal).expect("must derive"),
         1_000_000_000_000_000_000,
     );
-    let good_id = chain::submit_ic_tx(
-        good_principal,
-        vec![0x30],
-        common::build_default_ic_tx_bytes(0),
-    )
+    let good_id = chain::submit_tx_in(TxIn::IcSynthetic {
+        caller_principal: good_principal,
+        canister_id: vec![0x30],
+        tx: common::build_default_ic_tx_input(0),
+    })
     .expect("submit good");
     let bad_id = TxId([0xabu8; 32]);
     with_state_mut(|state| {
@@ -181,8 +206,12 @@ fn produce_block_outcome_reports_dropped_count() {
 fn rebuild_runtime_indexes_drops_decode_broken_pending_entries() {
     init_stable_state();
     relax_fee_floor_for_tests();
-    let good_id = chain::submit_ic_tx(vec![0x70], vec![0x80], common::build_default_ic_tx_bytes(0))
-        .expect("submit good");
+    let good_id = chain::submit_tx_in(TxIn::IcSynthetic {
+        caller_principal: vec![0x70],
+        canister_id: vec![0x80],
+        tx: common::build_default_ic_tx_input(0),
+    })
+    .expect("submit good");
     let bad_id = TxId([0xceu8; 32]);
     let bad_sender = [0x66u8; 20];
     let bad_pending = SenderNonceKey::new(bad_sender, 0);

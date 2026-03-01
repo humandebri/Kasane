@@ -1,6 +1,6 @@
 //! どこで: Phase1挙動テスト / 何を: metricsと選抜順序の回帰検知 / なぜ: chain.rs内テストを外出しして保守性を上げるため
 
-use evm_core::chain;
+use evm_core::chain::{self, TxIn};
 use evm_core::hash;
 use evm_core::tx_decode::IcSyntheticTxInput;
 use evm_db::stable_state::{init_stable_state, with_state, with_state_mut};
@@ -31,7 +31,7 @@ fn execute_ic_tx_invalid_opcode_does_not_increment_unknown_halt_metrics() {
     let (_, first) = common::execute_ic_tx_via_produce(
         caller_principal.clone(),
         vec![0xaa],
-        common::build_ic_tx_bytes(halt_target, 0, 2_000_000_000, 1_000_000_000),
+        common::build_ic_tx_input(halt_target, 0, 2_000_000_000, 1_000_000_000),
     );
     assert_eq!(first.status, 0);
 
@@ -42,7 +42,7 @@ fn execute_ic_tx_invalid_opcode_does_not_increment_unknown_halt_metrics() {
     let (_, second) = common::execute_ic_tx_via_produce(
         caller_principal,
         vec![0xbb],
-        common::build_ic_tx_bytes(halt_target, 1, 2_000_000_000, 1_000_000_000),
+        common::build_ic_tx_input(halt_target, 1, 2_000_000_000, 1_000_000_000),
     );
     assert_eq!(second.status, 0);
 
@@ -75,11 +75,11 @@ fn produce_block_selects_top_k_by_fee_then_submission_order() {
             hash::derive_evm_address_from_principal(&caller_principal).expect("must derive"),
             1_000_000_000_000_000_000,
         );
-        let tx_id = chain::submit_ic_tx(
+        let tx_id = chain::submit_tx_in(TxIn::IcSynthetic {
             caller_principal,
-            vec![0x80 + idx_u8],
-            common::build_ic_tx_bytes([0x20 + idx_u8; 20], 0, fee, fee),
-        )
+            canister_id: vec![0x80 + idx_u8],
+            tx: common::build_ic_tx_input([0x20 + idx_u8; 20], 0, fee, fee),
+        })
         .expect("submit");
         submitted.push((tx_id.0, fee, idx));
     }

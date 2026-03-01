@@ -42,7 +42,7 @@ tx_id = keccak256(
 
 ### 3.2 nonce の扱い
 - nonce は canister 側の自動採番ではない。
-- `submit_ic_tx` で `tx_bytes` ヘッダを decode し、ヘッダ内 `nonce` を使う。
+- `submit_ic_tx(record)` の `nonce` フィールド値をそのまま使う。
 
 ## 4. ハッシュ規則（現行）
 
@@ -99,4 +99,3 @@ block_hash = keccak256(
 - `crates/ic-evm-rpc/src/lib.rs`
 - `crates/evm-db/src/stable_state.rs`
 - `crates/evm-db/src/chain_data/tx.rs`
-

@@ -9,10 +9,7 @@ use crate::revm_exec::{
 };
 use crate::state_root::TouchedSummary;
 use crate::trie_commit;
-use crate::tx_decode::{
-    decode_ic_synthetic_header_trusted_size, decode_tx, encode_ic_synthetic_input,
-    IcSyntheticTxInput,
-};
+use crate::tx_decode::{decode_tx, encode_ic_synthetic_input, IcSyntheticTxInput};
 use crate::tx_submit;
 use evm_db::chain_data::constants::{
     DROPPED_RING_CAPACITY, DROP_CODE_BLOCK_GAS_EXCEEDED, DROP_CODE_CALLER_MISSING,
@@ -792,47 +789,6 @@ pub fn submit_tx(
         )?;
         Ok(tx_id)
     })
-}
-
-pub fn submit_ic_tx(
-    caller_principal: Vec<u8>,
-    canister_id: Vec<u8>,
-    tx_bytes: Vec<u8>,
-) -> Result<TxId, ChainError> {
-    if is_principal_decode_suppressed(caller_principal.as_slice(), crate::time::now_sec()) {
-        return Err(ChainError::DecodeRateLimited);
-    }
-    with_state_mut(|state| {
-        if tx_bytes.len() > MAX_TX_SIZE {
-            return Err(ChainError::TxTooLarge);
-        }
-        let caller_evm = derive_caller_evm_cached(caller_principal.as_slice())?;
-        let tx_id = TxId(hash::stored_tx_id(
-            TxKind::IcSynthetic,
-            &tx_bytes,
-            Some(caller_evm),
-            Some(&canister_id),
-            Some(&caller_principal),
-        ));
-        if state.seen_tx.get(&tx_id).is_some() {
-            return Err(ChainError::TxAlreadySeen);
-        }
-        Ok(())
-    })?;
-    let header = decode_ic_synthetic_header_trusted_size(&tx_bytes).map_err(|_| ChainError::DecodeFailed)?;
-    submit_ic_tx_input(
-        caller_principal,
-        canister_id,
-        IcSyntheticTxInput {
-            to: header.to,
-            value: header.value,
-            gas_limit: header.gas_limit,
-            nonce: header.nonce,
-            max_fee_per_gas: header.max_fee,
-            max_priority_fee_per_gas: header.max_priority,
-            data: header.data.to_vec(),
-        },
-    )
 }
 
 pub fn submit_ic_tx_input(

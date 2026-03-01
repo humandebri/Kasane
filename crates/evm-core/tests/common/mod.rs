@@ -44,12 +44,24 @@ pub fn build_default_ic_tx_bytes(nonce: u64) -> Vec<u8> {
     build_ic_tx_bytes([0x10u8; 20], nonce, 2_000_000_000, 1_000_000_000)
 }
 
+pub fn build_default_ic_tx_input(nonce: u64) -> IcSyntheticTxInput {
+    build_ic_tx_input([0x10u8; 20], nonce, 2_000_000_000, 1_000_000_000)
+}
+
 pub fn build_zero_to_ic_tx_bytes(
     nonce: u64,
     max_fee_per_gas: u128,
     max_priority_fee_per_gas: u128,
 ) -> Vec<u8> {
     build_ic_tx_bytes([0u8; 20], nonce, max_fee_per_gas, max_priority_fee_per_gas)
+}
+
+pub fn build_zero_to_ic_tx_input(
+    nonce: u64,
+    max_fee_per_gas: u128,
+    max_priority_fee_per_gas: u128,
+) -> IcSyntheticTxInput {
+    build_ic_tx_input([0u8; 20], nonce, max_fee_per_gas, max_priority_fee_per_gas)
 }
 
 pub fn install_contract(address: [u8; 20], code: &[u8]) {
@@ -70,10 +82,14 @@ pub fn fund_account(address: [u8; 20], amount: u128) {
 pub fn execute_ic_tx_via_produce(
     caller_principal: Vec<u8>,
     canister_id: Vec<u8>,
-    tx_bytes: Vec<u8>,
+    tx: IcSyntheticTxInput,
 ) -> (TxId, ReceiptLike) {
-    let tx_id =
-        evm_core::chain::submit_ic_tx(caller_principal, canister_id, tx_bytes).expect("submit");
+    let tx_id = evm_core::chain::submit_tx_in(evm_core::chain::TxIn::IcSynthetic {
+        caller_principal,
+        canister_id,
+        tx,
+    })
+    .expect("submit");
     let outcome = evm_core::chain::produce_block(1).expect("produce");
     assert_eq!(outcome.block.tx_ids.len(), 1);
     assert_eq!(outcome.block.tx_ids[0], tx_id);

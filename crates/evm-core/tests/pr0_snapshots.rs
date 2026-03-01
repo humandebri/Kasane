@@ -47,17 +47,17 @@ fn snapshot_tx_outcome_matrix_and_block_fields() {
     let (_, success) = common::execute_ic_tx_via_produce(
         caller_principal.clone(),
         vec![0xaa],
-        common::build_ic_tx_bytes(success_target, 0, 2_000_000_000, 1_000_000_000),
+        common::build_ic_tx_input(success_target, 0, 2_000_000_000, 1_000_000_000),
     );
     let (_, revert) = common::execute_ic_tx_via_produce(
         caller_principal.clone(),
         vec![0xbb],
-        common::build_ic_tx_bytes(revert_target, 1, 2_000_000_000, 1_000_000_000),
+        common::build_ic_tx_input(revert_target, 1, 2_000_000_000, 1_000_000_000),
     );
     let (_, halt) = common::execute_ic_tx_via_produce(
         caller_principal,
         vec![0xcc],
-        common::build_ic_tx_bytes(halt_target, 2, 2_000_000_000, 1_000_000_000),
+        common::build_ic_tx_input(halt_target, 2, 2_000_000_000, 1_000_000_000),
     );
 
     let matrix = format!(
