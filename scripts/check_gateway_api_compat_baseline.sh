@@ -99,7 +99,7 @@ validate_extracted_methods() {
   while IFS= read -r method; do
     [[ -z "${method}" ]] && continue
     local count
-    count="$(rg -n "^[[:space:]]*${method}[[:space:]]*:" "${extracted_did}" | wc -l | tr -d ' ')"
+    count="$(grep -Ec "^[[:space:]]*${method}[[:space:]]*:" "${extracted_did}" || true)"
     if [[ "${count}" != "1" ]]; then
       echo "[guard] extracted method mismatch: ${method} (count=${count})" >&2
       exit 1

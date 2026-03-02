@@ -24,7 +24,7 @@ GATEWAY_VERSION="$(node -e 'const fs=require("fs");const p=JSON.parse(fs.readFil
 MAJOR_MINOR_X="$(echo "${GATEWAY_VERSION}" | awk -F. '{print $1 "." $2 ".x"}')"
 EXPECTED="\`ic-evm-rpc-gateway@${MAJOR_MINOR_X}\`"
 
-if ! rg -F "${EXPECTED}" "${GATEWAY_README}" >/dev/null; then
+if ! grep -Fq "${EXPECTED}" "${GATEWAY_README}"; then
   echo "[guard] compatibility matrix gateway_version mismatch" >&2
   echo "[guard] expected to include: ${EXPECTED}" >&2
   echo "[guard] package version: ${GATEWAY_VERSION}" >&2
