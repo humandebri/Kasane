@@ -5,13 +5,19 @@ Wants=network-online.target
 
 [Service]
 Type=oneshot
-# 運用環境に合わせて書き換えること
-WorkingDirectory=/opt/kasane/tools/rpc-gateway
-User=rpcgw
-Group=rpcgw
-Environment=EVM_RPC_URL=https://rpc-testnet.kasane.network
+# Template file: replace placeholders before production use.
+# Required placeholders:
+# - __WORKDIR__
+# - __RUN_USER__
+# - __RUN_GROUP__
+# - __RPC_URL__
+# - __WATCH_SCRIPT__
+WorkingDirectory=__WORKDIR__
+User=__RUN_USER__
+Group=__RUN_GROUP__
+Environment=EVM_RPC_URL=__RPC_URL__
 # Environment=ALERT_WEBHOOK_URL=https://example.com/webhook
-ExecStart=/opt/kasane/tools/rpc-gateway/ops/watch_receipt.sh %i 180 1500
+ExecStart=__WATCH_SCRIPT__ %i 180 1500
 NoNewPrivileges=true
 StandardOutput=journal
 StandardError=journal

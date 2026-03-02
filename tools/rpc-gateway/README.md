@@ -15,7 +15,7 @@ cp .env.example .env.local
 `eth_sendRawTransaction` など update call を使う場合は、署名用identityのPEMも設定してください。
 
 ```env
-RPC_GATEWAY_IDENTITY_PEM_PATH=/opt/kasane/secrets/rpc-gateway-identity.pem
+RPC_GATEWAY_IDENTITY_PEM_PATH=/path/to/secrets/rpc-gateway-identity.pem
 ```
 
 対応PEM形式は `secp256k1` と `ed25519(PKCS#8)` です。`icp identity export` が出力する鍵種が `ec` の場合は使えないため、Gateway専用に `secp256k1` 鍵を作成してください。
@@ -58,6 +58,29 @@ npm run dev
 | 未対応 | `eth_getBlockByHash`, `eth_getTransactionByBlockHashAndIndex`, `eth_getTransactionByBlockNumberAndIndex`, `eth_getBlockTransactionCountByHash`, `eth_getBlockTransactionCountByNumber`, `eth_newFilter`, `eth_getFilterChanges`, `eth_uninstallFilter`, `eth_subscribe`, `eth_unsubscribe`, `eth_pendingTransactions` |
 
 注: `対応済み` でも一部は制限付きです。詳細は下の互換表を参照してください。
+
+## Compatibility Matrix (canister ↔ gateway)
+
+この表は互換運用の公開窓口です。  
+別repoで読んでも自己完結するように、API 互換ベースラインはこのディレクトリ配下を正として参照します。
+
+### Gateway Local API Compatibility Baseline
+- `contracts/gateway-api-compat-baseline.did`
+- `contracts/gateway-api-compat-methods.txt`
+- 補足: `contracts/README.md`
+
+### Canonical Source
+- `tools/rpc-gateway/contracts/*`（このディレクトリ）
+- 互換ガード: `scripts/check_gateway_api_compat_baseline.sh`
+
+| api_baseline_version | gateway_version | status | notes |
+| --- | --- | --- | --- |
+| `v1` | `ic-evm-rpc-gateway@0.1.x` | supported | `scripts/check_gateway_api_compat_baseline.sh` を満たす前提で互換 |
+
+補足:
+- ベースライン対象外メソッドの追加は許容されます。
+- ベースライン対象メソッドの削除/型変更/`query`↔`update` 変更は互換破壊です。
+- 互換ベースライン変更時は同一PRで「`tools/rpc-gateway/contracts/*` 更新 + 本マトリクス更新」を必須とします。
 
 ## callObject 対応範囲（Phase2.2）
 
@@ -207,7 +230,7 @@ npm run smoke:watch-receipt -- 0x<tx_hash> 120 1500
 
 ```bash
 cd tools/rpc-gateway
-EVM_RPC_URL="https://rpc-testnet.kasane.network" \
+EVM_RPC_URL="https://rpc.example.com" \
   npm run smoke:watch-receipt -- 0x<tx_hash> 180 1500
 ```
 
