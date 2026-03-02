@@ -34,6 +34,8 @@ scripts/query_smoke.sh
 
 ### 事前確認・品質ゲート
 - `scripts/ci-local.sh`: `github|smoke|all` の3モードで実行
+- `scripts/check_gateway_api_compat_baseline.sh`: Gateway API compatibility baseline の破壊変更を検知（`--update` でベースライン更新）
+- `scripts/check_gateway_matrix_sync.sh`: `tools/rpc-gateway/README.md` の互換マトリクス行が `tools/rpc-gateway/package.json` のバージョン系列と一致するか検証
 - `scripts/predeploy_smoke.sh`: `cargo check` + wasm build + PocketIC RPC互換E2E（任意で indexer smoke）
 - `scripts/run_rpc_compat_e2e.sh`: RPC互換E2Eテスト（`cargo test --test rpc_compat_e2e`）
 
