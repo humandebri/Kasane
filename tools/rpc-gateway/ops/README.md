@@ -6,7 +6,7 @@
 
 ```bash
 cd tools/rpc-gateway
-EVM_RPC_URL="https://rpc-testnet.kasane.network" \
+EVM_RPC_URL="https://rpc.example.com" \
   ./ops/watch_receipt.sh 0x<tx_hash> 180 1500
 ```
 
@@ -19,7 +19,7 @@ EVM_RPC_URL="https://rpc-testnet.kasane.network" \
 
 ```bash
 ALERT_WEBHOOK_URL="https://example.com/webhook" \
-EVM_RPC_URL="https://rpc-testnet.kasane.network" \
+EVM_RPC_URL="https://rpc.example.com" \
 ./ops/watch_receipt.sh 0x<tx_hash> 180 1500
 ```
 
@@ -27,7 +27,27 @@ EVM_RPC_URL="https://rpc-testnet.kasane.network" \
 
 `receipt-watch@.service` は tx hash をインスタンス名に取る oneshot です。
 
-配置例（VPS）:
+配置前にテンプレート置換が必須です。
+
+### 3.1 テンプレート置換（必須）
+
+`receipt-watch@.service` はテンプレートです。配置前に次を置換してください。
+
+- `__WORKDIR__`
+- `__RUN_USER__`
+- `__RUN_GROUP__`
+- `__RPC_URL__`
+- `__WATCH_SCRIPT__`
+
+置換後の残存チェック例:
+
+```bash
+rg -n "__WORKDIR__|__RUN_USER__|__RUN_GROUP__|__RPC_URL__|__WATCH_SCRIPT__" ops/receipt-watch@.service
+```
+
+`rg` の結果が 0 件であることを確認してから配置します。
+
+### 3.2 配置例（VPS）
 
 ```bash
 sudo cp ops/receipt-watch@.service /etc/systemd/system/
@@ -46,18 +66,17 @@ sudo systemctl status 'receipt-watch@0x<tx_hash>.service'
 送信系ジョブからの起動を統一するため、補助スクリプト `start_receipt_watch.sh` を使います。
 
 ```bash
-cd /opt/kasane/tools/rpc-gateway
+cd <PROJECT_ROOT>/tools/rpc-gateway
 ./ops/start_receipt_watch.sh 0x<tx_hash>
 ```
 
 - tx hash は `0x` + 64hex のみ受け付けます。
 - スクリプトは `systemctl start receipt-watch@<tx_hash>.service` を実行し、直後の status を表示します。
 
-## 5. 環境ファイル運用（Contabo）
+## 5. 環境ファイル運用（汎用）
 
-`/opt/kasane/tools/.../.env.local` はデプロイ同期で消える可能性があるため、systemd は `/etc/kasane/*.env` を参照します。
+`.env.local` がデプロイ同期で消える運用では、systemd の `EnvironmentFile` を使う運用を推奨します。
 
-- `rpc-gateway.service` -> `/etc/kasane/rpc-gateway.env`
-- `kasane-indexer.service` -> `/etc/kasane/indexer.env`
-- `kasane-explorer.service` -> `/etc/kasane/explorer.env`
-- `receipt-watch@.service` -> `/etc/default/receipt-watch`（`ALERT_WEBHOOK_URL`）
+例:
+- `rpc-gateway.service` -> `<ENV_FILE_PATH>/rpc-gateway.env`
+- `receipt-watch@.service` -> `<ENV_FILE_PATH>/receipt-watch.env`

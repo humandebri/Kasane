@@ -27,6 +27,12 @@ run_github_equivalent_phase() {
   scripts/check_rng_paths.sh
   scripts/check_getrandom_wasm_features.sh
   scripts/check_did_sync.sh
+  scripts/check_gateway_api_compat_baseline.sh
+  if ! command -v node >/dev/null 2>&1; then
+    echo "[phase=${CURRENT_PHASE}] node is required for scripts/check_gateway_matrix_sync.sh" >&2
+    exit 1
+  fi
+  scripts/check_gateway_matrix_sync.sh
   scripts/check_alloy_isolation.sh
 
   echo "[phase=${CURRENT_PHASE}] deny OP stack references"
