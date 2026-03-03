@@ -86,16 +86,18 @@ jobs:
           MIRROR_PAT: ${{ secrets.KASANE_MIRROR_PAT }}
         run: |
           set -euo pipefail
-          # Ensure checkout-injected bot auth header does not shadow PAT auth.
+          # Ensure bot credentials never shadow PAT auth.
           git config --local --unset-all http.https://github.com/.extraheader || true
+          git config --global --unset-all http.https://github.com/.extraheader || true
+          git config --local --unset credential.helper || true
           remote_url="https://x-access-token:${MIRROR_PAT}@github.com/kasane-network/rpc-gateway.git"
           split_sha="${{ steps.split.outputs.split_sha }}"
 
-          if git push "${remote_url}" "${split_sha}:main"; then
+          if git -c http.https://github.com/.extraheader= -c credential.helper= push "${remote_url}" "${split_sha}:main"; then
             echo "mirror push succeeded (non-force)"
           else
             echo "non-force push failed; retry with --force"
-            git push "${remote_url}" "${split_sha}:main" --force
+            git -c http.https://github.com/.extraheader= -c credential.helper= push "${remote_url}" "${split_sha}:main" --force
           fi
 
       - name: Verify mirror head
