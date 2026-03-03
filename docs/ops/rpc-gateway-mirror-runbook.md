@@ -8,6 +8,9 @@
 - 作業ディレクトリは monorepo root
 - `gh` で GitHub 認証済み
 - ミラー先 repo: `kasane-network/rpc-gateway`
+- 自動同期を使う場合は `KASANE_MIRROR_PAT` を `Kasane` repo secrets に登録
+  - 最低権限: `kasane-network/rpc-gateway` への push
+  - repo未作成時に自動作成も任せる場合は org/repo 作成権限が必要
 
 ## 初回セットアップ
 1. ミラー先 repo を作成
@@ -48,6 +51,22 @@ git push https://github.com/kasane-network/rpc-gateway.git gateway-split:main --
 ```bash
 git branch -D gateway-split
 ```
+
+## GitHub Actions 自動同期
+- workflow: `.github/workflows/rpc-gateway-mirror.yml`
+- trigger:
+  - `main` への push（`tools/rpc-gateway/**` 変更時）
+  - `workflow_dispatch`
+- 挙動:
+  1. 事前ガード（DID/API baseline/matrix）を実行
+  2. `tools/rpc-gateway` の `npm test` + `npm run build`
+  3. `git subtree split --prefix=tools/rpc-gateway`
+  4. `kasane-network/rpc-gateway` へ非force push
+  5. 失敗時のみ force push
+
+注:
+- `KASANE_MIRROR_PAT` が未設定だと workflow は失敗する。
+- org権限不足で repo 作成に失敗する場合は、先に手動で repo を作成する。
 
 ## 失敗時リカバリ
 - push 拒否/履歴衝突時:
