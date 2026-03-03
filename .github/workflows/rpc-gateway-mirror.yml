@@ -24,6 +24,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
@@ -85,6 +86,8 @@ jobs:
           MIRROR_PAT: ${{ secrets.KASANE_MIRROR_PAT }}
         run: |
           set -euo pipefail
+          # Ensure checkout-injected bot auth header does not shadow PAT auth.
+          git config --local --unset-all http.https://github.com/.extraheader || true
           remote_url="https://x-access-token:${MIRROR_PAT}@github.com/kasane-network/rpc-gateway.git"
           split_sha="${{ steps.split.outputs.split_sha }}"
 
