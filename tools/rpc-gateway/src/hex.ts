@@ -1,4 +1,4 @@
-// どこで: RPC変換層 / 何を: DATA/QUANTITY hex規約を実装 / なぜ: JSON-RPC互換の地雷を避けるため
+// where: RPC translation layer / what: implements DATA/QUANTITY hex rules / why: avoid common JSON-RPC compatibility pitfalls
 
 const HEX = /^0x[0-9a-fA-F]*$/;
 

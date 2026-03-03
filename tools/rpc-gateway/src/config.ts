@@ -1,4 +1,4 @@
-// どこで: Gateway設定層 / 何を: 実行時パラメータを一元管理 / なぜ: 制限値と接続先の誤設定を防ぐため
+// where: gateway config layer / what: centralizes runtime parameters / why: prevent misconfiguration of limits and upstream endpoints
 
 declare const process: {
   env: Record<string, string | undefined>;

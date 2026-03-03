@@ -1,4 +1,4 @@
-// どこで: Gateway identity解決層 / 何を: PEMから署名identityを復元 / なぜ: update callをanonymousにしないため
+// where: gateway identity resolution layer / what: restores signing identity from PEM / why: avoid anonymous update calls
 
 import type { SignIdentity } from "@dfinity/agent";
 import { createPrivateKey } from "node:crypto";

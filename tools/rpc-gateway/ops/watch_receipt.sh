@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # where: rpc-gateway ops
-# what: tx hash単位でreceipt.status監視を実行し、失敗時は任意Webhookへ通知
-# why: submit成功と実行成功を分離し、本番監視へ組み込むため
+# what: monitor receipt.status per tx hash and optionally notify webhook on failure
+# why: separate submit success from execution success in production monitoring
 set -euo pipefail
 
 if [[ $# -lt 1 ]]; then

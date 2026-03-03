@@ -1,4 +1,4 @@
-// どこで: Gatewayスモーク監視 / 何を: receipt.status をポーリングして成否判定 / なぜ: 送信成功と実行成功を分離して監視するため
+// where: gateway smoke monitor / what: polls receipt.status and judges success/failure / why: separate submit success from execution success
 type JsonRpcSuccess<T> = { jsonrpc: "2.0"; id: number; result: T };
 type JsonRpcError = { jsonrpc: "2.0"; id: number; error: { code: number; message: string; data?: unknown } };
 type JsonRpcResponse<T> = JsonRpcSuccess<T> | JsonRpcError;

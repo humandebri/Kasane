@@ -1,4 +1,4 @@
-// どこで: JSON-RPCハンドラ / 何を: methodごとの変換とcanister呼び出しを実装 / なぜ: Ethereum風インタフェースをGatewayで提供するため
+// where: JSON-RPC handlers / what: implement per-method translation and canister calls / why: provide Ethereum-style interface through gateway
 import { CONFIG } from "./config";
 import {
   type EthLogFilterView,

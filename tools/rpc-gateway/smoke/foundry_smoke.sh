@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # where: foundry smoke
-# what: cast経由でgateway互換を最小確認
-# why: foundry利用者向けの手動互換チェックを確保するため
+# what: perform a minimal gateway compatibility check via cast
+# why: provide a manual compatibility check for foundry users
 set -euo pipefail
 
 RPC_URL="${EVM_RPC_URL:-http://127.0.0.1:8545}"

@@ -1,4 +1,4 @@
-// どこで: Gatewayエントリ / 何を: 設定読み込みとHTTP起動 / なぜ: 実行導線を明確化するため
+// where: gateway entrypoint / what: loads config and starts HTTP server / why: keep execution flow explicit
 
 declare const process: {
   stderr: { write(chunk: string): void };

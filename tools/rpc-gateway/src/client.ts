@@ -1,4 +1,4 @@
-// どこで: Gateway canisterクライアント / 何を: query/updateの呼び出しラッパを提供 / なぜ: ハンドラ側の責務をJSON-RPC変換に集中させるため
+// where: gateway canister client / what: provides query/update call wrappers / why: keep handler responsibility focused on JSON-RPC translation
 
 import { Actor, HttpAgent } from "@dfinity/agent";
 import { readFileSync } from "node:fs";

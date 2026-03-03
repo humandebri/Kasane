@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # where: rpc-gateway ops
-# what: tx hash から receipt-watch@.service を起動する
-# why: 送信成功と実行成功の監視導線を常に同じ起動元に固定するため
+# what: start receipt-watch@.service from a tx hash
+# why: keep monitoring entrypoint consistent between submit and execution checks
 set -euo pipefail
 
 if [[ $# -lt 1 || $# -gt 2 ]]; then

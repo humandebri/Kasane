@@ -1,4 +1,4 @@
-// どこで: ethersスモーク / 何を: Gateway JSON-RPCの最小互換を実接続で確認 / なぜ: phase2要件のクライアント接続可否を担保するため
+// where: ethers smoke / what: checks minimal gateway JSON-RPC compatibility via live connection / why: ensure client connectivity requirements
 
 declare const process: {
   env: Record<string, string | undefined>;

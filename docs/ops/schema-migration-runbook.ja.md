@@ -1,0 +1,54 @@
+# Schema Migration Runbook
+
+English version: [./schema-migration-runbook.md](./schema-migration-runbook.md)
+
+
+## 目的
+- schema 移行を tick で安全に進める。
+- 途中停止時もカーソルから再開できる状態を維持する。
+
+## 事前準備（必須）
+1. 対象canisterを停止可能なメンテナンス時間を確保する。
+2. スナップショットを取得する。
+
+```bash
+icp canister snapshot create -e ic <canister_id>
+```
+
+3. 取得した snapshot ID を運用記録に残す。
+
+## 実行
+1. canister を停止する。
+2. snapshot を取得する。
+3. 新バイナリへ upgrade する。
+4. canister を起動する。
+5. `get_ops_status` で `needs_migration` を確認する。
+6. write系APIが拒否されること（`ops.write.needs_migration`）を確認する。
+7. 通常トラフィック下で migration tick が進み、`needs_migration=false` になるまで監視する。
+8. 完了後、移行対象ストアの active 先が新スキーマへ切替済みであることを確認する（Verify成功後にのみ切替）。
+
+```bash
+icp canister stop -e ic <canister_id>
+icp canister snapshot create -e ic <canister_id>
+icp canister install -e ic <canister_id> --mode upgrade --wasm target/wasm32-unknown-unknown/release/ic_evm_wrapper.release.final.wasm
+icp canister start -e ic <canister_id>
+```
+
+## 異常時復旧
+- 移行が `Error` で停止、または検証不整合が出た場合は復旧を優先する。
+- canister停止後、取得済みsnapshotへ戻し、旧WASMを再インストールして起動する。
+- `meta` 破損検知時（`decode_failure_last_label` が `meta*`、または `needs_migration=true` 固定）は write 拒否が正しい挙動であり、通常運転を継続しない。
+- 上記状態では `ops.write.needs_migration` を確認し、snapshot/upgrade の復旧手順へ移行する。
+
+```bash
+icp canister stop -e ic <canister_id>
+icp canister snapshot load -e ic <canister_id> <snapshot_id>
+icp canister install -e ic <canister_id> --mode reinstall --wasm <old_wasm_path>
+icp canister start -e ic <canister_id>
+```
+
+- 復旧後は原因分析を行い、再upgrade前に再検証する。
+
+## 注意
+- snapshot復旧は状態を巻き戻すため、復旧時点以降の書き込みは失われる。
+- 本番では snapshot 取得なしで schema 移行を実施しない。
