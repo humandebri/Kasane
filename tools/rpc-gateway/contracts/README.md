@@ -1,16 +1,18 @@
 # Gateway API Compatibility Baseline
 
-このディレクトリは、Gateway の API 互換ベースラインの正本です。
+Japanese version: [./README.ja.md](./README.ja.md)
 
-## 含まれるファイル
+This directory is the canonical source for the gateway API compatibility baseline.
+
+## Included Files
 - `gateway-api-compat-baseline.did`
-  - Gateway が依存する最小 Candid API ベースライン（v1）
+  - Minimal Candid API baseline (`v1`) required by gateway
 - `gateway-api-compat-methods.txt`
-  - ベースライン対象メソッド一覧（単一ソース）
+  - Baseline method list (single source)
 
-## 運用ルール
-- 互換破壊を伴う変更時は、同一PRで次を更新する。
+## Operational Rules
+- For any compatibility-breaking update, change the following in the same PR:
   - `gateway-api-compat-baseline.did`
   - `gateway-api-compat-methods.txt`
-  - `tools/rpc-gateway/README.md` の互換マトリクス
-- CIガード: `scripts/check_gateway_api_compat_baseline.sh`
+  - compatibility matrix in `../README.md`
+- CI guard: `scripts/check_gateway_api_compat_baseline.sh`

@@ -1,4 +1,4 @@
-// どこで: JSON-RPCコア / 何を: request検証とerror整形 / なぜ: 形式エラーを仕様どおり返すため
+// where: JSON-RPC core / what: validates requests and shapes errors / why: return format errors according to spec
 
 export type JsonRpcId = string | number | null;
 

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # where: smoke runner
-# what: viem/ethers/foundry の順で実行
-# why: phase2互換の確認手順を一本化するため
+# what: run viem/ethers/foundry in order
+# why: unify the compatibility verification sequence
 set -euo pipefail
 
 npm run smoke:viem

@@ -1,4 +1,4 @@
-// どこで: Gateway Candid定義 / 何を: 必要RPCメソッドをIDL化 / なぜ: Actor境界で型不一致を防ぐため
+// where: gateway Candid definitions / what: defines required RPC methods in IDL / why: prevent type mismatches at the actor boundary
 
 import type { IDL } from "@dfinity/candid";
 

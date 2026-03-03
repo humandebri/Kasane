@@ -1,56 +1,31 @@
 # ChainState 72->88 Migration Runbook
 
-## 目的
-- `ChainState` wireのサイズ変更（72->88）を、後方互換コードなしで安全に適用する。
-- 誤った直接upgradeで運用状態が既定値に戻る事故を防ぐ。
+Japanese version: [./chain-state-migration.ja.md](./chain-state-migration.ja.md)
 
-## 対象判定
-- 本runbookは、`ChainState` の旧wire（72バイト）から新wire（88バイト）へ移行するリリースで必須。
-- 判定はリリースノートの「non-backward-compatible ChainState format change」を基準に行う。
+## Purpose
+Operational procedure for migrating ChainState schema/version from 72 to 88 safely.
 
-## 事前準備（必須）
-1. メンテナンス時間を確保する。
-2. canister を停止する。
-3. snapshot を取得し、IDを記録する。
+## Scope Decision
+Use this runbook when target canister state is on the 72-line and must be upgraded to 88-line data layout.
 
-```bash
-dfx canister stop <canister_id>
-dfx canister snapshot create <canister_id>
-```
+## Required Preparation
+- confirm target canister/network and current version
+- take backup/snapshot before migration
+- confirm operator identity/permissions
+- stop write-heavy jobs if required
 
-4. 必要データをエクスポートする（少なくとも以下）。
-- 直近ブロック参照情報（tip）
-- pending tx（再投入対象）
-- 運用パラメータ（base_fee/min fee/mining interval/block gas limit）
+## Execution Steps
+1. run pre-checks
+2. execute migration command(s)
+3. verify post-migration state and method behavior
 
-## 実行手順
-1. 新WASMを `upgrade` する。
-2. canister を起動する。
-3. 初期化された運用パラメータを管理APIで再設定する。
-4. 必要に応じて pending tx を再投入する。
+## Validation
+- schema/version moved to expected target
+- key query/update APIs respond without regression
+- logs/metrics show no migration errors
 
-```bash
-dfx canister install <canister_id> --mode upgrade --wasm <new_wasm_path>
-dfx canister start <canister_id>
-```
+## Rollback
+If validation fails, stop traffic and restore from backup according to the rollback section in the Japanese runbook.
 
-## 検証チェック
-1. `health` で `tip_number`, `queue_len`, `block_gas_limit`, `instruction_soft_limit` を確認する。
-2. `get_ops_status` で `mode`, `needs_migration`, `block_gas_limit`, `instruction_soft_limit` を確認する。
-3. 小さなトランザクションを1件投入し、`auto-mine` が成功することを確認する。
-4. `get_receipt` で receipt を確認し、`gas_used` が非0であることを確認する。
-
-## ロールバック
-- 異常時は直ちに停止し、snapshotへ戻す。
-
-```bash
-dfx canister stop <canister_id>
-dfx canister snapshot load <canister_id> <snapshot_id>
-dfx canister install <canister_id> --mode reinstall --wasm <old_wasm_path>
-dfx canister start <canister_id>
-```
-
-## 注意
-- 本移行では旧72バイトwireを自動読込しない。
-- snapshotなしで本番適用しない。
-- 既定値復帰が起きた場合は通常運転を継続せず、即時ロールバックする。
+## Notes
+The Japanese version remains the full operational source for detailed command-level procedures.

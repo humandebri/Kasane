@@ -1,90 +1,95 @@
 # scripts/README.md
 
-このディレクトリの運用スクリプトの最短ガイドです。  
-迷ったらまずこの順で実行してください。
+Japanese version: [./README.ja.md](./README.ja.md)
 
-## 前提
-- 実行ディレクトリ: リポジトリルート（`Kasane/`）
-- 主な依存: `cargo`, `dfx`, `icp`, `node`, `npm`, `python`
-- query 呼び出しは `dfx canister call --query ...` を使う
+Shortest guide for operational scripts in this directory.
+If unsure, run the commands in the order below.
 
-## よく使うコマンド
+## Prerequisites
+- Working directory: repository root (`Kasane/`)
+- Main dependencies: `cargo`, `dfx`, `icp`, `node`, `npm`, `python`
+- For query calls, use `dfx canister call --query ...`
 
-1. CI相当チェック（軽量）
+## Frequently Used Commands
+
+1. CI-equivalent checks (light)
 ```bash
 scripts/ci-local.sh github
 ```
 
-2. デプロイ前スモーク（標準, PocketIC）
+2. Pre-deploy smoke (standard, PocketIC)
 ```bash
 scripts/predeploy_smoke.sh
 ```
 
-3. ローカル統合スモーク（重め）
+3. Local integrated smoke (heavy)
 ```bash
 scripts/local_indexer_smoke.sh
 ```
 
-4. Query専用スモーク
+4. Query-only smoke
 ```bash
 scripts/query_smoke.sh
 ```
 
-## 用途別
+## By Purpose
 
-### 事前確認・品質ゲート
-- `scripts/ci-local.sh`: `github|smoke|all` の3モードで実行
-- `scripts/check_gateway_api_compat_baseline.sh`: Gateway API compatibility baseline の破壊変更を検知（`--update` でベースライン更新）
-- `scripts/check_gateway_matrix_sync.sh`: `tools/rpc-gateway/README.md` の互換マトリクス行が `tools/rpc-gateway/package.json` のバージョン系列と一致するか検証
-- `scripts/predeploy_smoke.sh`: `cargo check` + wasm build + PocketIC RPC互換E2E（任意で indexer smoke）
-- `scripts/run_rpc_compat_e2e.sh`: RPC互換E2Eテスト（`cargo test --test rpc_compat_e2e`）
+### Pre-checks and Quality Gates
+- `scripts/ci-local.sh`: runs in `github|smoke|all` modes
+- `scripts/check_gateway_api_compat_baseline.sh`: detects breaking changes in gateway API compatibility baseline (`--update` updates baseline)
+- `scripts/check_gateway_matrix_sync.sh`: verifies compatibility matrix row in `tools/rpc-gateway/README.md` matches `tools/rpc-gateway/package.json` version line
+- `scripts/predeploy_smoke.sh`: `cargo check` + wasm build + PocketIC RPC compatibility E2E (optional indexer smoke)
+- `scripts/run_rpc_compat_e2e.sh`: RPC compatibility E2E test (`cargo test --test rpc_compat_e2e`)
 
-### ローカル運用
-- `scripts/dfx_local_clean_start.sh`: ローカル環境のクリーン起動補助
-- `scripts/local_pruning_stage.sh`: pruning段階検証
-- `scripts/local_indexer_fault_injection.sh`: indexer障害注入テスト
+### rpc-gateway Documentation Language Policy
+- `tools/rpc-gateway/README.md` is the English canonical document
+- Japanese supplement is `tools/rpc-gateway/README.ja.md` (same for `ops/`, `smoke/`, and `contracts/`)
 
-### playground
-- `scripts/playground_manual_deploy.sh`: playground への手動デプロイ
-- `scripts/playground_smoke.sh`: playground で Tx/RPC の一連確認
-  - 送金系の追加確認は `FUNDED_ETH_PRIVKEY` を設定
+### Local Operations
+- `scripts/dfx_local_clean_start.sh`: clean start helper for local environment
+- `scripts/local_pruning_stage.sh`: staged pruning verification
+- `scripts/local_indexer_fault_injection.sh`: indexer fault-injection test
 
-### mainnet運用
-- `scripts/mainnet/ic_mainnet_preflight.sh`: 本番前の最小チェック
-- `scripts/mainnet/ic_mainnet_deploy.sh`: 本番デプロイ本体
-- `scripts/mainnet/ic_mainnet_post_upgrade_smoke.sh`: デプロイ後の最小RPC確認
-- `scripts/verify_submit_after_deploy.sh`: verify submit の手動/CIフック
-- `scripts/mainnet/mainnet_method_test.sh`: 本番メソッド検証（重い）
-  - `MINING_IDLE_OBSERVE_SEC`: 冒頭の idle 観測秒数（既定: `6`）
-  - `IDLE_MAX_CYCLE_DELTA`: idle 観測で許容する cycle 減少上限。`0` で閾値チェック無効（既定: `0`）
+### Playground
+- `scripts/playground_manual_deploy.sh`: manual deployment to playground
+- `scripts/playground_smoke.sh`: end-to-end Tx/RPC checks on playground
+  - set `FUNDED_ETH_PRIVKEY` for additional transfer checks
 
-### prune運用
-- `scripts/ops/apply_prune_policy.sh`: policy適用 + pruning有効化 + status確認
-- `scripts/ops/tune_prune_max_ops.sh`: need_prune/error counters に基づく段階調整
-- `scripts/ops/test_prune_ops_scripts.sh`: 上記2スクリプトのモック検証
-- `scripts/ops/contabo_deploy_tools.sh`: Contabo上のgit作業ツリーから `tools/indexer` / `tools/explorer` を同期して build+restart（git ref指定運用）
-- `scripts/ops/contabo_deploy_gateway.sh`: Contabo上のgit作業ツリーから `tools/rpc-gateway` を同期して build+restart（git ref指定運用）
+### Mainnet Operations
+- `scripts/mainnet/ic_mainnet_preflight.sh`: minimum pre-mainnet checks
+- `scripts/mainnet/ic_mainnet_deploy.sh`: main deployment script
+- `scripts/mainnet/ic_mainnet_post_upgrade_smoke.sh`: minimum RPC checks after deploy
+- `scripts/verify_submit_after_deploy.sh`: manual/CI hook for verify submit
+- `scripts/mainnet/mainnet_method_test.sh`: heavy mainnet method test
+  - `MINING_IDLE_OBSERVE_SEC`: idle observation seconds at start (default: `6`)
+  - `IDLE_MAX_CYCLE_DELTA`: allowed cycle decrease in idle observation. `0` disables threshold check (default: `0`)
 
-## 主要環境変数（よく使うもの）
+### Prune Operations
+- `scripts/ops/apply_prune_policy.sh`: apply policy + enable pruning + status check
+- `scripts/ops/tune_prune_max_ops.sh`: staged tuning based on need_prune/error counters
+- `scripts/ops/test_prune_ops_scripts.sh`: mock tests for the two scripts above
+- `scripts/ops/contabo_deploy_tools.sh`: sync `tools/indexer` / `tools/explorer` from git worktree on Contabo, then build+restart (git ref based)
+- `scripts/ops/contabo_deploy_gateway.sh`: sync `tools/rpc-gateway` from git worktree on Contabo, then build+restart (git ref based)
+
+## Key Environment Variables
 - `CANISTER_NAME` / `CANISTER_ID`
 - `ICP_IDENTITY_NAME`
-- `POCKET_IC_BIN`（`predeploy_smoke.sh` / `run_rpc_compat_e2e.sh` で使用するPocketICバイナリ）
-- `E2E_TIMEOUT_SECONDS`（`run_rpc_compat_e2e.sh` のタイムアウト秒）
-- `RUN_INDEXER_SMOKE`（`predeploy_smoke.sh` で local indexer smoke を追加実行。既定 `0`）
-- `RUN_POST_SMOKE`（`ic_mainnet_deploy.sh` で post smoke を有効化）
+- `POCKET_IC_BIN` (PocketIC binary used by `predeploy_smoke.sh` / `run_rpc_compat_e2e.sh`)
+- `E2E_TIMEOUT_SECONDS` (timeout for `run_rpc_compat_e2e.sh`)
+- `RUN_INDEXER_SMOKE` (enable local indexer smoke in `predeploy_smoke.sh`; default `0`)
+- `RUN_POST_SMOKE` (enable post-smoke in `ic_mainnet_deploy.sh`)
 
-## verifyを自動投入する（任意）
+## Auto-submit verify (optional)
 
-canister deployスクリプトとは独立で、必要なパイプラインから
-`scripts/verify_submit_after_deploy.sh` を直接呼び出してください。
+Independent of canister deployment scripts, call `scripts/verify_submit_after_deploy.sh` directly from required pipelines.
 
-必要な環境変数:
-- `VERIFY_PAYLOAD_FILE`（verify submit payload JSON のパス）
+Required environment variables:
+- `VERIFY_PAYLOAD_FILE` (path to verify-submit payload JSON)
 - `VERIFY_AUTH_KID`
 - `VERIFY_AUTH_SECRET`
-- 任意: `AUTO_VERIFY_SUBMIT`, `VERIFY_SUBMIT_URL`, `VERIFY_AUTH_SUB`, `VERIFY_AUTH_SCOPE`, `VERIFY_AUTH_TTL_SEC`
+- Optional: `AUTO_VERIFY_SUBMIT`, `VERIFY_SUBMIT_URL`, `VERIFY_AUTH_SUB`, `VERIFY_AUTH_SCOPE`, `VERIFY_AUTH_TTL_SEC`
 
-例:
+Example:
 ```bash
 AUTO_VERIFY_SUBMIT=1 \
 VERIFY_PAYLOAD_FILE=/tmp/verify_payload.json \
@@ -93,9 +98,9 @@ VERIFY_AUTH_SECRET=replace_me \
 scripts/verify_submit_after_deploy.sh
 ```
 
-## 失敗時の切り分け
-1. まず `scripts/query_smoke.sh` が通るか確認する  
-2. 次に `scripts/run_rpc_compat_e2e.sh` を単体実行する  
-3. 必要なら `scripts/local_indexer_smoke.sh` を実行する  
+## Failure Triage
+1. First, confirm `scripts/query_smoke.sh` passes
+2. Then run `scripts/run_rpc_compat_e2e.sh` alone
+3. If needed, run `scripts/local_indexer_smoke.sh`
 
-重いスクリプトで失敗したときは、単体スクリプトに分解して再実行すると原因特定が速いです。
+If a heavy script fails, break verification into standalone scripts for faster root-cause isolation.

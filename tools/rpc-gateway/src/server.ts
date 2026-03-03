@@ -1,4 +1,4 @@
-// どこで: Gateway HTTP層 / 何を: POST受付とJSON-RPC処理を実行 / なぜ: canisterをHTTP直受けさせずGatewayで制限を掛けるため
+// where: gateway HTTP layer / what: accepts POST and processes JSON-RPC / why: enforce gateway-side limits instead of exposing canister HTTP directly
 
 import http from "node:http";
 import { CONFIG } from "./config";

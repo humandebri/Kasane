@@ -1,26 +1,27 @@
-# Smoke tests (optional)
+# RPC Gateway Smoke
 
-Gateway の実接続スモークです。`EVM_RPC_URL` が未指定なら `http://127.0.0.1:8545` を使います。
-実行前に、対象RPC（Gatewayまたは上流ノード）が起動していることを確認してください。
+Japanese version: [./README.ja.md](./README.ja.md)
+
+Live-connection smoke checks for gateway. If `EVM_RPC_URL` is not set, `http://127.0.0.1:8545` is used.
+Before running, ensure target RPC (gateway or upstream node) is up.
 
 ```bash
 cd tools/rpc-gateway
 npm run smoke:all
 ```
 
-個別実行:
+Run individual suites:
 
 ```bash
 npm run smoke:viem
 npm run smoke:ethers
 npm run smoke:foundry
-npm run smoke:watch-receipt -- 0x<tx_hash> 120 1500
 ```
 
-ポリシー:
-- `viem/ethers` 未導入時は `SKIP`
-- `cast` 未導入時は `SKIP`
-- SKIP は終了コード 0
-- `cast` 実行に失敗した場合は `FAIL`（終了コード 1）
-- `viem/ethers` は `eth_call` の revert プローブ（`data: 0xfe`）を実行し、`error.data` が `0x...` で返ることを確認
-- `smoke:watch-receipt` は `eth_getTransactionReceipt` をポーリングし、`status!=0x1` を失敗として終了コード 1 を返す
+Policy:
+- If `viem/ethers` are not installed, result is `SKIP`
+- If `cast` is not installed, result is `SKIP`
+- `SKIP` exits with code 0
+- If `cast` execution fails, result is `FAIL` (exit code 1)
+- `viem/ethers` run `eth_call` revert probe (`data: 0xfe`) and verify `error.data` returns as `0x...`
+- `smoke:watch-receipt` polls `eth_getTransactionReceipt` and exits with code 1 when `status!=0x1`
