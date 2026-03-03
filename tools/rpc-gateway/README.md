@@ -1,4 +1,4 @@
-# RPC Gateway (Phase2)
+# RPC Gateway
 
 Gateway前提で canister Candid API を Ethereum風 JSON-RPC 2.0 に変換する実装です。
 
@@ -15,6 +15,7 @@ cp .env.example .env.local
 `eth_sendRawTransaction` など update call を使う場合は、署名用identityのPEMも設定してください。
 
 ```env
+EVM_CANISTER_ID=aaaaa-aa
 RPC_GATEWAY_IDENTITY_PEM_PATH=/path/to/secrets/rpc-gateway-identity.pem
 ```
 
@@ -82,7 +83,7 @@ npm run dev
 - ベースライン対象メソッドの削除/型変更/`query`↔`update` 変更は互換破壊です。
 - 互換ベースライン変更時は同一PRで「`tools/rpc-gateway/contracts/*` 更新 + 本マトリクス更新」を必須とします。
 
-## callObject 対応範囲（Phase2.2）
+## callObject 対応範囲
 
 - サポート: `to`, `from`, `gas`, `gasPrice`, `value`, `data`, `nonce`, `maxFeePerGas`, `maxPriorityFeePerGas`, `chainId`, `type`, `accessList`
 - `type` は `0x0` / `0x2` のみ受理
@@ -119,9 +120,9 @@ npm run dev
 | `eth_call` | Partially supported | callObject + tag を canister `rpc_eth_call_object_at` に委譲 | `QUANTITY` は `head` と同値なら成功。`head` 未満は `exec.state.unavailable`、範囲外は `invalid.block_range.out_of_window` | revert は `-32000` + `error.data` |
 | `eth_estimateGas` | Partially supported | callObject + tag を canister `rpc_eth_estimate_gas_object_at` に委譲 | `QUANTITY` は `head` と同値なら成功。`head` 未満は `exec.state.unavailable`、範囲外は `invalid.block_range.out_of_window` | canister `Err` を `-32602`/`-32000` にマップ |
 | `eth_sendRawTransaction` | Supported | 生txを canister submit API に委譲し、返却 `tx_id` から `eth_tx_hash` を解決して `0x...` を返す | submit失敗はJSON-RPCエラーへマップ。`eth_tx_hash` 解決不能時は `-32000` を返す | canister では `rpc_eth_send_raw_transaction` |
-| `eth_newFilter` / `eth_getFilterChanges` / `eth_uninstallFilter` | Not supported | filter系は未実装 | Phase2スコープ外 | `rpc_eth_get_logs_paged` を利用 |
-| `eth_subscribe` / `eth_unsubscribe` | Not supported | WebSocket購読は未実装 | Phase2スコープ外 | `eth_blockNumber` ポーリング運用 |
-| pending / mempool 系（例: `eth_pendingTransactions`） | Not supported | pending/mempool概念を提供しない | Phase2スコープ外 | submit後にブロック生成と参照RPCで追跡 |
+| `eth_newFilter` / `eth_getFilterChanges` / `eth_uninstallFilter` | Not supported | filter系は未実装 | 現行スコープ外 | `rpc_eth_get_logs_paged` を利用 |
+| `eth_subscribe` / `eth_unsubscribe` | Not supported | WebSocket購読は未実装 | 現行スコープ外 | `eth_blockNumber` ポーリング運用 |
+| pending / mempool 系（例: `eth_pendingTransactions`） | Not supported | pending/mempool概念を提供しない | 現行スコープ外 | submit後にブロック生成と参照RPCで追跡 |
 
 本ドキュメントの互換表は JSON-RPC 層を対象とし、opcode 実行意味論の差分整理は現時点の対象外です。
 
@@ -169,7 +170,7 @@ npm run dev
   - Gateway は `error_prefix` を JSON-RPC `error.data.error_prefix` に透過して返します。
   - `1000-1999` は入力不正として `-32602`
   - `2000+` は実行失敗として `-32000`
-- `RpcErrorView.code` 固定値（Phase2.2）:
+- `RpcErrorView.code` 固定値:
   - `1001`: Invalid params（長さ不正、fee/type/chainId不整合など）
   - `2001`: Execution failed（EVM実行失敗）
   - `1000-1999`: 入力不正予約帯
