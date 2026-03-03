@@ -1,0 +1,104 @@
+name: RPC Gateway Mirror
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "tools/rpc-gateway/**"
+  workflow_dispatch:
+
+permissions: read-all
+
+concurrency:
+  group: rpc-gateway-mirror-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  mirror:
+    name: Mirror tools/rpc-gateway to kasane-network/rpc-gateway
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: tools/rpc-gateway/package-lock.json
+
+      - name: Ensure mirror token exists
+        env:
+          MIRROR_PAT: ${{ secrets.KASANE_MIRROR_PAT }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${MIRROR_PAT}" ]]; then
+            echo "missing secret: KASANE_MIRROR_PAT" >&2
+            exit 1
+          fi
+
+      - name: Pre-mirror guards
+        run: |
+          set -euo pipefail
+          scripts/check_did_sync.sh
+          scripts/check_gateway_api_compat_baseline.sh
+          scripts/check_gateway_matrix_sync.sh
+
+      - name: Gateway tests and build
+        working-directory: tools/rpc-gateway
+        env:
+          EVM_CANISTER_ID: aaaaa-aa
+        run: |
+          set -euo pipefail
+          npm ci
+          npm test
+          npm run build
+
+      - name: Ensure mirror repository exists
+        env:
+          GH_TOKEN: ${{ secrets.KASANE_MIRROR_PAT }}
+        run: |
+          set -euo pipefail
+          if gh repo view kasane-network/rpc-gateway --json name >/dev/null 2>&1; then
+            echo "mirror repo exists"
+          else
+            gh repo create kasane-network/rpc-gateway --public --description "Kasane RPC gateway mirror"
+          fi
+
+      - name: Create subtree split SHA
+        id: split
+        run: |
+          set -euo pipefail
+          split_sha="$(git subtree split --prefix=tools/rpc-gateway)"
+          echo "split_sha=${split_sha}" >> "$GITHUB_OUTPUT"
+
+      - name: Push mirror (non-force first)
+        env:
+          MIRROR_PAT: ${{ secrets.KASANE_MIRROR_PAT }}
+        run: |
+          set -euo pipefail
+          remote_url="https://x-access-token:${MIRROR_PAT}@github.com/kasane-network/rpc-gateway.git"
+          split_sha="${{ steps.split.outputs.split_sha }}"
+
+          if git push "${remote_url}" "${split_sha}:main"; then
+            echo "mirror push succeeded (non-force)"
+          else
+            echo "non-force push failed; retry with --force"
+            git push "${remote_url}" "${split_sha}:main" --force
+          fi
+
+      - name: Verify mirror head
+        env:
+          MIRROR_PAT: ${{ secrets.KASANE_MIRROR_PAT }}
+        run: |
+          set -euo pipefail
+          remote_url="https://x-access-token:${MIRROR_PAT}@github.com/kasane-network/rpc-gateway.git"
+          git ls-remote --heads "${remote_url}" | grep 'refs/heads/main$'
