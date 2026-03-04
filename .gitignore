@@ -42,3 +42,7 @@ docs/ops/reports/
 
 # local cargo cache home
 .cargo-home/
+
+# foundry build artifacts
+contracts/cache/
+contracts/out/

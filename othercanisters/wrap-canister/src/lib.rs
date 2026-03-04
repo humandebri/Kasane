@@ -199,11 +199,14 @@ impl Storable for RequestId {
 
 impl Storable for StoredRequest {
     fn to_bytes(&self) -> Cow<'_, [u8]> {
-        Cow::Owned(encode_stored_request(self).unwrap_or_default())
+        let encoded =
+            encode_stored_request(self).unwrap_or_else(|| panic!("stored_request.encode_failed"));
+        Cow::Owned(encoded)
     }
 
     fn from_bytes(bytes: Cow<'_, [u8]>) -> Self {
-        decode_stored_request(bytes.as_ref()).unwrap_or_else(decode_failure_request)
+        decode_stored_request(bytes.as_ref())
+            .unwrap_or_else(|| panic!("stored_request.decode_failed"))
     }
 
     const BOUND: Bound = Bound::Bounded {
@@ -214,13 +217,14 @@ impl Storable for StoredRequest {
 
 impl Storable for WrapStoredRequest {
     fn to_bytes(&self) -> Cow<'_, [u8]> {
-        let encoded = candid::encode_one(self).unwrap_or_default();
+        let encoded = candid::encode_one(self)
+            .unwrap_or_else(|_| panic!("wrap_stored_request.encode_failed"));
         Cow::Owned(encoded)
     }
 
     fn from_bytes(bytes: Cow<'_, [u8]>) -> Self {
         candid::decode_one::<WrapStoredRequest>(bytes.as_ref())
-            .unwrap_or_else(|_| decode_failure_wrap_request())
+            .unwrap_or_else(|_| panic!("wrap_stored_request.decode_failed"))
     }
 
     const BOUND: Bound = Bound::Bounded {
@@ -1301,40 +1305,6 @@ impl RequestStatus {
     }
 }
 
-fn decode_failure_request() -> StoredRequest {
-    StoredRequest {
-        asset_id: Vec::new(),
-        amount: vec![0u8; AMOUNT_BYTES],
-        recipient: Vec::new(),
-        result: RequestResult {
-            status: RequestStatus::Failed,
-            ledger_tx_id: None,
-            error_code: Some("decode_failure".to_string()),
-        },
-    }
-}
-
-fn decode_failure_wrap_request() -> WrapStoredRequest {
-    WrapStoredRequest {
-        caller: Vec::new(),
-        asset_id: Vec::new(),
-        amount: vec![0u8; AMOUNT_BYTES],
-        evm_recipient: vec![0u8; EVM_ADDRESS_BYTES],
-        evm_nonce: 0,
-        gas_limit: DEFAULT_MINT_GAS_LIMIT,
-        result: WrapRequestResult {
-            status: RequestStatus::Failed,
-            pull_ledger_tx_id: None,
-            mint_tx_id: None,
-            error_code: Some("decode_failure".to_string()),
-            withdrawn: false,
-            withdraw_ledger_tx_id: None,
-            withdraw_error_code: None,
-            mint_failed_recoverable: false,
-        },
-    }
-}
-
 fn encode_stored_request(value: &StoredRequest) -> Option<Vec<u8>> {
     if !(1..=PRINCIPAL_MAX_BYTES).contains(&value.asset_id.len()) {
         return None;
@@ -1473,19 +1443,17 @@ fn export_did() -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        decode_failure_request, decode_failure_wrap_request, decode_stored_request,
-        derive_wrap_request_id,
-        dequeue_request, encode_factory_mint_for_asset_call_data, encode_stored_request,
-        enqueue_request, init_state, insert_request, insert_wrap_request, is_withdrawable,
-        map_transfer_reply, mark_request_running, mark_wrap_request_running, nat_from_32_be,
-        nat_to_be_bytes, on_worker_queue_drain, on_wrap_worker_queue_drain, principal_from_bytes,
-        schedule_worker, schedule_wrap_worker, submit_error_to_code, to_request_id,
-        to_withdraw_error_code, transfer_error_to_code, transfer_from_error_to_code, u256_from_u64,
+        decode_stored_request, dequeue_request, derive_wrap_request_id,
+        encode_factory_mint_for_asset_call_data, encode_stored_request, enqueue_request,
+        init_state, insert_request, insert_wrap_request, is_withdrawable, map_transfer_reply,
+        mark_request_running, mark_wrap_request_running, nat_from_32_be, nat_to_be_bytes,
+        on_worker_queue_drain, on_wrap_worker_queue_drain, principal_from_bytes, schedule_worker,
+        schedule_wrap_worker, submit_error_to_code, to_request_id, to_withdraw_error_code,
+        transfer_error_to_code, transfer_from_error_to_code, u256_from_u64,
         validate_non_anonymous_principal, validate_withdraw_request, with_state, with_state_mut,
-        Icrc1TransferError,
-        Icrc2TransferFromError, QueueMeta, RequestResult, RequestStatus, StoredRequest,
-        SubmitTxError, SubmitUnwrapRequestArgs, SubmitWrapRequestArgs, WrapRequestResult,
-        WrapStoredRequest, WORKER_SCHEDULED, WRAP_WORKER_SCHEDULED,
+        Icrc1TransferError, Icrc2TransferFromError, QueueMeta, RequestResult, RequestStatus,
+        StoredRequest, SubmitTxError, SubmitUnwrapRequestArgs, SubmitWrapRequestArgs,
+        WrapRequestResult, WrapStoredRequest, WORKER_SCHEDULED, WRAP_WORKER_SCHEDULED,
     };
     use candid::{decode_one, encode_one, Nat, Principal};
     use num_bigint::BigUint;
@@ -1613,8 +1581,7 @@ mod tests {
             },
         };
         assert!(encode_stored_request(&req).is_none());
-        let fallback = decode_stored_request(&[0xFF]).unwrap_or_else(decode_failure_request);
-        assert_eq!(fallback.result.status, RequestStatus::Failed);
+        assert!(decode_stored_request(&[0xFF]).is_none());
     }
 
     #[test]
@@ -1832,13 +1799,6 @@ mod tests {
         assert_eq!(&data[68..100], &[0x22u8; 32]);
         assert_eq!(&data[100..132], &u256_from_u64(29));
         assert_eq!(&data[132..161], &[0x33u8; 29]);
-    }
-
-    #[test]
-    fn decode_failure_wrap_request_sets_failed() {
-        let req = decode_failure_wrap_request();
-        assert_eq!(req.result.status, RequestStatus::Failed);
-        assert!(req.result.error_code.is_some());
     }
 
     #[test]
