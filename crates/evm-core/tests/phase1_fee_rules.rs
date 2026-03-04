@@ -1,12 +1,12 @@
 //! どこで: Phase1.3テスト / 何を: fee境界とbase_fee再評価 / なぜ: 有効手数料と順序の決定性を保証するため
 
+use alloy_consensus::{SignableTransaction, TxEip1559};
 use alloy_eips::eip1559::{calc_next_block_base_fee, BaseFeeParams};
 use alloy_eips::eip2718::Encodable2718;
 use alloy_eips::eip2930::AccessList;
 use alloy_primitives::{Address, Bytes, TxKind as EthTxKind, U256 as AlloyU256};
 use alloy_signer::SignerSync;
 use alloy_signer_local::PrivateKeySigner;
-use alloy_consensus::{SignableTransaction, TxEip1559};
 use evm_core::base_fee::compute_next_base_fee;
 use evm_core::chain::{self, ChainError, TxIn};
 use evm_core::hash;
@@ -317,7 +317,11 @@ fn test_signer() -> PrivateKeySigner {
         .expect("signer")
 }
 
-fn build_eth_signed_1559(nonce: u64, max_fee_per_gas: u128, max_priority_fee_per_gas: u128) -> Vec<u8> {
+fn build_eth_signed_1559(
+    nonce: u64,
+    max_fee_per_gas: u128,
+    max_priority_fee_per_gas: u128,
+) -> Vec<u8> {
     let signer = test_signer();
     let tx = TxEip1559 {
         chain_id: CHAIN_ID,

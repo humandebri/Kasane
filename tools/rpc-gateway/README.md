@@ -145,7 +145,7 @@ Related constants (current values):
 - mining base interval: `DEFAULT_MINING_INTERVAL_MS = 2_000`
 - cycle observer interval: `60s` (`set_timer_interval(Duration::from_secs(60), ...)`)
 - prune policy interval field: `DEFAULT_PRUNE_TIMER_INTERVAL_MS = 3_600_000` (internal stored value; currently unused as `set_prune_policy` input)
-- prune event interval: `PRUNE_EVENT_BLOCK_INTERVAL = 84` blocks (`crates/ic-evm-wrapper/src/lib.rs`)
+- prune event interval: `PRUNE_EVENT_BLOCK_INTERVAL = 84` blocks (`crates/ic-evm-gateway/src/lib.rs`)
 - prune interval lower bound: `MIN_PRUNE_TIMER_INTERVAL_MS = 1_000` (for internal stored value)
 - prune max ops per tick: `DEFAULT_PRUNE_MAX_OPS_PER_TICK = 5_000`
 - prune min ops per tick: `MIN_PRUNE_MAX_OPS_PER_TICK = 1`

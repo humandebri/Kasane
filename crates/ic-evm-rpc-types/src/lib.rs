@@ -430,6 +430,26 @@ pub enum PendingStatusView {
     Unknown,
 }
 
+#[derive(Clone, Copy, Debug, CandidType, Deserialize, Eq, PartialEq)]
+pub enum RequestDispatchStatusView {
+    Queued,
+    Dispatching,
+    Dispatched,
+    DispatchFailed,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize, Eq, PartialEq)]
+pub struct RequestDispatchResultView {
+    pub status: RequestDispatchStatusView,
+    pub vault_canister_id: Vec<u8>,
+    pub error_code: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, CandidType, Deserialize, Eq, PartialEq)]
+pub enum RequestKindView {
+    Unwrap,
+}
+
 #[derive(Clone, Debug, CandidType, Deserialize)]
 pub enum TxKindView {
     EthSigned,

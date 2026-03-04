@@ -81,7 +81,7 @@ run_github_equivalent_phase() {
   find vendor/revm -type f -print0 | sort -z | xargs -0 sha256sum > "${snapshot_dir}/vendor-revm.sha256"
   find vendor/ark-relations -type f -print0 | sort -z | xargs -0 sha256sum > "${snapshot_dir}/vendor-ark-relations.sha256"
 
-  cargo test -p evm-db -p ic-evm-core -p ic-evm-wrapper --locked --lib --tests
+  cargo test -p evm-db -p ic-evm-core -p ic-evm-gateway --locked --lib --tests
   cargo test --manifest-path crates/evm-rpc-e2e/Cargo.toml --no-run --locked
 
   scripts/run_canbench_guard.sh

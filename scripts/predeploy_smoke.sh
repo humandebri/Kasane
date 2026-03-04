@@ -13,7 +13,7 @@ echo "[predeploy] cargo check"
 cargo check --workspace
 
 echo "[predeploy] build wasm release"
-cargo build -p ic-evm-wrapper --target wasm32-unknown-unknown --release
+cargo build -p ic-evm-gateway --target wasm32-unknown-unknown --release
 
 echo "[predeploy] rpc compat e2e (PocketIC)"
 scripts/run_rpc_compat_e2e.sh

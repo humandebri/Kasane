@@ -146,7 +146,7 @@ npm run dev
 - mining 基本間隔: `DEFAULT_MINING_INTERVAL_MS = 2_000`
 - cycle observer 間隔: `60s`（`set_timer_interval(Duration::from_secs(60), ...)`）
 - prune policy 間隔フィールド: `DEFAULT_PRUNE_TIMER_INTERVAL_MS = 3_600_000`（内部保持値。`set_prune_policy` 入力では未使用）
-- prune イベント間隔: `PRUNE_EVENT_BLOCK_INTERVAL = 84` blocks（`crates/ic-evm-wrapper/src/lib.rs`）
+- prune イベント間隔: `PRUNE_EVENT_BLOCK_INTERVAL = 84` blocks（`crates/ic-evm-gateway/src/lib.rs`）
 - prune 間隔の下限: `MIN_PRUNE_TIMER_INTERVAL_MS = 1_000`（内部保持値向け）
 - prune 1tick上限: `DEFAULT_PRUNE_MAX_OPS_PER_TICK = 5_000`
 - prune 1tick最小: `MIN_PRUNE_MAX_OPS_PER_TICK = 1`

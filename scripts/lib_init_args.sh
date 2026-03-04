@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # where: deploy/install scripts shared helper
-# what: build mandatory InitArgs candid text for ic-evm-wrapper install
+# what: build mandatory InitArgs candid text for ic-evm-gateway install
 # why: eliminate empty install-arg paths across all environments
 
 set -euo pipefail
@@ -32,14 +32,33 @@ print(''.join(f'\\\\{b:02x}' for b in data))
 PY
 }
 
+resolve_wrap_canister_id() {
+  if [[ -n "${WRAP_CANISTER_ID:-}" ]]; then
+    printf '%s\n' "${WRAP_CANISTER_ID}"
+    return
+  fi
+  if command -v dfx >/dev/null 2>&1; then
+    local dfx_id
+    dfx_id="$(dfx canister id wrap_canister 2>/dev/null || true)"
+    if [[ -n "${dfx_id}" ]]; then
+      printf '%s\n' "${dfx_id}"
+      return
+    fi
+  fi
+  echo "[lib_init_args] error: WRAP_CANISTER_ID is required (or resolvable via 'dfx canister id wrap_canister')" >&2
+  return 1
+}
+
 build_init_args_for_principal() {
   local principal="$1"
   local amount="${2:-$DEFAULT_GENESIS_AMOUNT}"
+  local wrap_canister_id
+  wrap_canister_id="$(resolve_wrap_canister_id)"
   local blob
   blob=$(caller_evm_blob_from_principal "${principal}")
   local out
   out=$(cat <<EOF
-(opt record { genesis_balances = vec { record { address = blob "${blob}"; amount = ${amount} : nat } } })
+(opt record { genesis_balances = vec { record { address = blob "${blob}"; amount = ${amount} : nat } }; wrap_canister_id = principal "${wrap_canister_id}" })
 EOF
 )
   validate_init_args_text "${out}"

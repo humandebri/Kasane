@@ -348,7 +348,7 @@ QUERY_POST_JSONL="$(mktemp -t evm_query_post.XXXXXX.jsonl)"
 HEAVY_METRICS_FILE="$(mktemp -t evm_heavy_metrics.XXXXXX.csv)"
 trap 'finalize_state; rm -f "${TMP_DID_RAW:-}" "${TMP_DID_JS:-}" "${QUERY_JSONL:-}" "${QUERY_SUMMARY:-}" "${QUERY_POST_JSONL:-}" "${HEAVY_METRICS_FILE:-}"' EXIT
 
-didc bind "${REPO_ROOT}/crates/ic-evm-wrapper/evm_canister.did" -t js > "${TMP_DID_JS}"
+didc bind "${REPO_ROOT}/crates/ic-evm-gateway/evm_canister.did" -t js > "${TMP_DID_JS}"
 record_suite_event "suite_start" "execution start"
 
 run_query_matrix "${QUERY_JSONL}" "${QUERY_SUMMARY}" "" "" ""

@@ -1,0 +1,49 @@
+type RequestStatus = variant { Queued; Running; Succeeded; Failed };
+type RequestResult = record {
+  status : RequestStatus;
+  ledger_tx_id : opt blob;
+  error_code : opt text;
+};
+type WrapRequestResult = record {
+  status : RequestStatus;
+  pull_ledger_tx_id : opt blob;
+  mint_tx_id : opt blob;
+  error_code : opt text;
+  withdrawn : bool;
+  withdraw_ledger_tx_id : opt blob;
+  withdraw_error_code : opt text;
+  mint_failed_recoverable : bool;
+};
+type SubmitUnwrapRequestArgs = record {
+  request_id : blob;
+  asset_id : blob;
+  amount : blob;
+  recipient : blob;
+};
+type SubmitUnwrapRequestOk = record { request_id : blob };
+type SubmitWrapRequestArgs = record {
+  request_id : blob;
+  asset_id : blob;
+  amount : blob;
+  from_owner : blob;
+  evm_recipient : blob;
+  evm_nonce : nat64;
+  gas_limit : nat64;
+};
+type SubmitWrapRequestOk = record { request_id : blob };
+type WithdrawFailedWrapArgs = record { request_id : blob };
+type WithdrawFailedWrapOk = record { request_id : blob; ledger_tx_id : blob };
+type InitArgs = record {
+  kasane_canister : principal;
+  evm_gateway_canister : principal;
+  evm_wrap_factory : blob;
+};
+service : (InitArgs) -> {
+  submit_unwrap_request : (SubmitUnwrapRequestArgs) -> (variant { Ok : SubmitUnwrapRequestOk; Err : text });
+  submit_wrap_request : (SubmitWrapRequestArgs) -> (variant { Ok : SubmitWrapRequestOk; Err : text });
+  withdraw_failed_wrap : (WithdrawFailedWrapArgs) -> (variant { Ok : WithdrawFailedWrapOk; Err : text });
+  get_request_status : (blob) -> (opt RequestStatus) query;
+  get_request_result : (blob) -> (opt RequestResult) query;
+  get_wrap_request_status : (blob) -> (opt RequestStatus) query;
+  get_wrap_request_result : (blob) -> (opt WrapRequestResult) query;
+}

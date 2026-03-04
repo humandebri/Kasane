@@ -113,8 +113,17 @@ impl Storable for BlockData {
 
     fn from_bytes(bytes: Cow<'_, [u8]>) -> Self {
         let data = bytes.as_ref();
-        let base_len =
-            8 + HASH_LEN + HASH_LEN + 8 + 8 + 8 + 8 + BLOCK_BENEFICIARY_LEN + HASH_LEN + HASH_LEN + 4;
+        let base_len = 8
+            + HASH_LEN
+            + HASH_LEN
+            + 8
+            + 8
+            + 8
+            + 8
+            + BLOCK_BENEFICIARY_LEN
+            + HASH_LEN
+            + HASH_LEN
+            + 4;
         if data.len() < base_len {
             mark_decode_failure(b"block_data", true);
             return BlockData {
@@ -335,11 +344,9 @@ fn len_to_u32(len: usize) -> Option<u32> {
 }
 
 fn encode_fallback_block() -> Cow<'static, [u8]> {
-    let mut out =
-        Vec::with_capacity(
-            8 + HASH_LEN + HASH_LEN + 8 + 8 + 8 + 8 + BLOCK_BENEFICIARY_LEN + HASH_LEN + HASH_LEN
-                + 4,
-        );
+    let mut out = Vec::with_capacity(
+        8 + HASH_LEN + HASH_LEN + 8 + 8 + 8 + 8 + BLOCK_BENEFICIARY_LEN + HASH_LEN + HASH_LEN + 4,
+    );
     out.extend_from_slice(&0u64.to_be_bytes());
     out.extend_from_slice(&[0u8; HASH_LEN]);
     out.extend_from_slice(&[0u8; HASH_LEN]);

@@ -70,8 +70,16 @@ pub const RECEIPT_MAX_SIZE_U32: u32 = RECEIPT_V2_EXTRA_U32
     + 4
     + (MAX_LOGS_PER_TX as u32) * (20 + 4 + (MAX_LOG_TOPICS as u32) * 32 + 4 + MAX_LOG_DATA_U32);
 
-pub const BLOCK_BASE_SIZE_U32: u32 =
-    8 + HASH_LEN_U32 + HASH_LEN_U32 + 8 + 8 + 8 + 8 + HASH_LEN_U32 + HASH_LEN_U32 + 4
-        + BLOCK_BENEFICIARY_LEN_U32;
+pub const BLOCK_BASE_SIZE_U32: u32 = 8
+    + HASH_LEN_U32
+    + HASH_LEN_U32
+    + 8
+    + 8
+    + 8
+    + 8
+    + HASH_LEN_U32
+    + HASH_LEN_U32
+    + 4
+    + BLOCK_BENEFICIARY_LEN_U32;
 pub const MAX_BLOCK_DATA_SIZE_U32: u32 =
     BLOCK_BASE_SIZE_U32 + (HASH_LEN_U32 * MAX_TXS_PER_BLOCK_U32);

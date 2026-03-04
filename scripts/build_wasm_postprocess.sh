@@ -7,9 +7,9 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
-INPUT_WASM="${1:-${REPO_ROOT}/target/wasm32-unknown-unknown/release/ic_evm_wrapper.wasm}"
-OUTPUT_WASM="${2:-${REPO_ROOT}/target/wasm32-unknown-unknown/release/ic_evm_wrapper.final.wasm}"
-DID_FILE="${DID_FILE:-${REPO_ROOT}/crates/ic-evm-wrapper/evm_canister.did}"
+INPUT_WASM="${1:-${REPO_ROOT}/target/wasm32-unknown-unknown/release/ic_evm_gateway.wasm}"
+OUTPUT_WASM="${2:-${REPO_ROOT}/target/wasm32-unknown-unknown/release/ic_evm_gateway.final.wasm}"
+DID_FILE="${DID_FILE:-${REPO_ROOT}/crates/ic-evm-gateway/evm_canister.did}"
 OPT_LEVEL="${OPT_LEVEL:-O3}"
 ENABLE_STUB_WASI="${ENABLE_STUB_WASI:-0}"
 CHECK_ENDPOINTS_EXCLUDE="${CHECK_ENDPOINTS_EXCLUDE:-rpc_eth_get_block_by_number_with_status,rpc_eth_get_transaction_receipt_with_status_by_eth_hash,rpc_eth_get_transaction_receipt_with_status_by_tx_id}"
@@ -33,9 +33,9 @@ fi
 WORK_DIR="$(dirname "${OUTPUT_WASM}")"
 mkdir -p "${WORK_DIR}"
 
-STUB_WASM="${WORK_DIR}/ic_evm_wrapper.stubbed.wasm"
-SHRUNK_WASM="${WORK_DIR}/ic_evm_wrapper.shrunk.wasm"
-OPT_WASM="${WORK_DIR}/ic_evm_wrapper.opt.wasm"
+STUB_WASM="${WORK_DIR}/ic_evm_gateway.stubbed.wasm"
+SHRUNK_WASM="${WORK_DIR}/ic_evm_gateway.shrunk.wasm"
+OPT_WASM="${WORK_DIR}/ic_evm_gateway.opt.wasm"
 
 SOURCE_WASM="${INPUT_WASM}"
 
@@ -63,7 +63,7 @@ ic-wasm "${OPT_WASM}" -o "${OUTPUT_WASM}" metadata candid:service -f "${DID_FILE
 echo "[postprocess] check-endpoints"
 CHECK_DID_FILE="${DID_FILE}"
 if [[ -n "${CHECK_ENDPOINTS_EXCLUDE}" ]]; then
-  CHECK_DID_FILE="$(mktemp -t ic_evm_wrapper.check.XXXXXX.did)"
+  CHECK_DID_FILE="$(mktemp -t ic_evm_gateway.check.XXXXXX.did)"
   awk -v EXCLUDE_METHODS="${CHECK_ENDPOINTS_EXCLUDE}" '
     function trim(value) {
       gsub(/^[[:space:]]+|[[:space:]]+$/, "", value)
@@ -109,7 +109,7 @@ fi
 check_cmd=("ic-wasm" "${OUTPUT_WASM}" "check-endpoints" "--candid" "${CHECK_DID_FILE}")
 HIDDEN_FILE=""
 if [[ -n "${CHECK_ENDPOINTS_HIDDEN}" ]]; then
-  HIDDEN_FILE="$(mktemp -t ic_evm_wrapper.hidden.XXXXXX.txt)"
+  HIDDEN_FILE="$(mktemp -t ic_evm_gateway.hidden.XXXXXX.txt)"
   IFS=',' read -r -a hidden_items <<<"${CHECK_ENDPOINTS_HIDDEN}"
   for item in "${hidden_items[@]}"; do
     trimmed="${item#"${item%%[![:space:]]*}"}"

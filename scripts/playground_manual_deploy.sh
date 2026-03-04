@@ -17,18 +17,18 @@ log() {
 }
 
 build_wasm() {
-  log "cargo build --release --target wasm32-unknown-unknown -p ic-evm-wrapper"
-  cargo build --release --target wasm32-unknown-unknown -p ic-evm-wrapper
+  log "cargo build --release --target wasm32-unknown-unknown -p ic-evm-gateway"
+  cargo build --release --target wasm32-unknown-unknown -p ic-evm-gateway
 }
 
 install_wasm() {
-  local wasm_path="target/wasm32-unknown-unknown/release/ic_evm_wrapper.wasm"
+  local wasm_path="target/wasm32-unknown-unknown/release/ic_evm_gateway.wasm"
   if [[ ! -f "${wasm_path}" ]]; then
     log "wasm not found: ${wasm_path}"
     exit 1
   fi
   log "wasm size: $(ls -lh "${wasm_path}" | awk '{print $5}')"
-  local wasm_out="target/wasm32-unknown-unknown/release/ic_evm_wrapper.final.wasm"
+  local wasm_out="target/wasm32-unknown-unknown/release/ic_evm_gateway.final.wasm"
   scripts/build_wasm_postprocess.sh "${wasm_path}" "${wasm_out}"
 
   if [[ "${NETWORK}" == "playground" || "${NETWORK}" == "ic" ]]; then

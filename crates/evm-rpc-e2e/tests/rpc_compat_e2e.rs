@@ -126,7 +126,7 @@ fn wasm_path() -> PathBuf {
         .join("target")
         .join("wasm32-unknown-unknown")
         .join("release")
-        .join("ic_evm_wrapper.wasm")
+        .join("ic_evm_gateway.wasm")
 }
 
 fn test_caller() -> Principal {
@@ -161,7 +161,7 @@ fn settle_migrations(pic: &PocketIc, _canister_id: Principal, _caller: Principal
 fn install_canister_with_arg(pic: &PocketIc, init_arg: Vec<u8>) -> Principal {
     let path = wasm_path();
     if !path.exists() {
-        panic!("wasm not found: build ic-evm-wrapper first: {:?}", path);
+        panic!("wasm not found: build ic-evm-gateway first: {:?}", path);
     }
     let wasm = std::fs::read(path).expect("read wasm");
     let canister_id = pic.create_canister();

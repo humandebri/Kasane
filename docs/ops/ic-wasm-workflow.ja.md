@@ -4,7 +4,7 @@ English version: [./ic-wasm-workflow.md](./ic-wasm-workflow.md)
 
 
 ## どこで・何を・なぜ
-- どこで: `ic-evm-wrapper` の build/deploy 導線
+- どこで: `ic-evm-gateway` の build/deploy 導線
 - 何を: `ic-wasm` による Wasm 後処理の標準手順
 - なぜ: バイナリ最適化、Candid整合性保証、運用の再現性向上
 
@@ -19,8 +19,8 @@ English version: [./ic-wasm-workflow.md](./ic-wasm-workflow.md)
 4. `check-endpoints`
 
 デフォルト入出力:
-- input: `target/wasm32-unknown-unknown/release/ic_evm_wrapper.wasm`
-- output: `target/wasm32-unknown-unknown/release/ic_evm_wrapper.final.wasm`
+- input: `target/wasm32-unknown-unknown/release/ic_evm_gateway.wasm`
+- output: `target/wasm32-unknown-unknown/release/ic_evm_gateway.final.wasm`
 
 実行例:
 ```bash
@@ -31,7 +31,7 @@ scripts/build_wasm_postprocess.sh
 - `scripts/ci-local.sh`
 - `scripts/playground_manual_deploy.sh`
 
-両方とも最終成果物として `ic_evm_wrapper.final.wasm` を使用する。
+両方とも最終成果物として `ic_evm_gateway.final.wasm` を使用する。
 
 ## ci-local モード運用（2026-02）
 `scripts/ci-local.sh` は責務分離のため、モードで実行範囲を切り替える。
@@ -122,7 +122,7 @@ START_PAGE=131072 SKIP_DEPLOY=1 scripts/profile_heap_trace.sh
 ```bash
 bash -n scripts/build_wasm_postprocess.sh
 bash -n scripts/profile_heap_trace.sh
-scripts/build_wasm_postprocess.sh target/wasm32-unknown-unknown/release/ic_evm_wrapper.wasm /tmp/ic_evm_wrapper.final.wasm
+scripts/build_wasm_postprocess.sh target/wasm32-unknown-unknown/release/ic_evm_gateway.wasm /tmp/ic_evm_gateway.final.wasm
 ```
 
 ## worktree 初期化手順（vendor/revm）
@@ -143,7 +143,7 @@ scripts/sync_vendor_revm.sh /Users/you/path/to/main/repo
 ## 監視とベンチマーク追加（2026-02）
 ### Prometheus形式メトリクス
 - canister query: `metrics_prometheus() -> (variant { Ok : text; Err : text })`
-- 実装: `crates/ic-evm-wrapper/src/prometheus_metrics.rs`
+- 実装: `crates/ic-evm-gateway/src/prometheus_metrics.rs`
 - 代表メトリクス:
   - `ic_evm_cycles_balance`
   - `ic_evm_stable_memory_pages`

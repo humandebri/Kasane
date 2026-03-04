@@ -25,5 +25,5 @@ To keep behavior for sidecar-enabled builds while reducing default runtime depen
   - first rebase vendor crate to upstream version
   - then re-apply this fork delta (feature split + fallback type)
   - validate with:
-    - `cargo check -p ic-evm-core -p ic-evm-wrapper`
+    - `cargo check -p ic-evm-core -p ic-evm-gateway`
     - `scripts/check_alloy_isolation.sh`

@@ -57,7 +57,7 @@ INIT_ARGS="$(build_init_args_for_current_identity 1000000000000000000)"
 dfx canister install evm_canister \
   --network local \
   --mode reinstall \
-  --wasm target/wasm32-unknown-unknown/release/ic_evm_wrapper.candid.wasm \
+  --wasm target/wasm32-unknown-unknown/release/ic_evm_gateway.candid.wasm \
   --argument "$INIT_ARGS" \
   2>&1 | tee /tmp/dfx-logs/deploy.log
 ```
@@ -374,7 +374,7 @@ ICP_ENV=ic CANISTER_ID=<canister_id> scripts/mainnet/ic_mainnet_preflight.sh
 3) 必須確認
 
 - `cargo check --workspace` が成功
-- `cargo build -p ic-evm-wrapper --target wasm32-unknown-unknown --release` が成功
+- `cargo build -p ic-evm-gateway --target wasm32-unknown-unknown --release` が成功
 - `tools/indexer` の `npm run build` が成功
 - `scripts/rpc_compat_smoke.sh` の各RPC呼び出しが成功
 

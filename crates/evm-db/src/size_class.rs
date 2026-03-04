@@ -51,6 +51,9 @@ mod tests {
     #[test]
     fn smallest_class_rejects_zero_and_too_large() {
         assert_eq!(smallest_class(0), Err(SizeClassError::ZeroLength));
-        assert_eq!(smallest_class(4 * 1024 * 1024 + 1), Err(SizeClassError::TooLarge));
+        assert_eq!(
+            smallest_class(4 * 1024 * 1024 + 1),
+            Err(SizeClassError::TooLarge)
+        );
     }
 }

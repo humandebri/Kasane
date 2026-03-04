@@ -6,6 +6,7 @@ use crate::constants::FEE_RECIPIENT;
 use crate::hash::keccak256;
 use crate::revm_db::RevmStableDb;
 use crate::tx_decode::DecodeError;
+use crate::wrap_precompile::WrapPrecompileProvider;
 use evm_db::chain_data::constants::{
     CHAIN_ID, MAX_LOGS_PER_TX, MAX_LOG_DATA, MAX_LOG_TOPICS, MAX_RETURN_DATA,
 };
@@ -112,6 +113,7 @@ pub fn execute_tx(
         exec_path,
         true,
         None,
+        true,
     )?;
     Ok(outcome)
 }
@@ -125,6 +127,7 @@ pub(crate) fn execute_tx_on<DB>(
     exec_path: ExecPath,
     persist_receipt_index: bool,
     instruction_soft_limit: Option<u64>,
+    allow_external_precompile: bool,
 ) -> Result<(ExecOutcome, StateDiff), ExecError>
 where
     DB: revm::database_interface::Database<Error = core::convert::Infallible> + DatabaseCommit,
@@ -153,7 +156,8 @@ where
             block.basefee = exec_ctx.base_fee;
             block.beneficiary = FEE_RECIPIENT;
         })
-        .build_mainnet_with_inspector(inspector);
+        .build_mainnet_with_inspector(inspector)
+        .with_precompiles(WrapPrecompileProvider::new(allow_external_precompile));
 
     let result = evm.inspect_tx(tx_env).map_err(map_tx_error_stage)?;
     if evm.inspector.tripped {
@@ -516,7 +520,11 @@ mod tests {
         with_state_mut(|state| {
             state.accounts.insert(
                 make_account_key(recipient),
-                AccountVal::from_parts(nonce, U256::from(starting_balance).to_be_bytes(), code_hash),
+                AccountVal::from_parts(
+                    nonce,
+                    U256::from(starting_balance).to_be_bytes(),
+                    code_hash,
+                ),
             );
         });
 

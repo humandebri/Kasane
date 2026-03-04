@@ -13,9 +13,9 @@ CANISTER_NAME="${CANISTER_NAME:-evm_canister}"
 CANISTER_ID="${CANISTER_ID:-}"
 MODE="${MODE:-reinstall}"
 TRACE_ONLY="${TRACE_ONLY:-execute_tx_on,mining_tick}"
-INPUT_WASM="${REPO_ROOT}/target/wasm32-unknown-unknown/release/ic_evm_wrapper.wasm"
-OPT_WASM="${REPO_ROOT}/target/wasm32-unknown-unknown/release/ic_evm_wrapper.final.wasm"
-PROFILED_WASM="${REPO_ROOT}/target/wasm32-unknown-unknown/release/ic_evm_wrapper.profiled.wasm"
+INPUT_WASM="${REPO_ROOT}/target/wasm32-unknown-unknown/release/ic_evm_gateway.wasm"
+OPT_WASM="${REPO_ROOT}/target/wasm32-unknown-unknown/release/ic_evm_gateway.final.wasm"
+PROFILED_WASM="${REPO_ROOT}/target/wasm32-unknown-unknown/release/ic_evm_gateway.profiled.wasm"
 START_PAGE="${START_PAGE:-}"
 PAGE_LIMIT="${PAGE_LIMIT:-}"
 SKIP_DEPLOY="${SKIP_DEPLOY:-0}"
@@ -25,8 +25,8 @@ log() {
 }
 
 build_release() {
-  log "cargo build --release --target wasm32-unknown-unknown -p ic-evm-wrapper"
-  cargo build --release --target wasm32-unknown-unknown -p ic-evm-wrapper
+  log "cargo build --release --target wasm32-unknown-unknown -p ic-evm-gateway"
+  cargo build --release --target wasm32-unknown-unknown -p ic-evm-gateway
 }
 
 instrument_wasm() {

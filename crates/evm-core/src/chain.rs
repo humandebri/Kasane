@@ -637,7 +637,11 @@ fn need_prune_internal(state: &StableState, estimated_kept_bytes: u64) -> bool {
     time_trigger || cap_trigger
 }
 
-fn compute_retain_count(state: &StableState, policy: PrunePolicy, estimated_kept_bytes: u64) -> u64 {
+fn compute_retain_count(
+    state: &StableState,
+    policy: PrunePolicy,
+    estimated_kept_bytes: u64,
+) -> u64 {
     let head = state.head.get().number;
     let config = state.prune_config.get();
     let emergency = policy.target_bytes > 0 && estimated_kept_bytes > config.hard_emergency_bytes;
@@ -1212,6 +1216,7 @@ pub fn produce_block(max_txs: usize) -> Result<ProduceBlockOutcome, ChainError> 
             ExecPath::UserTx,
             false,
             remaining_instruction_budget,
+            true,
         );
         let outcome = match execution {
             Ok((value, user_diff)) => {
@@ -1603,6 +1608,7 @@ pub fn eth_call(raw_tx: Vec<u8>) -> Result<Vec<u8>, ChainError> {
         ExecPath::UserTx,
         false,
         None,
+        false,
     )
     .map_err(|err| ChainError::ExecFailed(Some(err)))?;
     Ok(outcome.return_data)
@@ -1694,6 +1700,7 @@ pub fn eth_call_object(input: CallObjectInput) -> Result<CallObjectResult, Chain
         ExecPath::UserTx,
         false,
         None,
+        false,
     )
     .map_err(|err| ChainError::ExecFailed(Some(err)))?;
     let revert_data = if outcome.receipt.status == 0 && !outcome.return_data.is_empty() {
@@ -1922,6 +1929,7 @@ fn execute_and_seal_with_caller(
         ExecPath::UserTx,
         false,
         None,
+        true,
     ) {
         Ok(value) => value,
         Err(err) => {

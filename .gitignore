@@ -39,3 +39,6 @@ docs/ops/reports/
 # local ci supply-chain snapshots
 /cargo-metadata.sbom.json
 /vendor-revm.sha256
+
+# local cargo cache home
+.cargo-home/

@@ -1,8 +1,8 @@
 //! どこで: dropped管理テスト / 何を: 固定長リングの上限維持 / なぜ: tx_locsメモリリークを防ぐため
 
 use evm_core::chain::{self, TxIn};
-use evm_core::tx_decode::IcSyntheticTxInput;
 use evm_core::hash;
+use evm_core::tx_decode::IcSyntheticTxInput;
 use evm_db::chain_data::constants::DROPPED_RING_CAPACITY;
 use evm_db::chain_data::TxLocKind;
 use evm_db::stable_state::{init_stable_state, with_state, with_state_mut};

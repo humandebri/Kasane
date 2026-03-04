@@ -156,16 +156,16 @@ start_network() {
 
 build_and_install() {
   log "build wasm"
-  cargo build --release --target wasm32-unknown-unknown -p ic-evm-wrapper
+  cargo build --release --target wasm32-unknown-unknown -p ic-evm-gateway
 
   if ! command -v ic-wasm >/dev/null 2>&1; then
     log "installing ic-wasm"
     cargo install ic-wasm --locked
   fi
 
-  local wasm_in="target/wasm32-unknown-unknown/release/ic_evm_wrapper.wasm"
-  local wasm_out="target/wasm32-unknown-unknown/release/ic_evm_wrapper.candid.wasm"
-  ic-wasm "${wasm_in}" -o "${wasm_out}" metadata candid:service -f crates/ic-evm-wrapper/evm_canister.did
+  local wasm_in="target/wasm32-unknown-unknown/release/ic_evm_gateway.wasm"
+  local wasm_out="target/wasm32-unknown-unknown/release/ic_evm_gateway.candid.wasm"
+  ic-wasm "${wasm_in}" -o "${wasm_out}" metadata candid:service -f crates/ic-evm-gateway/evm_canister.did
 
   icp canister create -e "${NETWORK}" --identity "${ICP_IDENTITY_NAME}" "${CANISTER_NAME}" >/dev/null 2>&1 || true
   log "install wasm (mode=${MODE})"
