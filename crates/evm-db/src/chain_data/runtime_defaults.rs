@@ -11,7 +11,7 @@ pub const DEFAULT_BASE_FEE: u64 = 250_000_000_000;
 // legacy Tx の最低 gas_price。0 だと legacy 下限チェックが実質無効になるため非0を維持する。
 pub const DEFAULT_MIN_GAS_PRICE: u64 = 250_000_000_000;
 pub const DEFAULT_MIN_PRIORITY_FEE: u64 = 250_000_000_000;
-pub const DEFAULT_BLOCK_GAS_LIMIT: u64 = 3_000_000;
+pub const DEFAULT_BLOCK_GAS_LIMIT: u64 = 6_000_000;
 // 0 の場合は命令数ベースの早期打ち切りを無効化する。
 // 既定値は「上限手前で安全に止める」ための保守値。
 pub const DEFAULT_INSTRUCTION_SOFT_LIMIT: u64 = 4_000_000_000;
