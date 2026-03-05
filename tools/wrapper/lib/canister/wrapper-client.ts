@@ -1,20 +1,22 @@
-// どこで: wrapper canister クライアント / 何を: dispatch状態とsubmit_ic_txを呼び出す / なぜ: BFF APIでgateway責務を明確に扱うため
+// どこで: gateway canister クライアント / 何を: dispatch照会とsubmit_ic_txを提供 / なぜ: ウォレット接続identityで直接tx発行するため
 
-import { Actor, type ActorSubclass } from "@dfinity/agent";
+import { Actor, type ActorSubclass, type Identity } from "@dfinity/agent";
 import { IDL } from "@dfinity/candid";
 import { loadConfig } from "../config";
 import type { DispatchResultView, DispatchStatus } from "../types";
-import { bytesToHex } from "../utils";
-import { getQueryAgent, getSubmitAgent } from "./agent";
+import { getIdentityAgent, getQueryAgent } from "./agent";
 
 type SubmitTxError = { Internal: string } | { Rejected: string } | { InvalidArgument: string };
 type SubmitIcTxResult = { Ok: Uint8Array } | { Err: SubmitTxError };
 type NatResult = { Ok: bigint } | { Err: string };
+type RpcErrorView = { code: number; message: string; error_prefix: [] | [string] };
+type GasPriceResult = { Ok: bigint } | { Err: RpcErrorView };
 type RequestKind = { Unwrap: null };
 const REQUEST_KIND_UNWRAP: RequestKind = { Unwrap: null };
 
 type WrapperActor = ActorSubclass<{
   expected_nonce_by_address: (address: Uint8Array) => Promise<NatResult>;
+  rpc_eth_gas_price: () => Promise<GasPriceResult>;
   submit_ic_tx: (args: {
     to: [] | [Uint8Array];
     value: bigint;
@@ -24,8 +26,14 @@ type WrapperActor = ActorSubclass<{
     nonce: bigint;
     gas_limit: bigint;
   }) => Promise<SubmitIcTxResult>;
-  get_request_dispatch_status: (kind: RequestKind, requestId: Uint8Array) => Promise<[] | [{ Queued: null } | { Dispatching: null } | { Dispatched: null } | { DispatchFailed: null }]>
-  get_request_dispatch_result: (kind: RequestKind, requestId: Uint8Array) => Promise<[] | [{
+  get_request_dispatch_status: (
+    kind: RequestKind,
+    requestId: Uint8Array
+  ) => Promise<[] | [{ Queued: null } | { Dispatching: null } | { Dispatched: null } | { DispatchFailed: null }]>;
+  get_request_dispatch_result: (
+    kind: RequestKind,
+    requestId: Uint8Array
+  ) => Promise<[] | [{
     status: { Queued: null } | { Dispatching: null } | { Dispatched: null } | { DispatchFailed: null };
     vault_canister_id: Uint8Array;
     error_code: [] | [string];
@@ -33,7 +41,7 @@ type WrapperActor = ActorSubclass<{
 }>;
 
 let cachedQueryActor: WrapperActor | null = null;
-let cachedSubmitActor: WrapperActor | null = null;
+const cachedSubmitActors = new Map<string, WrapperActor>();
 
 const wrapperIdlFactory: IDL.InterfaceFactory = ({ IDL: I }) => {
   const SubmitTxError = I.Variant({
@@ -66,6 +74,14 @@ const wrapperIdlFactory: IDL.InterfaceFactory = ({ IDL: I }) => {
   });
   return I.Service({
     expected_nonce_by_address: I.Func([I.Vec(I.Nat8)], [I.Variant({ Ok: I.Nat, Err: I.Text })], ["query"]),
+    rpc_eth_gas_price: I.Func([], [I.Variant({
+      Ok: I.Nat,
+      Err: I.Record({
+        code: I.Nat32,
+        message: I.Text,
+        error_prefix: I.Opt(I.Text),
+      }),
+    })], ["query"]),
     submit_ic_tx: I.Func([SubmitIcTxArgsDto], [I.Variant({ Ok: I.Vec(I.Nat8), Err: SubmitTxError })], []),
     get_request_dispatch_status: I.Func([RequestKindView, I.Vec(I.Nat8)], [I.Opt(RequestDispatchStatusView)], ["query"]),
     get_request_dispatch_result: I.Func([RequestKindView, I.Vec(I.Nat8)], [I.Opt(RequestDispatchResultView)], ["query"]),
@@ -84,16 +100,19 @@ async function getQueryActor(): Promise<WrapperActor> {
   return cachedQueryActor;
 }
 
-async function getSubmitActor(): Promise<WrapperActor> {
-  if (cachedSubmitActor) {
-    return cachedSubmitActor;
+async function getSubmitActor(identity: Identity): Promise<WrapperActor> {
+  const key = identity.getPrincipal().toText();
+  const cached = cachedSubmitActors.get(key);
+  if (cached) {
+    return cached;
   }
   const cfg = loadConfig();
-  cachedSubmitActor = Actor.createActor<WrapperActor>(wrapperIdlFactory, {
+  const actor = Actor.createActor<WrapperActor>(wrapperIdlFactory, {
     canisterId: cfg.evmGatewayCanisterId,
-    agent: await getSubmitAgent(),
+    agent: await getIdentityAgent(identity),
   });
-  return cachedSubmitActor;
+  cachedSubmitActors.set(key, actor);
+  return actor;
 }
 
 function decodeDispatchStatus(status: { Queued: null } | { Dispatching: null } | { Dispatched: null } | { DispatchFailed: null }): DispatchStatus {
@@ -127,12 +146,21 @@ export async function getExpectedNonce(callerEvmAddress: Uint8Array): Promise<bi
   return out.Ok;
 }
 
+export async function getGasPriceWei(): Promise<bigint> {
+  const out = await (await getQueryActor()).rpc_eth_gas_price();
+  if ("Err" in out) {
+    throw new Error(`evm_gateway.gas_price_failed:${out.Err.code}:${out.Err.message}`);
+  }
+  return out.Ok;
+}
+
 export async function submitIcTx(args: {
   to: Uint8Array;
   data: Uint8Array;
   nonce: bigint;
+  identity: Identity;
 }): Promise<Uint8Array> {
-  const out = await (await getSubmitActor()).submit_ic_tx({
+  const out = await (await getSubmitActor(args.identity)).submit_ic_tx({
     to: [args.to],
     value: 0n,
     max_priority_fee_per_gas: 0n,
@@ -171,7 +199,7 @@ export async function getDispatchResult(requestId: Uint8Array): Promise<Dispatch
 export const wrapperClientTestHooks = {
   reset(): void {
     cachedQueryActor = null;
-    cachedSubmitActor = null;
+    cachedSubmitActors.clear();
   },
-  formatTxId: bytesToHex,
+  decodeSubmitError,
 };

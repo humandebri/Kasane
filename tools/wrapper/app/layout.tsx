@@ -1,6 +1,7 @@
-// どこで: App root layout / 何を: 共通メタ情報とグローバルCSSを適用 / なぜ: 全ページの表示基盤を揃えるため
+// どこで: App root layout / 何を: 共通メタ情報・グローバルCSS・providerを適用 / なぜ: wallet接続を全画面で共有するため
 
 import type { Metadata } from "next";
+import { Providers } from "./providers";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -11,7 +12,9 @@ export const metadata: Metadata = {
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="ja">
-      <body>{children}</body>
+      <body>
+        <Providers>{children}</Providers>
+      </body>
     </html>
   );
 }

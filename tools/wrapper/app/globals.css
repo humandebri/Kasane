@@ -4,14 +4,14 @@
 @import "tw-animate-css";
 
 @theme {
-  --color-background: #f3f6ee;
-  --color-foreground: #0f172a;
+  --color-background: #f4f8ff;
+  --color-foreground: #101828;
   --color-card: #ffffff;
-  --color-card-foreground: #0f172a;
-  --color-muted: #e7ebdf;
-  --color-muted-foreground: #556070;
-  --color-border: #ced6c2;
-  --color-ring: #10b981;
+  --color-card-foreground: #101828;
+  --color-muted: #eaf0fb;
+  --color-muted-foreground: #475467;
+  --color-border: #d7e3f5;
+  --color-ring: #2f6bff;
 }
 
 @layer base {
@@ -21,11 +21,11 @@
 
   body {
     @apply bg-background text-foreground antialiased;
-    font-family: "IBM Plex Sans", "Noto Sans JP", sans-serif;
+    font-family: "Space Grotesk", "Noto Sans JP", sans-serif;
     background-image:
-      radial-gradient(circle at 10% 0%, #ffffff 0%, transparent 35%),
-      radial-gradient(circle at 90% 20%, #d6ead5 0%, transparent 30%),
-      linear-gradient(180deg, #f8fbf5, #edf3e7 75%);
+      radial-gradient(circle at 12% -5%, #ffffff 0%, transparent 38%),
+      radial-gradient(circle at 92% 10%, #dcebff 0%, transparent 35%),
+      linear-gradient(180deg, #f9fbff, #eef4ff 72%, #e8f1ff 100%);
     min-height: 100vh;
   }
 

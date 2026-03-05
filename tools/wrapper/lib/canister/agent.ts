@@ -1,11 +1,10 @@
-// どこで: canister agent生成 / 何を: HttpAgentの共通生成を提供 / なぜ: BFF内の接続設定を一元化するため
+// どこで: canister agent生成 / 何を: query/updateで使うHttpAgentを生成 / なぜ: ブラウザ接続identityで直接update呼び出しするため
 
-import { HttpAgent } from "@dfinity/agent";
+import { HttpAgent, type Identity } from "@dfinity/agent";
 import { loadConfig } from "../config";
-import { submitIdentityFromSecretHex } from "../identity";
 
 let cachedQueryAgent: HttpAgent | null = null;
-let cachedSubmitAgent: HttpAgent | null = null;
+const cachedIdentityAgents = new Map<string, HttpAgent>();
 
 async function maybeFetchRootKey(agent: HttpAgent, enabled: boolean): Promise<void> {
   if (enabled) {
@@ -24,17 +23,20 @@ export async function getQueryAgent(): Promise<HttpAgent> {
   return agent;
 }
 
-export async function getSubmitAgent(): Promise<HttpAgent> {
-  if (cachedSubmitAgent) {
-    return cachedSubmitAgent;
+export async function getIdentityAgent(identity: Identity): Promise<HttpAgent> {
+  const key = identity.getPrincipal().toText();
+  const cached = cachedIdentityAgents.get(key);
+  if (cached) {
+    return cached;
   }
   const cfg = loadConfig();
-  if (cfg.submitIdentitySecretKeyHex === null) {
-    throw new Error("config.missing:ICP_IDENTITY_SECRET_KEY_HEX");
-  }
-  const identity = submitIdentityFromSecretHex(cfg.submitIdentitySecretKeyHex);
   const agent = new HttpAgent({ host: cfg.icHost, fetch: globalThis.fetch, identity });
   await maybeFetchRootKey(agent, cfg.fetchRootKey);
-  cachedSubmitAgent = agent;
+  cachedIdentityAgents.set(key, agent);
   return agent;
+}
+
+export function resetAgentCache(): void {
+  cachedQueryAgent = null;
+  cachedIdentityAgents.clear();
 }
