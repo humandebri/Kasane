@@ -1102,9 +1102,17 @@ fn get_request_dispatch_result(
             .map(|value| RequestDispatchResultView {
                 status: request_dispatch_status_to_view(value.status),
                 vault_canister_id: value.vault_canister_id.clone(),
-                error_code: value.error_code.clone(),
+                error_code: normalize_unwrap_error_code_for_view(value.error_code.as_deref()),
             })
     })
+}
+
+fn normalize_unwrap_error_code_for_view(error_code: Option<&str>) -> Option<String> {
+    match error_code {
+        Some(UNWRAP_DECODE_FAILURE_CODE) => Some(UNWRAP_QUARANTINE_ERROR.to_string()),
+        Some(value) => Some(value.to_string()),
+        None => None,
+    }
 }
 
 fn block_to_view(block: BlockData) -> BlockView {
@@ -1997,7 +2005,7 @@ fn pop_next_dispatch_request(now: u64) -> Result<Option<(TxId, UnwrapDispatchReq
                 request_id.0
             ));
         };
-        if should_quarantine_unwrap_request(&req) {
+        if should_skip_dispatch_unwrap_request(&req) {
             req.updated_at = now;
             req.status = UnwrapRequestStatus::DispatchFailed;
             req.ledger_tx_id = None;
@@ -2016,15 +2024,23 @@ fn pop_next_dispatch_request(now: u64) -> Result<Option<(TxId, UnwrapDispatchReq
     out
 }
 
-fn should_quarantine_unwrap_request(req: &UnwrapDispatchRequest) -> bool {
+fn is_decode_failed_unwrap_request(req: &UnwrapDispatchRequest) -> bool {
     req.error_code.as_deref() == Some(UNWRAP_DECODE_FAILURE_CODE)
+}
+
+fn is_quarantined_unwrap_request(req: &UnwrapDispatchRequest) -> bool {
+    req.error_code.as_deref() == Some(UNWRAP_QUARANTINE_ERROR)
+}
+
+fn should_skip_dispatch_unwrap_request(req: &UnwrapDispatchRequest) -> bool {
+    is_decode_failed_unwrap_request(req) || is_quarantined_unwrap_request(req)
 }
 
 fn quarantine_decode_failed_unwrap_requests(now: u64) -> (u64, u64) {
     let out = with_state_mut(|state| {
         let mut request_ids = Vec::new();
         for entry in state.unwrap_requests.iter() {
-            if should_quarantine_unwrap_request(&entry.value()) {
+            if is_decode_failed_unwrap_request(&entry.value()) {
                 request_ids.push(*entry.key());
             }
         }
@@ -2234,16 +2250,29 @@ mod tests {
     use evm_db::chain_data::{
         MigrationPhase, OpsMode, TxId, TxLoc, UnwrapDispatchRequest, UnwrapRequestStatus,
     };
-    use evm_db::memory::WASM_PAGE_SIZE_BYTES;
+    use evm_db::memory::{get_memory, AppMemoryId, WASM_PAGE_SIZE_BYTES};
     use evm_db::meta::{
         current_schema_version, schema_migration_state, set_meta, set_needs_migration,
         set_schema_migration_state, SchemaMigrationPhase, SchemaMigrationState,
     };
     use evm_db::stable_state::{init_stable_state, with_state, with_state_mut};
+    use evm_db::{Memory, Storable};
     use evm_db::types::keys::{make_account_key, make_storage_key};
     use evm_db::types::values::{AccountVal, U256Val};
     use std::collections::BTreeSet;
+    use std::panic::{catch_unwind, AssertUnwindSafe};
     use std::str::FromStr;
+
+    fn find_subsequence_positions(haystack: &[u8], needle: &[u8]) -> Vec<usize> {
+        if needle.is_empty() || haystack.len() < needle.len() {
+            return Vec::new();
+        }
+        haystack
+            .windows(needle.len())
+            .enumerate()
+            .filter_map(|(idx, window)| if window == needle { Some(idx) } else { None })
+            .collect()
+    }
 
     #[test]
     fn parse_submit_ic_tx_args_rejects_value_out_of_range() {
@@ -3467,6 +3496,166 @@ mod tests {
     }
 
     #[test]
+    fn get_request_dispatch_status_returns_dispatch_failed_for_decode_marker() {
+        init_stable_state();
+        let request_id = TxId([0x12u8; 32]);
+        with_state_mut(|state| {
+            state.unwrap_requests.insert(
+                request_id,
+                UnwrapDispatchRequest {
+                    vault_canister_id: vec![0u8],
+                    asset_id: vec![0u8],
+                    amount: vec![0u8; 32],
+                    recipient: vec![0u8],
+                    status: UnwrapRequestStatus::DispatchFailed,
+                    ledger_tx_id: None,
+                    error_code: Some(super::UNWRAP_DECODE_FAILURE_CODE.to_string()),
+                    created_at: 0,
+                    updated_at: 0,
+                },
+            );
+        });
+
+        let status =
+            super::get_request_dispatch_status(super::RequestKindView::Unwrap, request_id.0.to_vec())
+                .expect("status");
+        assert_eq!(status, super::RequestDispatchStatusView::DispatchFailed);
+    }
+
+    #[test]
+    fn get_request_dispatch_result_normalizes_decode_failure_error_code() {
+        init_stable_state();
+        let request_id = TxId([0x13u8; 32]);
+        with_state_mut(|state| {
+            state.unwrap_requests.insert(
+                request_id,
+                UnwrapDispatchRequest {
+                    vault_canister_id: vec![0u8],
+                    asset_id: vec![0u8],
+                    amount: vec![0u8; 32],
+                    recipient: vec![0u8],
+                    status: UnwrapRequestStatus::DispatchFailed,
+                    ledger_tx_id: None,
+                    error_code: Some(super::UNWRAP_DECODE_FAILURE_CODE.to_string()),
+                    created_at: 0,
+                    updated_at: 0,
+                },
+            );
+        });
+
+        let result = super::get_request_dispatch_result(
+            super::RequestKindView::Unwrap,
+            request_id.0.to_vec(),
+        )
+        .expect("result");
+        assert_eq!(
+            result.error_code,
+            Some(super::UNWRAP_QUARANTINE_ERROR.to_string())
+        );
+        let stored = with_state(|state| state.unwrap_requests.get(&request_id));
+        assert_eq!(
+            stored.and_then(|value| value.error_code),
+            Some(super::UNWRAP_DECODE_FAILURE_CODE.to_string())
+        );
+    }
+
+    #[test]
+    fn raw_stable_corruption_does_not_trap_query_or_dispatch_for_unwrap_request() {
+        init_stable_state();
+        let request_id = TxId([0x14u8; 32]);
+        let request = UnwrapDispatchRequest {
+            vault_canister_id: vec![0xA1u8; 13],
+            asset_id: vec![0xB2u8; 11],
+            amount: vec![0xC3u8; 32],
+            recipient: vec![0xD4u8; 19],
+            status: UnwrapRequestStatus::Queued,
+            ledger_tx_id: Some(vec![0xE5u8; 17]),
+            error_code: Some("wrap.integration.gateway.raw-corrupt.7f3e2c1b".to_string()),
+            created_at: 987_654_321,
+            updated_at: 987_654_333,
+        };
+        let encoded = request.to_bytes().into_owned();
+        with_state_mut(|state| {
+            let mut meta = *state.unwrap_dispatch_meta.get();
+            let seq = meta.push();
+            state.unwrap_dispatch_meta.set(meta);
+            state.unwrap_dispatch_queue.insert(seq, request_id);
+            state.unwrap_requests.insert(request_id, request);
+        });
+
+        let memory = get_memory(AppMemoryId::UnwrapRequests);
+        let pages = memory.size();
+        assert!(pages > 0, "unwrap request memory pages must be allocated");
+        let mut dump = vec![0u8; (pages * WASM_PAGE_SIZE_BYTES) as usize];
+        memory.read(0, &mut dump);
+        let candidates = find_subsequence_positions(&dump, &encoded);
+        assert!(
+            !candidates.is_empty(),
+            "encoded unwrap request bytes must be present in stable memory"
+        );
+
+        let mut corrupted_target = false;
+        for encoded_offset in candidates.into_iter() {
+            let checksum_last = encoded_offset + encoded.len() - 1;
+            let original = dump[checksum_last];
+            memory.write(checksum_last as u64, &[original ^ 0x01]);
+            let is_decode_failed = with_state(|state| {
+                state
+                    .unwrap_requests
+                    .get(&request_id)
+                    .is_some_and(|value| {
+                        value.status == UnwrapRequestStatus::DispatchFailed
+                            && value.error_code.as_deref() == Some(super::UNWRAP_DECODE_FAILURE_CODE)
+                    })
+            });
+            if is_decode_failed {
+                corrupted_target = true;
+                break;
+            }
+            memory.write(checksum_last as u64, &[original]);
+        }
+        assert!(
+            corrupted_target,
+            "failed to corrupt the inserted unwrap request payload"
+        );
+
+        let query_out = catch_unwind(AssertUnwindSafe(|| {
+            super::get_request_dispatch_result(super::RequestKindView::Unwrap, request_id.0.to_vec())
+        }));
+        assert!(query_out.is_ok(), "query path must not trap on raw corruption");
+        let query_result = query_out
+            .expect("query must not panic")
+            .expect("result must exist");
+        assert_eq!(
+            query_result.status,
+            super::RequestDispatchStatusView::DispatchFailed
+        );
+        assert_eq!(
+            query_result.error_code,
+            Some(super::UNWRAP_QUARANTINE_ERROR.to_string())
+        );
+
+        let pop_out = catch_unwind(AssertUnwindSafe(|| pop_next_dispatch_request(123)));
+        assert!(pop_out.is_ok(), "dispatch path must not trap on raw corruption");
+        let pop_err = pop_out
+            .expect("pop call must not panic")
+            .expect_err("corrupted unwrap request must be quarantined");
+        assert!(pop_err.starts_with("wrap.dispatch.quarantined:"));
+
+        let (stored, queue_len) = with_state(|state| {
+            (
+                state.unwrap_requests.get(&request_id),
+                state.unwrap_dispatch_queue.len(),
+            )
+        });
+        assert_eq!(queue_len, 0);
+        assert_eq!(
+            stored.and_then(|value| value.error_code),
+            Some(super::UNWRAP_QUARANTINE_ERROR.to_string())
+        );
+    }
+
+    #[test]
     fn pop_next_dispatch_request_marks_dispatching_and_dequeues() {
         init_stable_state();
         let request_id = TxId([0x33u8; 32]);
@@ -3548,6 +3737,46 @@ mod tests {
     }
 
     #[test]
+    fn pop_next_dispatch_request_skips_already_quarantined_entry() {
+        init_stable_state();
+        let request_id = TxId([0x37u8; 32]);
+        with_state_mut(|state| {
+            let mut meta = *state.unwrap_dispatch_meta.get();
+            let seq = meta.push();
+            state.unwrap_dispatch_meta.set(meta);
+            state.unwrap_dispatch_queue.insert(seq, request_id);
+            state.unwrap_requests.insert(
+                request_id,
+                UnwrapDispatchRequest {
+                    vault_canister_id: vec![0u8],
+                    asset_id: vec![0u8],
+                    amount: vec![0u8; 32],
+                    recipient: vec![0u8],
+                    status: UnwrapRequestStatus::DispatchFailed,
+                    ledger_tx_id: None,
+                    error_code: Some(super::UNWRAP_QUARANTINE_ERROR.to_string()),
+                    created_at: 1,
+                    updated_at: 1,
+                },
+            );
+        });
+
+        let err = pop_next_dispatch_request(123).expect_err("must skip already quarantined entry");
+        assert!(err.starts_with("wrap.dispatch.quarantined:"));
+        let (stored, queue_len) = with_state(|state| {
+            (
+                state.unwrap_requests.get(&request_id),
+                state.unwrap_dispatch_queue.len(),
+            )
+        });
+        assert_eq!(queue_len, 0);
+        assert_eq!(
+            stored.and_then(|v| v.error_code),
+            Some(super::UNWRAP_QUARANTINE_ERROR.to_string())
+        );
+    }
+
+    #[test]
     fn quarantine_decode_failed_unwrap_requests_marks_dead_letter_and_dequeues() {
         init_stable_state();
         let bad_request = TxId([0x35u8; 32]);
@@ -3592,6 +3821,10 @@ mod tests {
         let (quarantined, dropped) = super::quarantine_decode_failed_unwrap_requests(123);
         assert_eq!(quarantined, 1);
         assert_eq!(dropped, 1);
+        let (quarantined_second, dropped_second) =
+            super::quarantine_decode_failed_unwrap_requests(456);
+        assert_eq!(quarantined_second, 0);
+        assert_eq!(dropped_second, 0);
         let (bad, good, queue_len) = with_state(|state| {
             (
                 state.unwrap_requests.get(&bad_request),

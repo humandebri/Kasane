@@ -8,6 +8,7 @@ use evm_db::chain_data::receipt::LogEntry;
 use evm_db::chain_data::{
     BlockData, CallerKey, ChainStateV1, Head, OpsMetricsV1, PruneJournal, QueueMeta, ReceiptLike,
     StoredTx, StoredTxBytes, TxId, TxIndexEntry, TxKind, TxLoc, UnwrapDispatchRequest,
+    UnwrapRequestStatus, UNWRAP_DECODE_FAILURE_CODE,
 };
 use evm_db::chain_data::{LogConfigV1, LOG_CONFIG_FILTER_MAX};
 use evm_db::chain_data::{
@@ -255,12 +256,15 @@ fn stored_tx_encode_overflow_returns_fallback_bytes() {
 }
 
 #[test]
-fn unwrap_request_decode_failure_panics_without_global_freeze() {
+fn unwrap_request_decode_failure_returns_quarantinable_record_without_global_freeze() {
     init_stable_state();
     clear_needs_migration();
-    let result =
-        panic::catch_unwind(|| UnwrapDispatchRequest::from_bytes(Cow::Owned(vec![0xffu8])));
-    assert!(result.is_err());
+    let decoded = UnwrapDispatchRequest::from_bytes(Cow::Owned(vec![0xffu8]));
+    assert_eq!(decoded.status, UnwrapRequestStatus::DispatchFailed);
+    assert_eq!(
+        decoded.error_code.as_deref(),
+        Some(UNWRAP_DECODE_FAILURE_CODE)
+    );
     assert!(!needs_migration());
 }
 

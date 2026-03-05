@@ -16,4 +16,5 @@ pub mod upgrade;
 // 依存境界の一本化: 上位クレートはic-stable-structuresを直接参照せず、
 // evm-db経由でtrait/typeを使う。
 pub use ic_stable_structures::storable::Bound;
+pub use ic_stable_structures::Memory;
 pub use ic_stable_structures::Storable;
