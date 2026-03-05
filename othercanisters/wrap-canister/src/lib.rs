@@ -9,6 +9,7 @@ use ic_stable_structures::{DefaultMemoryImpl, StableBTreeMap, StableCell, Storab
 use num_bigint::BigUint;
 use std::borrow::Cow;
 use std::cell::{Cell, RefCell};
+use std::collections::BTreeSet;
 use tiny_keccak::{Hasher, Keccak};
 
 const MEM_KASANE_CANISTER: MemoryId = MemoryId::new(0);
@@ -20,6 +21,7 @@ const MEM_WRAP_REQUESTS: MemoryId = MemoryId::new(5);
 const MEM_WRAP_QUEUE: MemoryId = MemoryId::new(6);
 const MEM_WRAP_QUEUE_META: MemoryId = MemoryId::new(7);
 const MEM_EVM_WRAP_FACTORY: MemoryId = MemoryId::new(8);
+const MEM_FEE_POLICY: MemoryId = MemoryId::new(9);
 const PRINCIPAL_MAX_BYTES: usize = 29;
 const AMOUNT_BYTES: usize = 32;
 const EVM_ADDRESS_BYTES: usize = 20;
@@ -27,7 +29,12 @@ const MAX_LEDGER_TX_ID_BYTES: usize = 128;
 const MAX_ERROR_CODE_BYTES: usize = 192;
 const STORED_REQUEST_MAX_BYTES: u32 = 448;
 const WRAP_STORED_REQUEST_MAX_BYTES: u32 = 768;
+const FEE_POLICY_MAX_BYTES: u32 = 128;
 const DEFAULT_MINT_GAS_LIMIT: u64 = 300_000;
+const DEFAULT_CYCLE_FEE_E8S: u64 = 1_000_000;
+const DEFAULT_GAS_PRICE_BUFFER_BPS: u32 = 12_000;
+const GAS_PRICE_DENOMINATOR_BPS: u128 = 10_000;
+const WEI_PER_E8S: u128 = 10_000_000_000;
 
 type Memory = VirtualMemory<DefaultMemoryImpl>;
 
@@ -36,6 +43,9 @@ pub struct InitArgs {
     pub kasane_canister: Principal,
     pub evm_gateway_canister: Principal,
     pub evm_wrap_factory: Vec<u8>,
+    pub fee_ledger_canister: Principal,
+    pub cycle_fee_e8s: u64,
+    pub gas_price_buffer_bps: u32,
 }
 
 #[derive(Clone, Debug, CandidType, Deserialize)]
@@ -56,7 +66,6 @@ pub struct SubmitWrapRequestArgs {
     pub request_id: Vec<u8>,
     pub asset_id: Vec<u8>,
     pub amount: Vec<u8>,
-    pub from_owner: Vec<u8>,
     pub evm_recipient: Vec<u8>,
     pub evm_nonce: u64,
     pub gas_limit: u64,
@@ -107,6 +116,26 @@ pub struct WrapRequestResult {
     pub withdraw_error_code: Option<String>,
     #[serde(default)]
     pub mint_failed_recoverable: bool,
+    #[serde(default)]
+    pub fee_ledger_tx_id: Option<Vec<u8>>,
+    #[serde(default)]
+    pub charged_fee_e8s: Option<u128>,
+    #[serde(default)]
+    pub charged_gas_price_wei: Option<u128>,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize)]
+pub struct FeePolicyView {
+    pub fee_ledger_canister: Principal,
+    pub cycle_fee_e8s: u64,
+    pub gas_price_buffer_bps: u32,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize)]
+pub struct SetFeePolicyArgs {
+    pub fee_ledger_canister: Principal,
+    pub cycle_fee_e8s: u64,
+    pub gas_price_buffer_bps: u32,
 }
 
 #[derive(Clone, Debug, CandidType, Deserialize)]
@@ -126,6 +155,20 @@ struct WrapStoredRequest {
     evm_nonce: u64,
     gas_limit: u64,
     result: WrapRequestResult,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize)]
+struct FeePolicyStored {
+    fee_ledger_canister: Vec<u8>,
+    cycle_fee_e8s: u64,
+    gas_price_buffer_bps: u32,
+}
+
+#[derive(Clone, Debug)]
+struct FeeCharge {
+    ledger_tx_id: Vec<u8>,
+    charged_fee_e8s: u128,
+    charged_gas_price_wei: u128,
 }
 
 #[derive(Clone, Copy, Debug, CandidType, Deserialize, Eq, PartialEq, Ord, PartialOrd)]
@@ -233,10 +276,29 @@ impl Storable for WrapStoredRequest {
     };
 }
 
+impl Storable for FeePolicyStored {
+    fn to_bytes(&self) -> Cow<'_, [u8]> {
+        let encoded =
+            candid::encode_one(self).unwrap_or_else(|_| panic!("fee_policy.encode_failed"));
+        Cow::Owned(encoded)
+    }
+
+    fn from_bytes(bytes: Cow<'_, [u8]>) -> Self {
+        candid::decode_one::<FeePolicyStored>(bytes.as_ref())
+            .unwrap_or_else(|_| panic!("fee_policy.decode_failed"))
+    }
+
+    const BOUND: Bound = Bound::Bounded {
+        max_size: FEE_POLICY_MAX_BYTES,
+        is_fixed_size: false,
+    };
+}
+
 struct StableState {
     kasane_canister: StableCell<Vec<u8>, Memory>,
     evm_gateway_canister: StableCell<Vec<u8>, Memory>,
     evm_wrap_factory: StableCell<Vec<u8>, Memory>,
+    fee_policy: StableCell<FeePolicyStored, Memory>,
     requests: StableBTreeMap<RequestId, StoredRequest, Memory>,
     queue: StableBTreeMap<u64, RequestId, Memory>,
     queue_meta: StableCell<QueueMeta, Memory>,
@@ -251,6 +313,7 @@ thread_local! {
     static STABLE_STATE: RefCell<Option<StableState>> = const { RefCell::new(None) };
     static WORKER_SCHEDULED: Cell<bool> = const { Cell::new(false) };
     static WRAP_WORKER_SCHEDULED: Cell<bool> = const { Cell::new(false) };
+    static PENDING_WRAP_SUBMISSIONS: RefCell<BTreeSet<RequestId>> = RefCell::new(BTreeSet::new());
 }
 
 fn with_memory<R>(id: MemoryId, f: impl FnOnce(Memory) -> R) -> R {
@@ -283,6 +346,17 @@ fn init_state() {
             StableCell::init(memory, Vec::<u8>::new())
                 .unwrap_or_else(|_| ic_cdk::trap("stable cell init failed: evm_wrap_factory"))
         });
+        let fee_policy = with_memory(MEM_FEE_POLICY, |memory| {
+            StableCell::init(
+                memory,
+                FeePolicyStored {
+                    fee_ledger_canister: Vec::new(),
+                    cycle_fee_e8s: DEFAULT_CYCLE_FEE_E8S,
+                    gas_price_buffer_bps: DEFAULT_GAS_PRICE_BUFFER_BPS,
+                },
+            )
+            .unwrap_or_else(|_| ic_cdk::trap("stable cell init failed: fee_policy"))
+        });
         let wrap_requests = with_memory(MEM_WRAP_REQUESTS, StableBTreeMap::init);
         let wrap_queue = with_memory(MEM_WRAP_QUEUE, StableBTreeMap::init);
         let wrap_queue_meta = with_memory(MEM_WRAP_QUEUE_META, |memory| {
@@ -293,6 +367,7 @@ fn init_state() {
             kasane_canister,
             evm_gateway_canister,
             evm_wrap_factory,
+            fee_policy,
             requests,
             queue,
             queue_meta,
@@ -343,6 +418,15 @@ fn init(args: InitArgs) {
     ) {
         ic_cdk::trap(&code);
     }
+    if let Err(code) = validate_non_anonymous_principal(
+        &args.fee_ledger_canister,
+        "arg.fee_ledger_canister_anonymous",
+    ) {
+        ic_cdk::trap(&code);
+    }
+    if let Err(code) = validate_gas_price_buffer_bps(args.gas_price_buffer_bps) {
+        ic_cdk::trap(&code);
+    }
     with_state_mut(|state| {
         state
             .kasane_canister
@@ -356,6 +440,14 @@ fn init(args: InitArgs) {
             .evm_wrap_factory
             .set(args.evm_wrap_factory)
             .unwrap_or_else(|_| ic_cdk::trap("stable cell set failed: evm_wrap_factory"));
+        state
+            .fee_policy
+            .set(FeePolicyStored {
+                fee_ledger_canister: args.fee_ledger_canister.as_slice().to_vec(),
+                cycle_fee_e8s: args.cycle_fee_e8s,
+                gas_price_buffer_bps: args.gas_price_buffer_bps,
+            })
+            .unwrap_or_else(|_| ic_cdk::trap("stable cell set failed: fee_policy"));
     });
 }
 
@@ -383,15 +475,59 @@ fn submit_unwrap_request(args: SubmitUnwrapRequestArgs) -> Result<SubmitUnwrapRe
 }
 
 #[ic_cdk::update]
-fn submit_wrap_request(args: SubmitWrapRequestArgs) -> Result<SubmitWrapRequestOk, String> {
+async fn submit_wrap_request(args: SubmitWrapRequestArgs) -> Result<SubmitWrapRequestOk, String> {
     init_state();
-    ensure_kasane_caller()?;
-    let request_id = insert_wrap_request(args)?;
+    let caller = ic_cdk::api::msg_caller();
+    validate_non_anonymous_principal(&caller, "auth.caller_anonymous")?;
+    let request_id = validate_wrap_request_args(&args, caller)?;
+    reserve_pending_wrap_submission(request_id)?;
+
+    let out = submit_wrap_request_inner(args, caller, request_id).await;
+    release_pending_wrap_submission(request_id);
+    let request_id = out?;
     enqueue_wrap_request(request_id);
     schedule_wrap_worker();
     Ok(SubmitWrapRequestOk {
         request_id: request_id.0.to_vec(),
     })
+}
+
+async fn submit_wrap_request_inner(
+    args: SubmitWrapRequestArgs,
+    caller: Principal,
+    request_id: RequestId,
+) -> Result<RequestId, String> {
+    let effective_gas_limit = if args.gas_limit == 0 {
+        DEFAULT_MINT_GAS_LIMIT
+    } else {
+        args.gas_limit
+    };
+    let fee_policy = get_fee_policy_stored()?;
+    let gas_price_wei = fetch_gas_price_wei_from_gateway().await?;
+    let charged_gas_price_wei = ceil_mul_ratio_u128(
+        gas_price_wei,
+        u128::from(fee_policy.gas_price_buffer_bps),
+        GAS_PRICE_DENOMINATOR_BPS,
+    );
+    let charged_fee_e8s = compute_total_fee_e8s(
+        effective_gas_limit,
+        charged_gas_price_wei,
+        fee_policy.cycle_fee_e8s,
+    )?;
+    let fee_amount = u256_from_u128(charged_fee_e8s);
+    let fee_ledger_tx_id = attempt_icrc2_transfer_from(
+        caller.as_slice().to_vec(),
+        fee_policy.fee_ledger_canister.clone(),
+        fee_amount.to_vec(),
+    )
+    .await
+    .map_err(map_fee_collection_error)?;
+    let fee_charge = FeeCharge {
+        ledger_tx_id: fee_ledger_tx_id,
+        charged_fee_e8s,
+        charged_gas_price_wei,
+    };
+    insert_wrap_request(args, caller, request_id, fee_charge)
 }
 
 #[ic_cdk::update]
@@ -507,17 +643,19 @@ fn dequeue_request() -> Option<RequestId> {
     })
 }
 
-fn insert_wrap_request(args: SubmitWrapRequestArgs) -> Result<RequestId, String> {
+fn validate_wrap_request_args(
+    args: &SubmitWrapRequestArgs,
+    caller: Principal,
+) -> Result<RequestId, String> {
     let request_id = to_request_id(args.request_id.as_slice())?;
+    if with_state(|state| state.wrap_requests.contains_key(&request_id)) {
+        return Err("wrap.request.duplicate".to_string());
+    }
     validate_principal_bytes(args.asset_id.as_slice())?;
     validate_amount_bytes(args.amount.as_slice())?;
-    let from_owner = principal_from_bytes(args.from_owner.as_slice())?;
-    if from_owner == Principal::anonymous() {
-        return Err("arg.from_owner_anonymous".to_string());
-    }
     validate_evm_address(args.evm_recipient.as_slice(), "arg.evm_recipient_invalid")?;
     let expected_request_id = derive_wrap_request_id(
-        from_owner.as_slice(),
+        caller.as_slice(),
         args.asset_id.as_slice(),
         args.amount.as_slice(),
         args.evm_recipient.as_slice(),
@@ -527,6 +665,36 @@ fn insert_wrap_request(args: SubmitWrapRequestArgs) -> Result<RequestId, String>
     if request_id.0 != expected_request_id {
         return Err("arg.request_id_mismatch".to_string());
     }
+    Ok(request_id)
+}
+
+fn reserve_pending_wrap_submission(request_id: RequestId) -> Result<(), String> {
+    let inserted = PENDING_WRAP_SUBMISSIONS.with(|pending| {
+        let mut pending = pending.borrow_mut();
+        if pending.contains(&request_id) {
+            return false;
+        }
+        pending.insert(request_id)
+    });
+    if inserted {
+        Ok(())
+    } else {
+        Err("wrap.request.pending".to_string())
+    }
+}
+
+fn release_pending_wrap_submission(request_id: RequestId) {
+    PENDING_WRAP_SUBMISSIONS.with(|pending| {
+        pending.borrow_mut().remove(&request_id);
+    });
+}
+
+fn insert_wrap_request(
+    args: SubmitWrapRequestArgs,
+    caller: Principal,
+    request_id: RequestId,
+    fee_charge: FeeCharge,
+) -> Result<RequestId, String> {
     let inserted = with_state_mut(|state| {
         if state.wrap_requests.contains_key(&request_id) {
             return false;
@@ -534,7 +702,7 @@ fn insert_wrap_request(args: SubmitWrapRequestArgs) -> Result<RequestId, String>
         state.wrap_requests.insert(
             request_id,
             WrapStoredRequest {
-                caller: from_owner.as_slice().to_vec(),
+                caller: caller.as_slice().to_vec(),
                 asset_id: args.asset_id,
                 amount: args.amount,
                 evm_recipient: args.evm_recipient,
@@ -549,6 +717,9 @@ fn insert_wrap_request(args: SubmitWrapRequestArgs) -> Result<RequestId, String>
                     withdraw_ledger_tx_id: None,
                     withdraw_error_code: None,
                     mint_failed_recoverable: false,
+                    fee_ledger_tx_id: Some(fee_charge.ledger_tx_id),
+                    charged_fee_e8s: Some(fee_charge.charged_fee_e8s),
+                    charged_gas_price_wei: Some(fee_charge.charged_gas_price_wei),
                 },
             },
         );
@@ -661,6 +832,39 @@ fn get_wrap_request_result(request_id: Vec<u8>) -> Option<WrapRequestResult> {
     })
 }
 
+#[ic_cdk::query]
+fn get_fee_policy() -> Result<FeePolicyView, String> {
+    init_state();
+    let stored = get_fee_policy_stored()?;
+    Ok(FeePolicyView {
+        fee_ledger_canister: principal_from_bytes(stored.fee_ledger_canister.as_slice())?,
+        cycle_fee_e8s: stored.cycle_fee_e8s,
+        gas_price_buffer_bps: stored.gas_price_buffer_bps,
+    })
+}
+
+#[ic_cdk::update]
+fn set_fee_policy(args: SetFeePolicyArgs) -> Result<(), String> {
+    init_state();
+    ensure_controller_caller()?;
+    validate_non_anonymous_principal(
+        &args.fee_ledger_canister,
+        "arg.fee_ledger_canister_anonymous",
+    )?;
+    validate_gas_price_buffer_bps(args.gas_price_buffer_bps)?;
+    with_state_mut(|state| {
+        state
+            .fee_policy
+            .set(FeePolicyStored {
+                fee_ledger_canister: args.fee_ledger_canister.as_slice().to_vec(),
+                cycle_fee_e8s: args.cycle_fee_e8s,
+                gas_price_buffer_bps: args.gas_price_buffer_bps,
+            })
+            .unwrap_or_else(|_| ic_cdk::trap("stable cell set failed: fee_policy"));
+    });
+    Ok(())
+}
+
 fn ensure_kasane_caller() -> Result<(), String> {
     let caller = ic_cdk::api::msg_caller();
     let expected = with_state(|state| state.kasane_canister.get().clone());
@@ -672,6 +876,15 @@ fn ensure_kasane_caller() -> Result<(), String> {
         Ok(())
     } else {
         Err("auth.kasane_required".to_string())
+    }
+}
+
+fn ensure_controller_caller() -> Result<(), String> {
+    let caller = ic_cdk::api::msg_caller();
+    if ic_cdk::api::is_controller(&caller) {
+        Ok(())
+    } else {
+        Err("auth.controller_required".to_string())
     }
 }
 
@@ -797,10 +1010,20 @@ async fn wrap_worker_tick() {
                     req.evm_recipient.clone(),
                     req.evm_nonce,
                     req.gas_limit,
+                    req.result.charged_gas_price_wei.unwrap_or(0),
                 )
             })
         });
-        let Some((caller, asset_id, amount, evm_recipient, evm_nonce, gas_limit)) = req else {
+        let Some((
+            caller,
+            asset_id,
+            amount,
+            evm_recipient,
+            evm_nonce,
+            gas_limit,
+            charged_gas_price_wei,
+        )) = req
+        else {
             continue;
         };
         mark_wrap_request_running(request_id);
@@ -818,6 +1041,7 @@ async fn wrap_worker_tick() {
                     } else {
                         gas_limit
                     },
+                    charged_gas_price_wei,
                 )
                 .await;
                 match mint {
@@ -951,6 +1175,13 @@ enum SubmitTxError {
     Internal(String),
 }
 
+#[derive(Clone, Debug, CandidType, Deserialize)]
+struct RpcErrorView {
+    error_prefix: Option<String>,
+    code: u32,
+    message: String,
+}
+
 async fn attempt_icrc1_transfer(
     asset_id: Vec<u8>,
     amount: Vec<u8>,
@@ -1030,6 +1261,7 @@ async fn submit_mint_tx(
     amount: Vec<u8>,
     nonce: u64,
     gas_limit: u64,
+    charged_gas_price_wei: u128,
 ) -> Result<Vec<u8>, String> {
     validate_principal_bytes(asset_id.as_slice())?;
     validate_evm_address(evm_recipient.as_slice(), "arg.evm_recipient_invalid")?;
@@ -1046,8 +1278,8 @@ async fn submit_mint_tx(
         value: Nat::from(0u8),
         gas_limit,
         nonce,
-        max_fee_per_gas: Nat::from(0u8),
-        max_priority_fee_per_gas: Nat::from(0u8),
+        max_fee_per_gas: Nat::from(charged_gas_price_wei),
+        max_priority_fee_per_gas: Nat::from(charged_gas_price_wei),
         data,
     };
 
@@ -1066,6 +1298,23 @@ async fn submit_mint_tx(
             Err(err) => Err(format!("evm_gateway.decode_failed:{err}")),
         },
         Err(err) => Err(format!("evm_gateway.call_failed:{err}")),
+    }
+}
+
+async fn fetch_gas_price_wei_from_gateway() -> Result<u128, String> {
+    let gateway = expected_evm_gateway_canister()?;
+    let call_result = ic_cdk::call::Call::unbounded_wait(gateway, "rpc_eth_gas_price").await;
+    match call_result {
+        Ok(resp) => match resp.candid_tuple::<(Result<Nat, RpcErrorView>,)>() {
+            Ok((result,)) => match result {
+                Ok(value) => {
+                    nat_to_u128(&value).ok_or_else(|| "fee.quote_out_of_range".to_string())
+                }
+                Err(err) => Err(format!("fee.quote_failed:{}:{}", err.code, err.message)),
+            },
+            Err(err) => Err(format!("fee.quote_decode_failed:{err}")),
+        },
+        Err(err) => Err(format!("fee.quote_call_failed:{err}")),
     }
 }
 
@@ -1154,6 +1403,16 @@ fn nat_to_be_bytes(value: &Nat) -> Vec<u8> {
     bytes
 }
 
+fn nat_to_u128(value: &Nat) -> Option<u128> {
+    let bytes = value.0.to_bytes_be();
+    if bytes.len() > 16 {
+        return None;
+    }
+    let mut out = [0u8; 16];
+    out[16 - bytes.len()..].copy_from_slice(&bytes);
+    Some(u128::from_be_bytes(out))
+}
+
 fn mark_request_running(request_id: RequestId) {
     with_state_mut(|state| {
         if let Some(mut req) = state.requests.get(&request_id) {
@@ -1216,6 +1475,58 @@ fn validate_non_anonymous_principal(principal: &Principal, code: &str) -> Result
     Ok(())
 }
 
+fn validate_gas_price_buffer_bps(value: u32) -> Result<(), String> {
+    if value < 10_000 || value > 50_000 {
+        return Err("arg.gas_price_buffer_bps_out_of_range".to_string());
+    }
+    Ok(())
+}
+
+fn get_fee_policy_stored() -> Result<FeePolicyStored, String> {
+    let stored = with_state(|state| state.fee_policy.get().clone());
+    if stored.fee_ledger_canister.is_empty() {
+        return Err("config.fee_ledger_missing".to_string());
+    }
+    principal_from_bytes(stored.fee_ledger_canister.as_slice())?;
+    validate_gas_price_buffer_bps(stored.gas_price_buffer_bps)?;
+    Ok(stored)
+}
+
+fn ceil_mul_ratio_u128(value: u128, numerator: u128, denominator: u128) -> u128 {
+    if denominator == 0 {
+        return u128::MAX;
+    }
+    let prod = value.saturating_mul(numerator);
+    let add = denominator.saturating_sub(1);
+    prod.saturating_add(add) / denominator
+}
+
+fn compute_total_fee_e8s(
+    gas_limit: u64,
+    charged_gas_price_wei: u128,
+    cycle_fee_e8s: u64,
+) -> Result<u128, String> {
+    if charged_gas_price_wei == 0 {
+        return Err("fee.quote_zero".to_string());
+    }
+    let gas_fee_wei = u128::from(gas_limit).saturating_mul(charged_gas_price_wei);
+    let gas_fee_e8s = gas_fee_wei.saturating_add(WEI_PER_E8S.saturating_sub(1)) / WEI_PER_E8S;
+    Ok(gas_fee_e8s.saturating_add(u128::from(cycle_fee_e8s)))
+}
+
+fn map_fee_collection_error(code: String) -> String {
+    if let Some(suffix) = code.strip_prefix("ledger.transfer_from_failed:") {
+        return format!("fee.transfer_from_failed:{suffix}");
+    }
+    if let Some(suffix) = code.strip_prefix("ledger.decode_failed:") {
+        return format!("fee.decode_failed:{suffix}");
+    }
+    if let Some(suffix) = code.strip_prefix("ledger.call_failed:") {
+        return format!("fee.call_failed:{suffix}");
+    }
+    format!("fee.unknown:{code}")
+}
+
 fn principal_from_bytes(bytes: &[u8]) -> Result<Principal, String> {
     validate_principal_bytes(bytes)?;
     Ok(Principal::from_slice(bytes))
@@ -1264,6 +1575,12 @@ fn encode_factory_mint_for_asset_call_data(
 fn u256_from_u64(value: u64) -> [u8; 32] {
     let mut out = [0u8; 32];
     out[24..32].copy_from_slice(&value.to_be_bytes());
+    out
+}
+
+fn u256_from_u128(value: u128) -> [u8; 32] {
+    let mut out = [0u8; 32];
+    out[16..32].copy_from_slice(&value.to_be_bytes());
     out
 }
 
@@ -1450,10 +1767,11 @@ mod tests {
         on_worker_queue_drain, on_wrap_worker_queue_drain, principal_from_bytes, schedule_worker,
         schedule_wrap_worker, submit_error_to_code, to_request_id, to_withdraw_error_code,
         transfer_error_to_code, transfer_from_error_to_code, u256_from_u64,
-        validate_non_anonymous_principal, validate_withdraw_request, with_state, with_state_mut,
-        Icrc1TransferError, Icrc2TransferFromError, QueueMeta, RequestResult, RequestStatus,
-        StoredRequest, SubmitTxError, SubmitUnwrapRequestArgs, SubmitWrapRequestArgs,
-        WrapRequestResult, WrapStoredRequest, WORKER_SCHEDULED, WRAP_WORKER_SCHEDULED,
+        validate_non_anonymous_principal, validate_withdraw_request, validate_wrap_request_args,
+        with_state, with_state_mut, FeeCharge, Icrc1TransferError, Icrc2TransferFromError,
+        QueueMeta, RequestResult, RequestStatus, StoredRequest, SubmitTxError,
+        SubmitUnwrapRequestArgs, SubmitWrapRequestArgs, WrapRequestResult, WrapStoredRequest,
+        WORKER_SCHEDULED, WRAP_WORKER_SCHEDULED,
     };
     use candid::{decode_one, encode_one, Nat, Principal};
     use num_bigint::BigUint;
@@ -1498,7 +1816,26 @@ mod tests {
                 .evm_wrap_factory
                 .set(Vec::new())
                 .unwrap_or_else(|_| ic_cdk::trap("stable cell set failed: evm_wrap_factory"));
+            state
+                .fee_policy
+                .set(super::FeePolicyStored {
+                    fee_ledger_canister: Vec::new(),
+                    cycle_fee_e8s: super::DEFAULT_CYCLE_FEE_E8S,
+                    gas_price_buffer_bps: super::DEFAULT_GAS_PRICE_BUFFER_BPS,
+                })
+                .unwrap_or_else(|_| ic_cdk::trap("stable cell set failed: fee_policy"));
         });
+        super::PENDING_WRAP_SUBMISSIONS.with(|pending| {
+            pending.borrow_mut().clear();
+        });
+    }
+
+    fn test_fee_charge() -> FeeCharge {
+        FeeCharge {
+            ledger_tx_id: vec![0x44, 0x55],
+            charged_fee_e8s: 1_000_000,
+            charged_gas_price_wei: 300_000_000_000,
+        }
     }
 
     #[test]
@@ -1523,6 +1860,13 @@ mod tests {
         )
         .expect_err("must reject anonymous");
         assert_eq!(err, "arg.kasane_canister_anonymous");
+
+        let err = validate_non_anonymous_principal(
+            &Principal::anonymous(),
+            "arg.fee_ledger_canister_anonymous",
+        )
+        .expect_err("must reject anonymous");
+        assert_eq!(err, "arg.fee_ledger_canister_anonymous");
     }
 
     #[test]
@@ -1678,12 +2022,12 @@ mod tests {
     #[test]
     fn wrap_insert_request_rejects_duplicate() {
         reset_state();
-        let from_owner = vec![6u8; 29];
+        let caller = Principal::self_authenticating(b"wrap-caller-dup");
         let asset_id = vec![2u8; 29];
         let amount = vec![0u8; 32];
         let evm_recipient = vec![4u8; 20];
         let request_id = derive_wrap_request_id(
-            from_owner.as_slice(),
+            caller.as_slice(),
             asset_id.as_slice(),
             amount.as_slice(),
             evm_recipient.as_slice(),
@@ -1694,25 +2038,27 @@ mod tests {
             request_id: request_id.to_vec(),
             asset_id,
             amount,
-            from_owner,
             evm_recipient,
             evm_nonce: 1,
             gas_limit: 200_000,
         };
-        insert_wrap_request(args.clone()).expect("first should pass");
-        let err = insert_wrap_request(args).expect_err("second should fail");
+        let request_id = to_request_id(&request_id).expect("id");
+        insert_wrap_request(args.clone(), caller, request_id, test_fee_charge())
+            .expect("first should pass");
+        let err = insert_wrap_request(args, caller, request_id, test_fee_charge())
+            .expect_err("second should fail");
         assert_eq!(err, "wrap.request.duplicate");
     }
 
     #[test]
     fn mark_wrap_request_running_sets_running_status() {
         reset_state();
-        let from_owner = vec![6u8; 29];
+        let caller = Principal::self_authenticating(b"wrap-caller-running");
         let asset_id = vec![2u8; 29];
         let amount = vec![3u8; 32];
         let evm_recipient = vec![5u8; 20];
         let request_id_raw = derive_wrap_request_id(
-            from_owner.as_slice(),
+            caller.as_slice(),
             asset_id.as_slice(),
             amount.as_slice(),
             evm_recipient.as_slice(),
@@ -1720,15 +2066,19 @@ mod tests {
             300_000,
         );
         let request_id = to_request_id(&request_id_raw).expect("id");
-        insert_wrap_request(SubmitWrapRequestArgs {
-            request_id: request_id_raw.to_vec(),
-            asset_id,
-            amount,
-            from_owner,
-            evm_recipient,
-            evm_nonce: 1,
-            gas_limit: 300_000,
-        })
+        insert_wrap_request(
+            SubmitWrapRequestArgs {
+                request_id: request_id_raw.to_vec(),
+                asset_id,
+                amount,
+                evm_recipient,
+                evm_nonce: 1,
+                gas_limit: 300_000,
+            },
+            caller,
+            request_id,
+            test_fee_charge(),
+        )
         .expect("insert");
         mark_wrap_request_running(request_id);
         let status = with_state(|state| {
@@ -1741,33 +2091,20 @@ mod tests {
     }
 
     #[test]
-    fn wrap_insert_request_rejects_anonymous_from_owner() {
+    fn wrap_validate_request_rejects_request_id_mismatch() {
         reset_state();
-        let err = insert_wrap_request(SubmitWrapRequestArgs {
-            request_id: vec![8u8; 32],
-            asset_id: vec![2u8; 29],
-            amount: vec![3u8; 32],
-            from_owner: Principal::anonymous().as_slice().to_vec(),
-            evm_recipient: vec![5u8; 20],
-            evm_nonce: 1,
-            gas_limit: 300_000,
-        })
-        .expect_err("anonymous from_owner must fail");
-        assert_eq!(err, "arg.from_owner_anonymous");
-    }
-
-    #[test]
-    fn wrap_insert_request_rejects_request_id_mismatch() {
-        reset_state();
-        let err = insert_wrap_request(SubmitWrapRequestArgs {
-            request_id: vec![8u8; 32],
-            asset_id: vec![2u8; 29],
-            amount: vec![3u8; 32],
-            from_owner: vec![6u8; 29],
-            evm_recipient: vec![5u8; 20],
-            evm_nonce: 1,
-            gas_limit: 300_000,
-        })
+        let caller = Principal::self_authenticating(b"wrap-caller-mismatch");
+        let err = validate_wrap_request_args(
+            &SubmitWrapRequestArgs {
+                request_id: vec![8u8; 32],
+                asset_id: vec![2u8; 29],
+                amount: vec![3u8; 32],
+                evm_recipient: vec![5u8; 20],
+                evm_nonce: 1,
+                gas_limit: 300_000,
+            },
+            caller,
+        )
         .expect_err("mismatch must fail");
         assert_eq!(err, "arg.request_id_mismatch");
     }
@@ -1812,6 +2149,9 @@ mod tests {
             withdraw_ledger_tx_id: Some(vec![2u8; 4]),
             withdraw_error_code: Some("withdraw.call_failed:oops".to_string()),
             mint_failed_recoverable: false,
+            fee_ledger_tx_id: Some(vec![3u8; 4]),
+            charged_fee_e8s: Some(1_000_000),
+            charged_gas_price_wei: Some(300_000_000_000),
         };
         let bytes = encode_one(&value).expect("encode");
         let decoded: WrapRequestResult = decode_one(&bytes).expect("decode");
@@ -1843,6 +2183,9 @@ mod tests {
                 withdraw_ledger_tx_id: None,
                 withdraw_error_code: None,
                 mint_failed_recoverable: true,
+                fee_ledger_tx_id: Some(vec![3u8; 4]),
+                charged_fee_e8s: Some(1_000_000),
+                charged_gas_price_wei: Some(300_000_000_000),
             },
         };
         assert!(req.result.mint_failed_recoverable);
@@ -1869,6 +2212,9 @@ mod tests {
                 withdraw_ledger_tx_id: None,
                 withdraw_error_code: None,
                 mint_failed_recoverable: true,
+                fee_ledger_tx_id: Some(vec![3u8; 4]),
+                charged_fee_e8s: Some(1_000_000),
+                charged_gas_price_wei: Some(300_000_000_000),
             },
         };
         validate_withdraw_request(&base, owner).expect("eligible");
@@ -1905,6 +2251,9 @@ mod tests {
                 withdraw_ledger_tx_id: None,
                 withdraw_error_code: None,
                 mint_failed_recoverable: true,
+                fee_ledger_tx_id: Some(vec![3u8; 4]),
+                charged_fee_e8s: Some(1_000_000),
+                charged_gas_price_wei: Some(300_000_000_000),
             },
         };
         assert!(is_withdrawable(&req));

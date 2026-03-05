@@ -23,6 +23,11 @@ export WRAP_SUBNET_ID=4ecnw-byqwz-dtgss-ua2mh-pfvs7-c3lct-gtf4e-hnu75-j7eek-iifq
 # 既存 canister id（環境に合わせて設定）
 export EVM_CANISTER_ID=<existing_evm_canister_id>
 export KASANE_CANISTER_ID=<existing_kasane_canister_id>
+export FEE_LEDGER_CANISTER_ID=<icp_ledger_canister_id>
+
+# wrap fee policy（初期値）
+export CYCLE_FEE_E8S=1000000
+export GAS_PRICE_BUFFER_BPS=12000
 
 # WrapTokenFactory EVM address（20 bytes hex, 0xなし）
 export EVM_WRAP_FACTORY_HEX=<40_hex_chars>
@@ -87,6 +92,9 @@ icp canister install wrap_canister \
     kasane_canister = principal \"${KASANE_CANISTER_ID}\";
     evm_gateway_canister = principal \"${EVM_CANISTER_ID}\";
     evm_wrap_factory = vec { ${EVM_WRAP_FACTORY_BYTES} };
+    fee_ledger_canister = principal \"${FEE_LEDGER_CANISTER_ID}\";
+    cycle_fee_e8s = ${CYCLE_FEE_E8S} : nat64;
+    gas_price_buffer_bps = ${GAS_PRICE_BUFFER_BPS} : nat32;
   })"
 ```
 
@@ -118,7 +126,17 @@ dfx canister call --query wrap_canister export_did '()' --network "${ICP_ENV}"
 
 ## 6. 運用上の注意
 
-- `submit_wrap_request` は `kasane_canister` 以外からは呼べません。
-- `submit_wrap_request` の `from_owner` には、ユーザー principal を渡します。
+- `submit_wrap_request` は wallet caller 本人で実行され、`from_owner` は canister 側で `msg_caller` 固定です（引数で渡しません）。
+- Wrap手数料（`cycles + gas`）は `fee_ledger_canister` から `icrc2_transfer_from` で前払い徴収されます。
+- `set_fee_policy` は controller のみ実行可能です。例:
+
+```bash
+dfx canister call wrap_canister set_fee_policy '(record {
+  fee_ledger_canister = principal "'"${FEE_LEDGER_CANISTER_ID}"'";
+  cycle_fee_e8s = 1000000 : nat64;
+  gas_price_buffer_bps = 12000 : nat32;
+})' --network "${ICP_ENV}"
+```
+
 - もし既存 `wrap_canister` が別サブネット上にある場合、同一 canister id のまま移動はできません。  
   新規 canister を対象サブネットで作成し、参照先（`wrap_canister_id`）を切り替えてください。
