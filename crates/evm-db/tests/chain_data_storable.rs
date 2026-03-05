@@ -256,7 +256,7 @@ fn stored_tx_encode_overflow_returns_fallback_bytes() {
 }
 
 #[test]
-fn unwrap_request_decode_failure_is_fail_closed_without_panic() {
+fn unwrap_request_decode_failure_is_quarantined_without_global_freeze() {
     init_stable_state();
     clear_needs_migration();
     let result = panic::catch_unwind(|| UnwrapRequestV1::from_bytes(Cow::Owned(vec![0xffu8])));
@@ -267,7 +267,7 @@ fn unwrap_request_decode_failure_is_fail_closed_without_panic() {
         decoded.error_code.as_deref(),
         Some("stable.decode.unwrap_request")
     );
-    assert!(needs_migration());
+    assert!(!needs_migration());
 }
 
 #[test]

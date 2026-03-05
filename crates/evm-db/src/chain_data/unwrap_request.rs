@@ -69,7 +69,7 @@ impl Storable for UnwrapRequestV1 {
         match Self::decode_checked(bytes.as_ref()) {
             Some(value) => value,
             None => {
-                mark_decode_failure(b"unwrap_request", true);
+                mark_decode_failure(b"unwrap_request", false);
                 Self::decode_failed_sentinel()
             }
         }

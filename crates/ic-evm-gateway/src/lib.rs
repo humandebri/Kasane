@@ -55,6 +55,8 @@ const CYCLE_OBSERVER_FAST_INTERVAL_SECS: u64 = 60;
 const CYCLE_OBSERVER_SLOW_INTERVAL_SECS: u64 = 3_600;
 const WRAP_DISPATCH_DELAY_MS: u64 = 75;
 const MAX_PRINCIPAL_BYTES: usize = 29;
+const UNWRAP_DECODE_SENTINEL_ERROR: &str = "stable.decode.unwrap_request";
+const UNWRAP_QUARANTINE_ERROR: &str = "quarantine.decode.unwrap_request";
 
 static UNWRAP_DISPATCH_SCHEDULED: std::sync::atomic::AtomicBool =
     std::sync::atomic::AtomicBool::new(false);
@@ -1988,12 +1990,27 @@ fn pop_next_dispatch_request(now: u64) -> Result<Option<(TxId, UnwrapRequestV1)>
                 request_id.0
             ));
         };
+        if should_quarantine_unwrap_request(&req) {
+            req.updated_at = now;
+            req.status = UnwrapRequestStatus::DispatchFailed;
+            req.ledger_tx_id = None;
+            req.error_code = Some(UNWRAP_QUARANTINE_ERROR.to_string());
+            state.unwrap_requests.insert(request_id, req);
+            return Err(format!(
+                "wrap.dispatch.quarantined:request_id={:?}:reason={UNWRAP_QUARANTINE_ERROR}",
+                request_id.0
+            ));
+        }
         req.status = UnwrapRequestStatus::Dispatching;
         req.updated_at = now;
         state.unwrap_requests.insert(request_id, req.clone());
         Ok(Some((request_id, req)))
     });
     out
+}
+
+fn should_quarantine_unwrap_request(req: &UnwrapRequestV1) -> bool {
+    req.error_code.as_deref() == Some(UNWRAP_DECODE_SENTINEL_ERROR)
 }
 
 async fn unwrap_dispatch_tick() {
@@ -2003,10 +2020,14 @@ async fn unwrap_dispatch_tick() {
         let Some((request_id, req)) = (match next {
             Ok(v) => v,
             Err(err) => {
-                error!(
-                    error = err,
-                    "unwrap_dispatch_tick skipped corrupted queue entry"
-                );
+                if err.starts_with("wrap.dispatch.quarantined:") {
+                    warn!(error = err, "unwrap_dispatch_tick quarantined request");
+                } else {
+                    error!(
+                        error = err,
+                        "unwrap_dispatch_tick skipped corrupted queue entry"
+                    );
+                }
                 continue;
             }
         }) else {
@@ -3431,6 +3452,50 @@ mod tests {
         assert_eq!(
             stored.map(|v| v.status),
             Some(UnwrapRequestStatus::Dispatching)
+        );
+    }
+
+    #[test]
+    fn pop_next_dispatch_request_quarantines_decode_failed_entry() {
+        init_stable_state();
+        let request_id = TxId([0x34u8; 32]);
+        with_state_mut(|state| {
+            let mut meta = *state.unwrap_dispatch_meta.get();
+            let seq = meta.push();
+            state.unwrap_dispatch_meta.set(meta);
+            state.unwrap_dispatch_queue.insert(seq, request_id);
+            state.unwrap_requests.insert(
+                request_id,
+                UnwrapRequestV1 {
+                    vault_canister_id: vec![0u8],
+                    asset_id: vec![0u8],
+                    amount: vec![0u8; 32],
+                    recipient: vec![0u8],
+                    status: UnwrapRequestStatus::DispatchFailed,
+                    ledger_tx_id: None,
+                    error_code: Some(super::UNWRAP_DECODE_SENTINEL_ERROR.to_string()),
+                    created_at: 1,
+                    updated_at: 1,
+                },
+            );
+        });
+
+        let err = pop_next_dispatch_request(123).expect_err("must quarantine decode-failed entry");
+        assert!(err.starts_with("wrap.dispatch.quarantined:"));
+        let (stored, queue_len) = with_state(|state| {
+            (
+                state.unwrap_requests.get(&request_id),
+                state.unwrap_dispatch_queue.len(),
+            )
+        });
+        assert_eq!(queue_len, 0);
+        assert_eq!(
+            stored.as_ref().map(|v| v.status),
+            Some(UnwrapRequestStatus::DispatchFailed)
+        );
+        assert_eq!(
+            stored.and_then(|v| v.error_code),
+            Some(super::UNWRAP_QUARANTINE_ERROR.to_string())
         );
     }
 
