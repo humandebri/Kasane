@@ -193,6 +193,14 @@ fn post_upgrade() {
     let _ = ensure_meta_initialized();
     init_tracing();
     apply_post_upgrade_migrations();
+    let (quarantined, dropped_from_dispatch_queue) =
+        quarantine_decode_failed_unwrap_requests(time());
+    if quarantined > 0 {
+        warn!(
+            quarantined,
+            dropped_from_dispatch_queue, "post_upgrade quarantined decode-failed unwrap requests"
+        );
+    }
     observe_cycles();
     reset_mining_schedule_after_upgrade();
     schedule_mining();
@@ -2013,6 +2021,47 @@ fn should_quarantine_unwrap_request(req: &UnwrapRequestV1) -> bool {
     req.error_code.as_deref() == Some(UNWRAP_DECODE_SENTINEL_ERROR)
 }
 
+fn quarantine_decode_failed_unwrap_requests(now: u64) -> (u64, u64) {
+    let out = with_state_mut(|state| {
+        let mut request_ids = Vec::new();
+        for entry in state.unwrap_requests.iter() {
+            if should_quarantine_unwrap_request(&entry.value()) {
+                request_ids.push(*entry.key());
+            }
+        }
+        for request_id in request_ids.iter().copied() {
+            let Some(mut req) = state.unwrap_requests.get(&request_id) else {
+                continue;
+            };
+            req.updated_at = now;
+            req.status = UnwrapRequestStatus::DispatchFailed;
+            req.ledger_tx_id = None;
+            req.error_code = Some(UNWRAP_QUARANTINE_ERROR.to_string());
+            state.unwrap_requests.insert(request_id, req);
+        }
+        if request_ids.is_empty() {
+            return (0, 0);
+        }
+        let request_ids_set: std::collections::BTreeSet<TxId> =
+            request_ids.iter().copied().collect();
+        let mut dispatch_seq_to_drop = Vec::new();
+        for entry in state.unwrap_dispatch_queue.iter() {
+            let queued_request_id = entry.value();
+            if request_ids_set.contains(&queued_request_id) {
+                dispatch_seq_to_drop.push(*entry.key());
+            }
+        }
+        for seq in dispatch_seq_to_drop.iter().copied() {
+            state.unwrap_dispatch_queue.remove(&seq);
+        }
+        (
+            request_ids.len() as u64,
+            u64::try_from(dispatch_seq_to_drop.len()).unwrap_or(0),
+        )
+    });
+    out
+}
+
 async fn unwrap_dispatch_tick() {
     UNWRAP_DISPATCH_SCHEDULED.store(false, Ordering::SeqCst);
     loop {
@@ -3496,6 +3545,73 @@ mod tests {
         assert_eq!(
             stored.and_then(|v| v.error_code),
             Some(super::UNWRAP_QUARANTINE_ERROR.to_string())
+        );
+    }
+
+    #[test]
+    fn quarantine_decode_failed_unwrap_requests_marks_dead_letter_and_dequeues() {
+        init_stable_state();
+        let bad_request = TxId([0x35u8; 32]);
+        let good_request = TxId([0x36u8; 32]);
+        with_state_mut(|state| {
+            let mut meta = *state.unwrap_dispatch_meta.get();
+            let bad_seq = meta.push();
+            let good_seq = meta.push();
+            state.unwrap_dispatch_meta.set(meta);
+            state.unwrap_dispatch_queue.insert(bad_seq, bad_request);
+            state.unwrap_dispatch_queue.insert(good_seq, good_request);
+            state.unwrap_requests.insert(
+                bad_request,
+                UnwrapRequestV1 {
+                    vault_canister_id: vec![0u8],
+                    asset_id: vec![0u8],
+                    amount: vec![0u8; 32],
+                    recipient: vec![0u8],
+                    status: UnwrapRequestStatus::DispatchFailed,
+                    ledger_tx_id: None,
+                    error_code: Some(super::UNWRAP_DECODE_SENTINEL_ERROR.to_string()),
+                    created_at: 1,
+                    updated_at: 1,
+                },
+            );
+            state.unwrap_requests.insert(
+                good_request,
+                UnwrapRequestV1 {
+                    vault_canister_id: vec![1u8; 5],
+                    asset_id: vec![2u8; 5],
+                    amount: vec![3u8; 32],
+                    recipient: vec![4u8; 5],
+                    status: UnwrapRequestStatus::Queued,
+                    ledger_tx_id: None,
+                    error_code: None,
+                    created_at: 1,
+                    updated_at: 1,
+                },
+            );
+        });
+
+        let (quarantined, dropped) = super::quarantine_decode_failed_unwrap_requests(123);
+        assert_eq!(quarantined, 1);
+        assert_eq!(dropped, 1);
+        let (bad, good, queue_len) = with_state(|state| {
+            (
+                state.unwrap_requests.get(&bad_request),
+                state.unwrap_requests.get(&good_request),
+                state.unwrap_dispatch_queue.len(),
+            )
+        });
+        assert_eq!(queue_len, 1);
+        assert_eq!(
+            bad.as_ref().map(|v| v.status),
+            Some(UnwrapRequestStatus::DispatchFailed)
+        );
+        assert_eq!(
+            bad.and_then(|v| v.error_code),
+            Some(super::UNWRAP_QUARANTINE_ERROR.to_string())
+        );
+        assert_eq!(
+            good.as_ref().map(|v| v.status),
+            Some(UnwrapRequestStatus::Queued)
         );
     }
 
