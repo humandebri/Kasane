@@ -68,14 +68,10 @@ impl Storable for UnwrapDispatchRequest {
     }
 
     fn from_bytes(bytes: Cow<'_, [u8]>) -> Self {
-        match Self::decode_checked(bytes.as_ref()) {
-            Some(value) => value,
-            None => {
-                mark_decode_failure(b"unwrap_request", false);
-                // Storable::from_bytes は Result を返せないため、破損は marker で隔離側へ送る。
-                Self::decode_failed_marker()
-            }
-        }
+        Self::decode_checked(bytes.as_ref()).unwrap_or_else(|| {
+            mark_decode_failure(b"unwrap_request", false);
+            panic!("unwrap_request.decode_failed")
+        })
     }
 
     const BOUND: Bound = Bound::Bounded {
@@ -85,20 +81,6 @@ impl Storable for UnwrapDispatchRequest {
 }
 
 impl UnwrapDispatchRequest {
-    fn decode_failed_marker() -> Self {
-        Self {
-            vault_canister_id: vec![0u8],
-            asset_id: vec![0u8],
-            amount: vec![0u8; 32],
-            recipient: vec![0u8],
-            status: UnwrapRequestStatus::DispatchFailed,
-            ledger_tx_id: None,
-            error_code: Some(UNWRAP_DECODE_FAILURE_CODE.to_string()),
-            created_at: 0,
-            updated_at: 0,
-        }
-    }
-
     fn encode_checked(&self) -> Option<Vec<u8>> {
         if self.vault_canister_id.is_empty()
             || self.vault_canister_id.len() > MAX_BLOB_LEN
@@ -259,11 +241,12 @@ fn crc32_ieee(data: &[u8]) -> u32 {
 
 #[cfg(test)]
 mod tests {
-    use super::{UnwrapDispatchRequest, UnwrapRequestStatus, UNWRAP_DECODE_FAILURE_CODE};
+    use super::{UnwrapDispatchRequest, UnwrapRequestStatus};
     use crate::meta::{clear_needs_migration, needs_migration};
     use crate::stable_state::init_stable_state;
     use ic_stable_structures::Storable;
     use std::borrow::Cow;
+    use std::panic;
 
     fn sample_request() -> UnwrapDispatchRequest {
         UnwrapDispatchRequest {
@@ -292,12 +275,8 @@ mod tests {
         let req = sample_request();
         let mut bytes = req.to_bytes().into_owned();
         bytes.truncate(bytes.len().saturating_sub(4));
-        let decoded = UnwrapDispatchRequest::from_bytes(Cow::Owned(bytes));
-        assert_eq!(decoded.status, UnwrapRequestStatus::DispatchFailed);
-        assert_eq!(
-            decoded.error_code.as_deref(),
-            Some(UNWRAP_DECODE_FAILURE_CODE)
-        );
+        let out = panic::catch_unwind(|| UnwrapDispatchRequest::from_bytes(Cow::Owned(bytes)));
+        assert!(out.is_err(), "decode failure must panic");
     }
 
     #[test]
@@ -307,12 +286,8 @@ mod tests {
         let mut bytes = sample_request().to_bytes().into_owned();
         let last = bytes.last_mut().expect("checksum byte");
         *last ^= 0x01;
-        let decoded = UnwrapDispatchRequest::from_bytes(Cow::Owned(bytes));
-        assert_eq!(decoded.status, UnwrapRequestStatus::DispatchFailed);
-        assert_eq!(
-            decoded.error_code.as_deref(),
-            Some(UNWRAP_DECODE_FAILURE_CODE)
-        );
+        let out = panic::catch_unwind(|| UnwrapDispatchRequest::from_bytes(Cow::Owned(bytes)));
+        assert!(out.is_err(), "decode failure must panic");
         assert!(!needs_migration());
     }
 }
