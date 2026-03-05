@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "@dfinity/agent": "^3.4.3",
+    "@dfinity/auth-client": "^3.4.3",
     "@dfinity/candid": "^3.4.3",
     "@dfinity/ic-pub-key": "1.0.1",
     "@dfinity/identity": "^3.4.3",

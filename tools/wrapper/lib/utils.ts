@@ -1,4 +1,4 @@
-// どこで: UIユーティリティ / 何を: className結合関数とhex変換を提供 / なぜ: UI表現とID表現を一貫させるため
+// どこで: UI/canister共通ユーティリティ / 何を: className結合とhex変換を提供 / なぜ: ブラウザ/Node両対応で表現とID処理を一貫化するため
 
 import { clsx, type ClassValue } from "clsx";
 import { twMerge } from "tailwind-merge";
@@ -8,7 +8,15 @@ export function cn(...inputs: ClassValue[]): string {
 }
 
 export function bytesToHex(bytes: Uint8Array): string {
-  return `0x${Buffer.from(bytes).toString("hex")}`;
+  let out = "0x";
+  for (let i = 0; i < bytes.length; i += 1) {
+    const byte = bytes[i];
+    if (byte === undefined) {
+      throw new Error("hex.byte_missing");
+    }
+    out += byte.toString(16).padStart(2, "0");
+  }
+  return out;
 }
 
 export function hexToBytes(hex: string): Uint8Array {
@@ -19,7 +27,13 @@ export function hexToBytes(hex: string): Uint8Array {
   if (!/^[0-9a-fA-F]*$/.test(normalized)) {
     throw new Error("hex.char_invalid");
   }
-  return Uint8Array.from(Buffer.from(normalized, "hex"));
+  const out = new Uint8Array(normalized.length / 2);
+  for (let i = 0; i < out.length; i += 1) {
+    const hi = normalized[i * 2] ?? "0";
+    const lo = normalized[i * 2 + 1] ?? "0";
+    out[i] = Number.parseInt(`${hi}${lo}`, 16);
+  }
+  return out;
 }
 
 export function parseRequestIdHex(text: string): Uint8Array {

@@ -18,6 +18,16 @@ type UnwrapEncodeInput = {
   deadline: bigint;
 };
 
+type WrapRequestIdInput = {
+  // submit_wrap_request の caller principal bytes を指定する。
+  fromOwner: Uint8Array;
+  assetId: Uint8Array;
+  amount: Uint8Array;
+  evmRecipient: Uint8Array;
+  evmNonce: bigint;
+  gasLimit: bigint;
+};
+
 function assertLen(bytes: Uint8Array, len: number, code: string): void {
   if (bytes.length !== len) {
     throw new Error(code);
@@ -71,6 +81,31 @@ function concatBytes(parts: readonly Uint8Array[]): Uint8Array {
   return out;
 }
 
+function encodeU64Be(value: bigint, code: string): Uint8Array {
+  if (value < 0n || value > 0xffff_ffff_ffff_ffffn) {
+    throw new Error(code);
+  }
+  const out = new Uint8Array(8);
+  let cursor = value;
+  for (let i = 7; i >= 0; i -= 1) {
+    out[i] = Number(cursor & 0xffn);
+    cursor >>= 8n;
+  }
+  return out;
+}
+
+function hashLenPrefixed(parts: number[], bytes: Uint8Array): void {
+  const len = bytes.length;
+  parts.push((len >>> 24) & 0xff, (len >>> 16) & 0xff, (len >>> 8) & 0xff, len & 0xff);
+  for (let i = 0; i < bytes.length; i += 1) {
+    const b = bytes[i];
+    if (b === undefined) {
+      throw new Error("arg.byte_missing");
+    }
+    parts.push(b);
+  }
+}
+
 export function encodeUnwrapAbiInput(args: Omit<UnwrapEncodeInput, "callerEvmAddress">): Uint8Array {
   const vaultBytes = principalBytes(args.vaultCanisterId);
   const assetBytes = principalBytes(args.assetId);
@@ -108,4 +143,42 @@ export function deriveRequestId(args: UnwrapEncodeInput): Uint8Array {
 
 export function toSubmitIcTxData(args: Omit<UnwrapEncodeInput, "callerEvmAddress">): Uint8Array {
   return encodeUnwrapAbiInput(args);
+}
+
+export function decimalToBytes32(amountText: string): Uint8Array {
+  if (!/^[0-9]+$/.test(amountText.trim())) {
+    throw new Error("arg.amount_invalid");
+  }
+  const value = BigInt(amountText.trim());
+  if (value <= 0n) {
+    throw new Error("arg.amount_invalid");
+  }
+  return bigintToWord(value);
+}
+
+export function deriveWrapRequestId(args: WrapRequestIdInput): Uint8Array {
+  assertLen(args.amount, 32, "arg.amount_len_invalid");
+  assertLen(args.evmRecipient, 20, "arg.evm_recipient_invalid");
+  const bytes: number[] = [];
+  const prefix = new TextEncoder().encode("kasane.wrap.request.v1");
+  for (let i = 0; i < prefix.length; i += 1) {
+    const b = prefix[i];
+    if (b === undefined) {
+      throw new Error("arg.prefix_invalid");
+    }
+    bytes.push(b);
+  }
+  hashLenPrefixed(bytes, args.fromOwner);
+  hashLenPrefixed(bytes, args.assetId);
+  hashLenPrefixed(bytes, args.amount);
+  hashLenPrefixed(bytes, args.evmRecipient);
+  const evmNonce = encodeU64Be(args.evmNonce, "arg.evm_nonce_invalid");
+  const gasLimit = encodeU64Be(args.gasLimit, "arg.gas_limit_invalid");
+  for (let i = 0; i < evmNonce.length; i += 1) {
+    bytes.push(evmNonce[i] ?? 0);
+  }
+  for (let i = 0; i < gasLimit.length; i += 1) {
+    bytes.push(gasLimit[i] ?? 0);
+  }
+  return Uint8Array.from(keccak_256(Uint8Array.from(bytes)));
 }
