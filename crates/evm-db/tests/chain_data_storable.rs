@@ -7,17 +7,21 @@ use evm_db::chain_data::constants::{
 use evm_db::chain_data::receipt::LogEntry;
 use evm_db::chain_data::{
     BlockData, CallerKey, ChainStateV1, Head, OpsMetricsV1, PruneJournal, QueueMeta, ReceiptLike,
-    StoredTx, StoredTxBytes, TxId, TxIndexEntry, TxKind, TxLoc,
+    StoredTx, StoredTxBytes, TxId, TxIndexEntry, TxKind, TxLoc, UnwrapRequestStatus,
+    UnwrapRequestV1,
 };
 use evm_db::chain_data::{LogConfigV1, LOG_CONFIG_FILTER_MAX};
 use evm_db::chain_data::{
     DEFAULT_BLOCK_GAS_LIMIT, DEFAULT_INSTRUCTION_SOFT_LIMIT, DEFAULT_MIN_GAS_PRICE,
     DEFAULT_MIN_PRIORITY_FEE,
 };
+use evm_db::meta::{clear_needs_migration, needs_migration};
+use evm_db::stable_state::init_stable_state;
 use evm_db::types::keys::{
     make_account_key, make_storage_key, parse_account_key_bytes, parse_storage_key_bytes,
 };
 use ic_stable_structures::Storable;
+use std::borrow::Cow;
 use std::panic;
 
 #[test]
@@ -249,6 +253,21 @@ fn stored_tx_encode_overflow_returns_fallback_bytes() {
     assert!(!encoded.is_empty());
     let decoded = StoredTxBytes::from_bytes(encoded.into());
     assert!(decoded.is_invalid());
+}
+
+#[test]
+fn unwrap_request_decode_failure_is_fail_closed_without_panic() {
+    init_stable_state();
+    clear_needs_migration();
+    let result = panic::catch_unwind(|| UnwrapRequestV1::from_bytes(Cow::Owned(vec![0xffu8])));
+    assert!(result.is_ok());
+    let decoded = result.expect("decode should not panic");
+    assert_eq!(decoded.status, UnwrapRequestStatus::DispatchFailed);
+    assert_eq!(
+        decoded.error_code.as_deref(),
+        Some("stable.decode.unwrap_request")
+    );
+    assert!(needs_migration());
 }
 
 #[test]

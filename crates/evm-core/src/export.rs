@@ -104,20 +104,16 @@ pub fn export_blocks(
             if seg > 2 {
                 return Err(ExportError::InvalidCursor("segment out of range"));
             }
-            let (payloads, payload_lens) = build_block_payloads(state, block_number)?;
-            let seg_index = seg as usize;
-            debug_assert!(seg_index < 3);
-            if offset > payload_lens[seg_index] {
+            let mut payloads = BlockPayloads::load(state, block_number)?;
+            let segment_len = payloads.segment_len(state, seg)?;
+            if offset > segment_len {
                 return Err(ExportError::InvalidCursor("byte_offset out of range"));
             }
 
             let mut is_first = true;
             let mut block_started = false;
             while remaining > 0 && seg <= 2 {
-                let seg_index = seg as usize;
-                debug_assert!(seg_index < 3);
-                let payload = &payloads[seg_index];
-                let payload_len = payload_lens[seg_index];
+                let payload_len = payloads.segment_len(state, seg)?;
                 if offset > payload_len {
                     return Err(ExportError::InvalidCursor("offset out of range"));
                 }
@@ -152,7 +148,7 @@ pub fn export_blocks(
                         usize::try_from(take).map_err(|_| ExportError::InvalidCursor("length"))?,
                     )
                     .ok_or(ExportError::InvalidCursor("slice overflow"))?;
-                let bytes = payload[start..end].to_vec();
+                let bytes = payloads.segment_slice(state, seg)?[start..end].to_vec();
                 chunks.push(ExportChunk {
                     segment: seg,
                     start: offset,
@@ -176,7 +172,11 @@ pub fn export_blocks(
                 blocks_emitted = blocks_emitted.saturating_add(1);
             }
 
-            let block_done = seg == 2 && offset == payload_lens[2];
+            let block_done = if seg == 2 {
+                offset == payloads.segment_len(state, 2)?
+            } else {
+                false
+            };
             if remaining == 0 || !block_done {
                 break;
             }
@@ -211,39 +211,81 @@ pub fn export_blocks(
     })
 }
 
-fn build_block_payloads(
-    state: &evm_db::stable_state::StableState,
-    block_number: u64,
-) -> Result<([Vec<u8>; 3], [u32; 3]), ExportError> {
-    let block_ptr = state
-        .blocks
-        .get(&block_number)
-        .ok_or(ExportError::MissingData("block missing"))?;
-    let block_bytes = state
-        .blob_store
-        .read(&block_ptr)
-        .map_err(|_| ExportError::MissingData("block bytes missing"))?;
-    let block = BlockData::from_bytes(Cow::Borrowed(&block_bytes));
+struct BlockPayloads {
+    block_payload: Vec<u8>,
+    tx_ids: Vec<TxId>,
+    receipts_payload: Option<Vec<u8>>,
+    tx_index_payload: Option<Vec<u8>>,
+}
 
-    let receipts_payload = build_receipts_payload(state, &block.tx_ids)?;
-    let tx_index_payload = build_tx_index_payload(state, &block.tx_ids)?;
+impl BlockPayloads {
+    fn load(
+        state: &evm_db::stable_state::StableState,
+        block_number: u64,
+    ) -> Result<Self, ExportError> {
+        let block_ptr = state
+            .blocks
+            .get(&block_number)
+            .ok_or(ExportError::MissingData("block missing"))?;
+        let block_bytes = state
+            .blob_store
+            .read(&block_ptr)
+            .map_err(|_| ExportError::MissingData("block bytes missing"))?;
+        let block = BlockData::from_bytes(Cow::Borrowed(&block_bytes));
+        let _ = checked_segment_len(block_bytes.len(), 0)?;
+        Ok(Self {
+            block_payload: block_bytes,
+            tx_ids: block.tx_ids,
+            receipts_payload: None,
+            tx_index_payload: None,
+        })
+    }
 
-    let block_payload = block_bytes;
-    let payloads = [block_payload, receipts_payload, tx_index_payload];
-    let payload_lens = [
-        u32::try_from(payloads[0].len())
-            .map_err(|_| ExportError::InvalidCursor("block too large"))?,
-        u32::try_from(payloads[1].len())
-            .map_err(|_| ExportError::InvalidCursor("receipts too large"))?,
-        u32::try_from(payloads[2].len())
-            .map_err(|_| ExportError::InvalidCursor("tx_index too large"))?,
-    ];
-    for len in payload_lens.iter() {
-        if *len > MAX_SEGMENT_LEN {
-            return Err(ExportError::InvalidCursor("segment too large"));
+    fn segment_len(
+        &mut self,
+        state: &evm_db::stable_state::StableState,
+        segment: u8,
+    ) -> Result<u32, ExportError> {
+        let payload = self.segment_slice(state, segment)?;
+        checked_segment_len(payload.len(), segment)
+    }
+
+    fn segment_slice<'a>(
+        &'a mut self,
+        state: &evm_db::stable_state::StableState,
+        segment: u8,
+    ) -> Result<&'a [u8], ExportError> {
+        match segment {
+            0 => Ok(self.block_payload.as_slice()),
+            1 => {
+                if self.receipts_payload.is_none() {
+                    self.receipts_payload = Some(build_receipts_payload(state, &self.tx_ids)?);
+                }
+                Ok(self.receipts_payload.as_deref().unwrap_or(&[]))
+            }
+            2 => {
+                if self.tx_index_payload.is_none() {
+                    self.tx_index_payload = Some(build_tx_index_payload(state, &self.tx_ids)?);
+                }
+                Ok(self.tx_index_payload.as_deref().unwrap_or(&[]))
+            }
+            _ => Err(ExportError::InvalidCursor("segment out of range")),
         }
     }
-    Ok((payloads, payload_lens))
+}
+
+fn checked_segment_len(payload_len: usize, segment: u8) -> Result<u32, ExportError> {
+    let overflow_error = match segment {
+        0 => "block too large",
+        1 => "receipts too large",
+        2 => "tx_index too large",
+        _ => return Err(ExportError::InvalidCursor("segment out of range")),
+    };
+    let len = u32::try_from(payload_len).map_err(|_| ExportError::InvalidCursor(overflow_error))?;
+    if len > MAX_SEGMENT_LEN {
+        return Err(ExportError::InvalidCursor("segment too large"));
+    }
+    Ok(len)
 }
 
 fn build_receipts_payload(

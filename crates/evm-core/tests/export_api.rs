@@ -77,6 +77,12 @@ fn export_respects_max_bytes() {
     let result = export_blocks(Some(cursor), 1).expect("export should succeed");
     let total: usize = result.chunks.iter().map(|c| c.bytes.len()).sum();
     assert!(total <= 1);
+    let first = result.chunks.first().expect("first chunk");
+    assert_eq!(first.segment, 0);
+    let next = result.next_cursor.expect("next cursor");
+    assert_eq!(next.block_number, 2);
+    assert_eq!(next.segment, 0);
+    assert_eq!(next.byte_offset, 1);
 }
 
 #[test]
@@ -330,6 +336,39 @@ fn export_fails_when_tx_decode_fails() {
     )
     .expect_err("decode must fail");
     assert!(matches!(err, ExportError::MissingData("tx decode failed")));
+}
+
+#[test]
+fn export_skips_tx_index_decode_when_budget_stays_in_block_segment() {
+    init_stable_state();
+    let tx = build_ic_synthetic_tx_with_raw(0xa1, vec![0x01, 0x02, 0x03]);
+    let block = make_block(1, tx.tx_id);
+    with_state_mut(|state| {
+        state.tx_store.insert(tx.tx_id, tx.envelope);
+        insert_block(state, 1, &block);
+        insert_receipt(state, tx.tx_id, 1);
+        insert_tx_index(state, tx.tx_id, 1);
+        state.tx_locs.insert(tx.tx_id, TxLoc::included(1, 0));
+        let mut head = *state.head.get();
+        head.number = 1;
+        state.head.set(head);
+    });
+
+    let result = export_blocks(
+        Some(ExportCursor {
+            block_number: 1,
+            segment: 0,
+            byte_offset: 0,
+        }),
+        1,
+    )
+    .expect("small budget should stay in segment 0");
+    assert_eq!(result.chunks.len(), 1);
+    assert_eq!(result.chunks[0].segment, 0);
+    let next = result.next_cursor.expect("next cursor");
+    assert_eq!(next.block_number, 1);
+    assert_eq!(next.segment, 0);
+    assert_eq!(next.byte_offset, 1);
 }
 
 fn make_block(number: u64, tx_id: TxId) -> BlockData {

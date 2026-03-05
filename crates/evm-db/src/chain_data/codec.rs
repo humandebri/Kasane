@@ -43,6 +43,8 @@ fn is_fail_closed_label(label: &'static [u8]) -> bool {
         || label == b"receipt"
         || label == b"tx_loc"
         || label == b"tx_loc_kind"
+        || label == b"unwrap_request"
+        || label == b"state_root_journal_inconsistent"
         || label == b"block_data"
         || label == b"head"
         || label == b"tx_id"
@@ -72,6 +74,14 @@ mod tests {
         init_stable_state();
         assert!(!needs_migration());
         mark_decode_failure(b"ops_config", true);
+        assert!(needs_migration());
+    }
+
+    #[test]
+    fn fail_closed_unwrap_request_sets_needs_migration() {
+        init_stable_state();
+        assert!(!needs_migration());
+        mark_decode_failure(b"unwrap_request", true);
         assert!(needs_migration());
     }
 

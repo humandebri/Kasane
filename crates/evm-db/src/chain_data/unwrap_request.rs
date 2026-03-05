@@ -1,6 +1,6 @@
 //! どこで: wrap/unwrap request 永続化 / 何を: request状態の最小表現 / なぜ: 非同期実行結果をupgrade後も追跡するため
 
-use crate::chain_data::codec::encode_guarded;
+use crate::chain_data::codec::{encode_guarded, mark_decode_failure};
 use ic_stable_structures::storable::Bound;
 use ic_stable_structures::Storable;
 use std::borrow::Cow;
@@ -66,8 +66,13 @@ impl Storable for UnwrapRequestV1 {
     }
 
     fn from_bytes(bytes: Cow<'_, [u8]>) -> Self {
-        Self::decode_checked(bytes.as_ref())
-            .unwrap_or_else(|| panic!("unwrap_request.decode_failed"))
+        match Self::decode_checked(bytes.as_ref()) {
+            Some(value) => value,
+            None => {
+                mark_decode_failure(b"unwrap_request", true);
+                Self::decode_failed_sentinel()
+            }
+        }
     }
 
     const BOUND: Bound = Bound::Bounded {
@@ -77,6 +82,20 @@ impl Storable for UnwrapRequestV1 {
 }
 
 impl UnwrapRequestV1 {
+    fn decode_failed_sentinel() -> Self {
+        Self {
+            vault_canister_id: vec![0u8],
+            asset_id: vec![0u8],
+            amount: vec![0u8; 32],
+            recipient: vec![0u8],
+            status: UnwrapRequestStatus::DispatchFailed,
+            ledger_tx_id: None,
+            error_code: Some("stable.decode.unwrap_request".to_string()),
+            created_at: 0,
+            updated_at: 0,
+        }
+    }
+
     fn encode_checked(&self) -> Option<Vec<u8>> {
         if self.vault_canister_id.is_empty()
             || self.vault_canister_id.len() > MAX_BLOB_LEN
