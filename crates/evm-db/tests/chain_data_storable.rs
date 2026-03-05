@@ -7,8 +7,8 @@ use evm_db::chain_data::constants::{
 use evm_db::chain_data::receipt::LogEntry;
 use evm_db::chain_data::{
     BlockData, CallerKey, ChainStateV1, Head, OpsMetricsV1, PruneJournal, QueueMeta, ReceiptLike,
-    StoredTx, StoredTxBytes, TxId, TxIndexEntry, TxKind, TxLoc, UnwrapRequestStatus,
-    UnwrapRequestV1,
+    StoredTx, StoredTxBytes, TxId, TxIndexEntry, TxKind, TxLoc, UnwrapDispatchRequest,
+    UnwrapRequestStatus, UNWRAP_DECODE_FAILURE_CODE,
 };
 use evm_db::chain_data::{LogConfigV1, LOG_CONFIG_FILTER_MAX};
 use evm_db::chain_data::{
@@ -259,13 +259,14 @@ fn stored_tx_encode_overflow_returns_fallback_bytes() {
 fn unwrap_request_decode_failure_is_quarantined_without_global_freeze() {
     init_stable_state();
     clear_needs_migration();
-    let result = panic::catch_unwind(|| UnwrapRequestV1::from_bytes(Cow::Owned(vec![0xffu8])));
+    let result =
+        panic::catch_unwind(|| UnwrapDispatchRequest::from_bytes(Cow::Owned(vec![0xffu8])));
     assert!(result.is_ok());
     let decoded = result.expect("decode should not panic");
     assert_eq!(decoded.status, UnwrapRequestStatus::DispatchFailed);
     assert_eq!(
         decoded.error_code.as_deref(),
-        Some("stable.decode.unwrap_request")
+        Some(UNWRAP_DECODE_FAILURE_CODE)
     );
     assert!(!needs_migration());
 }

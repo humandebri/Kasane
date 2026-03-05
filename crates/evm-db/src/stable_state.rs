@@ -8,7 +8,7 @@ use crate::chain_data::{
     MetricsStateV1, MigrationStateV1, MismatchRecordV1, NodeRecord, OpsConfigV1, OpsMetricsV1,
     OpsStateV1, PendingFeeKey, PruneConfigV1, PruneJournal, PruneStateV1, QueueMeta, ReadyKey,
     ReadySeqKey, SenderKey, SenderNonceKey, StateRootMetaV1, StateRootMetricsV1, StoredTxBytes,
-    TxId, UnwrapRequestV1,
+    TxId, UnwrapDispatchRequest,
 };
 use crate::memory::{get_memory, AppMemoryId, VMem};
 use crate::types::keys::{AccountKey, CodeKey, StorageKey};
@@ -39,7 +39,7 @@ pub type PendingFeeIndex = StableBTreeMap<PendingFeeKey, TxId, VMem>;
 pub type PendingFeeKeyByTxId = StableBTreeMap<TxId, PendingFeeKey, VMem>;
 pub type ReadyBySeq = StableBTreeMap<ReadySeqKey, TxId, VMem>;
 pub type EthTxHashIndex = StableBTreeMap<TxId, TxId, VMem>;
-pub type UnwrapRequests = StableBTreeMap<TxId, UnwrapRequestV1, VMem>;
+pub type UnwrapRequests = StableBTreeMap<TxId, UnwrapDispatchRequest, VMem>;
 pub type UnwrapDispatchQueue = StableBTreeMap<u64, TxId, VMem>;
 pub type WrapCanisterId = StableCell<Vec<u8>, VMem>;
 pub type PruneJournalMap = StableBTreeMap<u64, PruneJournal, VMem>;

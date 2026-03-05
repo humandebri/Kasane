@@ -13,7 +13,7 @@ use evm_db::chain_data::DEFAULT_MINING_INTERVAL_MS;
 use evm_db::chain_data::MIN_PRUNE_MAX_OPS_PER_TICK;
 use evm_db::chain_data::{
     BlockData, MigrationPhase, OpsMode, ReceiptLike, TxId, TxKind, TxLoc, TxLocKind,
-    UnwrapRequestStatus, UnwrapRequestV1, LOG_CONFIG_FILTER_MAX,
+    UnwrapDispatchRequest, UnwrapRequestStatus, LOG_CONFIG_FILTER_MAX, UNWRAP_DECODE_FAILURE_CODE,
 };
 use evm_db::memory::{all_memory_regions, memory_size_pages, WASM_PAGE_SIZE_BYTES};
 use evm_db::meta::{
@@ -55,7 +55,6 @@ const CYCLE_OBSERVER_FAST_INTERVAL_SECS: u64 = 60;
 const CYCLE_OBSERVER_SLOW_INTERVAL_SECS: u64 = 3_600;
 const WRAP_DISPATCH_DELAY_MS: u64 = 75;
 const MAX_PRINCIPAL_BYTES: usize = 29;
-const UNWRAP_DECODE_SENTINEL_ERROR: &str = "stable.decode.unwrap_request";
 const UNWRAP_QUARANTINE_ERROR: &str = "quarantine.decode.unwrap_request";
 
 static UNWRAP_DISPATCH_SCHEDULED: std::sync::atomic::AtomicBool =
@@ -1942,7 +1941,7 @@ fn record_unwrap_requests_from_block(tx_ids: &[TxId]) {
                 let now = time();
                 state.unwrap_requests.insert(
                     request_id,
-                    UnwrapRequestV1 {
+                    UnwrapDispatchRequest {
                         vault_canister_id: intent.vault_canister_id.clone(),
                         asset_id: intent.asset_id.clone(),
                         amount: intent.amount.to_vec(),
@@ -1976,7 +1975,7 @@ fn schedule_unwrap_dispatch() {
     );
 }
 
-fn pop_next_dispatch_request(now: u64) -> Result<Option<(TxId, UnwrapRequestV1)>, String> {
+fn pop_next_dispatch_request(now: u64) -> Result<Option<(TxId, UnwrapDispatchRequest)>, String> {
     let out = with_state_mut(|state| {
         let mut meta = *state.unwrap_dispatch_meta.get();
         let seq = match meta.pop() {
@@ -2017,8 +2016,8 @@ fn pop_next_dispatch_request(now: u64) -> Result<Option<(TxId, UnwrapRequestV1)>
     out
 }
 
-fn should_quarantine_unwrap_request(req: &UnwrapRequestV1) -> bool {
-    req.error_code.as_deref() == Some(UNWRAP_DECODE_SENTINEL_ERROR)
+fn should_quarantine_unwrap_request(req: &UnwrapDispatchRequest) -> bool {
+    req.error_code.as_deref() == Some(UNWRAP_DECODE_FAILURE_CODE)
 }
 
 fn quarantine_decode_failed_unwrap_requests(now: u64) -> (u64, u64) {
@@ -2233,7 +2232,7 @@ mod tests {
     use evm_core::tx_decode::IcSyntheticTxInput;
     use evm_db::chain_data::constants::MAX_RETURN_DATA;
     use evm_db::chain_data::{
-        MigrationPhase, OpsMode, TxId, TxLoc, UnwrapRequestStatus, UnwrapRequestV1,
+        MigrationPhase, OpsMode, TxId, TxLoc, UnwrapDispatchRequest, UnwrapRequestStatus,
     };
     use evm_db::memory::WASM_PAGE_SIZE_BYTES;
     use evm_db::meta::{
@@ -3442,7 +3441,7 @@ mod tests {
             state.unwrap_dispatch_queue.insert(seq, request_id);
             state.unwrap_requests.insert(
                 request_id,
-                UnwrapRequestV1 {
+                UnwrapDispatchRequest {
                     vault_canister_id: vec![0x22u8; 10],
                     asset_id: vec![0x33u8; 10],
                     amount: vec![0x44u8; 32],
@@ -3478,7 +3477,7 @@ mod tests {
             state.unwrap_dispatch_queue.insert(seq, request_id);
             state.unwrap_requests.insert(
                 request_id,
-                UnwrapRequestV1 {
+                UnwrapDispatchRequest {
                     vault_canister_id: vec![0x44u8; 10],
                     asset_id: vec![0x55u8; 10],
                     amount: vec![0x66u8; 32],
@@ -3515,14 +3514,14 @@ mod tests {
             state.unwrap_dispatch_queue.insert(seq, request_id);
             state.unwrap_requests.insert(
                 request_id,
-                UnwrapRequestV1 {
+                UnwrapDispatchRequest {
                     vault_canister_id: vec![0u8],
                     asset_id: vec![0u8],
                     amount: vec![0u8; 32],
                     recipient: vec![0u8],
                     status: UnwrapRequestStatus::DispatchFailed,
                     ledger_tx_id: None,
-                    error_code: Some(super::UNWRAP_DECODE_SENTINEL_ERROR.to_string()),
+                    error_code: Some(super::UNWRAP_DECODE_FAILURE_CODE.to_string()),
                     created_at: 1,
                     updated_at: 1,
                 },
@@ -3562,21 +3561,21 @@ mod tests {
             state.unwrap_dispatch_queue.insert(good_seq, good_request);
             state.unwrap_requests.insert(
                 bad_request,
-                UnwrapRequestV1 {
+                UnwrapDispatchRequest {
                     vault_canister_id: vec![0u8],
                     asset_id: vec![0u8],
                     amount: vec![0u8; 32],
                     recipient: vec![0u8],
                     status: UnwrapRequestStatus::DispatchFailed,
                     ledger_tx_id: None,
-                    error_code: Some(super::UNWRAP_DECODE_SENTINEL_ERROR.to_string()),
+                    error_code: Some(super::UNWRAP_DECODE_FAILURE_CODE.to_string()),
                     created_at: 1,
                     updated_at: 1,
                 },
             );
             state.unwrap_requests.insert(
                 good_request,
-                UnwrapRequestV1 {
+                UnwrapDispatchRequest {
                     vault_canister_id: vec![1u8; 5],
                     asset_id: vec![2u8; 5],
                     amount: vec![3u8; 32],

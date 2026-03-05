@@ -10,6 +10,7 @@ const MAX_ERROR_LEN: usize = 192;
 const MAX_LEDGER_TX_ID_LEN: usize = 128;
 const MAX_ENCODED_LEN: u32 = 1_512;
 const CHECKSUM_LEN: usize = 4;
+pub const UNWRAP_DECODE_FAILURE_CODE: &str = "stable.decode.unwrap_request";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum UnwrapRequestStatus {
@@ -41,7 +42,7 @@ impl UnwrapRequestStatus {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct UnwrapRequestV1 {
+pub struct UnwrapDispatchRequest {
     pub vault_canister_id: Vec<u8>,
     pub asset_id: Vec<u8>,
     pub amount: Vec<u8>,
@@ -53,7 +54,7 @@ pub struct UnwrapRequestV1 {
     pub updated_at: u64,
 }
 
-impl Storable for UnwrapRequestV1 {
+impl Storable for UnwrapDispatchRequest {
     fn to_bytes(&self) -> Cow<'_, [u8]> {
         let encoded = self
             .encode_checked()
@@ -71,7 +72,8 @@ impl Storable for UnwrapRequestV1 {
             Some(value) => value,
             None => {
                 mark_decode_failure(b"unwrap_request", false);
-                Self::decode_failed_sentinel()
+                // Storable::from_bytes は Result を返せないため、破損は marker で隔離側へ送る。
+                Self::decode_failed_marker()
             }
         }
     }
@@ -82,8 +84,8 @@ impl Storable for UnwrapRequestV1 {
     };
 }
 
-impl UnwrapRequestV1 {
-    fn decode_failed_sentinel() -> Self {
+impl UnwrapDispatchRequest {
+    fn decode_failed_marker() -> Self {
         Self {
             vault_canister_id: vec![0u8],
             asset_id: vec![0u8],
@@ -91,7 +93,7 @@ impl UnwrapRequestV1 {
             recipient: vec![0u8],
             status: UnwrapRequestStatus::DispatchFailed,
             ledger_tx_id: None,
-            error_code: Some("stable.decode.unwrap_request".to_string()),
+            error_code: Some(UNWRAP_DECODE_FAILURE_CODE.to_string()),
             created_at: 0,
             updated_at: 0,
         }
@@ -257,14 +259,14 @@ fn crc32_ieee(data: &[u8]) -> u32 {
 
 #[cfg(test)]
 mod tests {
-    use super::{UnwrapRequestStatus, UnwrapRequestV1};
+    use super::{UnwrapDispatchRequest, UnwrapRequestStatus, UNWRAP_DECODE_FAILURE_CODE};
     use crate::meta::{clear_needs_migration, needs_migration};
     use crate::stable_state::init_stable_state;
     use ic_stable_structures::Storable;
     use std::borrow::Cow;
 
-    fn sample_request() -> UnwrapRequestV1 {
-        UnwrapRequestV1 {
+    fn sample_request() -> UnwrapDispatchRequest {
+        UnwrapDispatchRequest {
             vault_canister_id: vec![0x11u8; 10],
             asset_id: vec![0x22u8; 10],
             amount: vec![0x33u8; 32],
@@ -281,7 +283,7 @@ mod tests {
     fn unwrap_request_roundtrip_with_checksum() {
         let req = sample_request();
         let bytes = req.to_bytes().into_owned();
-        let decoded = UnwrapRequestV1::from_bytes(Cow::Owned(bytes));
+        let decoded = UnwrapDispatchRequest::from_bytes(Cow::Owned(bytes));
         assert_eq!(decoded, req);
     }
 
@@ -290,11 +292,11 @@ mod tests {
         let req = sample_request();
         let mut bytes = req.to_bytes().into_owned();
         bytes.truncate(bytes.len().saturating_sub(4));
-        let decoded = UnwrapRequestV1::from_bytes(Cow::Owned(bytes));
+        let decoded = UnwrapDispatchRequest::from_bytes(Cow::Owned(bytes));
         assert_eq!(decoded.status, UnwrapRequestStatus::DispatchFailed);
         assert_eq!(
             decoded.error_code.as_deref(),
-            Some("stable.decode.unwrap_request")
+            Some(UNWRAP_DECODE_FAILURE_CODE)
         );
     }
 
@@ -305,11 +307,11 @@ mod tests {
         let mut bytes = sample_request().to_bytes().into_owned();
         let last = bytes.last_mut().expect("checksum byte");
         *last ^= 0x01;
-        let decoded = UnwrapRequestV1::from_bytes(Cow::Owned(bytes));
+        let decoded = UnwrapDispatchRequest::from_bytes(Cow::Owned(bytes));
         assert_eq!(decoded.status, UnwrapRequestStatus::DispatchFailed);
         assert_eq!(
             decoded.error_code.as_deref(),
-            Some("stable.decode.unwrap_request")
+            Some(UNWRAP_DECODE_FAILURE_CODE)
         );
         assert!(!needs_migration());
     }

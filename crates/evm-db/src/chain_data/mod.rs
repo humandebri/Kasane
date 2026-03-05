@@ -58,4 +58,4 @@ pub use tx::{
     StoredTx, StoredTxBytes, StoredTxBytesError, StoredTxError, TxId, TxIndexEntry, TxKind,
 };
 pub use tx_loc::{TxLoc, TxLocKind};
-pub use unwrap_request::{UnwrapRequestStatus, UnwrapRequestV1};
+pub use unwrap_request::{UnwrapDispatchRequest, UnwrapRequestStatus, UNWRAP_DECODE_FAILURE_CODE};
