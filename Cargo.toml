@@ -9,7 +9,8 @@ members = [
     "crates/ic-evm-metrics",
     "crates/ic-evm-ops",
     "crates/ic-evm-rpc",
-    "othercanisters/wrap-canister"
+    "othercanisters/wrap-canister",
+    "othercanisters/mock-wrap-canister"
 ]
 exclude = [
     "vendor/revm"

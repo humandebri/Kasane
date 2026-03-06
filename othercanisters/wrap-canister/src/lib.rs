@@ -87,6 +87,12 @@ pub struct WithdrawFailedWrapOk {
     pub ledger_tx_id: Vec<u8>,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum InsertRequestOutcome {
+    Inserted(RequestId),
+    AlreadyExists(RequestId),
+}
+
 #[derive(Clone, Copy, Debug, CandidType, Deserialize, Eq, PartialEq)]
 pub enum RequestStatus {
     Queued,
@@ -466,12 +472,24 @@ fn post_upgrade() {
 fn submit_unwrap_request(args: SubmitUnwrapRequestArgs) -> Result<SubmitUnwrapRequestOk, String> {
     init_state();
     ensure_kasane_caller()?;
-    let request_id = insert_request(args)?;
-    enqueue_request(request_id);
-    schedule_worker();
+    let request_id = apply_insert_request_outcome(insert_request(args)?, schedule_worker);
     Ok(SubmitUnwrapRequestOk {
         request_id: request_id.0.to_vec(),
     })
+}
+
+fn apply_insert_request_outcome(
+    outcome: InsertRequestOutcome,
+    scheduler: fn(),
+) -> RequestId {
+    match outcome {
+        InsertRequestOutcome::Inserted(request_id) => {
+            enqueue_request(request_id);
+            scheduler();
+            request_id
+        }
+        InsertRequestOutcome::AlreadyExists(request_id) => request_id,
+    }
 }
 
 #[ic_cdk::update]
@@ -578,13 +596,20 @@ async fn withdraw_failed_wrap(
     }
 }
 
-fn insert_request(args: SubmitUnwrapRequestArgs) -> Result<RequestId, String> {
+fn insert_request(args: SubmitUnwrapRequestArgs) -> Result<InsertRequestOutcome, String> {
     let request_id = to_request_id(args.request_id.as_slice())?;
     validate_principal_bytes(args.asset_id.as_slice())?;
     validate_principal_bytes(args.recipient.as_slice())?;
-    let inserted = with_state_mut(|state| {
-        if state.requests.contains_key(&request_id) {
-            return false;
+    with_state_mut(|state| {
+        if let Some(existing) = state.requests.get(&request_id) {
+            let same_payload = existing.asset_id == args.asset_id
+                && existing.amount == args.amount
+                && existing.recipient == args.recipient;
+            return if same_payload {
+                Ok(InsertRequestOutcome::AlreadyExists(request_id))
+            } else {
+                Err("request.idempotency_mismatch".to_string())
+            };
         }
         state.requests.insert(
             request_id,
@@ -599,12 +624,8 @@ fn insert_request(args: SubmitUnwrapRequestArgs) -> Result<RequestId, String> {
                 },
             },
         );
-        true
-    });
-    if !inserted {
-        return Err("request.duplicate".to_string());
-    }
-    Ok(request_id)
+        Ok(InsertRequestOutcome::Inserted(request_id))
+    })
 }
 
 fn enqueue_request(request_id: RequestId) {
@@ -1760,18 +1781,18 @@ fn export_did() -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        decode_stored_request, dequeue_request, derive_wrap_request_id,
+        apply_insert_request_outcome, decode_stored_request, dequeue_request, derive_wrap_request_id,
         encode_factory_mint_for_asset_call_data, encode_stored_request, enqueue_request,
         init_state, insert_request, insert_wrap_request, is_withdrawable, map_transfer_reply,
         mark_request_running, mark_wrap_request_running, nat_from_32_be, nat_to_be_bytes,
         on_worker_queue_drain, on_wrap_worker_queue_drain, principal_from_bytes, schedule_worker,
-        schedule_wrap_worker, submit_error_to_code, to_request_id, to_withdraw_error_code,
-        transfer_error_to_code, transfer_from_error_to_code, u256_from_u64,
+        schedule_wrap_worker, submit_error_to_code, to_request_id,
+        to_withdraw_error_code, transfer_error_to_code, transfer_from_error_to_code, u256_from_u64,
         validate_non_anonymous_principal, validate_withdraw_request, validate_wrap_request_args,
         with_state, with_state_mut, FeeCharge, Icrc1TransferError, Icrc2TransferFromError,
-        QueueMeta, RequestResult, RequestStatus, StoredRequest, SubmitTxError,
-        SubmitUnwrapRequestArgs, SubmitWrapRequestArgs, WrapRequestResult, WrapStoredRequest,
-        WORKER_SCHEDULED, WRAP_WORKER_SCHEDULED,
+        InsertRequestOutcome, QueueMeta, RequestResult, RequestStatus, StoredRequest,
+        SubmitTxError, SubmitUnwrapRequestArgs, SubmitWrapRequestArgs, WrapRequestResult,
+        WrapStoredRequest, WORKER_SCHEDULED, WRAP_WORKER_SCHEDULED,
     };
     use candid::{decode_one, encode_one, Nat, Principal};
     use num_bigint::BigUint;
@@ -1830,6 +1851,8 @@ mod tests {
         });
     }
 
+    fn no_schedule() {}
+
     fn test_fee_charge() -> FeeCharge {
         FeeCharge {
             ledger_tx_id: vec![0x44, 0x55],
@@ -1870,7 +1893,7 @@ mod tests {
     }
 
     #[test]
-    fn insert_request_rejects_duplicate() {
+    fn insert_request_is_idempotent_for_same_payload() {
         reset_state();
         let args = SubmitUnwrapRequestArgs {
             request_id: vec![1u8; 32],
@@ -1879,9 +1902,15 @@ mod tests {
             recipient: vec![3u8; 29],
         };
         let first = insert_request(args.clone()).expect("first should pass");
-        assert_eq!(first, to_request_id(&[1u8; 32]).expect("id"));
-        let err = insert_request(args).expect_err("second should fail");
-        assert_eq!(err, "request.duplicate");
+        assert_eq!(
+            first,
+            InsertRequestOutcome::Inserted(to_request_id(&[1u8; 32]).expect("id"))
+        );
+        let second = insert_request(args).expect("second should be idempotent");
+        assert_eq!(
+            second,
+            InsertRequestOutcome::AlreadyExists(to_request_id(&[1u8; 32]).expect("id"))
+        );
         let status = with_state(|state| {
             state
                 .requests
@@ -1889,6 +1918,199 @@ mod tests {
                 .map(|r| r.result.status)
         });
         assert_eq!(status, Some(RequestStatus::Queued));
+        assert_eq!(with_state(|state| state.requests.len()), 1);
+    }
+
+    #[test]
+    fn insert_request_rejects_duplicate_with_asset_mismatch() {
+        reset_state();
+        let args = SubmitUnwrapRequestArgs {
+            request_id: vec![1u8; 32],
+            asset_id: vec![2u8; 29],
+            amount: vec![0u8; 32],
+            recipient: vec![3u8; 29],
+        };
+        insert_request(args).expect("first should pass");
+        let err = insert_request(SubmitUnwrapRequestArgs {
+            request_id: vec![1u8; 32],
+            asset_id: vec![9u8; 29],
+            amount: vec![0u8; 32],
+            recipient: vec![3u8; 29],
+        })
+        .expect_err("asset mismatch should fail");
+        assert_eq!(err, "request.idempotency_mismatch");
+    }
+
+    #[test]
+    fn insert_request_rejects_duplicate_with_amount_mismatch() {
+        reset_state();
+        let args = SubmitUnwrapRequestArgs {
+            request_id: vec![1u8; 32],
+            asset_id: vec![2u8; 29],
+            amount: vec![0u8; 32],
+            recipient: vec![3u8; 29],
+        };
+        insert_request(args).expect("first should pass");
+        let err = insert_request(SubmitUnwrapRequestArgs {
+            request_id: vec![1u8; 32],
+            asset_id: vec![2u8; 29],
+            amount: vec![8u8; 32],
+            recipient: vec![3u8; 29],
+        })
+        .expect_err("amount mismatch should fail");
+        assert_eq!(err, "request.idempotency_mismatch");
+    }
+
+    #[test]
+    fn insert_request_rejects_duplicate_with_recipient_mismatch() {
+        reset_state();
+        let args = SubmitUnwrapRequestArgs {
+            request_id: vec![1u8; 32],
+            asset_id: vec![2u8; 29],
+            amount: vec![0u8; 32],
+            recipient: vec![3u8; 29],
+        };
+        insert_request(args).expect("first should pass");
+        let err = insert_request(SubmitUnwrapRequestArgs {
+            request_id: vec![1u8; 32],
+            asset_id: vec![2u8; 29],
+            amount: vec![0u8; 32],
+            recipient: vec![7u8; 29],
+        })
+        .expect_err("recipient mismatch should fail");
+        assert_eq!(err, "request.idempotency_mismatch");
+    }
+
+    #[test]
+    fn submit_unwrap_request_does_not_requeue_existing_request() {
+        reset_state();
+        with_state_mut(|state| {
+            let _ = state.kasane_canister.set(Principal::anonymous().as_slice().to_vec());
+            let request_id = to_request_id(&[1u8; 32]).expect("id");
+            state.requests.insert(
+                request_id,
+                StoredRequest {
+                    asset_id: vec![2u8; 29],
+                    amount: vec![0u8; 32],
+                    recipient: vec![3u8; 29],
+                    result: RequestResult {
+                        status: RequestStatus::Queued,
+                        ledger_tx_id: None,
+                        error_code: None,
+                    },
+                },
+            );
+            let mut meta = *state.queue_meta.get();
+            let seq = meta.tail;
+            meta.tail = meta.tail.saturating_add(1);
+            state.queue.insert(seq, request_id);
+            state
+                .queue_meta
+                .set(meta)
+                .unwrap_or_else(|_| panic!("queue meta set failed"));
+        });
+
+        let request_id = apply_insert_request_outcome(
+            InsertRequestOutcome::AlreadyExists(to_request_id(&[1u8; 32]).expect("id")),
+            no_schedule,
+        );
+        assert_eq!(request_id, to_request_id(&[1u8; 32]).expect("id"));
+        with_state(|state| {
+            assert_eq!(state.requests.len(), 1);
+            assert_eq!(state.queue.len(), 1);
+            let req = state
+                .requests
+                .get(&to_request_id(&[1u8; 32]).expect("id"))
+                .expect("request");
+            assert_eq!(req.result.status, RequestStatus::Queued);
+        });
+    }
+
+    #[test]
+    fn apply_insert_request_outcome_enqueues_new_request_once() {
+        reset_state();
+        let request_id = to_request_id(&[9u8; 32]).expect("id");
+        with_state_mut(|state| {
+            state.requests.insert(
+                request_id,
+                StoredRequest {
+                    asset_id: vec![2u8; 29],
+                    amount: vec![0u8; 32],
+                    recipient: vec![3u8; 29],
+                    result: RequestResult {
+                        status: RequestStatus::Queued,
+                        ledger_tx_id: None,
+                        error_code: None,
+                    },
+                },
+            );
+        });
+
+        let returned =
+            apply_insert_request_outcome(InsertRequestOutcome::Inserted(request_id), no_schedule);
+        assert_eq!(returned, request_id);
+        with_state(|state| {
+            assert_eq!(state.requests.len(), 1);
+            assert_eq!(state.queue.len(), 1);
+        });
+    }
+
+    #[test]
+    fn submit_unwrap_request_keeps_queue_size_for_all_existing_statuses() {
+        let statuses = [
+            RequestStatus::Queued,
+            RequestStatus::Running,
+            RequestStatus::Succeeded,
+            RequestStatus::Failed,
+        ];
+        for status in statuses {
+            reset_state();
+            with_state_mut(|state| {
+                let _ = state.kasane_canister.set(Principal::anonymous().as_slice().to_vec());
+                let request_id = to_request_id(&[status as u8 + 1; 32]).expect("id");
+                state.requests.insert(
+                    request_id,
+                    StoredRequest {
+                        asset_id: vec![2u8; 29],
+                        amount: vec![0u8; 32],
+                        recipient: vec![3u8; 29],
+                        result: RequestResult {
+                            status,
+                            ledger_tx_id: None,
+                            error_code: None,
+                        },
+                    },
+                );
+                if status == RequestStatus::Queued {
+                    let mut meta = *state.queue_meta.get();
+                    let seq = meta.tail;
+                    meta.tail = meta.tail.saturating_add(1);
+                    state.queue.insert(seq, request_id);
+                    state
+                        .queue_meta
+                        .set(meta)
+                        .unwrap_or_else(|_| panic!("queue meta set failed"));
+                }
+            });
+
+            let request_id = apply_insert_request_outcome(
+                InsertRequestOutcome::AlreadyExists(
+                    to_request_id(&[status as u8 + 1; 32]).expect("id"),
+                ),
+                no_schedule,
+            );
+            assert_eq!(request_id, to_request_id(&[status as u8 + 1; 32]).expect("id"));
+            with_state(|state| {
+                assert_eq!(state.requests.len(), 1, "{status:?}");
+                let expected_queue_len = u64::from(status == RequestStatus::Queued);
+                assert_eq!(state.queue.len(), expected_queue_len, "{status:?}");
+                let req = state
+                    .requests
+                    .get(&to_request_id(&[status as u8 + 1; 32]).expect("id"))
+                    .expect("request");
+                assert_eq!(req.result.status, status, "{status:?}");
+            });
+        }
     }
 
     #[test]

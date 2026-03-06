@@ -1969,27 +1969,12 @@ struct WrapSubmitUnwrapRequestOk {
     request_id: Vec<u8>,
 }
 
-#[derive(Clone, Copy, Debug, CandidType, Deserialize, Eq, PartialEq)]
-enum WrapRequestStatusView {
-    Queued,
-    Running,
-    Succeeded,
-    Failed,
-}
-
 #[derive(Clone, Debug, Eq, PartialEq)]
 enum WrapSubmitDispatchOutcome {
     Accepted,
     Rejected(String),
     DecodeFailed(String),
     CallFailed(String),
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-enum DuplicateRequestResolution {
-    Exists,
-    Missing,
-    CheckFailed(String),
 }
 
 fn record_unwrap_requests_from_block(tx_ids: &[TxId]) {
@@ -2122,26 +2107,10 @@ async fn unwrap_dispatch_tick() {
                 }
             };
 
-        let outcome = resolve_wrap_submit_outcome(submit);
-        let duplicate_resolution = match &outcome {
-            WrapSubmitDispatchOutcome::Rejected(code) if code == "request.duplicate" => {
-                match validate_vault_canister_id(req.vault_canister_id.as_slice()).and_then(|_| {
-                    principal_from_bytes_checked(
-                        req.vault_canister_id.as_slice(),
-                        "wrap.arg.vault_principal_invalid",
-                    )
-                }) {
-                    Ok(vault) => Some(resolve_duplicate_unwrap_request(vault, request_id).await),
-                    Err(code) => Some(DuplicateRequestResolution::CheckFailed(code)),
-                }
-            }
-            _ => None,
-        };
-
         with_state_mut(|state| {
             if let Some(mut req) = state.unwrap_requests.get(&request_id) {
                 req.updated_at = time();
-                let (status, error_code) = apply_unwrap_dispatch_outcome(outcome, duplicate_resolution);
+                let (status, error_code) = apply_unwrap_dispatch_outcome(resolve_wrap_submit_outcome(submit));
                 req.ledger_tx_id = None;
                 req.status = status;
                 req.error_code = error_code;
@@ -2166,25 +2135,9 @@ fn resolve_wrap_submit_outcome(
 
 fn apply_unwrap_dispatch_outcome(
     outcome: WrapSubmitDispatchOutcome,
-    duplicate_resolution: Option<DuplicateRequestResolution>,
 ) -> (UnwrapRequestStatus, Option<String>) {
     match outcome {
         WrapSubmitDispatchOutcome::Accepted => (UnwrapRequestStatus::Dispatched, None),
-        WrapSubmitDispatchOutcome::Rejected(code) if code == "request.duplicate" => {
-            match duplicate_resolution {
-                Some(DuplicateRequestResolution::Exists) => {
-                    (UnwrapRequestStatus::Dispatched, None)
-                }
-                Some(DuplicateRequestResolution::Missing) | None => (
-                    UnwrapRequestStatus::DispatchFailed,
-                    Some("wrap.submit_failed:request.duplicate".to_string()),
-                ),
-                Some(DuplicateRequestResolution::CheckFailed(err)) => (
-                    UnwrapRequestStatus::DispatchFailed,
-                    Some(format!("wrap.duplicate_check_failed:{err}")),
-                ),
-            }
-        }
         WrapSubmitDispatchOutcome::Rejected(code) => (
             UnwrapRequestStatus::DispatchFailed,
             Some(format!("wrap.submit_failed:{code}")),
@@ -2197,23 +2150,6 @@ fn apply_unwrap_dispatch_outcome(
             UnwrapRequestStatus::DispatchFailed,
             Some(format!("wrap.call_failed:{err}")),
         ),
-    }
-}
-
-async fn resolve_duplicate_unwrap_request(
-    vault: Principal,
-    request_id: TxId,
-) -> DuplicateRequestResolution {
-    match ic_cdk::call::Call::bounded_wait(vault, "get_request_status")
-        .with_arg(request_id.0.to_vec())
-        .await
-    {
-        Ok(resp) => match resp.candid::<(Option<WrapRequestStatusView>,)>() {
-            Ok((Some(_),)) => DuplicateRequestResolution::Exists,
-            Ok((None,)) => DuplicateRequestResolution::Missing,
-            Err(err) => DuplicateRequestResolution::CheckFailed(err.to_string()),
-        },
-        Err(err) => DuplicateRequestResolution::CheckFailed(err.to_string()),
     }
 }
 
@@ -2779,61 +2715,9 @@ mod tests {
     }
 
     #[test]
-    fn duplicate_outcome_marks_dispatched_when_wrap_request_exists() {
-        let statuses = [
-            super::WrapRequestStatusView::Queued,
-            super::WrapRequestStatusView::Running,
-            super::WrapRequestStatusView::Succeeded,
-            super::WrapRequestStatusView::Failed,
-        ];
-        for status in statuses {
-            let out = super::apply_unwrap_dispatch_outcome(
-                super::WrapSubmitDispatchOutcome::Rejected("request.duplicate".to_string()),
-                Some(super::DuplicateRequestResolution::Exists),
-            );
-            assert_eq!(out, (UnwrapRequestStatus::Dispatched, None), "{status:?}");
-        }
-    }
-
-    #[test]
-    fn duplicate_outcome_fails_when_wrap_request_missing() {
-        let out = super::apply_unwrap_dispatch_outcome(
-            super::WrapSubmitDispatchOutcome::Rejected("request.duplicate".to_string()),
-            Some(super::DuplicateRequestResolution::Missing),
-        );
-        assert_eq!(
-            out,
-            (
-                UnwrapRequestStatus::DispatchFailed,
-                Some("wrap.submit_failed:request.duplicate".to_string())
-            )
-        );
-    }
-
-    #[test]
-    fn duplicate_outcome_fails_when_duplicate_check_errors() {
-        let out = super::apply_unwrap_dispatch_outcome(
-            super::WrapSubmitDispatchOutcome::Rejected("request.duplicate".to_string()),
-            Some(super::DuplicateRequestResolution::CheckFailed(
-                "wrap.arg.vault_principal_invalid".to_string(),
-            )),
-        );
-        assert_eq!(
-            out,
-            (
-                UnwrapRequestStatus::DispatchFailed,
-                Some(
-                    "wrap.duplicate_check_failed:wrap.arg.vault_principal_invalid".to_string()
-                )
-            )
-        );
-    }
-
-    #[test]
-    fn non_duplicate_rejection_stays_failed() {
+    fn rejection_stays_failed() {
         let out = super::apply_unwrap_dispatch_outcome(
             super::WrapSubmitDispatchOutcome::Rejected("request.invalid".to_string()),
-            None,
         );
         assert_eq!(
             out,
