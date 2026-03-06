@@ -5,6 +5,7 @@ import type { NextConfig } from "next";
 const nextConfig: NextConfig = {
   reactStrictMode: true,
   env: {
+    NEXT_PUBLIC_IC_HOST: process.env.NEXT_PUBLIC_IC_HOST,
     EVM_GATEWAY_CANISTER_ID: process.env.EVM_GATEWAY_CANISTER_ID,
     WRAP_CANISTER_ID: process.env.WRAP_CANISTER_ID,
   },

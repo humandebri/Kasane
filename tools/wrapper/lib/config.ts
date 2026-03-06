@@ -9,7 +9,17 @@ type WrapperConfig = {
 
 const REQUIRED_KEYS = ["NEXT_PUBLIC_IC_HOST", "EVM_GATEWAY_CANISTER_ID", "WRAP_CANISTER_ID"] as const;
 
-function requiredEnv(name: (typeof REQUIRED_KEYS)[number], env: NodeJS.ProcessEnv): string {
+type RequiredWrapperEnv = Pick<NodeJS.ProcessEnv, (typeof REQUIRED_KEYS)[number]>;
+type WrapperEnv = RequiredWrapperEnv & Pick<NodeJS.ProcessEnv, "FETCH_ROOT_KEY">;
+
+const BUNDLED_ENV: WrapperEnv = {
+  NEXT_PUBLIC_IC_HOST: process.env.NEXT_PUBLIC_IC_HOST,
+  EVM_GATEWAY_CANISTER_ID: process.env.EVM_GATEWAY_CANISTER_ID,
+  WRAP_CANISTER_ID: process.env.WRAP_CANISTER_ID,
+  FETCH_ROOT_KEY: process.env.FETCH_ROOT_KEY,
+};
+
+function requiredEnv(name: (typeof REQUIRED_KEYS)[number], env: RequiredWrapperEnv): string {
   const value = env[name];
   if (value === undefined || value.trim() === "") {
     throw new Error(`config.missing:${name}`);
@@ -31,7 +41,7 @@ function parseBoolean(value: string | undefined, fallback: boolean): boolean {
   return fallback;
 }
 
-export function loadConfig(env: NodeJS.ProcessEnv = process.env): WrapperConfig {
+export function loadConfig(env: WrapperEnv = BUNDLED_ENV): WrapperConfig {
   return {
     icHost: requiredEnv("NEXT_PUBLIC_IC_HOST", env),
     evmGatewayCanisterId: requiredEnv("EVM_GATEWAY_CANISTER_ID", env),

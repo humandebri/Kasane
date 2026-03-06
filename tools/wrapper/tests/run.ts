@@ -1,10 +1,12 @@
 // どこで: wrapperテスト / 何を: 主要ロジックのユニットテストを実行 / なぜ: request_id導出・状態統合・execution参照の退行を防ぐため
 
 import assert from "node:assert/strict";
+import { AnonymousIdentity } from "@dfinity/agent";
 import { mergeStatus } from "../lib/merge";
 import { decimalToBytes32, deriveRequestId, deriveWrapRequestId, encodeUnwrapAbiInput } from "../lib/request-id";
 import { principalTextToBytes } from "../lib/principal";
 import { bytesToHex, hexToBytes, parseRequestIdHex } from "../lib/utils";
+import { submitIcTx, wrapperClientTestHooks } from "../lib/canister/wrapper-client";
 import { getExecutionResult } from "../lib/canister/wrap-client";
 import {
   messageAfterRefreshSuccess,
@@ -295,6 +297,86 @@ async function runStatusPollingRegressionTests(): Promise<void> {
   );
 }
 
+function buildMockQueryActor(args: {
+  gasPriceResult: { Ok: bigint } | { Err: { code: number; message: string; error_prefix: [] | [string] } };
+  priorityFeeResult: { Ok: bigint } | { Err: { code: number; message: string; error_prefix: [] | [string] } };
+}) {
+  return {
+    expected_nonce_by_address: async () => ({ Ok: 0n }),
+    rpc_eth_gas_price: async () => args.gasPriceResult,
+    rpc_eth_max_priority_fee_per_gas: async () => args.priorityFeeResult,
+    get_request_dispatch_status: async (): Promise<[]> => [],
+    get_request_dispatch_result: async (): Promise<[]> => [],
+  };
+}
+
+async function runWrapperClientFeeTests(): Promise<void> {
+  wrapperClientTestHooks.reset();
+  const submittedArgsList: Array<{
+    to: [] | [Uint8Array];
+    value: bigint;
+    max_priority_fee_per_gas: bigint;
+    data: Uint8Array;
+    max_fee_per_gas: bigint;
+    nonce: bigint;
+    gas_limit: bigint;
+  }> = [];
+
+  wrapperClientTestHooks.setMockQueryActor(buildMockQueryActor({
+    gasPriceResult: { Ok: 250_000_000_000n },
+    priorityFeeResult: { Ok: 2_000_000_000n },
+  }));
+  wrapperClientTestHooks.setMockSubmitActor({
+    submit_ic_tx: async (args) => {
+      submittedArgsList.push(args);
+      return { Ok: Uint8Array.from([0xaa]) };
+    },
+  });
+
+  const txId = await submitIcTx({
+    to: Uint8Array.from(new Array(20).fill(0x11)),
+    data: Uint8Array.from([0x01, 0x02]),
+    nonce: 7n,
+    identity: new AnonymousIdentity(),
+  });
+  assert.deepEqual(txId, Uint8Array.from([0xaa]));
+  const submittedArgs = submittedArgsList[0];
+  if (submittedArgs === undefined) {
+    throw new Error("submit args missing");
+  }
+  assert.equal(submittedArgs.max_fee_per_gas, 250_000_000_000n);
+  assert.equal(submittedArgs.max_priority_fee_per_gas, 2_000_000_000n);
+
+  wrapperClientTestHooks.setMockQueryActor(buildMockQueryActor({
+    gasPriceResult: { Err: { code: 32000, message: "state unavailable", error_prefix: [] } },
+    priorityFeeResult: { Ok: 2_000_000_000n },
+  }));
+  await assert.rejects(
+    submitIcTx({
+      to: Uint8Array.from(new Array(20).fill(0x11)),
+      data: Uint8Array.from([0x01]),
+      nonce: 8n,
+      identity: new AnonymousIdentity(),
+    }),
+    /evm_gateway\.gas_price_failed:32000:state unavailable/,
+  );
+
+  wrapperClientTestHooks.setMockQueryActor(buildMockQueryActor({
+    gasPriceResult: { Ok: 250_000_000_000n },
+    priorityFeeResult: { Err: { code: 32000, message: "state unavailable", error_prefix: [] } },
+  }));
+  await assert.rejects(
+    submitIcTx({
+      to: Uint8Array.from(new Array(20).fill(0x11)),
+      data: Uint8Array.from([0x01]),
+      nonce: 9n,
+      identity: new AnonymousIdentity(),
+    }),
+    /evm_gateway\.priority_fee_failed:32000:state unavailable/,
+  );
+  wrapperClientTestHooks.reset();
+}
+
 async function main(): Promise<void> {
   await runUtilsTests();
   await runRequestIdTests();
@@ -304,6 +386,7 @@ async function main(): Promise<void> {
   await runAllowanceTests();
   await runStatusPhaseTests();
   await runStatusPollingRegressionTests();
+  await runWrapperClientFeeTests();
   process.stdout.write("wrapper tests passed\n");
 }
 

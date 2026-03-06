@@ -84,6 +84,7 @@ struct GenesisBalanceView {
 #[derive(Clone, Debug, CandidType, Deserialize, Eq, PartialEq)]
 struct InitArgs {
     genesis_balances: Vec<GenesisBalanceView>,
+    wrap_canister_id: Principal,
 }
 
 #[derive(Clone, Debug, CandidType, Deserialize, Eq, PartialEq)]
@@ -119,6 +120,17 @@ enum PendingStatusView {
     Unknown,
 }
 
+#[derive(Clone, Debug, CandidType, Deserialize, Eq, PartialEq)]
+struct SubmitIcTxArgsDto {
+    to: Option<Vec<u8>>,
+    value: candid::Nat,
+    max_priority_fee_per_gas: candid::Nat,
+    data: Vec<u8>,
+    max_fee_per_gas: candid::Nat,
+    nonce: u64,
+    gas_limit: u64,
+}
+
 fn wasm_path() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("..")
@@ -133,6 +145,10 @@ fn test_caller() -> Principal {
     Principal::self_authenticating(b"rpc-e2e-test-caller")
 }
 
+fn test_wrap_canister() -> Principal {
+    Principal::self_authenticating(b"rpc-e2e-wrap-canister")
+}
+
 fn install_canister(pic: &PocketIc) -> Principal {
     let caller = test_caller();
     let init = Some(InitArgs {
@@ -142,6 +158,7 @@ fn install_canister(pic: &PocketIc) -> Principal {
                 .to_vec(),
             amount: 1_000_000_000_000_000_000u128,
         }],
+        wrap_canister_id: test_wrap_canister(),
     });
     let init_arg = Encode!(&init).expect("encode init args");
     let canister_id = install_canister_with_arg(pic, init_arg);
@@ -272,14 +289,14 @@ fn rpc_get_transaction_by_eth_hash_and_receipt_return_none() {
 fn rpc_get_transaction_receipt_by_eth_hash_returns_none_for_non_eth_tx() {
     let pic = PocketIc::new();
     let canister_id = install_canister(&pic);
-    let tx_bytes = build_ic_tx_bytes([0x10u8; 20], 0);
+    let submit_args = build_submit_ic_tx_args([0x10u8; 20], 0);
     let mut tx_id: Option<Vec<u8>> = None;
     for _ in 0..4 {
         let submit_bytes = call_update(
             &pic,
             canister_id,
             "submit_ic_tx",
-            Encode!(&tx_bytes).expect("encode submit"),
+            Encode!(&submit_args).expect("encode submit"),
         );
         let submit: SubmitTxResult = Decode!(&submit_bytes, SubmitTxResult).expect("decode submit");
         match submit {
@@ -361,12 +378,12 @@ fn instruction_soft_limit_blocks_inclusion_in_pending_status() {
         Decode!(&set_limit_out, ManageWriteResult).expect("decode set_instruction_soft_limit");
     assert_eq!(set_limit, Ok(()));
 
-    let tx_bytes = build_ic_tx_bytes([0x22u8; 20], 0);
+    let submit_args = build_submit_ic_tx_args([0x22u8; 20], 0);
     let submit_out = call_update(
         &pic,
         canister_id,
         "submit_ic_tx",
-        Encode!(&tx_bytes).expect("encode submit"),
+        Encode!(&submit_args).expect("encode submit"),
     );
     let submit: SubmitTxResult = Decode!(&submit_out, SubmitTxResult).expect("decode submit");
     let tx_id = match submit {
@@ -410,6 +427,7 @@ fn install_rejects_invalid_init_args() {
             address: vec![0u8; 19],
             amount: 1,
         }],
+        wrap_canister_id: test_wrap_canister(),
     });
     let bad_address_arg = Encode!(&bad_address).expect("encode bad address init args");
     expect_install_trap(
@@ -423,6 +441,7 @@ fn install_rejects_invalid_init_args() {
             address: vec![0u8; 20],
             amount: 0,
         }],
+        wrap_canister_id: test_wrap_canister(),
     });
     let zero_amount_arg = Encode!(&zero_amount).expect("encode zero amount init args");
     expect_install_trap(
@@ -442,6 +461,7 @@ fn install_rejects_invalid_init_args() {
                 amount: 2,
             },
         ],
+        wrap_canister_id: test_wrap_canister(),
     });
     let duplicate_arg = Encode!(&duplicate).expect("encode duplicate init args");
     expect_install_trap(
@@ -451,26 +471,17 @@ fn install_rejects_invalid_init_args() {
     );
 }
 
-fn build_ic_tx_bytes(to: [u8; 20], nonce: u64) -> Vec<u8> {
-    let value = [0u8; 32];
-    let gas_limit = 50_000u64.to_be_bytes();
-    let nonce = nonce.to_be_bytes();
+fn build_submit_ic_tx_args(to: [u8; 20], nonce: u64) -> SubmitIcTxArgsDto {
     // NOTE: keep test txs valid under current fee floor policy.
     // max_priority(300 gwei) >= min_priority(250 gwei),
     // max_fee(600 gwei) >= base_fee + min_priority (500 gwei).
-    let max_fee = 600_000_000_000u128.to_be_bytes();
-    let max_priority = 300_000_000_000u128.to_be_bytes();
-    let data: Vec<u8> = Vec::new();
-    let data_len = u32::try_from(data.len()).unwrap_or(0).to_be_bytes();
-    let mut out = Vec::with_capacity(1 + 20 + 32 + 8 + 8 + 16 + 16 + 4 + data.len());
-    out.push(1u8);
-    out.extend_from_slice(&to);
-    out.extend_from_slice(&value);
-    out.extend_from_slice(&gas_limit);
-    out.extend_from_slice(&nonce);
-    out.extend_from_slice(&max_fee);
-    out.extend_from_slice(&max_priority);
-    out.extend_from_slice(&data_len);
-    out.extend_from_slice(&data);
-    out
+    SubmitIcTxArgsDto {
+        to: Some(to.to_vec()),
+        value: candid::Nat::from(0u8),
+        max_priority_fee_per_gas: candid::Nat::from(300_000_000_000u64),
+        data: Vec::new(),
+        max_fee_per_gas: candid::Nat::from(600_000_000_000u64),
+        nonce,
+        gas_limit: 50_000,
+    }
 }

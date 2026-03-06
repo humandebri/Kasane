@@ -17,6 +17,7 @@ const REQUEST_KIND_UNWRAP: RequestKind = { Unwrap: null };
 type WrapperActor = ActorSubclass<{
   expected_nonce_by_address: (address: Uint8Array) => Promise<NatResult>;
   rpc_eth_gas_price: () => Promise<GasPriceResult>;
+  rpc_eth_max_priority_fee_per_gas: () => Promise<GasPriceResult>;
   submit_ic_tx: (args: {
     to: [] | [Uint8Array];
     value: bigint;
@@ -40,8 +41,17 @@ type WrapperActor = ActorSubclass<{
   }]>;
 }>;
 
+type QueryActorLike = Pick<
+  WrapperActor,
+  "expected_nonce_by_address" | "rpc_eth_gas_price" | "rpc_eth_max_priority_fee_per_gas"
+  | "get_request_dispatch_status" | "get_request_dispatch_result"
+>;
+type SubmitActorLike = Pick<WrapperActor, "submit_ic_tx">;
+
 let cachedQueryActor: WrapperActor | null = null;
 const cachedSubmitActors = new Map<string, WrapperActor>();
+let mockQueryActor: QueryActorLike | null = null;
+let mockSubmitActor: SubmitActorLike | null = null;
 
 const wrapperIdlFactory: IDL.InterfaceFactory = ({ IDL: I }) => {
   const SubmitTxError = I.Variant({
@@ -82,13 +92,24 @@ const wrapperIdlFactory: IDL.InterfaceFactory = ({ IDL: I }) => {
         error_prefix: I.Opt(I.Text),
       }),
     })], ["query"]),
+    rpc_eth_max_priority_fee_per_gas: I.Func([], [I.Variant({
+      Ok: I.Nat,
+      Err: I.Record({
+        code: I.Nat32,
+        message: I.Text,
+        error_prefix: I.Opt(I.Text),
+      }),
+    })], ["query"]),
     submit_ic_tx: I.Func([SubmitIcTxArgsDto], [I.Variant({ Ok: I.Vec(I.Nat8), Err: SubmitTxError })], []),
     get_request_dispatch_status: I.Func([RequestKindView, I.Vec(I.Nat8)], [I.Opt(RequestDispatchStatusView)], ["query"]),
     get_request_dispatch_result: I.Func([RequestKindView, I.Vec(I.Nat8)], [I.Opt(RequestDispatchResultView)], ["query"]),
   });
 };
 
-async function getQueryActor(): Promise<WrapperActor> {
+async function getQueryActor(): Promise<QueryActorLike> {
+  if (mockQueryActor) {
+    return mockQueryActor;
+  }
   if (cachedQueryActor) {
     return cachedQueryActor;
   }
@@ -100,7 +121,10 @@ async function getQueryActor(): Promise<WrapperActor> {
   return cachedQueryActor;
 }
 
-async function getSubmitActor(identity: Identity): Promise<WrapperActor> {
+async function getSubmitActor(identity: Identity): Promise<SubmitActorLike> {
+  if (mockSubmitActor) {
+    return mockSubmitActor;
+  }
   const key = identity.getPrincipal().toText();
   const cached = cachedSubmitActors.get(key);
   if (cached) {
@@ -154,18 +178,30 @@ export async function getGasPriceWei(): Promise<bigint> {
   return out.Ok;
 }
 
+async function getMaxPriorityFeePerGasWei(): Promise<bigint> {
+  const out = await (await getQueryActor()).rpc_eth_max_priority_fee_per_gas();
+  if ("Err" in out) {
+    throw new Error(`evm_gateway.priority_fee_failed:${out.Err.code}:${out.Err.message}`);
+  }
+  return out.Ok;
+}
+
 export async function submitIcTx(args: {
   to: Uint8Array;
   data: Uint8Array;
   nonce: bigint;
   identity: Identity;
 }): Promise<Uint8Array> {
+  const [maxFeePerGas, maxPriorityFeePerGas] = await Promise.all([
+    getGasPriceWei(),
+    getMaxPriorityFeePerGasWei(),
+  ]);
   const out = await (await getSubmitActor(args.identity)).submit_ic_tx({
     to: [args.to],
     value: 0n,
-    max_priority_fee_per_gas: 0n,
+    max_priority_fee_per_gas: maxPriorityFeePerGas,
     data: args.data,
-    max_fee_per_gas: 0n,
+    max_fee_per_gas: maxFeePerGas,
     nonce: args.nonce,
     gas_limit: 300_000n,
   });
@@ -200,6 +236,14 @@ export const wrapperClientTestHooks = {
   reset(): void {
     cachedQueryActor = null;
     cachedSubmitActors.clear();
+    mockQueryActor = null;
+    mockSubmitActor = null;
+  },
+  setMockQueryActor(actor: QueryActorLike | null): void {
+    mockQueryActor = actor;
+  },
+  setMockSubmitActor(actor: SubmitActorLike | null): void {
+    mockSubmitActor = actor;
   },
   decodeSubmitError,
 };

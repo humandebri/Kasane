@@ -27,6 +27,7 @@ use ic_cdk::api::{
     accept_message, canister_cycle_balance, is_controller, msg_caller, msg_method_name, time,
 };
 use serde::Deserialize;
+use std::collections::BTreeSet;
 use std::sync::atomic::{AtomicU64, Ordering};
 use tracing::{error, info, warn};
 
@@ -193,6 +194,7 @@ fn post_upgrade() {
     apply_post_upgrade_migrations();
     observe_cycles();
     reset_mining_schedule_after_upgrade();
+    restore_unwrap_dispatch_after_upgrade();
     schedule_mining();
     schedule_cycle_observer();
 }
@@ -204,6 +206,58 @@ fn reset_mining_schedule_after_upgrade() {
         chain_state.mining_scheduled = false;
         state.chain_state.set(chain_state);
     });
+}
+
+fn restore_unwrap_dispatch_after_upgrade() {
+    // upgrade後は timer 実体が失われるため、永続化済みの unwrap queue を再接続する。
+    if recover_unwrap_dispatch_state_after_upgrade(time()) {
+        schedule_unwrap_dispatch();
+    }
+}
+
+fn recover_unwrap_dispatch_state_after_upgrade(now: u64) -> bool {
+    with_state_mut(|state| {
+        let mut queued_ids = BTreeSet::new();
+        for item in state.unwrap_dispatch_queue.range(..) {
+            queued_ids.insert(item.value());
+        }
+
+        let mut candidates = Vec::new();
+        for item in state.unwrap_requests.range(..) {
+            let request_id = *item.key();
+            let mut req = item.value().clone();
+            match req.status {
+                UnwrapRequestStatus::Queued => {
+                    if !queued_ids.contains(&request_id) {
+                        candidates.push((request_id, req));
+                    }
+                }
+                UnwrapRequestStatus::Dispatching => {
+                    req.status = UnwrapRequestStatus::Queued;
+                    req.updated_at = now;
+                    candidates.push((request_id, req));
+                }
+                UnwrapRequestStatus::Dispatched | UnwrapRequestStatus::DispatchFailed => {}
+            }
+        }
+
+        if candidates.is_empty() {
+            return state.unwrap_dispatch_queue.len() > 0;
+        }
+
+        let mut meta = *state.unwrap_dispatch_meta.get();
+        for (request_id, req) in candidates {
+            state.unwrap_requests.insert(request_id, req);
+            if queued_ids.contains(&request_id) {
+                continue;
+            }
+            let seq = meta.push();
+            state.unwrap_dispatch_queue.insert(seq, request_id);
+            queued_ids.insert(request_id);
+        }
+        state.unwrap_dispatch_meta.set(meta);
+        state.unwrap_dispatch_queue.len() > 0
+    })
 }
 
 #[ic_cdk::pre_upgrade]
@@ -1915,6 +1969,29 @@ struct WrapSubmitUnwrapRequestOk {
     request_id: Vec<u8>,
 }
 
+#[derive(Clone, Copy, Debug, CandidType, Deserialize, Eq, PartialEq)]
+enum WrapRequestStatusView {
+    Queued,
+    Running,
+    Succeeded,
+    Failed,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum WrapSubmitDispatchOutcome {
+    Accepted,
+    Rejected(String),
+    DecodeFailed(String),
+    CallFailed(String),
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum DuplicateRequestResolution {
+    Exists,
+    Missing,
+    CheckFailed(String),
+}
+
 fn record_unwrap_requests_from_block(tx_ids: &[TxId]) {
     for tx_id in tx_ids {
         let Some(receipt) = chain::get_receipt(tx_id) else {
@@ -2045,38 +2122,98 @@ async fn unwrap_dispatch_tick() {
                 }
             };
 
+        let outcome = resolve_wrap_submit_outcome(submit);
+        let duplicate_resolution = match &outcome {
+            WrapSubmitDispatchOutcome::Rejected(code) if code == "request.duplicate" => {
+                match validate_vault_canister_id(req.vault_canister_id.as_slice()).and_then(|_| {
+                    principal_from_bytes_checked(
+                        req.vault_canister_id.as_slice(),
+                        "wrap.arg.vault_principal_invalid",
+                    )
+                }) {
+                    Ok(vault) => Some(resolve_duplicate_unwrap_request(vault, request_id).await),
+                    Err(code) => Some(DuplicateRequestResolution::CheckFailed(code)),
+                }
+            }
+            _ => None,
+        };
+
         with_state_mut(|state| {
             if let Some(mut req) = state.unwrap_requests.get(&request_id) {
                 req.updated_at = time();
-                match submit {
-                    Ok(resp) => {
-                        match resp.candid_tuple::<(Result<WrapSubmitUnwrapRequestOk, String>,)>() {
-                            Ok((Ok(_),)) => {
-                                req.status = UnwrapRequestStatus::Dispatched;
-                                req.ledger_tx_id = None;
-                                req.error_code = None;
-                            }
-                            Ok((Err(code),)) => {
-                                req.status = UnwrapRequestStatus::DispatchFailed;
-                                req.ledger_tx_id = None;
-                                req.error_code = Some(format!("wrap.submit_failed:{code}"));
-                            }
-                            Err(err) => {
-                                req.status = UnwrapRequestStatus::DispatchFailed;
-                                req.ledger_tx_id = None;
-                                req.error_code = Some(format!("wrap.decode_failed:{err}"));
-                            }
-                        }
-                    }
-                    Err(err) => {
-                        req.ledger_tx_id = None;
-                        req.status = UnwrapRequestStatus::DispatchFailed;
-                        req.error_code = Some(format!("wrap.call_failed:{err}"));
-                    }
-                }
+                let (status, error_code) = apply_unwrap_dispatch_outcome(outcome, duplicate_resolution);
+                req.ledger_tx_id = None;
+                req.status = status;
+                req.error_code = error_code;
                 state.unwrap_requests.insert(request_id, req);
             }
         });
+    }
+}
+
+fn resolve_wrap_submit_outcome(
+    submit: Result<ic_cdk::call::Response, ic_cdk::call::CallFailed>,
+) -> WrapSubmitDispatchOutcome {
+    match submit {
+        Ok(resp) => match resp.candid_tuple::<(Result<WrapSubmitUnwrapRequestOk, String>,)>() {
+            Ok((Ok(_),)) => WrapSubmitDispatchOutcome::Accepted,
+            Ok((Err(code),)) => WrapSubmitDispatchOutcome::Rejected(code),
+            Err(err) => WrapSubmitDispatchOutcome::DecodeFailed(err.to_string()),
+        },
+        Err(err) => WrapSubmitDispatchOutcome::CallFailed(err.to_string()),
+    }
+}
+
+fn apply_unwrap_dispatch_outcome(
+    outcome: WrapSubmitDispatchOutcome,
+    duplicate_resolution: Option<DuplicateRequestResolution>,
+) -> (UnwrapRequestStatus, Option<String>) {
+    match outcome {
+        WrapSubmitDispatchOutcome::Accepted => (UnwrapRequestStatus::Dispatched, None),
+        WrapSubmitDispatchOutcome::Rejected(code) if code == "request.duplicate" => {
+            match duplicate_resolution {
+                Some(DuplicateRequestResolution::Exists) => {
+                    (UnwrapRequestStatus::Dispatched, None)
+                }
+                Some(DuplicateRequestResolution::Missing) | None => (
+                    UnwrapRequestStatus::DispatchFailed,
+                    Some("wrap.submit_failed:request.duplicate".to_string()),
+                ),
+                Some(DuplicateRequestResolution::CheckFailed(err)) => (
+                    UnwrapRequestStatus::DispatchFailed,
+                    Some(format!("wrap.duplicate_check_failed:{err}")),
+                ),
+            }
+        }
+        WrapSubmitDispatchOutcome::Rejected(code) => (
+            UnwrapRequestStatus::DispatchFailed,
+            Some(format!("wrap.submit_failed:{code}")),
+        ),
+        WrapSubmitDispatchOutcome::DecodeFailed(err) => (
+            UnwrapRequestStatus::DispatchFailed,
+            Some(format!("wrap.decode_failed:{err}")),
+        ),
+        WrapSubmitDispatchOutcome::CallFailed(err) => (
+            UnwrapRequestStatus::DispatchFailed,
+            Some(format!("wrap.call_failed:{err}")),
+        ),
+    }
+}
+
+async fn resolve_duplicate_unwrap_request(
+    vault: Principal,
+    request_id: TxId,
+) -> DuplicateRequestResolution {
+    match ic_cdk::call::Call::bounded_wait(vault, "get_request_status")
+        .with_arg(request_id.0.to_vec())
+        .await
+    {
+        Ok(resp) => match resp.candid::<(Option<WrapRequestStatusView>,)>() {
+            Ok((Some(_),)) => DuplicateRequestResolution::Exists,
+            Ok((None,)) => DuplicateRequestResolution::Missing,
+            Err(err) => DuplicateRequestResolution::CheckFailed(err.to_string()),
+        },
+        Err(err) => DuplicateRequestResolution::CheckFailed(err.to_string()),
     }
 }
 
@@ -2525,6 +2662,186 @@ mod tests {
         evm_db::stable_state::with_state(|state| {
             assert!(!state.chain_state.get().mining_scheduled);
         });
+    }
+
+    #[test]
+    fn recover_unwrap_dispatch_after_upgrade_requeues_dispatching_requests() {
+        init_stable_state();
+        let request_id = TxId([0x61u8; 32]);
+        with_state_mut(|state| {
+            state.unwrap_requests.insert(
+                request_id,
+                UnwrapRequestV1 {
+                    vault_canister_id: vec![0x44u8; 10],
+                    asset_id: vec![0x55u8; 10],
+                    amount: vec![0x66u8; 32],
+                    recipient: vec![0x77u8; 10],
+                    status: UnwrapRequestStatus::Dispatching,
+                    ledger_tx_id: None,
+                    error_code: None,
+                    created_at: 1,
+                    updated_at: 1,
+                },
+            );
+        });
+
+        assert!(super::recover_unwrap_dispatch_state_after_upgrade(123));
+        with_state(|state| {
+            let req = state.unwrap_requests.get(&request_id).expect("request");
+            assert_eq!(req.status, UnwrapRequestStatus::Queued);
+            assert_eq!(req.updated_at, 123);
+            assert_eq!(state.unwrap_dispatch_queue.len(), 1);
+        });
+    }
+
+    #[test]
+    fn recover_unwrap_dispatch_after_upgrade_preserves_existing_queue_without_duplicates() {
+        init_stable_state();
+        let request_id = TxId([0x62u8; 32]);
+        with_state_mut(|state| {
+            let mut meta = *state.unwrap_dispatch_meta.get();
+            let seq = meta.push();
+            state.unwrap_dispatch_meta.set(meta);
+            state.unwrap_dispatch_queue.insert(seq, request_id);
+            state.unwrap_requests.insert(
+                request_id,
+                UnwrapRequestV1 {
+                    vault_canister_id: vec![0x44u8; 10],
+                    asset_id: vec![0x55u8; 10],
+                    amount: vec![0x66u8; 32],
+                    recipient: vec![0x77u8; 10],
+                    status: UnwrapRequestStatus::Queued,
+                    ledger_tx_id: None,
+                    error_code: None,
+                    created_at: 1,
+                    updated_at: 1,
+                },
+            );
+        });
+
+        assert!(super::recover_unwrap_dispatch_state_after_upgrade(222));
+        with_state(|state| {
+            let req = state.unwrap_requests.get(&request_id).expect("request");
+            assert_eq!(req.status, UnwrapRequestStatus::Queued);
+            assert_eq!(req.updated_at, 1);
+            assert_eq!(state.unwrap_dispatch_queue.len(), 1);
+        });
+    }
+
+    #[test]
+    fn recover_unwrap_dispatch_after_upgrade_ignores_terminal_requests() {
+        init_stable_state();
+        let dispatched = TxId([0x63u8; 32]);
+        let failed = TxId([0x64u8; 32]);
+        with_state_mut(|state| {
+            state.unwrap_requests.insert(
+                dispatched,
+                UnwrapRequestV1 {
+                    vault_canister_id: vec![0x44u8; 10],
+                    asset_id: vec![0x55u8; 10],
+                    amount: vec![0x66u8; 32],
+                    recipient: vec![0x77u8; 10],
+                    status: UnwrapRequestStatus::Dispatched,
+                    ledger_tx_id: None,
+                    error_code: None,
+                    created_at: 1,
+                    updated_at: 11,
+                },
+            );
+            state.unwrap_requests.insert(
+                failed,
+                UnwrapRequestV1 {
+                    vault_canister_id: vec![0x44u8; 10],
+                    asset_id: vec![0x55u8; 10],
+                    amount: vec![0x66u8; 32],
+                    recipient: vec![0x77u8; 10],
+                    status: UnwrapRequestStatus::DispatchFailed,
+                    ledger_tx_id: None,
+                    error_code: Some("wrap.call_failed:oops".to_string()),
+                    created_at: 1,
+                    updated_at: 12,
+                },
+            );
+        });
+
+        assert!(!super::recover_unwrap_dispatch_state_after_upgrade(333));
+        with_state(|state| {
+            assert_eq!(state.unwrap_dispatch_queue.len(), 0);
+            assert_eq!(
+                state.unwrap_requests.get(&dispatched).map(|req| req.status),
+                Some(UnwrapRequestStatus::Dispatched)
+            );
+            assert_eq!(
+                state.unwrap_requests.get(&failed).map(|req| req.status),
+                Some(UnwrapRequestStatus::DispatchFailed)
+            );
+        });
+    }
+
+    #[test]
+    fn duplicate_outcome_marks_dispatched_when_wrap_request_exists() {
+        let statuses = [
+            super::WrapRequestStatusView::Queued,
+            super::WrapRequestStatusView::Running,
+            super::WrapRequestStatusView::Succeeded,
+            super::WrapRequestStatusView::Failed,
+        ];
+        for status in statuses {
+            let out = super::apply_unwrap_dispatch_outcome(
+                super::WrapSubmitDispatchOutcome::Rejected("request.duplicate".to_string()),
+                Some(super::DuplicateRequestResolution::Exists),
+            );
+            assert_eq!(out, (UnwrapRequestStatus::Dispatched, None), "{status:?}");
+        }
+    }
+
+    #[test]
+    fn duplicate_outcome_fails_when_wrap_request_missing() {
+        let out = super::apply_unwrap_dispatch_outcome(
+            super::WrapSubmitDispatchOutcome::Rejected("request.duplicate".to_string()),
+            Some(super::DuplicateRequestResolution::Missing),
+        );
+        assert_eq!(
+            out,
+            (
+                UnwrapRequestStatus::DispatchFailed,
+                Some("wrap.submit_failed:request.duplicate".to_string())
+            )
+        );
+    }
+
+    #[test]
+    fn duplicate_outcome_fails_when_duplicate_check_errors() {
+        let out = super::apply_unwrap_dispatch_outcome(
+            super::WrapSubmitDispatchOutcome::Rejected("request.duplicate".to_string()),
+            Some(super::DuplicateRequestResolution::CheckFailed(
+                "wrap.arg.vault_principal_invalid".to_string(),
+            )),
+        );
+        assert_eq!(
+            out,
+            (
+                UnwrapRequestStatus::DispatchFailed,
+                Some(
+                    "wrap.duplicate_check_failed:wrap.arg.vault_principal_invalid".to_string()
+                )
+            )
+        );
+    }
+
+    #[test]
+    fn non_duplicate_rejection_stays_failed() {
+        let out = super::apply_unwrap_dispatch_outcome(
+            super::WrapSubmitDispatchOutcome::Rejected("request.invalid".to_string()),
+            None,
+        );
+        assert_eq!(
+            out,
+            (
+                UnwrapRequestStatus::DispatchFailed,
+                Some("wrap.submit_failed:request.invalid".to_string())
+            )
+        );
     }
 
     fn build_ic_synthetic_tx_input_for_test(
