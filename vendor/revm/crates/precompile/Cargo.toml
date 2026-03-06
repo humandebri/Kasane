@@ -58,10 +58,10 @@ c-kzg = { workspace = true, optional = true, features = [
 blst = { workspace = true, optional = true }
 
 # Use the BLS12-381 implementation of arkworks for EIP2537
-ark-bls12-381 = { workspace = true, features = ["curve"] }
+ark-bls12-381 = { workspace = true, features = ["curve"], optional = true }
 
 # p256verify precompile
-p256 = { workspace = true, features = ["ecdsa"] }
+p256 = { workspace = true, features = ["ecdsa"], optional = true }
 
 # utils
 cfg-if.workspace = true
@@ -84,13 +84,13 @@ std = [
 	"c-kzg?/std",
 	"secp256k1?/std",
 	"ark-bn254/std",
-	"ark-bls12-381/std",
+	"ark-bls12-381?/std",
 	"aurora-engine-modexp/std",
 	"ark-ec/std",
 	"ark-ff/std",
 	"ark-serialize/std",
 	"ark-std/std",
-	"p256/std",
+	"p256?/std",
 ]
 hashbrown = ["primitives/hashbrown"]
 asm-keccak = ["primitives/asm-keccak"]
@@ -99,6 +99,9 @@ asm-sha2 = ["sha2/asm"]
 
 # Enables the c-kzg point evaluation precompile. Enabled by default as most stable/used implementation.
 c-kzg = ["dep:c-kzg"]
+
+# Enables the KZG point evaluation precompile registration (0x0A).
+kzg_precompile = ["dep:ark-bls12-381"]
 
 # Compile in portable mode, without ISA extensions.
 # Binary can be executed on all systems.
@@ -109,11 +112,17 @@ portable = ["c-kzg?/portable", "blst?/portable"]
 # In Linux it passes. If you don't require to build wasm on win/mac, it is safe to use it and it is enabled by default.
 secp256k1 = ["dep:secp256k1"]
 
-# Enables the blst implementation of the BLS12-381 precompile.
+# Enables the BLS12-381 precompiles from EIP-2537.
+bls12_381 = ["dep:ark-bls12-381"]
+
+# Enables the blst implementation of the BLS12-381 precompile backend.
 blst = ["dep:blst"]
 
 # Enables the substrate implementation of eip1962
 bn = ["dep:bn"]
+
+# Enables secp256r1 p256verify precompile.
+secp256r1 = ["dep:p256"]
 
 # Use GMP (LGPL) for modexp precompile via gmp-mpfr-sys.
 # If you want to use a system libs and dynamic linking of GMP, include `gmp-mpfr-sys` in your project

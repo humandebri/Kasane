@@ -7,26 +7,35 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
-EXPECTED_DID="${REPO_ROOT}/crates/ic-evm-gateway/evm_canister.did"
-GENERATED_DID="$(mktemp -t evm_canister.generated.XXXXXX.did)"
-NORMALIZED_EXPECTED="$(mktemp -t evm_canister.expected.XXXXXX.did)"
-NORMALIZED_GENERATED="$(mktemp -t evm_canister.generated.normalized.XXXXXX.did)"
+DEFAULT_DID="${REPO_ROOT}/crates/ic-evm-gateway/evm_canister.did"
+ADMIN_DID="${REPO_ROOT}/crates/ic-evm-gateway/evm_canister_precompile_profile_admin.did"
 
-cleanup() {
-  rm -f "${GENERATED_DID}"
-  rm -f "${NORMALIZED_EXPECTED}"
-  rm -f "${NORMALIZED_GENERATED}"
+check_did_sync() {
+  local label="$1"
+  local expected_did="$2"
+  local features="$3"
+  local generated_did
+  local normalized_expected
+  local normalized_generated
+
+  generated_did="$(mktemp -t evm_canister.generated.XXXXXX.did)"
+  normalized_expected="$(mktemp -t evm_canister.expected.XXXXXX.did)"
+  normalized_generated="$(mktemp -t evm_canister.generated.normalized.XXXXXX.did)"
+
+  cargo run -q -p ic-evm-gateway --features "${features}" --bin export_did > "${generated_did}"
+
+  grep -Ev '^[[:space:]]*//' "${expected_did}" > "${normalized_expected}"
+  grep -Ev '^[[:space:]]*//' "${generated_did}" > "${normalized_generated}"
+
+  if ! diff -u "${normalized_expected}" "${normalized_generated}"; then
+    rm -f "${generated_did}" "${normalized_expected}" "${normalized_generated}"
+    echo "[guard] DID mismatch detected for ${label}: ${expected_did}" >&2
+    return 1
+  fi
+
+  rm -f "${generated_did}" "${normalized_expected}" "${normalized_generated}"
+  echo "[guard] DID sync ok: ${label}"
 }
-trap cleanup EXIT
 
-cargo run -q -p ic-evm-gateway --features did-gen --bin export_did > "${GENERATED_DID}"
-
-grep -Ev '^[[:space:]]*//' "${EXPECTED_DID}" > "${NORMALIZED_EXPECTED}"
-grep -Ev '^[[:space:]]*//' "${GENERATED_DID}" > "${NORMALIZED_GENERATED}"
-
-if ! diff -u "${NORMALIZED_EXPECTED}" "${NORMALIZED_GENERATED}"; then
-  echo "[guard] DID mismatch detected. Regenerate and sync evm_canister.did." >&2
-  exit 1
-fi
-
-echo "[guard] DID sync ok"
+check_did_sync "default" "${DEFAULT_DID}" "did-gen"
+check_did_sync "precompile-profile-admin" "${ADMIN_DID}" "did-gen precompile-profile-admin"

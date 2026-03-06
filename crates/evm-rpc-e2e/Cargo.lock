@@ -1281,6 +1281,7 @@ dependencies = [
  "ic-evm-core",
  "pocket-ic",
  "serde",
+ "serde_json",
 ]
 
 [[package]]

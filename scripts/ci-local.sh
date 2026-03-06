@@ -49,6 +49,7 @@ run_github_equivalent_phase() {
   fi
   scripts/check_gateway_matrix_sync.sh
   scripts/check_alloy_isolation.sh
+  scripts/check_precompile_feature_isolation.sh
 
   echo "[phase=${CURRENT_PHASE}] deny OP stack references"
   DENY_PATTERN='op-revm|op_revm|op-node|op-geth|optimism|superchain|OpDeposit|L1BlockInfo'

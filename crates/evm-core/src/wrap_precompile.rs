@@ -10,6 +10,8 @@ use revm::{
     primitives::{Address, Bytes, Log, B256},
 };
 use std::boxed::Box;
+use std::cell::RefCell;
+use std::collections::BTreeMap;
 
 // 予約レンジ方針:
 // - 0x00000000000000000000000000000000ffff0001: unwrap
@@ -22,6 +24,33 @@ const MAX_PRINCIPAL_LEN: usize = 29;
 const ABI_WORD_SIZE: usize = 32;
 const ABI_HEAD_WORDS: usize = 6;
 const ABI_DYNAMIC_FIELDS: usize = 3;
+const FIXED_PRECOMPILE_GAS_RATIO_NUMERATOR: u32 = 1;
+const FIXED_PRECOMPILE_GAS_RATIO_DENOMINATOR: u32 = 100;
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PrecompileProfileEntry {
+    pub address: [u8; 20],
+    pub calls: u64,
+    pub total_instructions: u128,
+    pub avg_instructions: u64,
+    pub max_instructions: u64,
+    pub total_extra_gas: u128,
+    pub avg_extra_gas: u64,
+    pub max_extra_gas: u64,
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+struct PrecompileProfileAccumulator {
+    calls: u64,
+    total_instructions: u128,
+    max_instructions: u64,
+    total_extra_gas: u128,
+    max_extra_gas: u64,
+}
+
+thread_local! {
+    static PRECOMPILE_PROFILE_ACC: RefCell<BTreeMap<[u8; 20], PrecompileProfileAccumulator>> = const { RefCell::new(BTreeMap::new()) };
+}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct UnwrapIntent {
@@ -64,14 +93,31 @@ where
         context: &mut CTX,
         inputs: &CallInputs,
     ) -> Result<Option<Self::Output>, String> {
-        if inputs.bytecode_address != WRAP_PRECOMPILE_ADDRESS {
-            return self.inner.run(context, inputs);
+        // 課金と profile 判断は IC instruction counter を正とする。
+        let started_instruction = current_instruction_counter();
+        let address = inputs.bytecode_address.into_array();
+
+        let output = if inputs.bytecode_address != WRAP_PRECOMPILE_ADDRESS {
+            self.inner.run(context, inputs)?
+        } else {
+            Some(run_wrap_precompile(context, inputs, self.allow_external))
+        };
+
+        let Some(mut out) = output else {
+            return Ok(None);
+        };
+
+        let elapsed_instruction = current_instruction_counter().saturating_sub(started_instruction);
+        let extra_gas = extra_gas_by_instruction_ratio(elapsed_instruction);
+        if extra_gas != 0 && !out.gas.record_cost(extra_gas) {
+            out = InterpreterResult {
+                result: InstructionResult::PrecompileOOG,
+                gas: Gas::new(inputs.gas_limit),
+                output: Bytes::new(),
+            };
         }
-        Ok(Some(run_wrap_precompile(
-            context,
-            inputs,
-            self.allow_external,
-        )))
+        record_precompile_profile(address, elapsed_instruction, extra_gas);
+        Ok(Some(out))
     }
 
     fn warm_addresses(&self) -> Box<impl Iterator<Item = Address>> {
@@ -242,7 +288,7 @@ fn encode_log_data(intent: &UnwrapIntent, request_id: &[u8; 32]) -> Vec<u8> {
 }
 
 pub fn unwrap_intent_from_log(log: &LogEntry) -> Option<UnwrapIntent> {
-    if log.address.0 != WRAP_PRECOMPILE_ADDRESS.0 {
+    if log.address.as_slice() != WRAP_PRECOMPILE_ADDRESS.as_slice() {
         return None;
     }
     let topics = log.topics();
@@ -370,11 +416,84 @@ fn read_u64(data: &[u8], offset: &mut usize) -> Option<u64> {
     Some(u64::from_be_bytes(out))
 }
 
+fn current_instruction_counter() -> u64 {
+    #[cfg(target_arch = "wasm32")]
+    {
+        return ic_cdk::api::performance_counter(
+            ic_cdk::api::PerformanceCounterType::InstructionCounter,
+        );
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        0
+    }
+}
+
+fn extra_gas_by_instruction_ratio(elapsed_instruction: u64) -> u64 {
+    compute_extra_gas(
+        elapsed_instruction,
+        FIXED_PRECOMPILE_GAS_RATIO_NUMERATOR,
+        FIXED_PRECOMPILE_GAS_RATIO_DENOMINATOR,
+    )
+}
+
+fn compute_extra_gas(elapsed_instruction: u64, numerator: u32, denominator: u32) -> u64 {
+    if elapsed_instruction == 0 || numerator == 0 {
+        return 0;
+    }
+    let denominator = denominator.max(1);
+    let scaled = u128::from(elapsed_instruction).saturating_mul(u128::from(numerator));
+    let rounded =
+        scaled.saturating_add(u128::from(denominator).saturating_sub(1)) / u128::from(denominator);
+    rounded.min(u128::from(u64::MAX)) as u64
+}
+
+fn record_precompile_profile(address: [u8; 20], elapsed_instruction: u64, extra_gas: u64) {
+    PRECOMPILE_PROFILE_ACC.with(|map| {
+        let mut map = map.borrow_mut();
+        let entry = map
+            .entry(address)
+            .or_insert_with(PrecompileProfileAccumulator::default);
+        entry.calls = entry.calls.saturating_add(1);
+        entry.total_instructions = entry
+            .total_instructions
+            .saturating_add(u128::from(elapsed_instruction));
+        entry.max_instructions = entry.max_instructions.max(elapsed_instruction);
+        entry.total_extra_gas = entry.total_extra_gas.saturating_add(u128::from(extra_gas));
+        entry.max_extra_gas = entry.max_extra_gas.max(extra_gas);
+    });
+}
+
+pub fn precompile_profile_snapshot() -> Vec<PrecompileProfileEntry> {
+    PRECOMPILE_PROFILE_ACC.with(|map| {
+        map.borrow()
+            .iter()
+            .map(|(address, acc)| {
+                let calls = acc.calls.max(1);
+                PrecompileProfileEntry {
+                    address: *address,
+                    calls: acc.calls,
+                    total_instructions: acc.total_instructions,
+                    avg_instructions: (acc.total_instructions / u128::from(calls)) as u64,
+                    max_instructions: acc.max_instructions,
+                    total_extra_gas: acc.total_extra_gas,
+                    avg_extra_gas: (acc.total_extra_gas / u128::from(calls)) as u64,
+                    max_extra_gas: acc.max_extra_gas,
+                }
+            })
+            .collect()
+    })
+}
+
+pub fn clear_precompile_profile() {
+    PRECOMPILE_PROFILE_ACC.with(|map| map.borrow_mut().clear());
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        estimate_wrap_precompile_gas, parse_input, unwrap_intent_from_log, wrap_event_topic0,
-        WRAP_PRECOMPILE_ADDRESS,
+        compute_extra_gas, estimate_wrap_precompile_gas, extra_gas_by_instruction_ratio,
+        parse_input, unwrap_intent_from_log, wrap_event_topic0, WRAP_PRECOMPILE_ADDRESS,
     };
     use evm_db::chain_data::receipt::log_entry_from_parts;
 
@@ -530,6 +649,20 @@ mod tests {
         );
         let err = parse_input(&encoded).expect_err("must reject");
         assert_eq!(err, "wrap.arg.principal_invalid");
+    }
+
+    #[test]
+    fn extra_gas_rounds_up_with_ratio() {
+        assert_eq!(compute_extra_gas(0, 10, 3), 0);
+        assert_eq!(compute_extra_gas(100, 0, 3), 0);
+        assert_eq!(compute_extra_gas(100, 1, 3), 34);
+        assert_eq!(compute_extra_gas(100, 1, 0), 100);
+    }
+
+    #[test]
+    fn extra_gas_uses_fixed_ratio() {
+        assert_eq!(extra_gas_by_instruction_ratio(100), 1);
+        assert_eq!(extra_gas_by_instruction_ratio(250), 3);
     }
 
     fn encode_abi(

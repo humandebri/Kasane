@@ -15,6 +15,9 @@ English version: [./mainnet-deploy-runbook.md](./mainnet-deploy-runbook.md)
 1. 本番用 identity を選ぶ（本リポジトリ運用では `ci-local` を使用）。
 2. `evm_canister` の controller 構成を確認する。
 3. cycles 残高を確認する（最低目安: `2_000_000_000_000`）。
+4. precompile 追加課金の ratio を deploy 前に確定する。
+   - 計測は `scripts/run_precompile_profile_e2e.sh` / `scripts/measure_precompile_ratio.sh` で事前に行う。
+   - 計測専用 API（`get_precompile_profile` / `clear_precompile_profile` / `profile_precompile_call`）は `precompile-profile-admin` feature 付き build でのみ公開し、本番 deploy build には入れない。
 
 ```bash
 ICP_ENV=ic \
@@ -36,6 +39,12 @@ ICP_IDENTITY_NAME=ci-local \
 MODE=upgrade \
 scripts/mainnet/ic_mainnet_deploy.sh
 ```
+
+注意:
+- `scripts/mainnet/ic_mainnet_deploy.sh` の既定 build は計測専用 feature を有効化しない。
+- mainnet deploy 後に計測専用 API を叩く前提では運用しない。
+- 既定 build は precompile 追加課金 ratio `1/100` を固定で含む。
+- ratio を変更する場合は、PocketIC / local で再計測したうえで再デプロイする。
 
 初回 install/reinstall（`InitArgs` 必須）:
 

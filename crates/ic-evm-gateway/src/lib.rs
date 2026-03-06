@@ -159,11 +159,7 @@ fn init_inner(args: Option<InitArgs>, require_args: bool) {
             ic_cdk::trap(&format!("InvalidInitArgs: {reason}"));
         }
     }
-    with_state_mut(|state| {
-        state
-            .wrap_canister_id
-            .set(args.wrap_canister_id.as_slice().to_vec());
-    });
+    with_state_mut(|state| state.wrap_canister_id.set(args.wrap_canister_id.as_slice().to_vec()));
     if !args.genesis_balances.is_empty() {
         for alloc in args.genesis_balances.iter() {
             let mut addr = [0u8; 20];
@@ -244,7 +240,7 @@ struct InspectMethodPolicy {
     payload_limit: usize,
 }
 
-const INSPECT_METHOD_POLICIES: [InspectMethodPolicy; 8] = [
+const INSPECT_METHOD_POLICIES: &[InspectMethodPolicy] = &[
     InspectMethodPolicy {
         method: "submit_ic_tx",
         payload_limit: INSPECT_TX_PAYLOAD_LIMIT,
@@ -275,6 +271,16 @@ const INSPECT_METHOD_POLICIES: [InspectMethodPolicy; 8] = [
     },
     InspectMethodPolicy {
         method: "prune_blocks",
+        payload_limit: INSPECT_MANAGE_PAYLOAD_LIMIT,
+    },
+    #[cfg(feature = "precompile-profile-admin")]
+    InspectMethodPolicy {
+        method: "clear_precompile_profile",
+        payload_limit: INSPECT_MANAGE_PAYLOAD_LIMIT,
+    },
+    #[cfg(feature = "precompile-profile-admin")]
+    InspectMethodPolicy {
+        method: "profile_precompile_call",
         payload_limit: INSPECT_MANAGE_PAYLOAD_LIMIT,
     },
 ];
@@ -682,6 +688,26 @@ fn rpc_eth_call_object(call: RpcCallObjectView) -> Result<RpcCallResultView, Rpc
     ic_evm_rpc::rpc_eth_call_object(call)
 }
 
+#[cfg(feature = "precompile-profile-admin")]
+#[ic_cdk::update]
+fn profile_precompile_call(call: RpcCallObjectView) -> Result<RpcCallResultView, RpcErrorView> {
+    if let Some(reason) = reject_anonymous_update() {
+        return Err(RpcErrorView {
+            code: 1001,
+            message: reason,
+            error_prefix: Some("auth.controller_required".to_string()),
+        });
+    }
+    if let Err(reason) = require_control_plane_write() {
+        return Err(RpcErrorView {
+            code: 1001,
+            message: reason,
+            error_prefix: Some("auth.controller_required".to_string()),
+        });
+    }
+    ic_evm_rpc::rpc_eth_call_object(call)
+}
+
 #[ic_cdk::query]
 fn rpc_eth_call_object_at(
     call: RpcCallObjectView,
@@ -1034,6 +1060,38 @@ fn set_instruction_soft_limit(limit: u64) -> Result<(), String> {
         chain_state.instruction_soft_limit = limit;
         state.chain_state.set(chain_state);
     });
+    Ok(())
+}
+
+#[cfg(feature = "precompile-profile-admin")]
+#[ic_cdk::query]
+fn get_precompile_profile() -> Vec<PrecompileProfileView> {
+    if let Err(reason) = require_controller() {
+        ic_cdk::trap(&reason);
+    }
+    evm_core::wrap_precompile::precompile_profile_snapshot()
+        .into_iter()
+        .map(|entry| PrecompileProfileView {
+            address: entry.address.to_vec(),
+            calls: entry.calls,
+            total_instructions: entry.total_instructions,
+            avg_instructions: entry.avg_instructions,
+            max_instructions: entry.max_instructions,
+            total_extra_gas: entry.total_extra_gas,
+            avg_extra_gas: entry.avg_extra_gas,
+            max_extra_gas: entry.max_extra_gas,
+        })
+        .collect()
+}
+
+#[cfg(feature = "precompile-profile-admin")]
+#[ic_cdk::update]
+fn clear_precompile_profile() -> Result<(), String> {
+    if let Some(reason) = reject_anonymous_update() {
+        return Err(reason);
+    }
+    require_control_plane_write()?;
+    evm_core::wrap_precompile::clear_precompile_profile();
     Ok(())
 }
 
@@ -2256,9 +2314,9 @@ mod tests {
         set_schema_migration_state, SchemaMigrationPhase, SchemaMigrationState,
     };
     use evm_db::stable_state::{init_stable_state, with_state, with_state_mut};
-    use evm_db::{Memory, Storable};
     use evm_db::types::keys::{make_account_key, make_storage_key};
     use evm_db::types::values::{AccountVal, U256Val};
+    use evm_db::{Memory, Storable};
     use std::collections::BTreeSet;
     use std::panic::{catch_unwind, AssertUnwindSafe};
     use std::str::FromStr;
@@ -2493,6 +2551,15 @@ mod tests {
         assert!(inspect_payload_limit_for_method("set_pruning_enabled").is_some());
         assert!(inspect_payload_limit_for_method("set_block_gas_limit").is_some());
         assert!(inspect_payload_limit_for_method("set_instruction_soft_limit").is_some());
+        assert!(inspect_payload_limit_for_method("set_precompile_gas_ratio").is_none());
+        #[cfg(feature = "precompile-profile-admin")]
+        assert!(inspect_payload_limit_for_method("clear_precompile_profile").is_some());
+        #[cfg(feature = "precompile-profile-admin")]
+        assert!(inspect_payload_limit_for_method("profile_precompile_call").is_some());
+        #[cfg(not(feature = "precompile-profile-admin"))]
+        assert!(inspect_payload_limit_for_method("clear_precompile_profile").is_none());
+        #[cfg(not(feature = "precompile-profile-admin"))]
+        assert!(inspect_payload_limit_for_method("profile_precompile_call").is_none());
     }
 
     #[test]
@@ -2903,6 +2970,14 @@ mod tests {
         let ops = super::get_ops_status();
         assert_eq!(ops.block_gas_limit, 9_000_000);
         assert_eq!(ops.instruction_soft_limit, 123_456);
+    }
+
+    #[test]
+    fn get_ops_status_reports_ops_config() {
+        init_stable_state();
+        let ops = super::get_ops_status();
+        assert_eq!(ops.config.low_watermark, 2_000_000_000_000);
+        assert_eq!(ops.config.critical, 1_000_000_000_000);
     }
 
     #[test]
@@ -3516,9 +3591,11 @@ mod tests {
             );
         });
 
-        let status =
-            super::get_request_dispatch_status(super::RequestKindView::Unwrap, request_id.0.to_vec())
-                .expect("status");
+        let status = super::get_request_dispatch_status(
+            super::RequestKindView::Unwrap,
+            request_id.0.to_vec(),
+        )
+        .expect("status");
         assert_eq!(status, super::RequestDispatchStatusView::DispatchFailed);
     }
 
@@ -3600,13 +3677,10 @@ mod tests {
             let original = dump[checksum_last];
             memory.write(checksum_last as u64, &[original ^ 0x01]);
             let is_decode_failed = with_state(|state| {
-                state
-                    .unwrap_requests
-                    .get(&request_id)
-                    .is_some_and(|value| {
-                        value.status == UnwrapRequestStatus::DispatchFailed
-                            && value.error_code.as_deref() == Some(super::UNWRAP_DECODE_FAILURE_CODE)
-                    })
+                state.unwrap_requests.get(&request_id).is_some_and(|value| {
+                    value.status == UnwrapRequestStatus::DispatchFailed
+                        && value.error_code.as_deref() == Some(super::UNWRAP_DECODE_FAILURE_CODE)
+                })
             });
             if is_decode_failed {
                 corrupted_target = true;
@@ -3620,9 +3694,15 @@ mod tests {
         );
 
         let query_out = catch_unwind(AssertUnwindSafe(|| {
-            super::get_request_dispatch_result(super::RequestKindView::Unwrap, request_id.0.to_vec())
+            super::get_request_dispatch_result(
+                super::RequestKindView::Unwrap,
+                request_id.0.to_vec(),
+            )
         }));
-        assert!(query_out.is_ok(), "query path must not trap on raw corruption");
+        assert!(
+            query_out.is_ok(),
+            "query path must not trap on raw corruption"
+        );
         let query_result = query_out
             .expect("query must not panic")
             .expect("result must exist");
@@ -3636,7 +3716,10 @@ mod tests {
         );
 
         let pop_out = catch_unwind(AssertUnwindSafe(|| pop_next_dispatch_request(123)));
-        assert!(pop_out.is_ok(), "dispatch path must not trap on raw corruption");
+        assert!(
+            pop_out.is_ok(),
+            "dispatch path must not trap on raw corruption"
+        );
         let pop_err = pop_out
             .expect("pop call must not panic")
             .expect_err("corrupted unwrap request must be quarantined");

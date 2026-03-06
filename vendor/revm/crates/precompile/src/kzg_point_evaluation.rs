@@ -3,6 +3,7 @@
 use crate::{
     crypto, Address, Precompile, PrecompileError, PrecompileId, PrecompileOutput, PrecompileResult,
 };
+#[cfg(not(any(feature = "c-kzg", feature = "blst")))]
 pub mod arkworks;
 
 #[cfg(feature = "blst")]

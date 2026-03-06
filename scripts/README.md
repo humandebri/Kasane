@@ -32,14 +32,31 @@ scripts/local_indexer_smoke.sh
 scripts/query_smoke.sh
 ```
 
+5. Wasm dependency profiling (Phase 0.5)
+```bash
+scripts/profile_wasm_deps.sh --package ic-evm-gateway
+```
+
+6. Precompile ratio measurement
+```bash
+CANISTER_NAME_OR_ID=<id> \
+WORKLOAD_CMD='scripts/playground_smoke.sh' \
+scripts/measure_precompile_ratio.sh
+```
+
 ## By Purpose
 
 ### Pre-checks and Quality Gates
 - `scripts/ci-local.sh`: runs in `github|smoke|all` modes
 - `scripts/check_gateway_api_compat_baseline.sh`: detects breaking changes in gateway API compatibility baseline (`--update` updates baseline)
 - `scripts/check_gateway_matrix_sync.sh`: verifies compatibility matrix row in `tools/rpc-gateway/README.md` matches `tools/rpc-gateway/package.json` version line
+- `scripts/check_precompile_feature_isolation.sh`: verifies the default wasm build of `ic-evm-core` does not pull BLS/KZG backend crates (`ark-bls12-381`, `c-kzg`, `blst`)
 - `scripts/predeploy_smoke.sh`: `cargo check` + wasm build + PocketIC RPC compatibility E2E (optional indexer smoke)
 - `scripts/run_rpc_compat_e2e.sh`: RPC compatibility E2E test (`cargo test --test rpc_compat_e2e`)
+  - PocketIC must be able to bind to localhost (`127.0.0.1`); restricted sandbox environments can fail before the test logic runs
+- `scripts/profile_wasm_deps.sh`: dependency-size profiling for wasm (`twiggy top/dominators`, optional `cargo +nightly bloat -Z build-std`, and `cargo tree -e features -i <crate>` snapshots)
+  - output default: `docs/ops/reports/wasm-deps-<package>-<timestamp>/`
+  - optional: `--compare <previous_output_dir>` to generate before/after table (bytes + instruction estimate)
 
 ### rpc-gateway Documentation Language Policy
 - `tools/rpc-gateway/README.md` is the English canonical document
@@ -49,6 +66,58 @@ scripts/query_smoke.sh
 - `scripts/dfx_local_clean_start.sh`: clean start helper for local environment
 - `scripts/local_pruning_stage.sh`: staged pruning verification
 - `scripts/local_indexer_fault_injection.sh`: indexer fault-injection test
+- `scripts/measure_precompile_ratio.sh`: replays a workload, summarizes `get_precompile_profile`, and suggests a fixed precompile ratio
+  - treat IC instruction counter as the source of truth; wall-clock timing is not used for charging decisions
+  - verifies `clear_precompile_profile` before starting; if clear fails, the script stops instead of mixing stale profile entries into the measurement
+  - set `TARGET_GAS_PER_INSTRUCTION` to use a fixed target directly
+  - or set `REFERENCE_PRECOMPILE_ADDRESS` + `REFERENCE_TARGET_GAS` to derive a ratio from a measured reference precompile
+  - example for heavy modexp calibration: `REFERENCE_PRECOMPILE_ADDRESS=0x0000000000000000000000000000000000000005 REFERENCE_TARGET_GAS=3000000`
+  - the script does not mutate canister state; if you adopt a new ratio, update the fixed ratio in code and redeploy
+- `scripts/run_precompile_profile_e2e.sh`: builds the latest gateway wasm, runs PocketIC, and prints measured `get_precompile_profile` entries for default targets (`ecrecover`, `blake2f`, `modexp`)
+  - interpret the output using `total_instructions` / `avg_instructions`; PocketIC wall-clock timing is intentionally ignored
+  - PocketIC must be able to bind to localhost (`127.0.0.1`); if sandbox execution fails with a bind error, rerun in a normal terminal environment
+  - set `PRECOMPILE_PROFILE_TARGETS=ecrecover,blake2f,modexp,modexp_heavy` or another comma-separated subset to override targets
+  - use `modexp_heavy` when you want a larger 32-byte modular exponentiation fixture instead of the default lightweight `modexp`
+  - `p256` is available only when the current execution spec enables the RIP-7212 precompile
+  - this script builds `ic-evm-gateway` with the `precompile-profile-admin` feature; the default canister build does not expose the measurement-only APIs
+  - the postprocessed wasm uses `crates/ic-evm-gateway/evm_canister_precompile_profile_admin.did` for candid metadata and endpoint validation
+  - cleanup memo: `docs/ops/precompile_profile_cleanup.md`
+  - sample saved output (`PRECOMPILE_PROFILE_JSON_PATH=/tmp/precompile_profile.json`):
+```json
+{
+  "runs": 30,
+  "targets": ["ecrecover", "blake2f", "modexp"],
+  "entries": [
+    {
+      "name": "ecrecover",
+      "address": "0x0000000000000000000000000000000000000001",
+      "calls": 30,
+      "avg_instructions": 212777,
+      "max_instructions": 212900,
+      "avg_extra_gas": 2128,
+      "max_extra_gas": 2129
+    },
+    {
+      "name": "blake2f",
+      "address": "0x0000000000000000000000000000000000000009",
+      "calls": 30,
+      "avg_instructions": 55307225,
+      "max_instructions": 55307235,
+      "avg_extra_gas": 553073,
+      "max_extra_gas": 553073
+    },
+    {
+      "name": "modexp",
+      "address": "0x0000000000000000000000000000000000000005",
+      "calls": 30,
+      "avg_instructions": 31495,
+      "max_instructions": 31615,
+      "avg_extra_gas": 315,
+      "max_extra_gas": 317
+    }
+  ]
+}
+```
 
 ### Playground
 - `scripts/playground_manual_deploy.sh`: manual deployment to playground
@@ -58,6 +127,8 @@ scripts/query_smoke.sh
 ### Mainnet Operations
 - `scripts/mainnet/ic_mainnet_preflight.sh`: minimum pre-mainnet checks
 - `scripts/mainnet/ic_mainnet_deploy.sh`: main deployment script
+  - the default build does not enable the `precompile-profile-admin` feature
+  - measure precompile ratio before deploy with `scripts/run_precompile_profile_e2e.sh` / `scripts/measure_precompile_ratio.sh`; if you need to change the default fixed ratio `1/100`, rebuild and redeploy
 - `scripts/mainnet/ic_mainnet_post_upgrade_smoke.sh`: minimum RPC checks after deploy
 - `scripts/verify_submit_after_deploy.sh`: manual/CI hook for verify submit
 - `scripts/mainnet/mainnet_method_test.sh`: heavy mainnet method test

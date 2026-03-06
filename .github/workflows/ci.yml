@@ -44,6 +44,9 @@ jobs:
       - name: Alloy dependency isolation guard
         run: scripts/check_alloy_isolation.sh
 
+      - name: Precompile feature isolation guard
+        run: scripts/check_precompile_feature_isolation.sh
+
       - name: Deny OP stack references
         shell: bash
         run: |

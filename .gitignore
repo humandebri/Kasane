@@ -27,11 +27,14 @@ crates/evm-rpc-e2e/pocket-ic
 node_modules/
 .pnpm-store/
 dist/
+.next/
+*.tsbuildinfo
 .svelte-kit/
 **/tests/run.js
 
 # environment variables
 .env
+.env.local
 
 # ops reports
 docs/ops/reports/
