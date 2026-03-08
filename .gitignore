@@ -28,6 +28,7 @@ node_modules/
 .pnpm-store/
 dist/
 .svelte-kit/
+.playwright-cli/
 **/tests/run.js
 
 # environment variables
@@ -48,3 +49,6 @@ docs/ops/reports/
 # foundry build artifacts
 contracts/cache/
 contracts/out/
+
+# local internet identity artifacts
+.local/internet-identity/
