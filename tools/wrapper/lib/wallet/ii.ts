@@ -4,6 +4,7 @@ import { AuthClient } from "@dfinity/auth-client";
 import type { WalletSession } from "./types";
 
 let cachedAuthClient: AuthClient | null = null;
+const DEFAULT_MAINNET_IDENTITY_PROVIDER = "https://identity.ic0.app";
 
 async function getAuthClient(): Promise<AuthClient> {
   if (cachedAuthClient) {
@@ -13,13 +14,20 @@ async function getAuthClient(): Promise<AuthClient> {
   return cachedAuthClient;
 }
 
-export async function connectInternetIdentity(): Promise<WalletSession> {
+function resolveIdentityProvider(configured: string | null): string {
+  return configured && configured.trim() !== ""
+    ? configured.trim()
+    : DEFAULT_MAINNET_IDENTITY_PROVIDER;
+}
+
+export async function connectInternetIdentity(identityProvider: string | null): Promise<WalletSession> {
   const authClient = await getAuthClient();
   const authenticated = await authClient.isAuthenticated();
 
   if (!authenticated) {
     await new Promise<void>((resolve, reject) => {
       authClient.login({
+        identityProvider: resolveIdentityProvider(identityProvider),
         maxTimeToLive: 7n * 24n * 60n * 60n * 1_000_000_000n,
         onSuccess: () => resolve(),
         onError: (message?: string) => reject(new Error(`wallet.ii_login_failed:${message ?? "unknown"}`)),
@@ -40,3 +48,7 @@ export async function disconnectInternetIdentity(): Promise<void> {
   const authClient = await getAuthClient();
   await authClient.logout();
 }
+
+export const iiTestHooks = {
+  resolveIdentityProvider,
+};

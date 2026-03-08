@@ -31,11 +31,11 @@ export type StatusResponse = {
 
 export type HealthResponse = {
   ok: boolean;
-  evmGatewayReachable: boolean;
+  kasaneEvmReachable: boolean;
   wrapReachable: boolean;
   config: {
     icHost: string;
-    evmGatewayCanisterId: string;
+    kasaneEvmCanisterId: string;
     wrapCanisterId: string;
   };
 };

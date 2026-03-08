@@ -2,21 +2,29 @@
 
 type WrapperConfig = {
   icHost: string;
-  evmGatewayCanisterId: string;
+  kasaneEvmCanisterId: string;
   wrapCanisterId: string;
-  fetchRootKey: boolean;
+  evmWrapFactory: string;
 };
 
-const REQUIRED_KEYS = ["NEXT_PUBLIC_IC_HOST", "EVM_GATEWAY_CANISTER_ID", "WRAP_CANISTER_ID"] as const;
+function optionalEnv(name: "NEXT_PUBLIC_INTERNET_IDENTITY_URL", env: NodeJS.ProcessEnv): string | null {
+  const value = env[name];
+  if (value === undefined) {
+    return null;
+  }
+  const trimmed = value.trim();
+  return trimmed === "" ? null : trimmed;
+}
+
+const REQUIRED_KEYS = ["NEXT_PUBLIC_IC_HOST", "KASANE_EVM_CANISTER_ID", "WRAP_CANISTER_ID", "EVM_WRAP_FACTORY"] as const;
 
 type RequiredWrapperEnv = Pick<NodeJS.ProcessEnv, (typeof REQUIRED_KEYS)[number]>;
-type WrapperEnv = RequiredWrapperEnv & Pick<NodeJS.ProcessEnv, "FETCH_ROOT_KEY">;
 
-const BUNDLED_ENV: WrapperEnv = {
+const BUNDLED_ENV: RequiredWrapperEnv = {
   NEXT_PUBLIC_IC_HOST: process.env.NEXT_PUBLIC_IC_HOST,
-  EVM_GATEWAY_CANISTER_ID: process.env.EVM_GATEWAY_CANISTER_ID,
+  KASANE_EVM_CANISTER_ID: process.env.KASANE_EVM_CANISTER_ID,
   WRAP_CANISTER_ID: process.env.WRAP_CANISTER_ID,
-  FETCH_ROOT_KEY: process.env.FETCH_ROOT_KEY,
+  EVM_WRAP_FACTORY: process.env.EVM_WRAP_FACTORY,
 };
 
 function requiredEnv(name: (typeof REQUIRED_KEYS)[number], env: RequiredWrapperEnv): string {
@@ -27,25 +35,30 @@ function requiredEnv(name: (typeof REQUIRED_KEYS)[number], env: RequiredWrapperE
   return value.trim();
 }
 
-function parseBoolean(value: string | undefined, fallback: boolean): boolean {
-  if (value === undefined || value.trim() === "") {
-    return fallback;
-  }
-  const normalized = value.trim().toLowerCase();
-  if (normalized === "1" || normalized === "true" || normalized === "yes") {
-    return true;
-  }
-  if (normalized === "0" || normalized === "false" || normalized === "no") {
-    return false;
-  }
-  return fallback;
+function shouldFetchRootKey(icHost: string): boolean {
+  return icHost.startsWith("http://127.0.0.1:")
+    || icHost.startsWith("http://localhost:")
+    || icHost.startsWith("https://127.0.0.1:")
+    || icHost.startsWith("https://localhost:");
 }
 
-export function loadConfig(env: WrapperEnv = BUNDLED_ENV): WrapperConfig {
+  const icHost = requiredEnv("NEXT_PUBLIC_IC_HOST", env);
+export function loadConfig(env: RequiredWrapperEnv = BUNDLED_ENV): WrapperConfig {
+  const icHost = requiredEnv("NEXT_PUBLIC_IC_HOST", env);
   return {
-    icHost: requiredEnv("NEXT_PUBLIC_IC_HOST", env),
-    evmGatewayCanisterId: requiredEnv("EVM_GATEWAY_CANISTER_ID", env),
+    icHost,
+    kasaneEvmCanisterId: requiredEnv("KASANE_EVM_CANISTER_ID", env),
     wrapCanisterId: requiredEnv("WRAP_CANISTER_ID", env),
-    fetchRootKey: parseBoolean(env.FETCH_ROOT_KEY, false),
+    evmWrapFactory: requiredEnv("EVM_WRAP_FACTORY", env),
   };
 }
+
+export function resolveConfiguredIdentityProvider(env: NodeJS.ProcessEnv = process.env): string | null {
+  return optionalEnv("NEXT_PUBLIC_INTERNET_IDENTITY_URL", env);
+}
+
+export const configTestHooks = {
+  optionalEnv,
+  resolveConfiguredIdentityProvider,
+  shouldFetchRootKey,
+};

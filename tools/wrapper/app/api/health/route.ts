@@ -17,11 +17,11 @@ export async function GET(): Promise<Response> {
 
     const result = {
       ok: gatewayProbe.status === "fulfilled" && wrapProbe.status === "fulfilled",
-      evmGatewayReachable: gatewayProbe.status === "fulfilled",
+      kasaneEvmReachable: gatewayProbe.status === "fulfilled",
       wrapReachable: wrapProbe.status === "fulfilled",
       config: {
         icHost: cfg.icHost,
-        evmGatewayCanisterId: cfg.evmGatewayCanisterId,
+        kasaneEvmCanisterId: cfg.kasaneEvmCanisterId,
         wrapCanisterId: cfg.wrapCanisterId,
       },
     };
