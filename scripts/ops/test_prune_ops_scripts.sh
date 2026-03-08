@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # where: script-level tests for prune ops helpers
-# what: verify guardrails and tuning behavior with mocked dfx calls
+# what: verify guardrails and tuning behavior with mocked icp calls
 # why: keep operational scripts safe and regression-resistant
 set -euo pipefail
 
@@ -8,11 +8,11 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 TMP_DIR="$(mktemp -d)"
 trap 'rm -rf "${TMP_DIR}"' EXIT
 
-MOCK_DFX="${TMP_DIR}/dfx"
+MOCK_ICP="${TMP_DIR}/icp"
 CALLS_LOG="${TMP_DIR}/calls.log"
 STATE_FILE="${TMP_DIR}/state.json"
 
-cat >"${MOCK_DFX}" <<'EOF'
+cat >"${MOCK_ICP}" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 echo "$*" >> "${MOCK_CALLS_LOG}"
@@ -26,7 +26,7 @@ if printf '%s' "$*" | grep -q "get_ops_status"; then
 fi
 printf '(variant { Ok = null })\n'
 EOF
-chmod +x "${MOCK_DFX}"
+chmod +x "${MOCK_ICP}"
 
 fail() {
   echo "[test-prune-ops-scripts] FAIL: $*" >&2
@@ -46,7 +46,7 @@ run_apply_reject_case() {
   MOCK_CALLS_LOG="${CALLS_LOG}" \
   MOCK_PRUNE_STATUS_JSON='{"pruning_enabled":true,"need_prune":true}' \
   MOCK_OPS_STATUS_JSON='{"prune_error_count":0,"mining_error_count":0,"instruction_soft_limit":4000000000}' \
-  DFX_BIN="${MOCK_DFX}" \
+  CANISTER_CLI_BIN="${MOCK_ICP}" \
   CANISTER_NAME_OR_ID="abcd" \
   NETWORK="ic" \
   RETAIN_BLOCKS="167" \
@@ -63,7 +63,7 @@ run_apply_success_case() {
   MOCK_CALLS_LOG="${CALLS_LOG}" \
   MOCK_PRUNE_STATUS_JSON='{"pruning_enabled":true,"need_prune":false,"estimated_kept_bytes":100,"high_water_bytes":200,"hard_emergency_bytes":300,"pruned_before_block":null}' \
   MOCK_OPS_STATUS_JSON='{"prune_error_count":1,"mining_error_count":2,"instruction_soft_limit":4000000000}' \
-  DFX_BIN="${MOCK_DFX}" \
+  CANISTER_CLI_BIN="${MOCK_ICP}" \
   CANISTER_NAME_OR_ID="abcd" \
   NETWORK="ic" \
   TARGET_BYTES="0" \
@@ -74,8 +74,8 @@ run_apply_success_case() {
 
   assert_grep "set_prune_policy" "${CALLS_LOG}"
   assert_grep "set_pruning_enabled (true)" "${CALLS_LOG}"
-  assert_grep "call --query abcd get_prune_status --output json" "${CALLS_LOG}"
-  assert_grep "call --query abcd get_ops_status --output json" "${CALLS_LOG}"
+  assert_grep "canister call -n ic --query abcd get_prune_status --output json" "${CALLS_LOG}"
+  assert_grep "canister call -n ic --query abcd get_ops_status --output json" "${CALLS_LOG}"
 }
 
 run_tune_increase_case() {
@@ -92,7 +92,7 @@ EOF
   MOCK_CALLS_LOG="${CALLS_LOG}" \
   MOCK_PRUNE_STATUS_JSON='{"need_prune":true}' \
   MOCK_OPS_STATUS_JSON='{"prune_error_count":5,"mining_error_count":7}' \
-  DFX_BIN="${MOCK_DFX}" \
+  CANISTER_CLI_BIN="${MOCK_ICP}" \
   STATE_FILE="${STATE_FILE}" \
   CANISTER_NAME_OR_ID="abcd" \
   NETWORK="ic" \
@@ -119,7 +119,7 @@ EOF
   MOCK_CALLS_LOG="${CALLS_LOG}" \
   MOCK_PRUNE_STATUS_JSON='{"need_prune":true}' \
   MOCK_OPS_STATUS_JSON='{"prune_error_count":6,"mining_error_count":7}' \
-  DFX_BIN="${MOCK_DFX}" \
+  CANISTER_CLI_BIN="${MOCK_ICP}" \
   STATE_FILE="${STATE_FILE}" \
   CANISTER_NAME_OR_ID="abcd" \
   NETWORK="ic" \

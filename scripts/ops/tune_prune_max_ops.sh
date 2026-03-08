@@ -14,7 +14,7 @@ MAX_OPS_PER_TICK_CURRENT="${MAX_OPS_PER_TICK_CURRENT:-}"
 HEADROOM_RATIO_BPS="${HEADROOM_RATIO_BPS:-2000}"
 HARD_EMERGENCY_RATIO_BPS="${HARD_EMERGENCY_RATIO_BPS:-9500}"
 MAX_OPS_STEP="${MAX_OPS_STEP:-200}"
-DFX_BIN="${DFX_BIN:-dfx}"
+CANISTER_CLI_BIN="${CANISTER_CLI_BIN:-icp}"
 STATE_FILE="${STATE_FILE:-/tmp/kasane-prune-tune-state-${NETWORK}-${CANISTER_NAME_OR_ID}.json}"
 
 log() {
@@ -43,7 +43,7 @@ if [[ -z "${CANISTER_NAME_OR_ID}" ]]; then
   exit 1
 fi
 
-require_cmd "${DFX_BIN}"
+require_cmd "${CANISTER_CLI_BIN}"
 require_non_negative_int "TARGET_BYTES" "${TARGET_BYTES}"
 require_non_negative_int "RETAIN_DAYS" "${RETAIN_DAYS}"
 require_non_negative_int "RETAIN_BLOCKS" "${RETAIN_BLOCKS}"
@@ -60,8 +60,8 @@ if (( MAX_OPS_STEP < 1 )); then
   exit 1
 fi
 
-PRUNE_STATUS_JSON="$("${DFX_BIN}" canister --network "${NETWORK}" call --query "${CANISTER_NAME_OR_ID}" get_prune_status --output json)"
-OPS_STATUS_JSON="$("${DFX_BIN}" canister --network "${NETWORK}" call --query "${CANISTER_NAME_OR_ID}" get_ops_status --output json)"
+PRUNE_STATUS_JSON="$("${CANISTER_CLI_BIN}" canister call -n "${NETWORK}" --query "${CANISTER_NAME_OR_ID}" get_prune_status --output json)"
+OPS_STATUS_JSON="$("${CANISTER_CLI_BIN}" canister call -n "${NETWORK}" --query "${CANISTER_NAME_OR_ID}" get_ops_status --output json)"
 
 if [[ -z "${MAX_OPS_PER_TICK_CURRENT}" ]]; then
   if [[ -f "${STATE_FILE}" ]]; then
@@ -157,7 +157,7 @@ POLICY_ARG="(record {
 })"
 
 log "reason=${REASON} current_max_ops=${MAX_OPS_PER_TICK_CURRENT} new_max_ops=${NEW_MAX_OPS} need_prune_streak=${NEED_PRUNE_STREAK} errors_increased=${ERRORS_INCREASED}"
-"${DFX_BIN}" canister --network "${NETWORK}" call "${CANISTER_NAME_OR_ID}" set_prune_policy "${POLICY_ARG}" >/dev/null
+"${CANISTER_CLI_BIN}" canister call -n "${NETWORK}" "${CANISTER_NAME_OR_ID}" set_prune_policy "${POLICY_ARG}" >/dev/null
 
 log "set_prune_policy applied; counters prune_error_count=${PRUNE_ERR_NOW} mining_error_count=${MINING_ERR_NOW}"
 log "state_file=${STATE_FILE}"

@@ -7,7 +7,7 @@ Operational runbook for indexer setup, recovery, migration, archive, pruning, an
 
 ## Covered Operations
 - invariants and component map
-- local `dfx` recovery (503/timeout)
+- local `icp-cli` recovery (managed network, port 8000)
 - startup/shutdown and environment configuration
 - log interpretation (JSON lines)
 - Postgres migrations

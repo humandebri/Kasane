@@ -17,8 +17,8 @@ English version: [./chain-state-migration.md](./chain-state-migration.md)
 3. snapshot を取得し、IDを記録する。
 
 ```bash
-dfx canister stop <canister_id>
-dfx canister snapshot create <canister_id>
+icp canister stop -e ic <canister_id>
+icp canister snapshot create -e ic <canister_id>
 ```
 
 4. 必要データをエクスポートする（少なくとも以下）。
@@ -33,8 +33,8 @@ dfx canister snapshot create <canister_id>
 4. 必要に応じて pending tx を再投入する。
 
 ```bash
-dfx canister install <canister_id> --mode upgrade --wasm <new_wasm_path>
-dfx canister start <canister_id>
+icp canister install -e ic <canister_id> --mode upgrade --wasm <new_wasm_path>
+icp canister start -e ic <canister_id>
 ```
 
 ## 検証チェック
@@ -47,10 +47,10 @@ dfx canister start <canister_id>
 - 異常時は直ちに停止し、snapshotへ戻す。
 
 ```bash
-dfx canister stop <canister_id>
-dfx canister snapshot load <canister_id> <snapshot_id>
-dfx canister install <canister_id> --mode reinstall --wasm <old_wasm_path>
-dfx canister start <canister_id>
+icp canister stop -e ic <canister_id>
+icp canister snapshot restore -e ic <canister_id> <snapshot_id>
+icp canister install -e ic <canister_id> --mode reinstall --wasm <old_wasm_path>
+icp canister start -e ic <canister_id>
 ```
 
 ## 注意
