@@ -30,7 +30,6 @@ const MAX_ERROR_CODE_BYTES: usize = 192;
 const STORED_REQUEST_MAX_BYTES: u32 = 448;
 const WRAP_STORED_REQUEST_MAX_BYTES: u32 = 768;
 const FEE_POLICY_MAX_BYTES: u32 = 128;
-const DEFAULT_MINT_GAS_LIMIT: u64 = 300_000;
 const DEFAULT_CYCLE_FEE_E8S: u64 = 1_000_000;
 const DEFAULT_GAS_PRICE_BUFFER_BPS: u32 = 12_000;
 const GAS_PRICE_DENOMINATOR_BPS: u128 = 10_000;
@@ -515,11 +514,6 @@ async fn submit_wrap_request_inner(
     caller: Principal,
     request_id: RequestId,
 ) -> Result<RequestId, String> {
-    let effective_gas_limit = if args.gas_limit == 0 {
-        DEFAULT_MINT_GAS_LIMIT
-    } else {
-        args.gas_limit
-    };
     let fee_policy = get_fee_policy_stored()?;
     let gas_price_wei = fetch_gas_price_wei_from_gateway().await?;
     let charged_gas_price_wei = ceil_mul_ratio_u128(
@@ -528,7 +522,7 @@ async fn submit_wrap_request_inner(
         GAS_PRICE_DENOMINATOR_BPS,
     );
     let charged_fee_e8s = compute_total_fee_e8s(
-        effective_gas_limit,
+        args.gas_limit,
         charged_gas_price_wei,
         fee_policy.cycle_fee_e8s,
     )?;
@@ -675,6 +669,9 @@ fn validate_wrap_request_args(
     validate_principal_bytes(args.asset_id.as_slice())?;
     validate_amount_bytes(args.amount.as_slice())?;
     validate_evm_address(args.evm_recipient.as_slice(), "arg.evm_recipient_invalid")?;
+    if args.gas_limit == 0 {
+        return Err("arg.gas_limit_invalid".to_string());
+    }
     let expected_request_id = derive_wrap_request_id(
         caller.as_slice(),
         args.asset_id.as_slice(),
@@ -1057,11 +1054,7 @@ async fn wrap_worker_tick() {
                     evm_recipient,
                     amount,
                     evm_nonce,
-                    if gas_limit == 0 {
-                        DEFAULT_MINT_GAS_LIMIT
-                    } else {
-                        gas_limit
-                    },
+                    gas_limit,
                     charged_gas_price_wei,
                 )
                 .await;
@@ -2329,6 +2322,36 @@ mod tests {
         )
         .expect_err("mismatch must fail");
         assert_eq!(err, "arg.request_id_mismatch");
+    }
+
+    #[test]
+    fn wrap_validate_request_rejects_zero_gas_limit() {
+        reset_state();
+        let caller = Principal::self_authenticating(b"wrap-caller-zero-gas");
+        let asset_id = vec![2u8; 29];
+        let amount = vec![3u8; 32];
+        let evm_recipient = vec![5u8; 20];
+        let request_id = derive_wrap_request_id(
+            caller.as_slice(),
+            asset_id.as_slice(),
+            amount.as_slice(),
+            evm_recipient.as_slice(),
+            1,
+            0,
+        );
+        let err = validate_wrap_request_args(
+            &SubmitWrapRequestArgs {
+                request_id: request_id.to_vec(),
+                asset_id,
+                amount,
+                evm_recipient,
+                evm_nonce: 1,
+                gas_limit: 0,
+            },
+            caller,
+        )
+        .expect_err("zero gas limit must fail");
+        assert_eq!(err, "arg.gas_limit_invalid");
     }
 
     #[test]
