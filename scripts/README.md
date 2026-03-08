@@ -7,8 +7,11 @@ If unsure, run the commands in the order below.
 
 ## Prerequisites
 - Working directory: repository root (`Kasane/`)
-- Main dependencies: `cargo`, `dfx`, `icp`, `node`, `npm`, `python`
+- Main dependencies: `cargo`, `icp`, `node`, `npm`, `python`
 - For query calls, use `dfx canister call --query ...`
+- Keep `dfx` only for query paths for now; use `icp` everywhere else
+- For local verification, prefer PocketIC over ad-hoc local deploy flows
+- If a local PocketIC binary already exists in the repo or workspace, prefer that binary over downloading one on demand
 
 ## Frequently Used Commands
 
@@ -46,7 +49,7 @@ scripts/query_smoke.sh
 - Japanese supplement is `tools/rpc-gateway/README.ja.md` (same for `ops/`, `smoke/`, and `contracts/`)
 
 ### Local Operations
-- `scripts/dfx_local_clean_start.sh`: clean start helper for local environment
+- `scripts/icp_local_clean_start.sh`: clean start helper for managed local network (`icp network`)
 - `scripts/local_pruning_stage.sh`: staged pruning verification
 - `scripts/local_indexer_fault_injection.sh`: indexer fault-injection test
 
@@ -73,8 +76,12 @@ scripts/query_smoke.sh
 
 ## Key Environment Variables
 - `CANISTER_NAME` / `CANISTER_ID`
+- `WRAP_CANISTER_ID`
+  - required for scripts that build `InitArgs` (`build_init_args_for_current_identity`)
+  - `install` / `reinstall` flows no longer auto-resolve `wrap_canister`
 - `ICP_IDENTITY_NAME`
 - `POCKET_IC_BIN` (PocketIC binary used by `predeploy_smoke.sh` / `run_rpc_compat_e2e.sh`)
+  - Recommended: point this to an existing local binary first to reduce flaky downloads
 - `E2E_TIMEOUT_SECONDS` (timeout for `run_rpc_compat_e2e.sh`)
 - `RUN_INDEXER_SMOKE` (enable local indexer smoke in `predeploy_smoke.sh`; default `0`)
 - `RUN_POST_SMOKE` (enable post-smoke in `ic_mainnet_deploy.sh`)
