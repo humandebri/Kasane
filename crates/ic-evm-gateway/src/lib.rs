@@ -1982,7 +1982,6 @@ enum WrapSubmitDispatchOutcome {
 struct AppliedUnwrapDispatchOutcome {
     status: UnwrapRequestStatus,
     error_code: Option<String>,
-    requeue: bool,
 }
 
 fn record_unwrap_requests_from_block(tx_ids: &[TxId]) {
@@ -2115,15 +2114,11 @@ async fn unwrap_dispatch_tick() {
                 }
             };
 
-        let should_reschedule = finalize_unwrap_dispatch_attempt(
+        finalize_unwrap_dispatch_attempt(
             request_id,
             time(),
             apply_unwrap_dispatch_outcome(resolve_wrap_submit_outcome(&request_id.0, submit)),
         );
-        if should_reschedule {
-            schedule_unwrap_dispatch();
-            break;
-        }
     }
 }
 
@@ -2159,25 +2154,23 @@ fn apply_unwrap_dispatch_outcome(
         WrapSubmitDispatchOutcome::Accepted => AppliedUnwrapDispatchOutcome {
             status: UnwrapRequestStatus::Dispatched,
             error_code: None,
-            requeue: false,
         },
         WrapSubmitDispatchOutcome::Rejected(code) => AppliedUnwrapDispatchOutcome {
             status: UnwrapRequestStatus::DispatchFailed,
             error_code: Some(format!("wrap.submit_failed:{code}")),
-            requeue: false,
         },
         WrapSubmitDispatchOutcome::RequestIdMismatch => AppliedUnwrapDispatchOutcome {
             status: UnwrapRequestStatus::DispatchFailed,
             error_code: Some("wrap.request_id_mismatch".to_string()),
-            requeue: false,
         },
-        WrapSubmitDispatchOutcome::DecodeFailed(_) | WrapSubmitDispatchOutcome::CallFailed(_) => {
-            AppliedUnwrapDispatchOutcome {
-                status: UnwrapRequestStatus::Queued,
-                error_code: None,
-                requeue: true,
-            }
-        }
+        WrapSubmitDispatchOutcome::DecodeFailed(err) => AppliedUnwrapDispatchOutcome {
+            status: UnwrapRequestStatus::DispatchFailed,
+            error_code: Some(format!("wrap.decode_failed:{err}")),
+        },
+        WrapSubmitDispatchOutcome::CallFailed(err) => AppliedUnwrapDispatchOutcome {
+            status: UnwrapRequestStatus::DispatchFailed,
+            error_code: Some(format!("wrap.call_failed:{err}")),
+        },
     }
 }
 
@@ -2185,25 +2178,17 @@ fn finalize_unwrap_dispatch_attempt(
     request_id: TxId,
     now: u64,
     applied: AppliedUnwrapDispatchOutcome,
-) -> bool {
+) {
     with_state_mut(|state| {
         let Some(mut req) = state.unwrap_requests.get(&request_id) else {
-            return false;
+            return;
         };
         req.updated_at = now;
         req.ledger_tx_id = None;
         req.status = applied.status;
         req.error_code = applied.error_code;
         state.unwrap_requests.insert(request_id, req);
-        if !applied.requeue {
-            return false;
-        }
-        let mut meta = *state.unwrap_dispatch_meta.get();
-        let seq = meta.push();
-        state.unwrap_dispatch_meta.set(meta);
-        state.unwrap_dispatch_queue.insert(seq, request_id);
-        true
-    })
+    });
 }
 
 fn validate_vault_canister_id(vault_canister_id: &[u8]) -> Result<(), String> {
@@ -2777,7 +2762,6 @@ mod tests {
             super::AppliedUnwrapDispatchOutcome {
                 status: UnwrapRequestStatus::DispatchFailed,
                 error_code: Some("wrap.submit_failed:request.invalid".to_string()),
-                requeue: false,
             }
         );
     }
@@ -2791,28 +2775,26 @@ mod tests {
             super::AppliedUnwrapDispatchOutcome {
                 status: UnwrapRequestStatus::DispatchFailed,
                 error_code: Some("wrap.request_id_mismatch".to_string()),
-                requeue: false,
             }
         );
     }
 
     #[test]
-    fn call_failed_is_marked_retryable() {
+    fn call_failed_stays_failed() {
         let out = super::apply_unwrap_dispatch_outcome(super::WrapSubmitDispatchOutcome::CallFailed(
             "transport".to_string(),
         ));
         assert_eq!(
             out,
             super::AppliedUnwrapDispatchOutcome {
-                status: UnwrapRequestStatus::Queued,
-                error_code: None,
-                requeue: true,
+                status: UnwrapRequestStatus::DispatchFailed,
+                error_code: Some("wrap.call_failed:transport".to_string()),
             }
         );
     }
 
     #[test]
-    fn decode_failed_is_marked_retryable() {
+    fn decode_failed_stays_failed() {
         let out =
             super::apply_unwrap_dispatch_outcome(super::WrapSubmitDispatchOutcome::DecodeFailed(
                 "decode".to_string(),
@@ -2820,9 +2802,8 @@ mod tests {
         assert_eq!(
             out,
             super::AppliedUnwrapDispatchOutcome {
-                status: UnwrapRequestStatus::Queued,
-                error_code: None,
-                requeue: true,
+                status: UnwrapRequestStatus::DispatchFailed,
+                error_code: Some("wrap.decode_failed:decode".to_string()),
             }
         );
     }
@@ -2852,7 +2833,7 @@ mod tests {
     }
 
     #[test]
-    fn finalize_unwrap_dispatch_attempt_requeues_retryable_failure() {
+    fn finalize_unwrap_dispatch_attempt_keeps_call_failed_out_of_queue() {
         init_stable_state();
         let request_id = TxId([0x65u8; 32]);
         with_state_mut(|state| {
@@ -2872,23 +2853,24 @@ mod tests {
             );
         });
 
-        let should_reschedule = super::finalize_unwrap_dispatch_attempt(
+        super::finalize_unwrap_dispatch_attempt(
             request_id,
             444,
             super::AppliedUnwrapDispatchOutcome {
-                status: UnwrapRequestStatus::Queued,
-                error_code: None,
-                requeue: true,
+                status: UnwrapRequestStatus::DispatchFailed,
+                error_code: Some("wrap.call_failed:transport".to_string()),
             },
         );
 
-        assert!(should_reschedule);
         with_state(|state| {
             let req = state.unwrap_requests.get(&request_id).expect("request");
-            assert_eq!(req.status, UnwrapRequestStatus::Queued);
-            assert_eq!(req.error_code, None);
+            assert_eq!(req.status, UnwrapRequestStatus::DispatchFailed);
+            assert_eq!(
+                req.error_code,
+                Some("wrap.call_failed:transport".to_string())
+            );
             assert_eq!(req.updated_at, 444);
-            assert_eq!(state.unwrap_dispatch_queue.len(), 1);
+            assert_eq!(state.unwrap_dispatch_queue.len(), 0);
         });
     }
 
@@ -2913,17 +2895,15 @@ mod tests {
             );
         });
 
-        let should_reschedule = super::finalize_unwrap_dispatch_attempt(
+        super::finalize_unwrap_dispatch_attempt(
             request_id,
             555,
             super::AppliedUnwrapDispatchOutcome {
                 status: UnwrapRequestStatus::DispatchFailed,
                 error_code: Some("wrap.submit_failed:request.invalid".to_string()),
-                requeue: false,
             },
         );
 
-        assert!(!should_reschedule);
         with_state(|state| {
             let req = state.unwrap_requests.get(&request_id).expect("request");
             assert_eq!(req.status, UnwrapRequestStatus::DispatchFailed);
