@@ -1608,7 +1608,7 @@ pub fn eth_call(raw_tx: Vec<u8>) -> Result<Vec<u8>, ChainError> {
         ExecPath::UserTx,
         false,
         None,
-        false,
+        true,
     )
     .map_err(|err| ChainError::ExecFailed(Some(err)))?;
     Ok(outcome.return_data)
@@ -1700,7 +1700,7 @@ pub fn eth_call_object(input: CallObjectInput) -> Result<CallObjectResult, Chain
         ExecPath::UserTx,
         false,
         None,
-        false,
+        true,
     )
     .map_err(|err| ChainError::ExecFailed(Some(err)))?;
     let revert_data = if outcome.receipt.status == 0 && !outcome.return_data.is_empty() {

@@ -1973,8 +1973,16 @@ struct WrapSubmitUnwrapRequestOk {
 enum WrapSubmitDispatchOutcome {
     Accepted,
     Rejected(String),
+    RequestIdMismatch,
     DecodeFailed(String),
     CallFailed(String),
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct AppliedUnwrapDispatchOutcome {
+    status: UnwrapRequestStatus,
+    error_code: Option<String>,
+    requeue: bool,
 }
 
 fn record_unwrap_requests_from_block(tx_ids: &[TxId]) {
@@ -2107,25 +2115,25 @@ async fn unwrap_dispatch_tick() {
                 }
             };
 
-        with_state_mut(|state| {
-            if let Some(mut req) = state.unwrap_requests.get(&request_id) {
-                req.updated_at = time();
-                let (status, error_code) = apply_unwrap_dispatch_outcome(resolve_wrap_submit_outcome(submit));
-                req.ledger_tx_id = None;
-                req.status = status;
-                req.error_code = error_code;
-                state.unwrap_requests.insert(request_id, req);
-            }
-        });
+        let should_reschedule = finalize_unwrap_dispatch_attempt(
+            request_id,
+            time(),
+            apply_unwrap_dispatch_outcome(resolve_wrap_submit_outcome(&request_id.0, submit)),
+        );
+        if should_reschedule {
+            schedule_unwrap_dispatch();
+            break;
+        }
     }
 }
 
 fn resolve_wrap_submit_outcome(
+    expected_request_id: &[u8; 32],
     submit: Result<ic_cdk::call::Response, ic_cdk::call::CallFailed>,
 ) -> WrapSubmitDispatchOutcome {
     match submit {
         Ok(resp) => match resp.candid_tuple::<(Result<WrapSubmitUnwrapRequestOk, String>,)>() {
-            Ok((Ok(_),)) => WrapSubmitDispatchOutcome::Accepted,
+            Ok((Ok(ok),)) => resolve_wrap_submit_ok(expected_request_id, &ok),
             Ok((Err(code),)) => WrapSubmitDispatchOutcome::Rejected(code),
             Err(err) => WrapSubmitDispatchOutcome::DecodeFailed(err.to_string()),
         },
@@ -2133,24 +2141,69 @@ fn resolve_wrap_submit_outcome(
     }
 }
 
+fn resolve_wrap_submit_ok(
+    expected_request_id: &[u8; 32],
+    ok: &WrapSubmitUnwrapRequestOk,
+) -> WrapSubmitDispatchOutcome {
+    if ok.request_id.as_slice() == expected_request_id {
+        WrapSubmitDispatchOutcome::Accepted
+    } else {
+        WrapSubmitDispatchOutcome::RequestIdMismatch
+    }
+}
+
 fn apply_unwrap_dispatch_outcome(
     outcome: WrapSubmitDispatchOutcome,
-) -> (UnwrapRequestStatus, Option<String>) {
+) -> AppliedUnwrapDispatchOutcome {
     match outcome {
-        WrapSubmitDispatchOutcome::Accepted => (UnwrapRequestStatus::Dispatched, None),
-        WrapSubmitDispatchOutcome::Rejected(code) => (
-            UnwrapRequestStatus::DispatchFailed,
-            Some(format!("wrap.submit_failed:{code}")),
-        ),
-        WrapSubmitDispatchOutcome::DecodeFailed(err) => (
-            UnwrapRequestStatus::DispatchFailed,
-            Some(format!("wrap.decode_failed:{err}")),
-        ),
-        WrapSubmitDispatchOutcome::CallFailed(err) => (
-            UnwrapRequestStatus::DispatchFailed,
-            Some(format!("wrap.call_failed:{err}")),
-        ),
+        WrapSubmitDispatchOutcome::Accepted => AppliedUnwrapDispatchOutcome {
+            status: UnwrapRequestStatus::Dispatched,
+            error_code: None,
+            requeue: false,
+        },
+        WrapSubmitDispatchOutcome::Rejected(code) => AppliedUnwrapDispatchOutcome {
+            status: UnwrapRequestStatus::DispatchFailed,
+            error_code: Some(format!("wrap.submit_failed:{code}")),
+            requeue: false,
+        },
+        WrapSubmitDispatchOutcome::RequestIdMismatch => AppliedUnwrapDispatchOutcome {
+            status: UnwrapRequestStatus::DispatchFailed,
+            error_code: Some("wrap.request_id_mismatch".to_string()),
+            requeue: false,
+        },
+        WrapSubmitDispatchOutcome::DecodeFailed(_) | WrapSubmitDispatchOutcome::CallFailed(_) => {
+            AppliedUnwrapDispatchOutcome {
+                status: UnwrapRequestStatus::Queued,
+                error_code: None,
+                requeue: true,
+            }
+        }
     }
+}
+
+fn finalize_unwrap_dispatch_attempt(
+    request_id: TxId,
+    now: u64,
+    applied: AppliedUnwrapDispatchOutcome,
+) -> bool {
+    with_state_mut(|state| {
+        let Some(mut req) = state.unwrap_requests.get(&request_id) else {
+            return false;
+        };
+        req.updated_at = now;
+        req.ledger_tx_id = None;
+        req.status = applied.status;
+        req.error_code = applied.error_code;
+        state.unwrap_requests.insert(request_id, req);
+        if !applied.requeue {
+            return false;
+        }
+        let mut meta = *state.unwrap_dispatch_meta.get();
+        let seq = meta.push();
+        state.unwrap_dispatch_meta.set(meta);
+        state.unwrap_dispatch_queue.insert(seq, request_id);
+        true
+    })
 }
 
 fn validate_vault_canister_id(vault_canister_id: &[u8]) -> Result<(), String> {
@@ -2721,11 +2774,166 @@ mod tests {
         );
         assert_eq!(
             out,
-            (
-                UnwrapRequestStatus::DispatchFailed,
-                Some("wrap.submit_failed:request.invalid".to_string())
-            )
+            super::AppliedUnwrapDispatchOutcome {
+                status: UnwrapRequestStatus::DispatchFailed,
+                error_code: Some("wrap.submit_failed:request.invalid".to_string()),
+                requeue: false,
+            }
         );
+    }
+
+    #[test]
+    fn request_id_mismatch_stays_failed() {
+        let out =
+            super::apply_unwrap_dispatch_outcome(super::WrapSubmitDispatchOutcome::RequestIdMismatch);
+        assert_eq!(
+            out,
+            super::AppliedUnwrapDispatchOutcome {
+                status: UnwrapRequestStatus::DispatchFailed,
+                error_code: Some("wrap.request_id_mismatch".to_string()),
+                requeue: false,
+            }
+        );
+    }
+
+    #[test]
+    fn call_failed_is_marked_retryable() {
+        let out = super::apply_unwrap_dispatch_outcome(super::WrapSubmitDispatchOutcome::CallFailed(
+            "transport".to_string(),
+        ));
+        assert_eq!(
+            out,
+            super::AppliedUnwrapDispatchOutcome {
+                status: UnwrapRequestStatus::Queued,
+                error_code: None,
+                requeue: true,
+            }
+        );
+    }
+
+    #[test]
+    fn decode_failed_is_marked_retryable() {
+        let out =
+            super::apply_unwrap_dispatch_outcome(super::WrapSubmitDispatchOutcome::DecodeFailed(
+                "decode".to_string(),
+            ));
+        assert_eq!(
+            out,
+            super::AppliedUnwrapDispatchOutcome {
+                status: UnwrapRequestStatus::Queued,
+                error_code: None,
+                requeue: true,
+            }
+        );
+    }
+
+    #[test]
+    fn resolve_wrap_submit_ok_accepts_matching_request_id() {
+        let expected = [0x11u8; 32];
+        let out = super::resolve_wrap_submit_ok(
+            &expected,
+            &super::WrapSubmitUnwrapRequestOk {
+                request_id: expected.to_vec(),
+            },
+        );
+        assert_eq!(out, super::WrapSubmitDispatchOutcome::Accepted);
+    }
+
+    #[test]
+    fn resolve_wrap_submit_ok_rejects_mismatched_request_id() {
+        let expected = [0x11u8; 32];
+        let out = super::resolve_wrap_submit_ok(
+            &expected,
+            &super::WrapSubmitUnwrapRequestOk {
+                request_id: vec![0x22u8; 32],
+            },
+        );
+        assert_eq!(out, super::WrapSubmitDispatchOutcome::RequestIdMismatch);
+    }
+
+    #[test]
+    fn finalize_unwrap_dispatch_attempt_requeues_retryable_failure() {
+        init_stable_state();
+        let request_id = TxId([0x65u8; 32]);
+        with_state_mut(|state| {
+            state.unwrap_requests.insert(
+                request_id,
+                UnwrapRequestV1 {
+                    vault_canister_id: vec![0x44u8; 10],
+                    asset_id: vec![0x55u8; 10],
+                    amount: vec![0x66u8; 32],
+                    recipient: vec![0x77u8; 10],
+                    status: UnwrapRequestStatus::Dispatching,
+                    ledger_tx_id: None,
+                    error_code: Some("old".to_string()),
+                    created_at: 1,
+                    updated_at: 1,
+                },
+            );
+        });
+
+        let should_reschedule = super::finalize_unwrap_dispatch_attempt(
+            request_id,
+            444,
+            super::AppliedUnwrapDispatchOutcome {
+                status: UnwrapRequestStatus::Queued,
+                error_code: None,
+                requeue: true,
+            },
+        );
+
+        assert!(should_reschedule);
+        with_state(|state| {
+            let req = state.unwrap_requests.get(&request_id).expect("request");
+            assert_eq!(req.status, UnwrapRequestStatus::Queued);
+            assert_eq!(req.error_code, None);
+            assert_eq!(req.updated_at, 444);
+            assert_eq!(state.unwrap_dispatch_queue.len(), 1);
+        });
+    }
+
+    #[test]
+    fn finalize_unwrap_dispatch_attempt_keeps_terminal_failure_out_of_queue() {
+        init_stable_state();
+        let request_id = TxId([0x66u8; 32]);
+        with_state_mut(|state| {
+            state.unwrap_requests.insert(
+                request_id,
+                UnwrapRequestV1 {
+                    vault_canister_id: vec![0x44u8; 10],
+                    asset_id: vec![0x55u8; 10],
+                    amount: vec![0x66u8; 32],
+                    recipient: vec![0x77u8; 10],
+                    status: UnwrapRequestStatus::Dispatching,
+                    ledger_tx_id: None,
+                    error_code: None,
+                    created_at: 1,
+                    updated_at: 1,
+                },
+            );
+        });
+
+        let should_reschedule = super::finalize_unwrap_dispatch_attempt(
+            request_id,
+            555,
+            super::AppliedUnwrapDispatchOutcome {
+                status: UnwrapRequestStatus::DispatchFailed,
+                error_code: Some("wrap.submit_failed:request.invalid".to_string()),
+                requeue: false,
+            },
+        );
+
+        assert!(!should_reschedule);
+        with_state(|state| {
+            let req = state.unwrap_requests.get(&request_id).expect("request");
+            assert_eq!(req.status, UnwrapRequestStatus::DispatchFailed);
+            assert_eq!(
+                req.error_code,
+                Some("wrap.submit_failed:request.invalid".to_string())
+            );
+            assert_eq!(req.updated_at, 555);
+            assert_eq!(state.unwrap_dispatch_queue.len(), 0);
+        });
     }
 
     fn build_ic_synthetic_tx_input_for_test(
