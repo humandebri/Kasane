@@ -7,7 +7,9 @@ type WrapperConfig = {
   evmWrapFactory: string;
 };
 
-function optionalEnv(name: "NEXT_PUBLIC_INTERNET_IDENTITY_URL", env: NodeJS.ProcessEnv): string | null {
+type EnvMap = Record<string, string | undefined>;
+
+function optionalEnv(name: "NEXT_PUBLIC_INTERNET_IDENTITY_URL", env: EnvMap): string | null {
   const value = env[name];
   if (value === undefined) {
     return null;
@@ -17,17 +19,14 @@ function optionalEnv(name: "NEXT_PUBLIC_INTERNET_IDENTITY_URL", env: NodeJS.Proc
 }
 
 const REQUIRED_KEYS = ["NEXT_PUBLIC_IC_HOST", "KASANE_EVM_CANISTER_ID", "WRAP_CANISTER_ID", "EVM_WRAP_FACTORY"] as const;
-
-type RequiredWrapperEnv = Pick<NodeJS.ProcessEnv, (typeof REQUIRED_KEYS)[number]>;
-
-const BUNDLED_ENV: RequiredWrapperEnv = {
+const BUNDLED_ENV: EnvMap = {
   NEXT_PUBLIC_IC_HOST: process.env.NEXT_PUBLIC_IC_HOST,
   KASANE_EVM_CANISTER_ID: process.env.KASANE_EVM_CANISTER_ID,
   WRAP_CANISTER_ID: process.env.WRAP_CANISTER_ID,
   EVM_WRAP_FACTORY: process.env.EVM_WRAP_FACTORY,
 };
 
-function requiredEnv(name: (typeof REQUIRED_KEYS)[number], env: RequiredWrapperEnv): string {
+function requiredEnv(name: (typeof REQUIRED_KEYS)[number], env: EnvMap): string {
   const value = env[name];
   if (value === undefined || value.trim() === "") {
     throw new Error(`config.missing:${name}`);
@@ -42,8 +41,7 @@ function shouldFetchRootKey(icHost: string): boolean {
     || icHost.startsWith("https://localhost:");
 }
 
-  const icHost = requiredEnv("NEXT_PUBLIC_IC_HOST", env);
-export function loadConfig(env: RequiredWrapperEnv = BUNDLED_ENV): WrapperConfig {
+export function loadConfig(env: EnvMap = BUNDLED_ENV): WrapperConfig {
   const icHost = requiredEnv("NEXT_PUBLIC_IC_HOST", env);
   return {
     icHost,
@@ -53,7 +51,7 @@ export function loadConfig(env: RequiredWrapperEnv = BUNDLED_ENV): WrapperConfig
   };
 }
 
-export function resolveConfiguredIdentityProvider(env: NodeJS.ProcessEnv = process.env): string | null {
+export function resolveConfiguredIdentityProvider(env: EnvMap = process.env): string | null {
   return optionalEnv("NEXT_PUBLIC_INTERNET_IDENTITY_URL", env);
 }
 

@@ -62,7 +62,7 @@ export function SwapPanel(props: {
       <CardHeader>
         <CardTitle className="text-lg">Swap Panel</CardTitle>
         <CardDescription>
-          amountを入力して送信します。詳細設定はAdvancedで必要時のみ編集できます。
+          ledgerとamountを先に選び、詳細設定はAdvancedで必要時のみ編集できます。
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
@@ -91,6 +91,21 @@ export function SwapPanel(props: {
           </TabsList>
 
           <TabsContent value="unwrap" className="space-y-3">
+            <AssetSelector
+              value={props.unwrapForm.assetId}
+              options={props.assetOptions}
+              addLabel="Add Asset"
+              selectPlaceholder="asset を選択"
+              customLabelPlaceholder="custom asset label"
+              customAssetPlaceholder="ledger principal"
+              onChange={(assetId) =>
+                props.onUnwrapChange({
+                  ...props.unwrapForm,
+                  assetId,
+                })
+              }
+              onAddCustomAsset={props.onAddCustomAsset}
+            />
             <div className="rounded-xl border border-zinc-200 bg-zinc-50/70 p-4">
               <p className="text-xs font-semibold text-zinc-600">Amount</p>
               <Input
@@ -121,21 +136,6 @@ export function SwapPanel(props: {
                 Advanced
               </summary>
               <div className="mt-3 grid gap-2 sm:grid-cols-2">
-                <AssetSelector
-                  value={props.unwrapForm.assetId}
-                  options={props.assetOptions}
-                  addLabel="Add Asset"
-                  selectPlaceholder="asset を選択"
-                  customLabelPlaceholder="custom asset label"
-                  customAssetPlaceholder="ledger principal"
-                  onChange={(assetId) =>
-                    props.onUnwrapChange({
-                      ...props.unwrapForm,
-                      assetId,
-                    })
-                  }
-                  onAddCustomAsset={props.onAddCustomAsset}
-                />
                 <Input
                   placeholder="recipient principal"
                   value={props.unwrapForm.recipient}
@@ -172,11 +172,26 @@ export function SwapPanel(props: {
               request_id: {props.unwrapPreviewRequestId ?? "(入力待ち)"}
             </p>
             <p className="text-xs text-zinc-600">
-              asset_id / recipient は Advanced で必ず確認してください。
+              recipient / deadline は Advanced で必ず確認してください。
             </p>
           </TabsContent>
 
           <TabsContent value="wrap" className="space-y-3">
+            <AssetSelector
+              value={props.wrapForm.assetId}
+              options={props.assetOptions}
+              addLabel="Add Asset"
+              selectPlaceholder="asset を選択"
+              customLabelPlaceholder="custom asset label"
+              customAssetPlaceholder="ledger principal"
+              onChange={(assetId) =>
+                props.onWrapChange({
+                  ...props.wrapForm,
+                  assetId,
+                })
+              }
+              onAddCustomAsset={props.onAddCustomAsset}
+            />
             <div className="rounded-xl border border-zinc-200 bg-zinc-50/70 p-4">
               <p className="text-xs font-semibold text-zinc-600">Amount</p>
               <Input
@@ -209,21 +224,6 @@ export function SwapPanel(props: {
                 Advanced
               </summary>
               <div className="mt-3 grid gap-2 sm:grid-cols-2">
-                <AssetSelector
-                  value={props.wrapForm.assetId}
-                  options={props.assetOptions}
-                  addLabel="Add Asset"
-                  selectPlaceholder="asset を選択"
-                  customLabelPlaceholder="custom asset label"
-                  customAssetPlaceholder="ledger principal"
-                  onChange={(assetId) =>
-                    props.onWrapChange({
-                      ...props.wrapForm,
-                      assetId,
-                    })
-                  }
-                  onAddCustomAsset={props.onAddCustomAsset}
-                />
                 <Input
                   placeholder="evm recipient (0x..)"
                   value={props.wrapForm.evmRecipient}
@@ -281,7 +281,7 @@ export function SwapPanel(props: {
               feeは cycle + Kasane gas をICPで前払い徴収します。mint失敗時も返金されません。
             </p>
             <p className="text-xs text-zinc-600">
-              asset_id は selector で明示選択してください。custom asset は下段から追加できます。
+              custom asset は ledger selector から追加できます。
             </p>
           </TabsContent>
         </Tabs>

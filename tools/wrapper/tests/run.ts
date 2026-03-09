@@ -6,7 +6,12 @@ import { mergeStatus } from "../lib/merge";
 import { decimalToBytes32, deriveRequestId, deriveWrapRequestId, encodeUnwrapAbiInput } from "../lib/request-id";
 import { principalTextToBytes } from "../lib/principal";
 import { bytesToHex, hexToBytes, parseRequestIdHex } from "../lib/utils";
-import { submitIcTx, wrapperClientTestHooks } from "../lib/canister/wrapper-client";
+import {
+  estimateWrapGasLimit,
+  getWrapEvmNonce,
+  submitIcTx,
+  wrapperClientTestHooks,
+} from "../lib/canister/wrapper-client";
 import { getExecutionResult } from "../lib/canister/wrap-client";
 import {
   messageAfterRefreshSuccess,
@@ -33,11 +38,6 @@ import {
   serializeCustomAssets,
 } from "../lib/asset-catalog";
 import { configTestHooks, loadConfig } from "../lib/config";
-import {
-  estimateWrapGasLimit,
-  getWrapEvmNonce,
-  wrapperClientTestHooks,
-} from "../lib/canister/wrapper-client";
 import { iiTestHooks } from "../lib/wallet/ii";
 
 async function runUtilsTests(): Promise<void> {
@@ -518,6 +518,7 @@ function buildMockQueryActor(args: {
     expected_nonce_by_address: async () => ({ Ok: 0n }),
     rpc_eth_gas_price: async () => args.gasPriceResult,
     rpc_eth_max_priority_fee_per_gas: async () => args.priorityFeeResult,
+    rpc_eth_estimate_gas_object: async () => ({ Ok: 300_000n }),
     get_request_dispatch_status: async (): Promise<[]> => [],
     get_request_dispatch_result: async (): Promise<[]> => [],
   };
