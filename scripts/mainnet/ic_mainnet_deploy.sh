@@ -17,7 +17,7 @@ MODE="${MODE:-upgrade}"
 CREATE_IF_MISSING="${CREATE_IF_MISSING:-0}"
 CONFIRM="${CONFIRM:-1}"
 GENESIS_PRINCIPAL_AMOUNT="${GENESIS_PRINCIPAL_AMOUNT:-100000000000000000000000}"
-WASM_PATH="${WASM_PATH:-target/wasm32-unknown-unknown/release/ic_evm_wrapper.release.final.wasm}"
+WASM_PATH="${WASM_PATH:-target/wasm32-unknown-unknown/release/ic_evm_gateway.release.final.wasm}"
 RUN_POST_SMOKE="${RUN_POST_SMOKE:-0}"
 POST_SMOKE_SCRIPT="${POST_SMOKE_SCRIPT:-scripts/mainnet/ic_mainnet_post_upgrade_smoke.sh}"
 POST_SMOKE_RPC_URL="${POST_SMOKE_RPC_URL:-}"
@@ -62,6 +62,13 @@ ensure_mode() {
 
 build_init_args() {
   build_init_args_for_current_identity "${GENESIS_PRINCIPAL_AMOUNT}"
+}
+
+require_wrap_canister_id() {
+  if [[ -z "${WRAP_CANISTER_ID:-}" ]]; then
+    echo "[ic-deploy] WRAP_CANISTER_ID is required for install/reinstall." >&2
+    exit 1
+  fi
 }
 
 ensure_unsupported_env_unset() {
@@ -135,6 +142,7 @@ if [[ "${MODE}" == "upgrade" ]]; then
     --wasm "${WASM_PATH}" \
     "${TARGET}"
 else
+  require_wrap_canister_id
   INIT_ARGS="$(build_init_args)"
   log "install ${MODE} with init args"
   run_icp_canister install \

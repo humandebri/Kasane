@@ -93,10 +93,21 @@ jobs:
             /tmp/kasane-supply-chain/vendor-ark-relations.sha256
 
       - name: Run workspace tests
-        run: cargo test -p evm-db -p ic-evm-core -p ic-evm-wrapper --locked --lib --tests
+        run: cargo test -p evm-db -p ic-evm-core -p ic-evm-gateway --locked --lib --tests
 
       - name: Check evm-rpc-e2e manifest builds
         run: cargo test --manifest-path crates/evm-rpc-e2e/Cargo.toml --no-run --locked
+
+      - name: Install Foundry
+        uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: stable
+
+      - name: Solidity build and tests
+        working-directory: contracts
+        run: |
+          forge build
+          forge test -vv
 
       - name: Setup Node
         uses: actions/setup-node@v4

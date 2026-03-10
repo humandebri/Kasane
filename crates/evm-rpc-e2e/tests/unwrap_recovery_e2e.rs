@@ -1,0 +1,332 @@
+//! どこで: unwrap dispatch の PocketIC E2E
+//! 何を: upgrade 後の unwrap 再送が idempotent に復旧することを確認
+//! なぜ: gateway の Dispatching 再開と wrap 側 idempotency の回帰を防ぐため
+
+use candid::{CandidType, Decode, Deserialize, Encode, Principal};
+use evm_core::hash;
+use evm_core::wrap_precompile::WRAP_PRECOMPILE_ADDRESS;
+use pocket_ic::PocketIc;
+use std::path::PathBuf;
+use std::time::Duration;
+
+#[derive(Clone, Debug, CandidType, Deserialize, Eq, PartialEq)]
+struct GenesisBalanceView {
+    address: Vec<u8>,
+    amount: u128,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize, Eq, PartialEq)]
+struct GatewayInitArgs {
+    genesis_balances: Vec<GenesisBalanceView>,
+    wrap_canister_id: Principal,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize, Eq, PartialEq)]
+struct SubmitIcTxArgsDto {
+    to: Option<Vec<u8>>,
+    value: candid::Nat,
+    max_priority_fee_per_gas: candid::Nat,
+    data: Vec<u8>,
+    max_fee_per_gas: candid::Nat,
+    nonce: u64,
+    gas_limit: u64,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize, Eq, PartialEq)]
+enum SubmitTxError {
+    InvalidArgument(String),
+    Rejected(String),
+    Internal(String),
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize, Eq, PartialEq)]
+enum RequestKindView {
+    Unwrap,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize, Eq, PartialEq)]
+enum RequestDispatchStatusView {
+    Queued,
+    Dispatching,
+    Dispatched,
+    DispatchFailed,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize, Eq, PartialEq)]
+struct RequestDispatchResultView {
+    status: RequestDispatchStatusView,
+    vault_canister_id: Vec<u8>,
+    error_code: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, CandidType, Deserialize, Eq, PartialEq)]
+enum WrapRequestStatus {
+    Queued,
+    Running,
+    Succeeded,
+    Failed,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize, Eq, PartialEq)]
+struct SubmitUnwrapRequestArgs {
+    request_id: Vec<u8>,
+    asset_id: Vec<u8>,
+    amount: Vec<u8>,
+    recipient: Vec<u8>,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize, Eq, PartialEq)]
+struct SubmitUnwrapRequestOk {
+    request_id: Vec<u8>,
+}
+
+fn gateway_wasm_path() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("..")
+        .join("target")
+        .join("wasm32-unknown-unknown")
+        .join("release")
+        .join("ic_evm_gateway.wasm")
+}
+
+fn wrap_wasm_path() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("..")
+        .join("target")
+        .join("wasm32-unknown-unknown")
+        .join("release")
+        .join("mock_wrap_canister.wasm")
+}
+
+fn test_caller() -> Principal {
+    Principal::self_authenticating(b"unwrap-recovery-e2e-caller")
+}
+
+fn read_wasm(path: PathBuf) -> Vec<u8> {
+    if !path.exists() {
+        panic!("wasm not found: build release wasm first: {path:?}");
+    }
+    std::fs::read(path).expect("read wasm")
+}
+
+fn install_pair(pic: &PocketIc) -> (Principal, Principal) {
+    let gateway_id = pic.create_canister();
+    let wrap_id = pic.create_canister();
+    pic.add_cycles(gateway_id, 5_000_000_000_000u128);
+    pic.add_cycles(wrap_id, 5_000_000_000_000u128);
+
+    let gateway_init = Some(GatewayInitArgs {
+        genesis_balances: vec![GenesisBalanceView {
+            address: hash::derive_evm_address_from_principal(test_caller().as_slice())
+                .expect("derive caller evm address")
+                .to_vec(),
+            amount: 1_000_000_000_000_000_000u128,
+        }],
+        wrap_canister_id: wrap_id,
+    });
+    pic.install_canister(wrap_id, read_wasm(wrap_wasm_path()), Encode!(&()).expect("encode mock wrap init"), None);
+    pic.install_canister(
+        gateway_id,
+        read_wasm(gateway_wasm_path()),
+        Encode!(&gateway_init).expect("encode gateway init"),
+        None,
+    );
+    pic.set_controllers(gateway_id, Some(Principal::anonymous()), vec![test_caller()])
+        .unwrap_or_else(|err| panic!("set gateway controllers failed: {err}"));
+
+    settle_gateway(pic);
+    (gateway_id, wrap_id)
+}
+
+fn settle_gateway(pic: &PocketIc) {
+    for _ in 0..6 {
+        pic.advance_time(Duration::from_secs(60));
+        pic.tick();
+    }
+}
+
+fn abi_word_from_u64(value: u64) -> [u8; 32] {
+    let mut out = [0u8; 32];
+    out[24..].copy_from_slice(&value.to_be_bytes());
+    out
+}
+
+fn abi_word_from_u128(value: u128) -> [u8; 32] {
+    let mut out = [0u8; 32];
+    out[16..].copy_from_slice(&value.to_be_bytes());
+    out
+}
+
+fn encode_dynamic_bytes(bytes: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(32 + bytes.len().div_ceil(32) * 32);
+    out.extend_from_slice(&abi_word_from_u64(bytes.len() as u64));
+    out.extend_from_slice(bytes);
+    let padded_len = bytes.len().div_ceil(32) * 32;
+    out.resize(32 + padded_len, 0);
+    out
+}
+
+fn encode_unwrap_abi_input(vault: Principal, asset: Principal, recipient: Principal) -> Vec<u8> {
+    let vault_tail = encode_dynamic_bytes(vault.as_slice());
+    let asset_tail = encode_dynamic_bytes(asset.as_slice());
+    let recipient_tail = encode_dynamic_bytes(recipient.as_slice());
+    let head_size = 6 * 32;
+
+    let mut out = Vec::with_capacity(head_size + vault_tail.len() + asset_tail.len() + recipient_tail.len());
+    out.extend_from_slice(&abi_word_from_u64(head_size as u64));
+    out.extend_from_slice(&abi_word_from_u64((head_size + vault_tail.len()) as u64));
+    out.extend_from_slice(&abi_word_from_u128(1_000_000_000_000u128));
+    out.extend_from_slice(&abi_word_from_u64((head_size + vault_tail.len() + asset_tail.len()) as u64));
+    out.extend_from_slice(&abi_word_from_u64(0));
+    out.extend_from_slice(&abi_word_from_u64(u64::MAX));
+    out.extend_from_slice(&vault_tail);
+    out.extend_from_slice(&asset_tail);
+    out.extend_from_slice(&recipient_tail);
+    out
+}
+
+fn request_id_for(principal: Principal, abi_input: &[u8]) -> Vec<u8> {
+    let caller = hash::derive_evm_address_from_principal(principal.as_slice()).expect("derive caller");
+    let mut input = Vec::with_capacity(caller.len() + abi_input.len());
+    input.extend_from_slice(&caller);
+    input.extend_from_slice(abi_input);
+    hash::keccak256(&input).to_vec()
+}
+
+fn submit_unwrap_tx(pic: &PocketIc, gateway_id: Principal, data: Vec<u8>) {
+    let out = pic
+        .update_call(
+            gateway_id,
+            test_caller(),
+            "submit_ic_tx",
+            Encode!(&SubmitIcTxArgsDto {
+                to: Some(WRAP_PRECOMPILE_ADDRESS.into_array().to_vec()),
+                value: candid::Nat::from(0u8),
+                max_priority_fee_per_gas: candid::Nat::from(300_000_000_000u64),
+                data,
+                max_fee_per_gas: candid::Nat::from(600_000_000_000u64),
+                nonce: 0,
+                gas_limit: 300_000,
+            })
+            .expect("encode submit"),
+        )
+        .unwrap_or_else(|err| panic!("submit update failed: {err}"));
+    let result: Result<Vec<u8>, SubmitTxError> = Decode!(&out, Result<Vec<u8>, SubmitTxError>)
+        .expect("decode submit result");
+    assert!(result.is_ok(), "submit failed: {result:?}");
+}
+
+fn seed_wrap_request(
+    pic: &PocketIc,
+    wrap_id: Principal,
+    request_id: &[u8],
+    asset_id: Principal,
+    recipient: Principal,
+) {
+    let out = pic
+        .update_call(
+            wrap_id,
+            Principal::anonymous(),
+            "submit_unwrap_request",
+            Encode!(&SubmitUnwrapRequestArgs {
+                request_id: request_id.to_vec(),
+                asset_id: asset_id.as_slice().to_vec(),
+                amount: abi_word_from_u128(1_000_000_000_000u128).to_vec(),
+                recipient: recipient.as_slice().to_vec(),
+            })
+            .expect("encode mock wrap submit"),
+        )
+        .unwrap_or_else(|err| panic!("seed wrap update failed: {err}"));
+    let result: Result<SubmitUnwrapRequestOk, String> =
+        Decode!(&out, Result<SubmitUnwrapRequestOk, String>)
+            .expect("decode mock wrap seed result");
+    assert!(result.is_ok(), "seed wrap request failed: {result:?}");
+}
+
+fn gateway_dispatch_status(pic: &PocketIc, gateway_id: Principal, request_id: &[u8]) -> Option<RequestDispatchStatusView> {
+    let out = pic
+        .query_call(
+            gateway_id,
+            Principal::anonymous(),
+            "get_request_dispatch_status",
+            Encode!(&RequestKindView::Unwrap, &request_id.to_vec()).expect("encode status query"),
+        )
+        .unwrap_or_else(|err| panic!("gateway status query failed: {err}"));
+    Decode!(&out, Option<RequestDispatchStatusView>).expect("decode gateway status")
+}
+
+fn gateway_dispatch_result(pic: &PocketIc, gateway_id: Principal, request_id: &[u8]) -> Option<RequestDispatchResultView> {
+    let out = pic
+        .query_call(
+            gateway_id,
+            Principal::anonymous(),
+            "get_request_dispatch_result",
+            Encode!(&RequestKindView::Unwrap, &request_id.to_vec()).expect("encode result query"),
+        )
+        .unwrap_or_else(|err| panic!("gateway result query failed: {err}"));
+    Decode!(&out, Option<RequestDispatchResultView>).expect("decode gateway result")
+}
+
+fn wrap_request_status(pic: &PocketIc, wrap_id: Principal, request_id: &[u8]) -> Option<WrapRequestStatus> {
+    let out = pic
+        .query_call(
+            wrap_id,
+            Principal::anonymous(),
+            "get_request_status",
+            Encode!(&request_id.to_vec()).expect("encode wrap status query"),
+        )
+        .unwrap_or_else(|err| panic!("wrap status query failed: {err}"));
+    Decode!(&out, Option<WrapRequestStatus>).expect("decode wrap status")
+}
+
+#[test]
+fn upgrade_retries_dispatching_unwrap_via_idempotent_submit() {
+    let pic = PocketIc::new();
+    let (gateway_id, wrap_id) = install_pair(&pic);
+    let asset = Principal::self_authenticating(b"unwrap-recovery-e2e-asset");
+    let recipient = Principal::self_authenticating(b"unwrap-recovery-e2e-recipient");
+    let abi_input = encode_unwrap_abi_input(wrap_id, asset, recipient);
+    let request_id = request_id_for(test_caller(), &abi_input);
+
+    submit_unwrap_tx(&pic, gateway_id, abi_input);
+
+    pic.advance_time(Duration::from_secs(60));
+    pic.tick();
+    assert_eq!(
+        gateway_dispatch_status(&pic, gateway_id, &request_id),
+        Some(RequestDispatchStatusView::Queued)
+    );
+    seed_wrap_request(&pic, wrap_id, &request_id, asset, recipient);
+    assert_eq!(wrap_request_status(&pic, wrap_id, &request_id), Some(WrapRequestStatus::Queued));
+
+    pic.upgrade_canister(
+        gateway_id,
+        read_wasm(gateway_wasm_path()),
+        Encode!(&()).expect("encode empty upgrade arg"),
+        Some(test_caller()),
+    )
+    .unwrap_or_else(|err| panic!("upgrade failed: {err}"));
+
+    let mut final_result = None;
+    let mut last_result = None;
+    for _ in 0..12 {
+        pic.advance_time(Duration::from_secs(1));
+        pic.tick();
+        let result = gateway_dispatch_result(&pic, gateway_id, &request_id);
+        last_result = result.clone();
+        if result.as_ref().map(|value| &value.status) == Some(&RequestDispatchStatusView::Dispatched) {
+            final_result = result;
+            break;
+        }
+    }
+
+    let result = final_result.unwrap_or_else(|| {
+        panic!("gateway did not recover idempotent unwrap after upgrade: {last_result:?}")
+    });
+    assert_eq!(result.status, RequestDispatchStatusView::Dispatched);
+    assert_eq!(result.error_code, None);
+    assert_eq!(result.vault_canister_id, wrap_id.as_slice().to_vec());
+    assert!(wrap_request_status(&pic, wrap_id, &request_id).is_some());
+}

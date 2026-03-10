@@ -1,4 +1,4 @@
-//! どこで: ic-evm-wrapper の canbench 導線
+//! どこで: ic-evm-gateway の canbench 導線
 //! 何を: submit/produce の最小ベンチマークを提供
 //! なぜ: 命令数とメモリ増分の回帰を継続検知するため
 

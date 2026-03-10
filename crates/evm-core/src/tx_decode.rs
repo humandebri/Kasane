@@ -116,7 +116,9 @@ fn decode_ic_synthetic_header_impl<const ENFORCE_DATA_SIZE_LIMIT: bool>(
 
 pub fn encode_ic_synthetic_input(input: &IcSyntheticTxInput) -> Vec<u8> {
     let mut out = Vec::with_capacity(
-        IC_TX_BASE_HEADER_LEN + input.data.len() + if input.to.is_some() { IC_TX_TO_LEN } else { 0 },
+        IC_TX_BASE_HEADER_LEN
+            + input.data.len()
+            + if input.to.is_some() { IC_TX_TO_LEN } else { 0 },
     );
     match input.to {
         Some(to) => {
@@ -132,7 +134,11 @@ pub fn encode_ic_synthetic_input(input: &IcSyntheticTxInput) -> Vec<u8> {
     out.extend_from_slice(&input.nonce.to_be_bytes());
     out.extend_from_slice(&input.max_fee_per_gas.to_be_bytes());
     out.extend_from_slice(&input.max_priority_fee_per_gas.to_be_bytes());
-    out.extend_from_slice(&u32::try_from(input.data.len()).unwrap_or(u32::MAX).to_be_bytes());
+    out.extend_from_slice(
+        &u32::try_from(input.data.len())
+            .unwrap_or(u32::MAX)
+            .to_be_bytes(),
+    );
     out.extend_from_slice(&input.data);
     out
 }

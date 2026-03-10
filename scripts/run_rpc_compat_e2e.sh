@@ -10,7 +10,7 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 POCKET_IC_BIN="${POCKET_IC_BIN:-${REPO_ROOT}/crates/evm-rpc-e2e/pocket-ic}"
 E2E_TIMEOUT_SECONDS="${E2E_TIMEOUT_SECONDS:-120}"
 
-cargo build -p ic-evm-wrapper --target wasm32-unknown-unknown --release
+cargo build -p ic-evm-gateway --target wasm32-unknown-unknown --release
 (
   cd "${REPO_ROOT}/crates/evm-rpc-e2e"
   TEST_CMD=(cargo test --test rpc_compat_e2e -- --test-threads=1)

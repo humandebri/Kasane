@@ -150,7 +150,7 @@ fn migration_build_refcnt_keeps_state_root_stable() {
     assert!(!done);
     let done = chain::state_root_migration_tick(512);
     assert!(done);
-    let after = with_state_mut(|state| evm_core::state_root::current_state_root_with(state));
+    let after = with_state_mut(evm_core::state_root::current_state_root_with);
     assert_eq!(before, after);
     let unreachable = with_state(|state| state.state_root_metrics.get().node_db_unreachable);
     assert_eq!(unreachable, 0);

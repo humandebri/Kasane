@@ -1,7 +1,7 @@
 # Frontend実装ガイド: ICPウォレット起点でKasane(EVM canister)を実行する
 
 このドキュメントは、`submit_ic_tx -> (必要なら) auto-mine -> get_pending/get_receipt` の実装に絞って説明します。  
-前提: canister は `4c52m-aiaaa-aaaam-agwwa-cai`、API公開は `crates/ic-evm-wrapper/evm_canister.did` に準拠。
+前提: canister は `4c52m-aiaaa-aaaam-agwwa-cai`、API公開は `crates/ic-evm-gateway/evm_canister.did` に準拠。
 
 ## 1. 実行モデル（最重要）
 
@@ -314,5 +314,5 @@ export async function submitAndTrack(actor: {
 ## 9. 参照
 
 - `README.md` の submit系入力仕様と運用方針
-- `crates/ic-evm-wrapper/evm_canister.did` の service 定義
+- `crates/ic-evm-gateway/evm_canister.did` の service 定義
 - `docs/api/rpc_eth_send_raw_transaction_payload.md`（submit->produce->receipt の追跡パターン）

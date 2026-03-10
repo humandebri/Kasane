@@ -134,7 +134,10 @@ type HealthView = record {
   last_block_time : nat64;
   queue_len : nat64;
 };
-type InitArgs = record { genesis_balances : vec GenesisBalanceView };
+type InitArgs = record {
+  genesis_balances : vec GenesisBalanceView;
+  wrap_canister_id : principal;
+};
 type LogView = record { data : blob; topics : vec blob; address : blob };
 type LookupError = variant {
   NotFound;
@@ -252,6 +255,18 @@ type ReceiptView = record {
   gas_used : nat64;
   contract_address : opt blob;
 };
+type RequestDispatchResultView = record {
+  status : RequestDispatchStatusView;
+  vault_canister_id : blob;
+  error_code : opt text;
+};
+type RequestDispatchStatusView = variant {
+  Queued;
+  Dispatching;
+  Dispatched;
+  DispatchFailed;
+};
+type RequestKindView = variant { Unwrap };
 type Result = variant { Ok : nat64; Err : text };
 type Result_1 = variant { Ok : ExportResponseView; Err : ExportErrorView };
 type Result_10 = variant { Ok : nat; Err : RpcErrorView };
@@ -345,6 +360,12 @@ service : (opt InitArgs) -> {
   get_prune_status : () -> (PruneStatusView) query;
   get_queue_snapshot : (nat32, opt nat64) -> (QueueSnapshotView) query;
   get_receipt : (blob) -> (Result_3) query;
+  get_request_dispatch_result : (RequestKindView, blob) -> (
+      opt RequestDispatchResultView,
+    ) query;
+  get_request_dispatch_status : (RequestKindView, blob) -> (
+      opt RequestDispatchStatusView,
+    ) query;
   health : () -> (HealthView) query;
   memory_breakdown : () -> (MemoryBreakdownView) query;
   metrics : (nat64) -> (MetricsView) query;

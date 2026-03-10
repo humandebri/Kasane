@@ -65,6 +65,10 @@ pub enum AppMemoryId {
     PendingFeeKeyByTxId = 51,
     ReadyBySeq = 52,
     EthTxHashIndex = 53,
+    UnwrapRequests = 54,
+    UnwrapDispatchQueue = 55,
+    UnwrapDispatchMeta = 56,
+    WrapCanisterId = 57,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -74,7 +78,7 @@ pub struct MemoryRegionInfo {
     pub include_in_estimate: bool,
 }
 
-const ALL_MEMORY_REGIONS: [MemoryRegionInfo; 54] = [
+const ALL_MEMORY_REGIONS: [MemoryRegionInfo; 58] = [
     MemoryRegionInfo {
         id: AppMemoryId::Upgrades,
         name: "Upgrades",
@@ -345,6 +349,26 @@ const ALL_MEMORY_REGIONS: [MemoryRegionInfo; 54] = [
         name: "EthTxHashIndex",
         include_in_estimate: true,
     },
+    MemoryRegionInfo {
+        id: AppMemoryId::UnwrapRequests,
+        name: "UnwrapRequests",
+        include_in_estimate: true,
+    },
+    MemoryRegionInfo {
+        id: AppMemoryId::UnwrapDispatchQueue,
+        name: "UnwrapDispatchQueue",
+        include_in_estimate: true,
+    },
+    MemoryRegionInfo {
+        id: AppMemoryId::UnwrapDispatchMeta,
+        name: "UnwrapDispatchMeta",
+        include_in_estimate: true,
+    },
+    MemoryRegionInfo {
+        id: AppMemoryId::WrapCanisterId,
+        name: "WrapCanisterId",
+        include_in_estimate: true,
+    },
 ];
 
 impl AppMemoryId {
@@ -404,6 +428,10 @@ impl AppMemoryId {
             AppMemoryId::PendingFeeKeyByTxId => 51,
             AppMemoryId::ReadyBySeq => 52,
             AppMemoryId::EthTxHashIndex => 53,
+            AppMemoryId::UnwrapRequests => 54,
+            AppMemoryId::UnwrapDispatchQueue => 55,
+            AppMemoryId::UnwrapDispatchMeta => 56,
+            AppMemoryId::WrapCanisterId => 57,
         }
     }
 

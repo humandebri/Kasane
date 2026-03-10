@@ -14,7 +14,7 @@ const OFFSET_LAST_TS: u64 = HEADER_SIZE + 8;
 const OFFSET_LAST_TAG: u64 = HEADER_SIZE + 16;
 
 thread_local! {
-    static LAST_RECORDED_TS: Cell<u64> = Cell::new(0);
+    static LAST_RECORDED_TS: Cell<u64> = const { Cell::new(0) };
 }
 
 pub fn record_corrupt(tag: &'static [u8]) {

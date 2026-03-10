@@ -30,7 +30,7 @@ icp canister snapshot create -e ic <canister_id>
 ```bash
 icp canister stop -e ic <canister_id>
 icp canister snapshot create -e ic <canister_id>
-icp canister install -e ic <canister_id> --mode upgrade --wasm target/wasm32-unknown-unknown/release/ic_evm_wrapper.release.final.wasm
+icp canister install -e ic <canister_id> --mode upgrade --wasm target/wasm32-unknown-unknown/release/ic_evm_gateway.release.final.wasm
 icp canister start -e ic <canister_id>
 ```
 

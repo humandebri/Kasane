@@ -110,7 +110,7 @@ validate_extracted_methods() {
 validate_methods_file
 
 if [[ "${1:-}" == "--update" ]]; then
-  cargo run -q -p ic-evm-wrapper --features did-gen --bin export_did > "${GENERATED_DID}"
+  cargo run -q -p ic-evm-gateway --features did-gen --bin export_did > "${GENERATED_DID}"
   extract_minimal_service "${GENERATED_DID}" "${BASELINE_DID}"
   validate_extracted_methods "${BASELINE_DID}"
   echo "[guard] updated baseline: ${BASELINE_DID}"
@@ -123,7 +123,7 @@ if [[ ! -f "${BASELINE_DID}" ]]; then
   exit 1
 fi
 
-cargo run -q -p ic-evm-wrapper --features did-gen --bin export_did > "${GENERATED_DID}"
+cargo run -q -p ic-evm-gateway --features did-gen --bin export_did > "${GENERATED_DID}"
 extract_minimal_service "${BASELINE_DID}" "${EXTRACTED_BASELINE}"
 extract_minimal_service "${GENERATED_DID}" "${EXTRACTED_DID}"
 validate_extracted_methods "${EXTRACTED_BASELINE}"

@@ -8,6 +8,9 @@ English version: [./mainnet-deploy-runbook.md](./mainnet-deploy-runbook.md)
 - 何を: `icp` CLI で preflight / deploy / verify を実施
 - なぜ: 本番導線を手順化し、運用ミスを減らす
 
+関連:
+- `wrap_canister` を既存 `evm_canister` と同一サブネットへ deploy する手順は [wrap-canister-deploy-runbook.ja.md](/Users/0xhude/Desktop/ICP/Kasane/docs/ops/wrap-canister-deploy-runbook.ja.md) を参照。
+
 ## 1. 事前確認
 1. 本番用 identity を選ぶ（本リポジトリ運用では `ci-local` を使用）。
 2. `evm_canister` の controller 構成を確認する。
@@ -41,9 +44,14 @@ ICP_ENV=ic \
 CANISTER_ID=<canister_id> \
 ICP_IDENTITY_NAME=ci-local \
 MODE=install \
+WRAP_CANISTER_ID=<wrap_canister_id> \
 GENESIS_PRINCIPAL_AMOUNT=100000000000000000000000 \
 scripts/mainnet/ic_mainnet_deploy.sh
 ```
+
+注記:
+- `MODE=install` / `MODE=reinstall` では `WRAP_CANISTER_ID` が必須。
+- `wrap_canister` の自動解決は行わない。
 
 ## 3. デプロイ後確認
 1. `icp canister status -e ic <canister_id>` で module hash / settings / balance を確認する。

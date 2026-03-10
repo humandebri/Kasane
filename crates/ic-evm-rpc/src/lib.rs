@@ -16,6 +16,8 @@ use ic_evm_rpc_types::{
 };
 use tracing::{error, warn};
 
+type AccessListItem = ([u8; 20], Vec<[u8; 32]>);
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum TxApiErrorKind {
     InvalidArgument,
@@ -73,7 +75,9 @@ pub fn rpc_eth_get_transaction_receipt_with_status_by_eth_hash(
     receipt_lookup_status(tx_id)
 }
 
-pub fn rpc_eth_get_transaction_receipt_with_status_by_tx_id(tx_id: Vec<u8>) -> RpcReceiptLookupView {
+pub fn rpc_eth_get_transaction_receipt_with_status_by_tx_id(
+    tx_id: Vec<u8>,
+) -> RpcReceiptLookupView {
     let Some(tx_id) = tx_id_from_bytes(tx_id) else {
         return RpcReceiptLookupView::NotFound;
     };
@@ -106,7 +110,10 @@ pub fn rpc_eth_get_block_number_by_hash(
     Ok(None)
 }
 
-pub fn rpc_eth_get_balance(address: Vec<u8>, tag: RpcBlockTagView) -> Result<Vec<u8>, RpcErrorView> {
+pub fn rpc_eth_get_balance(
+    address: Vec<u8>,
+    tag: RpcBlockTagView,
+) -> Result<Vec<u8>, RpcErrorView> {
     let addr = parse_address_20_with_label(address, "address")
         .map_err(|message| invalid_error("invalid.address", message))?;
     resolve_latest_state_read_tag(tag, "balance")?;
@@ -187,10 +194,14 @@ fn execution_error(prefix: &str, message: impl Into<String>) -> RpcErrorView {
 }
 
 pub fn rpc_eth_call_object(call: RpcCallObjectView) -> Result<RpcCallResultView, RpcErrorView> {
-    let input =
-        call_object_to_input(call).map_err(|message| invalid_error("invalid.call_object", message))?;
-    let out = chain::eth_call_object(input)
-        .map_err(|err| execution_error("exec.eth_call_object.failed", format!("eth_call_object failed: {err:?}")))?;
+    let input = call_object_to_input(call)
+        .map_err(|message| invalid_error("invalid.call_object", message))?;
+    let out = chain::eth_call_object(input).map_err(|err| {
+        execution_error(
+            "exec.eth_call_object.failed",
+            format!("eth_call_object failed: {err:?}"),
+        )
+    })?;
     Ok(RpcCallResultView {
         status: out.status,
         gas_used: out.gas_used,
@@ -200,8 +211,8 @@ pub fn rpc_eth_call_object(call: RpcCallObjectView) -> Result<RpcCallResultView,
 }
 
 pub fn rpc_eth_estimate_gas_object(call: RpcCallObjectView) -> Result<u64, RpcErrorView> {
-    let input =
-        call_object_to_input(call).map_err(|message| invalid_error("invalid.call_object", message))?;
+    let input = call_object_to_input(call)
+        .map_err(|message| invalid_error("invalid.call_object", message))?;
     chain::eth_estimate_gas_object(input).map_err(|err| {
         execution_error(
             "exec.eth_estimate_gas_object.failed",
@@ -302,7 +313,10 @@ pub fn rpc_eth_estimate_gas_object_at(
 pub fn rpc_eth_max_priority_fee_per_gas() -> Result<u128, RpcErrorView> {
     let head = chain::get_head_number();
     let sample = load_fee_history_sample(head).ok_or_else(|| {
-        execution_error("exec.state.unavailable", "exec.state.unavailable fee sample is unavailable")
+        execution_error(
+            "exec.state.unavailable",
+            "exec.state.unavailable fee sample is unavailable",
+        )
     })?;
     Ok(estimate_priority_fee_from_sample(&sample))
 }
@@ -310,7 +324,10 @@ pub fn rpc_eth_max_priority_fee_per_gas() -> Result<u128, RpcErrorView> {
 pub fn rpc_eth_gas_price() -> Result<u128, RpcErrorView> {
     let head = chain::get_head_number();
     let sample = load_fee_history_sample(head).ok_or_else(|| {
-        execution_error("exec.state.unavailable", "exec.state.unavailable fee sample is unavailable")
+        execution_error(
+            "exec.state.unavailable",
+            "exec.state.unavailable fee sample is unavailable",
+        )
     })?;
     let (min_gas_price, min_priority_fee) = with_state(|state| {
         let chain_state = *state.chain_state.get();
@@ -356,7 +373,10 @@ pub fn rpc_eth_fee_history(
         ));
     }
     let last = samples.last().ok_or_else(|| {
-        execution_error("exec.state.unavailable", "exec.state.unavailable fee history is unavailable")
+        execution_error(
+            "exec.state.unavailable",
+            "exec.state.unavailable fee history is unavailable",
+        )
     })?;
     let mut base_fee_per_gas: Vec<u64> = samples.iter().map(|item| item.base_fee_per_gas).collect();
     base_fee_per_gas.push(compute_next_base_fee(
@@ -771,9 +791,7 @@ fn call_object_to_input(call: RpcCallObjectView) -> Result<chain::CallObjectInpu
     })
 }
 
-fn parse_access_list(
-    items: Vec<RpcAccessListItemView>,
-) -> Result<Vec<([u8; 20], Vec<[u8; 32]>)>, String> {
+fn parse_access_list(items: Vec<RpcAccessListItemView>) -> Result<Vec<AccessListItem>, String> {
     let mut out = Vec::with_capacity(items.len());
     for item in items {
         let address = parse_address_20_with_label(item.address, "accessList.address")?;
@@ -899,15 +917,16 @@ fn receipt_to_eth_view(receipt: ReceiptLike) -> EthReceiptView {
                 TxKind::IcSynthetic => stored.caller_evm.unwrap_or([0u8; 20]),
                 TxKind::EthSigned => [0u8; 20],
             };
-            let decoded =
-                evm_core::tx_decode::decode_tx_view(kind, caller, &stored.raw).ok();
+            let decoded = evm_core::tx_decode::decode_tx_view(kind, caller, &stored.raw).ok();
             let eth_hash = if kind == TxKind::EthSigned {
                 Some(hash::keccak256(&stored.raw).to_vec())
             } else {
                 None
             };
             let from = decoded.as_ref().map(|v| v.from.to_vec());
-            let to = decoded.as_ref().and_then(|v| v.to.map(|addr| addr.to_vec()));
+            let to = decoded
+                .as_ref()
+                .and_then(|v| v.to.map(|addr| addr.to_vec()));
             (eth_hash, from, to)
         })
         .unwrap_or((None, None, None));
@@ -1276,7 +1295,7 @@ fn prune_boundary_for_number(number: u64) -> Option<u64> {
 
 fn receipt_lookup_status(tx_id: TxId) -> RpcReceiptLookupView {
     if let Some(receipt) = chain::get_receipt(&tx_id) {
-        return RpcReceiptLookupView::Found(receipt_to_eth_view(receipt));
+        return RpcReceiptLookupView::Found(Box::new(receipt_to_eth_view(receipt)));
     }
     let pruned_before = with_state(|state| state.prune_state.get().pruned_before());
     let loc = chain::get_tx_loc(&tx_id);

@@ -452,7 +452,7 @@ test("runWorkerWithDeps commits two blocks from one response and stores final cu
   await withTempDir(async (dir) => {
     const config: Config = {
       canisterId: "test-canister",
-      icHost: "http://127.0.0.1:4943",
+      icHost: "http://127.0.0.1:8000",
       databaseUrl: "postgres://unused",
       dbPoolMax: 1,
       retentionDays: 90,
@@ -566,7 +566,7 @@ test("runWorkerWithDeps recovers from Pruned by rebasing cursor and dropping pen
   await withTempDir(async (dir) => {
     const config: Config = {
       canisterId: "test-canister",
-      icHost: "http://127.0.0.1:4943",
+      icHost: "http://127.0.0.1:8000",
       databaseUrl: "postgres://unused",
       dbPoolMax: 1,
       retentionDays: 90,
@@ -694,7 +694,7 @@ test("runWorkerWithDeps clamps Pruned cursor to block 1 minimum", async () => {
   await withTempDir(async (dir) => {
     const config: Config = {
       canisterId: "test-canister",
-      icHost: "http://127.0.0.1:4943",
+      icHost: "http://127.0.0.1:8000",
       databaseUrl: "postgres://unused",
       dbPoolMax: 1,
       retentionDays: 90,
@@ -794,7 +794,7 @@ test("runWorkerWithDeps clamps Pruned cursor to head when prune floor is ahead",
   await withTempDir(async (dir) => {
     const config: Config = {
       canisterId: "test-canister",
-      icHost: "http://127.0.0.1:4943",
+      icHost: "http://127.0.0.1:8000",
       databaseUrl: "postgres://unused",
       dbPoolMax: 1,
       retentionDays: 90,
@@ -894,7 +894,7 @@ test("runWorkerWithDeps bootstraps MissingData at block 1 instead of head", asyn
   await withTempDir(async (dir) => {
     const config: Config = {
       canisterId: "test-canister",
-      icHost: "http://127.0.0.1:4943",
+      icHost: "http://127.0.0.1:8000",
       databaseUrl: "postgres://unused",
       dbPoolMax: 1,
       retentionDays: 90,
@@ -993,7 +993,7 @@ test("runWorkerWithDeps exits on final cursor mismatch", async () => {
     await withTempDir(async (dir) => {
       const config: Config = {
         canisterId: "test-canister",
-        icHost: "http://127.0.0.1:4943",
+        icHost: "http://127.0.0.1:8000",
         databaseUrl: "postgres://unused",
         dbPoolMax: 1,
         retentionDays: 90,
@@ -1086,7 +1086,7 @@ test("runWorkerWithDeps exits when decoded block number mismatches cursor", asyn
     await withTempDir(async (dir) => {
       const config: Config = {
         canisterId: "test-canister",
-        icHost: "http://127.0.0.1:4943",
+        icHost: "http://127.0.0.1:8000",
         databaseUrl: "postgres://unused",
         dbPoolMax: 1,
         retentionDays: 90,
@@ -1179,7 +1179,7 @@ test("runWorkerWithDeps exits when tx_index and receipts counts differ", async (
     await withTempDir(async (dir) => {
       const config: Config = {
         canisterId: "test-canister",
-        icHost: "http://127.0.0.1:4943",
+        icHost: "http://127.0.0.1:8000",
         databaseUrl: "postgres://unused",
         dbPoolMax: 1,
         retentionDays: 90,
@@ -1272,7 +1272,7 @@ test("runWorkerWithDeps stores token_transfers block/tx index from tx_index payl
   await withTempDir(async (dir) => {
     const config: Config = {
       canisterId: "test-canister",
-      icHost: "http://127.0.0.1:4943",
+      icHost: "http://127.0.0.1:8000",
       databaseUrl: "postgres://unused",
       dbPoolMax: 1,
       retentionDays: 90,
@@ -1397,7 +1397,7 @@ test("runWorkerWithDeps retries tx meta fetch and stores tx input while using pa
   await withTempDir(async (dir) => {
     const config: Config = {
       canisterId: "test-canister",
-      icHost: "http://127.0.0.1:4943",
+      icHost: "http://127.0.0.1:8000",
       databaseUrl: "postgres://unused",
       dbPoolMax: 1,
       retentionDays: 90,
@@ -1519,7 +1519,7 @@ test("runWorkerWithDeps handles multi-block response without crash", async () =>
   await withTempDir(async (dir) => {
     const config: Config = {
       canisterId: "test-canister",
-      icHost: "http://127.0.0.1:4943",
+      icHost: "http://127.0.0.1:8000",
       databaseUrl: "postgres://unused",
       dbPoolMax: 1,
       retentionDays: 90,
@@ -1649,7 +1649,7 @@ test("runWorkerWithDeps handles multi-block response with segment-0-only blocks"
   await withTempDir(async (dir) => {
     const config: Config = {
       canisterId: "test-canister",
-      icHost: "http://127.0.0.1:4943",
+      icHost: "http://127.0.0.1:8000",
       databaseUrl: "postgres://unused",
       dbPoolMax: 1,
       retentionDays: 90,
@@ -1763,7 +1763,7 @@ test("runWorkerWithDeps exits when stored cursor segment exceeds maxSegment", as
     await withTempDir(async (dir) => {
       const config: Config = {
         canisterId: "test-canister",
-        icHost: "http://127.0.0.1:4943",
+        icHost: "http://127.0.0.1:8000",
         databaseUrl: "postgres://unused",
         dbPoolMax: 1,
         retentionDays: 90,
@@ -1837,7 +1837,7 @@ test("runWorkerWithDeps normalizes stored mid-block cursor to block start on res
   await withTempDir(async (dir) => {
     const config: Config = {
       canisterId: "test-canister",
-      icHost: "http://127.0.0.1:4943",
+      icHost: "http://127.0.0.1:8000",
       databaseUrl: "postgres://unused",
       dbPoolMax: 1,
       retentionDays: 90,
@@ -1938,7 +1938,7 @@ test("runWorkerWithDeps keeps segment-0 offset cursor on restart", async () => {
   await withTempDir(async (dir) => {
     const config: Config = {
       canisterId: "test-canister",
-      icHost: "http://127.0.0.1:4943",
+      icHost: "http://127.0.0.1:8000",
       databaseUrl: "postgres://unused",
       dbPoolMax: 1,
       retentionDays: 90,
@@ -2039,7 +2039,7 @@ test("runWorkerWithDeps does not double count metrics_daily on block re-commit",
   await withTempDir(async (dir) => {
     const config: Config = {
       canisterId: "test-canister",
-      icHost: "http://127.0.0.1:4943",
+      icHost: "http://127.0.0.1:8000",
       databaseUrl: "postgres://unused",
       dbPoolMax: 1,
       retentionDays: 90,
@@ -2165,7 +2165,7 @@ test("runWorkerWithDeps exits when cursor is null and stream cursor is not estab
     await withTempDir(async (dir) => {
       const config: Config = {
         canisterId: "test-canister",
-        icHost: "http://127.0.0.1:4943",
+        icHost: "http://127.0.0.1:8000",
         databaseUrl: "postgres://unused",
         dbPoolMax: 1,
         retentionDays: 90,
@@ -2255,7 +2255,7 @@ test("runWorkerWithDeps does not leak signal listeners after stop", async () => 
     await withTempDir(async (dir) => {
       const config: Config = {
         canisterId: "test-canister",
-        icHost: "http://127.0.0.1:4943",
+        icHost: "http://127.0.0.1:8000",
         databaseUrl: "postgres://unused",
         dbPoolMax: 1,
         retentionDays: 90,

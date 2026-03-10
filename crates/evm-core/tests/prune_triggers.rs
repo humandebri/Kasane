@@ -121,7 +121,10 @@ fn estimated_kept_bytes_drops_after_prune_and_can_clear_cap_trigger() {
     let before_blob_used = with_state(|state| state.blob_store.usage_stats().used_class_bytes);
     assert!(before.need_prune);
     let result = chain::prune_tick().expect("prune_tick should succeed");
-    assert!(result.did_work, "prune_tick should do work under cap trigger");
+    assert!(
+        result.did_work,
+        "prune_tick should do work under cap trigger"
+    );
     let after = chain::get_prune_status();
     let after_blob_used = with_state(|state| state.blob_store.usage_stats().used_class_bytes);
     assert!(

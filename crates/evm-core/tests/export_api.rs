@@ -7,10 +7,10 @@ use alloy_primitives::{Address, Bytes, Signature, TxKind as EthTxKind, U256};
 use alloy_signer::SignerSync;
 use alloy_signer_local::PrivateKeySigner;
 use evm_core::export::{export_blocks, ExportCursor, ExportError};
+use evm_db::chain_data::constants::CHAIN_ID;
 use evm_db::chain_data::{
     BlockData, ReceiptLike, StoredTxBytes, TxId, TxIndexEntry, TxKind, TxLoc,
 };
-use evm_db::chain_data::constants::CHAIN_ID;
 use evm_db::stable_state::{init_stable_state, with_state_mut};
 use evm_db::Storable;
 use ic_evm_address::derive_evm_address_from_principal;

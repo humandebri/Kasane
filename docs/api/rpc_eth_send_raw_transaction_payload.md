@@ -3,7 +3,7 @@
 このドキュメントは、`rpc_eth_send_raw_transaction` に渡す `blob`（Ethereum signed raw transaction）の作り方と、
 `submit -> auto-mine -> get_receipt` までの確認手順を示します。  
 正本実装は `/Users/0xhude/Desktop/ICP/Kasane/crates/evm-core/src/tx_decode.rs` と
-`/Users/0xhude/Desktop/ICP/Kasane/crates/ic-evm-wrapper/src/lib.rs` です。
+`/Users/0xhude/Desktop/ICP/Kasane/crates/ic-evm-gateway/src/lib.rs` です。
 
 ### 1) 入力仕様
 

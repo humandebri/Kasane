@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# where: local env sanity check for dfx/indexer
+# where: local env sanity check for icp/indexer
 # what: print env variables that can poison local connectivity
 # why: IC_HOST/DFX_NETWORK固定で再現性が壊れるのを防ぐため
 set -euo pipefail

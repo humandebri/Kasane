@@ -387,7 +387,7 @@ pub enum RpcBlockLookupView {
 
 #[derive(Clone, Debug, CandidType, Deserialize)]
 pub enum RpcReceiptLookupView {
-    Found(EthReceiptView),
+    Found(Box<EthReceiptView>),
     Pruned { pruned_before_block: u64 },
     PossiblyPruned { pruned_before_block: u64 },
     NotFound,
@@ -428,6 +428,26 @@ pub enum PendingStatusView {
     Included { block_number: u64, tx_index: u32 },
     Dropped { code: u16 },
     Unknown,
+}
+
+#[derive(Clone, Copy, Debug, CandidType, Deserialize, Eq, PartialEq)]
+pub enum RequestDispatchStatusView {
+    Queued,
+    Dispatching,
+    Dispatched,
+    DispatchFailed,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize, Eq, PartialEq)]
+pub struct RequestDispatchResultView {
+    pub status: RequestDispatchStatusView,
+    pub vault_canister_id: Vec<u8>,
+    pub error_code: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, CandidType, Deserialize, Eq, PartialEq)]
+pub enum RequestKindView {
+    Unwrap,
 }
 
 #[derive(Clone, Debug, CandidType, Deserialize)]

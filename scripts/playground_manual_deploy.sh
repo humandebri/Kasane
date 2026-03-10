@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # where: playground-only manual build/deploy helper
-# what: build wasm with cargo (no dfx build) and install via icp-cli
-# why: keep wasm small and reproducible; avoid dfx-internal build/strip issues
+# what: build wasm with cargo and install via icp-cli
+# why: keep wasm small and reproducible; avoid hidden build-time behavior
 # note: this is intended for playground use only (size issues); not needed for mainnet deploys
 set -euo pipefail
 source "$(dirname "$0")/lib_init_args.sh"
@@ -16,19 +16,26 @@ log() {
   echo "[manual-deploy] $*"
 }
 
+require_wrap_canister_id() {
+  if [[ -z "${WRAP_CANISTER_ID:-}" ]]; then
+    log "WRAP_CANISTER_ID is required"
+    exit 1
+  fi
+}
+
 build_wasm() {
-  log "cargo build --release --target wasm32-unknown-unknown -p ic-evm-wrapper"
-  cargo build --release --target wasm32-unknown-unknown -p ic-evm-wrapper
+  log "cargo build --release --target wasm32-unknown-unknown -p ic-evm-gateway"
+  cargo build --release --target wasm32-unknown-unknown -p ic-evm-gateway
 }
 
 install_wasm() {
-  local wasm_path="target/wasm32-unknown-unknown/release/ic_evm_wrapper.wasm"
+  local wasm_path="target/wasm32-unknown-unknown/release/ic_evm_gateway.wasm"
   if [[ ! -f "${wasm_path}" ]]; then
     log "wasm not found: ${wasm_path}"
     exit 1
   fi
   log "wasm size: $(ls -lh "${wasm_path}" | awk '{print $5}')"
-  local wasm_out="target/wasm32-unknown-unknown/release/ic_evm_wrapper.final.wasm"
+  local wasm_out="target/wasm32-unknown-unknown/release/ic_evm_gateway.final.wasm"
   scripts/build_wasm_postprocess.sh "${wasm_path}" "${wasm_out}"
 
   if [[ "${NETWORK}" == "playground" || "${NETWORK}" == "ic" ]]; then
@@ -61,6 +68,7 @@ install_wasm() {
 }
 
 build_wasm
+require_wrap_canister_id
 install_wasm
 
 if [[ "${RUN_SMOKE}" == "1" ]]; then

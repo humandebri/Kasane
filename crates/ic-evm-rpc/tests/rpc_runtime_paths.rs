@@ -17,13 +17,11 @@ use ic_evm_rpc::{
     rpc_eth_call_object, rpc_eth_call_object_at, rpc_eth_call_rawtx, rpc_eth_estimate_gas_object,
     rpc_eth_estimate_gas_object_at, rpc_eth_fee_history, rpc_eth_gas_price, rpc_eth_get_balance,
     rpc_eth_get_block_by_number_with_status, rpc_eth_get_block_number_by_hash, rpc_eth_get_code,
-    rpc_eth_get_storage_at,
-    rpc_eth_get_transaction_by_eth_hash, rpc_eth_get_transaction_count_at,
+    rpc_eth_get_storage_at, rpc_eth_get_transaction_by_eth_hash, rpc_eth_get_transaction_count_at,
     rpc_eth_get_transaction_receipt_by_eth_hash,
     rpc_eth_get_transaction_receipt_with_status_by_eth_hash,
-    rpc_eth_get_transaction_receipt_with_status_by_tx_id,
-    rpc_eth_history_window, rpc_eth_max_priority_fee_per_gas, rpc_eth_send_raw_transaction,
-    submit_tx_in_with_code,
+    rpc_eth_get_transaction_receipt_with_status_by_tx_id, rpc_eth_history_window,
+    rpc_eth_max_priority_fee_per_gas, rpc_eth_send_raw_transaction, submit_tx_in_with_code,
 };
 use ic_evm_rpc_types::{
     RpcBlockLookupView, RpcBlockTagView, RpcCallObjectView, RpcReceiptLookupView,
@@ -61,8 +59,8 @@ fn rpc_eth_get_balance_rejects_invalid_address_length() {
 fn rpc_eth_get_balance_returns_zero_for_unknown_account() {
     let _guard = test_lock().lock().expect("lock");
     init_stable_state();
-    let out = rpc_eth_get_balance(vec![0u8; 20], RpcBlockTagView::Latest)
-        .expect("query should succeed");
+    let out =
+        rpc_eth_get_balance(vec![0u8; 20], RpcBlockTagView::Latest).expect("query should succeed");
     assert_eq!(out, vec![0u8; 32]);
 }
 
@@ -80,7 +78,8 @@ fn rpc_eth_get_code_rejects_invalid_address_length() {
 fn rpc_eth_get_code_returns_empty_for_unknown_account() {
     let _guard = test_lock().lock().expect("lock");
     init_stable_state();
-    let out = rpc_eth_get_code(vec![0u8; 20], RpcBlockTagView::Latest).expect("query should succeed");
+    let out =
+        rpc_eth_get_code(vec![0u8; 20], RpcBlockTagView::Latest).expect("query should succeed");
     assert!(out.is_empty());
 }
 
@@ -161,8 +160,8 @@ fn rpc_eth_estimate_gas_object_returns_minimum_successful_gas_limit() {
     let from = [0x55u8; 20];
     let to = [0x66u8; 20];
     let code = vec![
-        0x5a, 0x62, 0x02, 0x49, 0xf0, 0x11, 0x60, 0x13, 0x57, 0x60, 0x01, 0x60, 0x00, 0x52,
-        0x60, 0x20, 0x60, 0x00, 0xf3, 0x5b, 0x60, 0x00, 0x60, 0x00, 0xfd,
+        0x5a, 0x62, 0x02, 0x49, 0xf0, 0x11, 0x60, 0x13, 0x57, 0x60, 0x01, 0x60, 0x00, 0x52, 0x60,
+        0x20, 0x60, 0x00, 0xf3, 0x5b, 0x60, 0x00, 0x60, 0x00, 0xfd,
     ];
     let code_hash = hash::keccak256(&code);
     with_state_mut(|state| {
@@ -174,7 +173,9 @@ fn rpc_eth_estimate_gas_object_returns_minimum_successful_gas_limit() {
             make_account_key(to),
             AccountVal::from_parts(0, [0u8; 32], code_hash),
         );
-        state.codes.insert(make_code_key(code_hash), CodeVal(code.clone()));
+        state
+            .codes
+            .insert(make_code_key(code_hash), CodeVal(code.clone()));
     });
 
     let call = RpcCallObjectView {
@@ -233,16 +234,16 @@ fn rpc_eth_txcount_at_respects_latest_and_pending_semantics() {
     let latest = rpc_eth_get_transaction_count_at(sender.to_vec(), RpcBlockTagView::Latest)
         .expect("latest nonce");
     assert_eq!(latest, 3);
-    let by_number =
-        rpc_eth_get_transaction_count_at(sender.to_vec(), RpcBlockTagView::Number(2))
-            .expect("head-number nonce should be available");
+    let by_number = rpc_eth_get_transaction_count_at(sender.to_vec(), RpcBlockTagView::Number(2))
+        .expect("head-number nonce should be available");
     assert_eq!(by_number, latest);
     let past = rpc_eth_get_transaction_count_at(sender.to_vec(), RpcBlockTagView::Number(1))
         .expect_err("historical nonce should be unavailable for in-window number");
     assert_eq!(past.code, 2001);
     assert!(past.message.starts_with("exec.state.unavailable"));
-    let out_of_window = rpc_eth_get_transaction_count_at(sender.to_vec(), RpcBlockTagView::Number(3))
-        .expect_err("out-of-window number should fail");
+    let out_of_window =
+        rpc_eth_get_transaction_count_at(sender.to_vec(), RpcBlockTagView::Number(3))
+            .expect_err("out-of-window number should fail");
     assert_eq!(out_of_window.code, 1001);
     assert!(out_of_window
         .message
@@ -269,7 +270,9 @@ fn rpc_eth_state_reads_at_respect_blocktag_window() {
             make_account_key(addr),
             AccountVal::from_parts(0, [0x44u8; 32], code_hash),
         );
-        state.codes.insert(make_code_key(code_hash), CodeVal(code.clone()));
+        state
+            .codes
+            .insert(make_code_key(code_hash), CodeVal(code.clone()));
         state
             .storage
             .insert(make_storage_key(addr, slot), U256Val([0x55u8; 32]));
@@ -289,8 +292,9 @@ fn rpc_eth_state_reads_at_respect_blocktag_window() {
     let code_head =
         rpc_eth_get_code(addr.to_vec(), RpcBlockTagView::Number(2)).expect("head-number code");
     assert_eq!(code_head, code);
-    let storage_head = rpc_eth_get_storage_at(addr.to_vec(), slot.to_vec(), RpcBlockTagView::Number(2))
-        .expect("head-number storage");
+    let storage_head =
+        rpc_eth_get_storage_at(addr.to_vec(), slot.to_vec(), RpcBlockTagView::Number(2))
+            .expect("head-number storage");
     assert_eq!(storage_head, [0x55u8; 32].to_vec());
 
     let bal_past = rpc_eth_get_balance(addr.to_vec(), RpcBlockTagView::Number(1))
@@ -301,15 +305,18 @@ fn rpc_eth_state_reads_at_respect_blocktag_window() {
         .expect_err("historical code should be unavailable");
     assert_eq!(code_past.code, 2001);
     assert!(code_past.message.starts_with("exec.state.unavailable"));
-    let storage_past = rpc_eth_get_storage_at(addr.to_vec(), slot.to_vec(), RpcBlockTagView::Number(1))
-        .expect_err("historical storage should be unavailable");
+    let storage_past =
+        rpc_eth_get_storage_at(addr.to_vec(), slot.to_vec(), RpcBlockTagView::Number(1))
+            .expect_err("historical storage should be unavailable");
     assert_eq!(storage_past.code, 2001);
     assert!(storage_past.message.starts_with("exec.state.unavailable"));
 
     let bal_oow = rpc_eth_get_balance(addr.to_vec(), RpcBlockTagView::Number(3))
         .expect_err("out-of-window number should fail");
     assert_eq!(bal_oow.code, 1001);
-    assert!(bal_oow.message.starts_with("invalid.block_range.out_of_window"));
+    assert!(bal_oow
+        .message
+        .starts_with("invalid.block_range.out_of_window"));
 
     let earliest = rpc_eth_get_code(addr.to_vec(), RpcBlockTagView::Earliest)
         .expect_err("earliest should be out-of-window when pruned");
@@ -323,8 +330,9 @@ fn rpc_eth_state_reads_at_respect_blocktag_window() {
         prune.set_pruned_before(10);
         state.prune_state.set(prune);
     });
-    let earliest_oow = rpc_eth_get_storage_at(addr.to_vec(), slot.to_vec(), RpcBlockTagView::Earliest)
-        .expect_err("earliest should be out-of-window when pruned");
+    let earliest_oow =
+        rpc_eth_get_storage_at(addr.to_vec(), slot.to_vec(), RpcBlockTagView::Earliest)
+            .expect_err("earliest should be out-of-window when pruned");
     assert_eq!(earliest_oow.code, 1001);
     assert!(earliest_oow
         .message
@@ -438,7 +446,8 @@ fn rpc_eth_fee_methods_validate_and_window_is_exposed() {
     assert_eq!(tip_err.code, 2001);
     assert!(tip_err.message.starts_with("exec.state.unavailable"));
 
-    let gas_price_err = rpc_eth_gas_price().expect_err("empty chain should return state unavailable");
+    let gas_price_err =
+        rpc_eth_gas_price().expect_err("empty chain should return state unavailable");
     assert_eq!(gas_price_err.code, 2001);
     assert!(gas_price_err.message.starts_with("exec.state.unavailable"));
 }
@@ -1353,8 +1362,8 @@ fn get_transaction_receipt_with_status_by_eth_hash_accepts_eth_hash() {
     let out = rpc_eth_get_transaction_receipt_with_status_by_eth_hash(eth_hash.to_vec());
     match out {
         RpcReceiptLookupView::Found(found) => {
-            assert_eq!(found.tx_hash, tx_id.0.to_vec());
-            assert_eq!(found.status, 1);
+            assert_eq!(found.as_ref().tx_hash, tx_id.0.to_vec());
+            assert_eq!(found.as_ref().status, 1);
         }
         _ => panic!("expected Found for eth hash input"),
     }
@@ -1411,8 +1420,8 @@ fn get_transaction_receipt_with_status_by_tx_id_accepts_tx_id() {
     let out = rpc_eth_get_transaction_receipt_with_status_by_tx_id(tx_id.0.to_vec());
     match out {
         RpcReceiptLookupView::Found(found) => {
-            assert_eq!(found.tx_hash, tx_id.0.to_vec());
-            assert_eq!(found.status, 1);
+            assert_eq!(found.as_ref().tx_hash, tx_id.0.to_vec());
+            assert_eq!(found.as_ref().status, 1);
         }
         _ => panic!("expected Found for tx_id input"),
     }

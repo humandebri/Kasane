@@ -24,8 +24,13 @@ fn prune_journal_recovery_frees_quarantine() {
     let first = chain::prune_blocks(1, 100).expect("prune should succeed");
     assert!(first.did_work);
 
-    let second = chain::prune_blocks(1, 100).expect("prune should succeed");
-    assert!(second.did_work || !second.did_work);
+    let _ = chain::prune_blocks(1, 100).expect("prune should succeed");
+    with_state(|state| {
+        assert!(state.blocks.get(&10).is_some());
+        assert!(state.receipts.get(&tx).is_some());
+        assert!(state.tx_index.get(&tx).is_some());
+        assert!(state.prune_state.get().journal_block().is_none());
+    });
 }
 
 #[test]
@@ -68,8 +73,7 @@ fn prune_journal_recovery_removes_seen_tx() {
         state.prune_state.set(prune_state);
     });
 
-    let result = chain::prune_blocks(1, 100).expect("prune should succeed");
-    assert!(result.did_work || !result.did_work);
+    let _ = chain::prune_blocks(1, 100).expect("prune should succeed");
 
     with_state(|state| {
         assert!(state.seen_tx.get(&tx).is_none());
@@ -93,8 +97,10 @@ fn quarantine_is_not_reused_during_prune() {
     });
 
     let _ = chain::prune_blocks(1, 100).expect("prune should succeed");
-    let result = chain::prune_blocks(1, 100).expect("prune should succeed");
-    assert!(result.did_work || !result.did_work);
+    let _ = chain::prune_blocks(1, 100).expect("prune should succeed");
+    with_state(|state| {
+        assert!(state.prune_state.get().journal_block().is_none());
+    });
 }
 
 #[test]
@@ -114,9 +120,14 @@ fn prune_is_idempotent() {
     });
 
     let first = chain::prune_blocks(1, 100).expect("prune should succeed");
-    let second = chain::prune_blocks(1, 100).expect("prune should succeed");
+    let _ = chain::prune_blocks(1, 100).expect("prune should succeed");
     assert!(first.did_work);
-    assert!(second.did_work || !second.did_work);
+    with_state(|state| {
+        assert!(state.blocks.get(&30).is_some());
+        assert!(state.receipts.get(&tx).is_some());
+        assert!(state.tx_index.get(&tx).is_some());
+        assert!(state.prune_state.get().journal_block().is_none());
+    });
 }
 
 #[test]

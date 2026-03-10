@@ -1,0 +1,273 @@
+// どこで: wrapper dashboard hook / 何を: form state と request_id preview を管理 / なぜ: 画面部品と送信ロジックの責務を分離するため
+
+import { useEffect, useMemo, useState } from "react";
+import type {
+  WrapGasEstimateStatus,
+  WrapNonceStatus,
+  UnwrapFormState,
+  WrapFormState,
+} from "@/components/dashboard-ui/types";
+import { estimateWrapGasLimit, getWrapEvmNonce } from "@/lib/canister/wrapper-client";
+import { callerEvmAddressFromPrincipalText, principalTextToBytes } from "@/lib/principal";
+import {
+  decimalToBytes32,
+  deriveRequestId,
+  deriveWrapRequestId,
+} from "@/lib/request-id";
+import { bytesToHex, hexToBytes } from "@/lib/utils";
+import {
+  defaultDeadlineText,
+  parsePositiveBigInt,
+  parsePositiveU64,
+  parseU64,
+  randomU64NonceText,
+} from "@/lib/wrap-input";
+import { buildWrapEstimateCallObject } from "@/lib/wrap-estimate";
+
+export function useWrapperForms(params: {
+  walletPrincipalText: string | null;
+  wrapCanisterId: string;
+  evmWrapFactory: string;
+}) {
+  const [unwrapForm, setUnwrapForm] = useState<UnwrapFormState>({
+    assetId: "",
+    amount: "",
+    recipient: "",
+    userNonce: "",
+    deadline: "",
+  });
+  const [wrapForm, setWrapForm] = useState<WrapFormState>({
+    assetId: "",
+    amount: "",
+    evmRecipient: "",
+    evmNonce: "",
+    gasLimit: "",
+  });
+  const [wrapGasEstimateStatus, setWrapGasEstimateStatus] = useState<WrapGasEstimateStatus>("idle");
+  const [wrapGasEstimateError, setWrapGasEstimateError] = useState<string | null>(null);
+  const [wrapNonceStatus, setWrapNonceStatus] = useState<WrapNonceStatus>("idle");
+  const [wrapNonceError, setWrapNonceError] = useState<string | null>(null);
+
+  useEffect(() => {
+    setUnwrapForm((current) => {
+      if (current.userNonce !== "" || current.deadline !== "") {
+        return current;
+      }
+      return {
+        ...current,
+        userNonce: randomU64NonceText(),
+        deadline: defaultDeadlineText(),
+      };
+    });
+  }, []);
+
+  useEffect(() => {
+    const principalText = params.walletPrincipalText;
+    if (!principalText) {
+      return;
+    }
+    setUnwrapForm((current) =>
+      current.recipient.trim() === ""
+        ? { ...current, recipient: principalText }
+        : current,
+    );
+    setWrapForm((current) => {
+      if (current.evmRecipient.trim() !== "") {
+        return current;
+      }
+      try {
+        return {
+          ...current,
+          evmRecipient: bytesToHex(callerEvmAddressFromPrincipalText(principalText)),
+        };
+      } catch {
+        return current;
+      }
+    });
+  }, [params.walletPrincipalText]);
+
+  useEffect(() => {
+    if (params.walletPrincipalText === null || params.wrapCanisterId.trim() === "") {
+      setWrapNonceStatus("idle");
+      setWrapNonceError(null);
+      setWrapForm((current) => (current.evmNonce === "" ? current : { ...current, evmNonce: "" }));
+      return;
+    }
+
+    let cancelled = false;
+    setWrapNonceStatus("loading");
+    setWrapNonceError(null);
+    void getWrapEvmNonce(params.wrapCanisterId)
+      .then((nonce) => {
+        if (cancelled) {
+          return;
+        }
+        setWrapNonceStatus("ready");
+        setWrapNonceError(null);
+        setWrapForm((current) => (
+          current.evmNonce === nonce.toString()
+            ? current
+            : { ...current, evmNonce: nonce.toString() }
+        ));
+      })
+      .catch((error: unknown) => {
+        if (cancelled) {
+          return;
+        }
+        setWrapNonceStatus("error");
+        setWrapNonceError(error instanceof Error ? error.message : "wrap.nonce_failed");
+        setWrapForm((current) => (current.evmNonce === "" ? current : { ...current, evmNonce: "" }));
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [params.walletPrincipalText, params.wrapCanisterId]);
+
+  useEffect(() => {
+    const assetId = wrapForm.assetId.trim();
+    const amount = wrapForm.amount.trim();
+    const evmRecipient = wrapForm.evmRecipient.trim();
+    const evmNonce = wrapForm.evmNonce.trim();
+
+    if (
+      wrapNonceStatus !== "ready" ||
+      assetId === "" ||
+      amount === "" ||
+      evmRecipient === "" ||
+      evmNonce === ""
+    ) {
+      setWrapGasEstimateStatus("idle");
+      setWrapGasEstimateError(null);
+      setWrapForm((current) => (current.gasLimit === "" ? current : { ...current, gasLimit: "" }));
+      return;
+    }
+
+    try {
+      parseU64(evmNonce, "validation.evm_nonce.invalid");
+      buildWrapEstimateCallObject({
+        wrapCanisterId: params.wrapCanisterId,
+        evmWrapFactory: params.evmWrapFactory,
+        assetId,
+        amount,
+        evmRecipient,
+      });
+    } catch {
+      setWrapGasEstimateStatus("idle");
+      setWrapGasEstimateError(null);
+      setWrapForm((current) => (current.gasLimit === "" ? current : { ...current, gasLimit: "" }));
+      return;
+    }
+
+    let cancelled = false;
+    setWrapGasEstimateStatus("estimating");
+    setWrapGasEstimateError(null);
+    void estimateWrapGasLimit({
+      wrapCanisterId: params.wrapCanisterId,
+      evmWrapFactory: params.evmWrapFactory,
+      assetId,
+      amount,
+      evmRecipient,
+    }).then((gasLimit) => {
+      if (cancelled) {
+        return;
+      }
+      setWrapGasEstimateStatus("ready");
+      setWrapGasEstimateError(null);
+      setWrapForm((current) => (
+        current.gasLimit === gasLimit.toString()
+          ? current
+          : { ...current, gasLimit: gasLimit.toString() }
+      ));
+    }).catch((error: unknown) => {
+      if (cancelled) {
+        return;
+      }
+      setWrapGasEstimateStatus("error");
+      setWrapGasEstimateError(
+        error instanceof Error ? error.message : "wrap.gas_estimate_failed",
+      );
+      setWrapForm((current) => (current.gasLimit === "" ? current : { ...current, gasLimit: "" }));
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    params.evmWrapFactory,
+    params.wrapCanisterId,
+    wrapForm.assetId,
+    wrapForm.amount,
+    wrapForm.evmNonce,
+    wrapForm.evmRecipient,
+    wrapNonceStatus,
+  ]);
+
+  const unwrapPreviewRequestId = useMemo(() => {
+    if (!params.walletPrincipalText) {
+      return null;
+    }
+    try {
+      return bytesToHex(
+        deriveRequestId({
+          callerEvmAddress: callerEvmAddressFromPrincipalText(
+            params.walletPrincipalText,
+          ),
+          vaultCanisterId: params.wrapCanisterId,
+          assetId: unwrapForm.assetId.trim(),
+          amount: parsePositiveBigInt(unwrapForm.amount, "validation.amount.invalid"),
+          recipient: unwrapForm.recipient.trim(),
+          userNonce: parseU64(unwrapForm.userNonce, "validation.user_nonce.invalid"),
+          deadline: parseU64(unwrapForm.deadline, "validation.deadline.invalid"),
+        }),
+      );
+    } catch {
+      return null;
+    }
+  }, [params.walletPrincipalText, params.wrapCanisterId, unwrapForm]);
+
+  const wrapPreviewRequestId = useMemo(() => {
+    if (!params.walletPrincipalText) {
+      return null;
+    }
+    if (wrapNonceStatus !== "ready" || wrapGasEstimateStatus !== "ready") {
+      return null;
+    }
+    try {
+      return bytesToHex(
+        deriveWrapRequestId({
+          fromOwner: principalTextToBytes(params.walletPrincipalText),
+          assetId: principalTextToBytes(wrapForm.assetId.trim()),
+          amount: decimalToBytes32(wrapForm.amount.trim()),
+          evmRecipient: hexToBytes(wrapForm.evmRecipient.trim()),
+          evmNonce: parseU64(wrapForm.evmNonce, "validation.evm_nonce.invalid"),
+          gasLimit: parsePositiveU64(wrapForm.gasLimit, "validation.gas_limit.invalid"),
+        }),
+      );
+    } catch {
+      return null;
+    }
+  }, [params.walletPrincipalText, wrapForm, wrapGasEstimateStatus, wrapNonceStatus]);
+
+  function resetUnwrapNonceDeadline(): void {
+    setUnwrapForm((current) => ({
+      ...current,
+      userNonce: randomU64NonceText(),
+      deadline: defaultDeadlineText(),
+    }));
+  }
+
+  return {
+    unwrapForm,
+    setUnwrapForm,
+    wrapForm,
+    setWrapForm,
+    unwrapPreviewRequestId,
+    wrapPreviewRequestId,
+    wrapGasEstimateStatus,
+    wrapGasEstimateError,
+    wrapNonceStatus,
+    wrapNonceError,
+    resetUnwrapNonceDeadline,
+  };
+}

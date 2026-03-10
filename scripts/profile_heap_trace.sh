@@ -13,9 +13,9 @@ CANISTER_NAME="${CANISTER_NAME:-evm_canister}"
 CANISTER_ID="${CANISTER_ID:-}"
 MODE="${MODE:-reinstall}"
 TRACE_ONLY="${TRACE_ONLY:-execute_tx_on,mining_tick}"
-INPUT_WASM="${REPO_ROOT}/target/wasm32-unknown-unknown/release/ic_evm_wrapper.wasm"
-OPT_WASM="${REPO_ROOT}/target/wasm32-unknown-unknown/release/ic_evm_wrapper.final.wasm"
-PROFILED_WASM="${REPO_ROOT}/target/wasm32-unknown-unknown/release/ic_evm_wrapper.profiled.wasm"
+INPUT_WASM="${REPO_ROOT}/target/wasm32-unknown-unknown/release/ic_evm_gateway.wasm"
+OPT_WASM="${REPO_ROOT}/target/wasm32-unknown-unknown/release/ic_evm_gateway.final.wasm"
+PROFILED_WASM="${REPO_ROOT}/target/wasm32-unknown-unknown/release/ic_evm_gateway.profiled.wasm"
 START_PAGE="${START_PAGE:-}"
 PAGE_LIMIT="${PAGE_LIMIT:-}"
 SKIP_DEPLOY="${SKIP_DEPLOY:-0}"
@@ -24,9 +24,16 @@ log() {
   echo "[profile] $*"
 }
 
+require_wrap_canister_id() {
+  if [[ -z "${WRAP_CANISTER_ID:-}" ]]; then
+    log "WRAP_CANISTER_ID is required"
+    exit 1
+  fi
+}
+
 build_release() {
-  log "cargo build --release --target wasm32-unknown-unknown -p ic-evm-wrapper"
-  cargo build --release --target wasm32-unknown-unknown -p ic-evm-wrapper
+  log "cargo build --release --target wasm32-unknown-unknown -p ic-evm-gateway"
+  cargo build --release --target wasm32-unknown-unknown -p ic-evm-gateway
 }
 
 instrument_wasm() {
@@ -83,7 +90,7 @@ instrument_wasm() {
 }
 
 deploy_profiled() {
-  local dfx_cmd="dfx canister --network ${NETWORK}"
+  local -a icp_cmd=(icp canister install -n "${NETWORK}")
   local init_args
   init_args="$(build_init_args_for_current_identity 1000000000000000000)"
 
@@ -93,17 +100,16 @@ deploy_profiled() {
       exit 1
     fi
     log "install profiled wasm to canister_id=${CANISTER_ID} mode=${MODE}"
-    ${dfx_cmd} install --mode "${MODE}" --wasm "${PROFILED_WASM}" --argument "${init_args}" "${CANISTER_ID}"
+    "${icp_cmd[@]}" --mode "${MODE}" --wasm "${PROFILED_WASM}" --args "${init_args}" "${CANISTER_ID}"
   else
     log "install profiled wasm to canister_name=${CANISTER_NAME} mode=${MODE}"
-    ${dfx_cmd} install --mode "${MODE}" --wasm "${PROFILED_WASM}" --argument "${init_args}" "${CANISTER_NAME}"
+    "${icp_cmd[@]}" --mode "${MODE}" --wasm "${PROFILED_WASM}" --args "${init_args}" "${CANISTER_NAME}"
   fi
 
   cat <<'EOF'
 [profile] next step examples:
-  dfx canister --network "$NETWORK" call evm_canister submit_ic_tx '(vec { <tx_bytes...> })'
-  dfx canister --network "$NETWORK" call --query evm_canister rpc_eth_block_number '( )'
-  dfx canister --network "$NETWORK" call evm_canister metrics '(60:nat64)'
+  icp canister call -n "$NETWORK" evm_canister submit_ic_tx '(vec { <tx_bytes...> })'
+  icp canister call -n "$NETWORK" evm_canister metrics '(60:nat64)'
 EOF
 }
 
@@ -112,5 +118,6 @@ instrument_wasm
 if [[ "${SKIP_DEPLOY}" == "1" ]]; then
   log "skip deploy (SKIP_DEPLOY=1)"
 else
+  require_wrap_canister_id
   deploy_profiled
 fi

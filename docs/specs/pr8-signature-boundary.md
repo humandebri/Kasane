@@ -22,7 +22,7 @@ Reference implementation files:
 - `crates/evm-core/src/tx_decode.rs`
 - `crates/evm-core/src/chain.rs`
 - `crates/evm-core/src/revm_exec.rs`
-- `crates/ic-evm-wrapper/src/lib.rs`
+- `crates/ic-evm-gateway/src/lib.rs`
 
 ## 2. Boundary Rules
 

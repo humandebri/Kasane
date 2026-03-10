@@ -326,15 +326,16 @@ max_tx_size / max_gas_per_tx / max_code_size が効く
 目的: canister上での落ち方/起動を確認し、stable上の壊れたtxを巻き込んで落ちないことを保証する。
 
 必須:
-- cargo test -p ic-evm-wrapper
+- cargo test -p ic-evm-gateway
 
-手動スモーク（dfx）:
-- dfx start --clean --background
+手動スモーク（icp-cli）:
+- icp network start -d
+- export WRAP_CANISTER_ID="$(icp canister status -e local --id-only wrap_canister)"
 - source scripts/lib_init_args.sh && INIT_ARGS="$(build_init_args_for_current_identity 1000000000000000000)"
-- dfx canister install <canister> --mode reinstall --wasm target/wasm32-unknown-unknown/release/ic_evm_wrapper.candid.wasm --argument "$INIT_ARGS"
+- icp canister install -e local <canister> --mode reinstall --wasm target/wasm32-unknown-unknown/release/ic_evm_gateway.candid.wasm --args "$INIT_ARGS"
 - 運用の資金配布は `InitArgs.genesis_balances` のみを使用する
-- dfx canister call <canister> submit_tx '(blob "<raw_eip2718_tx>")'
-- （旧案・廃止）dfx canister call <canister> 手動採掘API '(1:nat)'
+- icp canister call -e local <canister> submit_tx '(blob "<raw_eip2718_tx>")'
+- （旧案・廃止）手動採掘API '(1:nat)'
 - dfx canister call <canister> get_block '(0:nat)' / get_receipt
 
 旧データ混入の起動確認（最低1回）:

@@ -12,7 +12,7 @@ crate-type = ["cdylib", "rlib"]
 [dependencies]
 candid = "0.10"
 ic-cdk = "0.19.0"
-ic-cdk-timers = "1.0.0" # Keep in sync with ic-evm-wrapper to avoid links conflicts
+ic-cdk-timers = "1.0.0" # Keep in sync with ic-evm-gateway to avoid links conflicts
 ic-stable-structures = "0.7.2"
 alloy-primitives = { version = "=1.5.3", default-features = false, features = ["std"] }
 wincode = { version = "0.3.1", features = ["derive"] }

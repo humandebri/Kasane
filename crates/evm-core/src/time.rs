@@ -43,8 +43,5 @@ fn now_ns() -> u64 {
 
     let max_u64 = u128::from(u64::MAX);
     let clamped = nanos_u128.min(max_u64);
-    match u64::try_from(clamped) {
-        Ok(value) => value,
-        Err(_) => u64::MAX,
-    }
+    u64::try_from(clamped).unwrap_or(u64::MAX)
 }

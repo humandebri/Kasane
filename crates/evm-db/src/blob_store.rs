@@ -73,7 +73,7 @@ impl Storable for AllocKey {
         let data = bytes.as_ref();
         if data.len() != 12 {
             record_corrupt(b"alloc_key");
-            return Self { 0: [0u8; 12] };
+            return Self([0u8; 12]);
         }
         let mut out = [0u8; 12];
         out.copy_from_slice(data);
@@ -221,10 +221,8 @@ impl BlobStore {
                     state: BlobState::Used,
                 };
                 self.alloc_table.insert(key, entry);
-                self.usage_totals.used_class_bytes = self
-                    .usage_totals
-                    .used_class_bytes
-                    .saturating_add(class_u64);
+                self.usage_totals.used_class_bytes =
+                    self.usage_totals.used_class_bytes.saturating_add(class_u64);
                 self.usage_totals.arena_end_bytes = end;
                 current
             }

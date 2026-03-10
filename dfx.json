@@ -1,14 +1,19 @@
 {
   "canisters": {
     "evm_canister": {
-      "candid": "crates/ic-evm-wrapper/evm_canister.did",
-      "package": "ic-evm-wrapper",
+      "candid": "crates/ic-evm-gateway/evm_canister.did",
+      "package": "ic-evm-gateway",
       "metadata": [
         {
           "name": "candid:service",
           "visibility": "public"
         }
       ],
+      "type": "rust"
+    },
+    "wrap_canister": {
+      "candid": "othercanisters/wrap-canister/wrap_canister.did",
+      "package": "wrap-canister",
       "type": "rust"
     }
   },

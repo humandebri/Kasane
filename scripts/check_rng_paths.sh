@@ -33,7 +33,7 @@ fi
 
 if [[ -s "$TMP_FILE" ]]; then
   # 許可: wasmでcustom backendを登録する箇所のみ
-  grep -v '^\.\/crates\/ic-evm-wrapper\/src\/lib.rs:' "$TMP_FILE" > "$TMP_FILE.filtered" || true
+  grep -v '^\.\/crates\/ic-evm-gateway\/src\/lib.rs:' "$TMP_FILE" > "$TMP_FILE.filtered" || true
   mv "$TMP_FILE.filtered" "$TMP_FILE"
 fi
 

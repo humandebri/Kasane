@@ -20,6 +20,7 @@ pub mod state_root_meta;
 pub mod state_root_ops;
 pub mod tx;
 pub mod tx_loc;
+pub mod unwrap_request;
 
 pub use block::{BlockData, Head};
 pub use caller::CallerKey;
@@ -56,3 +57,4 @@ pub use tx::{
     StoredTx, StoredTxBytes, StoredTxBytesError, StoredTxError, TxId, TxIndexEntry, TxKind,
 };
 pub use tx_loc::{TxLoc, TxLocKind};
+pub use unwrap_request::{UnwrapRequestStatus, UnwrapRequestV1};
