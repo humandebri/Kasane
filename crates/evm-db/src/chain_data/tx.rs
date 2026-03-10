@@ -130,6 +130,7 @@ pub enum StoredTxError {
 }
 
 impl StoredTxBytes {
+    #[allow(clippy::too_many_arguments)]
     pub fn new_with_fees(
         tx_id: TxId,
         kind: TxKind,

@@ -117,6 +117,12 @@ impl GcStateV1 {
     }
 }
 
+impl Default for GcStateV1 {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Storable for GcStateV1 {
     fn to_bytes(&self) -> Cow<'_, [u8]> {
         let mut out = [0u8; 32];
@@ -283,6 +289,12 @@ impl StateRootMetricsV1 {
             gc_progress: 0,
             migration_phase: MigrationPhase::Done as u8,
         }
+    }
+}
+
+impl Default for StateRootMetricsV1 {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

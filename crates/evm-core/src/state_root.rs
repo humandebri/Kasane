@@ -239,13 +239,13 @@ pub fn run_migration_tick(state: &mut StableState, max_steps: u32) -> bool {
             migration.cursor = 0;
             migration.last_error = 0;
             state.state_root_migration.set(migration);
-            return false;
+            false
         }
         MigrationPhase::Init => {
             migration.phase = MigrationPhase::BuildTrie;
             migration.cursor = 0;
             state.state_root_migration.set(migration);
-            return false;
+            false
         }
         MigrationPhase::BuildTrie => {
             if migration.cursor == 0 {
@@ -286,7 +286,7 @@ pub fn run_migration_tick(state: &mut StableState, max_steps: u32) -> bool {
                 migration.cursor = u64::try_from(start.saturating_add(scanned)).unwrap_or(u64::MAX);
             }
             state.state_root_migration.set(migration);
-            return false;
+            false
         }
         MigrationPhase::BuildRefcnt => {
             clear_stable_map(&mut state.state_root_node_db);
@@ -311,7 +311,7 @@ pub fn run_migration_tick(state: &mut StableState, max_steps: u32) -> bool {
             migration.phase = MigrationPhase::Verify;
             migration.cursor = 0;
             state.state_root_migration.set(migration);
-            return false;
+            false
         }
         MigrationPhase::Verify => {
             let root = compute_state_root_from_cache(state);
@@ -323,7 +323,7 @@ pub fn run_migration_tick(state: &mut StableState, max_steps: u32) -> bool {
             migration.cursor = 0;
             migration.last_error = 0;
             state.state_root_migration.set(migration);
-            return true;
+            true
         }
     }
 }
@@ -375,9 +375,11 @@ fn build_anchor_delta(
     storage_updates: &[StorageRootUpdate],
     new_state_root: [u8; 32],
 ) -> AnchorDelta {
-    let mut out = AnchorDelta::default();
-    out.state_root_old = node_codec::root_hash_key(state.state_root_meta.get().state_root);
-    out.state_root_new = node_codec::root_hash_key(new_state_root);
+    let mut out = AnchorDelta {
+        state_root_old: node_codec::root_hash_key(state.state_root_meta.get().state_root),
+        state_root_new: node_codec::root_hash_key(new_state_root),
+        ..AnchorDelta::default()
+    };
     for update in storage_updates {
         let key = make_account_key(update.addr);
         let old_root = state.state_storage_roots.get(&key).map(|v| HashKey(v.0));
@@ -438,7 +440,7 @@ fn apply_node_db_records(state: &mut StableState, records: Vec<(HashKey, NodeRec
 }
 
 fn should_verify(block_number: u64, touched: TouchedSummary) -> bool {
-    if block_number % VERIFY_SAMPLE_MOD == 0 {
+    if block_number.is_multiple_of(VERIFY_SAMPLE_MOD) {
         return true;
     }
     touched.accounts_count <= VERIFY_MAX_TOUCHED_ACCOUNTS

@@ -147,7 +147,7 @@ fn precompile_fail<CTX: ContextTr>(
 }
 
 fn parse_input(input: &[u8]) -> Result<UnwrapIntent, &'static str> {
-    if input.len() < ABI_WORD_SIZE * ABI_HEAD_WORDS || input.len() % ABI_WORD_SIZE != 0 {
+    if input.len() < ABI_WORD_SIZE * ABI_HEAD_WORDS || !input.len().is_multiple_of(ABI_WORD_SIZE) {
         return Err("wrap.arg.abi_invalid");
     }
     let vault_offset = decode_offset(
@@ -527,7 +527,7 @@ mod tests {
         out[24..32].copy_from_slice(&(bytes.len() as u64).to_be_bytes());
         out.extend_from_slice(&bytes);
         let pad = (32 - (bytes.len() % 32)) % 32;
-        out.extend(std::iter::repeat(0u8).take(pad));
+        out.extend(std::iter::repeat_n(0u8, pad));
         out
     }
 }

@@ -37,9 +37,8 @@ fn encode_unwrap_input() -> Vec<u8> {
     let recipient_tail = encode_dynamic_bytes(&recipient);
     let head_size = 32 * 6;
 
-    let mut out = Vec::with_capacity(
-        head_size + vault_tail.len() + asset_tail.len() + recipient_tail.len(),
-    );
+    let mut out =
+        Vec::with_capacity(head_size + vault_tail.len() + asset_tail.len() + recipient_tail.len());
     out.extend_from_slice(&abi_word_from_u64(head_size as u64));
     out.extend_from_slice(&abi_word_from_u64((head_size + vault_tail.len()) as u64));
     out.extend_from_slice(&abi_word_from_u128(1_000_000_000_000u128));
@@ -83,7 +82,10 @@ fn wrap_precompile_eth_call_object_succeeds_in_query_path() {
     expected_hash_input.extend_from_slice(&caller);
     expected_hash_input.extend_from_slice(&input);
     assert_eq!(out.status, 1);
-    assert_eq!(out.return_data, hash::keccak256(&expected_hash_input).to_vec());
+    assert_eq!(
+        out.return_data,
+        hash::keccak256(&expected_hash_input).to_vec()
+    );
     assert!(out.revert_data.is_none());
 }
 

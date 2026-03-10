@@ -318,7 +318,8 @@ thread_local! {
     static STABLE_STATE: RefCell<Option<StableState>> = const { RefCell::new(None) };
     static WORKER_SCHEDULED: Cell<bool> = const { Cell::new(false) };
     static WRAP_WORKER_SCHEDULED: Cell<bool> = const { Cell::new(false) };
-    static PENDING_WRAP_SUBMISSIONS: RefCell<BTreeSet<RequestId>> = RefCell::new(BTreeSet::new());
+    static PENDING_WRAP_SUBMISSIONS: RefCell<BTreeSet<RequestId>> =
+        const { RefCell::new(BTreeSet::new()) };
 }
 
 fn with_memory<R>(id: MemoryId, f: impl FnOnce(Memory) -> R) -> R {
@@ -477,10 +478,7 @@ fn submit_unwrap_request(args: SubmitUnwrapRequestArgs) -> Result<SubmitUnwrapRe
     })
 }
 
-fn apply_insert_request_outcome(
-    outcome: InsertRequestOutcome,
-    scheduler: fn(),
-) -> RequestId {
+fn apply_insert_request_outcome(outcome: InsertRequestOutcome, scheduler: fn()) -> RequestId {
     match outcome {
         InsertRequestOutcome::Inserted(request_id) => {
             enqueue_request(request_id);
@@ -1490,7 +1488,7 @@ fn validate_non_anonymous_principal(principal: &Principal, code: &str) -> Result
 }
 
 fn validate_gas_price_buffer_bps(value: u32) -> Result<(), String> {
-    if value < 10_000 || value > 50_000 {
+    if !(10_000..=50_000).contains(&value) {
         return Err("arg.gas_price_buffer_bps_out_of_range".to_string());
     }
     Ok(())
@@ -1774,12 +1772,12 @@ fn export_did() -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        apply_insert_request_outcome, decode_stored_request, dequeue_request, derive_wrap_request_id,
-        encode_factory_mint_for_asset_call_data, encode_stored_request, enqueue_request,
-        init_state, insert_request, insert_wrap_request, is_withdrawable, map_transfer_reply,
-        mark_request_running, mark_wrap_request_running, nat_from_32_be, nat_to_be_bytes,
-        on_worker_queue_drain, on_wrap_worker_queue_drain, principal_from_bytes, schedule_worker,
-        schedule_wrap_worker, submit_error_to_code, to_request_id,
+        apply_insert_request_outcome, decode_stored_request, dequeue_request,
+        derive_wrap_request_id, encode_factory_mint_for_asset_call_data, encode_stored_request,
+        enqueue_request, init_state, insert_request, insert_wrap_request, is_withdrawable,
+        map_transfer_reply, mark_request_running, mark_wrap_request_running, nat_from_32_be,
+        nat_to_be_bytes, on_worker_queue_drain, on_wrap_worker_queue_drain, principal_from_bytes,
+        schedule_worker, schedule_wrap_worker, submit_error_to_code, to_request_id,
         to_withdraw_error_code, transfer_error_to_code, transfer_from_error_to_code, u256_from_u64,
         validate_non_anonymous_principal, validate_withdraw_request, validate_wrap_request_args,
         with_state, with_state_mut, FeeCharge, Icrc1TransferError, Icrc2TransferFromError,
@@ -1978,7 +1976,9 @@ mod tests {
     fn submit_unwrap_request_does_not_requeue_existing_request() {
         reset_state();
         with_state_mut(|state| {
-            let _ = state.kasane_canister.set(Principal::anonymous().as_slice().to_vec());
+            let _ = state
+                .kasane_canister
+                .set(Principal::anonymous().as_slice().to_vec());
             let request_id = to_request_id(&[1u8; 32]).expect("id");
             state.requests.insert(
                 request_id,
@@ -2059,7 +2059,9 @@ mod tests {
         for status in statuses {
             reset_state();
             with_state_mut(|state| {
-                let _ = state.kasane_canister.set(Principal::anonymous().as_slice().to_vec());
+                let _ = state
+                    .kasane_canister
+                    .set(Principal::anonymous().as_slice().to_vec());
                 let request_id = to_request_id(&[status as u8 + 1; 32]).expect("id");
                 state.requests.insert(
                     request_id,
@@ -2092,7 +2094,10 @@ mod tests {
                 ),
                 no_schedule,
             );
-            assert_eq!(request_id, to_request_id(&[status as u8 + 1; 32]).expect("id"));
+            assert_eq!(
+                request_id,
+                to_request_id(&[status as u8 + 1; 32]).expect("id")
+            );
             with_state(|state| {
                 assert_eq!(state.requests.len(), 1, "{status:?}");
                 let expected_queue_len = u64::from(status == RequestStatus::Queued);

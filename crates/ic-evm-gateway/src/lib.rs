@@ -156,7 +156,7 @@ fn init_inner(args: Option<InitArgs>, require_args: bool) {
     };
     if require_args || !args.genesis_balances.is_empty() {
         if let Err(reason) = args.validate() {
-            ic_cdk::trap(&format!("InvalidInitArgs: {reason}"));
+            ic_cdk::trap(format!("InvalidInitArgs: {reason}"));
         }
     }
     with_state_mut(|state| {
@@ -242,7 +242,7 @@ fn recover_unwrap_dispatch_state_after_upgrade(now: u64) -> bool {
         }
 
         if candidates.is_empty() {
-            return state.unwrap_dispatch_queue.len() > 0;
+            return !state.unwrap_dispatch_queue.is_empty();
         }
 
         let mut meta = *state.unwrap_dispatch_meta.get();
@@ -256,7 +256,7 @@ fn recover_unwrap_dispatch_state_after_upgrade(now: u64) -> bool {
             queued_ids.insert(request_id);
         }
         state.unwrap_dispatch_meta.set(meta);
-        state.unwrap_dispatch_queue.len() > 0
+        !state.unwrap_dispatch_queue.is_empty()
     })
 }
 
@@ -1403,7 +1403,7 @@ fn prune_boundary_for_number(number: u64) -> Option<u64> {
 #[cfg(test)]
 fn receipt_lookup_status(tx_id: TxId) -> RpcReceiptLookupView {
     if let Some(receipt) = chain::get_receipt(&tx_id) {
-        return RpcReceiptLookupView::Found(receipt_to_eth_view(receipt));
+        return RpcReceiptLookupView::Found(Box::new(receipt_to_eth_view(receipt)));
     }
     let pruned_before = with_state(|state| state.prune_state.get().pruned_before());
     let loc = chain::get_tx_loc(&tx_id);
@@ -1881,7 +1881,7 @@ fn install_mining_timer(interval_ms: u64) {
 }
 
 fn should_prune_on_block_event(block_number: u64) -> bool {
-    block_number != 0 && block_number % PRUNE_EVENT_BLOCK_INTERVAL == 0
+    block_number != 0 && block_number.is_multiple_of(PRUNE_EVENT_BLOCK_INTERVAL)
 }
 
 fn maybe_prune_on_block_event(block_number: u64) {
@@ -1919,7 +1919,7 @@ fn mining_tick_with_timer(timer_scheduler: fn(u64), reject_provider: fn() -> Opt
             state.chain_state.set(chain_state);
             return false;
         }
-        if state.ready_queue.len() == 0 {
+        if state.ready_queue.is_empty() {
             state.chain_state.set(chain_state);
             return false;
         }
@@ -1948,11 +1948,10 @@ fn mining_tick_with_timer(timer_scheduler: fn(u64), reject_provider: fn() -> Opt
                 error!(error = ?err, "mining_tick produce_block failed");
             }
         }
-        let has_ready_tx = with_state(|state| state.ready_queue.len() > 0);
+        let has_ready_tx = with_state(|state| !state.ready_queue.is_empty());
         if has_ready_tx {
             schedule_mining_with_timer(timer_scheduler, reject_provider);
         }
-        return;
     }
 }
 
@@ -2754,9 +2753,9 @@ mod tests {
 
     #[test]
     fn rejection_stays_failed() {
-        let out = super::apply_unwrap_dispatch_outcome(
-            super::WrapSubmitDispatchOutcome::Rejected("request.invalid".to_string()),
-        );
+        let out = super::apply_unwrap_dispatch_outcome(super::WrapSubmitDispatchOutcome::Rejected(
+            "request.invalid".to_string(),
+        ));
         assert_eq!(
             out,
             super::AppliedUnwrapDispatchOutcome {
@@ -2768,8 +2767,9 @@ mod tests {
 
     #[test]
     fn request_id_mismatch_stays_failed() {
-        let out =
-            super::apply_unwrap_dispatch_outcome(super::WrapSubmitDispatchOutcome::RequestIdMismatch);
+        let out = super::apply_unwrap_dispatch_outcome(
+            super::WrapSubmitDispatchOutcome::RequestIdMismatch,
+        );
         assert_eq!(
             out,
             super::AppliedUnwrapDispatchOutcome {
@@ -2781,9 +2781,9 @@ mod tests {
 
     #[test]
     fn call_failed_stays_failed() {
-        let out = super::apply_unwrap_dispatch_outcome(super::WrapSubmitDispatchOutcome::CallFailed(
-            "transport".to_string(),
-        ));
+        let out = super::apply_unwrap_dispatch_outcome(
+            super::WrapSubmitDispatchOutcome::CallFailed("transport".to_string()),
+        );
         assert_eq!(
             out,
             super::AppliedUnwrapDispatchOutcome {
@@ -2795,10 +2795,9 @@ mod tests {
 
     #[test]
     fn decode_failed_stays_failed() {
-        let out =
-            super::apply_unwrap_dispatch_outcome(super::WrapSubmitDispatchOutcome::DecodeFailed(
-                "decode".to_string(),
-            ));
+        let out = super::apply_unwrap_dispatch_outcome(
+            super::WrapSubmitDispatchOutcome::DecodeFailed("decode".to_string()),
+        );
         assert_eq!(
             out,
             super::AppliedUnwrapDispatchOutcome {
@@ -2976,7 +2975,7 @@ mod tests {
         .expect("submit_ic_tx should succeed");
         evm_db::stable_state::with_state(|state| {
             assert!(state.seen_tx.get(&tx_id).is_some());
-            assert!(state.ready_queue.len() > 0);
+            assert!(!state.ready_queue.is_empty());
             assert!(!state.chain_state.get().mining_scheduled);
         });
 

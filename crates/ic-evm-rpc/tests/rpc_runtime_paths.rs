@@ -1362,8 +1362,8 @@ fn get_transaction_receipt_with_status_by_eth_hash_accepts_eth_hash() {
     let out = rpc_eth_get_transaction_receipt_with_status_by_eth_hash(eth_hash.to_vec());
     match out {
         RpcReceiptLookupView::Found(found) => {
-            assert_eq!(found.tx_hash, tx_id.0.to_vec());
-            assert_eq!(found.status, 1);
+            assert_eq!(found.as_ref().tx_hash, tx_id.0.to_vec());
+            assert_eq!(found.as_ref().status, 1);
         }
         _ => panic!("expected Found for eth hash input"),
     }
@@ -1420,8 +1420,8 @@ fn get_transaction_receipt_with_status_by_tx_id_accepts_tx_id() {
     let out = rpc_eth_get_transaction_receipt_with_status_by_tx_id(tx_id.0.to_vec());
     match out {
         RpcReceiptLookupView::Found(found) => {
-            assert_eq!(found.tx_hash, tx_id.0.to_vec());
-            assert_eq!(found.status, 1);
+            assert_eq!(found.as_ref().tx_hash, tx_id.0.to_vec());
+            assert_eq!(found.as_ref().status, 1);
         }
         _ => panic!("expected Found for tx_id input"),
     }

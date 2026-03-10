@@ -751,7 +751,7 @@ pub fn build_state_update_journal_full(
             value = Some(SmallVec::from_vec(out));
         }
         let key = Nibbles::unpack(keccak256(Address::from(addr).as_slice()));
-        account_key_nibbles.push((addr, key.clone()));
+        account_key_nibbles.push((addr, key));
         account_ops.push(KvOp { key, value });
     }
     account_ops.sort_by(|a, b| a.key.cmp(&b.key));
