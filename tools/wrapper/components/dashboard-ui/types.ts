@@ -37,6 +37,18 @@ export type WrapActionStep =
   | "done"
   | "error";
 
+export type WrapGasEstimateStatus =
+  | "idle"
+  | "estimating"
+  | "ready"
+  | "error";
+
+export type WrapNonceStatus =
+  | "idle"
+  | "loading"
+  | "ready"
+  | "error";
+
 export type DashboardWalletState = {
   session: {
     principalText: string;

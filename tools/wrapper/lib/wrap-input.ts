@@ -27,3 +27,11 @@ export function parseU64(text: string, code: string): bigint {
   }
   return value;
 }
+
+export function parsePositiveU64(text: string, code: string): bigint {
+  const value = parseU64(text, code);
+  if (value === 0n) {
+    throw new Error(code);
+  }
+  return value;
+}

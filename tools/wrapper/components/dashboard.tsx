@@ -2,42 +2,37 @@
 
 // どこで: wrapperダッシュボード / 何を: amount中心のWrap/Unwrap送信と状態追跡を統合 / なぜ: 主要導線を1画面で最短操作にするため
 
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import { HistoryPanel } from "@/components/dashboard-ui/history-panel";
 import { HeaderBar } from "@/components/dashboard-ui/header-bar";
 import { StatusPanel } from "@/components/dashboard-ui/status-panel";
 import { SwapPanel } from "@/components/dashboard-ui/swap-panel";
 import type { ActiveTab, HistoryEntry } from "@/components/dashboard-ui/types";
+import { useAssetCatalog } from "@/lib/hooks/use-asset-catalog";
 import { useWrapperActions } from "@/lib/hooks/use-wrapper-actions";
 import { useStatusTracker } from "@/lib/hooks/use-status-tracker";
 import { useWrapperForms } from "@/lib/hooks/use-wrapper-forms";
-import { loadConfig } from "@/lib/config";
+import type { loadConfig } from "@/lib/config";
 import { useWallet } from "@/lib/wallet/use-wallet";
 
-function resolveConfig(): {
+export type WrapperDashboardConfigState = {
   cfg: ReturnType<typeof loadConfig> | null;
   configError: string | null;
-} {
-  try {
-    return { cfg: loadConfig(), configError: null };
-  } catch (error) {
-    const message = error instanceof Error ? error.message : "config.invalid";
-    return { cfg: null, configError: message };
-  }
-}
+};
 
-export function WrapperDashboard() {
-  const { cfg, configError } = useMemo(resolveConfig, []);
+export function WrapperDashboard({ cfg, configError }: WrapperDashboardConfigState) {
   const wallet = useWallet();
 
   const [tab, setTab] = useState<ActiveTab>("unwrap");
   const [requestIdInput, setRequestIdInput] = useState("");
   const [history, setHistory] = useState<HistoryEntry[]>([]);
+  const assetCatalog = useAssetCatalog();
 
   const tracker = useStatusTracker();
   const forms = useWrapperForms({
     walletPrincipalText: wallet.session?.principalText ?? null,
     wrapCanisterId: cfg?.wrapCanisterId ?? "",
+    evmWrapFactory: cfg?.evmWrapFactory ?? "",
   });
   const actions = useWrapperActions({
     cfg,
@@ -56,7 +51,7 @@ export function WrapperDashboard() {
       <HeaderBar
         wallet={wallet}
         host={cfg?.icHost ?? "(config missing)"}
-        gatewayCanisterId={cfg?.evmGatewayCanisterId ?? "(config missing)"}
+        kasaneEvmCanisterId={cfg?.kasaneEvmCanisterId ?? "(config missing)"}
         onConnectInternetIdentity={() => void wallet.connect("ii")}
         onConnectOisy={() => void wallet.connect("oisy")}
         onDisconnect={() => void wallet.disconnect()}
@@ -67,15 +62,21 @@ export function WrapperDashboard() {
           unwrapForm={forms.unwrapForm}
           wrapForm={forms.wrapForm}
           wrapActionStep={actions.wrapActionStep}
+          wrapGasEstimateStatus={forms.wrapGasEstimateStatus}
+          wrapGasEstimateError={forms.wrapGasEstimateError}
+          wrapNonceStatus={forms.wrapNonceStatus}
+          wrapNonceError={forms.wrapNonceError}
           wrapFeeEstimateText={actions.wrapFeeEstimateText}
           unwrapPreviewRequestId={forms.unwrapPreviewRequestId}
           wrapPreviewRequestId={forms.wrapPreviewRequestId}
           submitLoading={actions.submitLoading}
           walletConnected={wallet.session !== null}
           configError={configError}
+          assetOptions={assetCatalog.assetOptions}
           onTabChange={setTab}
           onUnwrapChange={forms.setUnwrapForm}
           onWrapChange={forms.setWrapForm}
+          onAddCustomAsset={assetCatalog.addCustomAsset}
           onSubmitUnwrap={() => void actions.submitUnwrap()}
           onSubmitWrap={() => void actions.submitWrap()}
         />

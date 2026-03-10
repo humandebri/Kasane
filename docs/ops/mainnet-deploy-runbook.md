@@ -31,3 +31,8 @@ For exact command sequences and environment-specific snippets, see the Japanese 
 - Measurement-only APIs (`get_precompile_profile`, `clear_precompile_profile`, `profile_precompile_call`) are exposed only in builds with the `precompile-profile-admin` feature.
 - The default mainnet deploy path must not ship those measurement-only APIs.
 - The default mainnet deploy path ships a fixed precompile ratio `1/100`; changing it later requires a redeploy.
+
+## Important Note
+- `MODE=install` / `MODE=reinstall` requires `WRAP_CANISTER_ID`.
+- The deploy scripts do not auto-resolve `wrap_canister` anymore.
+- When upgrading an existing `evm_canister` from a version that did not persist this field, call `set_wrap_canister_id(<wrap_canister_principal>)` once as a controller after the upgrade.

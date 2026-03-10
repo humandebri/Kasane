@@ -13,7 +13,7 @@ RETAIN_BLOCKS="${RETAIN_BLOCKS:-168}"
 MAX_OPS_PER_TICK="${MAX_OPS_PER_TICK:-300}"
 HEADROOM_RATIO_BPS="${HEADROOM_RATIO_BPS:-2000}"
 HARD_EMERGENCY_RATIO_BPS="${HARD_EMERGENCY_RATIO_BPS:-9500}"
-DFX_BIN="${DFX_BIN:-dfx}"
+CANISTER_CLI_BIN="${CANISTER_CLI_BIN:-icp}"
 
 log() {
   echo "[apply-prune-policy] $*"
@@ -41,7 +41,7 @@ if [[ -z "${CANISTER_NAME_OR_ID}" ]]; then
   exit 1
 fi
 
-require_cmd "${DFX_BIN}"
+require_cmd "${CANISTER_CLI_BIN}"
 require_non_negative_int "TARGET_BYTES" "${TARGET_BYTES}"
 require_non_negative_int "RETAIN_DAYS" "${RETAIN_DAYS}"
 require_non_negative_int "RETAIN_BLOCKS" "${RETAIN_BLOCKS}"
@@ -68,12 +68,12 @@ POLICY_ARG="(record {
 })"
 
 log "set_prune_policy: canister=${CANISTER_NAME_OR_ID} network=${NETWORK}"
-"${DFX_BIN}" canister --network "${NETWORK}" call "${CANISTER_NAME_OR_ID}" set_prune_policy "${POLICY_ARG}" >/dev/null
+"${CANISTER_CLI_BIN}" canister call -n "${NETWORK}" "${CANISTER_NAME_OR_ID}" set_prune_policy "${POLICY_ARG}" >/dev/null
 log "set_pruning_enabled(true): canister=${CANISTER_NAME_OR_ID} network=${NETWORK}"
-"${DFX_BIN}" canister --network "${NETWORK}" call "${CANISTER_NAME_OR_ID}" set_pruning_enabled "(true)" >/dev/null
+"${CANISTER_CLI_BIN}" canister call -n "${NETWORK}" "${CANISTER_NAME_OR_ID}" set_pruning_enabled "(true)" >/dev/null
 
-PRUNE_STATUS_JSON="$("${DFX_BIN}" canister --network "${NETWORK}" call --query "${CANISTER_NAME_OR_ID}" get_prune_status --output json)"
-OPS_STATUS_JSON="$("${DFX_BIN}" canister --network "${NETWORK}" call --query "${CANISTER_NAME_OR_ID}" get_ops_status --output json)"
+PRUNE_STATUS_JSON="$("${CANISTER_CLI_BIN}" canister call -n "${NETWORK}" --query "${CANISTER_NAME_OR_ID}" get_prune_status --output json)"
+OPS_STATUS_JSON="$("${CANISTER_CLI_BIN}" canister call -n "${NETWORK}" --query "${CANISTER_NAME_OR_ID}" get_ops_status --output json)"
 
 python - <<PY
 import json
@@ -94,4 +94,4 @@ print("[apply-prune-policy] verification:", json.dumps(summary, ensure_ascii=Fal
 PY
 
 echo "[apply-prune-policy] restore command:"
-echo "${DFX_BIN} canister --network ${NETWORK} call ${CANISTER_NAME_OR_ID} set_pruning_enabled '(false)'"
+echo "${CANISTER_CLI_BIN} canister call -n ${NETWORK} ${CANISTER_NAME_OR_ID} set_pruning_enabled '(false)'"

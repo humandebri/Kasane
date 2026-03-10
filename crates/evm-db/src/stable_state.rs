@@ -112,11 +112,8 @@ thread_local! {
 /// 何を: StableBTreeMapを全件削除する
 /// なぜ: 呼び出し側でic-stable-structures型を再定義せず、型系統を一本化するため
 pub fn clear_map<K: Copy + Ord + Storable, V: Storable>(map: &mut StableBTreeMap<K, V, VMem>) {
-    loop {
-        let key = match map.range(..).next() {
-            Some(entry) => *entry.key(),
-            None => break,
-        };
+    while let Some(entry) = map.range(..).next() {
+        let key = *entry.key();
         map.remove(&key);
     }
 }

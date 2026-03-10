@@ -3,29 +3,56 @@
 Japanese version: [./chain-state-migration.ja.md](./chain-state-migration.ja.md)
 
 ## Purpose
-Operational procedure for migrating ChainState schema/version from 72 to 88 safely.
+- Apply the `ChainState` wire size change (72 -> 88) safely without backward-compatibility shims.
+- Prevent accidental direct upgrades from silently resetting operational state to defaults.
 
 ## Scope Decision
-Use this runbook when target canister state is on the 72-line and must be upgraded to 88-line data layout.
+- This runbook is required for releases that migrate `ChainState` from the old 72-byte wire format to the new 88-byte format.
+- Use the release note marker `non-backward-compatible ChainState format change` as the trigger.
 
 ## Required Preparation
-- confirm target canister/network and current version
-- take backup/snapshot before migration
-- confirm operator identity/permissions
-- stop write-heavy jobs if required
+1. Reserve a maintenance window.
+2. Stop the target canister.
+3. Create a snapshot and record the snapshot ID.
+
+```bash
+icp canister stop -e ic <canister_id>
+icp canister snapshot create -e ic <canister_id>
+```
+
+4. Export the minimum required operational data:
+- latest block reference (`tip`)
+- pending transactions to be replayed
+- operational parameters (`base_fee`, minimum fee, mining interval, block gas limit)
 
 ## Execution Steps
-1. run pre-checks
-2. execute migration command(s)
-3. verify post-migration state and method behavior
+1. Upgrade to the new WASM.
+2. Start the canister.
+3. Re-apply the operational parameters through the management API.
+4. Replay pending transactions if needed.
+
+```bash
+icp canister install -e ic <canister_id> --mode upgrade --wasm <new_wasm_path>
+icp canister start -e ic <canister_id>
+```
 
 ## Validation
-- schema/version moved to expected target
-- key query/update APIs respond without regression
-- logs/metrics show no migration errors
+1. Check `health` for `tip_number`, `queue_len`, `block_gas_limit`, and `instruction_soft_limit`.
+2. Check `get_ops_status` for `mode`, `needs_migration`, `block_gas_limit`, and `instruction_soft_limit`.
+3. Submit one small transaction and confirm that auto-mining succeeds.
+4. Read the receipt and confirm `gas_used` is non-zero.
 
 ## Rollback
-If validation fails, stop traffic and restore from backup according to the rollback section in the Japanese runbook.
+Stop immediately and restore from the snapshot.
+
+```bash
+icp canister stop -e ic <canister_id>
+icp canister snapshot restore -e ic <canister_id> <snapshot_id>
+icp canister install -e ic <canister_id> --mode reinstall --wasm <old_wasm_path>
+icp canister start -e ic <canister_id>
+```
 
 ## Notes
-The Japanese version remains the full operational source for detailed command-level procedures.
+- This migration does not auto-read the old 72-byte wire format.
+- Do not run this on mainnet without a snapshot.
+- If defaults are restored unexpectedly, do not continue normal operations; roll back immediately.

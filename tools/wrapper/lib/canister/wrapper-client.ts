@@ -4,19 +4,29 @@ import { Actor, type ActorSubclass, type Identity } from "@dfinity/agent";
 import { IDL } from "@dfinity/candid";
 import { loadConfig } from "../config";
 import type { DispatchResultView, DispatchStatus } from "../types";
+import { callerEvmAddressFromPrincipalText } from "../principal";
 import { getIdentityAgent, getQueryAgent } from "./agent";
+import {
+  buildWrapEstimateCallObject,
+  type BuildWrapEstimateCallArgs,
+  type WrapEstimateCallObject,
+  validateEstimatedGasLimit,
+} from "../wrap-estimate";
 
 type SubmitTxError = { Internal: string } | { Rejected: string } | { InvalidArgument: string };
 type SubmitIcTxResult = { Ok: Uint8Array } | { Err: SubmitTxError };
 type NatResult = { Ok: bigint } | { Err: string };
 type RpcErrorView = { code: number; message: string; error_prefix: [] | [string] };
 type GasPriceResult = { Ok: bigint } | { Err: RpcErrorView };
+type GasEstimateResult = { Ok: bigint } | { Err: RpcErrorView };
 type RequestKind = { Unwrap: null };
 const REQUEST_KIND_UNWRAP: RequestKind = { Unwrap: null };
 
 type WrapperActor = ActorSubclass<{
   expected_nonce_by_address: (address: Uint8Array) => Promise<NatResult>;
   rpc_eth_gas_price: () => Promise<GasPriceResult>;
+  rpc_eth_max_priority_fee_per_gas: () => Promise<GasPriceResult>;
+  rpc_eth_estimate_gas_object: (call: WrapEstimateCallObject) => Promise<GasEstimateResult>;
   submit_ic_tx: (args: {
     to: [] | [Uint8Array];
     value: bigint;
@@ -40,8 +50,18 @@ type WrapperActor = ActorSubclass<{
   }]>;
 }>;
 
+type QueryActorLike = Pick<
+  WrapperActor,
+  "expected_nonce_by_address" | "rpc_eth_gas_price" | "rpc_eth_max_priority_fee_per_gas"
+  | "rpc_eth_estimate_gas_object"
+  | "get_request_dispatch_status" | "get_request_dispatch_result"
+>;
+type SubmitActorLike = Pick<WrapperActor, "submit_ic_tx">;
+
 let cachedQueryActor: WrapperActor | null = null;
 const cachedSubmitActors = new Map<string, WrapperActor>();
+let mockQueryActor: QueryActorLike | null = null;
+let mockSubmitActor: SubmitActorLike | null = null;
 
 const wrapperIdlFactory: IDL.InterfaceFactory = ({ IDL: I }) => {
   const SubmitTxError = I.Variant({
@@ -82,25 +102,67 @@ const wrapperIdlFactory: IDL.InterfaceFactory = ({ IDL: I }) => {
         error_prefix: I.Opt(I.Text),
       }),
     })], ["query"]),
+    rpc_eth_max_priority_fee_per_gas: I.Func([], [I.Variant({
+      Ok: I.Nat,
+      Err: I.Record({
+        code: I.Nat32,
+        message: I.Text,
+        error_prefix: I.Opt(I.Text),
+      }),
+    })], ["query"]),
+    rpc_eth_estimate_gas_object: I.Func(
+      [I.Record({
+        to: I.Opt(I.Vec(I.Nat8)),
+        from: I.Opt(I.Vec(I.Nat8)),
+        gas: I.Opt(I.Nat64),
+        gas_price: I.Opt(I.Nat),
+        nonce: I.Opt(I.Nat64),
+        max_fee_per_gas: I.Opt(I.Nat),
+        max_priority_fee_per_gas: I.Opt(I.Nat),
+        chain_id: I.Opt(I.Nat64),
+        tx_type: I.Opt(I.Nat64),
+        access_list: I.Opt(I.Vec(I.Record({
+          address: I.Vec(I.Nat8),
+          storage_keys: I.Vec(I.Vec(I.Nat8)),
+        }))),
+        value: I.Opt(I.Vec(I.Nat8)),
+        data: I.Opt(I.Vec(I.Nat8)),
+      })],
+      [I.Variant({
+        Ok: I.Nat64,
+        Err: I.Record({
+          code: I.Nat32,
+          message: I.Text,
+          error_prefix: I.Opt(I.Text),
+        }),
+      })],
+      ["query"]
+    ),
     submit_ic_tx: I.Func([SubmitIcTxArgsDto], [I.Variant({ Ok: I.Vec(I.Nat8), Err: SubmitTxError })], []),
     get_request_dispatch_status: I.Func([RequestKindView, I.Vec(I.Nat8)], [I.Opt(RequestDispatchStatusView)], ["query"]),
     get_request_dispatch_result: I.Func([RequestKindView, I.Vec(I.Nat8)], [I.Opt(RequestDispatchResultView)], ["query"]),
   });
 };
 
-async function getQueryActor(): Promise<WrapperActor> {
+async function getQueryActor(): Promise<QueryActorLike> {
+  if (mockQueryActor) {
+    return mockQueryActor;
+  }
   if (cachedQueryActor) {
     return cachedQueryActor;
   }
   const cfg = loadConfig();
   cachedQueryActor = Actor.createActor<WrapperActor>(wrapperIdlFactory, {
-    canisterId: cfg.evmGatewayCanisterId,
+    canisterId: cfg.kasaneEvmCanisterId,
     agent: await getQueryAgent(),
   });
   return cachedQueryActor;
 }
 
-async function getSubmitActor(identity: Identity): Promise<WrapperActor> {
+async function getSubmitActor(identity: Identity): Promise<SubmitActorLike> {
+  if (mockSubmitActor) {
+    return mockSubmitActor;
+  }
   const key = identity.getPrincipal().toText();
   const cached = cachedSubmitActors.get(key);
   if (cached) {
@@ -108,7 +170,7 @@ async function getSubmitActor(identity: Identity): Promise<WrapperActor> {
   }
   const cfg = loadConfig();
   const actor = Actor.createActor<WrapperActor>(wrapperIdlFactory, {
-    canisterId: cfg.evmGatewayCanisterId,
+    canisterId: cfg.kasaneEvmCanisterId,
     agent: await getIdentityAgent(identity),
   });
   cachedSubmitActors.set(key, actor);
@@ -138,6 +200,10 @@ function decodeSubmitError(err: SubmitTxError): string {
   return `evm_gateway.submit.invalid_argument:${err.InvalidArgument}`;
 }
 
+function decodeRpcNatError(prefix: string, err: RpcErrorView): string {
+  return `${prefix}:${err.code}:${err.message}`;
+}
+
 export async function getExpectedNonce(callerEvmAddress: Uint8Array): Promise<bigint> {
   const out = await (await getQueryActor()).expected_nonce_by_address(callerEvmAddress);
   if ("Err" in out) {
@@ -146,12 +212,48 @@ export async function getExpectedNonce(callerEvmAddress: Uint8Array): Promise<bi
   return out.Ok;
 }
 
+export async function getWrapEvmNonce(
+  wrapCanisterId: string,
+  deps: {
+    readExpectedNonce: (callerEvmAddress: Uint8Array) => Promise<bigint>;
+  } = {
+    readExpectedNonce: getExpectedNonce,
+  },
+): Promise<bigint> {
+  const callerEvmAddress = callerEvmAddressFromPrincipalText(wrapCanisterId.trim());
+  return deps.readExpectedNonce(callerEvmAddress);
+}
+
 export async function getGasPriceWei(): Promise<bigint> {
   const out = await (await getQueryActor()).rpc_eth_gas_price();
   if ("Err" in out) {
-    throw new Error(`evm_gateway.gas_price_failed:${out.Err.code}:${out.Err.message}`);
+    throw new Error(decodeRpcNatError("evm_gateway.gas_price_failed", out.Err));
   }
   return out.Ok;
+}
+
+async function getMaxPriorityFeePerGasWei(): Promise<bigint> {
+  const out = await (await getQueryActor()).rpc_eth_max_priority_fee_per_gas();
+  if ("Err" in out) {
+    throw new Error(`evm_gateway.priority_fee_failed:${out.Err.code}:${out.Err.message}`);
+  }
+  return out.Ok;
+}
+
+export async function estimateWrapGasLimit(
+  args: BuildWrapEstimateCallArgs,
+  deps: {
+    readEstimateGas: (call: WrapEstimateCallObject) => Promise<GasEstimateResult>;
+  } = {
+    readEstimateGas: async (call) => (await getQueryActor()).rpc_eth_estimate_gas_object(call),
+  },
+): Promise<bigint> {
+  const call = buildWrapEstimateCallObject(args);
+  const out = await deps.readEstimateGas(call);
+  if ("Err" in out) {
+    throw new Error(decodeRpcNatError("evm_gateway.estimate_gas_failed", out.Err));
+  }
+  return validateEstimatedGasLimit(out.Ok);
 }
 
 export async function submitIcTx(args: {
@@ -160,12 +262,16 @@ export async function submitIcTx(args: {
   nonce: bigint;
   identity: Identity;
 }): Promise<Uint8Array> {
+  const [maxFeePerGas, maxPriorityFeePerGas] = await Promise.all([
+    getGasPriceWei(),
+    getMaxPriorityFeePerGasWei(),
+  ]);
   const out = await (await getSubmitActor(args.identity)).submit_ic_tx({
     to: [args.to],
     value: 0n,
-    max_priority_fee_per_gas: 0n,
+    max_priority_fee_per_gas: maxPriorityFeePerGas,
     data: args.data,
-    max_fee_per_gas: 0n,
+    max_fee_per_gas: maxFeePerGas,
     nonce: args.nonce,
     gas_limit: 300_000n,
   });
@@ -200,6 +306,15 @@ export const wrapperClientTestHooks = {
   reset(): void {
     cachedQueryActor = null;
     cachedSubmitActors.clear();
+    mockQueryActor = null;
+    mockSubmitActor = null;
+  },
+  setMockQueryActor(actor: QueryActorLike | null): void {
+    mockQueryActor = actor;
+  },
+  setMockSubmitActor(actor: SubmitActorLike | null): void {
+    mockSubmitActor = actor;
   },
   decodeSubmitError,
+  decodeRpcNatError,
 };

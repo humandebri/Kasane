@@ -44,23 +44,28 @@ import json
 import os
 text = os.environ.get("API_STATUS_JSON", "").strip()
 if not text:
-    print("http://127.0.0.1:4943")
+    print("http://127.0.0.1:8000")
     raise SystemExit(0)
 try:
     data = json.loads(text)
 except Exception:
-    print("http://127.0.0.1:4943")
+    print("http://127.0.0.1:8000")
+    raise SystemExit(0)
+api_url = data.get("api_url")
+if isinstance(api_url, str) and api_url:
+    print(api_url)
     raise SystemExit(0)
 port = data.get("port")
-if isinstance(port, int) and port > 0:
-    print(f"http://127.0.0.1:{port}")
-else:
-    print("http://127.0.0.1:4943")
+print(f"http://127.0.0.1:{port}" if isinstance(port, int) and port > 0 else "http://127.0.0.1:8000")
 PY
 }
 
 resolve_canister_id() {
   icp canister status -e "${NETWORK}" --identity "${ICP_IDENTITY_NAME}" --id-only "${CANISTER_NAME}"
+}
+
+resolve_wrap_canister_id_for_smoke() {
+  icp canister status -e "${NETWORK}" --identity "${ICP_IDENTITY_NAME}" --id-only wrap_canister
 }
 
 get_canister_id() {
@@ -167,9 +172,12 @@ build_and_install() {
   local wasm_out="target/wasm32-unknown-unknown/release/ic_evm_gateway.candid.wasm"
   ic-wasm "${wasm_in}" -o "${wasm_out}" metadata candid:service -f crates/ic-evm-gateway/evm_canister.did
 
+  icp canister create -e "${NETWORK}" --identity "${ICP_IDENTITY_NAME}" wrap_canister >/dev/null 2>&1 || true
   icp canister create -e "${NETWORK}" --identity "${ICP_IDENTITY_NAME}" "${CANISTER_NAME}" >/dev/null 2>&1 || true
   log "install wasm (mode=${MODE})"
   local init_args
+  WRAP_CANISTER_ID="$(resolve_wrap_canister_id_for_smoke)"
+  export WRAP_CANISTER_ID
   init_args="$(build_init_args_for_current_identity 1000000000000000000)"
   icp canister install -e "${NETWORK}" --identity "${ICP_IDENTITY_NAME}" --mode "${MODE}" --wasm "${wasm_out}" --args "${init_args}" "${CANISTER_NAME}"
   RESOLVED_CANISTER_ID="$(resolve_canister_id)"

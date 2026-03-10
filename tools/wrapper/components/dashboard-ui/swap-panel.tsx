@@ -2,6 +2,7 @@
 
 import { ArrowDownUp, Sparkles } from "lucide-react";
 import type { ReactElement } from "react";
+import { AssetSelector } from "@/components/dashboard-ui/asset-selector";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -12,10 +13,13 @@ import {
 } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import type { AssetOption, CustomAssetDraft } from "@/lib/asset-catalog";
 import type {
   ActiveTab,
   UnwrapFormState,
   WrapActionStep,
+  WrapGasEstimateStatus,
+  WrapNonceStatus,
   WrapFormState,
 } from "./types";
 
@@ -35,15 +39,21 @@ export function SwapPanel(props: {
   unwrapForm: UnwrapFormState;
   wrapForm: WrapFormState;
   wrapActionStep: WrapActionStep;
+  wrapGasEstimateStatus: WrapGasEstimateStatus;
+  wrapGasEstimateError: string | null;
+  wrapNonceStatus: WrapNonceStatus;
+  wrapNonceError: string | null;
   wrapFeeEstimateText: string | null;
   unwrapPreviewRequestId: string | null;
   wrapPreviewRequestId: string | null;
   submitLoading: boolean;
   walletConnected: boolean;
   configError: string | null;
+  assetOptions: AssetOption[];
   onTabChange: (tab: ActiveTab) => void;
   onUnwrapChange: (next: UnwrapFormState) => void;
   onWrapChange: (next: WrapFormState) => void;
+  onAddCustomAsset: (draft: CustomAssetDraft) => AssetOption;
   onSubmitUnwrap: () => void;
   onSubmitWrap: () => void;
 }): ReactElement {
@@ -52,7 +62,7 @@ export function SwapPanel(props: {
       <CardHeader>
         <CardTitle className="text-lg">Swap Panel</CardTitle>
         <CardDescription>
-          amountを入力して送信します。詳細設定はAdvancedで必要時のみ編集できます。
+          ledgerとamountを先に選び、詳細設定はAdvancedで必要時のみ編集できます。
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
@@ -81,6 +91,21 @@ export function SwapPanel(props: {
           </TabsList>
 
           <TabsContent value="unwrap" className="space-y-3">
+            <AssetSelector
+              value={props.unwrapForm.assetId}
+              options={props.assetOptions}
+              addLabel="Add Asset"
+              selectPlaceholder="asset を選択"
+              customLabelPlaceholder="custom asset label"
+              customAssetPlaceholder="ledger principal"
+              onChange={(assetId) =>
+                props.onUnwrapChange({
+                  ...props.unwrapForm,
+                  assetId,
+                })
+              }
+              onAddCustomAsset={props.onAddCustomAsset}
+            />
             <div className="rounded-xl border border-zinc-200 bg-zinc-50/70 p-4">
               <p className="text-xs font-semibold text-zinc-600">Amount</p>
               <Input
@@ -111,16 +136,6 @@ export function SwapPanel(props: {
                 Advanced
               </summary>
               <div className="mt-3 grid gap-2 sm:grid-cols-2">
-                <Input
-                  placeholder="assetId principal"
-                  value={props.unwrapForm.assetId}
-                  onChange={(event) =>
-                    props.onUnwrapChange({
-                      ...props.unwrapForm,
-                      assetId: event.target.value,
-                    })
-                  }
-                />
                 <Input
                   placeholder="recipient principal"
                   value={props.unwrapForm.recipient}
@@ -157,11 +172,26 @@ export function SwapPanel(props: {
               request_id: {props.unwrapPreviewRequestId ?? "(入力待ち)"}
             </p>
             <p className="text-xs text-zinc-600">
-              asset_id / recipient は Advanced で必ず確認してください。
+              recipient / deadline は Advanced で必ず確認してください。
             </p>
           </TabsContent>
 
           <TabsContent value="wrap" className="space-y-3">
+            <AssetSelector
+              value={props.wrapForm.assetId}
+              options={props.assetOptions}
+              addLabel="Add Asset"
+              selectPlaceholder="asset を選択"
+              customLabelPlaceholder="custom asset label"
+              customAssetPlaceholder="ledger principal"
+              onChange={(assetId) =>
+                props.onWrapChange({
+                  ...props.wrapForm,
+                  assetId,
+                })
+              }
+              onAddCustomAsset={props.onAddCustomAsset}
+            />
             <div className="rounded-xl border border-zinc-200 bg-zinc-50/70 p-4">
               <p className="text-xs font-semibold text-zinc-600">Amount</p>
               <Input
@@ -181,7 +211,9 @@ export function SwapPanel(props: {
                 disabled={
                   props.submitLoading ||
                   !props.walletConnected ||
-                  props.configError !== null
+                  props.configError !== null ||
+                  props.wrapNonceStatus !== "ready" ||
+                  props.wrapGasEstimateStatus !== "ready"
                 }
               >
                 {props.submitLoading ? "Submitting..." : "Submit Wrap"}
@@ -192,16 +224,6 @@ export function SwapPanel(props: {
                 Advanced
               </summary>
               <div className="mt-3 grid gap-2 sm:grid-cols-2">
-                <Input
-                  placeholder="assetId(ledger) principal"
-                  value={props.wrapForm.assetId}
-                  onChange={(event) =>
-                    props.onWrapChange({
-                      ...props.wrapForm,
-                      assetId: event.target.value,
-                    })
-                  }
-                />
                 <Input
                   placeholder="evm recipient (0x..)"
                   value={props.wrapForm.evmRecipient}
@@ -215,25 +237,37 @@ export function SwapPanel(props: {
                 <Input
                   placeholder="evm nonce (u64)"
                   value={props.wrapForm.evmNonce}
-                  onChange={(event) =>
-                    props.onWrapChange({
-                      ...props.wrapForm,
-                      evmNonce: event.target.value,
-                    })
-                  }
+                  readOnly
                 />
                 <Input
                   placeholder="gas limit"
                   value={props.wrapForm.gasLimit}
-                  onChange={(event) =>
-                    props.onWrapChange({
-                      ...props.wrapForm,
-                      gasLimit: event.target.value,
-                    })
-                  }
+                  readOnly
                 />
               </div>
             </details>
+            <p className="rounded-lg bg-zinc-50 px-3 py-2 text-xs text-zinc-700">
+              nonce: {
+                props.wrapNonceStatus === "loading"
+                  ? "自動取得中..."
+                  : props.wrapNonceStatus === "ready"
+                    ? props.wrapForm.evmNonce
+                    : props.wrapNonceStatus === "error"
+                      ? `失敗 (${props.wrapNonceError ?? "wrap.nonce_failed"})`
+                      : "-"
+              }
+            </p>
+            <p className="rounded-lg bg-zinc-50 px-3 py-2 text-xs text-zinc-700">
+              gas estimate: {
+                props.wrapGasEstimateStatus === "estimating"
+                  ? "自動見積中..."
+                  : props.wrapGasEstimateStatus === "ready"
+                    ? props.wrapForm.gasLimit
+                    : props.wrapGasEstimateStatus === "error"
+                      ? `失敗 (${props.wrapGasEstimateError ?? "wrap.gas_estimate_failed"})`
+                      : "-"
+              }
+            </p>
             <p className="rounded-lg bg-zinc-50 px-3 py-2 font-mono text-xs text-zinc-600">
               request_id: {props.wrapPreviewRequestId ?? "(入力待ち)"}
             </p>
@@ -247,7 +281,7 @@ export function SwapPanel(props: {
               feeは cycle + Kasane gas をICPで前払い徴収します。mint失敗時も返金されません。
             </p>
             <p className="text-xs text-zinc-600">
-              asset_id は自動補完しません。誤送信防止のため Advanced で明示指定してください。
+              custom asset は ledger selector から追加できます。
             </p>
           </TabsContent>
         </Tabs>

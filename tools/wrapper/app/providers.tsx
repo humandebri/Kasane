@@ -5,6 +5,8 @@
 import type { ReactNode } from "react";
 import { WalletProvider } from "@/lib/wallet/provider";
 
-export function Providers({ children }: { children: ReactNode }) {
-  return <WalletProvider>{children}</WalletProvider>;
+export function Providers(
+  { children, iiIdentityProvider }: { children: ReactNode; iiIdentityProvider: string | null },
+) {
+  return <WalletProvider iiIdentityProvider={iiIdentityProvider}>{children}</WalletProvider>;
 }

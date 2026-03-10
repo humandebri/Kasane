@@ -16,6 +16,8 @@ use ic_evm_rpc_types::{
 };
 use tracing::{error, warn};
 
+type AccessListItem = ([u8; 20], Vec<[u8; 32]>);
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum TxApiErrorKind {
     InvalidArgument,
@@ -802,9 +804,7 @@ fn call_object_to_input(call: RpcCallObjectView) -> Result<chain::CallObjectInpu
     })
 }
 
-fn parse_access_list(
-    items: Vec<RpcAccessListItemView>,
-) -> Result<Vec<([u8; 20], Vec<[u8; 32]>)>, String> {
+fn parse_access_list(items: Vec<RpcAccessListItemView>) -> Result<Vec<AccessListItem>, String> {
     if items.len() > MAX_ACCESS_LIST_ITEMS {
         return Err(format!(
             "accessList too large: max {MAX_ACCESS_LIST_ITEMS} items"
@@ -1326,7 +1326,7 @@ fn prune_boundary_for_number(number: u64) -> Option<u64> {
 
 fn receipt_lookup_status(tx_id: TxId) -> RpcReceiptLookupView {
     if let Some(receipt) = chain::get_receipt(&tx_id) {
-        return RpcReceiptLookupView::Found(receipt_to_eth_view(receipt));
+        return RpcReceiptLookupView::Found(Box::new(receipt_to_eth_view(receipt)));
     }
     let pruned_before = with_state(|state| state.prune_state.get().pruned_before());
     let loc = chain::get_tx_loc(&tx_id);
@@ -1357,6 +1357,9 @@ mod tests {
         validate_reward_percentiles, MAX_ACCESS_LIST_ITEMS, MAX_ACCESS_LIST_STORAGE_KEYS_PER_ITEM,
         MAX_BLOCK_HASH_SCAN, MAX_FEE_HISTORY_PERCENTILES,
     };
+    use evm_db::chain_data::{StoredTxBytes, TxId, TxLoc};
+    use evm_db::stable_state::{init_stable_state, with_state_mut};
+    use evm_db::Storable;
     use ic_evm_rpc_types::RpcAccessListItemView;
 
     #[test]
@@ -1458,5 +1461,20 @@ mod tests {
             out.expect("must return values").len(),
             MAX_FEE_HISTORY_PERCENTILES
         );
+    }
+
+    #[test]
+    fn tx_to_view_returns_none_for_invalid_stored_tx() {
+        init_stable_state();
+        let tx_id = TxId([0x91u8; 32]);
+        with_state_mut(|state| {
+            state
+                .tx_store
+                .insert(tx_id, StoredTxBytes::from_bytes(std::borrow::Cow::Owned(vec![0u8; 1])));
+            state.tx_locs.insert(tx_id, TxLoc::included(7, 0));
+        });
+
+        let out = super::tx_to_view(tx_id);
+        assert!(out.is_none());
     }
 }

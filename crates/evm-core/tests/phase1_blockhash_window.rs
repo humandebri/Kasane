@@ -25,7 +25,7 @@ fn install_block(number: u64, hash: [u8; 32]) {
         );
         let ptr = state
             .blob_store
-            .store_bytes(&block.to_bytes().into_owned())
+            .store_bytes(&block.to_bytes())
             .expect("store block");
         state.blocks.insert(number, ptr);
     });

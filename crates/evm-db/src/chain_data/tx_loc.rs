@@ -55,6 +55,14 @@ impl TxLoc {
             drop_code: code,
         }
     }
+
+    pub fn decode_failure_placeholder() -> Self {
+        Self::queued(u64::MAX)
+    }
+
+    pub fn is_decode_failure_placeholder(&self) -> bool {
+        self.kind == TxLocKind::Queued && self.seq == u64::MAX
+    }
 }
 
 impl Storable for TxLoc {
@@ -113,7 +121,7 @@ fn tx_loc_wincode_config() -> impl wincode::config::Config {
 }
 
 fn encode_fallback_tx_loc() -> Cow<'static, [u8]> {
-    let fallback = TxLoc::queued(0);
+    let fallback = TxLoc::decode_failure_placeholder();
     let encoded = wincode::config::serialize(&fallback, tx_loc_wincode_config())
         .unwrap_or_else(|_| Vec::new());
     let fixed = encode_fixed_tx_loc(&fallback, &encoded).unwrap_or([0u8; TX_LOC_SIZE_U32 as usize]);
@@ -145,7 +153,7 @@ fn encode_fixed_tx_loc(loc: &TxLoc, encoded: &[u8]) -> Option<[u8; TX_LOC_SIZE_U
 fn decode_fixed_tx_loc(data: &[u8]) -> TxLoc {
     if data.len() != TX_LOC_SIZE_U32 as usize {
         mark_decode_failure(b"tx_loc", true);
-        return TxLoc::queued(0);
+        return TxLoc::decode_failure_placeholder();
     }
     let kind = match data[0] {
         0 => TxLocKind::Queued,
@@ -153,7 +161,7 @@ fn decode_fixed_tx_loc(data: &[u8]) -> TxLoc {
         2 => TxLocKind::Dropped,
         _ => {
             mark_decode_failure(b"tx_loc", true);
-            TxLocKind::Queued
+            return TxLoc::decode_failure_placeholder();
         }
     };
     let mut buf8 = [0u8; 8];
@@ -181,7 +189,7 @@ fn decode_fixed_tx_loc(data: &[u8]) -> TxLoc {
 fn decode_legacy_tx_loc(data: &[u8]) -> TxLoc {
     if data.len() != 24 {
         mark_decode_failure(b"tx_loc", true);
-        return TxLoc::queued(0);
+        return TxLoc::decode_failure_placeholder();
     }
     let kind = match data[0] {
         0 => TxLocKind::Queued,
@@ -189,7 +197,7 @@ fn decode_legacy_tx_loc(data: &[u8]) -> TxLoc {
         2 => TxLocKind::Dropped,
         _ => {
             mark_decode_failure(b"tx_loc_kind", true);
-            TxLocKind::Queued
+            return TxLoc::decode_failure_placeholder();
         }
     };
     let mut seq = [0u8; 8];

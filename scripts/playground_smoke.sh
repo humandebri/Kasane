@@ -173,7 +173,7 @@ log "starting playground smoke"
 if ! before=$(cycle_balance "before"); then
   exit 1
 fi
-CALLER_PRINCIPAL=$(dfx identity get-principal)
+CALLER_PRINCIPAL=$(icp identity principal)
 CALLER_HEX=$(cargo run -q -p ic-evm-core --bin derive_evm_address -- "$CALLER_PRINCIPAL")
 CALLER_BLOB=$(python - <<PY
 data = bytes.fromhex("$CALLER_HEX")

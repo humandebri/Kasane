@@ -1,6 +1,6 @@
 // どこで: wrapper dashboard hook / 何を: unwrap/wrap/withdraw送信処理を提供 / なぜ: 画面コンポーネントから副作用ロジックを分離するため
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type {
   HistoryEntry,
   UnwrapFormState,
@@ -24,8 +24,12 @@ import {
   WRAP_PRECOMPILE_ADDRESS,
 } from "@/lib/request-id";
 import { bytesToHex, hexToBytes, parseRequestIdHex } from "@/lib/utils";
-import { computeRequiredAllowances, computeWrapFeeQuote, formatE8sToIcpText } from "@/lib/wrap-flow";
-import { parsePositiveBigInt, parseU64 } from "@/lib/wrap-input";
+import {
+  computeRequiredAllowances,
+  computeWrapFeeQuote,
+  formatE8sToIcpText,
+} from "@/lib/wrap-flow";
+import { parsePositiveBigInt, parsePositiveU64, parseU64 } from "@/lib/wrap-input";
 import type { WalletSession } from "@/lib/wallet/types";
 
 type AppConfig = ReturnType<typeof loadConfig>;
@@ -40,6 +44,10 @@ type StatusTrackerState = {
 type WrapperFormsState = {
   unwrapForm: UnwrapFormState;
   wrapForm: WrapFormState;
+  wrapGasEstimateStatus: "idle" | "estimating" | "ready" | "error";
+  wrapGasEstimateError: string | null;
+  wrapNonceStatus: "idle" | "loading" | "ready" | "error";
+  wrapNonceError: string | null;
   resetUnwrapNonceDeadline: () => void;
 };
 
@@ -163,11 +171,17 @@ export function useWrapperActions(params: {
         params.forms.wrapForm.amount,
         "validation.amount.invalid",
       );
+      if (params.forms.wrapNonceStatus !== "ready") {
+        throw new Error(params.forms.wrapNonceError ?? "wrap.nonce_failed");
+      }
       const evmNonce = parseU64(
         params.forms.wrapForm.evmNonce,
         "validation.evm_nonce.invalid",
       );
-      const gasLimit = parseU64(
+      if (params.forms.wrapGasEstimateStatus !== "ready") {
+        throw new Error(params.forms.wrapGasEstimateError ?? "wrap.gas_estimate_failed");
+      }
+      const gasLimit = parsePositiveU64(
         params.forms.wrapForm.gasLimit,
         "validation.gas_limit.invalid",
       );
@@ -264,6 +278,41 @@ export function useWrapperActions(params: {
       setSubmitLoading(false);
     }
   }
+
+  useEffect(() => {
+    if (params.forms.wrapGasEstimateStatus !== "ready") {
+      setWrapFeeEstimateText(null);
+      return;
+    }
+    let cancelled = false;
+    void Promise.all([getFeePolicy(), getGasPriceWei()])
+      .then(([feePolicy, gasPriceWei]) => {
+        if (cancelled) {
+          return;
+        }
+        const gasLimit = parsePositiveU64(
+          params.forms.wrapForm.gasLimit,
+          "validation.gas_limit.invalid",
+        );
+        const quote = computeWrapFeeQuote({
+          gasPriceWei,
+          gasLimit,
+          cycleFeeE8s: feePolicy.cycleFeeE8s,
+          gasPriceBufferBps: BigInt(feePolicy.gasPriceBufferBps),
+        });
+        setWrapFeeEstimateText(
+          `estimated fee: ${formatE8sToIcpText(quote.totalFeeE8s)} ICP (${quote.totalFeeE8s.toString()} e8s)`,
+        );
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setWrapFeeEstimateText(null);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [params.forms.wrapForm.gasLimit, params.forms.wrapGasEstimateStatus]);
 
   async function withdraw(): Promise<void> {
     if (!params.walletSession || !params.tracker.status) {
