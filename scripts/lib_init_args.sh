@@ -37,15 +37,7 @@ resolve_wrap_canister_id() {
     printf '%s\n' "${WRAP_CANISTER_ID}"
     return
   fi
-  if command -v dfx >/dev/null 2>&1; then
-    local dfx_id
-    dfx_id="$(dfx canister id wrap_canister 2>/dev/null || true)"
-    if [[ -n "${dfx_id}" ]]; then
-      printf '%s\n' "${dfx_id}"
-      return
-    fi
-  fi
-  echo "[lib_init_args] error: WRAP_CANISTER_ID is required (or resolvable via 'dfx canister id wrap_canister')" >&2
+  echo "[lib_init_args] error: WRAP_CANISTER_ID is required" >&2
   return 1
 }
 
@@ -75,7 +67,8 @@ build_init_args_for_current_identity() {
       principal="$(icp identity principal)"
     fi
   else
-    principal="$(dfx identity get-principal)"
+    echo "[lib_init_args] error: icp command is required to resolve current identity principal" >&2
+    return 1
   fi
   local out
   out="$(build_init_args_for_principal "${principal}" "${amount}")"

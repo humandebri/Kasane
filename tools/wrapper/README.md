@@ -7,7 +7,7 @@ Next.js + Tailwind + shadcn で構築した wrapper 用 Dashboard です。
 - II / Oisy ウォレット接続（ブラウザ署名）
 - Unwrap tx発行（`submit_ic_tx` を client から直接実行）
 - Wrap submit（`submit_wrap_request` を wallet から直接実行）
-- Amount中心UI + Advanced入力（asset/recipient/evm/gas/nonce）
+- Amount中心UI + Advanced入力（asset selector/recipient/evm/gas/nonce）
 - request_id の送信前プレビュー
 - Wrap fee見積（`cycle + gas` をICPで前払い）
 - allowance不足時のみ approve（asset / ICP fee）
@@ -28,10 +28,13 @@ npm run dev
 
 ## 環境変数 (`.env.local`)
 
-- `NEXT_PUBLIC_IC_HOST`: 例 `http://127.0.0.1:4943`
-- `EVM_GATEWAY_CANISTER_ID`: evm gateway canister id
+- `NEXT_PUBLIC_IC_HOST`: 例 `http://127.0.0.1:8000`
+- `NEXT_PUBLIC_INTERNET_IDENTITY_URL`: PocketIC で II を使うときだけ指定
+- `KASANE_EVM_CANISTER_ID`: Kasane EVM canister id
 - `WRAP_CANISTER_ID`: wrap canister id
-- `FETCH_ROOT_KEY`: `true`/`false`（local は `true` 推奨）
+- `EVM_WRAP_FACTORY`: 20-byte EVM factory address (`0x...`)
+
+`fetchRootKey` は `NEXT_PUBLIC_IC_HOST` が `localhost` / `127.0.0.1` のとき自動で有効になります。
 
 ## API Route
 
@@ -53,7 +56,9 @@ npm run dev
 - allowance が十分な場合、`icrc2_approve` は呼びません。
 - allowance 不足時のみ approve を実行します。
 - `asset_id == fee_ledger` の場合、asset+fee を合算して1回の approve で処理します。
-- `asset_id` は自動補完しません。Advancedで明示指定します。
+- `asset_id` は Advanced の selector で明示選択します。
+- プリセット候補は `ICP / ckBTC / ckETH / ckUSDC` を同梱しています。
+- custom asset は UI から追加し、ブラウザの `localStorage` に保存します。
 
 ## テスト
 

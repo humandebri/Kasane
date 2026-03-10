@@ -43,15 +43,19 @@ import os
 import sys
 text = os.environ.get("STATUS_JSON", "").strip()
 if not text:
-    print("http://127.0.0.1:4943")
+    print("http://127.0.0.1:8000")
     raise SystemExit(0)
 try:
     data = json.loads(text)
 except Exception:
-    print("http://127.0.0.1:4943")
+    print("http://127.0.0.1:8000")
+    raise SystemExit(0)
+api_url = data.get("api_url")
+if isinstance(api_url, str) and api_url:
+    print(api_url)
     raise SystemExit(0)
 port = data.get("port")
-print(f"http://127.0.0.1:{port}" if isinstance(port, int) and port > 0 else "http://127.0.0.1:4943")
+print(f"http://127.0.0.1:{port}" if isinstance(port, int) and port > 0 else "http://127.0.0.1:8000")
 PY
 }
 

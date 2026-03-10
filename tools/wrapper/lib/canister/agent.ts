@@ -1,7 +1,7 @@
 // どこで: canister agent生成 / 何を: query/updateで使うHttpAgentを生成 / なぜ: ブラウザ接続identityで直接update呼び出しするため
 
 import { HttpAgent, type Identity } from "@dfinity/agent";
-import { loadConfig } from "../config";
+import { configTestHooks, loadConfig } from "../config";
 
 let cachedQueryAgent: HttpAgent | null = null;
 const cachedIdentityAgents = new Map<string, HttpAgent>();
@@ -18,7 +18,7 @@ export async function getQueryAgent(): Promise<HttpAgent> {
   }
   const cfg = loadConfig();
   const agent = new HttpAgent({ host: cfg.icHost, fetch: globalThis.fetch });
-  await maybeFetchRootKey(agent, cfg.fetchRootKey);
+  await maybeFetchRootKey(agent, configTestHooks.shouldFetchRootKey(cfg.icHost));
   cachedQueryAgent = agent;
   return agent;
 }
@@ -31,7 +31,7 @@ export async function getIdentityAgent(identity: Identity): Promise<HttpAgent> {
   }
   const cfg = loadConfig();
   const agent = new HttpAgent({ host: cfg.icHost, fetch: globalThis.fetch, identity });
-  await maybeFetchRootKey(agent, cfg.fetchRootKey);
+  await maybeFetchRootKey(agent, configTestHooks.shouldFetchRootKey(cfg.icHost));
   cachedIdentityAgents.set(key, agent);
   return agent;
 }

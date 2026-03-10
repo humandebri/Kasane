@@ -88,15 +88,15 @@ fn run() -> Result<(), String> {
     let mut args = env::args().skip(1);
     while let Some(arg) = args.next() {
         match arg.as_str() {
-            "--mode" => mode = args.next().ok_or_else(|| usage())?,
-            "--privkey" => privkey = Some(args.next().ok_or_else(|| usage())?),
-            "--to" => to = Some(args.next().ok_or_else(|| usage())?),
-            "--value" => value = Some(args.next().ok_or_else(|| usage())?),
-            "--gas-price" => gas_price = Some(args.next().ok_or_else(|| usage())?),
-            "--gas-limit" => gas_limit = Some(args.next().ok_or_else(|| usage())?),
-            "--nonce" => nonce = Some(args.next().ok_or_else(|| usage())?),
-            "--chain-id" => chain_id = Some(args.next().ok_or_else(|| usage())?),
-            "--raw-csv" => raw_csv = Some(args.next().ok_or_else(|| usage())?),
+            "--mode" => mode = args.next().ok_or_else(usage)?,
+            "--privkey" => privkey = Some(args.next().ok_or_else(usage)?),
+            "--to" => to = Some(args.next().ok_or_else(usage)?),
+            "--value" => value = Some(args.next().ok_or_else(usage)?),
+            "--gas-price" => gas_price = Some(args.next().ok_or_else(usage)?),
+            "--gas-limit" => gas_limit = Some(args.next().ok_or_else(usage)?),
+            "--nonce" => nonce = Some(args.next().ok_or_else(usage)?),
+            "--chain-id" => chain_id = Some(args.next().ok_or_else(usage)?),
+            "--raw-csv" => raw_csv = Some(args.next().ok_or_else(usage)?),
             _ => return Err(usage()),
         }
     }
@@ -107,7 +107,7 @@ fn run() -> Result<(), String> {
         return Ok(());
     }
 
-    let privkey = privkey.ok_or_else(|| usage())?;
+    let privkey = privkey.ok_or_else(usage)?;
     let signer: PrivateKeySigner = privkey.parse().map_err(|_| "invalid privkey")?;
 
     if mode == "sender" || mode == "sender-hex" {
@@ -124,7 +124,7 @@ fn run() -> Result<(), String> {
     }
 
     if mode == "decode-csv" {
-        let csv = raw_csv.ok_or_else(|| usage())?;
+        let csv = raw_csv.ok_or_else(usage)?;
         let raw = parse_csv_bytes(&csv)?;
         let decoded = decode_eth_raw_tx(&raw).map_err(|e| format!("decode failed: {e:?}"))?;
         let chain = decoded
@@ -141,12 +141,12 @@ fn run() -> Result<(), String> {
         return Ok(());
     }
 
-    let to = parse_address(&to.ok_or_else(|| usage())?)?;
-    let value = parse_u256(&value.ok_or_else(|| usage())?)?;
-    let gas_price = parse_u128(&gas_price.ok_or_else(|| usage())?)?;
-    let gas_limit = parse_u64(&gas_limit.ok_or_else(|| usage())?)?;
-    let nonce = parse_u64(&nonce.ok_or_else(|| usage())?)?;
-    let chain_id = parse_u64(&chain_id.ok_or_else(|| usage())?)?;
+    let to = parse_address(&to.ok_or_else(usage)?)?;
+    let value = parse_u256(&value.ok_or_else(usage)?)?;
+    let gas_price = parse_u128(&gas_price.ok_or_else(usage)?)?;
+    let gas_limit = parse_u64(&gas_limit.ok_or_else(usage)?)?;
+    let nonce = parse_u64(&nonce.ok_or_else(usage)?)?;
+    let chain_id = parse_u64(&chain_id.ok_or_else(usage)?)?;
 
     let tx = TxLegacy {
         chain_id: Some(chain_id),

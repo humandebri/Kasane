@@ -28,6 +28,7 @@ pub struct BlockData {
 }
 
 impl BlockData {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         number: u64,
         parent_hash: [u8; HASH_LEN],

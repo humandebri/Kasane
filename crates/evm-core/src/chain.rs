@@ -93,7 +93,7 @@ pub(crate) fn trap_store_err(
         tx_id_hex,
         err_label
     );
-    ic_cdk::trap(&format!(
+    ic_cdk::trap(format!(
         "storage.write_failed ctx={} block_number={} tx_id={} err={}",
         ctx, block_value, tx_id_hex, err_label
     ));
@@ -1111,12 +1111,12 @@ pub fn produce_block(max_txs: usize) -> Result<ProduceBlockOutcome, ChainError> 
         let sender_bytes = try_address_to_bytes(tx_env.caller)
             .map_err(|e| ChainError::InvariantViolation(e.to_string()))?;
         let sender_nonce = tx_env.nonce;
-        prepared.push(PreparedItem::Tx(PreparedTx {
+        prepared.push(PreparedItem::Tx(Box::new(PreparedTx {
             tx_id,
             tx_env,
             sender_bytes,
             sender_nonce,
-        }));
+        })));
         if should_stop_block_execution(
             block_gas_used,
             exec_ctx.block_gas_limit,
@@ -1134,7 +1134,7 @@ pub fn produce_block(max_txs: usize) -> Result<ProduceBlockOutcome, ChainError> 
                 staged_drops.push(drop);
                 track_drop(&mut dropped_total, &mut dropped_by_code, drop.drop_code);
             }
-            PreparedItem::Tx(value) => staged_txs.push(value),
+            PreparedItem::Tx(value) => staged_txs.push(*value),
         }
     }
 
@@ -1557,7 +1557,7 @@ struct PreparedTx {
 
 enum PreparedItem {
     Drop(QueuedDrop),
-    Tx(PreparedTx),
+    Tx(Box<PreparedTx>),
 }
 
 #[derive(Clone, Copy)]
@@ -1608,7 +1608,7 @@ pub fn eth_call(raw_tx: Vec<u8>) -> Result<Vec<u8>, ChainError> {
         ExecPath::UserTx,
         false,
         None,
-        false,
+        true,
     )
     .map_err(|err| ChainError::ExecFailed(Some(err)))?;
     Ok(outcome.return_data)
@@ -1700,7 +1700,7 @@ pub fn eth_call_object(input: CallObjectInput) -> Result<CallObjectResult, Chain
         ExecPath::UserTx,
         false,
         None,
-        false,
+        true,
     )
     .map_err(|err| ChainError::ExecFailed(Some(err)))?;
     let revert_data = if outcome.receipt.status == 0 && !outcome.return_data.is_empty() {
@@ -1843,29 +1843,27 @@ fn store_receipt(state: &mut StableState, receipt: &ReceiptLike) -> evm_db::blob
         Some(receipt.tx_id),
     );
     let bytes = receipt.to_bytes().into_owned();
-    let ptr = state.blob_store.store_bytes(&bytes).unwrap_or_else(|_| {
+    state.blob_store.store_bytes(&bytes).unwrap_or_else(|_| {
         trap_store_err(
             "store_receipt",
             Some(receipt.block_number),
             Some(receipt.tx_id),
             "blob_store",
         );
-    });
-    ptr
+    })
 }
 
 fn store_tx_index_entry(state: &mut StableState, entry: TxIndexEntry) -> evm_db::blob_ptr::BlobPtr {
     before_store_write_for_test("store_tx_index_entry", Some(entry.block_number), None);
     let bytes = entry.to_bytes().into_owned();
-    let ptr = state.blob_store.store_bytes(&bytes).unwrap_or_else(|_| {
+    state.blob_store.store_bytes(&bytes).unwrap_or_else(|_| {
         trap_store_err(
             "store_tx_index_entry",
             Some(entry.block_number),
             None,
             "blob_store",
         );
-    });
-    ptr
+    })
 }
 
 fn load_block(state: &StableState, number: u64) -> Option<BlockData> {
@@ -2363,6 +2361,7 @@ fn record_exec_halt_unknown(now: u64) {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn promote_if_next_nonce(
     state: &mut evm_db::stable_state::StableState,
     sender: SenderKey,
@@ -2728,10 +2727,10 @@ fn next_pending_for_sender(
     after_nonce: u64,
 ) -> Option<(u64, TxId)> {
     let start = SenderNonceKey::new(sender.0, after_nonce.saturating_add(1));
-    for entry in state.pending_by_sender_nonce.range(start..) {
+    if let Some(entry) = state.pending_by_sender_nonce.range(start..).next() {
         let key = *entry.key();
         if key.sender != sender {
-            break;
+            return None;
         }
         return Some((key.nonce, entry.value()));
     }

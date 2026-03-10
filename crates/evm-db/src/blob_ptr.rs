@@ -30,6 +30,10 @@ impl BlobPtr {
         u32::from_be_bytes(buf)
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
     pub fn class(&self) -> u32 {
         let mut buf = [0u8; 4];
         buf.copy_from_slice(&self.0[12..16]);

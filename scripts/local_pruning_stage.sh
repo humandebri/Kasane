@@ -93,18 +93,19 @@ import json
 import os
 text = os.environ.get("API_STATUS_JSON", "").strip()
 if not text:
-    print("http://127.0.0.1:4943")
+    print("http://127.0.0.1:8000")
     raise SystemExit(0)
 try:
     data = json.loads(text)
 except Exception:
-    print("http://127.0.0.1:4943")
+    print("http://127.0.0.1:8000")
+    raise SystemExit(0)
+api_url = data.get("api_url")
+if isinstance(api_url, str) and api_url:
+    print(api_url)
     raise SystemExit(0)
 port = data.get("port")
-if isinstance(port, int) and port > 0:
-    print(f"http://127.0.0.1:{port}")
-else:
-    print("http://127.0.0.1:4943")
+print(f"http://127.0.0.1:{port}" if isinstance(port, int) and port > 0 else "http://127.0.0.1:8000")
 PY
 }
 
@@ -173,7 +174,7 @@ process.stdout.on("error", (err: any) => {
 });
 
 const canisterId = process.env.EVM_CANISTER_ID;
-const host = process.env.INDEXER_IC_HOST ?? "http://127.0.0.1:4943";
+const host = process.env.INDEXER_IC_HOST ?? "http://127.0.0.1:8000";
 const fetchRootKey = process.env.INDEXER_FETCH_ROOT_KEY === "true";
 if (!canisterId) throw new Error("missing EVM_CANISTER_ID");
 const idlFactory = ({ IDL }) =>
@@ -211,7 +212,7 @@ query_expected_nonce() {
 import { Actor, HttpAgent } from "@dfinity/agent";
 
 const canisterId = process.env.EVM_CANISTER_ID;
-const host = process.env.INDEXER_IC_HOST ?? "http://127.0.0.1:4943";
+const host = process.env.INDEXER_IC_HOST ?? "http://127.0.0.1:8000";
 const fetchRootKey = process.env.INDEXER_FETCH_ROOT_KEY === "true";
 const addressHex = process.env.ADDRESS_HEX ?? "";
 if (!canisterId) throw new Error("missing EVM_CANISTER_ID");
@@ -342,7 +343,7 @@ get_prune_status() {
 import { Actor, HttpAgent } from "@dfinity/agent";
 
 const canisterId = process.env.EVM_CANISTER_ID;
-const host = process.env.INDEXER_IC_HOST ?? "http://127.0.0.1:4943";
+const host = process.env.INDEXER_IC_HOST ?? "http://127.0.0.1:8000";
 const fetchRootKey = process.env.INDEXER_FETCH_ROOT_KEY === "true";
 if (!canisterId) {
   throw new Error("missing EVM_CANISTER_ID");
@@ -412,7 +413,7 @@ process.stdout.on("error", (err: any) => {
 });
 
 const canisterId = process.env.EVM_CANISTER_ID;
-const host = process.env.INDEXER_IC_HOST ?? "http://127.0.0.1:4943";
+const host = process.env.INDEXER_IC_HOST ?? "http://127.0.0.1:8000";
 const fetchRootKey = process.env.INDEXER_FETCH_ROOT_KEY === "true";
 const blockNumber = BigInt(process.env.BLOCK_NUMBER ?? "0");
 if (!canisterId) {

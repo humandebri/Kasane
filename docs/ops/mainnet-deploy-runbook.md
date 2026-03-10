@@ -24,3 +24,7 @@ Runbook for mainnet deployment, post-checks, rollback, and environment-specific 
 ## Usage
 Use this file as the canonical index for mainnet operation phases.
 For exact command sequences and environment-specific snippets, see the Japanese version.
+
+## Important Note
+- `MODE=install` / `MODE=reinstall` requires `WRAP_CANISTER_ID`.
+- The deploy scripts do not auto-resolve `wrap_canister` anymore.

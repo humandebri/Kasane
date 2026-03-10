@@ -9,7 +9,7 @@ import type { DashboardWalletState } from "./types";
 export function HeaderBar(props: {
   wallet: DashboardWalletState;
   host: string;
-  gatewayCanisterId: string;
+  kasaneEvmCanisterId: string;
   onConnectInternetIdentity: () => void;
   onConnectOisy: () => void;
   onDisconnect: () => void;
@@ -29,7 +29,7 @@ export function HeaderBar(props: {
             Wrap / Unwrap Console
           </h1>
           <p className="mt-2 text-xs text-zinc-600">
-            host: {props.host} / gateway: {props.gatewayCanisterId}
+            host: {props.host} / Kasane EVM: {props.kasaneEvmCanisterId}
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">

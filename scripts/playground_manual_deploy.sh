@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # where: playground-only manual build/deploy helper
-# what: build wasm with cargo (no dfx build) and install via icp-cli
-# why: keep wasm small and reproducible; avoid dfx-internal build/strip issues
+# what: build wasm with cargo and install via icp-cli
+# why: keep wasm small and reproducible; avoid hidden build-time behavior
 # note: this is intended for playground use only (size issues); not needed for mainnet deploys
 set -euo pipefail
 source "$(dirname "$0")/lib_init_args.sh"
@@ -14,6 +14,13 @@ RUN_SMOKE="${RUN_SMOKE:-0}"
 
 log() {
   echo "[manual-deploy] $*"
+}
+
+require_wrap_canister_id() {
+  if [[ -z "${WRAP_CANISTER_ID:-}" ]]; then
+    log "WRAP_CANISTER_ID is required"
+    exit 1
+  fi
 }
 
 build_wasm() {
@@ -61,6 +68,7 @@ install_wasm() {
 }
 
 build_wasm
+require_wrap_canister_id
 install_wasm
 
 if [[ "${RUN_SMOKE}" == "1" ]]; then

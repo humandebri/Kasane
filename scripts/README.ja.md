@@ -8,8 +8,11 @@ English version: [./README.md](./README.md)
 
 ## 前提
 - 実行ディレクトリ: リポジトリルート（`Kasane/`）
-- 主な依存: `cargo`, `dfx`, `icp`, `node`, `npm`, `python`
+- 主な依存: `cargo`, `icp`, `node`, `npm`, `python`
 - query 呼び出しは `dfx canister call --query ...` を使う
+- query 系だけは現時点で `dfx` を維持し、非 query 系は `icp` に統一する
+- ローカル検証は場当たり的な local deploy より PocketIC を優先する
+- 既にローカルに PocketIC バイナリがある場合は、そのバイナリを優先して使う
 
 ## よく使うコマンド
 
@@ -47,7 +50,7 @@ scripts/query_smoke.sh
 - 日本語補助は `tools/rpc-gateway/README.ja.md`（`ops/`, `smoke/`, `contracts/` も同様）
 
 ### ローカル運用
-- `scripts/dfx_local_clean_start.sh`: ローカル環境のクリーン起動補助
+- `scripts/icp_local_clean_start.sh`: managed local network（`icp network`）のクリーン起動補助
 - `scripts/local_pruning_stage.sh`: pruning段階検証
 - `scripts/local_indexer_fault_injection.sh`: indexer障害注入テスト
 
@@ -74,8 +77,12 @@ scripts/query_smoke.sh
 
 ## 主要環境変数（よく使うもの）
 - `CANISTER_NAME` / `CANISTER_ID`
+- `WRAP_CANISTER_ID`
+  - `build_init_args_for_current_identity` を使うスクリプトでは必須
+  - `install` / `reinstall` 時に `wrap_canister` の自動解決は行わない
 - `ICP_IDENTITY_NAME`
 - `POCKET_IC_BIN`（`predeploy_smoke.sh` / `run_rpc_compat_e2e.sh` で使用するPocketICバイナリ）
+  - 推奨: まず既存のローカルバイナリを指して、都度ダウンロードを避ける
 - `E2E_TIMEOUT_SECONDS`（`run_rpc_compat_e2e.sh` のタイムアウト秒）
 - `RUN_INDEXER_SMOKE`（`predeploy_smoke.sh` で local indexer smoke を追加実行。既定 `0`）
 - `RUN_POST_SMOKE`（`ic_mainnet_deploy.sh` で post smoke を有効化）

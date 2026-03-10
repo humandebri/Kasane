@@ -16,6 +16,8 @@ use ic_evm_rpc_types::{
 };
 use tracing::{error, warn};
 
+type AccessListItem = ([u8; 20], Vec<[u8; 32]>);
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum TxApiErrorKind {
     InvalidArgument,
@@ -802,9 +804,7 @@ fn call_object_to_input(call: RpcCallObjectView) -> Result<chain::CallObjectInpu
     })
 }
 
-fn parse_access_list(
-    items: Vec<RpcAccessListItemView>,
-) -> Result<Vec<([u8; 20], Vec<[u8; 32]>)>, String> {
+fn parse_access_list(items: Vec<RpcAccessListItemView>) -> Result<Vec<AccessListItem>, String> {
     if items.len() > MAX_ACCESS_LIST_ITEMS {
         return Err(format!(
             "accessList too large: max {MAX_ACCESS_LIST_ITEMS} items"
@@ -1326,7 +1326,7 @@ fn prune_boundary_for_number(number: u64) -> Option<u64> {
 
 fn receipt_lookup_status(tx_id: TxId) -> RpcReceiptLookupView {
     if let Some(receipt) = chain::get_receipt(&tx_id) {
-        return RpcReceiptLookupView::Found(receipt_to_eth_view(receipt));
+        return RpcReceiptLookupView::Found(Box::new(receipt_to_eth_view(receipt)));
     }
     let pruned_before = with_state(|state| state.prune_state.get().pruned_before());
     let loc = chain::get_tx_loc(&tx_id);

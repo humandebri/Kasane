@@ -73,7 +73,7 @@ impl Storable for AllocKey {
         let data = bytes.as_ref();
         if data.len() != 12 {
             record_corrupt(b"alloc_key");
-            return Self { 0: [0u8; 12] };
+            return Self([0u8; 12]);
         }
         let mut out = [0u8; 12];
         out.copy_from_slice(data);

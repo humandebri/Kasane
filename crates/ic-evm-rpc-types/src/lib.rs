@@ -387,7 +387,7 @@ pub enum RpcBlockLookupView {
 
 #[derive(Clone, Debug, CandidType, Deserialize)]
 pub enum RpcReceiptLookupView {
-    Found(EthReceiptView),
+    Found(Box<EthReceiptView>),
     Pruned { pruned_before_block: u64 },
     PossiblyPruned { pruned_before_block: u64 },
     NotFound,

@@ -78,7 +78,7 @@ fn principal_pending_and_fee_indexes_track_lifecycle() {
     with_state(|state| {
         let key = CallerKey::from_principal_bytes(&principal);
         assert_eq!(state.principal_pending_count.get(&key), Some(1));
-        assert_eq!(state.pending_fee_key_by_tx_id.get(&tx_id).is_some(), true);
+        assert!(state.pending_fee_key_by_tx_id.get(&tx_id).is_some());
         assert_eq!(state.pending_fee_index.len(), 1);
     });
 

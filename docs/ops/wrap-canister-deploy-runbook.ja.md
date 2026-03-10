@@ -131,11 +131,11 @@ dfx canister call --query wrap_canister export_did '()' --network "${ICP_ENV}"
 - `set_fee_policy` は controller のみ実行可能です。例:
 
 ```bash
-dfx canister call wrap_canister set_fee_policy '(record {
+icp canister call -e "${ICP_ENV}" wrap_canister set_fee_policy '(record {
   fee_ledger_canister = principal "'"${FEE_LEDGER_CANISTER_ID}"'";
   cycle_fee_e8s = 1000000 : nat64;
   gas_price_buffer_bps = 12000 : nat32;
-})' --network "${ICP_ENV}"
+})'
 ```
 
 - もし既存 `wrap_canister` が別サブネット上にある場合、同一 canister id のまま移動はできません。  

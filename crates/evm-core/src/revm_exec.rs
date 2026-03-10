@@ -21,7 +21,7 @@ use revm::handler::{ExecuteCommitEvm, MainBuilder, MainContext};
 use revm::inspector::InspectEvm;
 use revm::interpreter::{InstructionResult, Interpreter, InterpreterTypes};
 use revm::primitives::{Address, U256};
-use revm::state::{Account, AccountInfo};
+use revm::state::Account;
 
 pub(crate) type StateDiff = revm::primitives::HashMap<Address, revm::state::Account>;
 
@@ -118,6 +118,7 @@ pub fn execute_tx(
     Ok(outcome)
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn execute_tx_on<DB>(
     db: DB,
     tx_id: TxId,
@@ -338,11 +339,7 @@ fn add_base_fee_portion_to_recipient(state: &mut StateDiff, gas_used: u64, base_
     // これにより nonce/code_hash の上書き事故を避けつつ、base fee取りこぼしを防ぐ。
     let account = state.entry(recipient).or_insert_with(|| {
         let mut db = RevmStableDb;
-        let info = db
-            .basic(recipient)
-            .ok()
-            .flatten()
-            .unwrap_or_else(AccountInfo::default);
+        let info = db.basic(recipient).ok().flatten().unwrap_or_default();
         Account::from(info)
     });
     account.mark_touch();
@@ -446,7 +443,7 @@ fn revm_log_to_receipt_log(log: revm::primitives::Log) -> LogEntry {
 mod tests {
     use super::{
         add_base_fee_portion_to_recipient, compute_effective_gas_price, map_halt_reason,
-        validate_execution_result_sizes, AccountInfo, ExecError, LogEntry, OpHaltReason, StateDiff,
+        validate_execution_result_sizes, ExecError, LogEntry, OpHaltReason, StateDiff,
         FEE_RECIPIENT, MAX_RETURN_DATA,
     };
     use evm_db::stable_state::{init_stable_state, with_state_mut};
@@ -454,6 +451,7 @@ mod tests {
     use evm_db::types::values::AccountVal;
     use revm::context_interface::result::{HaltReason, OutOfGasError};
     use revm::primitives::{B256, U256};
+    use revm::state::AccountInfo;
 
     #[test]
     fn effective_price_uses_min_of_max_and_base_plus_priority() {

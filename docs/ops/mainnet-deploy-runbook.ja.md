@@ -44,9 +44,14 @@ ICP_ENV=ic \
 CANISTER_ID=<canister_id> \
 ICP_IDENTITY_NAME=ci-local \
 MODE=install \
+WRAP_CANISTER_ID=<wrap_canister_id> \
 GENESIS_PRINCIPAL_AMOUNT=100000000000000000000000 \
 scripts/mainnet/ic_mainnet_deploy.sh
 ```
+
+注記:
+- `MODE=install` / `MODE=reinstall` では `WRAP_CANISTER_ID` が必須。
+- `wrap_canister` の自動解決は行わない。
 
 ## 3. デプロイ後確認
 1. `icp canister status -e ic <canister_id>` で module hash / settings / balance を確認する。
