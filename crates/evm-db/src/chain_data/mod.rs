@@ -25,6 +25,7 @@ pub mod unwrap_request;
 pub use block::{BlockData, Head};
 pub use caller::CallerKey;
 pub use chain_state::ChainStateV1;
+pub use codec::mark_decode_failure;
 pub use constants::{
     CALLER_KEY_LEN, CHAIN_STATE_SIZE_U32, HASH_LEN, MAX_PRINCIPAL_LEN, MAX_TXS_PER_BLOCK,
     MAX_TX_SIZE, RECEIPT_CONTRACT_ADDR_LEN, TX_ID_LEN,
@@ -57,4 +58,4 @@ pub use tx::{
     StoredTx, StoredTxBytes, StoredTxBytesError, StoredTxError, TxId, TxIndexEntry, TxKind,
 };
 pub use tx_loc::{TxLoc, TxLocKind};
-pub use unwrap_request::{UnwrapRequestStatus, UnwrapRequestV1};
+pub use unwrap_request::{UnwrapDispatchRequest, UnwrapRequestStatus, UNWRAP_DECODE_FAILURE_CODE};

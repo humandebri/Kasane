@@ -30,7 +30,7 @@ benches:
   state_root_migration_tick_path:
     total:
       calls: 1
-      instructions: 391
+      instructions: 387
       heap_increase: 0
       stable_memory_increase: 0
     scopes: {}

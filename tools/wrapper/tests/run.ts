@@ -3,7 +3,13 @@
 import assert from "node:assert/strict";
 import { AnonymousIdentity } from "@dfinity/agent";
 import { mergeStatus } from "../lib/merge";
-import { decimalToBytes32, deriveRequestId, deriveWrapRequestId, encodeUnwrapAbiInput } from "../lib/request-id";
+import {
+  decimalToBytes32,
+  deriveRequestId,
+  deriveWrapRequestId,
+  encodeUnwrapAbiInput,
+  WRAP_PRECOMPILE_ADDRESS,
+} from "../lib/request-id";
 import { principalTextToBytes } from "../lib/principal";
 import { bytesToHex, hexToBytes, parseRequestIdHex } from "../lib/utils";
 import {
@@ -54,6 +60,11 @@ async function runUtilsTests(): Promise<void> {
 }
 
 async function runRequestIdTests(): Promise<void> {
+  assert.equal(
+    Buffer.from(WRAP_PRECOMPILE_ADDRESS).toString("hex"),
+    "00000000000000000000000000000000ffff0001",
+  );
+
   const abi = encodeUnwrapAbiInput({
     vaultCanisterId: "2vxsx-fae",
     assetId: "2vxsx-fae",

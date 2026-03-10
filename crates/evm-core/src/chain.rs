@@ -499,11 +499,15 @@ pub fn verify_eth_tx_hash_index(sample_limit: u32) -> (bool, u64, u64) {
 }
 
 fn tx_locs_get(state: &StableState, tx_id: &TxId) -> Option<TxLoc> {
-    if tx_locs_v3_active() {
+    let loc = if tx_locs_v3_active() {
         state.tx_locs_v3.get(tx_id)
     } else {
         state.tx_locs.get(tx_id)
+    }?;
+    if loc.is_decode_failure_placeholder() {
+        return None;
     }
+    Some(loc)
 }
 
 fn insert_eth_tx_hash_index_for_envelope(
@@ -1869,7 +1873,11 @@ fn store_tx_index_entry(state: &mut StableState, entry: TxIndexEntry) -> evm_db:
 fn load_block(state: &StableState, number: u64) -> Option<BlockData> {
     if let Some(ptr) = state.blocks.get(&number) {
         let bytes = state.blob_store.read(&ptr).ok()?;
-        return Some(BlockData::from_bytes(Cow::Owned(bytes)));
+        let block = BlockData::from_bytes(Cow::Owned(bytes));
+        if is_corrupt_block(&block) {
+            return None;
+        }
+        return Some(block);
     }
     None
 }
@@ -1877,13 +1885,30 @@ fn load_block(state: &StableState, number: u64) -> Option<BlockData> {
 fn load_receipt(state: &StableState, tx_id: &TxId) -> Option<ReceiptLike> {
     if let Some(ptr) = state.receipts.get(tx_id) {
         let bytes = state.blob_store.read(&ptr).ok()?;
-        return Some(ReceiptLike::from_bytes(Cow::Owned(bytes)));
+        let receipt = ReceiptLike::from_bytes(Cow::Owned(bytes));
+        if is_corrupt_receipt(&receipt, tx_id) {
+            return None;
+        }
+        return Some(receipt);
     }
     None
 }
 
 pub fn get_tx_envelope(tx_id: &TxId) -> Option<StoredTxBytes> {
-    with_state(|state| state.tx_store.get(tx_id))
+    with_state(|state| {
+        state
+            .tx_store
+            .get(tx_id)
+            .filter(|envelope| !envelope.is_invalid())
+    })
+}
+
+fn is_corrupt_block(block: &BlockData) -> bool {
+    block.block_hash == [0u8; 32] && block.parent_hash == [0u8; 32] && block.tx_ids.is_empty()
+}
+
+fn is_corrupt_receipt(receipt: &ReceiptLike, tx_id: &TxId) -> bool {
+    receipt.tx_id != *tx_id || receipt.tx_id.0 == [0u8; 32]
 }
 
 #[cfg(not(target_arch = "wasm32"))]

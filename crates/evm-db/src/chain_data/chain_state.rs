@@ -1,7 +1,7 @@
 //! どこで: chain_data のヘッダ状態 / 何を: 固定サイズのStableStateV1 / なぜ: upgrade耐性と最小メタ保持のため
 
 use crate::chain_data::codec::{encode_guarded, mark_decode_failure};
-use crate::chain_data::constants::CHAIN_STATE_SIZE_U32;
+use crate::chain_data::constants::{CHAIN_ID, CHAIN_STATE_SIZE_U32};
 use crate::chain_data::runtime_defaults::{
     DEFAULT_BASE_FEE, DEFAULT_BLOCK_GAS_LIMIT, DEFAULT_INSTRUCTION_SOFT_LIMIT,
     DEFAULT_MINING_INTERVAL_MS, DEFAULT_MIN_GAS_PRICE, DEFAULT_MIN_PRIORITY_FEE,
@@ -109,6 +109,15 @@ impl ChainStateV1 {
         self.is_producing = (flags & (1 << 1)) != 0;
         self.mining_scheduled = (flags & (1 << 2)) != 0;
     }
+
+    fn decode_failure_default() -> Self {
+        let mut state = Self::new(CHAIN_ID);
+        // 破損レコードからの自動再開を避けるため、安全側に倒す。
+        state.auto_production_enabled = false;
+        state.is_producing = false;
+        state.mining_scheduled = false;
+        state
+    }
 }
 
 impl Storable for ChainStateV1 {
@@ -129,19 +138,16 @@ impl Storable for ChainStateV1 {
     }
 
     fn from_bytes(bytes: Cow<'_, [u8]>) -> Self {
-        const CHAIN_STATE_DECODE_INCOMPATIBLE: &str = "stable.decode.chain_state_incompatible";
         let data = bytes.as_ref();
-        // 非互換方針: 旧wireからの自動移行は行わない。
-        // 想定サイズ外は即trapで停止し、静かな初期化を禁止する。
         if data.len() != CHAIN_STATE_SIZE_U32 as usize {
-            mark_decode_failure(b"chain_state", false);
-            ic_cdk::trap(CHAIN_STATE_DECODE_INCOMPATIBLE);
+            mark_decode_failure(b"chain_state", true);
+            return Self::decode_failure_default();
         }
         let wire = match ChainStateWireV3::read_from_bytes(data) {
             Ok(value) => value,
             Err(_) => {
-                mark_decode_failure(b"chain_state", false);
-                ic_cdk::trap(CHAIN_STATE_DECODE_INCOMPATIBLE);
+                mark_decode_failure(b"chain_state", true);
+                return Self::decode_failure_default();
             }
         };
         let mut state = Self {

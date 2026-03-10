@@ -11,8 +11,12 @@ use revm::{
 };
 use std::boxed::Box;
 
-pub const WRAP_PRECOMPILE_ADDRESS: Address =
-    Address::new([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1]);
+// 予約レンジ方針:
+// - 0x00000000000000000000000000000000ffff0001: unwrap
+// - 0x00000000000000000000000000000000ffff0002+: 将来拡張用の予約スロット
+pub const WRAP_PRECOMPILE_ADDRESS: Address = Address::new([
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xff, 0xff, 0x00, 0x01,
+]);
 const MAX_FIELD_LEN: usize = 120;
 const MAX_PRINCIPAL_LEN: usize = 29;
 const ABI_WORD_SIZE: usize = 32;
@@ -407,6 +411,39 @@ mod tests {
         assert_eq!(parsed.recipient, recipient);
         assert_eq!(parsed.user_nonce, nonce);
         assert_eq!(parsed.deadline, deadline);
+    }
+
+    #[test]
+    fn wrap_precompile_address_points_to_reserved_high_range_slot() {
+        assert_eq!(
+            WRAP_PRECOMPILE_ADDRESS.into_array(),
+            [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xff, 0xff, 0x00, 0x01]
+        );
+    }
+
+    #[test]
+    fn unwrap_intent_from_log_rejects_legacy_precompile_address() {
+        let legacy = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1];
+        let request_id = [7u8; 32];
+        let vault = vec![1, 2, 3];
+        let asset = vec![4, 5, 6];
+        let amount = [8u8; 32];
+        let recipient = vec![9, 10, 11];
+        let nonce = 12u64;
+        let deadline = 34u64;
+        let mut data = Vec::new();
+        data.extend_from_slice(&request_id);
+        data.push(vault.len() as u8);
+        data.extend_from_slice(&vault);
+        data.push(asset.len() as u8);
+        data.extend_from_slice(&asset);
+        data.extend_from_slice(&amount);
+        data.push(recipient.len() as u8);
+        data.extend_from_slice(&recipient);
+        data.extend_from_slice(&nonce.to_be_bytes());
+        data.extend_from_slice(&deadline.to_be_bytes());
+        let log = log_entry_from_parts(legacy, vec![wrap_event_topic0(), request_id], data);
+        assert!(unwrap_intent_from_log(&log).is_none());
     }
 
     #[test]

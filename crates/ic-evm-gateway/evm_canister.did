@@ -419,5 +419,6 @@ service : (opt InitArgs) -> {
   set_log_filter : (opt text) -> (Result_15);
   set_prune_policy : (PrunePolicyView) -> (Result_15);
   set_pruning_enabled : (bool) -> (Result_15);
+  set_wrap_canister_id : (principal) -> (Result_15);
   submit_ic_tx : (SubmitIcTxArgsDto) -> (Result_14);
 }

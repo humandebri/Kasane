@@ -1,7 +1,7 @@
 //! どこで: state root永続化層 / 何を: journalをstableに適用 / なぜ: 副作用境界を一本化するため
 
 use alloy_trie::EMPTY_ROOT_HASH;
-use evm_db::chain_data::{HashKey, NodeRecord};
+use evm_db::chain_data::{mark_decode_failure, HashKey, NodeRecord};
 use evm_db::stable_state::StableState;
 use std::collections::BTreeMap;
 
@@ -48,7 +48,8 @@ pub fn apply_journal(state: &mut StableState, mut journal: JournalUpdate) {
             if hash.0 == empty_root {
                 continue;
             }
-            panic!("state_root_missing_new_node_record");
+            mark_decode_failure(b"state_root_journal_inconsistent", true);
+            continue;
         }
         let Some(mut record) = existing else { continue };
         let next = (i128::from(record.refcnt) + i128::from(delta)).max(0) as u32;
@@ -130,4 +131,36 @@ fn refresh_metrics(state: &mut StableState) {
     metrics.node_db_unreachable = unreachable;
     metrics.gc_progress = state.state_root_gc_state.get().dequeue_seq;
     state.state_root_metrics.set(metrics);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{apply_journal, AnchorDelta, JournalUpdate, NewNodeRecords, NodeDeltaCounts};
+    use evm_db::chain_data::HashKey;
+    use evm_db::meta::{clear_needs_migration, needs_migration};
+    use evm_db::stable_state::{init_stable_state, with_state_mut};
+    use std::collections::BTreeMap;
+
+    #[test]
+    fn inconsistent_journal_marks_decode_failure_instead_of_panicking() {
+        init_stable_state();
+        clear_needs_migration();
+
+        with_state_mut(|state| {
+            let mut deltas: NodeDeltaCounts = BTreeMap::new();
+            let inconsistent = HashKey([0x11u8; 32]);
+            deltas.insert(inconsistent, 1);
+            apply_journal(
+                state,
+                JournalUpdate {
+                    node_delta_counts: deltas,
+                    new_node_records: NewNodeRecords::new(),
+                    anchor_delta: AnchorDelta::default(),
+                },
+            );
+            assert!(state.state_root_node_db.get(&inconsistent).is_none());
+        });
+
+        assert!(needs_migration());
+    }
 }

@@ -36,18 +36,13 @@ pub fn mark_decode_failure(label: &'static [u8], fail_closed: bool) {
 }
 
 // fail-closed policy:
-// - ledger整合性に加えて運用ガード系（ops/caller）も fail-closed に倒す。
+// - 全体整合性に直結する状態と admission control に効くキーは fail-closed に倒す。
 // - needs_migration を立て、制御プレーン介入までデータプレーン更新を停止させる。
 fn is_fail_closed_label(label: &'static [u8]) -> bool {
     label == b"state_root_meta"
-        || label == b"receipt"
-        || label == b"tx_loc"
-        || label == b"tx_loc_kind"
-        || label == b"block_data"
+        || label == b"chain_state"
         || label == b"head"
-        || label == b"tx_id"
-        || label == b"stored_tx_decode"
-        || label == b"tx_index"
+        || label == b"state_root_journal_inconsistent"
         || label == b"ops_config"
         || label == b"ops_state"
         || label == b"caller_key"
@@ -73,6 +68,14 @@ mod tests {
         assert!(!needs_migration());
         mark_decode_failure(b"ops_config", true);
         assert!(needs_migration());
+    }
+
+    #[test]
+    fn fail_closed_unwrap_request_does_not_set_needs_migration() {
+        init_stable_state();
+        assert!(!needs_migration());
+        mark_decode_failure(b"unwrap_request", true);
+        assert!(!needs_migration());
     }
 
     #[test]

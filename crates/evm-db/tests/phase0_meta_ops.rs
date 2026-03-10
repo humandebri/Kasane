@@ -1,6 +1,6 @@
 //! どこで: Phase0テスト / 何を: Meta互換読込とOps storableの復元確認 / なぜ: upgrade時の退行を防ぐため
 
-use evm_db::chain_data::{CallerKey, OpsConfigV1, OpsMode, OpsStateV1, TxLoc};
+use evm_db::chain_data::{CallerKey, ChainStateV1, OpsConfigV1, OpsMode, OpsStateV1, TxLoc};
 use evm_db::meta::{needs_migration, Meta, SchemaMigrationPhase, SchemaMigrationState};
 use evm_db::stable_state::init_stable_state;
 use ic_stable_structures::Storable;
@@ -33,7 +33,7 @@ fn meta_roundtrip_keeps_new_fields() {
 fn fail_closed_decode_sets_needs_migration() {
     init_stable_state();
     assert!(!needs_migration());
-    let _ = TxLoc::from_bytes(Cow::Borrowed(&[0u8; 1]));
+    let _ = ChainStateV1::from_bytes(Cow::Borrowed(&[0u8; 1]));
     assert!(needs_migration());
 }
 
@@ -96,6 +96,15 @@ fn caller_key_invalid_len_sets_needs_migration() {
     let decoded = CallerKey::from_bytes(Cow::Owned(vec![0u8; 1]));
     assert_eq!(decoded.0, [0u8; 30]);
     assert!(needs_migration());
+}
+
+#[test]
+fn tx_loc_invalid_len_is_localized_without_needs_migration() {
+    init_stable_state();
+    assert!(!needs_migration());
+    let decoded = TxLoc::from_bytes(Cow::Owned(vec![0u8; 1]));
+    assert!(decoded.is_decode_failure_placeholder());
+    assert!(!needs_migration());
 }
 
 #[test]

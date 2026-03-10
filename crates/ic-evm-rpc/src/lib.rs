@@ -90,12 +90,13 @@ pub fn rpc_eth_get_block_number_by_hash(
 ) -> Result<Option<u64>, String> {
     let target =
         parse_hash_32(block_hash).ok_or_else(|| "block_hash must be 32 bytes".to_string())?;
-    if max_scan == 0 {
+    let scan_limit = clamp_block_hash_scan(max_scan);
+    if scan_limit == 0 {
         return Ok(None);
     }
     let mut number = chain::get_head_number();
     let mut scanned = 0u32;
-    while scanned < max_scan {
+    while scanned < scan_limit {
         if let Some(block) = chain::get_block(number) {
             if block.block_hash == target {
                 return Ok(Some(number));
@@ -108,6 +109,14 @@ pub fn rpc_eth_get_block_number_by_hash(
         number = number.saturating_sub(1);
     }
     Ok(None)
+}
+
+fn clamp_block_hash_scan(max_scan: u32) -> u32 {
+    if max_scan > MAX_BLOCK_HASH_SCAN {
+        MAX_BLOCK_HASH_SCAN
+    } else {
+        max_scan
+    }
 }
 
 pub fn rpc_eth_get_balance(
@@ -174,6 +183,10 @@ pub fn rpc_eth_get_storage_at(
 const RPC_ERR_INVALID_PARAMS: u32 = 1001;
 const RPC_ERR_EXECUTION_FAILED: u32 = 2001;
 const MAX_FEE_HISTORY_BLOCKS: u64 = 256;
+const MAX_BLOCK_HASH_SCAN: u32 = 50_000;
+const MAX_ACCESS_LIST_ITEMS: usize = 1_024;
+const MAX_ACCESS_LIST_STORAGE_KEYS_PER_ITEM: usize = 2_048;
+const MAX_FEE_HISTORY_PERCENTILES: usize = 128;
 const EIP1559_BASE_FEE_MAX_CHANGE_DENOM: u128 = 8;
 const EIP1559_ELASTICITY_MULTIPLIER: u128 = 2;
 
@@ -792,8 +805,18 @@ fn call_object_to_input(call: RpcCallObjectView) -> Result<chain::CallObjectInpu
 }
 
 fn parse_access_list(items: Vec<RpcAccessListItemView>) -> Result<Vec<AccessListItem>, String> {
+    if items.len() > MAX_ACCESS_LIST_ITEMS {
+        return Err(format!(
+            "accessList too large: max {MAX_ACCESS_LIST_ITEMS} items"
+        ));
+    }
     let mut out = Vec::with_capacity(items.len());
     for item in items {
+        if item.storage_keys.len() > MAX_ACCESS_LIST_STORAGE_KEYS_PER_ITEM {
+            return Err(format!(
+                "accessList.storageKeys too large: max {MAX_ACCESS_LIST_STORAGE_KEYS_PER_ITEM} keys per item"
+            ));
+        }
         let address = parse_address_20_with_label(item.address, "accessList.address")?;
         let mut storage_keys = Vec::with_capacity(item.storage_keys.len());
         for key in item.storage_keys {
@@ -1174,6 +1197,14 @@ fn validate_reward_percentiles(
     let Some(percentiles) = reward_percentiles else {
         return Ok(None);
     };
+    if percentiles.len() > MAX_FEE_HISTORY_PERCENTILES {
+        return Err(invalid_error(
+            "invalid.fee_history.percentiles",
+            format!(
+                "invalid.fee_history.percentiles too many values (max {MAX_FEE_HISTORY_PERCENTILES})"
+            ),
+        ));
+    }
     let mut prev = -1.0f64;
     for value in &percentiles {
         if !value.is_finite() || *value < 0.0 || *value > 100.0 {
@@ -1321,7 +1352,15 @@ fn receipt_lookup_status(tx_id: TxId) -> RpcReceiptLookupView {
 
 #[cfg(test)]
 mod tests {
-    use super::cursor_after_scan_limit;
+    use super::{
+        clamp_block_hash_scan, cursor_after_scan_limit, parse_access_list,
+        validate_reward_percentiles, MAX_ACCESS_LIST_ITEMS, MAX_ACCESS_LIST_STORAGE_KEYS_PER_ITEM,
+        MAX_BLOCK_HASH_SCAN, MAX_FEE_HISTORY_PERCENTILES,
+    };
+    use evm_db::chain_data::{StoredTxBytes, TxId, TxLoc};
+    use evm_db::stable_state::{init_stable_state, with_state_mut};
+    use evm_db::Storable;
+    use ic_evm_rpc_types::RpcAccessListItemView;
 
     #[test]
     fn cursor_after_scan_limit_stays_in_block_when_txs_remain() {
@@ -1342,6 +1381,100 @@ mod tests {
     #[test]
     fn cursor_after_scan_limit_returns_none_at_query_end() {
         let out = cursor_after_scan_limit(20, 7, 8, 20);
+        assert!(out.is_none());
+    }
+
+    #[test]
+    fn block_hash_scan_is_clamped() {
+        assert_eq!(clamp_block_hash_scan(0), 0);
+        assert_eq!(
+            clamp_block_hash_scan(MAX_BLOCK_HASH_SCAN.saturating_add(1)),
+            MAX_BLOCK_HASH_SCAN
+        );
+    }
+
+    #[test]
+    fn parse_access_list_rejects_too_many_items() {
+        let mut items = Vec::with_capacity(MAX_ACCESS_LIST_ITEMS.saturating_add(1));
+        for _ in 0..MAX_ACCESS_LIST_ITEMS.saturating_add(1) {
+            items.push(RpcAccessListItemView {
+                address: vec![0u8; 20],
+                storage_keys: Vec::new(),
+            });
+        }
+        let err = parse_access_list(items).expect_err("must reject oversized access list");
+        assert!(err.contains("accessList too large"));
+    }
+
+    #[test]
+    fn parse_access_list_rejects_too_many_storage_keys_per_item() {
+        let mut storage_keys =
+            Vec::with_capacity(MAX_ACCESS_LIST_STORAGE_KEYS_PER_ITEM.saturating_add(1));
+        for _ in 0..MAX_ACCESS_LIST_STORAGE_KEYS_PER_ITEM.saturating_add(1) {
+            storage_keys.push(vec![0u8; 32]);
+        }
+        let err = parse_access_list(vec![RpcAccessListItemView {
+            address: vec![0u8; 20],
+            storage_keys,
+        }])
+        .expect_err("must reject oversized storage keys");
+        assert!(err.contains("accessList.storageKeys too large"));
+    }
+
+    #[test]
+    fn parse_access_list_accepts_upper_bounds() {
+        let mut storage_keys = Vec::with_capacity(MAX_ACCESS_LIST_STORAGE_KEYS_PER_ITEM);
+        for _ in 0..MAX_ACCESS_LIST_STORAGE_KEYS_PER_ITEM {
+            storage_keys.push(vec![0u8; 32]);
+        }
+        let out = parse_access_list(vec![RpcAccessListItemView {
+            address: vec![0u8; 20],
+            storage_keys,
+        }])
+        .expect("upper bound should pass");
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].1.len(), MAX_ACCESS_LIST_STORAGE_KEYS_PER_ITEM);
+    }
+
+    #[test]
+    fn validate_reward_percentiles_rejects_too_many_values() {
+        let mut values = Vec::with_capacity(MAX_FEE_HISTORY_PERCENTILES.saturating_add(1));
+        for i in 0..MAX_FEE_HISTORY_PERCENTILES.saturating_add(1) {
+            values.push(i as f64);
+        }
+        let err = validate_reward_percentiles(Some(values)).expect_err("must reject oversized");
+        assert_eq!(
+            err.error_prefix.as_deref(),
+            Some("invalid.fee_history.percentiles")
+        );
+    }
+
+    #[test]
+    fn validate_reward_percentiles_accepts_upper_bound() {
+        let mut values = Vec::with_capacity(MAX_FEE_HISTORY_PERCENTILES);
+        for i in 0..MAX_FEE_HISTORY_PERCENTILES {
+            let ratio = (i as f64) / ((MAX_FEE_HISTORY_PERCENTILES - 1) as f64);
+            values.push(100.0 * ratio);
+        }
+        let out = validate_reward_percentiles(Some(values)).expect("upper bound should pass");
+        assert_eq!(
+            out.expect("must return values").len(),
+            MAX_FEE_HISTORY_PERCENTILES
+        );
+    }
+
+    #[test]
+    fn tx_to_view_returns_none_for_invalid_stored_tx() {
+        init_stable_state();
+        let tx_id = TxId([0x91u8; 32]);
+        with_state_mut(|state| {
+            state
+                .tx_store
+                .insert(tx_id, StoredTxBytes::from_bytes(std::borrow::Cow::Owned(vec![0u8; 1])));
+            state.tx_locs.insert(tx_id, TxLoc::included(7, 0));
+        });
+
+        let out = super::tx_to_view(tx_id);
         assert!(out.is_none());
     }
 }
