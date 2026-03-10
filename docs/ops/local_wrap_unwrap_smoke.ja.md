@@ -17,7 +17,7 @@
 
 実 ledger を含む local smoke は
 [local_wrap_unwrap_ledger_smoke.ja.md](/Users/0xhude/Desktop/ICP/Kasane/docs/ops/local_wrap_unwrap_ledger_smoke.ja.md)
-を使う。
+を使う。こちらは `WrapTokenFactory` deploy、successful mint、wrapped token balance、mint receipt `status = 1` まで確認する。
 
 ## 前提
 
@@ -84,6 +84,12 @@ cargo test -p ic-evm-gateway resolve_wrap_submit_ok -- --nocapture
 - matching request_id は accept
 - mismatched request_id は reject
 
+補足:
+
+- `request_id_mismatch` は real `wrap_canister` の local 正常系 smoke では人工的に作っていない
+- local 実機では `Dispatched` 到達を確認し、不一致検知そのものはこの unit test を正とする
+- real-ledger smoke で見る `wrap` の `Succeeded` は mint tx 受理の意味で、EVM inclusion 完了は別途 receipt で確認する
+
 ### 5. query 経路の wrap precompile 回帰
 
 ```bash
@@ -132,6 +138,7 @@ scripts/query_smoke.sh
 
 - `icp network stop local`
 - `scripts/icp_local_clean_start.sh`
+- `pkill -f 'pocket-ic --ttl'`
 - それでも不安定なら PocketIC E2E を優先する
 
 ## 終了

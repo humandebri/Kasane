@@ -1,15 +1,19 @@
 # local wrap/unwrap smoke with real ledger
 
-目的: official ICRC ledger を local managed network に立て、`wrap` の fee pull / withdraw と `unwrap` の ledger transfer を実 ledger で確認する。
+目的: official ICRC ledger を local managed network に立て、`wrap` の fee pull / successful mint と `unwrap` の ledger transfer を実 ledger で確認する。
 
 ## 前提
 
 - 実行ディレクトリは repo root
 - 必要コマンド:
+  - `cast`
   - `icp`
   - `dfx`
   - `cargo`
   - `curl`
+  - `didc`
+  - `forge`
+  - `gzip`
   - `python`
   - `node`
   - `npm`
@@ -32,14 +36,20 @@ scripts/local_wrap_unwrap_ledger_smoke.sh
 3. local ledger canister を detached で作成し、ICRC-2 有効で install
 4. `evm_canister` と `wrap_canister` を local install
 5. ledger に test caller と `wrap_canister` の初期残高を入れる
-6. `submit_ic_tx` を 1 本投げて gas price を初期化
+6. `submit_ic_tx` で `WrapTokenFactory` を deploy
+   - この初回 tx により gas price も初期化される
 7. allowance なしの `submit_wrap_request` で `insufficient_allowance` を確認
 8. `icrc2_approve` 後に `submit_wrap_request` を再送し、worker が
    - `fee_ledger_tx_id != null`
    - `pull_ledger_tx_id != null`
-   - `mint_failed_recoverable = true`
+   - `mint_tx_id != null`
+   - `mint_failed_recoverable = false`
    になることを確認
-9. `withdraw_failed_wrap` で `withdraw_ledger_tx_id != null` を確認
+9. mint tx receipt が `status = 1` になることと、
+    - factory の `predictTokenAddress(bytes)`
+    - factory の `getTokenAddress(bytes)`
+    - wrapped token の `balanceOf(address)`
+    が期待どおりであることを確認
 10. `submit_ic_tx` で unwrap request を起票し、
     - gateway 側 `Dispatched`
     - wrap 側 `Succeeded`
@@ -52,7 +62,11 @@ scripts/local_wrap_unwrap_ledger_smoke.sh
   - `fee.quote_*` では失敗しない
   - approve 前は `fee.transfer_from_failed:insufficient_allowance:*`
   - approve 後は fee pull と asset pull が成功する
-  - mint は意図的に失敗し、`withdraw_failed_wrap` で回収できる
+  - `WrapRequestResult.status = Succeeded` は wrap canister が mint tx を gateway に受理させたことを表す
+  - EVM inclusion 完了は別で mint receipt `status = 1` を確認する
+  - factory deploy と initial mint が成功する
+  - `predictTokenAddress(bytes)` と `getTokenAddress(bytes)` が一致する
+  - wrapped token の `balanceOf` が `WRAP_AMOUNT` になる
 - unwrap:
   - 正しい vault bytes で `Dispatched`
   - worker が `icrc1_transfer` を完了し、`ledger_tx_id` が保存される
@@ -62,7 +76,11 @@ scripts/local_wrap_unwrap_ledger_smoke.sh
 - `ICP_IDENTITY_NAME`
   - local で deploy / call に使う identity
 - `LEDGER_RELEASE`
-  - `latest` または GitHub release tag
+  - 既定値は `ledger-suite-icrc-2026-03-09`
+  - 別 release を試す場合だけ上書きする
+  - `latest` も使えるが、再現性は下がる
+- `GENESIS_BALANCE_WEI`
+  - 明示的に小さくしても script が factory deploy / wrap mint / unwrap submit の前払い上限を見て必要最小値まで自動補正する
 - `LEDGER_CACHE_DIR`
   - ledger artifact の保存先
 - `WRAP_AMOUNT`
@@ -83,3 +101,10 @@ scripts/local_wrap_unwrap_ledger_smoke.sh
   で継続確認します。
 - `icp network stop local` の後でも `127.0.0.1:8000` が埋まっていると local start は失敗する。
   その場合は stale な `pocket-ic` / replica process を止めてから再実行する。
+  - 例: `pkill -f 'pocket-ic --ttl'`
+- `request_id_mismatch` は real `wrap_canister` に不正応答を返させないと local 実機で作りづらい。
+  そのため、この smoke では `Dispatched` / `Succeeded` の正常系を確認し、不一致検知自体は
+  `cargo test -p ic-evm-gateway resolve_wrap_submit_ok -- --nocapture`
+  で担保する。
+- query / update 呼び出しは Candid 引数の decode ずれを避けるため、script 内で `didc encode` した hex を使っている。
+  local で手動確認を追加する場合も同じ形に揃えると切り分けしやすい。
