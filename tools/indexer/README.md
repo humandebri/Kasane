@@ -35,7 +35,7 @@ npm run dev
 - `INDEXER_ZSTD_LEVEL` (任意, 既定: 3)
 - `INDEXER_MAX_SEGMENT` (任意, 既定: 2, `next_cursor.segment` の許容上限)
 
-注: ローカル（`icp network start -d`）向けに接続する場合は `INDEXER_IC_HOST` を `http://127.0.0.1:8000` にし、`INDEXER_FETCH_ROOT_KEY=true` を推奨。`icp network status --json` が使える場合は、その `api_url` を優先してください。
+注: ローカル（dfx）向けに接続する場合は `INDEXER_IC_HOST` を `http://127.0.0.1:4943` にし、`INDEXER_FETCH_ROOT_KEY=true` を推奨。
 
 ## Cursor JSON（固定）
 

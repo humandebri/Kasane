@@ -94,7 +94,7 @@ function requireEnv(name: string): string {
 
 async function main(): Promise<void> {
   const canisterId = requireEnv("EVM_CANISTER_ID");
-  const host = process.env.INDEXER_IC_HOST ?? "http://127.0.0.1:8000";
+  const host = process.env.INDEXER_IC_HOST ?? "http://127.0.0.1:4943";
   const fetchRootKey = process.env.INDEXER_FETCH_ROOT_KEY === "true";
   const maxBytes = Number(process.env.QUERY_SMOKE_MAX_BYTES ?? "65536");
   const requiredHeadMin = envNat("QUERY_SMOKE_REQUIRED_HEAD_MIN");

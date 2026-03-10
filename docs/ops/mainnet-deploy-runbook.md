@@ -28,3 +28,4 @@ For exact command sequences and environment-specific snippets, see the Japanese 
 ## Important Note
 - `MODE=install` / `MODE=reinstall` requires `WRAP_CANISTER_ID`.
 - The deploy scripts do not auto-resolve `wrap_canister` anymore.
+- When upgrading an existing `evm_canister` from a version that did not persist this field, call `set_wrap_canister_id(<wrap_canister_principal>)` once as a controller after the upgrade.

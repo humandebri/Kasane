@@ -108,9 +108,7 @@ pub struct InitArgs {
 impl InitArgs {
     fn validate(&self) -> Result<(), String> {
         let mut seen_addresses = std::collections::BTreeSet::new();
-        if self.wrap_canister_id == Principal::anonymous() {
-            return Err("wrap_canister_id must not be anonymous".to_string());
-        }
+        validate_wrap_canister_id_input(self.wrap_canister_id)?;
         if self.genesis_balances.is_empty() {
             return Err("genesis_balances must be non-empty".to_string());
         }
@@ -127,6 +125,13 @@ impl InitArgs {
         }
         Ok(())
     }
+}
+
+fn validate_wrap_canister_id_input(wrap_canister_id: Principal) -> Result<(), String> {
+    if wrap_canister_id == Principal::anonymous() {
+        return Err("wrap_canister_id must not be anonymous".to_string());
+    }
+    Ok(())
 }
 
 #[cfg(not(feature = "canbench-rs"))]
@@ -160,11 +165,7 @@ fn init_inner(args: Option<InitArgs>, require_args: bool) {
             ic_cdk::trap(format!("InvalidInitArgs: {reason}"));
         }
     }
-    with_state_mut(|state| {
-        state
-            .wrap_canister_id
-            .set(args.wrap_canister_id.as_slice().to_vec());
-    });
+    set_wrap_canister_id_inner(args.wrap_canister_id);
     if !args.genesis_balances.is_empty() {
         for alloc in args.genesis_balances.iter() {
             let mut addr = [0u8; 20];
@@ -184,6 +185,14 @@ fn init_inner(args: Option<InitArgs>, require_args: bool) {
     observe_cycles();
     schedule_mining();
     schedule_cycle_observer();
+}
+
+fn set_wrap_canister_id_inner(wrap_canister_id: Principal) {
+    with_state_mut(|state| {
+        state
+            .wrap_canister_id
+            .set(wrap_canister_id.as_slice().to_vec());
+    });
 }
 
 #[ic_cdk::post_upgrade]
@@ -1088,6 +1097,17 @@ fn set_instruction_soft_limit(limit: u64) -> Result<(), String> {
         chain_state.instruction_soft_limit = limit;
         state.chain_state.set(chain_state);
     });
+    Ok(())
+}
+
+#[ic_cdk::update]
+fn set_wrap_canister_id(wrap_canister_id: Principal) -> Result<(), String> {
+    if let Some(reason) = reject_anonymous_update() {
+        return Err(reason);
+    }
+    require_control_plane_write()?;
+    validate_wrap_canister_id_input(wrap_canister_id)?;
+    set_wrap_canister_id_inner(wrap_canister_id);
     Ok(())
 }
 
@@ -2742,7 +2762,7 @@ mod tests {
         with_state_mut(|state| {
             state.unwrap_requests.insert(
                 request_id,
-                UnwrapRequestV1 {
+                UnwrapDispatchRequest {
                     vault_canister_id: vec![0x44u8; 10],
                     asset_id: vec![0x55u8; 10],
                     amount: vec![0x66u8; 32],
@@ -2776,7 +2796,7 @@ mod tests {
             state.unwrap_dispatch_queue.insert(seq, request_id);
             state.unwrap_requests.insert(
                 request_id,
-                UnwrapRequestV1 {
+                UnwrapDispatchRequest {
                     vault_canister_id: vec![0x44u8; 10],
                     asset_id: vec![0x55u8; 10],
                     amount: vec![0x66u8; 32],
@@ -2807,7 +2827,7 @@ mod tests {
         with_state_mut(|state| {
             state.unwrap_requests.insert(
                 dispatched,
-                UnwrapRequestV1 {
+                UnwrapDispatchRequest {
                     vault_canister_id: vec![0x44u8; 10],
                     asset_id: vec![0x55u8; 10],
                     amount: vec![0x66u8; 32],
@@ -2821,7 +2841,7 @@ mod tests {
             );
             state.unwrap_requests.insert(
                 failed,
-                UnwrapRequestV1 {
+                UnwrapDispatchRequest {
                     vault_canister_id: vec![0x44u8; 10],
                     asset_id: vec![0x55u8; 10],
                     amount: vec![0x66u8; 32],
@@ -2936,7 +2956,7 @@ mod tests {
         with_state_mut(|state| {
             state.unwrap_requests.insert(
                 request_id,
-                UnwrapRequestV1 {
+                UnwrapDispatchRequest {
                     vault_canister_id: vec![0x44u8; 10],
                     asset_id: vec![0x55u8; 10],
                     amount: vec![0x66u8; 32],
@@ -2978,7 +2998,7 @@ mod tests {
         with_state_mut(|state| {
             state.unwrap_requests.insert(
                 request_id,
-                UnwrapRequestV1 {
+                UnwrapDispatchRequest {
                     vault_canister_id: vec![0x44u8; 10],
                     asset_id: vec![0x55u8; 10],
                     amount: vec![0x66u8; 32],
@@ -3839,12 +3859,30 @@ mod tests {
     #[test]
     fn validate_vault_canister_id_checks_config_match() {
         init_stable_state();
-        with_state_mut(|state| {
-            state.wrap_canister_id.set(vec![1, 2, 3]);
-        });
+        super::set_wrap_canister_id_inner(Principal::from_slice(&[1, 2, 3]));
         assert!(validate_vault_canister_id(&[1, 2, 3]).is_ok());
         let err = validate_vault_canister_id(&[9]).expect_err("must reject mismatch");
         assert_eq!(err, "wrap.arg.vault_not_allowed");
+    }
+
+    #[test]
+    fn set_wrap_canister_id_inner_updates_empty_upgrade_state() {
+        init_stable_state();
+        let before = with_state(|state| state.wrap_canister_id.get().clone());
+        assert!(before.is_empty());
+
+        let wrap_canister_id = Principal::from_slice(&[9, 8, 7, 6]);
+        super::set_wrap_canister_id_inner(wrap_canister_id);
+
+        let after = with_state(|state| state.wrap_canister_id.get().clone());
+        assert_eq!(after, wrap_canister_id.as_slice().to_vec());
+    }
+
+    #[test]
+    fn validate_wrap_canister_id_input_rejects_anonymous_principal() {
+        let err = super::validate_wrap_canister_id_input(Principal::anonymous())
+            .expect_err("must reject");
+        assert_eq!(err, "wrap_canister_id must not be anonymous");
     }
 
     #[test]
@@ -4256,5 +4294,6 @@ mod tests {
         assert!(!did.contains("get_unwrap_request_status"));
         assert!(did.contains("get_request_dispatch_result"));
         assert!(did.contains("get_request_dispatch_status"));
+        assert!(did.contains("set_wrap_canister_id : (principal) -> (Result_15);"));
     }
 }
