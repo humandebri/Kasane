@@ -460,10 +460,11 @@ fn init(args: InitArgs) {
 #[ic_cdk::post_upgrade]
 fn post_upgrade() {
     init_state();
-    if with_state(|state| !state.queue_meta.get().is_empty()) {
+    let now = ic_cdk::api::time();
+    if recover_request_state_after_upgrade(now) {
         schedule_worker();
     }
-    if with_state(|state| !state.wrap_queue_meta.get().is_empty()) {
+    if recover_wrap_request_state_after_upgrade(now) {
         schedule_wrap_worker();
     }
 }
@@ -856,6 +857,100 @@ fn get_fee_policy() -> Result<FeePolicyView, String> {
         fee_ledger_canister: principal_from_bytes(stored.fee_ledger_canister.as_slice())?,
         cycle_fee_e8s: stored.cycle_fee_e8s,
         gas_price_buffer_bps: stored.gas_price_buffer_bps,
+    })
+}
+
+fn recover_request_state_after_upgrade(_now: u64) -> bool {
+    with_state_mut(|state| {
+        let mut queued_ids = BTreeSet::new();
+        for (_, request_id) in state.queue.range(..) {
+            queued_ids.insert(request_id);
+        }
+
+        let mut candidates = Vec::new();
+        for (request_id, stored) in state.requests.range(..) {
+            let mut req = stored.clone();
+            match req.result.status {
+                RequestStatus::Queued => {
+                    if !queued_ids.contains(&request_id) {
+                        candidates.push((request_id, req));
+                    }
+                }
+                RequestStatus::Running => {
+                    req.result.status = RequestStatus::Queued;
+                    candidates.push((request_id, req));
+                }
+                RequestStatus::Succeeded | RequestStatus::Failed => {}
+            }
+        }
+
+        if candidates.is_empty() {
+            return !state.queue_meta.get().is_empty();
+        }
+
+        let mut meta = *state.queue_meta.get();
+        for (request_id, req) in candidates {
+            state.requests.insert(request_id, req);
+            if queued_ids.contains(&request_id) {
+                continue;
+            }
+            let seq = meta.tail;
+            meta.tail = meta.tail.saturating_add(1);
+            state.queue.insert(seq, request_id);
+            queued_ids.insert(request_id);
+        }
+        state
+            .queue_meta
+            .set(meta)
+            .unwrap_or_else(|_| ic_cdk::trap("stable cell set failed: queue_meta"));
+        !state.queue_meta.get().is_empty()
+    })
+}
+
+fn recover_wrap_request_state_after_upgrade(_now: u64) -> bool {
+    with_state_mut(|state| {
+        let mut queued_ids = BTreeSet::new();
+        for (_, request_id) in state.wrap_queue.range(..) {
+            queued_ids.insert(request_id);
+        }
+
+        let mut candidates = Vec::new();
+        for (request_id, stored) in state.wrap_requests.range(..) {
+            let mut req = stored.clone();
+            match req.result.status {
+                RequestStatus::Queued => {
+                    if !queued_ids.contains(&request_id) {
+                        candidates.push((request_id, req));
+                    }
+                }
+                RequestStatus::Running => {
+                    req.result.status = RequestStatus::Queued;
+                    candidates.push((request_id, req));
+                }
+                RequestStatus::Succeeded | RequestStatus::Failed => {}
+            }
+        }
+
+        if candidates.is_empty() {
+            return !state.wrap_queue_meta.get().is_empty();
+        }
+
+        let mut meta = *state.wrap_queue_meta.get();
+        for (request_id, req) in candidates {
+            state.wrap_requests.insert(request_id, req);
+            if queued_ids.contains(&request_id) {
+                continue;
+            }
+            let seq = meta.tail;
+            meta.tail = meta.tail.saturating_add(1);
+            state.wrap_queue.insert(seq, request_id);
+            queued_ids.insert(request_id);
+        }
+        state
+            .wrap_queue_meta
+            .set(meta)
+            .unwrap_or_else(|_| ic_cdk::trap("stable cell set failed: wrap_queue_meta"));
+        !state.wrap_queue_meta.get().is_empty()
     })
 }
 
@@ -1777,6 +1872,7 @@ mod tests {
         enqueue_request, init_state, insert_request, insert_wrap_request, is_withdrawable,
         map_transfer_reply, mark_request_running, mark_wrap_request_running, nat_from_32_be,
         nat_to_be_bytes, on_worker_queue_drain, on_wrap_worker_queue_drain, principal_from_bytes,
+        recover_request_state_after_upgrade, recover_wrap_request_state_after_upgrade,
         schedule_worker, schedule_wrap_worker, submit_error_to_code, to_request_id,
         to_withdraw_error_code, transfer_error_to_code, transfer_from_error_to_code, u256_from_u64,
         validate_non_anonymous_principal, validate_withdraw_request, validate_wrap_request_args,
@@ -2240,6 +2336,116 @@ mod tests {
     }
 
     #[test]
+    fn recover_request_state_after_upgrade_requeues_running_request() {
+        reset_state();
+        let request_id = to_request_id(&[0x31u8; 32]).expect("id");
+        with_state_mut(|state| {
+            state.requests.insert(
+                request_id,
+                StoredRequest {
+                    asset_id: vec![2u8; 29],
+                    amount: vec![3u8; 32],
+                    recipient: vec![4u8; 29],
+                    result: RequestResult {
+                        status: RequestStatus::Running,
+                        ledger_tx_id: None,
+                        error_code: None,
+                    },
+                },
+            );
+        });
+
+        assert!(recover_request_state_after_upgrade(123));
+        with_state(|state| {
+            assert_eq!(state.queue.len(), 1);
+            assert_eq!(state.queue_meta.get().head, 0);
+            assert_eq!(state.queue_meta.get().tail, 1);
+            assert_eq!(
+                state.requests.get(&request_id).map(|req| req.result.status),
+                Some(RequestStatus::Queued)
+            );
+            assert_eq!(state.queue.get(&0), Some(request_id));
+        });
+    }
+
+    #[test]
+    fn recover_request_state_after_upgrade_fills_missing_queued_request_once() {
+        reset_state();
+        let request_id = to_request_id(&[0x32u8; 32]).expect("id");
+        with_state_mut(|state| {
+            state.requests.insert(
+                request_id,
+                StoredRequest {
+                    asset_id: vec![2u8; 29],
+                    amount: vec![3u8; 32],
+                    recipient: vec![4u8; 29],
+                    result: RequestResult {
+                        status: RequestStatus::Queued,
+                        ledger_tx_id: None,
+                        error_code: None,
+                    },
+                },
+            );
+        });
+
+        assert!(recover_request_state_after_upgrade(123));
+        assert!(recover_request_state_after_upgrade(124));
+        with_state(|state| {
+            assert_eq!(state.queue.len(), 1);
+            assert_eq!(state.queue_meta.get().tail, 1);
+            assert_eq!(state.queue.get(&0), Some(request_id));
+        });
+    }
+
+    #[test]
+    fn recover_request_state_after_upgrade_keeps_terminal_requests_out_of_queue() {
+        reset_state();
+        let succeeded = to_request_id(&[0x33u8; 32]).expect("id");
+        let failed = to_request_id(&[0x34u8; 32]).expect("id");
+        with_state_mut(|state| {
+            state.requests.insert(
+                succeeded,
+                StoredRequest {
+                    asset_id: vec![2u8; 29],
+                    amount: vec![3u8; 32],
+                    recipient: vec![4u8; 29],
+                    result: RequestResult {
+                        status: RequestStatus::Succeeded,
+                        ledger_tx_id: Some(vec![1u8; 2]),
+                        error_code: None,
+                    },
+                },
+            );
+            state.requests.insert(
+                failed,
+                StoredRequest {
+                    asset_id: vec![2u8; 29],
+                    amount: vec![3u8; 32],
+                    recipient: vec![4u8; 29],
+                    result: RequestResult {
+                        status: RequestStatus::Failed,
+                        ledger_tx_id: None,
+                        error_code: Some("ledger.call_failed:oops".to_string()),
+                    },
+                },
+            );
+        });
+
+        assert!(!recover_request_state_after_upgrade(123));
+        with_state(|state| {
+            assert_eq!(state.queue.len(), 0);
+            assert_eq!(
+                state.requests.get(&succeeded).map(|req| req.result.status),
+                Some(RequestStatus::Succeeded)
+            );
+            assert_eq!(
+                state.requests.get(&failed).map(|req| req.result.status),
+                Some(RequestStatus::Failed)
+            );
+        });
+    }
+
+    #[test]
     fn wrap_insert_request_rejects_duplicate() {
         reset_state();
         let caller = Principal::self_authenticating(b"wrap-caller-dup");
@@ -2541,5 +2747,143 @@ mod tests {
         schedule_wrap_worker();
         let scheduled = WRAP_WORKER_SCHEDULED.with(|f| f.get());
         assert!(scheduled);
+    }
+
+    #[test]
+    fn recover_wrap_request_state_after_upgrade_requeues_running_request() {
+        reset_state();
+        let request_id = to_request_id(&[0x41u8; 32]).expect("id");
+        with_state_mut(|state| {
+            state.wrap_requests.insert(
+                request_id,
+                WrapStoredRequest {
+                    caller: Principal::self_authenticating(b"wrap-running")
+                        .as_slice()
+                        .to_vec(),
+                    asset_id: vec![7u8; 29],
+                    amount: vec![8u8; 32],
+                    evm_recipient: vec![9u8; 20],
+                    evm_nonce: 1,
+                    gas_limit: 300_000,
+                    result: WrapRequestResult {
+                        status: RequestStatus::Running,
+                        pull_ledger_tx_id: None,
+                        mint_tx_id: None,
+                        error_code: None,
+                        withdrawn: false,
+                        withdraw_ledger_tx_id: None,
+                        withdraw_error_code: None,
+                        mint_failed_recoverable: false,
+                        fee_ledger_tx_id: Some(vec![3u8; 4]),
+                        charged_fee_e8s: Some(1_000_000),
+                        charged_gas_price_wei: Some(300_000_000_000),
+                    },
+                },
+            );
+        });
+
+        assert!(recover_wrap_request_state_after_upgrade(123));
+        with_state(|state| {
+            let req = state.wrap_requests.get(&request_id).expect("request");
+            assert_eq!(req.result.status, RequestStatus::Queued);
+            assert_eq!(req.result.fee_ledger_tx_id, Some(vec![3u8; 4]));
+            assert_eq!(req.result.charged_fee_e8s, Some(1_000_000));
+            assert_eq!(req.result.charged_gas_price_wei, Some(300_000_000_000));
+            assert_eq!(state.wrap_queue.len(), 1);
+            assert_eq!(state.wrap_queue_meta.get().tail, 1);
+            assert_eq!(state.wrap_queue.get(&0), Some(request_id));
+        });
+    }
+
+    #[test]
+    fn recover_wrap_request_state_after_upgrade_does_not_duplicate_existing_queue_entry() {
+        reset_state();
+        let request_id = to_request_id(&[0x42u8; 32]).expect("id");
+        with_state_mut(|state| {
+            state.wrap_requests.insert(
+                request_id,
+                WrapStoredRequest {
+                    caller: Principal::self_authenticating(b"wrap-queued")
+                        .as_slice()
+                        .to_vec(),
+                    asset_id: vec![7u8; 29],
+                    amount: vec![8u8; 32],
+                    evm_recipient: vec![9u8; 20],
+                    evm_nonce: 1,
+                    gas_limit: 300_000,
+                    result: WrapRequestResult {
+                        status: RequestStatus::Queued,
+                        pull_ledger_tx_id: None,
+                        mint_tx_id: None,
+                        error_code: None,
+                        withdrawn: false,
+                        withdraw_ledger_tx_id: None,
+                        withdraw_error_code: None,
+                        mint_failed_recoverable: false,
+                        fee_ledger_tx_id: Some(vec![3u8; 4]),
+                        charged_fee_e8s: Some(1_000_000),
+                        charged_gas_price_wei: Some(300_000_000_000),
+                    },
+                },
+            );
+            let mut meta = *state.wrap_queue_meta.get();
+            let seq = meta.tail;
+            meta.tail = meta.tail.saturating_add(1);
+            state.wrap_queue.insert(seq, request_id);
+            state
+                .wrap_queue_meta
+                .set(meta)
+                .unwrap_or_else(|_| panic!("wrap queue meta set failed"));
+        });
+
+        assert!(recover_wrap_request_state_after_upgrade(123));
+        with_state(|state| {
+            assert_eq!(state.wrap_queue.len(), 1);
+            assert_eq!(state.wrap_queue_meta.get().tail, 1);
+            assert_eq!(state.wrap_queue.get(&0), Some(request_id));
+        });
+    }
+
+    #[test]
+    fn recover_wrap_request_state_after_upgrade_keeps_terminal_requests_out_of_queue() {
+        reset_state();
+        let request_id = to_request_id(&[0x43u8; 32]).expect("id");
+        with_state_mut(|state| {
+            state.wrap_requests.insert(
+                request_id,
+                WrapStoredRequest {
+                    caller: Principal::self_authenticating(b"wrap-failed")
+                        .as_slice()
+                        .to_vec(),
+                    asset_id: vec![7u8; 29],
+                    amount: vec![8u8; 32],
+                    evm_recipient: vec![9u8; 20],
+                    evm_nonce: 1,
+                    gas_limit: 300_000,
+                    result: WrapRequestResult {
+                        status: RequestStatus::Failed,
+                        pull_ledger_tx_id: Some(vec![1u8; 4]),
+                        mint_tx_id: None,
+                        error_code: Some("evm_gateway.submit_failed:rejected:nonce".to_string()),
+                        withdrawn: false,
+                        withdraw_ledger_tx_id: None,
+                        withdraw_error_code: None,
+                        mint_failed_recoverable: true,
+                        fee_ledger_tx_id: Some(vec![3u8; 4]),
+                        charged_fee_e8s: Some(1_000_000),
+                        charged_gas_price_wei: Some(300_000_000_000),
+                    },
+                },
+            );
+        });
+
+        assert!(!recover_wrap_request_state_after_upgrade(123));
+        with_state(|state| {
+            let req = state.wrap_requests.get(&request_id).expect("request");
+            assert_eq!(req.result.status, RequestStatus::Failed);
+            assert_eq!(req.result.pull_ledger_tx_id, Some(vec![1u8; 4]));
+            assert_eq!(req.result.mint_failed_recoverable, true);
+            assert_eq!(state.wrap_queue.len(), 0);
+        });
     }
 }
