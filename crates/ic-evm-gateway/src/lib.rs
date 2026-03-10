@@ -2382,7 +2382,8 @@ mod tests {
     use evm_core::tx_decode::IcSyntheticTxInput;
     use evm_db::chain_data::constants::MAX_RETURN_DATA;
     use evm_db::chain_data::{
-        MigrationPhase, OpsMode, TxId, TxLoc, UnwrapDispatchRequest, UnwrapRequestStatus,
+        BlockData, MigrationPhase, OpsMode, ReceiptLike, TxId, TxLoc, UnwrapDispatchRequest,
+        UnwrapRequestStatus,
     };
     use evm_db::memory::{get_memory, AppMemoryId, WASM_PAGE_SIZE_BYTES};
     use evm_db::meta::{
@@ -2393,6 +2394,7 @@ mod tests {
     use evm_db::types::keys::{make_account_key, make_storage_key};
     use evm_db::types::values::{AccountVal, U256Val};
     use evm_db::{Memory, Storable};
+    use std::borrow::Cow;
     use std::collections::BTreeSet;
     use std::panic::{catch_unwind, AssertUnwindSafe};
     use std::str::FromStr;
@@ -3369,6 +3371,39 @@ mod tests {
     }
 
     #[test]
+    fn get_block_returns_not_found_for_corrupt_block_payload() {
+        init_stable_state();
+        with_state_mut(|state| {
+            let corrupt = BlockData::from_bytes(Cow::Owned(vec![0u8; 1]));
+            let ptr = state
+                .blob_store
+                .store_bytes(corrupt.to_bytes().as_ref())
+                .expect("store corrupt block");
+            state.blocks.insert(9, ptr);
+        });
+
+        let out = super::get_block(9);
+        assert!(matches!(out, Err(super::LookupError::NotFound)));
+    }
+
+    #[test]
+    fn get_receipt_returns_not_found_for_corrupt_receipt_payload() {
+        init_stable_state();
+        let tx_id = TxId([0x81u8; 32]);
+        with_state_mut(|state| {
+            let corrupt = ReceiptLike::from_bytes(Cow::Owned(vec![0u8; 1]));
+            let ptr = state
+                .blob_store
+                .store_bytes(corrupt.to_bytes().as_ref())
+                .expect("store corrupt receipt");
+            state.receipts.insert(tx_id, ptr);
+        });
+
+        let out = super::get_receipt(tx_id.0.to_vec());
+        assert!(matches!(out, Err(super::LookupError::NotFound)));
+    }
+
+    #[test]
     fn memory_breakdown_reports_consistent_totals_and_known_regions() {
         init_stable_state();
         let view = super::memory_breakdown();
@@ -4092,6 +4127,77 @@ mod tests {
             stored.and_then(|value| value.error_code),
             Some(super::UNWRAP_QUARANTINE_ERROR.to_string())
         );
+    }
+
+    #[test]
+    fn raw_stable_corruption_does_not_trap_reads_for_chain_state() {
+        const STABLE_CELL_LEN_OFFSET: u64 = 4;
+        const STABLE_CELL_VALUE_OFFSET: u64 = 8;
+
+        init_stable_state();
+        set_migration_not_pending_for_test();
+
+        let encoded = with_state(|state| state.chain_state.get().to_bytes().into_owned());
+        let memory = get_memory(AppMemoryId::ChainState);
+        let original_len = u32::try_from(encoded.len()).expect("chain_state len");
+        memory.write(STABLE_CELL_LEN_OFFSET, &72u32.to_le_bytes());
+
+        init_stable_state();
+
+        let health_out = catch_unwind(AssertUnwindSafe(super::health));
+        assert!(health_out.is_ok(), "health must not trap on raw corruption");
+        let health = health_out.expect("health");
+        assert!(!health.auto_production_enabled);
+        assert!(!health.is_producing);
+        assert!(!health.mining_scheduled);
+
+        let ops_out = catch_unwind(AssertUnwindSafe(super::get_ops_status));
+        assert!(ops_out.is_ok(), "ops status must not trap on raw corruption");
+        let ops = ops_out.expect("ops");
+        assert!(ops.needs_migration);
+
+        let reason = reject_write_reason().expect("write should be blocked");
+        assert_eq!(reason, "ops.write.needs_migration");
+
+        memory.write(STABLE_CELL_LEN_OFFSET, &original_len.to_le_bytes());
+        memory.write(STABLE_CELL_VALUE_OFFSET, &encoded);
+        init_stable_state();
+        set_migration_not_pending_for_test();
+        let mut restored = with_state(|state| *state.chain_state.get());
+        restored.auto_production_enabled = true;
+        with_state_mut(|state| {
+            state.chain_state.set(restored);
+        });
+    }
+
+    #[test]
+    fn raw_stable_corruption_in_head_blocks_writes_before_block_production() {
+        const STABLE_CELL_LEN_OFFSET: u64 = 4;
+        const STABLE_CELL_VALUE_OFFSET: u64 = 8;
+
+        init_stable_state();
+        set_migration_not_pending_for_test();
+
+        let encoded = with_state(|state| state.head.get().to_bytes().into_owned());
+        let memory = get_memory(AppMemoryId::Head);
+        let original_len = u32::try_from(encoded.len()).expect("head len");
+        memory.write(STABLE_CELL_LEN_OFFSET, &1u32.to_le_bytes());
+
+        init_stable_state();
+
+        let health_out = catch_unwind(AssertUnwindSafe(super::health));
+        assert!(health_out.is_ok(), "health must not trap on raw corruption");
+        let health = health_out.expect("health");
+        assert_eq!(health.tip_number, 0);
+        assert_eq!(health.tip_hash, vec![0u8; 32]);
+
+        let reason = reject_write_reason().expect("write should be blocked");
+        assert_eq!(reason, "ops.write.needs_migration");
+
+        memory.write(STABLE_CELL_LEN_OFFSET, &original_len.to_le_bytes());
+        memory.write(STABLE_CELL_VALUE_OFFSET, &encoded);
+        init_stable_state();
+        set_migration_not_pending_for_test();
     }
 
     #[test]

@@ -22,7 +22,6 @@ use evm_db::types::keys::{
 };
 use ic_stable_structures::Storable;
 use std::borrow::Cow;
-use std::panic;
 
 #[test]
 fn tx_envelope_roundtrip() {
@@ -453,15 +452,76 @@ fn chain_state_default_fees_follow_runtime_defaults() {
 }
 
 #[test]
-fn chain_state_invalid_len_traps() {
+fn chain_state_invalid_len_returns_safe_default_and_sets_needs_migration() {
+    init_stable_state();
+    clear_needs_migration();
     let legacy = [0u8; 72];
-    let previous_hook = panic::take_hook();
-    panic::set_hook(Box::new(|_| {}));
-    let out = panic::catch_unwind(|| {
-        let _ = ChainStateV1::from_bytes(std::borrow::Cow::Owned(legacy.to_vec()));
-    });
-    panic::set_hook(previous_hook);
-    assert!(out.is_err(), "decode mismatch must trap");
+    let decoded = ChainStateV1::from_bytes(Cow::Owned(legacy.to_vec()));
+    assert!(needs_migration(), "decode mismatch must block writes");
+    assert_eq!(decoded.chain_id, evm_db::chain_data::constants::CHAIN_ID);
+    assert!(!decoded.auto_production_enabled);
+    assert!(!decoded.is_producing);
+    assert!(!decoded.mining_scheduled);
+    assert_eq!(decoded.min_gas_price, DEFAULT_MIN_GAS_PRICE);
+    assert_eq!(decoded.min_priority_fee, DEFAULT_MIN_PRIORITY_FEE);
+    assert_eq!(decoded.block_gas_limit, DEFAULT_BLOCK_GAS_LIMIT);
+    assert_eq!(
+        decoded.instruction_soft_limit,
+        DEFAULT_INSTRUCTION_SOFT_LIMIT
+    );
+}
+
+#[test]
+fn localized_decode_failures_do_not_set_needs_migration() {
+    init_stable_state();
+    clear_needs_migration();
+
+    let block = BlockData::from_bytes(Cow::Owned(vec![0u8; 8]));
+    assert_eq!(block.block_hash, [0u8; 32]);
+    assert!(!needs_migration());
+
+    let receipt = ReceiptLike::from_bytes(Cow::Owned(vec![0u8; 8]));
+    assert_eq!(receipt.tx_id.0, [0u8; 32]);
+    assert!(!needs_migration());
+
+    let stored = StoredTxBytes::from_bytes(Cow::Owned(vec![0u8; 1]));
+    assert!(stored.is_invalid());
+    assert!(!needs_migration());
+
+    let tx_index = TxIndexEntry::from_bytes(Cow::Owned(vec![0u8; 1]));
+    assert_eq!(tx_index.block_number, 0);
+    assert_eq!(tx_index.tx_index, 0);
+    assert!(!needs_migration());
+
+    let tx_loc = TxLoc::from_bytes(Cow::Owned(vec![0u8; 1]));
+    assert!(tx_loc.is_decode_failure_placeholder());
+    assert!(!needs_migration());
+
+    let tx_id = TxId::from_bytes(Cow::Owned(vec![0u8; 1]));
+    assert_ne!(tx_id.0, [0u8; 32]);
+    assert!(!needs_migration());
+}
+
+#[test]
+fn head_invalid_len_returns_safe_default_and_sets_needs_migration() {
+    init_stable_state();
+    clear_needs_migration();
+
+    let decoded = Head::from_bytes(Cow::Owned(vec![0u8; 1]));
+    assert_eq!(decoded.number, 0);
+    assert_eq!(decoded.block_hash, [0u8; 32]);
+    assert_eq!(decoded.timestamp, 0);
+    assert!(needs_migration());
+}
+
+#[test]
+fn caller_key_invalid_len_returns_zero_key_and_sets_needs_migration() {
+    init_stable_state();
+    clear_needs_migration();
+
+    let decoded = CallerKey::from_bytes(Cow::Owned(vec![0u8; 1]));
+    assert_eq!(decoded.0, [0u8; 30]);
+    assert!(needs_migration());
 }
 
 #[test]

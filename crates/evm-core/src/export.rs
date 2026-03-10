@@ -303,6 +303,9 @@ fn build_receipts_payload(
             .read(&ptr)
             .map_err(|_| ExportError::MissingData("receipt bytes missing"))?;
         let receipt = ReceiptLike::from_bytes(Cow::Owned(bytes));
+        if receipt.tx_id != *tx_id || receipt.tx_id.0 == [0u8; 32] {
+            return Err(ExportError::MissingData("receipt decode failed"));
+        }
         let encoded = receipt.to_bytes().into_owned();
         let len = u32::try_from(encoded.len())
             .map_err(|_| ExportError::InvalidCursor("receipt too large"))?;
@@ -328,10 +331,14 @@ fn build_tx_index_payload(
             .read(&ptr)
             .map_err(|_| ExportError::MissingData("tx_index bytes missing"))?;
         let entry = TxIndexEntry::from_bytes(Cow::Owned(bytes));
+        if entry.block_number == 0 && entry.tx_index == 0 {
+            return Err(ExportError::MissingData("tx_index decode failed"));
+        }
         let encoded = entry.to_bytes().into_owned();
         let stored = state
             .tx_store
             .get(tx_id)
+            .and_then(|envelope| (!envelope.is_invalid()).then_some(envelope))
             .and_then(|envelope| StoredTx::try_from(envelope).ok())
             .ok_or(ExportError::MissingData("tx_store missing"))?;
         let caller_principal = stored.caller_principal.clone();
