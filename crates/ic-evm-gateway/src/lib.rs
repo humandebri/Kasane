@@ -307,7 +307,7 @@ struct InspectMethodPolicy {
     payload_limit: usize,
 }
 
-const INSPECT_METHOD_POLICIES: [InspectMethodPolicy; 8] = [
+const INSPECT_METHOD_POLICIES: [InspectMethodPolicy; 9] = [
     InspectMethodPolicy {
         method: "submit_ic_tx",
         payload_limit: INSPECT_TX_PAYLOAD_LIMIT,
@@ -322,6 +322,10 @@ const INSPECT_METHOD_POLICIES: [InspectMethodPolicy; 8] = [
     },
     InspectMethodPolicy {
         method: "set_instruction_soft_limit",
+        payload_limit: INSPECT_MANAGE_PAYLOAD_LIMIT,
+    },
+    InspectMethodPolicy {
+        method: "set_wrap_canister_id",
         payload_limit: INSPECT_MANAGE_PAYLOAD_LIMIT,
     },
     InspectMethodPolicy {
@@ -2623,6 +2627,7 @@ mod tests {
         assert!(inspect_payload_limit_for_method("set_pruning_enabled").is_some());
         assert!(inspect_payload_limit_for_method("set_block_gas_limit").is_some());
         assert!(inspect_payload_limit_for_method("set_instruction_soft_limit").is_some());
+        assert!(inspect_payload_limit_for_method("set_wrap_canister_id").is_some());
     }
 
     #[test]
