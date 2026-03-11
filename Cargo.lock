@@ -3910,7 +3910,6 @@ name = "wrap-canister"
 version = "0.1.0"
 dependencies = [
  "candid",
- "getrandom 0.2.17",
  "ic-cdk",
  "ic-cdk-timers",
  "ic-evm-address",

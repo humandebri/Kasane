@@ -12,14 +12,6 @@ use std::cell::{Cell, RefCell};
 use std::collections::BTreeSet;
 use tiny_keccak::{Hasher, Keccak};
 
-#[cfg(target_arch = "wasm32")]
-getrandom::register_custom_getrandom!(always_fail_getrandom);
-
-#[cfg(target_arch = "wasm32")]
-fn always_fail_getrandom(_buf: &mut [u8]) -> Result<(), getrandom::Error> {
-    Err(getrandom::Error::UNSUPPORTED)
-}
-
 const MEM_KASANE_CANISTER: MemoryId = MemoryId::new(0);
 const MEM_REQUESTS: MemoryId = MemoryId::new(1);
 const MEM_QUEUE: MemoryId = MemoryId::new(2);
