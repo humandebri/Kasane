@@ -7,7 +7,7 @@ use crate::{
     bls12_381_const::TRUSTED_SETUP_TAU_G2_BYTES,
     PrecompileError,
 };
-use ::blst::{
+use blst::{
     blst_p1_affine, blst_p1_affine_in_g1, blst_p1_affine_on_curve, blst_p2_affine, blst_scalar,
     blst_scalar_fr_check, blst_scalar_from_bendian,
 };

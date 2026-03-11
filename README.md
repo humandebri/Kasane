@@ -33,6 +33,37 @@ Azle stable mode is continuously subjected to intense scrutiny and testing, howe
 
 Explorer の実装詳細（ルート一覧・lib層責務）は `tools/explorer/README.md` を参照。
 
+### Precompile 実行時間計測と追加 gas 課金
+
+- `get_precompile_profile` (query):
+  - precompile アドレスごとの呼び出し回数、命令数、追加gasの集計を返す。
+  - 課金と運用判断は wall-clock ではなく instruction counter を基準にする。
+- 既定 build の追加課金は固定 ratio `1/100`:
+  - `extra_gas = ceil(elapsed_instruction / 100)`
+  - ratio は canister state に保持せず、変更時はコード修正と再デプロイで反映する。
+- `clear_precompile_profile` (update):
+  - 集計プロファイルをクリアする。
+- `profile_precompile_call(call: RpcCallObjectView)` (update, controller-only):
+  - `rpc_eth_call_object` を update 文脈で実行し、PocketIC / local 計測でも profile を永続化する。
+  - この API は計測用 feature `precompile-profile-admin` 有効時のみ公開する。
+
+### Precompile 互換ポリシー
+
+- 既定ビルドでは `0x0A KZG_POINT_EVALUATION` は無効化している。
+- `EIP-4844` raw tx は decode 段階で reject し、`0x0A` を直接 call しても既定ビルドでは precompile 不在として失敗する。
+- 既定ビルドでは Prague / Osaka の `BLS12-381` precompile 群は無効化している。
+- 影響アドレスは `0x0b` 〜 `0x11`:
+  - `BLS12_G1ADD`
+  - `BLS12_G1MSM`
+  - `BLS12_G2ADD`
+  - `BLS12_G2MSM`
+  - `BLS12_PAIRING_CHECK`
+  - `BLS12_MAP_FP_TO_G1`
+  - `BLS12_MAP_FP2_TO_G2`
+- 既定ビルドでは Osaka の `0x0100 P256VERIFY` も無効化している。
+- これらを呼ぶコントラクトは既定ビルドでは `PrecompileError` / halt 系失敗になる。
+- 従来挙動が必要な場合は `revm` / `revm-precompile` の `bls12_381`, `secp256r1` feature を明示的に有効化する。
+
 ## 運用上の決定事項（2026-02-04）
 
 - InitArgs: Candidは service : (opt InitArgs) を維持するが、互換性維持目的であり runtime では None を拒否する。

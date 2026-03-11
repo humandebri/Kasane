@@ -34,6 +34,18 @@ pub struct OpsConfigView {
 }
 
 #[derive(Clone, Debug, CandidType, Deserialize)]
+pub struct PrecompileProfileView {
+    pub address: Vec<u8>,
+    pub calls: u64,
+    pub total_instructions: u128,
+    pub avg_instructions: u64,
+    pub max_instructions: u64,
+    pub total_extra_gas: u128,
+    pub avg_extra_gas: u64,
+    pub max_extra_gas: u64,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize)]
 pub enum OpsModeView {
     Normal,
     Low,

@@ -84,7 +84,6 @@ struct GenesisBalanceView {
 #[derive(Clone, Debug, CandidType, Deserialize, Eq, PartialEq)]
 struct InitArgs {
     genesis_balances: Vec<GenesisBalanceView>,
-    wrap_canister_id: Principal,
 }
 
 #[derive(Clone, Debug, CandidType, Deserialize, Eq, PartialEq)]
@@ -145,10 +144,6 @@ fn test_caller() -> Principal {
     Principal::self_authenticating(b"rpc-e2e-test-caller")
 }
 
-fn test_wrap_canister() -> Principal {
-    Principal::self_authenticating(b"rpc-e2e-wrap-canister")
-}
-
 fn install_canister(pic: &PocketIc) -> Principal {
     let caller = test_caller();
     let init = Some(InitArgs {
@@ -158,7 +153,6 @@ fn install_canister(pic: &PocketIc) -> Principal {
                 .to_vec(),
             amount: 1_000_000_000_000_000_000u128,
         }],
-        wrap_canister_id: test_wrap_canister(),
     });
     let init_arg = Encode!(&init).expect("encode init args");
     let canister_id = install_canister_with_arg(pic, init_arg);
@@ -427,7 +421,6 @@ fn install_rejects_invalid_init_args() {
             address: vec![0u8; 19],
             amount: 1,
         }],
-        wrap_canister_id: test_wrap_canister(),
     });
     let bad_address_arg = Encode!(&bad_address).expect("encode bad address init args");
     expect_install_trap(
@@ -441,7 +434,6 @@ fn install_rejects_invalid_init_args() {
             address: vec![0u8; 20],
             amount: 0,
         }],
-        wrap_canister_id: test_wrap_canister(),
     });
     let zero_amount_arg = Encode!(&zero_amount).expect("encode zero amount init args");
     expect_install_trap(
@@ -461,7 +453,6 @@ fn install_rejects_invalid_init_args() {
                 amount: 2,
             },
         ],
-        wrap_canister_id: test_wrap_canister(),
     });
     let duplicate_arg = Encode!(&duplicate).expect("encode duplicate init args");
     expect_install_trap(

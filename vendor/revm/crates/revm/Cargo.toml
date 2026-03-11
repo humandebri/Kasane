@@ -104,9 +104,13 @@ optional_priority_fee_check = ["context/optional_priority_fee_check"]
 # Precompiles features: Please look at the comments in `precompile` crate for more information.
 
 secp256k1 = ["precompile/secp256k1"] # See comments in `precompile` use it with caution
+secp256r1 = ["precompile/secp256r1"]
 c-kzg = ["precompile/c-kzg"]
+kzg_precompile = ["precompile/kzg_precompile"]
+bls12_381 = ["precompile/bls12_381"]
 
-# blst will be enabled both for bls precompiles and for kzg precompile.
+# blst is used by KZG and can also serve as the BLS12-381 backend when that
+# precompile feature is enabled explicitly.
 blst = ["precompile/blst"]
 bn = ["precompile/bn"]
 asm-sha2 = ["precompile/asm-sha2"]

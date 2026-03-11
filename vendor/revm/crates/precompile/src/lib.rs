@@ -9,17 +9,22 @@
 extern crate alloc as std;
 
 pub mod blake2;
+#[cfg(any(feature = "bls12_381", feature = "kzg_precompile"))]
 pub mod bls12_381;
+#[cfg(any(feature = "bls12_381", feature = "kzg_precompile"))]
 pub mod bls12_381_const;
+#[cfg(feature = "bls12_381")]
 pub mod bls12_381_utils;
 pub mod bn254;
 pub mod hash;
 mod id;
 pub mod identity;
 pub mod interface;
+#[cfg(feature = "kzg_precompile")]
 pub mod kzg_point_evaluation;
 pub mod modexp;
 pub mod secp256k1;
+#[cfg(feature = "secp256r1")]
 pub mod secp256r1;
 pub mod utilities;
 
@@ -38,15 +43,21 @@ cfg_if::cfg_if! {
 
 use arrayref as _;
 
-// silence arkworks-bls12-381 lint as blst will be used as default if both are enabled.
-cfg_if::cfg_if! {
-    if #[cfg(feature = "blst")]{
-        use ark_bls12_381 as _;
-        use ark_ff as _;
-        use ark_ec as _;
-        use ark_serialize as _;
-    }
-}
+// Silence optional BLS/KZG backend deps when the shared implementation is enabled.
+#[cfg(any(feature = "bls12_381", feature = "kzg_precompile"))]
+use ark_bls12_381 as _;
+#[cfg(any(feature = "bls12_381", feature = "kzg_precompile"))]
+use ark_ec as _;
+#[cfg(any(feature = "bls12_381", feature = "kzg_precompile"))]
+use ark_ff as _;
+#[cfg(any(feature = "bls12_381", feature = "kzg_precompile"))]
+use ark_serialize as _;
+
+// Silence optional backend deps when features are enabled without registration.
+#[cfg(feature = "blst")]
+use blst as _;
+#[cfg(feature = "c-kzg")]
+use c_kzg as _;
 
 // silence aurora-engine-modexp if gmp is enabled
 #[cfg(feature = "gmp")]
@@ -171,12 +182,14 @@ impl Precompiles {
 
     /// Returns precompiles for Cancun spec.
     ///
-    /// If the `c-kzg` feature is not enabled KZG Point Evaluation precompile will not be included,
-    /// effectively making this the same as Berlin.
+    /// If the `kzg_precompile` feature is not enabled KZG Point Evaluation precompile will not be
+    /// included, effectively making this the same as Berlin.
     pub fn cancun() -> &'static Self {
         static INSTANCE: OnceLock<Precompiles> = OnceLock::new();
         INSTANCE.get_or_init(|| {
+            #[allow(unused_mut)]
             let mut precompiles = Self::berlin().clone();
+            #[cfg(feature = "kzg_precompile")]
             precompiles.extend([
                 // EIP-4844: Shard Blob Transactions
                 kzg_point_evaluation::POINT_EVALUATION,
@@ -189,7 +202,9 @@ impl Precompiles {
     pub fn prague() -> &'static Self {
         static INSTANCE: OnceLock<Precompiles> = OnceLock::new();
         INSTANCE.get_or_init(|| {
+            #[allow(unused_mut)]
             let mut precompiles = Self::cancun().clone();
+            #[cfg(feature = "bls12_381")]
             precompiles.extend(bls12_381::precompiles());
             precompiles
         })
@@ -200,7 +215,9 @@ impl Precompiles {
         static INSTANCE: OnceLock<Precompiles> = OnceLock::new();
         INSTANCE.get_or_init(|| {
             let mut precompiles = Self::prague().clone();
-            precompiles.extend([modexp::OSAKA, secp256r1::P256VERIFY_OSAKA]);
+            precompiles.extend([modexp::OSAKA]);
+            #[cfg(feature = "secp256r1")]
+            precompiles.extend([secp256r1::P256VERIFY_OSAKA]);
             precompiles
         })
     }
@@ -394,8 +411,10 @@ pub enum PrecompileSpecId {
     BERLIN,
     /// Cancun spec added
     /// * [`EIP-4844: Shard Blob Transactions`](https://eips.ethereum.org/EIPS/eip-4844). It added the KZG point evaluation precompile (at 0x0A address).
+    ///   In this repository it is only registered when the `kzg_precompile` feature is enabled.
     CANCUN,
     /// Prague spec added bls precompiles [`EIP-2537: Precompile for BLS12-381 curve operations`](https://eips.ethereum.org/EIPS/eip-2537).
+    /// In this repository they are only registered when the `bls12_381` feature is enabled.
     /// * `BLS12_G1ADD` at address 0x0b
     /// * `BLS12_G1MSM` at address 0x0c
     /// * `BLS12_G2ADD` at address 0x0d
@@ -500,5 +519,68 @@ mod test {
         let intersection = Precompiles::homestead().intersection(Precompiles::byzantium());
 
         assert_eq!(intersection.len(), 4)
+    }
+
+    #[test]
+    fn test_prague_excludes_p256verify() {
+        assert!(!Precompiles::prague().contains(&u64_to_address(256)));
+    }
+
+    #[test]
+    fn test_cancun_kzg_precompile_is_feature_gated() {
+        #[cfg(feature = "kzg_precompile")]
+        assert!(Precompiles::cancun().contains(&u64_to_address(10)));
+
+        #[cfg(not(feature = "kzg_precompile"))]
+        assert!(!Precompiles::cancun().contains(&u64_to_address(10)));
+    }
+
+    #[test]
+    fn test_prague_kzg_precompile_is_feature_gated() {
+        #[cfg(feature = "kzg_precompile")]
+        assert!(Precompiles::prague().contains(&u64_to_address(10)));
+
+        #[cfg(not(feature = "kzg_precompile"))]
+        assert!(!Precompiles::prague().contains(&u64_to_address(10)));
+    }
+
+    #[test]
+    fn test_osaka_kzg_precompile_is_feature_gated() {
+        #[cfg(feature = "kzg_precompile")]
+        assert!(Precompiles::osaka().contains(&u64_to_address(10)));
+
+        #[cfg(not(feature = "kzg_precompile"))]
+        assert!(!Precompiles::osaka().contains(&u64_to_address(10)));
+    }
+
+    #[test]
+    fn test_osaka_p256verify_is_feature_gated() {
+        #[cfg(feature = "secp256r1")]
+        assert!(Precompiles::osaka().contains(&u64_to_address(256)));
+
+        #[cfg(not(feature = "secp256r1"))]
+        assert!(!Precompiles::osaka().contains(&u64_to_address(256)));
+    }
+
+    #[test]
+    fn test_prague_bls12_precompiles_are_feature_gated() {
+        for address in 11..=17 {
+            #[cfg(feature = "bls12_381")]
+            assert!(Precompiles::prague().contains(&u64_to_address(address)));
+
+            #[cfg(not(feature = "bls12_381"))]
+            assert!(!Precompiles::prague().contains(&u64_to_address(address)));
+        }
+    }
+
+    #[test]
+    fn test_osaka_bls12_precompiles_are_feature_gated() {
+        for address in 11..=17 {
+            #[cfg(feature = "bls12_381")]
+            assert!(Precompiles::osaka().contains(&u64_to_address(address)));
+
+            #[cfg(not(feature = "bls12_381"))]
+            assert!(!Precompiles::osaka().contains(&u64_to_address(address)));
+        }
     }
 }

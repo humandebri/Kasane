@@ -335,4 +335,12 @@ mod tests {
             Some(DecodeError::UnsupportedType)
         );
     }
+
+    #[test]
+    fn decode_eth_raw_tx_rejects_legacy_typed_0x00_prefix() {
+        assert_eq!(
+            decode_eth_raw_tx(&[0x00, 0xc0]).err(),
+            Some(DecodeError::UnsupportedType)
+        );
+    }
 }

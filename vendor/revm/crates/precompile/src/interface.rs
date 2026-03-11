@@ -4,6 +4,7 @@ use core::fmt::{self, Debug};
 use primitives::{Bytes, OnceLock};
 use std::{borrow::Cow, boxed::Box, string::String, vec::Vec};
 
+#[cfg(feature = "bls12_381")]
 use crate::bls12_381::{G1Point, G1PointScalar, G2Point, G2PointScalar};
 
 /// Global crypto provider instance
@@ -131,12 +132,21 @@ pub trait Crypto: Send + Sync + Debug {
 
     /// secp256r1 (P-256) signature verification.
     #[inline]
+    #[cfg(feature = "secp256r1")]
     fn secp256r1_verify_signature(&self, msg: &[u8; 32], sig: &[u8; 64], pk: &[u8; 64]) -> bool {
         crate::secp256r1::verify_signature(*msg, *sig, *pk).is_some()
     }
 
+    /// secp256r1 (P-256) signature verification.
+    #[inline]
+    #[cfg(not(feature = "secp256r1"))]
+    fn secp256r1_verify_signature(&self, _msg: &[u8; 32], _sig: &[u8; 64], _pk: &[u8; 64]) -> bool {
+        false
+    }
+
     /// KZG point evaluation.
     #[inline]
+    #[cfg(feature = "kzg_precompile")]
     fn verify_kzg_proof(
         &self,
         z: &[u8; 32],
@@ -151,12 +161,27 @@ pub trait Crypto: Send + Sync + Debug {
         Ok(())
     }
 
+    /// KZG point evaluation.
+    #[inline]
+    #[cfg(not(feature = "kzg_precompile"))]
+    fn verify_kzg_proof(
+        &self,
+        _z: &[u8; 32],
+        _y: &[u8; 32],
+        _commitment: &[u8; 48],
+        _proof: &[u8; 48],
+    ) -> Result<(), PrecompileError> {
+        Err(PrecompileError::BlobVerifyKzgProofFailed)
+    }
+
     /// BLS12-381 G1 addition (returns 96-byte unpadded G1 point)
+    #[cfg(feature = "bls12_381")]
     fn bls12_381_g1_add(&self, a: G1Point, b: G1Point) -> Result<[u8; 96], PrecompileError> {
         crate::bls12_381::crypto_backend::p1_add_affine_bytes(a, b)
     }
 
     /// BLS12-381 G1 multi-scalar multiplication (returns 96-byte unpadded G1 point)
+    #[cfg(feature = "bls12_381")]
     fn bls12_381_g1_msm(
         &self,
         pairs: &mut dyn Iterator<Item = Result<G1PointScalar, PrecompileError>>,
@@ -165,11 +190,13 @@ pub trait Crypto: Send + Sync + Debug {
     }
 
     /// BLS12-381 G2 addition (returns 192-byte unpadded G2 point)
+    #[cfg(feature = "bls12_381")]
     fn bls12_381_g2_add(&self, a: G2Point, b: G2Point) -> Result<[u8; 192], PrecompileError> {
         crate::bls12_381::crypto_backend::p2_add_affine_bytes(a, b)
     }
 
     /// BLS12-381 G2 multi-scalar multiplication (returns 192-byte unpadded G2 point)
+    #[cfg(feature = "bls12_381")]
     fn bls12_381_g2_msm(
         &self,
         pairs: &mut dyn Iterator<Item = Result<G2PointScalar, PrecompileError>>,
@@ -178,6 +205,7 @@ pub trait Crypto: Send + Sync + Debug {
     }
 
     /// BLS12-381 pairing check.
+    #[cfg(feature = "bls12_381")]
     fn bls12_381_pairing_check(
         &self,
         pairs: &[(G1Point, G2Point)],
@@ -186,11 +214,13 @@ pub trait Crypto: Send + Sync + Debug {
     }
 
     /// BLS12-381 map field element to G1.
+    #[cfg(feature = "bls12_381")]
     fn bls12_381_fp_to_g1(&self, fp: &[u8; 48]) -> Result<[u8; 96], PrecompileError> {
         crate::bls12_381::crypto_backend::map_fp_to_g1_bytes(fp)
     }
 
     /// BLS12-381 map field element to G2.
+    #[cfg(feature = "bls12_381")]
     fn bls12_381_fp2_to_g2(&self, fp2: ([u8; 48], [u8; 48])) -> Result<[u8; 192], PrecompileError> {
         crate::bls12_381::crypto_backend::map_fp2_to_g2_bytes(&fp2.0, &fp2.1)
     }

@@ -9,6 +9,7 @@ use evm_db::chain_data::constants::CHAIN_ID;
 use evm_db::chain_data::constants::{MAX_QUEUE_SNAPSHOT_LIMIT, MAX_RETURN_DATA, MAX_TX_SIZE};
 #[cfg(test)]
 use evm_db::chain_data::StoredTx;
+use evm_db::chain_data::runtime_defaults::DEFAULT_WRAP_CANISTER_ID_TEXT;
 use evm_db::chain_data::DEFAULT_MINING_INTERVAL_MS;
 use evm_db::chain_data::MIN_PRUNE_MAX_OPS_PER_TICK;
 use evm_db::chain_data::{
@@ -102,13 +103,11 @@ const CODE_INTERNAL_UNEXPECTED: &str = "internal.unexpected";
 #[derive(Clone, Debug, CandidType, Deserialize)]
 pub struct InitArgs {
     pub genesis_balances: Vec<GenesisBalanceView>,
-    pub wrap_canister_id: Principal,
 }
 
 impl InitArgs {
     fn validate(&self) -> Result<(), String> {
         let mut seen_addresses = std::collections::BTreeSet::new();
-        validate_wrap_canister_id_input(self.wrap_canister_id)?;
         if self.genesis_balances.is_empty() {
             return Err("genesis_balances must be non-empty".to_string());
         }
@@ -125,13 +124,6 @@ impl InitArgs {
         }
         Ok(())
     }
-}
-
-fn validate_wrap_canister_id_input(wrap_canister_id: Principal) -> Result<(), String> {
-    if wrap_canister_id == Principal::anonymous() {
-        return Err("wrap_canister_id must not be anonymous".to_string());
-    }
-    Ok(())
 }
 
 #[cfg(not(feature = "canbench-rs"))]
@@ -157,7 +149,6 @@ fn init_inner(args: Option<InitArgs>, require_args: bool) {
     } else {
         args.unwrap_or(InitArgs {
             genesis_balances: Vec::new(),
-            wrap_canister_id: Principal::anonymous(),
         })
     };
     if require_args || !args.genesis_balances.is_empty() {
@@ -165,7 +156,6 @@ fn init_inner(args: Option<InitArgs>, require_args: bool) {
             ic_cdk::trap(format!("InvalidInitArgs: {reason}"));
         }
     }
-    set_wrap_canister_id_inner(args.wrap_canister_id);
     if !args.genesis_balances.is_empty() {
         for alloc in args.genesis_balances.iter() {
             let mut addr = [0u8; 20];
@@ -187,12 +177,9 @@ fn init_inner(args: Option<InitArgs>, require_args: bool) {
     schedule_cycle_observer();
 }
 
-fn set_wrap_canister_id_inner(wrap_canister_id: Principal) {
-    with_state_mut(|state| {
-        state
-            .wrap_canister_id
-            .set(wrap_canister_id.as_slice().to_vec());
-    });
+fn current_wrap_canister_id() -> Principal {
+    Principal::from_text(DEFAULT_WRAP_CANISTER_ID_TEXT)
+        .unwrap_or_else(|err| ic_cdk::trap(format!("InvalidDefaultWrapCanisterId: {err}")))
 }
 
 #[ic_cdk::post_upgrade]
@@ -307,7 +294,7 @@ struct InspectMethodPolicy {
     payload_limit: usize,
 }
 
-const INSPECT_METHOD_POLICIES: [InspectMethodPolicy; 9] = [
+const INSPECT_METHOD_POLICIES: &[InspectMethodPolicy] = &[
     InspectMethodPolicy {
         method: "submit_ic_tx",
         payload_limit: INSPECT_TX_PAYLOAD_LIMIT,
@@ -325,10 +312,6 @@ const INSPECT_METHOD_POLICIES: [InspectMethodPolicy; 9] = [
         payload_limit: INSPECT_MANAGE_PAYLOAD_LIMIT,
     },
     InspectMethodPolicy {
-        method: "set_wrap_canister_id",
-        payload_limit: INSPECT_MANAGE_PAYLOAD_LIMIT,
-    },
-    InspectMethodPolicy {
         method: "set_prune_policy",
         payload_limit: INSPECT_MANAGE_PAYLOAD_LIMIT,
     },
@@ -342,6 +325,16 @@ const INSPECT_METHOD_POLICIES: [InspectMethodPolicy; 9] = [
     },
     InspectMethodPolicy {
         method: "prune_blocks",
+        payload_limit: INSPECT_MANAGE_PAYLOAD_LIMIT,
+    },
+    #[cfg(feature = "precompile-profile-admin")]
+    InspectMethodPolicy {
+        method: "clear_precompile_profile",
+        payload_limit: INSPECT_MANAGE_PAYLOAD_LIMIT,
+    },
+    #[cfg(feature = "precompile-profile-admin")]
+    InspectMethodPolicy {
+        method: "profile_precompile_call",
         payload_limit: INSPECT_MANAGE_PAYLOAD_LIMIT,
     },
 ];
@@ -749,6 +742,26 @@ fn rpc_eth_call_object(call: RpcCallObjectView) -> Result<RpcCallResultView, Rpc
     ic_evm_rpc::rpc_eth_call_object(call)
 }
 
+#[cfg(feature = "precompile-profile-admin")]
+#[ic_cdk::update]
+fn profile_precompile_call(call: RpcCallObjectView) -> Result<RpcCallResultView, RpcErrorView> {
+    if let Some(reason) = reject_anonymous_update() {
+        return Err(RpcErrorView {
+            code: 1001,
+            message: reason,
+            error_prefix: Some("auth.controller_required".to_string()),
+        });
+    }
+    if let Err(reason) = require_control_plane_write() {
+        return Err(RpcErrorView {
+            code: 1001,
+            message: reason,
+            error_prefix: Some("auth.controller_required".to_string()),
+        });
+    }
+    ic_evm_rpc::rpc_eth_call_object(call)
+}
+
 #[ic_cdk::query]
 fn rpc_eth_call_object_at(
     call: RpcCallObjectView,
@@ -1104,14 +1117,35 @@ fn set_instruction_soft_limit(limit: u64) -> Result<(), String> {
     Ok(())
 }
 
+#[cfg(feature = "precompile-profile-admin")]
+#[ic_cdk::query]
+fn get_precompile_profile() -> Vec<PrecompileProfileView> {
+    if let Err(reason) = require_controller() {
+        ic_cdk::trap(&reason);
+    }
+    evm_core::wrap_precompile::precompile_profile_snapshot()
+        .into_iter()
+        .map(|entry| PrecompileProfileView {
+            address: entry.address.to_vec(),
+            calls: entry.calls,
+            total_instructions: entry.total_instructions,
+            avg_instructions: entry.avg_instructions,
+            max_instructions: entry.max_instructions,
+            total_extra_gas: entry.total_extra_gas,
+            avg_extra_gas: entry.avg_extra_gas,
+            max_extra_gas: entry.max_extra_gas,
+        })
+        .collect()
+}
+
+#[cfg(feature = "precompile-profile-admin")]
 #[ic_cdk::update]
-fn set_wrap_canister_id(wrap_canister_id: Principal) -> Result<(), String> {
+fn clear_precompile_profile() -> Result<(), String> {
     if let Some(reason) = reject_anonymous_update() {
         return Err(reason);
     }
     require_control_plane_write()?;
-    validate_wrap_canister_id_input(wrap_canister_id)?;
-    set_wrap_canister_id_inner(wrap_canister_id);
+    evm_core::wrap_precompile::clear_precompile_profile();
     Ok(())
 }
 
@@ -2300,11 +2334,8 @@ fn finalize_unwrap_dispatch_attempt(
 }
 
 fn validate_vault_canister_id(vault_canister_id: &[u8]) -> Result<(), String> {
-    let expected = with_state(|state| state.wrap_canister_id.get().clone());
-    if expected.is_empty() {
-        return Err("config.wrap_canister_missing".to_string());
-    }
-    if expected != vault_canister_id {
+    let expected = current_wrap_canister_id();
+    if expected.as_slice() != vault_canister_id {
         return Err("wrap.arg.vault_not_allowed".to_string());
     }
     Ok(())
@@ -2629,7 +2660,15 @@ mod tests {
         assert!(inspect_payload_limit_for_method("set_pruning_enabled").is_some());
         assert!(inspect_payload_limit_for_method("set_block_gas_limit").is_some());
         assert!(inspect_payload_limit_for_method("set_instruction_soft_limit").is_some());
-        assert!(inspect_payload_limit_for_method("set_wrap_canister_id").is_some());
+        assert!(inspect_payload_limit_for_method("set_precompile_gas_ratio").is_none());
+        #[cfg(feature = "precompile-profile-admin")]
+        assert!(inspect_payload_limit_for_method("clear_precompile_profile").is_some());
+        #[cfg(feature = "precompile-profile-admin")]
+        assert!(inspect_payload_limit_for_method("profile_precompile_call").is_some());
+        #[cfg(not(feature = "precompile-profile-admin"))]
+        assert!(inspect_payload_limit_for_method("clear_precompile_profile").is_none());
+        #[cfg(not(feature = "precompile-profile-admin"))]
+        assert!(inspect_payload_limit_for_method("profile_precompile_call").is_none());
     }
 
     #[test]
@@ -3321,6 +3360,14 @@ mod tests {
     }
 
     #[test]
+    fn get_ops_status_reports_ops_config() {
+        init_stable_state();
+        let ops = super::get_ops_status();
+        assert_eq!(ops.config.low_watermark, 2_000_000_000_000);
+        assert_eq!(ops.config.critical, 1_000_000_000_000);
+    }
+
+    #[test]
     fn set_prune_policy_rejects_non_positive_max_ops() {
         init_stable_state();
         let policy = PrunePolicyView {
@@ -3897,32 +3944,17 @@ mod tests {
     }
 
     #[test]
-    fn validate_vault_canister_id_checks_config_match() {
+    fn validate_vault_canister_id_checks_runtime_default_match() {
         init_stable_state();
-        super::set_wrap_canister_id_inner(Principal::from_slice(&[1, 2, 3]));
-        assert!(validate_vault_canister_id(&[1, 2, 3]).is_ok());
+        assert!(validate_vault_canister_id(Principal::management_canister().as_slice()).is_ok());
         let err = validate_vault_canister_id(&[9]).expect_err("must reject mismatch");
         assert_eq!(err, "wrap.arg.vault_not_allowed");
     }
 
     #[test]
-    fn set_wrap_canister_id_inner_updates_empty_upgrade_state() {
+    fn validate_vault_canister_id_uses_runtime_default() {
         init_stable_state();
-        let before = with_state(|state| state.wrap_canister_id.get().clone());
-        assert!(before.is_empty());
-
-        let wrap_canister_id = Principal::from_slice(&[9, 8, 7, 6]);
-        super::set_wrap_canister_id_inner(wrap_canister_id);
-
-        let after = with_state(|state| state.wrap_canister_id.get().clone());
-        assert_eq!(after, wrap_canister_id.as_slice().to_vec());
-    }
-
-    #[test]
-    fn validate_wrap_canister_id_input_rejects_anonymous_principal() {
-        let err = super::validate_wrap_canister_id_input(Principal::anonymous())
-            .expect_err("must reject");
-        assert_eq!(err, "wrap_canister_id must not be anonymous");
+        assert!(validate_vault_canister_id(Principal::management_canister().as_slice()).is_ok());
     }
 
     #[test]
@@ -4396,7 +4428,7 @@ mod tests {
     fn did_contains_dispatch_result_contract_shape() {
         let did = include_str!("../evm_canister.did");
         assert!(did.contains("type RequestDispatchResultView = record {"));
-        assert!(did.contains("wrap_canister_id : principal;"));
+        assert!(!did.contains("wrap_canister_id : principal;"));
         assert!(did.contains("vault_canister_id : blob;"));
         assert!(!did.contains("ledger_tx_id : opt blob;"));
         assert!(did.contains("type RequestDispatchStatusView = variant {"));
@@ -4405,6 +4437,6 @@ mod tests {
         assert!(!did.contains("get_unwrap_request_status"));
         assert!(did.contains("get_request_dispatch_result"));
         assert!(did.contains("get_request_dispatch_status"));
-        assert!(did.contains("set_wrap_canister_id : (principal) -> (Result_15);"));
+        assert!(!did.contains("set_wrap_canister_id : (principal) -> (Result_15);"));
     }
 }

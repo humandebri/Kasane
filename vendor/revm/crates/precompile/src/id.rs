@@ -129,21 +129,80 @@ impl PrecompileId {
                 }
             }
             Self::Blake2F => crate::blake2::FUN,
-            Self::KzgPointEvaluation => crate::kzg_point_evaluation::POINT_EVALUATION,
-            Self::Bls12G1Add => crate::bls12_381::g1_add::PRECOMPILE,
-            Self::Bls12G1Msm => crate::bls12_381::g1_msm::PRECOMPILE,
-            Self::Bls12G2Add => crate::bls12_381::g2_add::PRECOMPILE,
-            Self::Bls12G2Msm => crate::bls12_381::g2_msm::PRECOMPILE,
-            Self::Bls12Pairing => crate::bls12_381::pairing::PRECOMPILE,
-            Self::Bls12MapFpToGp1 => crate::bls12_381::map_fp_to_g1::PRECOMPILE,
-            Self::Bls12MapFp2ToGp2 => crate::bls12_381::map_fp2_to_g2::PRECOMPILE,
+            Self::KzgPointEvaluation => {
+                #[cfg(feature = "kzg_precompile")]
+                {
+                    crate::kzg_point_evaluation::POINT_EVALUATION
+                }
+                #[cfg(not(feature = "kzg_precompile"))]
+                return None;
+            }
+            Self::Bls12G1Add => {
+                #[cfg(feature = "bls12_381")]
+                {
+                    crate::bls12_381::g1_add::PRECOMPILE
+                }
+                #[cfg(not(feature = "bls12_381"))]
+                return None;
+            }
+            Self::Bls12G1Msm => {
+                #[cfg(feature = "bls12_381")]
+                {
+                    crate::bls12_381::g1_msm::PRECOMPILE
+                }
+                #[cfg(not(feature = "bls12_381"))]
+                return None;
+            }
+            Self::Bls12G2Add => {
+                #[cfg(feature = "bls12_381")]
+                {
+                    crate::bls12_381::g2_add::PRECOMPILE
+                }
+                #[cfg(not(feature = "bls12_381"))]
+                return None;
+            }
+            Self::Bls12G2Msm => {
+                #[cfg(feature = "bls12_381")]
+                {
+                    crate::bls12_381::g2_msm::PRECOMPILE
+                }
+                #[cfg(not(feature = "bls12_381"))]
+                return None;
+            }
+            Self::Bls12Pairing => {
+                #[cfg(feature = "bls12_381")]
+                {
+                    crate::bls12_381::pairing::PRECOMPILE
+                }
+                #[cfg(not(feature = "bls12_381"))]
+                return None;
+            }
+            Self::Bls12MapFpToGp1 => {
+                #[cfg(feature = "bls12_381")]
+                {
+                    crate::bls12_381::map_fp_to_g1::PRECOMPILE
+                }
+                #[cfg(not(feature = "bls12_381"))]
+                return None;
+            }
+            Self::Bls12MapFp2ToGp2 => {
+                #[cfg(feature = "bls12_381")]
+                {
+                    crate::bls12_381::map_fp2_to_g2::PRECOMPILE
+                }
+                #[cfg(not(feature = "bls12_381"))]
+                return None;
+            }
             Self::P256Verify => {
                 // P256 verify - gas cost changes in Osaka
+                #[cfg(feature = "secp256r1")]
                 if spec < OSAKA {
                     crate::secp256r1::P256VERIFY
                 } else {
                     crate::secp256r1::P256VERIFY_OSAKA
                 }
+                #[cfg(not(feature = "secp256r1"))]
+                return None;
             }
             Self::Custom(_) => return None,
         };
@@ -155,5 +214,44 @@ impl PrecompileId {
 impl fmt::Display for PrecompileId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(self.name())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{PrecompileId, PrecompileSpecId};
+
+    #[test]
+    fn test_bls12_precompile_ids_are_feature_gated() {
+        let ids = [
+            PrecompileId::Bls12G1Add,
+            PrecompileId::Bls12G1Msm,
+            PrecompileId::Bls12G2Add,
+            PrecompileId::Bls12G2Msm,
+            PrecompileId::Bls12Pairing,
+            PrecompileId::Bls12MapFpToGp1,
+            PrecompileId::Bls12MapFp2ToGp2,
+        ];
+
+        for id in ids {
+            #[cfg(feature = "bls12_381")]
+            assert!(id.precompile(PrecompileSpecId::PRAGUE).is_some());
+
+            #[cfg(not(feature = "bls12_381"))]
+            assert!(id.precompile(PrecompileSpecId::PRAGUE).is_none());
+        }
+    }
+
+    #[test]
+    fn test_kzg_precompile_id_is_feature_gated() {
+        #[cfg(feature = "kzg_precompile")]
+        assert!(PrecompileId::KzgPointEvaluation
+            .precompile(PrecompileSpecId::CANCUN)
+            .is_some());
+
+        #[cfg(not(feature = "kzg_precompile"))]
+        assert!(PrecompileId::KzgPointEvaluation
+            .precompile(PrecompileSpecId::CANCUN)
+            .is_none());
     }
 }

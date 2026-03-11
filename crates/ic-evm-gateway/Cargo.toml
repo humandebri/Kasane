@@ -12,6 +12,7 @@ doctest = false
 did-gen = []
 canbench-rs = ["dep:canbench-rs"]
 ic-debug-print = []
+precompile-profile-admin = []
 
 [dependencies]
 candid = "0.10"

@@ -2,12 +2,16 @@
 //! 何を: alloy-consensus/k256 依存を tx 専用crateに隔離
 //! なぜ: 依存汚染範囲を最小化し、core から重い依存を切り離すため
 
-use alloy_consensus::private::alloy_eips::eip2718::{Decodable2718, Eip2718Error};
 use alloy_consensus::transaction::SignerRecoverable;
-use alloy_consensus::Typed2718;
-use alloy_consensus::{Transaction, TxEnvelope};
+use alloy_consensus::{Signed, Transaction, TxEip1559, TxEip2930, TxLegacy};
 use alloy_primitives::{Address as AlloyAddress, TxKind as AlloyTxKind, U256 as AlloyU256};
 use evm_db::chain_data::constants::CHAIN_ID;
+
+const TX_TYPE_EIP2930: u8 = 0x01;
+const TX_TYPE_EIP1559: u8 = 0x02;
+const TX_TYPE_EIP4844: u8 = 0x03;
+const TX_TYPE_EIP7702: u8 = 0x04;
+const TX_TYPE_LEGACY_ENVELOPE: u8 = 0x00;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum RecoveryError {
@@ -35,24 +39,21 @@ pub struct RecoveredTx {
 }
 
 pub fn recover_eth_tx(bytes: &[u8]) -> Result<RecoveredTx, RecoveryError> {
-    let envelope = TxEnvelope::decode_2718_exact(bytes).map_err(map_eip2718_error)?;
+    let Some(first_byte) = bytes.first().copied() else {
+        return Err(RecoveryError::InvalidRlp);
+    };
 
-    match envelope.chain_id() {
-        None => return Err(RecoveryError::LegacyChainIdMissing),
-        Some(chain_id) if chain_id != CHAIN_ID => return Err(RecoveryError::WrongChainId),
-        _ => {}
+    if first_byte >= 0xc0 {
+        return recover_legacy_untagged(bytes);
     }
 
-    let sender = envelope
-        .recover_signer()
-        .map_err(|_| RecoveryError::InvalidSignature)?;
-
-    match envelope {
-        TxEnvelope::Legacy(tx) => Ok(recovered_from_tx(tx.tx(), sender, tx.ty())),
-        TxEnvelope::Eip2930(tx) => Ok(recovered_from_tx(tx.tx(), sender, tx.ty())),
-        TxEnvelope::Eip1559(tx) => Ok(recovered_from_tx(tx.tx(), sender, tx.ty())),
-        TxEnvelope::Eip4844(tx) => Ok(recovered_from_tx(tx.tx(), sender, tx.ty())),
-        TxEnvelope::Eip7702(tx) => Ok(recovered_from_tx(tx.tx(), sender, tx.ty())),
+    match first_byte {
+        TX_TYPE_EIP2930 => recover_eip2930(bytes),
+        TX_TYPE_EIP1559 => recover_eip1559(bytes),
+        TX_TYPE_LEGACY_ENVELOPE | TX_TYPE_EIP4844 | TX_TYPE_EIP7702 => {
+            Err(RecoveryError::UnsupportedType)
+        }
+        _ => Err(RecoveryError::UnsupportedType),
     }
 }
 
@@ -88,11 +89,160 @@ fn recovered_from_tx<T: Transaction>(tx: &T, from: AlloyAddress, tx_type: u8) ->
     }
 }
 
-fn map_eip2718_error(error: Eip2718Error) -> RecoveryError {
-    match error {
-        Eip2718Error::UnexpectedType(_) => RecoveryError::UnsupportedType,
-        Eip2718Error::RlpError(alloy_rlp::Error::UnexpectedLength) => RecoveryError::TrailingBytes,
-        Eip2718Error::RlpError(_) => RecoveryError::InvalidRlp,
-        _ => RecoveryError::InvalidRlp,
+fn recover_legacy_untagged(bytes: &[u8]) -> Result<RecoveredTx, RecoveryError> {
+    let mut buf = bytes;
+    let signed = Signed::<TxLegacy>::rlp_decode(&mut buf).map_err(|_| RecoveryError::InvalidRlp)?;
+    finalize_recovered(signed, TX_TYPE_LEGACY_ENVELOPE, buf)
+}
+
+fn recover_eip2930(bytes: &[u8]) -> Result<RecoveredTx, RecoveryError> {
+    let mut buf = bytes;
+    let signed =
+        Signed::<TxEip2930>::eip2718_decode(&mut buf).map_err(|_| RecoveryError::InvalidRlp)?;
+    finalize_recovered(signed, TX_TYPE_EIP2930, buf)
+}
+
+fn recover_eip1559(bytes: &[u8]) -> Result<RecoveredTx, RecoveryError> {
+    let mut buf = bytes;
+    let signed =
+        Signed::<TxEip1559>::eip2718_decode(&mut buf).map_err(|_| RecoveryError::InvalidRlp)?;
+    finalize_recovered(signed, TX_TYPE_EIP1559, buf)
+}
+
+fn finalize_recovered<T: Transaction>(
+    signed: Signed<T>,
+    tx_type: u8,
+    trailing: &[u8],
+) -> Result<RecoveredTx, RecoveryError>
+where
+    Signed<T>: SignerRecoverable,
+{
+    if !trailing.is_empty() {
+        return Err(RecoveryError::TrailingBytes);
+    }
+    validate_chain_id(signed.tx().chain_id())?;
+    let from = signed
+        .recover_signer()
+        .map_err(|_| RecoveryError::InvalidSignature)?;
+    Ok(recovered_from_tx(signed.tx(), from, tx_type))
+}
+
+fn validate_chain_id(chain_id: Option<u64>) -> Result<(), RecoveryError> {
+    match chain_id {
+        None => Err(RecoveryError::LegacyChainIdMissing),
+        Some(id) if id != CHAIN_ID => Err(RecoveryError::WrongChainId),
+        Some(_) => Ok(()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{recover_eth_tx, RecoveryError, CHAIN_ID, TX_TYPE_LEGACY_ENVELOPE};
+    use alloy_consensus::{SignableTransaction, Signed, TxEip1559, TxEip2930, TxLegacy};
+    use alloy_primitives::{Address, Signature, TxKind, B256, U256};
+
+    #[test]
+    fn rejects_unsupported_types_without_deep_decode() {
+        assert_eq!(
+            recover_eth_tx(&[TX_TYPE_LEGACY_ENVELOPE]),
+            Err(RecoveryError::UnsupportedType)
+        );
+        assert_eq!(recover_eth_tx(&[0x03]), Err(RecoveryError::UnsupportedType));
+        assert_eq!(recover_eth_tx(&[0x04]), Err(RecoveryError::UnsupportedType));
+    }
+
+    #[test]
+    fn legacy_without_chain_id_is_rejected() {
+        let tx = TxLegacy {
+            chain_id: None,
+            nonce: 1,
+            gas_price: 100,
+            gas_limit: 21_000,
+            to: TxKind::Call(Address::ZERO),
+            value: U256::ZERO,
+            input: Vec::new().into(),
+        };
+        let raw = encode_legacy(tx.into_signed(zero_signature()));
+        assert_eq!(
+            recover_eth_tx(&raw),
+            Err(RecoveryError::LegacyChainIdMissing)
+        );
+    }
+
+    #[test]
+    fn supported_types_decode_and_fail_on_invalid_signature() {
+        let legacy = TxLegacy {
+            chain_id: Some(CHAIN_ID),
+            nonce: 1,
+            gas_price: 100,
+            gas_limit: 21_000,
+            to: TxKind::Call(Address::ZERO),
+            value: U256::from(1u64),
+            input: vec![1, 2, 3].into(),
+        };
+        let legacy_raw = encode_legacy(legacy.into_signed(zero_signature()));
+        assert_eq!(
+            recover_eth_tx(&legacy_raw),
+            Err(RecoveryError::InvalidSignature)
+        );
+
+        let mut tagged_legacy_raw = vec![TX_TYPE_LEGACY_ENVELOPE];
+        tagged_legacy_raw.extend_from_slice(&legacy_raw);
+        assert_eq!(
+            recover_eth_tx(&tagged_legacy_raw),
+            Err(RecoveryError::UnsupportedType)
+        );
+
+        let eip2930 = TxEip2930 {
+            chain_id: CHAIN_ID,
+            nonce: 7,
+            gas_price: 101,
+            gas_limit: 30_000,
+            to: TxKind::Call(Address::ZERO),
+            value: U256::from(2u64),
+            input: vec![4, 5].into(),
+            access_list: Default::default(),
+        };
+        let eip2930_raw = encode_eip2718(eip2930.into_signed(zero_signature()));
+        assert_eq!(
+            recover_eth_tx(&eip2930_raw),
+            Err(RecoveryError::InvalidSignature)
+        );
+
+        let eip1559 = TxEip1559 {
+            chain_id: CHAIN_ID,
+            nonce: 8,
+            max_fee_per_gas: 120,
+            max_priority_fee_per_gas: 11,
+            gas_limit: 31_000,
+            to: TxKind::Call(Address::ZERO),
+            value: U256::from(3u64),
+            input: vec![6, 7].into(),
+            access_list: Default::default(),
+        };
+        let eip1559_raw = encode_eip2718(eip1559.into_signed(zero_signature()));
+        assert_eq!(
+            recover_eth_tx(&eip1559_raw),
+            Err(RecoveryError::InvalidSignature)
+        );
+    }
+
+    fn zero_signature() -> Signature {
+        Signature::from_scalars_and_parity(B256::ZERO, B256::ZERO, false)
+    }
+
+    fn encode_legacy(signed: Signed<TxLegacy>) -> Vec<u8> {
+        let mut out = Vec::new();
+        signed.rlp_encode(&mut out);
+        out
+    }
+
+    fn encode_eip2718<T>(signed: Signed<T>) -> Vec<u8>
+    where
+        T: alloy_consensus::transaction::RlpEcdsaEncodableTx,
+    {
+        let mut out = Vec::new();
+        signed.eip2718_encode(&mut out);
+        out
     }
 }
