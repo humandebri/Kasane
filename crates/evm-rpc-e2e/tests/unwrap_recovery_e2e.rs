@@ -54,7 +54,6 @@ enum RequestDispatchStatusView {
 #[derive(Clone, Debug, CandidType, Deserialize, Eq, PartialEq)]
 struct RequestDispatchResultView {
     status: RequestDispatchStatusView,
-    vault_canister_id: Vec<u8>,
     error_code: Option<String>,
 }
 
@@ -145,9 +144,22 @@ fn settle_gateway(pic: &PocketIc) {
     }
 }
 
-fn abi_word_from_u64(value: u64) -> [u8; 32] {
-    let mut out = [0u8; 32];
-    out[24..].copy_from_slice(&value.to_be_bytes());
+fn encode_unwrap_payload(asset: Principal, recipient: Principal) -> Vec<u8> {
+    fn principal_field(principal: Principal) -> Vec<u8> {
+        let bytes = principal.as_slice();
+        let mut out = vec![0u8; 30];
+        out[0] = bytes.len() as u8;
+        out[1..1 + bytes.len()].copy_from_slice(bytes);
+        out
+    }
+
+    let mut amount = [0u8; 32];
+    amount[16..].copy_from_slice(&1_000_000_000_000u128.to_be_bytes());
+    let mut out = Vec::with_capacity(93);
+    out.push(1);
+    out.extend_from_slice(&principal_field(asset));
+    out.extend_from_slice(&amount);
+    out.extend_from_slice(&principal_field(recipient));
     out
 }
 
@@ -157,43 +169,7 @@ fn abi_word_from_u128(value: u128) -> [u8; 32] {
     out
 }
 
-fn encode_dynamic_bytes(bytes: &[u8]) -> Vec<u8> {
-    let mut out = Vec::with_capacity(32 + bytes.len().div_ceil(32) * 32);
-    out.extend_from_slice(&abi_word_from_u64(bytes.len() as u64));
-    out.extend_from_slice(bytes);
-    let padded_len = bytes.len().div_ceil(32) * 32;
-    out.resize(32 + padded_len, 0);
-    out
-}
-
-fn encode_unwrap_abi_input(vault: Principal, asset: Principal, recipient: Principal) -> Vec<u8> {
-    let vault_tail = encode_dynamic_bytes(vault.as_slice());
-    let asset_tail = encode_dynamic_bytes(asset.as_slice());
-    let recipient_tail = encode_dynamic_bytes(recipient.as_slice());
-    let head_size = 6 * 32;
-
-    let mut out = Vec::with_capacity(head_size + vault_tail.len() + asset_tail.len() + recipient_tail.len());
-    out.extend_from_slice(&abi_word_from_u64(head_size as u64));
-    out.extend_from_slice(&abi_word_from_u64((head_size + vault_tail.len()) as u64));
-    out.extend_from_slice(&abi_word_from_u128(1_000_000_000_000u128));
-    out.extend_from_slice(&abi_word_from_u64((head_size + vault_tail.len() + asset_tail.len()) as u64));
-    out.extend_from_slice(&abi_word_from_u64(0));
-    out.extend_from_slice(&abi_word_from_u64(u64::MAX));
-    out.extend_from_slice(&vault_tail);
-    out.extend_from_slice(&asset_tail);
-    out.extend_from_slice(&recipient_tail);
-    out
-}
-
-fn request_id_for(principal: Principal, abi_input: &[u8]) -> Vec<u8> {
-    let caller = hash::derive_evm_address_from_principal(principal.as_slice()).expect("derive caller");
-    let mut input = Vec::with_capacity(caller.len() + abi_input.len());
-    input.extend_from_slice(&caller);
-    input.extend_from_slice(abi_input);
-    hash::keccak256(&input).to_vec()
-}
-
-fn submit_unwrap_tx(pic: &PocketIc, gateway_id: Principal, data: Vec<u8>) {
+fn submit_unwrap_tx(pic: &PocketIc, gateway_id: Principal, data: Vec<u8>) -> Vec<u8> {
     let out = pic
         .update_call(
             gateway_id,
@@ -213,7 +189,7 @@ fn submit_unwrap_tx(pic: &PocketIc, gateway_id: Principal, data: Vec<u8>) {
         .unwrap_or_else(|err| panic!("submit update failed: {err}"));
     let result: Result<Vec<u8>, SubmitTxError> = Decode!(&out, Result<Vec<u8>, SubmitTxError>)
         .expect("decode submit result");
-    assert!(result.is_ok(), "submit failed: {result:?}");
+    result.unwrap_or_else(|err| panic!("submit failed: {err:?}"))
 }
 
 fn seed_wrap_request(
@@ -267,6 +243,22 @@ fn gateway_dispatch_result(pic: &PocketIc, gateway_id: Principal, request_id: &[
     Decode!(&out, Option<RequestDispatchResultView>).expect("decode gateway result")
 }
 
+fn gateway_unwrap_request_ids_by_tx_id(
+    pic: &PocketIc,
+    gateway_id: Principal,
+    tx_id: &[u8],
+) -> Vec<Vec<u8>> {
+    let out = pic
+        .query_call(
+            gateway_id,
+            Principal::anonymous(),
+            "get_unwrap_request_ids_by_tx_id",
+            Encode!(&tx_id.to_vec()).expect("encode unwrap ids query"),
+        )
+        .unwrap_or_else(|err| panic!("gateway unwrap ids query failed: {err}"));
+    Decode!(&out, Vec<Vec<u8>>).expect("decode unwrap ids")
+}
+
 fn wrap_request_status(pic: &PocketIc, wrap_id: Principal, request_id: &[u8]) -> Option<WrapRequestStatus> {
     let out = pic
         .query_call(
@@ -285,13 +277,15 @@ fn upgrade_retries_dispatching_unwrap_via_idempotent_submit() {
     let (gateway_id, wrap_id) = install_pair(&pic);
     let asset = Principal::self_authenticating(b"unwrap-recovery-e2e-asset");
     let recipient = Principal::self_authenticating(b"unwrap-recovery-e2e-recipient");
-    let abi_input = encode_unwrap_abi_input(wrap_id, asset, recipient);
-    let request_id = request_id_for(test_caller(), &abi_input);
+    let payload = encode_unwrap_payload(asset, recipient);
 
-    submit_unwrap_tx(&pic, gateway_id, abi_input);
+    let tx_id = submit_unwrap_tx(&pic, gateway_id, payload);
 
     pic.advance_time(Duration::from_secs(60));
     pic.tick();
+    let request_ids = gateway_unwrap_request_ids_by_tx_id(&pic, gateway_id, &tx_id);
+    assert_eq!(request_ids.len(), 1);
+    let request_id = request_ids[0].clone();
     assert_eq!(
         gateway_dispatch_status(&pic, gateway_id, &request_id),
         Some(RequestDispatchStatusView::Queued)
@@ -325,6 +319,5 @@ fn upgrade_retries_dispatching_unwrap_via_idempotent_submit() {
     });
     assert_eq!(result.status, RequestDispatchStatusView::Dispatched);
     assert_eq!(result.error_code, None);
-    assert_eq!(result.vault_canister_id, wrap_id.as_slice().to_vec());
     assert!(wrap_request_status(&pic, wrap_id, &request_id).is_some());
 }

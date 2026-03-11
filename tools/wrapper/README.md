@@ -6,6 +6,7 @@ Next.js + Tailwind + shadcn で構築した wrapper 用 Dashboard です。
 
 - II / Oisy ウォレット接続（ブラウザ署名）
 - Unwrap tx発行（`submit_ic_tx` を client から直接実行）
+- Unwrap payload は compact 形式で生成し、送信前に `estimateGas` で `gas_limit` を決める
 - Wrap submit（`submit_wrap_request` を wallet から直接実行）
 - Amount中心UI + Advanced入力（asset selector/recipient/evm/gas/nonce）
 - request_id の送信前プレビュー

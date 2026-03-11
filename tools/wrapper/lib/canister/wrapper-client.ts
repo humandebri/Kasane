@@ -7,7 +7,11 @@ import type { DispatchResultView, DispatchStatus } from "../types";
 import { callerEvmAddressFromPrincipalText } from "../principal";
 import { getIdentityAgent, getQueryAgent } from "./agent";
 import {
+  applyWrapGasHeadroom,
+  applyUnwrapGasHeadroom,
+  buildUnwrapEstimateCallObject,
   buildWrapEstimateCallObject,
+  type BuildUnwrapEstimateCallArgs,
   type BuildWrapEstimateCallArgs,
   type WrapEstimateCallObject,
   validateEstimatedGasLimit,
@@ -45,9 +49,9 @@ type WrapperActor = ActorSubclass<{
     requestId: Uint8Array
   ) => Promise<[] | [{
     status: { Queued: null } | { Dispatching: null } | { Dispatched: null } | { DispatchFailed: null };
-    vault_canister_id: Uint8Array;
     error_code: [] | [string];
   }]>;
+  get_unwrap_request_ids_by_tx_id: (txId: Uint8Array) => Promise<Array<Uint8Array>>;
 }>;
 
 type QueryActorLike = Pick<
@@ -55,6 +59,7 @@ type QueryActorLike = Pick<
   "expected_nonce_by_address" | "rpc_eth_gas_price" | "rpc_eth_max_priority_fee_per_gas"
   | "rpc_eth_estimate_gas_object"
   | "get_request_dispatch_status" | "get_request_dispatch_result"
+  | "get_unwrap_request_ids_by_tx_id"
 >;
 type SubmitActorLike = Pick<WrapperActor, "submit_ic_tx">;
 
@@ -86,7 +91,6 @@ const wrapperIdlFactory: IDL.InterfaceFactory = ({ IDL: I }) => {
   });
   const RequestDispatchResultView = I.Record({
     status: RequestDispatchStatusView,
-    vault_canister_id: I.Vec(I.Nat8),
     error_code: I.Opt(I.Text),
   });
   const RequestKindView = I.Variant({
@@ -141,6 +145,7 @@ const wrapperIdlFactory: IDL.InterfaceFactory = ({ IDL: I }) => {
     submit_ic_tx: I.Func([SubmitIcTxArgsDto], [I.Variant({ Ok: I.Vec(I.Nat8), Err: SubmitTxError })], []),
     get_request_dispatch_status: I.Func([RequestKindView, I.Vec(I.Nat8)], [I.Opt(RequestDispatchStatusView)], ["query"]),
     get_request_dispatch_result: I.Func([RequestKindView, I.Vec(I.Nat8)], [I.Opt(RequestDispatchResultView)], ["query"]),
+    get_unwrap_request_ids_by_tx_id: I.Func([I.Vec(I.Nat8)], [I.Vec(I.Vec(I.Nat8))], ["query"]),
   });
 };
 
@@ -253,13 +258,30 @@ export async function estimateWrapGasLimit(
   if ("Err" in out) {
     throw new Error(decodeRpcNatError("evm_gateway.estimate_gas_failed", out.Err));
   }
-  return validateEstimatedGasLimit(out.Ok);
+  return applyWrapGasHeadroom(out.Ok);
+}
+
+export async function estimateUnwrapGasLimit(
+  args: BuildUnwrapEstimateCallArgs,
+  deps: {
+    readEstimateGas: (call: WrapEstimateCallObject) => Promise<GasEstimateResult>;
+  } = {
+    readEstimateGas: async (call) => (await getQueryActor()).rpc_eth_estimate_gas_object(call),
+  },
+): Promise<bigint> {
+  const call = buildUnwrapEstimateCallObject(args);
+  const out = await deps.readEstimateGas(call);
+  if ("Err" in out) {
+    throw new Error(decodeRpcNatError("evm_gateway.estimate_gas_failed", out.Err));
+  }
+  return applyUnwrapGasHeadroom(out.Ok);
 }
 
 export async function submitIcTx(args: {
   to: Uint8Array;
   data: Uint8Array;
   nonce: bigint;
+  gasLimit: bigint;
   identity: Identity;
 }): Promise<Uint8Array> {
   const [maxFeePerGas, maxPriorityFeePerGas] = await Promise.all([
@@ -273,7 +295,7 @@ export async function submitIcTx(args: {
     data: args.data,
     max_fee_per_gas: maxFeePerGas,
     nonce: args.nonce,
-    gas_limit: 300_000n,
+    gas_limit: args.gasLimit,
   });
   if ("Err" in out) {
     throw new Error(decodeSubmitError(out.Err));
@@ -297,9 +319,12 @@ export async function getDispatchResult(requestId: Uint8Array): Promise<Dispatch
   const value = out[0];
   return {
     status: decodeDispatchStatus(value.status),
-    vaultCanisterId: value.vault_canister_id,
     errorCode: value.error_code.length === 0 ? null : value.error_code[0],
   };
+}
+
+export async function getUnwrapRequestIdsByTxId(txId: Uint8Array): Promise<Uint8Array[]> {
+  return (await getQueryActor()).get_unwrap_request_ids_by_tx_id(txId);
 }
 
 export const wrapperClientTestHooks = {

@@ -9,6 +9,7 @@ import type {
 } from "@/components/dashboard-ui/types";
 import { approveLedgerSpend, getLedgerAllowance } from "@/lib/canister/icrc2-client";
 import {
+  estimateUnwrapGasLimit,
   getExpectedNonce,
   getGasPriceWei,
   submitIcTx,
@@ -17,9 +18,6 @@ import { getFeePolicy, submitWrapRequest, withdrawFailedWrap } from "@/lib/canis
 import type { loadConfig } from "@/lib/config";
 import { callerEvmAddressFromPrincipalText, principalTextToBytes } from "@/lib/principal";
 import {
-  decimalToBytes32,
-  deriveRequestId,
-  deriveWrapRequestId,
   toSubmitIcTxData,
   WRAP_PRECOMPILE_ADDRESS,
 } from "@/lib/request-id";
@@ -77,8 +75,8 @@ export function useWrapperActions(params: {
     return { cfg: params.cfg, principalText: params.walletSession.principalText };
   }
 
-  async function queryAndStartPolling(requestIdHex: string): Promise<void> {
-    const ok = await params.tracker.refreshStatus(requestIdHex);
+  async function queryAndStartPolling(trackingIdHex: string): Promise<void> {
+    const ok = await params.tracker.refreshStatus(trackingIdHex);
     if (ok) {
       params.tracker.setAutoPolling(true);
     }
@@ -102,47 +100,33 @@ export function useWrapperActions(params: {
         params.forms.unwrapForm.amount,
         "validation.amount.invalid",
       );
-      const userNonce = parseU64(
-        params.forms.unwrapForm.userNonce,
-        "validation.user_nonce.invalid",
-      );
-      const deadline = parseU64(
-        params.forms.unwrapForm.deadline,
-        "validation.deadline.invalid",
-      );
       const callerEvmAddress = callerEvmAddressFromPrincipalText(ready.principalText);
-      const requestId = deriveRequestId({
-        callerEvmAddress,
-        vaultCanisterId: ready.cfg.wrapCanisterId,
-        assetId: params.forms.unwrapForm.assetId.trim(),
-        amount,
-        recipient: params.forms.unwrapForm.recipient.trim(),
-        userNonce,
-        deadline,
-      });
-      const requestIdHex = bytesToHex(requestId);
       const txData = toSubmitIcTxData({
-        vaultCanisterId: ready.cfg.wrapCanisterId,
         assetId: params.forms.unwrapForm.assetId.trim(),
         amount,
         recipient: params.forms.unwrapForm.recipient.trim(),
-        userNonce,
-        deadline,
       });
       const nonce = await getExpectedNonce(callerEvmAddress);
-      await submitIcTx({
+      const gasLimit = await estimateUnwrapGasLimit({
+        callerEvmAddress,
+        nonce,
+        data: txData,
+      });
+      const txId = await submitIcTx({
         to: WRAP_PRECOMPILE_ADDRESS,
         data: txData,
         nonce,
+        gasLimit,
         identity: params.walletSession.identity,
       });
-      params.onRequestIdInput(requestIdHex);
+      const txIdHex = bytesToHex(txId);
+      params.onRequestIdInput(txIdHex);
       params.onRequestSubmitted({
-        requestId: requestIdHex,
+        requestId: txIdHex,
         kind: "unwrap",
         submittedAt: new Date().toISOString(),
       });
-      await queryAndStartPolling(requestIdHex);
+      await queryAndStartPolling(txIdHex);
       params.tracker.setMessage("submit.success");
       params.forms.resetUnwrapNonceDeadline();
     } catch (error) {

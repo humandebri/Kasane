@@ -126,7 +126,7 @@ scripts/query_smoke.sh
 
 ### `DispatchFailed` / `wrap.arg.vault_not_allowed`
 
-- unwrap ABI 内の vault bytes が `wrap_canister_id` と一致していない
+- unwrap compact payload 内の vault bytes が `wrap_canister_id` と一致していない
 - local 実機確認では principal bytes をそのまま使う
 
 ### `auth.kasane_required`

@@ -453,7 +453,6 @@ pub enum RequestDispatchStatusView {
 #[derive(Clone, Debug, CandidType, Deserialize, Eq, PartialEq)]
 pub struct RequestDispatchResultView {
     pub status: RequestDispatchStatusView,
-    pub vault_canister_id: Vec<u8>,
     pub error_code: Option<String>,
 }
 

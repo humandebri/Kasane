@@ -80,7 +80,6 @@ enum RequestDispatchStatusView {
 #[derive(Clone, Debug, CandidType, Deserialize, Eq, PartialEq)]
 struct RequestDispatchResultView {
     status: RequestDispatchStatusView,
-    vault_canister_id: Vec<u8>,
     error_code: Option<String>,
 }
 
@@ -168,12 +167,12 @@ fn build_submit_ic_tx_args(to: [u8; 20], nonce: u64, data: Vec<u8>, gas_limit: u
     }
 }
 
-fn submit_ic_tx(pic: &PocketIc, gateway_id: Principal, args: SubmitIcTxArgsDto) {
+fn submit_ic_tx(pic: &PocketIc, gateway_id: Principal, args: SubmitIcTxArgsDto) -> Vec<u8> {
     for _ in 0..4 {
         let out = pic.update_call(gateway_id, test_caller(), "submit_ic_tx", Encode!(&args).expect("encode submit")).unwrap();
         let result: Result<Vec<u8>, SubmitTxError> = Decode!(&out, Result<Vec<u8>, SubmitTxError>).expect("decode submit");
         match result {
-            Ok(_) => return,
+            Ok(tx_id) => return tx_id,
             Err(SubmitTxError::Rejected(message)) if message == "ops.write.needs_migration" => settle(pic, 1),
             Err(err) => panic!("submit failed: {err:?}"),
         }
@@ -181,33 +180,23 @@ fn submit_ic_tx(pic: &PocketIc, gateway_id: Principal, args: SubmitIcTxArgsDto) 
     panic!("submit did not succeed after migration retries");
 }
 
-fn encode_unwrap_abi_input(vault: Principal, asset: Principal, recipient: Principal, user_nonce: u64) -> Vec<u8> {
-    fn abi_u64(value: u64) -> [u8; 32] { let mut out = [0u8; 32]; out[24..].copy_from_slice(&value.to_be_bytes()); out }
-    fn abi_u128(value: u128) -> [u8; 32] { let mut out = [0u8; 32]; out[16..].copy_from_slice(&value.to_be_bytes()); out }
-    fn dyn_bytes(bytes: &[u8]) -> Vec<u8> { let mut out = Vec::with_capacity(32 + bytes.len().div_ceil(32) * 32); out.extend_from_slice(&abi_u64(bytes.len() as u64)); out.extend_from_slice(bytes); out.resize(32 + bytes.len().div_ceil(32) * 32, 0); out }
-    let vault_tail = dyn_bytes(vault.as_slice());
-    let asset_tail = dyn_bytes(asset.as_slice());
-    let recipient_tail = dyn_bytes(recipient.as_slice());
-    let head_size = 6 * 32;
-    let mut out = Vec::with_capacity(head_size + vault_tail.len() + asset_tail.len() + recipient_tail.len());
-    out.extend_from_slice(&abi_u64(head_size as u64));
-    out.extend_from_slice(&abi_u64((head_size + vault_tail.len()) as u64));
-    out.extend_from_slice(&abi_u128(1_000_000_000_000u128));
-    out.extend_from_slice(&abi_u64((head_size + vault_tail.len() + asset_tail.len()) as u64));
-    out.extend_from_slice(&abi_u64(user_nonce));
-    out.extend_from_slice(&abi_u64(u64::MAX));
-    out.extend_from_slice(&vault_tail);
-    out.extend_from_slice(&asset_tail);
-    out.extend_from_slice(&recipient_tail);
-    out
-}
+fn encode_unwrap_payload(asset: Principal, recipient: Principal) -> Vec<u8> {
+    fn principal_field(principal: Principal) -> Vec<u8> {
+        let bytes = principal.as_slice();
+        let mut out = vec![0u8; 30];
+        out[0] = bytes.len() as u8;
+        out[1..1 + bytes.len()].copy_from_slice(bytes);
+        out
+    }
 
-fn unwrap_request_id(principal: Principal, abi_input: &[u8]) -> Vec<u8> {
-    let caller = hash::derive_evm_address_from_principal(principal.as_slice()).expect("derive caller");
-    let mut input = Vec::with_capacity(caller.len() + abi_input.len());
-    input.extend_from_slice(&caller);
-    input.extend_from_slice(abi_input);
-    hash::keccak256(&input).to_vec()
+    let mut amount = [0u8; 32];
+    amount[16..].copy_from_slice(&1_000_000_000_000u128.to_be_bytes());
+    let mut out = Vec::with_capacity(93);
+    out.push(1);
+    out.extend_from_slice(&principal_field(asset));
+    out.extend_from_slice(&amount);
+    out.extend_from_slice(&principal_field(recipient));
+    out
 }
 
 fn wrap_request_id(principal: Principal, asset_id: &[u8], amount: &[u8], evm_recipient: &[u8], evm_nonce: u64, gas_limit: u64) -> Vec<u8> {
@@ -248,22 +237,51 @@ fn wrap_submit_request_reaches_fee_collection_after_gateway_gas_quote() {
     assert!(!err.contains("fee.quote_"), "gas quote path should already be fixed: {err}");
 }
 
+fn gateway_unwrap_request_ids_by_tx_id(
+    pic: &PocketIc,
+    gateway_id: Principal,
+    tx_id: &[u8],
+) -> Vec<Vec<u8>> {
+    let out = pic
+        .query_call(
+            gateway_id,
+            Principal::anonymous(),
+            "get_unwrap_request_ids_by_tx_id",
+            Encode!(&tx_id.to_vec()).expect("encode unwrap ids query"),
+        )
+        .unwrap();
+    Decode!(&out, Vec<Vec<u8>>).expect("decode unwrap ids")
+}
+
 #[test]
 fn unwrap_dispatch_succeeds_with_real_wrap_canister() {
     let pic = PocketIc::new();
     let (gateway_id, wrap_id, _) = install_pair(&pic);
     let asset = Principal::self_authenticating(b"wrap-unwrap-e2e-asset");
     let recipient = Principal::self_authenticating(b"wrap-unwrap-e2e-recipient");
-    let data = encode_unwrap_abi_input(wrap_id, asset, recipient, 0);
-    let request_id = unwrap_request_id(test_caller(), &data);
+    let data = encode_unwrap_payload(asset, recipient);
 
-    submit_ic_tx(&pic, gateway_id, build_submit_ic_tx_args(WRAP_PRECOMPILE_ADDRESS.into_array(), 0, data, 300_000));
+    let tx_id = submit_ic_tx(
+        &pic,
+        gateway_id,
+        build_submit_ic_tx_args(WRAP_PRECOMPILE_ADDRESS.into_array(), 0, data, 300_000),
+    );
 
     let mut final_result = None;
     let mut last_result = None;
+    let mut request_id = None;
     for _ in 0..12 {
         settle(&pic, 1);
-        let out = pic.query_call(gateway_id, Principal::anonymous(), "get_request_dispatch_result", Encode!(&RequestKindView::Unwrap, &request_id).unwrap()).unwrap();
+        if request_id.is_none() {
+            let request_ids = gateway_unwrap_request_ids_by_tx_id(&pic, gateway_id, &tx_id);
+            if request_ids.len() == 1 {
+                request_id = request_ids.into_iter().next();
+            }
+        }
+        let Some(ref request_id) = request_id else {
+            continue;
+        };
+        let out = pic.query_call(gateway_id, Principal::anonymous(), "get_request_dispatch_result", Encode!(&RequestKindView::Unwrap, request_id).unwrap()).unwrap();
         let result: Option<RequestDispatchResultView> = Decode!(&out, Option<RequestDispatchResultView>).expect("decode dispatch result");
         last_result = result.clone();
         if result.as_ref().map(|value| &value.status) == Some(&RequestDispatchStatusView::Dispatched) {
@@ -275,8 +293,7 @@ fn unwrap_dispatch_succeeds_with_real_wrap_canister() {
     let result = final_result.unwrap_or_else(|| panic!("unwrap should dispatch, last_result={last_result:?}"));
     assert_eq!(result.status, RequestDispatchStatusView::Dispatched);
     assert_eq!(result.error_code, None);
-    assert_eq!(result.vault_canister_id, wrap_id.as_slice().to_vec());
-
+    let request_id = request_id.expect("unwrap request id must resolve from tx");
     let wrap_status_out = pic.query_call(wrap_id, Principal::anonymous(), "get_request_status", Encode!(&request_id).unwrap()).unwrap();
     let wrap_status: Option<WrapRequestStatus> = Decode!(&wrap_status_out, Option<WrapRequestStatus>).expect("decode wrap request status");
     assert_eq!(wrap_status, Some(WrapRequestStatus::Queued));

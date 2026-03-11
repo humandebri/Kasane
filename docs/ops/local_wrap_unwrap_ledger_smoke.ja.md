@@ -55,6 +55,7 @@ scripts/local_wrap_unwrap_ledger_smoke.sh
     - wrap 側 `Succeeded`
     - `ledger_tx_id != null`
     を確認
+   - unwrap calldata は `tools/wrapper` の helper が生成する compact payload を使う
 
 ## 期待結果
 
@@ -70,6 +71,7 @@ scripts/local_wrap_unwrap_ledger_smoke.sh
 - unwrap:
   - 正しい vault bytes で `Dispatched`
   - worker が `icrc1_transfer` を完了し、`ledger_tx_id` が保存される
+  - unwrap 入力形式は旧 ABI ではなく compact payload 前提
 
 ## 主な環境変数
 

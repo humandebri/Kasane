@@ -1468,9 +1468,10 @@ mod tests {
         init_stable_state();
         let tx_id = TxId([0x91u8; 32]);
         with_state_mut(|state| {
-            state
-                .tx_store
-                .insert(tx_id, StoredTxBytes::from_bytes(std::borrow::Cow::Owned(vec![0u8; 1])));
+            state.tx_store.insert(
+                tx_id,
+                StoredTxBytes::from_bytes(std::borrow::Cow::Owned(vec![0u8; 1])),
+            );
             state.tx_locs.insert(tx_id, TxLoc::included(7, 0));
         });
 

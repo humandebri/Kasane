@@ -34,7 +34,7 @@ export function HistoryPanel(props: {
           <TableHeader>
             <TableRow>
               <TableHead>kind</TableHead>
-              <TableHead>request_id</TableHead>
+              <TableHead>tracking_id</TableHead>
               <TableHead className="text-right">action</TableHead>
             </TableRow>
           </TableHeader>

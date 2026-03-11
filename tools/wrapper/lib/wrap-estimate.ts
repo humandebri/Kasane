@@ -1,9 +1,9 @@
-// どこで: wrap gas見積もり共通
-// 何を: estimateGas用 call object と mint calldata を構築
-// なぜ: frontend の自動 gas 見積もりとテストで同じ仕様を使うため
+// どこで: wrap/unwrap gas見積もり共通
+// 何を: estimateGas用 call object と calldata 補正を構築
+// なぜ: frontend の自動 gas 見積もりと送信が同じ仕様を共有するため
 
 import { keccak_256 } from "@noble/hashes/sha3";
-import { decimalToBytes32 } from "./request-id";
+import { decimalToBytes32, WRAP_PRECOMPILE_ADDRESS } from "./request-id";
 import { callerEvmAddressFromPrincipalText, principalTextToBytes } from "./principal";
 import { hexToBytes } from "./utils";
 
@@ -29,6 +29,18 @@ export type BuildWrapEstimateCallArgs = {
   amount: string;
   evmRecipient: string;
 };
+
+export type BuildUnwrapEstimateCallArgs = {
+  callerEvmAddress: Uint8Array;
+  nonce: bigint;
+  data: Uint8Array;
+};
+
+const UNWRAP_GAS_HEADROOM_NUMERATOR = 12n;
+const UNWRAP_GAS_HEADROOM_DENOMINATOR = 10n;
+const MIN_UNWRAP_GAS_LIMIT = 300_000n;
+const WRAP_GAS_HEADROOM_NUMERATOR = 12n;
+const WRAP_GAS_HEADROOM_DENOMINATOR = 10n;
 
 function assertLen(bytes: Uint8Array, len: number, code: string): void {
   if (bytes.length !== len) {
@@ -103,9 +115,51 @@ export function buildWrapEstimateCallObject(args: BuildWrapEstimateCallArgs): Wr
   };
 }
 
+export function buildUnwrapEstimateCallObject(args: BuildUnwrapEstimateCallArgs): WrapEstimateCallObject {
+  assertLen(args.callerEvmAddress, 20, "arg.caller_evm_invalid");
+  if (args.nonce < 0n) {
+    throw new Error("arg.nonce_invalid");
+  }
+  if (args.data.length === 0) {
+    throw new Error("arg.data_invalid");
+  }
+  const value = new Uint8Array(32);
+  return {
+    to: [WRAP_PRECOMPILE_ADDRESS],
+    from: [args.callerEvmAddress],
+    gas: [],
+    gas_price: [],
+    nonce: [args.nonce],
+    max_fee_per_gas: [],
+    max_priority_fee_per_gas: [],
+    chain_id: [],
+    tx_type: [],
+    access_list: [],
+    value: [value],
+    data: [args.data],
+  };
+}
+
 export function validateEstimatedGasLimit(gasLimit: bigint): bigint {
   if (gasLimit <= 0n) {
     throw new Error("wrap.estimate_gas_invalid");
   }
   return gasLimit;
+}
+
+export function applyWrapGasHeadroom(gasLimit: bigint): bigint {
+  const normalized = validateEstimatedGasLimit(gasLimit);
+  return (
+    normalized * WRAP_GAS_HEADROOM_NUMERATOR
+      + (WRAP_GAS_HEADROOM_DENOMINATOR - 1n)
+  ) / WRAP_GAS_HEADROOM_DENOMINATOR;
+}
+
+export function applyUnwrapGasHeadroom(gasLimit: bigint): bigint {
+  const normalized = validateEstimatedGasLimit(gasLimit);
+  const withHeadroom =
+    (normalized * UNWRAP_GAS_HEADROOM_NUMERATOR
+      + (UNWRAP_GAS_HEADROOM_DENOMINATOR - 1n))
+    / UNWRAP_GAS_HEADROOM_DENOMINATOR;
+  return withHeadroom < MIN_UNWRAP_GAS_LIMIT ? MIN_UNWRAP_GAS_LIMIT : withHeadroom;
 }

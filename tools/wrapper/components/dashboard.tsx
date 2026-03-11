@@ -67,7 +67,6 @@ export function WrapperDashboard({ cfg, configError }: WrapperDashboardConfigSta
           wrapNonceStatus={forms.wrapNonceStatus}
           wrapNonceError={forms.wrapNonceError}
           wrapFeeEstimateText={actions.wrapFeeEstimateText}
-          unwrapPreviewRequestId={forms.unwrapPreviewRequestId}
           wrapPreviewRequestId={forms.wrapPreviewRequestId}
           submitLoading={actions.submitLoading}
           walletConnected={wallet.session !== null}

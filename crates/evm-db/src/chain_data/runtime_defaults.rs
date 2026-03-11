@@ -1,8 +1,8 @@
 //! どこで: chain_data の実行時デフォルト / 何を: 運用調整しうる既定値を集約 / なぜ: 仕様固定値と責務分離するため
 
 // unwrap dispatch の既定許可先。
-// 運用で固定 principal を採るまでの暫定値として management canister を使う。
-pub const DEFAULT_WRAP_CANISTER_ID_TEXT: &str = "aaaaa-aa";
+// mainnet では同一 subnet 上の wrap_canister を固定で使う。
+pub const DEFAULT_WRAP_CANISTER_ID_TEXT: &str = "lpuz5-uyaaa-aaaam-ah4da-cai";
 
 // 自動ブロック生成の既定間隔（ms）
 pub const DEFAULT_MINING_INTERVAL_MS: u64 = 2_000;

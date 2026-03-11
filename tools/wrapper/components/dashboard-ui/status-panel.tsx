@@ -61,13 +61,13 @@ export function StatusPanel(props: {
       <CardHeader>
         <CardTitle>Status</CardTitle>
         <CardDescription>
-          request_id を追跡し、dispatch/executionを自動更新します。
+          request_id または unwrap の tx_id を追跡し、dispatch/executionを自動更新します。
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-3">
         <div className="flex gap-2">
           <Input
-            placeholder="0x... (32 bytes)"
+            placeholder="0x... (request_id / tx_id)"
             value={props.requestIdInput}
             onChange={(event) => props.onChangeRequestId(event.target.value)}
           />
@@ -126,7 +126,6 @@ export function StatusPanel(props: {
                 {props.status.executionStatus ?? "null"}
               </Badge>
             </div>
-            <KeyValue label="vault_canister_id" value={props.status.vaultCanisterId} />
             <KeyValue label="ledger_tx_id" value={props.status.ledgerTxId} />
             <KeyValue label="error_code" value={props.status.errorCode} />
             <KeyValue label="withdrawn" value={String(props.status.withdrawn)} />

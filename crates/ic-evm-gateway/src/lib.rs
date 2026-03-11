@@ -2,14 +2,13 @@
 
 use candid::{CandidType, Nat, Principal};
 use evm_core::chain;
-#[cfg(test)]
 use evm_core::hash;
 use evm_core::wrap_precompile::unwrap_intent_from_log;
 use evm_db::chain_data::constants::CHAIN_ID;
 use evm_db::chain_data::constants::{MAX_QUEUE_SNAPSHOT_LIMIT, MAX_RETURN_DATA, MAX_TX_SIZE};
+use evm_db::chain_data::runtime_defaults::DEFAULT_WRAP_CANISTER_ID_TEXT;
 #[cfg(test)]
 use evm_db::chain_data::StoredTx;
-use evm_db::chain_data::runtime_defaults::DEFAULT_WRAP_CANISTER_ID_TEXT;
 use evm_db::chain_data::DEFAULT_MINING_INTERVAL_MS;
 use evm_db::chain_data::MIN_PRUNE_MAX_OPS_PER_TICK;
 use evm_db::chain_data::{
@@ -56,7 +55,6 @@ const PRUNE_EVENT_BLOCK_INTERVAL: u64 = 84;
 const CYCLE_OBSERVER_FAST_INTERVAL_SECS: u64 = 60;
 const CYCLE_OBSERVER_SLOW_INTERVAL_SECS: u64 = 3_600;
 const WRAP_DISPATCH_DELAY_MS: u64 = 75;
-const MAX_PRINCIPAL_BYTES: usize = 29;
 const UNWRAP_QUARANTINE_ERROR: &str = "quarantine.decode.unwrap_request";
 
 static UNWRAP_DISPATCH_SCHEDULED: std::sync::atomic::AtomicBool =
@@ -1213,10 +1211,20 @@ fn get_request_dispatch_result(
             .get(&TxId(request_id))
             .map(|value| RequestDispatchResultView {
                 status: request_dispatch_status_to_view(value.status),
-                vault_canister_id: value.vault_canister_id.clone(),
                 error_code: normalize_unwrap_error_code_for_view(value.error_code.as_deref()),
             })
     })
+}
+
+#[ic_cdk::query]
+fn get_unwrap_request_ids_by_tx_id(tx_id: Vec<u8>) -> Vec<Vec<u8>> {
+    let Some(tx_id) = tx_id_from_bytes(tx_id) else {
+        return Vec::new();
+    };
+    unwrap_request_ids_for_tx(&tx_id)
+        .into_iter()
+        .map(|request_id| request_id.0.to_vec())
+        .collect()
 }
 
 fn normalize_unwrap_error_code_for_view(error_code: Option<&str>) -> Option<String> {
@@ -1398,7 +1406,6 @@ fn current_stable_memory_pages() -> u64 {
     })
 }
 
-#[cfg(test)]
 fn tx_id_from_bytes(tx_id: Vec<u8>) -> Option<TxId> {
     if tx_id.len() != 32 {
         return None;
@@ -2063,12 +2070,14 @@ fn record_unwrap_requests_from_block(tx_ids: &[TxId]) {
         let Some(receipt) = chain::get_receipt(tx_id) else {
             continue;
         };
-        for log in receipt.logs.iter() {
+        for (log_index, log) in receipt.logs.iter().enumerate() {
             let Some(intent) = unwrap_intent_from_log(log) else {
                 continue;
             };
+            let Some(request_id) = derive_unwrap_request_id(tx_id, log_index) else {
+                continue;
+            };
             with_state_mut(|state| {
-                let request_id = TxId(intent.request_id);
                 if state.unwrap_requests.get(&request_id).is_some() {
                     return;
                 }
@@ -2076,14 +2085,12 @@ fn record_unwrap_requests_from_block(tx_ids: &[TxId]) {
                 state.unwrap_requests.insert(
                     request_id,
                     UnwrapDispatchRequest {
-                        vault_canister_id: intent.vault_canister_id.clone(),
                         asset_id: intent.asset_id.clone(),
-                        amount: intent.amount.to_vec(),
+                        amount: intent.amount,
                         recipient: intent.recipient.clone(),
                         status: UnwrapRequestStatus::Queued,
                         ledger_tx_id: None,
                         error_code: None,
-                        created_at: now,
                         updated_at: now,
                     },
                 );
@@ -2224,37 +2231,18 @@ async fn unwrap_dispatch_tick() {
             break;
         };
 
-        let submit =
-            match validate_vault_canister_id(req.vault_canister_id.as_slice()).and_then(|_| {
-                principal_from_bytes_checked(
-                    req.vault_canister_id.as_slice(),
-                    "wrap.arg.vault_principal_invalid",
-                )
-            }) {
-                Ok(vault) => {
-                    let args = WrapSubmitUnwrapRequestArgs {
-                        request_id: request_id.0.to_vec(),
-                        asset_id: req.asset_id.clone(),
-                        amount: req.amount.clone(),
-                        recipient: req.recipient.clone(),
-                    };
-                    ic_cdk::call::Call::unbounded_wait(vault, "submit_unwrap_request")
-                        .with_arg(args)
-                        .await
-                }
-                Err(code) => {
-                    with_state_mut(|state| {
-                        if let Some(mut req) = state.unwrap_requests.get(&request_id) {
-                            req.updated_at = time();
-                            req.status = UnwrapRequestStatus::DispatchFailed;
-                            req.ledger_tx_id = None;
-                            req.error_code = Some(code);
-                            state.unwrap_requests.insert(request_id, req);
-                        }
-                    });
-                    continue;
-                }
-            };
+        let args = WrapSubmitUnwrapRequestArgs {
+            request_id: request_id.0.to_vec(),
+            asset_id: req.asset_id.clone(),
+            amount: req.amount.to_vec(),
+            recipient: req.recipient.clone(),
+        };
+        let submit = ic_cdk::call::Call::unbounded_wait(
+            current_wrap_canister_id(),
+            "submit_unwrap_request",
+        )
+        .with_arg(args)
+        .await;
 
         finalize_unwrap_dispatch_attempt(
             request_id,
@@ -2333,21 +2321,6 @@ fn finalize_unwrap_dispatch_attempt(
     });
 }
 
-fn validate_vault_canister_id(vault_canister_id: &[u8]) -> Result<(), String> {
-    let expected = current_wrap_canister_id();
-    if expected.as_slice() != vault_canister_id {
-        return Err("wrap.arg.vault_not_allowed".to_string());
-    }
-    Ok(())
-}
-
-fn principal_from_bytes_checked(bytes: &[u8], code: &str) -> Result<Principal, String> {
-    if !(1..=MAX_PRINCIPAL_BYTES).contains(&bytes.len()) {
-        return Err(code.to_string());
-    }
-    Ok(Principal::from_slice(bytes))
-}
-
 fn request_id_from_bytes(bytes: Vec<u8>) -> Option<[u8; 32]> {
     if bytes.len() != 32 {
         return None;
@@ -2355,6 +2328,29 @@ fn request_id_from_bytes(bytes: Vec<u8>) -> Option<[u8; 32]> {
     let mut out = [0u8; 32];
     out.copy_from_slice(&bytes);
     Some(out)
+}
+
+fn derive_unwrap_request_id(tx_id: &TxId, log_index: usize) -> Option<TxId> {
+    let log_index = u32::try_from(log_index).ok()?;
+    let mut payload = Vec::with_capacity(36);
+    payload.extend_from_slice(&tx_id.0);
+    payload.extend_from_slice(&log_index.to_be_bytes());
+    Some(TxId(hash::keccak256(&payload)))
+}
+
+fn unwrap_request_ids_for_tx(tx_id: &TxId) -> Vec<TxId> {
+    let Some(receipt) = chain::get_receipt(tx_id) else {
+        return Vec::new();
+    };
+    receipt
+        .logs
+        .iter()
+        .enumerate()
+        .filter_map(|(log_index, log)| {
+            unwrap_intent_from_log(log)?;
+            derive_unwrap_request_id(tx_id, log_index)
+        })
+        .collect()
 }
 
 fn request_dispatch_status_to_view(status: UnwrapRequestStatus) -> RequestDispatchStatusView {
@@ -2399,19 +2395,21 @@ mod tests {
         chain_submit_error_to_code, clamp_return_data, exec_error_to_code,
         inspect_lightweight_tx_guard, inspect_payload_limit_for_method, inspect_policy_for_method,
         map_execute_chain_result, map_submit_chain_error, migration_pending,
-        parse_submit_ic_tx_args, pop_next_dispatch_request, principal_from_bytes_checked,
-        prune_boundary_for_number, receipt_lookup_status, reject_anonymous_principal,
-        reject_write_reason, should_run_cycle_observer_migration_tick,
-        should_schedule_mining_after_cycle_observer, tx_id_from_bytes, validate_prune_policy_input,
-        validate_vault_canister_id, EthLogFilterView, ExecuteTxError, GetLogsErrorView,
-        PrunePolicyView, SubmitIcTxArgsDto, INSPECT_METHOD_POLICIES, MINING_ERROR_COUNT,
-        PRUNE_ERROR_COUNT,
+        parse_submit_ic_tx_args, pop_next_dispatch_request, prune_boundary_for_number,
+        receipt_lookup_status, reject_anonymous_principal, reject_write_reason,
+        should_run_cycle_observer_migration_tick, should_schedule_mining_after_cycle_observer,
+        tx_id_from_bytes, validate_prune_policy_input, EthLogFilterView, ExecuteTxError,
+        GetLogsErrorView, PrunePolicyView, SubmitIcTxArgsDto, INSPECT_METHOD_POLICIES,
+        MINING_ERROR_COUNT, PRUNE_ERROR_COUNT,
     };
     use candid::{encode_one, Nat, Principal};
     use evm_core::chain::{ChainError, ExecResult, TxIn};
+    use evm_core::hash;
+    use evm_core::wrap_precompile::WRAP_PRECOMPILE_ADDRESS;
     use evm_core::revm_exec::{ExecError, OpHaltReason, OpTransactionError};
     use evm_core::tx_decode::IcSyntheticTxInput;
     use evm_db::chain_data::constants::MAX_RETURN_DATA;
+    use evm_db::chain_data::receipt::log_entry_from_parts;
     use evm_db::chain_data::{
         BlockData, MigrationPhase, OpsMode, ReceiptLike, TxId, TxLoc, UnwrapDispatchRequest,
         UnwrapRequestStatus,
@@ -2430,6 +2428,22 @@ mod tests {
     use std::panic::{catch_unwind, AssertUnwindSafe};
     use std::str::FromStr;
 
+    fn sample_unwrap_request(
+        status: UnwrapRequestStatus,
+        error_code: Option<&str>,
+        updated_at: u64,
+    ) -> UnwrapDispatchRequest {
+        UnwrapDispatchRequest {
+            asset_id: vec![0x55u8; 10],
+            amount: [0x66u8; 32],
+            recipient: vec![0x77u8; 10],
+            status,
+            ledger_tx_id: None,
+            error_code: error_code.map(str::to_string),
+            updated_at,
+        }
+    }
+
     fn find_subsequence_positions(haystack: &[u8], needle: &[u8]) -> Vec<usize> {
         if needle.is_empty() || haystack.len() < needle.len() {
             return Vec::new();
@@ -2439,6 +2453,16 @@ mod tests {
             .enumerate()
             .filter_map(|(idx, window)| if window == needle { Some(idx) } else { None })
             .collect()
+    }
+
+    fn unwrap_log_data(asset_id: &[u8], amount: [u8; 32], recipient: &[u8]) -> Vec<u8> {
+        let mut out = Vec::with_capacity(2 + asset_id.len() + amount.len() + recipient.len());
+        out.push(u8::try_from(asset_id.len()).expect("asset len"));
+        out.extend_from_slice(asset_id);
+        out.extend_from_slice(&amount);
+        out.push(u8::try_from(recipient.len()).expect("recipient len"));
+        out.extend_from_slice(recipient);
+        out
     }
 
     #[test]
@@ -2808,17 +2832,7 @@ mod tests {
         with_state_mut(|state| {
             state.unwrap_requests.insert(
                 request_id,
-                UnwrapDispatchRequest {
-                    vault_canister_id: vec![0x44u8; 10],
-                    asset_id: vec![0x55u8; 10],
-                    amount: vec![0x66u8; 32],
-                    recipient: vec![0x77u8; 10],
-                    status: UnwrapRequestStatus::Dispatching,
-                    ledger_tx_id: None,
-                    error_code: None,
-                    created_at: 1,
-                    updated_at: 1,
-                },
+                sample_unwrap_request(UnwrapRequestStatus::Dispatching, None, 1),
             );
         });
 
@@ -2842,17 +2856,7 @@ mod tests {
             state.unwrap_dispatch_queue.insert(seq, request_id);
             state.unwrap_requests.insert(
                 request_id,
-                UnwrapDispatchRequest {
-                    vault_canister_id: vec![0x44u8; 10],
-                    asset_id: vec![0x55u8; 10],
-                    amount: vec![0x66u8; 32],
-                    recipient: vec![0x77u8; 10],
-                    status: UnwrapRequestStatus::Queued,
-                    ledger_tx_id: None,
-                    error_code: None,
-                    created_at: 1,
-                    updated_at: 1,
-                },
+                sample_unwrap_request(UnwrapRequestStatus::Queued, None, 1),
             );
         });
 
@@ -2873,31 +2877,15 @@ mod tests {
         with_state_mut(|state| {
             state.unwrap_requests.insert(
                 dispatched,
-                UnwrapDispatchRequest {
-                    vault_canister_id: vec![0x44u8; 10],
-                    asset_id: vec![0x55u8; 10],
-                    amount: vec![0x66u8; 32],
-                    recipient: vec![0x77u8; 10],
-                    status: UnwrapRequestStatus::Dispatched,
-                    ledger_tx_id: None,
-                    error_code: None,
-                    created_at: 1,
-                    updated_at: 11,
-                },
+                sample_unwrap_request(UnwrapRequestStatus::Dispatched, None, 11),
             );
             state.unwrap_requests.insert(
                 failed,
-                UnwrapDispatchRequest {
-                    vault_canister_id: vec![0x44u8; 10],
-                    asset_id: vec![0x55u8; 10],
-                    amount: vec![0x66u8; 32],
-                    recipient: vec![0x77u8; 10],
-                    status: UnwrapRequestStatus::DispatchFailed,
-                    ledger_tx_id: None,
-                    error_code: Some("wrap.call_failed:oops".to_string()),
-                    created_at: 1,
-                    updated_at: 12,
-                },
+                sample_unwrap_request(
+                    UnwrapRequestStatus::DispatchFailed,
+                    Some("wrap.call_failed:oops"),
+                    12,
+                ),
             );
         });
 
@@ -3002,17 +2990,7 @@ mod tests {
         with_state_mut(|state| {
             state.unwrap_requests.insert(
                 request_id,
-                UnwrapDispatchRequest {
-                    vault_canister_id: vec![0x44u8; 10],
-                    asset_id: vec![0x55u8; 10],
-                    amount: vec![0x66u8; 32],
-                    recipient: vec![0x77u8; 10],
-                    status: UnwrapRequestStatus::Dispatching,
-                    ledger_tx_id: None,
-                    error_code: Some("old".to_string()),
-                    created_at: 1,
-                    updated_at: 1,
-                },
+                sample_unwrap_request(UnwrapRequestStatus::Dispatching, Some("old"), 1),
             );
         });
 
@@ -3044,17 +3022,7 @@ mod tests {
         with_state_mut(|state| {
             state.unwrap_requests.insert(
                 request_id,
-                UnwrapDispatchRequest {
-                    vault_canister_id: vec![0x44u8; 10],
-                    asset_id: vec![0x55u8; 10],
-                    amount: vec![0x66u8; 32],
-                    recipient: vec![0x77u8; 10],
-                    status: UnwrapRequestStatus::Dispatching,
-                    ledger_tx_id: None,
-                    error_code: None,
-                    created_at: 1,
-                    updated_at: 1,
-                },
+                sample_unwrap_request(UnwrapRequestStatus::Dispatching, None, 1),
             );
         });
 
@@ -3917,13 +3885,6 @@ mod tests {
     }
 
     #[test]
-    fn principal_from_bytes_checked_rejects_too_long_vault_id() {
-        let err = principal_from_bytes_checked(&[1u8; 30], "wrap.arg.vault_principal_invalid")
-            .expect_err("must reject");
-        assert_eq!(err, "wrap.arg.vault_principal_invalid");
-    }
-
-    #[test]
     fn request_dispatch_status_to_view_maps_dispatch_states() {
         assert_eq!(
             super::request_dispatch_status_to_view(UnwrapRequestStatus::Queued),
@@ -3944,21 +3905,7 @@ mod tests {
     }
 
     #[test]
-    fn validate_vault_canister_id_checks_runtime_default_match() {
-        init_stable_state();
-        assert!(validate_vault_canister_id(Principal::management_canister().as_slice()).is_ok());
-        let err = validate_vault_canister_id(&[9]).expect_err("must reject mismatch");
-        assert_eq!(err, "wrap.arg.vault_not_allowed");
-    }
-
-    #[test]
-    fn validate_vault_canister_id_uses_runtime_default() {
-        init_stable_state();
-        assert!(validate_vault_canister_id(Principal::management_canister().as_slice()).is_ok());
-    }
-
-    #[test]
-    fn get_request_dispatch_result_returns_vault_canister_id() {
+    fn get_request_dispatch_result_returns_status_without_vault_id() {
         init_stable_state();
         let request_id = TxId([0x11u8; 32]);
         with_state_mut(|state| {
@@ -3968,17 +3915,7 @@ mod tests {
             state.unwrap_dispatch_queue.insert(seq, request_id);
             state.unwrap_requests.insert(
                 request_id,
-                UnwrapDispatchRequest {
-                    vault_canister_id: vec![0x22u8; 10],
-                    asset_id: vec![0x33u8; 10],
-                    amount: vec![0x44u8; 32],
-                    recipient: vec![0x55u8; 10],
-                    status: UnwrapRequestStatus::Dispatched,
-                    ledger_tx_id: None,
-                    error_code: None,
-                    created_at: 1,
-                    updated_at: 1,
-                },
+                sample_unwrap_request(UnwrapRequestStatus::Dispatched, None, 1),
             );
         });
 
@@ -3987,7 +3924,6 @@ mod tests {
             request_id.0.to_vec(),
         )
         .expect("result");
-        assert_eq!(result.vault_canister_id, vec![0x22u8; 10]);
         assert_eq!(result.status, super::RequestDispatchStatusView::Dispatched);
         let stored = with_state(|state| state.unwrap_requests.get(&request_id));
         assert!(stored.is_some());
@@ -4000,17 +3936,11 @@ mod tests {
         with_state_mut(|state| {
             state.unwrap_requests.insert(
                 request_id,
-                UnwrapDispatchRequest {
-                    vault_canister_id: vec![0u8],
-                    asset_id: vec![0u8],
-                    amount: vec![0u8; 32],
-                    recipient: vec![0u8],
-                    status: UnwrapRequestStatus::DispatchFailed,
-                    ledger_tx_id: None,
-                    error_code: Some(super::UNWRAP_DECODE_FAILURE_CODE.to_string()),
-                    created_at: 0,
-                    updated_at: 0,
-                },
+                sample_unwrap_request(
+                    UnwrapRequestStatus::DispatchFailed,
+                    Some(super::UNWRAP_DECODE_FAILURE_CODE),
+                    0,
+                ),
             );
         });
 
@@ -4029,17 +3959,11 @@ mod tests {
         with_state_mut(|state| {
             state.unwrap_requests.insert(
                 request_id,
-                UnwrapDispatchRequest {
-                    vault_canister_id: vec![0u8],
-                    asset_id: vec![0u8],
-                    amount: vec![0u8; 32],
-                    recipient: vec![0u8],
-                    status: UnwrapRequestStatus::DispatchFailed,
-                    ledger_tx_id: None,
-                    error_code: Some(super::UNWRAP_DECODE_FAILURE_CODE.to_string()),
-                    created_at: 0,
-                    updated_at: 0,
-                },
+                sample_unwrap_request(
+                    UnwrapRequestStatus::DispatchFailed,
+                    Some(super::UNWRAP_DECODE_FAILURE_CODE),
+                    0,
+                ),
             );
         });
 
@@ -4060,18 +3984,77 @@ mod tests {
     }
 
     #[test]
+    fn get_unwrap_request_ids_by_tx_id_derives_one_id_per_unwrap_log() {
+        init_stable_state();
+        let tx_id = TxId([0x21u8; 32]);
+        let amount = [0x44u8; 32];
+        let unwrap_topic = hash::keccak256(b"KasaneUnwrapRequest(bytes)");
+        let logs = vec![
+            log_entry_from_parts(
+                WRAP_PRECOMPILE_ADDRESS.into_array(),
+                vec![unwrap_topic],
+                unwrap_log_data(&[0x01, 0x02], amount, &[0x03, 0x04]),
+            ),
+            log_entry_from_parts([0x77u8; 20], vec![[0x88u8; 32]], vec![0x99]),
+            log_entry_from_parts(
+                WRAP_PRECOMPILE_ADDRESS.into_array(),
+                vec![unwrap_topic],
+                unwrap_log_data(&[0x05, 0x06], amount, &[0x07, 0x08]),
+            ),
+        ];
+        with_state_mut(|state| {
+            let receipt = ReceiptLike {
+                tx_id,
+                block_number: 7,
+                tx_index: 0,
+                status: 1,
+                gas_used: 1,
+                effective_gas_price: 1,
+                l1_data_fee: 0,
+                operator_fee: 0,
+                total_fee: 0,
+                return_data_hash: [0u8; 32],
+                return_data: Vec::new(),
+                contract_address: None,
+                logs,
+            };
+            let ptr = state
+                .blob_store
+                .store_bytes(receipt.to_bytes().as_ref())
+                .expect("store receipt");
+            state.receipts.insert(tx_id, ptr);
+        });
+
+        let request_ids = super::get_unwrap_request_ids_by_tx_id(tx_id.0.to_vec());
+        assert_eq!(request_ids.len(), 2);
+        assert_ne!(request_ids[0], request_ids[1]);
+        assert_eq!(
+            request_ids[0],
+            super::derive_unwrap_request_id(&tx_id, 0)
+                .expect("first id")
+                .0
+                .to_vec()
+        );
+        assert_eq!(
+            request_ids[1],
+            super::derive_unwrap_request_id(&tx_id, 2)
+                .expect("second id")
+                .0
+                .to_vec()
+        );
+    }
+
+    #[test]
     fn raw_stable_corruption_does_not_trap_query_or_dispatch_for_unwrap_request() {
         init_stable_state();
         let request_id = TxId([0x14u8; 32]);
         let request = UnwrapDispatchRequest {
-            vault_canister_id: vec![0xA1u8; 13],
             asset_id: vec![0xB2u8; 11],
-            amount: vec![0xC3u8; 32],
+            amount: [0xC3u8; 32],
             recipient: vec![0xD4u8; 19],
             status: UnwrapRequestStatus::Queued,
             ledger_tx_id: Some(vec![0xE5u8; 17]),
             error_code: Some("wrap.integration.gateway.raw-corrupt.7f3e2c1b".to_string()),
-            created_at: 987_654_321,
             updated_at: 987_654_333,
         };
         let encoded = request.to_bytes().into_owned();
@@ -4184,7 +4167,10 @@ mod tests {
         assert!(!health.mining_scheduled);
 
         let ops_out = catch_unwind(AssertUnwindSafe(super::get_ops_status));
-        assert!(ops_out.is_ok(), "ops status must not trap on raw corruption");
+        assert!(
+            ops_out.is_ok(),
+            "ops status must not trap on raw corruption"
+        );
         let ops = ops_out.expect("ops");
         assert!(ops.needs_migration);
 
@@ -4243,17 +4229,7 @@ mod tests {
             state.unwrap_dispatch_queue.insert(seq, request_id);
             state.unwrap_requests.insert(
                 request_id,
-                UnwrapDispatchRequest {
-                    vault_canister_id: vec![0x44u8; 10],
-                    asset_id: vec![0x55u8; 10],
-                    amount: vec![0x66u8; 32],
-                    recipient: vec![0x77u8; 10],
-                    status: UnwrapRequestStatus::Queued,
-                    ledger_tx_id: None,
-                    error_code: None,
-                    created_at: 1,
-                    updated_at: 1,
-                },
+                sample_unwrap_request(UnwrapRequestStatus::Queued, None, 1),
             );
         });
 
@@ -4280,17 +4256,11 @@ mod tests {
             state.unwrap_dispatch_queue.insert(seq, request_id);
             state.unwrap_requests.insert(
                 request_id,
-                UnwrapDispatchRequest {
-                    vault_canister_id: vec![0u8],
-                    asset_id: vec![0u8],
-                    amount: vec![0u8; 32],
-                    recipient: vec![0u8],
-                    status: UnwrapRequestStatus::DispatchFailed,
-                    ledger_tx_id: None,
-                    error_code: Some(super::UNWRAP_DECODE_FAILURE_CODE.to_string()),
-                    created_at: 1,
-                    updated_at: 1,
-                },
+                sample_unwrap_request(
+                    UnwrapRequestStatus::DispatchFailed,
+                    Some(super::UNWRAP_DECODE_FAILURE_CODE),
+                    1,
+                ),
             );
         });
 
@@ -4324,17 +4294,11 @@ mod tests {
             state.unwrap_dispatch_queue.insert(seq, request_id);
             state.unwrap_requests.insert(
                 request_id,
-                UnwrapDispatchRequest {
-                    vault_canister_id: vec![0u8],
-                    asset_id: vec![0u8],
-                    amount: vec![0u8; 32],
-                    recipient: vec![0u8],
-                    status: UnwrapRequestStatus::DispatchFailed,
-                    ledger_tx_id: None,
-                    error_code: Some(super::UNWRAP_QUARANTINE_ERROR.to_string()),
-                    created_at: 1,
-                    updated_at: 1,
-                },
+                sample_unwrap_request(
+                    UnwrapRequestStatus::DispatchFailed,
+                    Some(super::UNWRAP_QUARANTINE_ERROR),
+                    1,
+                ),
             );
         });
 
@@ -4367,29 +4331,21 @@ mod tests {
             state.unwrap_dispatch_queue.insert(good_seq, good_request);
             state.unwrap_requests.insert(
                 bad_request,
-                UnwrapDispatchRequest {
-                    vault_canister_id: vec![0u8],
-                    asset_id: vec![0u8],
-                    amount: vec![0u8; 32],
-                    recipient: vec![0u8],
-                    status: UnwrapRequestStatus::DispatchFailed,
-                    ledger_tx_id: None,
-                    error_code: Some(super::UNWRAP_DECODE_FAILURE_CODE.to_string()),
-                    created_at: 1,
-                    updated_at: 1,
-                },
+                sample_unwrap_request(
+                    UnwrapRequestStatus::DispatchFailed,
+                    Some(super::UNWRAP_DECODE_FAILURE_CODE),
+                    1,
+                ),
             );
             state.unwrap_requests.insert(
                 good_request,
                 UnwrapDispatchRequest {
-                    vault_canister_id: vec![1u8; 5],
                     asset_id: vec![2u8; 5],
-                    amount: vec![3u8; 32],
+                    amount: [3u8; 32],
                     recipient: vec![4u8; 5],
                     status: UnwrapRequestStatus::Queued,
                     ledger_tx_id: None,
                     error_code: None,
-                    created_at: 1,
                     updated_at: 1,
                 },
             );
@@ -4429,7 +4385,7 @@ mod tests {
         let did = include_str!("../evm_canister.did");
         assert!(did.contains("type RequestDispatchResultView = record {"));
         assert!(!did.contains("wrap_canister_id : principal;"));
-        assert!(did.contains("vault_canister_id : blob;"));
+        assert!(!did.contains("vault_canister_id : blob;"));
         assert!(!did.contains("ledger_tx_id : opt blob;"));
         assert!(did.contains("type RequestDispatchStatusView = variant {"));
         assert!(did.contains("type RequestKindView = variant { Unwrap };"));
@@ -4437,6 +4393,7 @@ mod tests {
         assert!(!did.contains("get_unwrap_request_status"));
         assert!(did.contains("get_request_dispatch_result"));
         assert!(did.contains("get_request_dispatch_status"));
+        assert!(did.contains("get_unwrap_request_ids_by_tx_id"));
         assert!(!did.contains("set_wrap_canister_id : (principal) -> (Result_15);"));
     }
 }

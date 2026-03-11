@@ -1,7 +1,11 @@
 // どこで: wrapper dashboard hook / 何を: status照会と自動ポーリング停止制御を提供 / なぜ: 通信失敗時の無限再試行を防ぐため
 
 import { useCallback, useEffect, useState } from "react";
-import { getDispatchResult, getDispatchStatus } from "@/lib/canister/wrapper-client";
+import {
+  getDispatchResult,
+  getDispatchStatus,
+  getUnwrapRequestIdsByTxId,
+} from "@/lib/canister/wrapper-client";
 import { getExecutionResult } from "@/lib/canister/wrap-client";
 import { mergeStatus } from "@/lib/merge";
 import {
@@ -12,8 +16,16 @@ import {
   shouldScheduleAutoPolling,
 } from "@/lib/status-poll";
 import type { StatusResponse } from "@/lib/types";
-import { parseRequestIdHex } from "@/lib/utils";
+import { bytesToHex, parseRequestIdHex } from "@/lib/utils";
 import { isTerminalStatus } from "@/lib/wrap-flow";
+
+async function resolveTrackingRequestId(inputId: Uint8Array): Promise<Uint8Array> {
+  const unwrapRequestIds = await getUnwrapRequestIdsByTxId(inputId);
+  if (unwrapRequestIds.length > 1) {
+    throw new Error("status.unwrap_tx.multiple_request_ids");
+  }
+  return unwrapRequestIds[0] ?? inputId;
+}
 
 export function useStatusTracker() {
   const [status, setStatus] = useState<StatusResponse | null>(null);
@@ -28,7 +40,9 @@ export function useStatusTracker() {
         setStatusLoading(true);
       }
       try {
-        const requestId = parseRequestIdHex(requestIdHex.trim());
+        const inputId = parseRequestIdHex(requestIdHex.trim());
+        const requestId = await resolveTrackingRequestId(inputId);
+        const resolvedRequestIdHex = bytesToHex(requestId);
         const [dispatchStatus, dispatchResult, executionResult] = await Promise.all([
           getDispatchStatus(requestId),
           getDispatchResult(requestId),
@@ -36,7 +50,7 @@ export function useStatusTracker() {
         ]);
         setStatus(
           mergeStatus({
-            requestIdHex: requestIdHex.trim(),
+            requestIdHex: resolvedRequestIdHex,
             dispatchStatus,
             dispatchResult,
             executionResult,

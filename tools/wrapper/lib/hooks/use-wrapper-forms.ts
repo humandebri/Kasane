@@ -1,4 +1,4 @@
-// どこで: wrapper dashboard hook / 何を: form state と request_id preview を管理 / なぜ: 画面部品と送信ロジックの責務を分離するため
+// どこで: wrapper dashboard hook / 何を: form state と wrap 見積もり補助を管理 / なぜ: 画面部品と送信ロジックの責務を分離するため
 
 import { useEffect, useMemo, useState } from "react";
 import type {
@@ -11,17 +11,10 @@ import { estimateWrapGasLimit, getWrapEvmNonce } from "@/lib/canister/wrapper-cl
 import { callerEvmAddressFromPrincipalText, principalTextToBytes } from "@/lib/principal";
 import {
   decimalToBytes32,
-  deriveRequestId,
   deriveWrapRequestId,
 } from "@/lib/request-id";
 import { bytesToHex, hexToBytes } from "@/lib/utils";
-import {
-  defaultDeadlineText,
-  parsePositiveBigInt,
-  parsePositiveU64,
-  parseU64,
-  randomU64NonceText,
-} from "@/lib/wrap-input";
+import { parseU64 } from "@/lib/wrap-input";
 import { buildWrapEstimateCallObject } from "@/lib/wrap-estimate";
 
 export function useWrapperForms(params: {
@@ -33,8 +26,6 @@ export function useWrapperForms(params: {
     assetId: "",
     amount: "",
     recipient: "",
-    userNonce: "",
-    deadline: "",
   });
   const [wrapForm, setWrapForm] = useState<WrapFormState>({
     assetId: "",
@@ -47,19 +38,6 @@ export function useWrapperForms(params: {
   const [wrapGasEstimateError, setWrapGasEstimateError] = useState<string | null>(null);
   const [wrapNonceStatus, setWrapNonceStatus] = useState<WrapNonceStatus>("idle");
   const [wrapNonceError, setWrapNonceError] = useState<string | null>(null);
-
-  useEffect(() => {
-    setUnwrapForm((current) => {
-      if (current.userNonce !== "" || current.deadline !== "") {
-        return current;
-      }
-      return {
-        ...current,
-        userNonce: randomU64NonceText(),
-        deadline: defaultDeadlineText(),
-      };
-    });
-  }, []);
 
   useEffect(() => {
     const principalText = params.walletPrincipalText;
@@ -203,29 +181,6 @@ export function useWrapperForms(params: {
     wrapNonceStatus,
   ]);
 
-  const unwrapPreviewRequestId = useMemo(() => {
-    if (!params.walletPrincipalText) {
-      return null;
-    }
-    try {
-      return bytesToHex(
-        deriveRequestId({
-          callerEvmAddress: callerEvmAddressFromPrincipalText(
-            params.walletPrincipalText,
-          ),
-          vaultCanisterId: params.wrapCanisterId,
-          assetId: unwrapForm.assetId.trim(),
-          amount: parsePositiveBigInt(unwrapForm.amount, "validation.amount.invalid"),
-          recipient: unwrapForm.recipient.trim(),
-          userNonce: parseU64(unwrapForm.userNonce, "validation.user_nonce.invalid"),
-          deadline: parseU64(unwrapForm.deadline, "validation.deadline.invalid"),
-        }),
-      );
-    } catch {
-      return null;
-    }
-  }, [params.walletPrincipalText, params.wrapCanisterId, unwrapForm]);
-
   const wrapPreviewRequestId = useMemo(() => {
     if (!params.walletPrincipalText) {
       return null;
@@ -250,11 +205,7 @@ export function useWrapperForms(params: {
   }, [params.walletPrincipalText, wrapForm, wrapGasEstimateStatus, wrapNonceStatus]);
 
   function resetUnwrapNonceDeadline(): void {
-    setUnwrapForm((current) => ({
-      ...current,
-      userNonce: randomU64NonceText(),
-      deadline: defaultDeadlineText(),
-    }));
+    setUnwrapForm((current) => current);
   }
 
   return {
@@ -262,7 +213,6 @@ export function useWrapperForms(params: {
     setUnwrapForm,
     wrapForm,
     setWrapForm,
-    unwrapPreviewRequestId,
     wrapPreviewRequestId,
     wrapGasEstimateStatus,
     wrapGasEstimateError,

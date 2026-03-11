@@ -13,14 +13,12 @@ export type SubmitResponse = {
   ok: true;
   requestId: string;
   dispatchStatus: DispatchStatus;
-  vaultCanisterId: string;
 };
 
 export type StatusResponse = {
   requestId: string;
   dispatchStatus: DispatchStatus | null;
   executionStatus: ExecutionStatus | null;
-  vaultCanisterId: string | null;
   ledgerTxId: string | null;
   errorCode: string | null;
   mintFailedRecoverable: boolean;
@@ -48,7 +46,6 @@ export type ApiErrorBody = {
 
 export type DispatchResultView = {
   status: DispatchStatus;
-  vaultCanisterId: Uint8Array;
   errorCode: string | null;
 };
 

@@ -5,15 +5,16 @@ import { AnonymousIdentity } from "@dfinity/agent";
 import { mergeStatus } from "../lib/merge";
 import {
   decimalToBytes32,
-  deriveRequestId,
   deriveWrapRequestId,
-  encodeUnwrapAbiInput,
+  encodeUnwrapPayload,
   WRAP_PRECOMPILE_ADDRESS,
 } from "../lib/request-id";
 import { principalTextToBytes } from "../lib/principal";
 import { bytesToHex, hexToBytes, parseRequestIdHex } from "../lib/utils";
 import {
+  estimateUnwrapGasLimit,
   estimateWrapGasLimit,
+  getUnwrapRequestIdsByTxId,
   getWrapEvmNonce,
   submitIcTx,
   wrapperClientTestHooks,
@@ -32,6 +33,9 @@ import {
 } from "../lib/wrap-flow";
 import { parsePositiveU64 } from "../lib/wrap-input";
 import {
+  applyWrapGasHeadroom,
+  applyUnwrapGasHeadroom,
+  buildUnwrapEstimateCallObject,
   buildWrapEstimateCallObject,
   encodeFactoryMintForAssetCallData,
   validateEstimatedGasLimit,
@@ -65,26 +69,13 @@ async function runRequestIdTests(): Promise<void> {
     "00000000000000000000000000000000ffff0001",
   );
 
-  const abi = encodeUnwrapAbiInput({
-    vaultCanisterId: "2vxsx-fae",
+  const payload = encodeUnwrapPayload({
     assetId: "2vxsx-fae",
     amount: 1n,
     recipient: "2vxsx-fae",
-    userNonce: 1n,
-    deadline: 2n,
   });
-  assert.equal(abi.length % 32, 0);
-
-  const requestId = deriveRequestId({
-    callerEvmAddress: Uint8Array.from(new Array(20).fill(0x11)),
-    vaultCanisterId: "2vxsx-fae",
-    assetId: "2vxsx-fae",
-    amount: 1n,
-    recipient: "2vxsx-fae",
-    userNonce: 1n,
-    deadline: 2n,
-  });
-  assert.equal(requestId.length, 32);
+  assert.equal(payload.length, 93);
+  assert.equal(payload[0], 1);
 
   const wrapRequestId = deriveWrapRequestId({
     // 匿名principalではなく、実運用で使う非匿名principal bytesを使う。
@@ -104,7 +95,6 @@ async function runMergeTests(): Promise<void> {
     dispatchStatus: "Queued",
     dispatchResult: {
       status: "Dispatched",
-      vaultCanisterId: Uint8Array.from([4]),
       errorCode: null,
     },
     executionResult: {
@@ -224,6 +214,18 @@ async function runWrapEstimateEncodingTests(): Promise<void> {
     Buffer.from(call.data[0]?.subarray(0, 4) ?? new Uint8Array()).toString("hex"),
     Buffer.from(data.subarray(0, 4)).toString("hex"),
   );
+  const unwrapCall = buildUnwrapEstimateCallObject({
+    callerEvmAddress: hexToBytes("0x1111111111111111111111111111111111111111"),
+    nonce: 7n,
+    data: Uint8Array.from([0xaa, 0xbb]),
+  });
+  assert.equal(unwrapCall.to.length, 1);
+  assert.equal(unwrapCall.from.length, 1);
+  assert.equal(unwrapCall.nonce.length, 1);
+  assert.equal(unwrapCall.data.length, 1);
+  assert.equal(applyWrapGasHeadroom(43_574n), 52_289n);
+  assert.equal(applyUnwrapGasHeadroom(250_000n), 300_000n);
+  assert.equal(applyUnwrapGasHeadroom(300_000n), 360_000n);
 }
 
 async function runEstimateWrapGasClientTests(): Promise<void> {
@@ -239,7 +241,7 @@ async function runEstimateWrapGasClientTests(): Promise<void> {
       readEstimateGas: async () => ({ Ok: 300_000n }),
     },
   );
-  assert.equal(gas, 300_000n);
+  assert.equal(gas, 360_000n);
   assert.equal(validateEstimatedGasLimit(21_000n), 21_000n);
   assert.throws(() => validateEstimatedGasLimit(0n), /wrap\.estimate_gas_invalid/);
 
@@ -265,6 +267,34 @@ async function runEstimateWrapGasClientTests(): Promise<void> {
       error_prefix: [],
     }),
     "evm_gateway.estimate_gas_failed:32000:revert",
+  );
+}
+
+async function runEstimateUnwrapGasClientTests(): Promise<void> {
+  const gas = await estimateUnwrapGasLimit(
+    {
+      callerEvmAddress: hexToBytes("0x1111111111111111111111111111111111111111"),
+      nonce: 9n,
+      data: Uint8Array.from([0xaa]),
+    },
+    {
+      readEstimateGas: async () => ({ Ok: 400_000n }),
+    },
+  );
+  assert.equal(gas, 480_000n);
+
+  await assert.rejects(
+    () => estimateUnwrapGasLimit(
+      {
+        callerEvmAddress: hexToBytes("0x1111111111111111111111111111111111111111"),
+        nonce: 9n,
+        data: Uint8Array.from([0xaa]),
+      },
+      {
+        readEstimateGas: async () => ({ Err: { code: 32000, message: "revert", error_prefix: [] } }),
+      },
+    ),
+    /evm_gateway\.estimate_gas_failed:32000:revert/,
   );
 }
 
@@ -392,7 +422,6 @@ async function runStatusPhaseTests(): Promise<void> {
       requestId: "0x11",
       dispatchStatus: "Queued",
       executionStatus: null,
-      vaultCanisterId: null,
       ledgerTxId: null,
       errorCode: null,
       mintFailedRecoverable: false,
@@ -407,7 +436,6 @@ async function runStatusPhaseTests(): Promise<void> {
       requestId: "0x11",
       dispatchStatus: "Dispatched",
       executionStatus: "Running",
-      vaultCanisterId: null,
       ledgerTxId: null,
       errorCode: null,
       mintFailedRecoverable: false,
@@ -422,7 +450,6 @@ async function runStatusPhaseTests(): Promise<void> {
       requestId: "0x11",
       dispatchStatus: "Dispatched",
       executionStatus: "Succeeded",
-      vaultCanisterId: null,
       ledgerTxId: null,
       errorCode: null,
       mintFailedRecoverable: false,
@@ -437,7 +464,6 @@ async function runStatusPhaseTests(): Promise<void> {
       requestId: "0x11",
       dispatchStatus: "Dispatching",
       executionStatus: "Running",
-      vaultCanisterId: null,
       ledgerTxId: null,
       errorCode: null,
       mintFailedRecoverable: false,
@@ -454,7 +480,6 @@ async function runStatusPollingRegressionTests(): Promise<void> {
     requestId: "0x11",
     dispatchStatus: "Dispatching" as const,
     executionStatus: "Running" as const,
-    vaultCanisterId: null,
     ledgerTxId: null,
     errorCode: null,
     mintFailedRecoverable: false,
@@ -532,7 +557,26 @@ function buildMockQueryActor(args: {
     rpc_eth_estimate_gas_object: async () => ({ Ok: 300_000n }),
     get_request_dispatch_status: async (): Promise<[]> => [],
     get_request_dispatch_result: async (): Promise<[]> => [],
+    get_unwrap_request_ids_by_tx_id: async () => [],
   };
+}
+
+async function runGetUnwrapRequestIdsByTxIdTests(): Promise<void> {
+  wrapperClientTestHooks.reset();
+  wrapperClientTestHooks.setMockQueryActor({
+    ...buildMockQueryActor({
+      gasPriceResult: { Ok: 1n },
+      priorityFeeResult: { Ok: 1n },
+    }),
+    get_unwrap_request_ids_by_tx_id: async (txId) => [
+      Uint8Array.from(txId),
+      Uint8Array.from(new Array(32).fill(0x22)),
+    ],
+  });
+
+  const out = await getUnwrapRequestIdsByTxId(Uint8Array.from(new Array(32).fill(0x11)));
+  assert.equal(out.length, 2);
+  assert.deepEqual(out[1], Uint8Array.from(new Array(32).fill(0x22)));
 }
 
 async function runWrapperClientFeeTests(): Promise<void> {
@@ -562,6 +606,7 @@ async function runWrapperClientFeeTests(): Promise<void> {
     to: Uint8Array.from(new Array(20).fill(0x11)),
     data: Uint8Array.from([0x01, 0x02]),
     nonce: 7n,
+    gasLimit: 333_000n,
     identity: new AnonymousIdentity(),
   });
   assert.deepEqual(txId, Uint8Array.from([0xaa]));
@@ -571,6 +616,7 @@ async function runWrapperClientFeeTests(): Promise<void> {
   }
   assert.equal(submittedArgs.max_fee_per_gas, 250_000_000_000n);
   assert.equal(submittedArgs.max_priority_fee_per_gas, 2_000_000_000n);
+  assert.equal(submittedArgs.gas_limit, 333_000n);
 
   wrapperClientTestHooks.setMockQueryActor(buildMockQueryActor({
     gasPriceResult: { Err: { code: 32000, message: "state unavailable", error_prefix: [] } },
@@ -581,6 +627,7 @@ async function runWrapperClientFeeTests(): Promise<void> {
       to: Uint8Array.from(new Array(20).fill(0x11)),
       data: Uint8Array.from([0x01]),
       nonce: 8n,
+      gasLimit: 300_000n,
       identity: new AnonymousIdentity(),
     }),
     /evm_gateway\.gas_price_failed:32000:state unavailable/,
@@ -595,6 +642,7 @@ async function runWrapperClientFeeTests(): Promise<void> {
       to: Uint8Array.from(new Array(20).fill(0x11)),
       data: Uint8Array.from([0x01]),
       nonce: 9n,
+      gasLimit: 300_000n,
       identity: new AnonymousIdentity(),
     }),
     /evm_gateway\.priority_fee_failed:32000:state unavailable/,
@@ -612,11 +660,13 @@ async function main(): Promise<void> {
   await runWrapInputValidationTests();
   await runWrapEstimateEncodingTests();
   await runEstimateWrapGasClientTests();
+  await runEstimateUnwrapGasClientTests();
   await runWrapNonceClientTests();
   await runAssetCatalogTests();
   await runInternetIdentityConfigTests();
   await runStatusPhaseTests();
   await runStatusPollingRegressionTests();
+  await runGetUnwrapRequestIdsByTxIdTests();
   await runWrapperClientFeeTests();
   process.stdout.write("wrapper tests passed\n");
 }

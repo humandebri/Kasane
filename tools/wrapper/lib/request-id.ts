@@ -1,4 +1,4 @@
-// どこで: unwrap request_id導出 / 何を: precompile互換ABIとkeccak計算を実装 / なぜ: submit時にrequest_idを即時提示するため
+// どこで: wrap/unwrap の識別子・payload 生成 / 何を: precompile互換payloadとwrap request_id導出を実装 / なぜ: 送信仕様を frontend 内で統一するため
 
 import { Principal } from "@dfinity/principal";
 import { keccak_256 } from "@noble/hashes/sha3";
@@ -7,15 +7,13 @@ export const WRAP_PRECOMPILE_ADDRESS = Uint8Array.from([
   0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
   0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xff, 0xff, 0x00, 0x01,
 ]);
+const UNWRAP_PAYLOAD_VERSION = 1;
+const MAX_PRINCIPAL_LEN = 29;
 
 type UnwrapEncodeInput = {
-  callerEvmAddress: Uint8Array;
-  vaultCanisterId: string;
   assetId: string;
   amount: bigint;
   recipient: string;
-  userNonce: bigint;
-  deadline: bigint;
 };
 
 type WrapRequestIdInput = {
@@ -50,24 +48,8 @@ function bigintToWord(value: bigint): Uint8Array {
   return out;
 }
 
-function encodeU64Word(value: bigint, err: string): Uint8Array {
-  if (value < 0n || value > 0xffff_ffff_ffff_ffffn) {
-    throw new Error(err);
-  }
-  return bigintToWord(value);
-}
-
 function principalBytes(text: string): Uint8Array {
   return Principal.fromText(text).toUint8Array();
-}
-
-function encodeDynamicBytes(data: Uint8Array): Uint8Array {
-  const lenWord = bigintToWord(BigInt(data.length));
-  const paddedLen = Math.ceil(data.length / 32) * 32;
-  const out = new Uint8Array(32 + paddedLen);
-  out.set(lenWord, 0);
-  out.set(data, 32);
-  return out;
 }
 
 function concatBytes(parts: readonly Uint8Array[]): Uint8Array {
@@ -94,6 +76,17 @@ function encodeU64Be(value: bigint, code: string): Uint8Array {
   return out;
 }
 
+function encodePrincipalField(text: string, code: string): Uint8Array {
+  const bytes = principalBytes(text.trim());
+  if (bytes.length === 0 || bytes.length > MAX_PRINCIPAL_LEN) {
+    throw new Error(code);
+  }
+  const out = new Uint8Array(1 + MAX_PRINCIPAL_LEN);
+  out[0] = bytes.length;
+  out.set(bytes, 1);
+  return out;
+}
+
 function hashLenPrefixed(parts: number[], bytes: Uint8Array): void {
   const len = bytes.length;
   parts.push((len >>> 24) & 0xff, (len >>> 16) & 0xff, (len >>> 8) & 0xff, len & 0xff);
@@ -106,43 +99,17 @@ function hashLenPrefixed(parts: number[], bytes: Uint8Array): void {
   }
 }
 
-export function encodeUnwrapAbiInput(args: Omit<UnwrapEncodeInput, "callerEvmAddress">): Uint8Array {
-  const vaultBytes = principalBytes(args.vaultCanisterId);
-  const assetBytes = principalBytes(args.assetId);
-  const recipientBytes = principalBytes(args.recipient);
-
-  const vaultTail = encodeDynamicBytes(vaultBytes);
-  const assetTail = encodeDynamicBytes(assetBytes);
-  const recipientTail = encodeDynamicBytes(recipientBytes);
-
-  const headWords = 6;
-  const headSize = headWords * 32;
-  const vaultOffset = bigintToWord(BigInt(headSize));
-  const assetOffset = bigintToWord(BigInt(headSize + vaultTail.length));
-  const recipientOffset = bigintToWord(BigInt(headSize + vaultTail.length + assetTail.length));
-
+export function encodeUnwrapPayload(args: Omit<UnwrapEncodeInput, "callerEvmAddress">): Uint8Array {
   return concatBytes([
-    vaultOffset,
-    assetOffset,
+    Uint8Array.from([UNWRAP_PAYLOAD_VERSION]),
+    encodePrincipalField(args.assetId, "arg.asset_principal_invalid"),
     bigintToWord(args.amount),
-    recipientOffset,
-    encodeU64Word(args.userNonce, "arg.user_nonce_out_of_range"),
-    encodeU64Word(args.deadline, "arg.deadline_out_of_range"),
-    vaultTail,
-    assetTail,
-    recipientTail,
+    encodePrincipalField(args.recipient, "arg.recipient_principal_invalid"),
   ]);
 }
 
-export function deriveRequestId(args: UnwrapEncodeInput): Uint8Array {
-  assertLen(args.callerEvmAddress, 20, "arg.caller_evm_invalid");
-  const abiInput = encodeUnwrapAbiInput(args);
-  const hashInput = concatBytes([args.callerEvmAddress, abiInput]);
-  return Uint8Array.from(keccak_256(hashInput));
-}
-
-export function toSubmitIcTxData(args: Omit<UnwrapEncodeInput, "callerEvmAddress">): Uint8Array {
-  return encodeUnwrapAbiInput(args);
+export function toSubmitIcTxData(args: UnwrapEncodeInput): Uint8Array {
+  return encodeUnwrapPayload(args);
 }
 
 export function decimalToBytes32(amountText: string): Uint8Array {
