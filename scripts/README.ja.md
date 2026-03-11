@@ -149,8 +149,7 @@ scripts/measure_precompile_ratio.sh
 ## 主要環境変数（よく使うもの）
 - `CANISTER_NAME` / `CANISTER_ID`
 - `WRAP_CANISTER_ID`
-  - `build_init_args_for_current_identity` を使うスクリプトでは必須
-  - `install` / `reinstall` 時に `wrap_canister` の自動解決は行わない
+  - 実際の `wrap_canister` principal が必要な wrap/unwrap smoke・ledger 系スクリプトで使用
 - `ICP_IDENTITY_NAME`
 - `POCKET_IC_BIN`（`predeploy_smoke.sh` / `run_rpc_compat_e2e.sh` で使用するPocketICバイナリ）
   - 推奨: まず既存のローカルバイナリを指して、都度ダウンロードを避ける

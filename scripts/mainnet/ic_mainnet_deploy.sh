@@ -64,13 +64,6 @@ build_init_args() {
   build_init_args_for_current_identity "${GENESIS_PRINCIPAL_AMOUNT}"
 }
 
-require_wrap_canister_id() {
-  if [[ -z "${WRAP_CANISTER_ID:-}" ]]; then
-    echo "[ic-deploy] WRAP_CANISTER_ID is required for install/reinstall." >&2
-    exit 1
-  fi
-}
-
 ensure_unsupported_env_unset() {
   if [[ -n "${GENESIS_ETH_PRIVKEY:-}" ]]; then
     echo "[ic-deploy] GENESIS_ETH_PRIVKEY is no longer supported in mainnet deploy." >&2
@@ -142,7 +135,6 @@ if [[ "${MODE}" == "upgrade" ]]; then
     --wasm "${WASM_PATH}" \
     "${TARGET}"
 else
-  require_wrap_canister_id
   INIT_ARGS="$(build_init_args)"
   log "install ${MODE} with init args"
   run_icp_canister install \

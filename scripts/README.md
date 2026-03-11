@@ -148,8 +148,7 @@ scripts/measure_precompile_ratio.sh
 ## Key Environment Variables
 - `CANISTER_NAME` / `CANISTER_ID`
 - `WRAP_CANISTER_ID`
-  - required for scripts that build `InitArgs` (`build_init_args_for_current_identity`)
-  - `install` / `reinstall` flows no longer auto-resolve `wrap_canister`
+  - used by wrap/unwrap smoke and ledger scripts that need the actual wrap canister principal
 - `ICP_IDENTITY_NAME`
 - `POCKET_IC_BIN` (PocketIC binary used by `predeploy_smoke.sh` / `run_rpc_compat_e2e.sh`)
   - Recommended: point this to an existing local binary first to reduce flaky downloads

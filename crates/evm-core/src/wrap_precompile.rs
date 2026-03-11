@@ -288,7 +288,7 @@ fn encode_log_data(intent: &UnwrapIntent, request_id: &[u8; 32]) -> Vec<u8> {
 }
 
 pub fn unwrap_intent_from_log(log: &LogEntry) -> Option<UnwrapIntent> {
-    if log.address != WRAP_PRECOMPILE_ADDRESS {
+    if log.address.into_array() != WRAP_PRECOMPILE_ADDRESS.into_array() {
         return None;
     }
     let topics = log.topics();

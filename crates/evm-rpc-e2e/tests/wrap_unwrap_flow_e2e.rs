@@ -19,7 +19,6 @@ struct GenesisBalanceView {
 #[derive(Clone, Debug, CandidType, Deserialize, Eq, PartialEq)]
 struct GatewayInitArgs {
     genesis_balances: Vec<GenesisBalanceView>,
-    wrap_canister_id: Principal,
 }
 
 #[derive(Clone, Debug, CandidType, Deserialize, Eq, PartialEq)]
@@ -129,7 +128,6 @@ fn install_pair(pic: &PocketIc) -> (Principal, Principal, Principal) {
                 .to_vec(),
             amount: 1_000_000_000_000_000_000u128,
         }],
-        wrap_canister_id: wrap_id,
     });
     let wrap_init = WrapInitArgs {
         kasane_canister: gateway_id,

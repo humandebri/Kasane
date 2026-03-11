@@ -16,13 +16,6 @@ log() {
   echo "[manual-deploy] $*"
 }
 
-require_wrap_canister_id() {
-  if [[ -z "${WRAP_CANISTER_ID:-}" ]]; then
-    log "WRAP_CANISTER_ID is required"
-    exit 1
-  fi
-}
-
 build_wasm() {
   log "cargo build --release --target wasm32-unknown-unknown -p ic-evm-gateway"
   cargo build --release --target wasm32-unknown-unknown -p ic-evm-gateway
@@ -68,7 +61,6 @@ install_wasm() {
 }
 
 build_wasm
-require_wrap_canister_id
 install_wasm
 
 if [[ "${RUN_SMOKE}" == "1" ]]; then

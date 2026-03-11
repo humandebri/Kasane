@@ -53,15 +53,13 @@ ICP_ENV=ic \
 CANISTER_ID=<canister_id> \
 ICP_IDENTITY_NAME=ci-local \
 MODE=install \
-WRAP_CANISTER_ID=<wrap_canister_id> \
 GENESIS_PRINCIPAL_AMOUNT=100000000000000000000000 \
 scripts/mainnet/ic_mainnet_deploy.sh
 ```
 
 注記:
-- `MODE=install` / `MODE=reinstall` では `WRAP_CANISTER_ID` が必須。
-- `wrap_canister` の自動解決は行わない。
-- 旧 version から `MODE=upgrade` する既存 `evm_canister` は、upgrade 後に controller で `set_wrap_canister_id(<wrap_canister_principal>)` を 1 回実行する。
+- `wrap_canister_id` は `InitArgs` で渡さず、gateway コード内の runtime default を使う。
+- `WRAP_CANISTER_ID` は wrap canister 自体を扱うスクリプトでのみ必要。
 
 ## 3. デプロイ後確認
 1. `icp canister status -e ic <canister_id>` で module hash / settings / balance を確認する。

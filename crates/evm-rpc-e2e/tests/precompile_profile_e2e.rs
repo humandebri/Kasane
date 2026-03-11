@@ -17,7 +17,6 @@ struct GenesisBalanceView {
 #[derive(Clone, Debug, CandidType, Deserialize)]
 struct InitArgs {
     genesis_balances: Vec<GenesisBalanceView>,
-    wrap_canister_id: Principal,
 }
 
 #[derive(Clone, Debug, CandidType, Deserialize)]
@@ -99,7 +98,6 @@ fn test_caller() -> Principal {
 
 fn install_canister(pic: &PocketIc) -> Principal {
     let caller = test_caller();
-    let wrap_canister_id = pic.create_canister();
     let init = Some(InitArgs {
         genesis_balances: vec![GenesisBalanceView {
             address: hash::derive_evm_address_from_principal(caller.as_slice())
@@ -107,7 +105,6 @@ fn install_canister(pic: &PocketIc) -> Principal {
                 .to_vec(),
             amount: 10_000_000_000_000_000_000_000_000u128,
         }],
-        wrap_canister_id,
     });
     let wasm = fs::read(wasm_path()).expect("read gateway wasm");
     let canister_id = pic.create_canister();

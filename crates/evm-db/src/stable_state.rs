@@ -41,7 +41,6 @@ pub type ReadyBySeq = StableBTreeMap<ReadySeqKey, TxId, VMem>;
 pub type EthTxHashIndex = StableBTreeMap<TxId, TxId, VMem>;
 pub type UnwrapRequests = StableBTreeMap<TxId, UnwrapDispatchRequest, VMem>;
 pub type UnwrapDispatchQueue = StableBTreeMap<u64, TxId, VMem>;
-pub type WrapCanisterId = StableCell<Vec<u8>, VMem>;
 pub type PruneJournalMap = StableBTreeMap<u64, PruneJournal, VMem>;
 pub type DroppedRing = StableBTreeMap<u64, TxId, VMem>;
 pub type StateStorageRoots = StableBTreeMap<AccountKey, U256Val, VMem>;
@@ -90,7 +89,6 @@ pub struct StableState {
     pub unwrap_requests: UnwrapRequests,
     pub unwrap_dispatch_queue: UnwrapDispatchQueue,
     pub unwrap_dispatch_meta: StableCell<QueueMeta, VMem>,
-    pub wrap_canister_id: WrapCanisterId,
     pub dropped_ring_state: StableCell<DroppedRingStateV1, VMem>,
     pub dropped_ring: DroppedRing,
     pub state_storage_roots: StateStorageRoots,
@@ -180,7 +178,6 @@ pub fn init_stable_state() {
         get_memory(AppMemoryId::UnwrapDispatchMeta),
         QueueMeta::new(),
     );
-    let wrap_canister_id = StableCell::init(get_memory(AppMemoryId::WrapCanisterId), Vec::new());
     let dropped_ring_state = StableCell::init(
         get_memory(AppMemoryId::DroppedRingState),
         DroppedRingStateV1::new(),
@@ -247,7 +244,6 @@ pub fn init_stable_state() {
             unwrap_requests,
             unwrap_dispatch_queue,
             unwrap_dispatch_meta,
-            wrap_canister_id,
             dropped_ring_state,
             dropped_ring,
             state_storage_roots,

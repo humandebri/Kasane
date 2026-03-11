@@ -134,10 +134,7 @@ type HealthView = record {
   last_block_time : nat64;
   queue_len : nat64;
 };
-type InitArgs = record {
-  genesis_balances : vec GenesisBalanceView;
-  wrap_canister_id : principal;
-};
+type InitArgs = record { genesis_balances : vec GenesisBalanceView };
 type LogView = record { data : blob; topics : vec blob; address : blob };
 type LookupError = variant {
   NotFound;
@@ -419,6 +416,5 @@ service : (opt InitArgs) -> {
   set_log_filter : (opt text) -> (Result_15);
   set_prune_policy : (PrunePolicyView) -> (Result_15);
   set_pruning_enabled : (bool) -> (Result_15);
-  set_wrap_canister_id : (principal) -> (Result_15);
   submit_ic_tx : (SubmitIcTxArgsDto) -> (Result_14);
 }

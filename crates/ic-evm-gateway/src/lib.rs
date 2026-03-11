@@ -9,6 +9,7 @@ use evm_db::chain_data::constants::CHAIN_ID;
 use evm_db::chain_data::constants::{MAX_QUEUE_SNAPSHOT_LIMIT, MAX_RETURN_DATA, MAX_TX_SIZE};
 #[cfg(test)]
 use evm_db::chain_data::StoredTx;
+use evm_db::chain_data::runtime_defaults::DEFAULT_WRAP_CANISTER_ID_TEXT;
 use evm_db::chain_data::DEFAULT_MINING_INTERVAL_MS;
 use evm_db::chain_data::MIN_PRUNE_MAX_OPS_PER_TICK;
 use evm_db::chain_data::{
@@ -102,13 +103,11 @@ const CODE_INTERNAL_UNEXPECTED: &str = "internal.unexpected";
 #[derive(Clone, Debug, CandidType, Deserialize)]
 pub struct InitArgs {
     pub genesis_balances: Vec<GenesisBalanceView>,
-    pub wrap_canister_id: Principal,
 }
 
 impl InitArgs {
     fn validate(&self) -> Result<(), String> {
         let mut seen_addresses = std::collections::BTreeSet::new();
-        validate_wrap_canister_id_input(self.wrap_canister_id)?;
         if self.genesis_balances.is_empty() {
             return Err("genesis_balances must be non-empty".to_string());
         }
@@ -125,13 +124,6 @@ impl InitArgs {
         }
         Ok(())
     }
-}
-
-fn validate_wrap_canister_id_input(wrap_canister_id: Principal) -> Result<(), String> {
-    if wrap_canister_id == Principal::anonymous() {
-        return Err("wrap_canister_id must not be anonymous".to_string());
-    }
-    Ok(())
 }
 
 #[cfg(not(feature = "canbench-rs"))]
@@ -157,7 +149,6 @@ fn init_inner(args: Option<InitArgs>, require_args: bool) {
     } else {
         args.unwrap_or(InitArgs {
             genesis_balances: Vec::new(),
-            wrap_canister_id: Principal::anonymous(),
         })
     };
     if require_args || !args.genesis_balances.is_empty() {
@@ -165,7 +156,6 @@ fn init_inner(args: Option<InitArgs>, require_args: bool) {
             ic_cdk::trap(format!("InvalidInitArgs: {reason}"));
         }
     }
-    set_wrap_canister_id_inner(args.wrap_canister_id);
     if !args.genesis_balances.is_empty() {
         for alloc in args.genesis_balances.iter() {
             let mut addr = [0u8; 20];
@@ -187,12 +177,9 @@ fn init_inner(args: Option<InitArgs>, require_args: bool) {
     schedule_cycle_observer();
 }
 
-fn set_wrap_canister_id_inner(wrap_canister_id: Principal) {
-    with_state_mut(|state| {
-        state
-            .wrap_canister_id
-            .set(wrap_canister_id.as_slice().to_vec());
-    });
+fn current_wrap_canister_id() -> Principal {
+    Principal::from_text(DEFAULT_WRAP_CANISTER_ID_TEXT)
+        .unwrap_or_else(|err| ic_cdk::trap(format!("InvalidDefaultWrapCanisterId: {err}")))
 }
 
 #[ic_cdk::post_upgrade]
@@ -322,10 +309,6 @@ const INSPECT_METHOD_POLICIES: &[InspectMethodPolicy] = &[
     },
     InspectMethodPolicy {
         method: "set_instruction_soft_limit",
-        payload_limit: INSPECT_MANAGE_PAYLOAD_LIMIT,
-    },
-    InspectMethodPolicy {
-        method: "set_wrap_canister_id",
         payload_limit: INSPECT_MANAGE_PAYLOAD_LIMIT,
     },
     InspectMethodPolicy {
@@ -1163,17 +1146,6 @@ fn clear_precompile_profile() -> Result<(), String> {
     }
     require_control_plane_write()?;
     evm_core::wrap_precompile::clear_precompile_profile();
-    Ok(())
-}
-
-#[ic_cdk::update]
-fn set_wrap_canister_id(wrap_canister_id: Principal) -> Result<(), String> {
-    if let Some(reason) = reject_anonymous_update() {
-        return Err(reason);
-    }
-    require_control_plane_write()?;
-    validate_wrap_canister_id_input(wrap_canister_id)?;
-    set_wrap_canister_id_inner(wrap_canister_id);
     Ok(())
 }
 
@@ -2362,11 +2334,8 @@ fn finalize_unwrap_dispatch_attempt(
 }
 
 fn validate_vault_canister_id(vault_canister_id: &[u8]) -> Result<(), String> {
-    let expected = with_state(|state| state.wrap_canister_id.get().clone());
-    if expected.is_empty() {
-        return Err("config.wrap_canister_missing".to_string());
-    }
-    if expected != vault_canister_id {
+    let expected = current_wrap_canister_id();
+    if expected.as_slice() != vault_canister_id {
         return Err("wrap.arg.vault_not_allowed".to_string());
     }
     Ok(())
@@ -2700,7 +2669,6 @@ mod tests {
         assert!(inspect_payload_limit_for_method("clear_precompile_profile").is_none());
         #[cfg(not(feature = "precompile-profile-admin"))]
         assert!(inspect_payload_limit_for_method("profile_precompile_call").is_none());
-        assert!(inspect_payload_limit_for_method("set_wrap_canister_id").is_some());
     }
 
     #[test]
@@ -3976,32 +3944,17 @@ mod tests {
     }
 
     #[test]
-    fn validate_vault_canister_id_checks_config_match() {
+    fn validate_vault_canister_id_checks_runtime_default_match() {
         init_stable_state();
-        super::set_wrap_canister_id_inner(Principal::from_slice(&[1, 2, 3]));
-        assert!(validate_vault_canister_id(&[1, 2, 3]).is_ok());
+        assert!(validate_vault_canister_id(Principal::management_canister().as_slice()).is_ok());
         let err = validate_vault_canister_id(&[9]).expect_err("must reject mismatch");
         assert_eq!(err, "wrap.arg.vault_not_allowed");
     }
 
     #[test]
-    fn set_wrap_canister_id_inner_updates_empty_upgrade_state() {
+    fn validate_vault_canister_id_uses_runtime_default() {
         init_stable_state();
-        let before = with_state(|state| state.wrap_canister_id.get().clone());
-        assert!(before.is_empty());
-
-        let wrap_canister_id = Principal::from_slice(&[9, 8, 7, 6]);
-        super::set_wrap_canister_id_inner(wrap_canister_id);
-
-        let after = with_state(|state| state.wrap_canister_id.get().clone());
-        assert_eq!(after, wrap_canister_id.as_slice().to_vec());
-    }
-
-    #[test]
-    fn validate_wrap_canister_id_input_rejects_anonymous_principal() {
-        let err = super::validate_wrap_canister_id_input(Principal::anonymous())
-            .expect_err("must reject");
-        assert_eq!(err, "wrap_canister_id must not be anonymous");
+        assert!(validate_vault_canister_id(Principal::management_canister().as_slice()).is_ok());
     }
 
     #[test]
@@ -4475,7 +4428,7 @@ mod tests {
     fn did_contains_dispatch_result_contract_shape() {
         let did = include_str!("../evm_canister.did");
         assert!(did.contains("type RequestDispatchResultView = record {"));
-        assert!(did.contains("wrap_canister_id : principal;"));
+        assert!(!did.contains("wrap_canister_id : principal;"));
         assert!(did.contains("vault_canister_id : blob;"));
         assert!(!did.contains("ledger_tx_id : opt blob;"));
         assert!(did.contains("type RequestDispatchStatusView = variant {"));
@@ -4484,6 +4437,6 @@ mod tests {
         assert!(!did.contains("get_unwrap_request_status"));
         assert!(did.contains("get_request_dispatch_result"));
         assert!(did.contains("get_request_dispatch_status"));
-        assert!(did.contains("set_wrap_canister_id : (principal) -> (Result_15);"));
+        assert!(!did.contains("set_wrap_canister_id : (principal) -> (Result_15);"));
     }
 }

@@ -18,7 +18,6 @@ struct GenesisBalanceView {
 #[derive(Clone, Debug, CandidType, Deserialize, Eq, PartialEq)]
 struct GatewayInitArgs {
     genesis_balances: Vec<GenesisBalanceView>,
-    wrap_canister_id: Principal,
 }
 
 #[derive(Clone, Debug, CandidType, Deserialize, Eq, PartialEq)]
@@ -124,7 +123,6 @@ fn install_pair(pic: &PocketIc) -> (Principal, Principal) {
                 .to_vec(),
             amount: 1_000_000_000_000_000_000u128,
         }],
-        wrap_canister_id: wrap_id,
     });
     pic.install_canister(wrap_id, read_wasm(wrap_wasm_path()), Encode!(&()).expect("encode mock wrap init"), None);
     pic.install_canister(

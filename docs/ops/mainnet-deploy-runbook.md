@@ -33,6 +33,5 @@ For exact command sequences and environment-specific snippets, see the Japanese 
 - The default mainnet deploy path ships a fixed precompile ratio `1/100`; changing it later requires a redeploy.
 
 ## Important Note
-- `MODE=install` / `MODE=reinstall` requires `WRAP_CANISTER_ID`.
-- The deploy scripts do not auto-resolve `wrap_canister` anymore.
-- When upgrading an existing `evm_canister` from a version that did not persist this field, call `set_wrap_canister_id(<wrap_canister_principal>)` once as a controller after the upgrade.
+- `wrap_canister_id` is no longer passed via `InitArgs`; the gateway uses the runtime default configured in code.
+- `WRAP_CANISTER_ID` is still needed only for scripts that interact with the wrap canister itself.
