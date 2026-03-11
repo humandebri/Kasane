@@ -331,7 +331,8 @@ pub fn rpc_eth_max_priority_fee_per_gas() -> Result<u128, RpcErrorView> {
             "exec.state.unavailable fee sample is unavailable",
         )
     })?;
-    Ok(estimate_priority_fee_from_sample(&sample))
+    let min_priority_fee = with_state(|state| u128::from(state.chain_state.get().min_priority_fee));
+    Ok(estimate_priority_fee_from_sample(&sample).max(min_priority_fee))
 }
 
 pub fn rpc_eth_gas_price() -> Result<u128, RpcErrorView> {

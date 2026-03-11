@@ -12,8 +12,7 @@ use evm_db::chain_data::{
 };
 use evm_db::chain_data::{LogConfigV1, LOG_CONFIG_FILTER_MAX};
 use evm_db::chain_data::{
-    DEFAULT_BLOCK_GAS_LIMIT, DEFAULT_INSTRUCTION_SOFT_LIMIT, DEFAULT_MIN_GAS_PRICE,
-    DEFAULT_MIN_PRIORITY_FEE,
+    DEFAULT_BLOCK_GAS_LIMIT, DEFAULT_INSTRUCTION_SOFT_LIMIT, DEFAULT_MIN_FEE_FLOOR,
 };
 use evm_db::meta::{clear_needs_migration, needs_migration};
 use evm_db::stable_state::init_stable_state;
@@ -445,8 +444,8 @@ fn chain_state_roundtrip() {
 fn chain_state_default_fees_follow_runtime_defaults() {
     let state = ChainStateV1::new(4_801_360);
     assert!(state.auto_production_enabled);
-    assert_eq!(state.min_gas_price, DEFAULT_MIN_GAS_PRICE);
-    assert_eq!(state.min_priority_fee, DEFAULT_MIN_PRIORITY_FEE);
+    assert_eq!(state.min_gas_price, DEFAULT_MIN_FEE_FLOOR);
+    assert_eq!(state.min_priority_fee, DEFAULT_MIN_FEE_FLOOR);
     assert_eq!(state.block_gas_limit, DEFAULT_BLOCK_GAS_LIMIT);
     assert_eq!(state.instruction_soft_limit, DEFAULT_INSTRUCTION_SOFT_LIMIT);
 }
@@ -462,8 +461,8 @@ fn chain_state_invalid_len_returns_safe_default_and_sets_needs_migration() {
     assert!(!decoded.auto_production_enabled);
     assert!(!decoded.is_producing);
     assert!(!decoded.mining_scheduled);
-    assert_eq!(decoded.min_gas_price, DEFAULT_MIN_GAS_PRICE);
-    assert_eq!(decoded.min_priority_fee, DEFAULT_MIN_PRIORITY_FEE);
+    assert_eq!(decoded.min_gas_price, DEFAULT_MIN_FEE_FLOOR);
+    assert_eq!(decoded.min_priority_fee, DEFAULT_MIN_FEE_FLOOR);
     assert_eq!(decoded.block_gas_limit, DEFAULT_BLOCK_GAS_LIMIT);
     assert_eq!(
         decoded.instruction_soft_limit,
