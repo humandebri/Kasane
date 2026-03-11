@@ -5,6 +5,7 @@ export type ExplorerConfig = {
   databaseUrl: string;
   dbPoolMax: number;
   canisterId: string | null;
+  wrapFactoryHex: string | null;
   icHost: string;
   rpcGatewayUrl: string | null;
   fetchRootKey: boolean;
@@ -44,6 +45,7 @@ export function loadConfig(env: NodeJS.ProcessEnv): ExplorerConfig {
     databaseUrl,
     dbPoolMax: parseRangeInt(env.EXPLORER_DB_POOL_MAX ?? env.INDEXER_DB_POOL_MAX, DEFAULT_DB_POOL_MAX, 1, 50),
     canisterId: env.EVM_CANISTER_ID ?? null,
+    wrapFactoryHex: parseOptionalAddressHex(env.EXPLORER_EVM_WRAP_FACTORY ?? env.EVM_WRAP_FACTORY),
     icHost: env.EXPLORER_IC_HOST ?? env.INDEXER_IC_HOST ?? DEFAULT_IC_HOST,
     rpcGatewayUrl: parseOptionalNonEmpty(env.EXPLORER_RPC_GATEWAY_URL ?? env.RPC_GATEWAY_URL),
     fetchRootKey: parseBool(env.EXPLORER_FETCH_ROOT_KEY ?? env.INDEXER_FETCH_ROOT_KEY),
@@ -78,6 +80,14 @@ function parseOptionalNonEmpty(value: string | undefined): string | null {
   }
   const trimmed = value.trim();
   return trimmed === "" ? null : trimmed;
+}
+
+function parseOptionalAddressHex(value: string | undefined): string | null {
+  if (!value) {
+    return null;
+  }
+  const trimmed = value.trim().toLowerCase();
+  return /^0x[0-9a-f]{40}$/.test(trimmed) ? trimmed : null;
 }
 
 function parseBool(value: string | undefined): boolean {

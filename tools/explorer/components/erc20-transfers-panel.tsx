@@ -11,6 +11,7 @@ export type Erc20TransferRowView = {
   toAddressHex: string;
   amountText: string;
   isRawAmount: boolean;
+  kind: "mint" | "burn" | "transfer";
 };
 
 const ZERO_ADDRESS_HEX = `0x${"0".repeat(40)}`;
@@ -38,24 +39,62 @@ function TransferSection({
             <article
               key={`${row.logIndex}:${row.tokenAddressHex}:${row.fromAddressHex}:${row.toAddressHex}:${index.toString()}`}
             >
-              <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-slate-900">
-                <span className="font-semibold ">From</span>
-                <AddressLink addressHex={row.fromAddressHex} />
-                <span className="font-semibold ">To</span>
-                <AddressLink addressHex={row.toAddressHex} />
-                <span className="font-semibold ">For</span>
-                <span className="font-mono">
-                  {row.amountText}
-                  {" "}
-                  <TokenLink tokenAddressHex={row.tokenAddressHex} tokenSymbol={row.tokenSymbol} />
-                  {row.isRawAmount ? " (raw)" : ""}
-                </span>
-              </div>
+              {row.kind === "mint" ? <MintTransferRow row={row} /> : null}
+              {row.kind === "burn" ? <BurnTransferRow row={row} /> : null}
+              {row.kind === "transfer" ? <StandardTransferRow row={row} /> : null}
             </article>
           ))}
         </div>
       )}
     </div>
+  );
+}
+
+function MintTransferRow({ row }: { row: Erc20TransferRowView }) {
+  return (
+    <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-slate-900">
+      <span className="font-semibold">Mint</span>
+      <span>to</span>
+      <AddressLink addressHex={row.toAddressHex} />
+      <span className="font-semibold">For</span>
+      <AmountToken row={row} />
+    </div>
+  );
+}
+
+function BurnTransferRow({ row }: { row: Erc20TransferRowView }) {
+  return (
+    <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-slate-900">
+      <span className="font-semibold">Burn</span>
+      <span>from</span>
+      <AddressLink addressHex={row.fromAddressHex} />
+      <span className="font-semibold">For</span>
+      <AmountToken row={row} />
+    </div>
+  );
+}
+
+function StandardTransferRow({ row }: { row: Erc20TransferRowView }) {
+  return (
+    <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-slate-900">
+      <span className="font-semibold">From</span>
+      <AddressLink addressHex={row.fromAddressHex} />
+      <span className="font-semibold">To</span>
+      <AddressLink addressHex={row.toAddressHex} />
+      <span className="font-semibold">For</span>
+      <AmountToken row={row} />
+    </div>
+  );
+}
+
+function AmountToken({ row }: { row: Erc20TransferRowView }) {
+  return (
+    <span className="font-mono">
+      {row.amountText}
+      {" "}
+      <TokenLink tokenAddressHex={row.tokenAddressHex} tokenSymbol={row.tokenSymbol} />
+      {row.isRawAmount ? " (raw)" : ""}
+    </span>
   );
 }
 

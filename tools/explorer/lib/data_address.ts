@@ -6,7 +6,9 @@ import type {
   TokenTransferSummary,
   TxSummary,
 } from "./db";
+import type { TokenMetaView } from "./token_meta";
 import { normalizeHex, parseHex, toHexLower } from "./hex";
+import { formatTokenAmount } from "./format";
 import { inferMethodLabel } from "./tx_method";
 
 export const ADDRESS_HISTORY_LIMIT = 50;
@@ -40,6 +42,8 @@ export type AddressTokenTransferItem = {
   toAddressHex: string;
   direction: "in" | "out" | "self";
   amount: bigint;
+  amountText: string;
+  tokenLabel: string;
 };
 
 export type AddressView = {
@@ -56,6 +60,13 @@ export type AddressView = {
   tokenTransfers: AddressTokenTransferItem[];
   tokenNextCursor: string | null;
   warnings: string[];
+  erc20Meta: {
+    name: string;
+    symbol: string;
+    decimals: number;
+    totalSupplyRaw: bigint;
+    totalSupplyFormatted: string;
+  } | null;
 };
 
 export function mapAddressHistory(rows: TxSummary[], targetHex: string): AddressHistoryItem[] {
@@ -126,12 +137,15 @@ export function buildTokenTransferCursor(item: TokenTransferSummary): string {
 
 export function mapAddressTokenTransfers(
   rows: TokenTransferSummary[],
-  targetHex: string
+  targetHex: string,
+  metaByTokenHex: ReadonlyMap<string, TokenMetaView>,
+  targetTokenLabel: string | null = null
 ): AddressTokenTransferItem[] {
   return rows.map((row) => {
     const fromAddressHex = toHexLower(row.fromAddress);
     const toAddressHex = toHexLower(row.toAddress);
     const tokenAddressHex = toHexLower(row.tokenAddress);
+    const tokenMeta = metaByTokenHex.get(tokenAddressHex) ?? { symbol: null, decimals: null };
     const direction = fromAddressHex === targetHex && toAddressHex === targetHex
       ? "self"
       : fromAddressHex === targetHex
@@ -151,6 +165,11 @@ export function mapAddressTokenTransfers(
       toAddressHex,
       direction,
       amount: row.amount,
+      amountText: formatTokenAmount(row.amount, tokenMeta.decimals),
+      tokenLabel:
+        tokenAddressHex === targetHex && targetTokenLabel
+          ? targetTokenLabel
+          : (tokenMeta.symbol ?? shortAddressLabel(tokenAddressHex)),
     };
   });
 }
@@ -205,4 +224,11 @@ function toAddressHistoryItem(tx: TxSummary, targetHex: string): AddressHistoryI
     counterpartyHex: fromHex,
     receiptStatus: tx.receiptStatus,
   };
+}
+
+function shortAddressLabel(addressHex: string): string {
+  if (addressHex.length <= 12) {
+    return addressHex;
+  }
+  return `${addressHex.slice(0, 8)}...${addressHex.slice(-4)}`;
 }

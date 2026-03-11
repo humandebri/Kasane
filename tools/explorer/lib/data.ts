@@ -3,7 +3,8 @@
 import { Principal } from "@dfinity/principal";
 import { loadConfig } from "./config";
 import { extractErc20TransfersFromReceipt, type Erc20TransferView } from "./erc20";
-import { getTokenMeta } from "./token_meta";
+import { extractUnwrapRequestFromReceipt, type UnwrapRequestView } from "./kasane_wrap";
+import { getExtendedTokenMeta, getTokenMeta } from "./token_meta";
 import {
   getBlockDetails,
   getLatestBlocks,
@@ -25,6 +26,7 @@ import {
   getTxsByCallerPrincipal,
   type BlockSummary,
   type OverviewStats,
+  type TokenTransferSummary,
   type TxSummary,
 } from "./db";
 import {
@@ -37,6 +39,7 @@ import {
   parseAddressCursor,
   type AddressView,
 } from "./data_address";
+import { formatTokenAmount } from "./format";
 import {
   buildPruneHistory,
   buildOpsSeries,
@@ -192,6 +195,7 @@ export type TxDetailView = {
   receipt: ReceiptView | null;
   receiptLookupError: LookupError | null;
   erc20Transfers: Array<Erc20TransferView & { tokenSymbol: string | null; tokenDecimals: number | null }>;
+  unwrapRequest: UnwrapRequestView | null;
 };
 
 type BlockDetailsWithPrincipal = {
@@ -218,6 +222,9 @@ const OPS_PRUNE_HISTORY_LIMIT = 10;
 const CYCLES_TREND_WINDOW_MS_24H = 24 * 60 * 60 * 1000;
 const CYCLES_TREND_WINDOW_MS_7D = 7 * 24 * 60 * 60 * 1000;
 const DAY_MS = 24 * 60 * 60 * 1000;
+let addressViewBalanceFetcher: typeof getRpcBalance = getRpcBalance;
+let addressViewNonceFetcher: typeof getRpcExpectedNonce = getRpcExpectedNonce;
+let addressViewCodeFetcher: typeof getRpcCode = getRpcCode;
 
 function parsePositiveInt(rawValue: string | string[] | undefined, fallback: number): number {
   const raw = Array.isArray(rawValue) ? rawValue[0] : rawValue;
@@ -449,6 +456,7 @@ export async function getTxDetailView(txHashHex: string): Promise<TxDetailView |
   const maxPriorityFeePerGasWei = rpcTx?.decoded[0]?.max_priority_fee_per_gas[0] ?? null;
   const erc20TransfersRaw = "Ok" in receiptOut ? extractErc20TransfersFromReceipt(receiptOut.Ok) : [];
   const erc20Transfers = await withTokenMeta(erc20TransfersRaw);
+  const unwrapRequest = "Ok" in receiptOut ? extractUnwrapRequestFromReceipt(receiptOut.Ok) : null;
   const internalTxIdHex = tx.txHashHex;
   const ethTxHashHex = txLookup.ethTxHashHex ?? (rpcTx?.eth_tx_hash[0] ? toHexLower(rpcTx.eth_tx_hash[0]) : null);
   const displayTxHashHex = ethTxHashHex ?? internalTxIdHex;
@@ -470,6 +478,7 @@ export async function getTxDetailView(txHashHex: string): Promise<TxDetailView |
     receipt: "Ok" in receiptOut ? receiptOut.Ok : null,
     receiptLookupError: "Ok" in receiptOut ? null : receiptOut.Err,
     erc20Transfers,
+    unwrapRequest,
   };
 }
 
@@ -488,9 +497,9 @@ export async function getAddressView(
   const tokenCursor = parseTokenTransferCursor(tokenCursorToken);
   const warnings: string[] = [];
   const [balance, nonce, code, historyRows, tokenTransferRows] = await Promise.all([
-    tryRpc(() => getRpcBalance(bytes), "balance RPC is unavailable", warnings),
-    tryRpc(() => getRpcExpectedNonce(bytes), "nonce RPC is unavailable", warnings),
-    tryRpc(() => getRpcCode(bytes), "code RPC is unavailable", warnings),
+    tryRpc(() => addressViewBalanceFetcher(bytes), "balance RPC is unavailable", warnings),
+    tryRpc(() => addressViewNonceFetcher(bytes), "nonce RPC is unavailable", warnings),
+    tryRpc(() => addressViewCodeFetcher(bytes), "code RPC is unavailable", warnings),
     getTxsByAddress(bytes, ADDRESS_HISTORY_LIMIT, cursor),
     getTokenTransfersByAddress(bytes, ADDRESS_HISTORY_LIMIT, tokenCursor),
   ]);
@@ -505,7 +514,14 @@ export async function getAddressView(
   const tokenPageRows = tokenHasMore ? tokenTransferRows.slice(0, ADDRESS_HISTORY_LIMIT) : tokenTransferRows;
   const tokenNextCursorRow = tokenHasMore ? tokenPageRows[tokenPageRows.length - 1] : undefined;
   const tokenNextCursor = tokenNextCursorRow ? buildTokenTransferCursor(tokenNextCursorRow) : null;
-  const tokenTransfers = mapAddressTokenTransfers(tokenPageRows, toHexLower(bytes));
+  const erc20Meta = codeBytes !== null && codeBytes > 0 ? await getErc20AddressMeta(toHexLower(bytes)) : null;
+  const tokenMetaByTokenHex = await loadAddressTokenMeta(tokenPageRows);
+  const tokenTransfers = mapAddressTokenTransfers(
+    tokenPageRows,
+    toHexLower(bytes),
+    tokenMetaByTokenHex,
+    erc20Meta?.symbol ?? null
+  );
   const submitterPrincipals = collectSubmitterPrincipals(pageRows, bytes);
 
   return {
@@ -522,6 +538,7 @@ export async function getAddressView(
     tokenTransfers,
     tokenNextCursor,
     warnings,
+    erc20Meta,
   };
 }
 
@@ -754,6 +771,20 @@ export const dataTestHooks = {
       baseFeePerGasWei,
       lookupByTxId
     ),
+  setAddressViewRpcFetchersForTest: (hooks: {
+    balance?: typeof getRpcBalance;
+    nonce?: typeof getRpcExpectedNonce;
+    code?: typeof getRpcCode;
+  }): void => {
+    addressViewBalanceFetcher = hooks.balance ?? getRpcBalance;
+    addressViewNonceFetcher = hooks.nonce ?? getRpcExpectedNonce;
+    addressViewCodeFetcher = hooks.code ?? getRpcCode;
+  },
+  resetAddressViewRpcFetchersForTest: (): void => {
+    addressViewBalanceFetcher = getRpcBalance;
+    addressViewNonceFetcher = getRpcExpectedNonce;
+    addressViewCodeFetcher = getRpcCode;
+  },
 };
 
 export async function getPrincipalView(principalText: string): Promise<PrincipalView> {
@@ -924,6 +955,40 @@ async function withTokenMeta(
       tokenDecimals: meta.decimals,
     };
   });
+}
+
+async function getErc20AddressMeta(addressHex: string): Promise<AddressView["erc20Meta"]> {
+  const meta = await getExtendedTokenMeta(addressHex);
+  if (
+    meta.symbol === null ||
+    meta.decimals === null ||
+    meta.totalSupplyRaw === null
+  ) {
+    return null;
+  }
+  return {
+    name: meta.name ?? "",
+    symbol: meta.symbol,
+    decimals: meta.decimals,
+    totalSupplyRaw: meta.totalSupplyRaw,
+    totalSupplyFormatted: formatTokenAmount(meta.totalSupplyRaw, meta.decimals),
+  };
+}
+
+async function loadAddressTokenMeta(
+  tokenTransfers: TokenTransferSummary[]
+): Promise<Map<string, { symbol: string | null; decimals: number | null }>> {
+  const unique = new Set<string>();
+  for (const row of tokenTransfers) {
+    unique.add(toHexLower(row.tokenAddress));
+  }
+  const entries = await Promise.all(
+    Array.from(unique).map(async (tokenAddressHex) => ({
+      tokenAddressHex,
+      meta: await getTokenMeta(tokenAddressHex),
+    }))
+  );
+  return new Map(entries.map((entry) => [entry.tokenAddressHex, entry.meta]));
 }
 
 function receiptStatusLabel(status: number | null): string {

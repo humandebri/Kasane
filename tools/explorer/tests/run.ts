@@ -38,10 +38,18 @@ import {
   setExplorerPool,
   consumeVerifyReplayJti,
 } from "../lib/db";
-import { dataTestHooks, getLatestTxsPageView, getPrincipalView, opsDataTestHooks, parseCyclesTrendWindow, resolveHomeBlocksLimit } from "../lib/data";
+import {
+  dataTestHooks,
+  getAddressView,
+  getLatestTxsPageView,
+  getPrincipalView,
+  opsDataTestHooks,
+  parseCyclesTrendWindow,
+  resolveHomeBlocksLimit,
+} from "../lib/data";
 import { buildPruneHistory, parseStoredPruneStatusForTest } from "../lib/data_ops";
 import { mapAddressHistory, mapAddressTokenTransfers } from "../lib/data_address";
-import { calcRoundedBps, formatEthFromWei, formatGweiFromWei, formatTimestampWithRelativeUtc } from "../lib/format";
+import { calcRoundedBps, formatEthFromWei, formatGweiFromWei, formatTimestampWithRelativeUtc, formatTokenAmount } from "../lib/format";
 import { deriveEvmAddressFromPrincipal } from "../lib/principal";
 import { logsTestHooks } from "../lib/logs";
 import { resolveSearchRoute } from "../lib/search";
@@ -57,15 +65,17 @@ import { isRuntimeMatch } from "../lib/verify/compile";
 import { medianBigInt } from "../lib/verify/metrics";
 import { executeVerifyJob, isVerifyServiceError } from "../lib/verify/service";
 import { buildVerifyAuthToken } from "../lib/verify/token";
-import { getTokenMeta } from "../lib/token_meta";
+import { getExtendedTokenMeta, getTokenMeta } from "../lib/token_meta";
 import { createOrGetVerifyRequest } from "../lib/verify/submit";
 import { runBackgroundTask, shouldRunPeriodicTask } from "../lib/verify/worker_tasks";
 import { parseChainId, parseVerifiedAbi } from "../lib/verify/verified_contract_api";
 import { verifyWorkerTestHooks } from "../scripts/verify-worker";
 import { tokenMetaTestHooks } from "../lib/token_meta";
 import { buildTimelineFromReceiptLogs } from "../lib/tx_timeline";
+import { decodeKnownLog } from "../lib/tx_log_decode";
 import { deriveTxDirection } from "../lib/tx_direction";
 import { inferMethodLabel } from "../lib/tx_method";
+import { extractUnwrapRequestFromReceipt, isConfirmedKasaneWrapTx, WRAP_PRECOMPILE_ADDRESS_HEX } from "../lib/kasane_wrap";
 import { txValueFeeCellsTestHooks } from "../components/tx-value-fee-cells";
 import type { ReceiptView } from "../lib/rpc";
 import type { VerifySubmitInput } from "../lib/verify/types";
@@ -180,6 +190,7 @@ async function runConfigTests(): Promise<void> {
   assert.equal(fallback.verifyDefaultChainId, 0);
   assert.equal(fallback.verifyRequiredScope, "verify.submit");
   assert.equal(fallback.verifyMetricsRetentionDays, 30);
+  assert.equal(fallback.wrapFactoryHex, null);
   const maxInt4 = loadConfig({
     ...process.env,
     NODE_ENV: process.env.NODE_ENV ?? "test",
@@ -194,6 +205,13 @@ async function runConfigTests(): Promise<void> {
     EXPLORER_VERIFY_DEFAULT_CHAIN_ID: "2147483648",
   });
   assert.equal(outOfRange.verifyDefaultChainId, 0);
+  const wrapFactory = loadConfig({
+    ...process.env,
+    NODE_ENV: process.env.NODE_ENV ?? "test",
+    EXPLORER_DATABASE_URL: "postgres://localhost:5432/test",
+    EVM_WRAP_FACTORY: "0x44ec859b574d343188a1a36918192a1f39e41510",
+  });
+  assert.equal(wrapFactory.wrapFactoryHex, "0x44ec859b574d343188a1a36918192a1f39e41510");
 }
 
 async function runFormatTests(): Promise<void> {
@@ -204,6 +222,10 @@ async function runFormatTests(): Promise<void> {
   assert.equal(calcRoundedBps(8_000_000n, 10_000_000n), 8000n);
   assert.equal(calcRoundedBps(-5n, 2n), -25000n);
   assert.equal(calcRoundedBps(1n, 0n), null);
+  assert.equal(formatTokenAmount(1n, 9), "<0.00000001");
+  assert.equal(formatTokenAmount(-1n, 9), "-<0.00000001");
+  assert.equal(formatTokenAmount(1_000_000_0001n, 10), "1.00000000");
+  assert.equal(formatTokenAmount(-1_000_000_0001n, 10), "-1.00000000");
 
   const originalNow = Date.now;
   Date.now = () => 1_700_000_000_000;
@@ -801,32 +823,46 @@ async function runTokenMetaTests(): Promise<void> {
   const decimals = new Uint8Array(32);
   decimals[31] = 18;
   assert.equal(tokenMetaTestHooks.decodeDecimals(decimals), 18);
+  assert.equal(tokenMetaTestHooks.decodeAbiString(dynamic), "USD");
+  assert.equal(tokenMetaTestHooks.decodeAbiString(bytes32), "ICP");
+  assert.equal(tokenMetaTestHooks.decodeUint256(decimals), 18n);
 
   const originalNow = Date.now();
   let nowMs = originalNow;
   tokenMetaTestHooks.setNowProviderForTest(() => nowMs);
   let fetchCount = 0;
+  let extendedFetchCount = 0;
   tokenMetaTestHooks.setFetcherForTest(async () => {
     fetchCount += 1;
     return { symbol: "AAA", decimals: 18 };
+  });
+  tokenMetaTestHooks.setExtendedFetcherForTest(async () => {
+    extendedFetchCount += 1;
+    return { name: "Alpha", symbol: "AAA", decimals: 18, totalSupplyRaw: 123n };
   });
 
   const addrA = "0x" + "01".repeat(20);
   const first = await getTokenMeta(addrA);
   const second = await getTokenMeta(addrA);
+  const extended = await getExtendedTokenMeta(addrA);
   assert.equal(first.symbol, "AAA");
   assert.equal(second.symbol, "AAA");
+  assert.equal(extended.name, "Alpha");
+  assert.equal(extended.totalSupplyRaw, 123n);
   assert.equal(fetchCount, 1);
+  assert.equal(extendedFetchCount, 1);
 
   nowMs += tokenMetaTestHooks.constants.SUCCESS_TTL_MS + 1;
   await getTokenMeta(addrA);
   assert.equal(fetchCount, 2);
+  assert.equal(extendedFetchCount, 1);
 
   tokenMetaTestHooks.resetForTest();
   nowMs = originalNow;
   tokenMetaTestHooks.setNowProviderForTest(() => nowMs);
   let fail = true;
   fetchCount = 0;
+  extendedFetchCount = 0;
   tokenMetaTestHooks.setFetcherForTest(async () => {
     fetchCount += 1;
     if (fail) {
@@ -878,6 +914,25 @@ async function runTokenMetaTests(): Promise<void> {
   });
   await Promise.all(Array.from({ length: 20 }, (_, i) => getTokenMeta(addressFromIndex(10_000 + i))));
   assert.equal(maxInflight <= tokenMetaTestHooks.constants.MAX_CONCURRENT_FETCHES, true);
+
+  tokenMetaTestHooks.resetForTest();
+  tokenMetaTestHooks.setNowProviderForTest(() => nowMs);
+  tokenMetaTestHooks.setFetcherForTest(async () => {
+    fetchCount += 1;
+    return { symbol: "LITE", decimals: 8 };
+  });
+  tokenMetaTestHooks.setExtendedFetcherForTest(async () => {
+    extendedFetchCount += 1;
+    return { name: "Extended", symbol: "EXT", decimals: 8, totalSupplyRaw: 42n };
+  });
+  const lite = await getTokenMeta(addrA);
+  const ext = await getExtendedTokenMeta(addrA);
+  assert.equal(lite.symbol, "LITE");
+  assert.equal(ext.name, "Extended");
+  assert.equal(fetchCount > 0, true);
+  assert.equal(extendedFetchCount > 0, true);
+  assert.equal(tokenMetaTestHooks.getCacheSizeForTest(), 1);
+  assert.equal(tokenMetaTestHooks.getExtendedCacheSizeForTest(), 1);
   tokenMetaTestHooks.resetForTest();
 }
 
@@ -1186,6 +1241,10 @@ async function runDbTests(): Promise<void> {
   assert.equal(tokenTransfers[0]?.blockTimestamp, 1000n);
   assert.equal(tokenTransfers[0]?.txSelector?.toString("hex"), "01020304");
   assert.equal(tokenTransfers[0]?.amount, 250000000000000000n);
+  const tokenAddress = Uint8Array.from(Buffer.from("99".repeat(20), "hex"));
+  const tokenTransfersByToken = await getTokenTransfersByAddress(tokenAddress, 10, null);
+  assert.equal(tokenTransfersByToken.length, 1);
+  assert.equal(tokenTransfersByToken[0]?.txHashHex, "0x1122");
   const opsSamples = await getRecentOpsMetricsSamples(10);
   assert.equal(opsSamples.length, 2);
   assert.equal(opsSamples[0]?.sampledAtMs, 2000n);
@@ -1304,6 +1363,8 @@ async function runTxMethodTests(): Promise<void> {
   assert.equal(inferMethodLabel(null, null), "create");
   assert.equal(inferMethodLabel("0x" + "11".repeat(20), null), "call");
   assert.equal(inferMethodLabel("0x" + "11".repeat(20), Buffer.from("a9059cbb", "hex")), "transfer");
+  assert.equal(inferMethodLabel(WRAP_PRECOMPILE_ADDRESS_HEX, Buffer.from("010a0000", "hex")), "unwrap");
+  assert.equal(inferMethodLabel("0x" + "11".repeat(20), Buffer.from("4fdb8cbf", "hex")), "0x4fdb8cbf");
   assert.equal(inferMethodLabel("0x" + "11".repeat(20), Buffer.from("60e06040", "hex")), "0x60e06040");
 }
 
@@ -1316,6 +1377,7 @@ async function runTxDirectionTests(): Promise<void> {
 
 async function runAddressTokenTransferMappingTests(): Promise<void> {
   const target = "0x" + "11".repeat(20);
+  const tokenHex = "0x" + "99".repeat(20);
   const mapped = mapAddressTokenTransfers(
     [
       {
@@ -1332,13 +1394,220 @@ async function runAddressTokenTransferMappingTests(): Promise<void> {
         amount: 123n,
       },
     ],
-    target
+    target,
+    new Map([
+      [
+        tokenHex,
+        {
+          symbol: "WICP",
+          decimals: 8,
+        },
+      ],
+    ])
   );
   assert.equal(mapped.length, 1);
   assert.equal(mapped[0]?.direction, "out");
   assert.equal(mapped[0]?.blockTimestamp, 1100n);
   assert.equal(mapped[0]?.txSelectorHex, "0x095ea7b3");
   assert.equal(mapped[0]?.methodLabel, "approve");
+  assert.equal(mapped[0]?.amountText, "0.00000123");
+  assert.equal(mapped[0]?.tokenLabel, "WICP");
+
+  const selfTokenMapped = mapAddressTokenTransfers(
+    [
+      {
+        txHashHex: "0x" + "dd".repeat(32),
+        blockNumber: 121n,
+        blockTimestamp: 1200n,
+        txIndex: 1,
+        logIndex: 0,
+        receiptStatus: 1,
+        txSelector: Buffer.from("a9059cbb", "hex"),
+        tokenAddress: Buffer.from("11".repeat(20), "hex"),
+        fromAddress: Buffer.from("00".repeat(20), "hex"),
+        toAddress: Buffer.from("11".repeat(20), "hex"),
+        amount: 1_000_000n,
+      },
+    ],
+    target,
+    new Map(),
+    "SELF"
+  );
+  assert.equal(selfTokenMapped[0]?.tokenLabel, "SELF");
+  assert.equal(selfTokenMapped[0]?.amountText, "1000000");
+}
+
+async function runAddressViewErc20Tests(): Promise<void> {
+  const mem = newDb({ noAstCoverageCheck: true });
+  mem.public.none(`
+    CREATE TABLE blocks(number bigint primary key, hash bytea, timestamp bigint not null, tx_count integer not null, gas_used bigint);
+    CREATE TABLE txs(tx_hash bytea primary key, eth_tx_hash bytea, block_number bigint not null, tx_index integer not null, caller_principal bytea, from_address bytea not null, to_address bytea, tx_selector bytea, receipt_status smallint);
+    CREATE TABLE tx_receipts_index(tx_hash bytea primary key, contract_address bytea, status smallint not null, block_number bigint not null, tx_index integer not null);
+    CREATE TABLE token_transfers(tx_hash bytea not null, block_number bigint not null, tx_index integer not null, log_index integer not null, token_address bytea not null, from_address bytea not null, to_address bytea not null, amount_numeric numeric(78,0) not null, primary key(tx_hash, log_index));
+  `);
+  const adapter = mem.adapters.createPg();
+  const pool = new adapter.Pool();
+  setExplorerPool(pool);
+
+  const tokenAddressBuf = Buffer.from("a".repeat(20));
+  const recipientAddressBuf = Buffer.from("b".repeat(20));
+  const txHashBuf = Buffer.from("c".repeat(32));
+  const tokenAddressHex = `0x${tokenAddressBuf.toString("hex")}`;
+  await pool.query("INSERT INTO blocks(number, hash, timestamp, tx_count, gas_used) VALUES($1, $2, $3, $4, $5)", [
+    42,
+    Buffer.from("d".repeat(32)),
+    1_700,
+    1,
+    21_000,
+  ]);
+  await pool.query("INSERT INTO txs(tx_hash, block_number, tx_index, caller_principal, from_address, to_address, tx_selector, receipt_status) VALUES($1, $2, $3, $4, $5, $6, $7, $8)", [
+    txHashBuf,
+    42,
+    0,
+    null,
+    Buffer.from("0".repeat(20)),
+    tokenAddressBuf,
+    Buffer.from("wrap"),
+    1,
+  ]);
+  await pool.query("INSERT INTO token_transfers(tx_hash, block_number, tx_index, log_index, token_address, from_address, to_address, amount_numeric) VALUES($1, $2, $3, $4, $5, $6, $7, $8)", [
+    txHashBuf,
+    42,
+    0,
+    0,
+    tokenAddressBuf,
+    Buffer.from("0".repeat(20)),
+    recipientAddressBuf,
+    "250000000",
+  ]);
+
+  tokenMetaTestHooks.resetForTest();
+  tokenMetaTestHooks.setFetcherForTest(async (addressHex) => {
+    if (addressHex === tokenAddressHex) {
+      return { symbol: "WICP", decimals: 8 };
+    }
+    return { symbol: null, decimals: null };
+  });
+  tokenMetaTestHooks.setExtendedFetcherForTest(async (addressHex) => {
+    if (addressHex === tokenAddressHex) {
+      return { name: "Wrapped ICP", symbol: "WICP", decimals: 8, totalSupplyRaw: 123456789n };
+    }
+    return { name: null, symbol: null, decimals: null, totalSupplyRaw: null };
+  });
+
+  dataTestHooks.setAddressViewRpcFetchersForTest({
+    code: async () => Uint8Array.from([0x60, 0x00]),
+    balance: async () => 0n,
+    nonce: async () => 1n,
+  });
+
+  try {
+    const view = await getAddressView(tokenAddressHex);
+    assert.equal(view.erc20Meta?.name, "Wrapped ICP");
+    assert.equal(view.erc20Meta?.symbol, "WICP");
+    assert.equal(view.erc20Meta?.decimals, 8);
+    assert.equal(view.erc20Meta?.totalSupplyRaw, 123456789n);
+    assert.equal(view.erc20Meta?.totalSupplyFormatted, "1.23456789");
+    assert.equal(view.tokenTransfers[0]?.tokenLabel, "WICP");
+    assert.equal(view.tokenTransfers[0]?.amountText, "2.5");
+  } finally {
+    dataTestHooks.resetAddressViewRpcFetchersForTest();
+    tokenMetaTestHooks.resetForTest();
+    await closeExplorerPool();
+  }
+}
+
+async function runKasaneWrapTests(): Promise<void> {
+  const wrapFactoryHex = "0x44ec859b574d343188a1a36918192a1f39e41510";
+  const amountBytes = Buffer.alloc(32);
+  amountBytes[31] = 7;
+  const asset = Uint8Array.from([0x01, 0x02, 0x03]);
+  const recipient = Uint8Array.from([0x04, 0x05, 0x06]);
+  const receipt: ReceiptView = {
+    tx_id: Uint8Array.from(Buffer.alloc(32, 0x11)),
+    block_number: 1n,
+    tx_index: 0,
+    status: 1,
+    gas_used: 1n,
+    effective_gas_price: 1n,
+    l1_data_fee: 0n,
+    operator_fee: 0n,
+    total_fee: 1n,
+    contract_address: [],
+    return_data_hash: Uint8Array.from(Buffer.alloc(32)),
+    return_data: [],
+    logs: [
+      {
+        address: parseHex(WRAP_PRECOMPILE_ADDRESS_HEX),
+        topics: [Uint8Array.from(Buffer.alloc(32, 0xaa))],
+        data: Uint8Array.from([asset.length, ...asset, ...amountBytes, recipient.length, ...recipient]),
+      },
+    ],
+  };
+  const unwrap = extractUnwrapRequestFromReceipt(receipt);
+  assert.ok(unwrap);
+  assert.equal(unwrap?.assetIdHex, "0x010203");
+  assert.equal(unwrap?.recipientHex, "0x040506");
+  assert.equal(unwrap?.amount, 7n);
+
+  const known = decodeKnownLog({
+    addressHex: WRAP_PRECOMPILE_ADDRESS_HEX,
+    topic0Hex: "0xfaef50ddf54b1bf879718e112b8631c1ee03bdd73f37d23a4e8c372fcf6bc548",
+    dataHex: "0x03010203" + "0".repeat(62) + "07" + "03040506",
+  });
+  assert.ok(known);
+  assert.equal(known?.eventName, "KasaneUnwrapRequest");
+  assert.equal(known?.emitterLabel, "Wrap Precompile");
+  assert.equal(known?.fields[0]?.label, "Asset ID");
+  assert.equal(known?.fields[2]?.value, "7");
+
+  const wrapReceipt: ReceiptView = {
+    tx_id: Uint8Array.from(Buffer.alloc(32, 0x22)),
+    block_number: 2n,
+    tx_index: 0,
+    status: 1,
+    gas_used: 1n,
+    effective_gas_price: 1n,
+    l1_data_fee: 0n,
+    operator_fee: 0n,
+    total_fee: 1n,
+    contract_address: [],
+    return_data_hash: Uint8Array.from(Buffer.alloc(32)),
+    return_data: [],
+    logs: [
+      {
+        address: parseHex(wrapFactoryHex),
+        topics: [
+          parseHex("0xc24c0b635304dd6d5692e0452892191032dd98f7af780e92e277fcd453a50aa0"),
+        ],
+        data: Uint8Array.from([]),
+      },
+    ],
+  };
+  assert.equal(
+    isConfirmedKasaneWrapTx({
+      toHex: wrapFactoryHex,
+      receipt: wrapReceipt,
+      wrapFactoryHex,
+    }),
+    true
+  );
+  assert.equal(
+    isConfirmedKasaneWrapTx({
+      toHex: "0x" + "11".repeat(20),
+      receipt: wrapReceipt,
+      wrapFactoryHex,
+    }),
+    false
+  );
+  assert.equal(
+    isConfirmedKasaneWrapTx({
+      toHex: wrapFactoryHex,
+      receipt: null,
+      wrapFactoryHex,
+    }),
+    false
+  );
 }
 
 async function runBlockFeeBreakdownLookupTests(): Promise<void> {
@@ -1407,6 +1676,8 @@ runHexTests()
   .then(runTxMethodTests)
   .then(runTxDirectionTests)
   .then(runAddressTokenTransferMappingTests)
+  .then(runAddressViewErc20Tests)
+  .then(runKasaneWrapTests)
   .then(runBlockFeeBreakdownLookupTests)
   .then(() => {
     console.log("ok");

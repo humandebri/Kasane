@@ -11,6 +11,7 @@ export type Erc20TransferView = {
   toAddressHex: string;
   amount: bigint;
   logIndex: number;
+  kind: "mint" | "burn" | "transfer";
 };
 
 export function extractErc20TransfersFromReceipt(receipt: ReceiptView): Erc20TransferView[] {
@@ -35,9 +36,22 @@ export function extractErc20TransfersFromReceipt(receipt: ReceiptView): Erc20Tra
       toAddressHex: toHexLower(toTopic.subarray(12)),
       amount: readWord(log.data, 0),
       logIndex: i,
+      kind: classifyTransferKind(fromTopic.subarray(12), toTopic.subarray(12)),
     });
   }
   return out;
+}
+
+function classifyTransferKind(fromAddress: Uint8Array, toAddress: Uint8Array): "mint" | "burn" | "transfer" {
+  const fromHex = toHexLower(fromAddress);
+  if (fromHex === ZERO_ADDRESS_HEX) {
+    return "mint";
+  }
+  const toHex = toHexLower(toAddress);
+  if (toHex === ZERO_ADDRESS_HEX) {
+    return "burn";
+  }
+  return "transfer";
 }
 
 function readWord(data: Uint8Array, wordIndex: number): bigint {
@@ -56,3 +70,5 @@ function readWord(data: Uint8Array, wordIndex: number): bigint {
   }
   return out;
 }
+
+const ZERO_ADDRESS_HEX = `0x${"0".repeat(40)}`;

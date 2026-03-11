@@ -3,13 +3,14 @@
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { AlertTriangle, Clock3 } from "lucide-react";
-import type { ReactNode } from "react";
+import { Fragment, type ReactNode } from "react";
 import { Badge } from "../../../components/ui/badge";
 import { Card, CardContent } from "../../../components/ui/card";
 import { Erc20TransfersPanel, type Erc20TransferRowView } from "../../../components/erc20-transfers-panel";
 import { StatusSuccessIcon } from "../../../components/status-success-icon";
 import { TxLogDataToggle } from "../../../components/tx-log-data-toggle";
-import { getTxDetailView } from "../../../lib/data";
+import { getTxDetailView, type TxDetailView } from "../../../lib/data";
+import { loadConfig } from "../../../lib/config";
 import {
   calcRoundedBps,
   formatGweiFromWei,
@@ -19,6 +20,8 @@ import {
   receiptStatusLabel,
 } from "../../../lib/format";
 import { shortHex, toHexLower } from "../../../lib/hex";
+import { isConfirmedKasaneWrapTx } from "../../../lib/kasane_wrap";
+import { decodeKnownLog } from "../../../lib/tx_log_decode";
 import { buildTimelineFromReceiptLogs, type TimelineStep } from "../../../lib/tx_timeline";
 
 export const dynamic = "force-dynamic";
@@ -38,6 +41,7 @@ export default async function TxPage({
   if (!detail) {
     notFound();
   }
+  const cfg = loadConfig(process.env);
   if (detail.redirectToHashHex) {
     const query = new URLSearchParams();
     if (tab === "logs") {
@@ -61,6 +65,7 @@ export default async function TxPage({
     toAddressHex: row.toAddressHex,
     amountText: formatTokenAmount(row.amount, row.tokenDecimals),
     isRawAmount: row.tokenDecimals === null,
+    kind: row.kind,
   }));
   const dividedRowLabelClass = "border-b border-slate-200 pb-4 text-slate-500";
   const dividedRowValueClass = "border-b border-slate-200 pb-4 font-mono break-all";
@@ -87,6 +92,34 @@ export default async function TxPage({
       ) : null}
 
       {receiptTab === "overview" || !detail.receipt ? (
+      <>
+      {txLabel(detail, cfg.wrapFactoryHex) ? (
+        <Card className="border-slate-200 bg-sky-50 shadow-sm py-0">
+          <CardContent className="space-y-3 py-4">
+            <div className="text-sm font-semibold text-sky-900">{txLabel(detail, cfg.wrapFactoryHex)}</div>
+            {detail.unwrapRequest ? (
+              <dl className="grid grid-cols-1 gap-y-2 text-sm md:grid-cols-[180px_1fr]">
+                <dt className="text-slate-600">Asset</dt>
+                <dd className="font-mono">{detail.unwrapRequest.assetIdText ?? detail.unwrapRequest.assetIdHex}</dd>
+                <dt className="text-slate-600">Recipient</dt>
+                <dd className="font-mono">{detail.unwrapRequest.recipientText ?? detail.unwrapRequest.recipientHex}</dd>
+                <dt className="text-slate-600">Amount</dt>
+                <dd className="font-mono">{detail.unwrapRequest.amount.toString()}</dd>
+              </dl>
+            ) : null}
+            {isWrapTx(detail, cfg.wrapFactoryHex) ? (
+              <div className="space-y-2 text-sm">
+                <div className="text-slate-700">This transaction is the EVM mint step for wrap settlement.</div>
+                {erc20TransfersView.length > 0 ? (
+                  <div className="text-slate-700">Minted token transfer is shown below in the ERC-20 section.</div>
+                ) : (
+                  <div className="text-slate-700">No ERC-20 mint transfer was indexed for this receipt.</div>
+                )}
+              </div>
+            ) : null}
+          </CardContent>
+        </Card>
+      ) : null}
       <Card className="border-slate-200 bg-white shadow-sm py-0">
         <CardContent className="space-y-4 py-4">
         <dl className="grid grid-cols-1 gap-y-4 text-sm md:grid-cols-[240px_1fr]">
@@ -186,6 +219,7 @@ export default async function TxPage({
         </dl>
         </CardContent>
       </Card>
+      </>
       ) : null}
       {receiptTab === "overview" || !detail.receipt ? (
         <Card className="border-slate-200 bg-white shadow-sm py-4">
@@ -234,6 +268,24 @@ export default async function TxPage({
   );
 }
 
+function isWrapTx(detail: TxDetailView, wrapFactoryHex: string | null): boolean {
+  return isConfirmedKasaneWrapTx({
+    toHex: detail.tx.toAddress ? toHexLower(detail.tx.toAddress) : null,
+    receipt: detail.receipt,
+    wrapFactoryHex,
+  });
+}
+
+function txLabel(detail: TxDetailView, wrapFactoryHex: string | null): string | null {
+  if (detail.unwrapRequest) {
+    return "Kasane Unwrap";
+  }
+  if (isWrapTx(detail, wrapFactoryHex)) {
+    return "Kasane Wrap Mint";
+  }
+  return null;
+}
+
 function buildReceiptTabHref(txHashHex: string, tab: ReceiptTab): string {
   const query = new URLSearchParams();
   query.set("tab", tab);
@@ -241,6 +293,11 @@ function buildReceiptTabHref(txHashHex: string, tab: ReceiptTab): string {
 }
 
 function TimelineRow({ step }: { step: TimelineStep }) {
+  const knownLog = decodeKnownLog({
+    addressHex: step.addressHex,
+    topic0Hex: step.topic0Hex,
+    dataHex: step.raw.dataHex,
+  });
   return (
     <div className="border-b border-slate-200 py-3">
       <div className="space-y-6">
@@ -252,16 +309,35 @@ function TimelineRow({ step }: { step: TimelineStep }) {
         <div className="grid grid-cols-1 gap-y-3 text-xs md:grid-cols-[90px_1fr]">
           <div className="text-slate-500">Address</div>
           <div className="font-mono break-all">
-            <Link href={`/address/${step.addressHex}`} className="text-sky-700 hover:underline">
-              {step.addressHex}
-            </Link>
+            <div className="space-y-1">
+              <Link href={`/address/${step.addressHex}`} className="text-sky-700 hover:underline">
+                {step.addressHex}
+              </Link>
+              {knownLog?.emitterLabel ? <div className="font-sans text-[11px] text-slate-500">{knownLog.emitterLabel}</div> : null}
+            </div>
           </div>
         </div>
 
         <div className="grid grid-cols-1 gap-y-3 text-xs md:grid-cols-[90px_1fr]">
           <div className="text-slate-500">Name</div>
-          <div className="font-mono text-slate-700">{formatEventName(step)}</div>
+          <div className="font-mono text-slate-700">{knownLog?.eventName ?? formatEventName(step)}</div>
         </div>
+
+        {knownLog && knownLog.fields.length > 0 ? (
+          <div className="grid grid-cols-1 gap-y-3 text-xs md:grid-cols-[90px_1fr]">
+            <div className="text-slate-500">Decoded</div>
+            <div className="rounded bg-slate-50 p-3">
+              <dl className="grid grid-cols-1 gap-y-2 md:grid-cols-[140px_1fr]">
+                {knownLog.fields.map((field) => (
+                  <Fragment key={`${step.index}:${field.label}`}>
+                    <dt className="text-slate-500">{field.label}</dt>
+                    <dd className="font-mono text-slate-700 break-all">{renderDecodedField(field.value, field.kind)}</dd>
+                  </Fragment>
+                ))}
+              </dl>
+            </div>
+          </div>
+        ) : null}
 
         <div className="grid grid-cols-1 gap-y-3 text-xs md:grid-cols-[90px_1fr]">
           <div className="text-slate-500">Topics</div>
@@ -282,7 +358,7 @@ function TimelineRow({ step }: { step: TimelineStep }) {
         </div>
 
         <div className="grid grid-cols-1 gap-y-3 text-xs md:grid-cols-[90px_1fr]">
-          <div className="text-slate-500 pt-3">Data</div>
+          <div className="text-slate-500 pt-3">{knownLog ? "Raw Data" : "Data"}</div>
           <div className="rounded   bg-slate-100 p-2 font-mono break-all ">
             <TxLogDataToggle dataHex={step.raw.dataHex} />
           </div>
@@ -312,6 +388,17 @@ function TimelineRow({ step }: { step: TimelineStep }) {
       </div>
     </div>
   );
+}
+
+function renderDecodedField(value: string, kind: "address" | "principal" | "number" | "hex" | "text"): ReactNode {
+  if (kind === "address" && /^0x[0-9a-f]{40}$/.test(value)) {
+    return (
+      <Link href={`/address/${value}`} className="text-sky-700 hover:underline">
+        {value}
+      </Link>
+    );
+  }
+  return value;
 }
 
 function linkifyAddresses(value: string): ReactNode[] {
@@ -425,6 +512,9 @@ const EVENT_NAME_BY_TOPIC0: Record<string, string> = {
   "0x631042c832b07452973831137f2d73e395028b44b250dedc5abb0ee766e168ac": "FlashLoan (Aave V2)",
   "0xefefaba5e921573100900a3ad9cf29f222d995fb3b6045797eaea7521bd8d6f0": "FlashLoan (Aave V3)",
   "0xf164a7d9b7e450d8229718aed20376118864bcc756709e0fc1d0891133dd2fe8": "FlashLoanSimple (Aave V3)",
+
+  // Kasane
+  "0xfaef50ddf54b1bf879718e112b8631c1ee03bdd73f37d23a4e8c372fcf6bc548": "KasaneUnwrapRequest",
 
   // Common ownership/admin patterns
   "0x8be0079c531659141344cd1fd0a4f28419497f9722a3daafe3b4186f6b6457e0": "OwnershipTransferred",

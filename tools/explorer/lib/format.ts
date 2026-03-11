@@ -43,6 +43,9 @@ export function formatTokenAmount(amount: bigint, decimals: number | null): stri
     return `${sign}${whole.toString()}`;
   }
   const shownFraction = trimmedFraction.slice(0, 8);
+  if (whole === 0n && shownFraction.length > 0 && /^0+$/.test(shownFraction)) {
+    return `${sign}<0.${"0".repeat(7)}1`;
+  }
   return `${sign}${whole.toString()}.${shownFraction}`;
 }
 
