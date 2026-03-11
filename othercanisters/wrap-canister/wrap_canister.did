@@ -29,6 +29,7 @@ type SubmitUnwrapRequestArgs = record {
   recipient : blob;
 };
 type SubmitUnwrapRequestOk = record { request_id : blob };
+type RetryFailedUnwrapArgs = record { request_id : blob };
 type SubmitWrapRequestArgs = record {
   request_id : blob;
   asset_id : blob;
@@ -48,7 +49,6 @@ type WithdrawFailedWrapOk = record { request_id : blob; ledger_tx_id : blob };
 type InitArgs = record {
   kasane_canister : principal;
   evm_gateway_canister : principal;
-  evm_wrap_factory : blob;
   fee_ledger_canister : principal;
   cycle_fee_e8s : nat64;
   gas_price_buffer_bps : nat32;
@@ -56,6 +56,7 @@ type InitArgs = record {
 service : (InitArgs) -> {
   submit_unwrap_request : (SubmitUnwrapRequestArgs) -> (variant { Ok : SubmitUnwrapRequestOk; Err : text });
   submit_wrap_request : (SubmitWrapRequestArgs) -> (variant { Ok : SubmitWrapRequestOk; Err : text });
+  retry_failed_unwrap : (RetryFailedUnwrapArgs) -> (variant { Ok : SubmitUnwrapRequestOk; Err : text });
   withdraw_failed_wrap : (WithdrawFailedWrapArgs) -> (variant { Ok : WithdrawFailedWrapOk; Err : text });
   get_fee_policy : () -> (variant { Ok : FeePolicyView; Err : text }) query;
   get_request_status : (blob) -> (opt RequestStatus) query;

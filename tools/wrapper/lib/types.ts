@@ -61,7 +61,6 @@ export type WrapExecutionResult = {
 
 export type StatusMergeInput = {
   requestIdHex: string;
-  dispatchStatus: DispatchStatus | null;
   dispatchResult: DispatchResultView | null;
   executionResult: WrapExecutionResult | null;
 };

@@ -46,8 +46,9 @@ scripts/local_wrap_unwrap_ledger_smoke.sh
    - `mint_failed_recoverable = false`
    になることを確認
 9. mint tx receipt が `status = 1` になることと、
-    - factory の `predictTokenAddress(bytes)`
+    - factory の `predictTokenAddress(bytes,uint8)`
     - factory の `getTokenAddress(bytes)`
+    - wrapped token の `decimals()`
     - wrapped token の `balanceOf(address)`
     が期待どおりであることを確認
 10. `submit_ic_tx` で unwrap request を起票し、
@@ -66,7 +67,8 @@ scripts/local_wrap_unwrap_ledger_smoke.sh
   - `WrapRequestResult.status = Succeeded` は wrap canister が mint tx を gateway に受理させたことを表す
   - EVM inclusion 完了は別で mint receipt `status = 1` を確認する
   - factory deploy と initial mint が成功する
-  - `predictTokenAddress(bytes)` と `getTokenAddress(bytes)` が一致する
+  - `predictTokenAddress(bytes,uint8)` と `getTokenAddress(bytes)` が一致する
+  - wrapped token の `decimals()` が ledger metadata と一致する
   - wrapped token の `balanceOf` が `WRAP_AMOUNT` になる
 - unwrap:
   - 正しい vault bytes で `Dispatched`

@@ -8,16 +8,24 @@ import type {
   WrapFormState,
 } from "@/components/dashboard-ui/types";
 import { approveLedgerSpend, getLedgerAllowance } from "@/lib/canister/icrc2-client";
+import { approveWrappedTokenIfNeeded } from "@/lib/canister/erc20-client";
 import {
   estimateUnwrapGasLimit,
   getExpectedNonce,
   getGasPriceWei,
   submitIcTx,
 } from "@/lib/canister/wrapper-client";
-import { getFeePolicy, submitWrapRequest, withdrawFailedWrap } from "@/lib/canister/wrap-client";
+import {
+  getFeePolicy,
+  retryFailedUnwrap,
+  submitWrapRequest,
+  withdrawFailedWrap,
+} from "@/lib/canister/wrap-client";
 import type { loadConfig } from "@/lib/config";
 import { callerEvmAddressFromPrincipalText, principalTextToBytes } from "@/lib/principal";
 import {
+  decimalToBytes32,
+  deriveWrapRequestId,
   toSubmitIcTxData,
   WRAP_PRECOMPILE_ADDRESS,
 } from "@/lib/request-id";
@@ -59,6 +67,7 @@ export function useWrapperActions(params: {
   onRequestIdInput: (requestId: string) => void;
 }) {
   const [submitLoading, setSubmitLoading] = useState(false);
+  const [retryLoading, setRetryLoading] = useState(false);
   const [withdrawLoading, setWithdrawLoading] = useState(false);
   const [wrapActionStep, setWrapActionStep] = useState<WrapActionStep>("idle");
   const [wrapFeeEstimateText, setWrapFeeEstimateText] = useState<string | null>(null);
@@ -100,6 +109,12 @@ export function useWrapperActions(params: {
         params.forms.unwrapForm.amount,
         "validation.amount.invalid",
       );
+      await approveWrappedTokenIfNeeded({
+        assetId: params.forms.unwrapForm.assetId.trim(),
+        amount,
+        principalText: ready.principalText,
+        identity: params.walletSession.identity,
+      });
       const callerEvmAddress = callerEvmAddressFromPrincipalText(ready.principalText);
       const txData = toSubmitIcTxData({
         assetId: params.forms.unwrapForm.assetId.trim(),
@@ -323,13 +338,36 @@ export function useWrapperActions(params: {
     }
   }
 
+  async function retryUnwrap(): Promise<void> {
+    if (!params.walletSession || !params.tracker.status) {
+      params.tracker.setMessage("status.not_loaded");
+      return;
+    }
+    try {
+      setRetryLoading(true);
+      params.tracker.setMessage(null);
+      const requestId = await retryFailedUnwrap(
+        parseRequestIdHex(params.tracker.status.requestId),
+        params.walletSession.identity,
+      );
+      await queryAndStartPolling(bytesToHex(requestId));
+      params.tracker.setMessage("retry.success");
+    } catch (error) {
+      params.tracker.setMessage(error instanceof Error ? error.message : "retry_failed");
+    } finally {
+      setRetryLoading(false);
+    }
+  }
+
   return {
+    retryLoading,
     submitLoading,
     withdrawLoading,
     wrapActionStep,
     wrapFeeEstimateText,
     submitUnwrap,
     submitWrap,
+    retryUnwrap,
     withdraw,
     queryAndStartPolling,
   };

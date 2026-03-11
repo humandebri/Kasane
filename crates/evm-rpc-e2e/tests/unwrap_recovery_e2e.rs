@@ -219,18 +219,6 @@ fn seed_wrap_request(
     assert!(result.is_ok(), "seed wrap request failed: {result:?}");
 }
 
-fn gateway_dispatch_status(pic: &PocketIc, gateway_id: Principal, request_id: &[u8]) -> Option<RequestDispatchStatusView> {
-    let out = pic
-        .query_call(
-            gateway_id,
-            Principal::anonymous(),
-            "get_request_dispatch_status",
-            Encode!(&RequestKindView::Unwrap, &request_id.to_vec()).expect("encode status query"),
-        )
-        .unwrap_or_else(|err| panic!("gateway status query failed: {err}"));
-    Decode!(&out, Option<RequestDispatchStatusView>).expect("decode gateway status")
-}
-
 fn gateway_dispatch_result(pic: &PocketIc, gateway_id: Principal, request_id: &[u8]) -> Option<RequestDispatchResultView> {
     let out = pic
         .query_call(
@@ -287,7 +275,8 @@ fn upgrade_retries_dispatching_unwrap_via_idempotent_submit() {
     assert_eq!(request_ids.len(), 1);
     let request_id = request_ids[0].clone();
     assert_eq!(
-        gateway_dispatch_status(&pic, gateway_id, &request_id),
+        gateway_dispatch_result(&pic, gateway_id, &request_id)
+            .map(|value| value.status),
         Some(RequestDispatchStatusView::Queued)
     );
     seed_wrap_request(&pic, wrap_id, &request_id, asset, recipient);

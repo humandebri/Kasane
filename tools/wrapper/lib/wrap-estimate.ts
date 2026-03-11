@@ -26,6 +26,7 @@ export type BuildWrapEstimateCallArgs = {
   wrapCanisterId: string;
   evmWrapFactory: string;
   assetId: string;
+  tokenDecimals: number;
   amount: string;
   evmRecipient: string;
 };
@@ -59,22 +60,28 @@ function u256FromU64(value: number): Uint8Array {
 }
 
 function factoryMintForAssetSelector(): Uint8Array {
-  return Uint8Array.from(keccak_256(new TextEncoder().encode("mintForAsset(bytes,address,uint256)")).slice(0, 4));
+  return Uint8Array.from(keccak_256(new TextEncoder().encode("mintForAsset(bytes,uint8,address,uint256)")).slice(0, 4));
 }
 
 export function encodeFactoryMintForAssetCallData(args: {
   assetId: Uint8Array;
+  tokenDecimals: number;
   evmRecipient: Uint8Array;
   amount: Uint8Array;
 }): Uint8Array {
   assertLen(args.evmRecipient, 20, "arg.evm_recipient_invalid");
   assertLen(args.amount, 32, "arg.amount_len_invalid");
+  if (!Number.isInteger(args.tokenDecimals) || args.tokenDecimals < 0 || args.tokenDecimals > 255) {
+    throw new Error("wrap.asset_decimals_invalid");
+  }
   const padded = (32 - (args.assetId.length % 32)) % 32;
-  const out = new Uint8Array(4 + 32 * 4 + args.assetId.length + padded);
+  const out = new Uint8Array(4 + 32 * 5 + args.assetId.length + padded);
   let offset = 0;
   out.set(factoryMintForAssetSelector(), offset);
   offset += 4;
-  out.set(u256FromU64(96), offset);
+  out.set(u256FromU64(128), offset);
+  offset += 32;
+  out.set(u256FromU64(args.tokenDecimals), offset);
   offset += 32;
   out.set(args.evmRecipient, offset + 12);
   offset += 32;
@@ -96,6 +103,7 @@ export function buildWrapEstimateCallObject(args: BuildWrapEstimateCallArgs): Wr
   const value = new Uint8Array(32);
   const data = encodeFactoryMintForAssetCallData({
     assetId,
+    tokenDecimals: args.tokenDecimals,
     evmRecipient,
     amount,
   });

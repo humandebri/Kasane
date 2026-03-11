@@ -25,7 +25,6 @@ struct GatewayInitArgs {
 struct WrapInitArgs {
     kasane_canister: Principal,
     evm_gateway_canister: Principal,
-    evm_wrap_factory: Vec<u8>,
     fee_ledger_canister: Principal,
     cycle_fee_e8s: u64,
     gas_price_buffer_bps: u32,
@@ -131,7 +130,6 @@ fn install_pair(pic: &PocketIc) -> (Principal, Principal, Principal) {
     let wrap_init = WrapInitArgs {
         kasane_canister: gateway_id,
         evm_gateway_canister: gateway_id,
-        evm_wrap_factory: vec![0x11; 20],
         fee_ledger_canister: fee_ledger_id,
         cycle_fee_e8s: 1_000_000,
         gas_price_buffer_bps: 12_000,

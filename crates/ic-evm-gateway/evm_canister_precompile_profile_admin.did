@@ -371,9 +371,6 @@ service : (opt InitArgs) -> {
   get_request_dispatch_result : (RequestKindView, blob) -> (
       opt RequestDispatchResultView,
     ) query;
-  get_request_dispatch_status : (RequestKindView, blob) -> (
-      opt RequestDispatchStatusView,
-    ) query;
   get_unwrap_request_ids_by_tx_id : (blob) -> (vec blob) query;
   health : () -> (HealthView) query;
   memory_breakdown : () -> (MemoryBreakdownView) query;

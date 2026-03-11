@@ -3,7 +3,6 @@
 import { useCallback, useEffect, useState } from "react";
 import {
   getDispatchResult,
-  getDispatchStatus,
   getUnwrapRequestIdsByTxId,
 } from "@/lib/canister/wrapper-client";
 import { getExecutionResult } from "@/lib/canister/wrap-client";
@@ -43,15 +42,13 @@ export function useStatusTracker() {
         const inputId = parseRequestIdHex(requestIdHex.trim());
         const requestId = await resolveTrackingRequestId(inputId);
         const resolvedRequestIdHex = bytesToHex(requestId);
-        const [dispatchStatus, dispatchResult, executionResult] = await Promise.all([
-          getDispatchStatus(requestId),
+        const [dispatchResult, executionResult] = await Promise.all([
           getDispatchResult(requestId),
           getExecutionResult(requestId),
         ]);
         setStatus(
           mergeStatus({
             requestIdHex: resolvedRequestIdHex,
-            dispatchStatus,
             dispatchResult,
             executionResult,
           }),

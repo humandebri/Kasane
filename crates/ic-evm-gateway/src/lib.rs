@@ -1180,23 +1180,6 @@ fn get_pending(tx_id: Vec<u8>) -> PendingStatusView {
 }
 
 #[ic_cdk::query]
-fn get_request_dispatch_status(
-    kind: RequestKindView,
-    request_id: Vec<u8>,
-) -> Option<RequestDispatchStatusView> {
-    match kind {
-        RequestKindView::Unwrap => {}
-    }
-    let request_id = request_id_from_bytes(request_id)?;
-    with_state(|state| {
-        state
-            .unwrap_requests
-            .get(&TxId(request_id))
-            .map(|v| request_dispatch_status_to_view(v.status))
-    })
-}
-
-#[ic_cdk::query]
 fn get_request_dispatch_result(
     kind: RequestKindView,
     request_id: Vec<u8>,
@@ -2231,25 +2214,51 @@ async fn unwrap_dispatch_tick() {
             break;
         };
 
-        let args = WrapSubmitUnwrapRequestArgs {
-            request_id: request_id.0.to_vec(),
-            asset_id: req.asset_id.clone(),
-            amount: req.amount.to_vec(),
-            recipient: req.recipient.clone(),
+        let args = match build_wrap_submit_unwrap_request_args(&request_id, &req) {
+            Ok(args) => args,
+            Err(code) => {
+                finalize_unwrap_dispatch_attempt(
+                    request_id,
+                    time(),
+                    AppliedUnwrapDispatchOutcome {
+                        status: UnwrapRequestStatus::DispatchFailed,
+                        error_code: Some(code),
+                    },
+                );
+                if with_state(|state| !state.unwrap_dispatch_queue.is_empty()) {
+                    schedule_unwrap_dispatch();
+                }
+                break;
+            }
         };
-        let submit = ic_cdk::call::Call::unbounded_wait(
-            current_wrap_canister_id(),
-            "submit_unwrap_request",
-        )
-        .with_arg(args)
-        .await;
+        let submit =
+            ic_cdk::call::Call::unbounded_wait(current_wrap_canister_id(), "submit_unwrap_request")
+                .with_arg(args)
+                .await;
 
         finalize_unwrap_dispatch_attempt(
             request_id,
             time(),
             apply_unwrap_dispatch_outcome(resolve_wrap_submit_outcome(&request_id.0, submit)),
         );
+
+        if with_state(|state| !state.unwrap_dispatch_queue.is_empty()) {
+            schedule_unwrap_dispatch();
+        }
+        break;
     }
+}
+
+fn build_wrap_submit_unwrap_request_args(
+    request_id: &TxId,
+    req: &UnwrapDispatchRequest,
+) -> Result<WrapSubmitUnwrapRequestArgs, String> {
+    Ok(WrapSubmitUnwrapRequestArgs {
+        request_id: request_id.0.to_vec(),
+        asset_id: req.asset_id.clone(),
+        amount: req.amount.to_vec(),
+        recipient: req.recipient.clone(),
+    })
 }
 
 fn resolve_wrap_submit_outcome(
@@ -2405,14 +2414,14 @@ mod tests {
     use candid::{encode_one, Nat, Principal};
     use evm_core::chain::{ChainError, ExecResult, TxIn};
     use evm_core::hash;
-    use evm_core::wrap_precompile::WRAP_PRECOMPILE_ADDRESS;
     use evm_core::revm_exec::{ExecError, OpHaltReason, OpTransactionError};
     use evm_core::tx_decode::IcSyntheticTxInput;
+    use evm_core::wrap_precompile::WRAP_PRECOMPILE_ADDRESS;
     use evm_db::chain_data::constants::MAX_RETURN_DATA;
     use evm_db::chain_data::receipt::log_entry_from_parts;
     use evm_db::chain_data::{
-        BlockData, MigrationPhase, OpsMode, ReceiptLike, TxId, TxLoc, UnwrapDispatchRequest,
-        UnwrapRequestStatus,
+        BlockData, MigrationPhase, OpsMode, ReceiptLike, TxId, TxLoc,
+        UnwrapDispatchRequest, UnwrapRequestStatus,
     };
     use evm_db::memory::{get_memory, AppMemoryId, WASM_PAGE_SIZE_BYTES};
     use evm_db::meta::{
@@ -3930,7 +3939,7 @@ mod tests {
     }
 
     #[test]
-    fn get_request_dispatch_status_returns_dispatch_failed_for_decode_marker() {
+    fn get_request_dispatch_result_returns_dispatch_failed_for_decode_marker() {
         init_stable_state();
         let request_id = TxId([0x12u8; 32]);
         with_state_mut(|state| {
@@ -3944,12 +3953,12 @@ mod tests {
             );
         });
 
-        let status = super::get_request_dispatch_status(
+        let result = super::get_request_dispatch_result(
             super::RequestKindView::Unwrap,
             request_id.0.to_vec(),
         )
-        .expect("status");
-        assert_eq!(status, super::RequestDispatchStatusView::DispatchFailed);
+        .expect("result");
+        assert_eq!(result.status, super::RequestDispatchStatusView::DispatchFailed);
     }
 
     #[test]
@@ -4392,7 +4401,6 @@ mod tests {
         assert!(!did.contains("get_unwrap_request_result"));
         assert!(!did.contains("get_unwrap_request_status"));
         assert!(did.contains("get_request_dispatch_result"));
-        assert!(did.contains("get_request_dispatch_status"));
         assert!(did.contains("get_unwrap_request_ids_by_tx_id"));
         assert!(!did.contains("set_wrap_canister_id : (principal) -> (Result_15);"));
     }

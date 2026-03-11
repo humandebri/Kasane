@@ -2,7 +2,8 @@
 
 use alloy_primitives::keccak256;
 use ic_pub_key::{derive_ecdsa_key, EcdsaCurve, EcdsaKeyId, EcdsaPublicKeyArgs};
-use ic_secp256k1::PublicKey;
+use k256::elliptic_curve::sec1::ToEncodedPoint;
+use k256::PublicKey;
 use std::sync::OnceLock;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -32,10 +33,10 @@ pub fn derive_evm_address_from_principal(
         },
     })
     .map_err(|_| AddressDerivationError::DerivationFailed)?;
-    let derived = PublicKey::deserialize_sec1(&out.public_key)
+    let derived = PublicKey::from_sec1_bytes(&out.public_key)
         .map_err(|_| AddressDerivationError::InvalidDerivedPublicKeyEncoding)?;
-    let uncompressed = derived.serialize_sec1(false);
-    derive_evm_address_from_uncompressed_sec1(uncompressed.as_slice())
+    let uncompressed = derived.to_encoded_point(false);
+    derive_evm_address_from_uncompressed_sec1(uncompressed.as_bytes())
 }
 
 fn derive_evm_address_from_uncompressed_sec1(

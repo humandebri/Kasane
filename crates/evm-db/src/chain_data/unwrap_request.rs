@@ -8,7 +8,7 @@ use std::borrow::Cow;
 const MAX_BLOB_LEN: usize = 256;
 const MAX_ERROR_LEN: usize = 192;
 const MAX_LEDGER_TX_ID_LEN: usize = 128;
-const MAX_ENCODED_LEN: u32 = 1_024;
+const MAX_ENCODED_LEN: u32 = 1_088;
 const CHECKSUM_LEN: usize = 4;
 pub const UNWRAP_DECODE_FAILURE_CODE: &str = "stable.decode.unwrap_request";
 
@@ -114,7 +114,7 @@ impl UnwrapDispatchRequest {
             return None;
         }
         let mut out = Vec::with_capacity(256);
-        out.push(2u8);
+        out.push(1u8);
         write_bytes(&mut out, &self.asset_id)?;
         out.extend_from_slice(&self.amount);
         write_bytes(&mut out, &self.recipient)?;
@@ -142,10 +142,10 @@ impl UnwrapDispatchRequest {
     fn decode_checked(data: &[u8]) -> Option<Self> {
         let mut offset = 0usize;
         let version = *data.get(offset)?;
-        if version != 2 {
+        offset += 1;
+        if version != 1 {
             return None;
         }
-        offset += 1;
         let asset_id = read_bytes(data, &mut offset, MAX_BLOB_LEN)?;
         let amount = read_array_32(data, &mut offset)?;
         let recipient = read_bytes(data, &mut offset, MAX_BLOB_LEN)?;

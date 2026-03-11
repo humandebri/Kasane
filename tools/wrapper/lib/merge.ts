@@ -4,7 +4,7 @@ import type { StatusMergeInput, StatusResponse } from "./types";
 import { bytesToHex } from "./utils";
 
 export function mergeStatus(input: StatusMergeInput): StatusResponse {
-  const dispatchStatus = input.dispatchResult?.status ?? input.dispatchStatus;
+  const dispatchStatus = input.dispatchResult?.status ?? null;
   const executionStatus = input.executionResult?.status ?? null;
   const ledgerTxId = input.executionResult?.ledgerTxId
     ? bytesToHex(input.executionResult.ledgerTxId)

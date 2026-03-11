@@ -85,9 +85,11 @@ export function WrapperDashboard({ cfg, configError }: WrapperDashboardConfigSta
           statusLoading={tracker.statusLoading}
           message={tracker.message}
           walletConnected={wallet.session !== null}
+          retryLoading={actions.retryLoading}
           withdrawLoading={actions.withdrawLoading}
           onChangeRequestId={setRequestIdInput}
           onQuery={() => void actions.queryAndStartPolling(requestIdInput)}
+          onRetry={() => void actions.retryUnwrap()}
           onWithdraw={() => void actions.withdraw()}
         />
       </section>

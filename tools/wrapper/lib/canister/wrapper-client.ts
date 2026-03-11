@@ -23,6 +23,7 @@ type NatResult = { Ok: bigint } | { Err: string };
 type RpcErrorView = { code: number; message: string; error_prefix: [] | [string] };
 type GasPriceResult = { Ok: bigint } | { Err: RpcErrorView };
 type GasEstimateResult = { Ok: bigint } | { Err: RpcErrorView };
+type CallResult = { Ok: { status: number; gas_used: bigint; return_data: Uint8Array; revert_data: [] | [Uint8Array] } } | { Err: RpcErrorView };
 type RequestKind = { Unwrap: null };
 const REQUEST_KIND_UNWRAP: RequestKind = { Unwrap: null };
 
@@ -31,6 +32,7 @@ type WrapperActor = ActorSubclass<{
   rpc_eth_gas_price: () => Promise<GasPriceResult>;
   rpc_eth_max_priority_fee_per_gas: () => Promise<GasPriceResult>;
   rpc_eth_estimate_gas_object: (call: WrapEstimateCallObject) => Promise<GasEstimateResult>;
+  rpc_eth_call_object: (call: WrapEstimateCallObject) => Promise<CallResult>;
   submit_ic_tx: (args: {
     to: [] | [Uint8Array];
     value: bigint;
@@ -40,10 +42,6 @@ type WrapperActor = ActorSubclass<{
     nonce: bigint;
     gas_limit: bigint;
   }) => Promise<SubmitIcTxResult>;
-  get_request_dispatch_status: (
-    kind: RequestKind,
-    requestId: Uint8Array
-  ) => Promise<[] | [{ Queued: null } | { Dispatching: null } | { Dispatched: null } | { DispatchFailed: null }]>;
   get_request_dispatch_result: (
     kind: RequestKind,
     requestId: Uint8Array
@@ -57,8 +55,8 @@ type WrapperActor = ActorSubclass<{
 type QueryActorLike = Pick<
   WrapperActor,
   "expected_nonce_by_address" | "rpc_eth_gas_price" | "rpc_eth_max_priority_fee_per_gas"
-  | "rpc_eth_estimate_gas_object"
-  | "get_request_dispatch_status" | "get_request_dispatch_result"
+  | "rpc_eth_estimate_gas_object" | "rpc_eth_call_object"
+  | "get_request_dispatch_result"
   | "get_unwrap_request_ids_by_tx_id"
 >;
 type SubmitActorLike = Pick<WrapperActor, "submit_ic_tx">;
@@ -142,8 +140,40 @@ const wrapperIdlFactory: IDL.InterfaceFactory = ({ IDL: I }) => {
       })],
       ["query"]
     ),
+    rpc_eth_call_object: I.Func(
+      [I.Record({
+        to: I.Opt(I.Vec(I.Nat8)),
+        from: I.Opt(I.Vec(I.Nat8)),
+        gas: I.Opt(I.Nat64),
+        gas_price: I.Opt(I.Nat),
+        nonce: I.Opt(I.Nat64),
+        max_fee_per_gas: I.Opt(I.Nat),
+        max_priority_fee_per_gas: I.Opt(I.Nat),
+        chain_id: I.Opt(I.Nat64),
+        tx_type: I.Opt(I.Nat64),
+        access_list: I.Opt(I.Vec(I.Record({
+          address: I.Vec(I.Nat8),
+          storage_keys: I.Vec(I.Vec(I.Nat8)),
+        }))),
+        value: I.Opt(I.Vec(I.Nat8)),
+        data: I.Opt(I.Vec(I.Nat8)),
+      })],
+      [I.Variant({
+        Ok: I.Record({
+          status: I.Nat8,
+          gas_used: I.Nat64,
+          return_data: I.Vec(I.Nat8),
+          revert_data: I.Opt(I.Vec(I.Nat8)),
+        }),
+        Err: I.Record({
+          code: I.Nat32,
+          message: I.Text,
+          error_prefix: I.Opt(I.Text),
+        }),
+      })],
+      ["query"]
+    ),
     submit_ic_tx: I.Func([SubmitIcTxArgsDto], [I.Variant({ Ok: I.Vec(I.Nat8), Err: SubmitTxError })], []),
-    get_request_dispatch_status: I.Func([RequestKindView, I.Vec(I.Nat8)], [I.Opt(RequestDispatchStatusView)], ["query"]),
     get_request_dispatch_result: I.Func([RequestKindView, I.Vec(I.Nat8)], [I.Opt(RequestDispatchResultView)], ["query"]),
     get_unwrap_request_ids_by_tx_id: I.Func([I.Vec(I.Nat8)], [I.Vec(I.Vec(I.Nat8))], ["query"]),
   });
@@ -277,6 +307,67 @@ export async function estimateUnwrapGasLimit(
   return applyUnwrapGasHeadroom(out.Ok);
 }
 
+export async function estimateContractGasLimit(
+  args: {
+    to: Uint8Array;
+    from: Uint8Array;
+    nonce: bigint;
+    data: Uint8Array;
+  },
+  deps: {
+    readEstimateGas: (call: WrapEstimateCallObject) => Promise<GasEstimateResult>;
+  } = {
+    readEstimateGas: async (call) => (await getQueryActor()).rpc_eth_estimate_gas_object(call),
+  },
+): Promise<bigint> {
+  const out = await deps.readEstimateGas({
+    to: [args.to],
+    from: [args.from],
+    gas: [],
+    gas_price: [],
+    nonce: [args.nonce],
+    max_fee_per_gas: [],
+    max_priority_fee_per_gas: [],
+    chain_id: [],
+    tx_type: [],
+    access_list: [],
+    value: [new Uint8Array(32)],
+    data: [args.data],
+  });
+  if ("Err" in out) {
+    throw new Error(decodeRpcNatError("evm_gateway.estimate_gas_failed", out.Err));
+  }
+  return applyWrapGasHeadroom(out.Ok);
+}
+
+export async function callReadonlyContract(args: {
+  to: Uint8Array;
+  data: Uint8Array;
+  from?: Uint8Array;
+}): Promise<Uint8Array> {
+  const out = await (await getQueryActor()).rpc_eth_call_object({
+    to: [args.to],
+    from: args.from ? [args.from] : [],
+    gas: [],
+    gas_price: [],
+    nonce: [],
+    max_fee_per_gas: [],
+    max_priority_fee_per_gas: [],
+    chain_id: [],
+    tx_type: [],
+    access_list: [],
+    value: [new Uint8Array(32)],
+    data: [args.data],
+  });
+  if ("Err" in out) {
+    throw new Error(decodeRpcNatError("evm_gateway.call_failed", out.Err));
+  }
+  if (out.Ok.status !== 1) {
+    throw new Error("evm_gateway.call_reverted");
+  }
+  return out.Ok.return_data;
+}
+
 export async function submitIcTx(args: {
   to: Uint8Array;
   data: Uint8Array;
@@ -301,14 +392,6 @@ export async function submitIcTx(args: {
     throw new Error(decodeSubmitError(out.Err));
   }
   return out.Ok;
-}
-
-export async function getDispatchStatus(requestId: Uint8Array): Promise<DispatchStatus | null> {
-  const out = await (await getQueryActor()).get_request_dispatch_status(REQUEST_KIND_UNWRAP, requestId);
-  if (out.length === 0) {
-    return null;
-  }
-  return decodeDispatchStatus(out[0]);
 }
 
 export async function getDispatchResult(requestId: Uint8Array): Promise<DispatchResultView | null> {

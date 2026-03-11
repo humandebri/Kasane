@@ -14,7 +14,8 @@ ICP_IDENTITY_NAME="${ICP_IDENTITY_NAME:-ci-local}"
 EVM_CANISTER_ID="${EVM_CANISTER_ID:-4c52m-aiaaa-aaaam-agwwa-cai}"
 WRAP_CANISTER_ID="${WRAP_CANISTER_ID:-lpuz5-uyaaa-aaaam-ah4da-cai}"
 FEE_LEDGER_CANISTER_ID="${FEE_LEDGER_CANISTER_ID:-xafvr-biaaa-aaaai-aql5q-cai}"
-EVM_WRAP_FACTORY="${EVM_WRAP_FACTORY:-0x44ec859b574d343188a1a36918192a1f39e41510}"
+FEE_LEDGER_DECIMALS="${FEE_LEDGER_DECIMALS:-8}"
+EVM_WRAP_FACTORY="${EVM_WRAP_FACTORY:-0x9057eb7d9095e5e0ff2091b8870c753fb16d3ebb}"
 WRAP_AMOUNT_E8S="${WRAP_AMOUNT_E8S:-1000000}"
 WRAP_ALLOWANCE_E8S="${WRAP_ALLOWANCE_E8S:-500000000}"
 UNWRAP_AMOUNT_E8S="${UNWRAP_AMOUNT_E8S:-${WRAP_AMOUNT_E8S}}"
@@ -79,6 +80,7 @@ if (mode === "wrap-meta") {
   const factory = process.argv[6] ?? "";
   const evmNonce = BigInt(process.argv[7] ?? "0");
   const gasLimit = BigInt(process.argv[8] ?? "0");
+  const tokenDecimals = Number(process.argv[10] ?? "0");
   const callerPrincipal = Principal.fromText(principal);
   const assetPrincipal = Principal.fromText(assetId);
   const evmRecipient = callerEvmAddressFromPrincipalText(principal);
@@ -86,6 +88,7 @@ if (mode === "wrap-meta") {
     wrapCanisterId: process.argv[9] ?? "",
     evmWrapFactory: factory,
     assetId,
+    tokenDecimals,
     amount,
     evmRecipient: `0x${Buffer.from(evmRecipient).toString("hex")}`,
   });
@@ -227,7 +230,7 @@ append_report() {
 
 BALANCE_OUT="$(icp token "${FEE_LEDGER_CANISTER_ID}" balance -n ic --identity "${ICP_IDENTITY_NAME}")"
 ALLOWANCE_OUT="$(icp canister call -e "${ICP_ENV}" --identity "${ICP_IDENTITY_NAME}" "${FEE_LEDGER_CANISTER_ID}" icrc2_allowance "(record { account = record { owner = principal \"${CALLER_PRINCIPAL}\"; subaccount = null }; spender = record { owner = principal \"${WRAP_CANISTER_ID}\"; subaccount = null } })")"
-WRAP_ESTIMATE_META="$(helper_json wrap-meta "${CALLER_PRINCIPAL}" "${FEE_LEDGER_CANISTER_ID}" "${WRAP_AMOUNT_E8S}" "${EVM_WRAP_FACTORY}" "0" "1" "${WRAP_CANISTER_ID}")"
+WRAP_ESTIMATE_META="$(helper_json wrap-meta "${CALLER_PRINCIPAL}" "${FEE_LEDGER_CANISTER_ID}" "${WRAP_AMOUNT_E8S}" "${EVM_WRAP_FACTORY}" "0" "1" "${WRAP_CANISTER_ID}" "${FEE_LEDGER_DECIMALS}")"
 CALLER_EVM_HEX="$(WRAP_ESTIMATE_META="${WRAP_ESTIMATE_META}" python - <<'PY'
 import json, os
 print(json.loads(os.environ["WRAP_ESTIMATE_META"])["caller_evm_hex"])
@@ -244,7 +247,7 @@ print("; ".join(str(b) for b in bytes.fromhex(hexv)))
 PY
 ) })")")"
 
-WRAP_ESTIMATE_META="$(helper_json wrap-meta "${CALLER_PRINCIPAL}" "${FEE_LEDGER_CANISTER_ID}" "${WRAP_AMOUNT_E8S}" "${EVM_WRAP_FACTORY}" "${WRAP_NONCE}" "1" "${WRAP_CANISTER_ID}")"
+WRAP_ESTIMATE_META="$(helper_json wrap-meta "${CALLER_PRINCIPAL}" "${FEE_LEDGER_CANISTER_ID}" "${WRAP_AMOUNT_E8S}" "${EVM_WRAP_FACTORY}" "${WRAP_NONCE}" "1" "${WRAP_CANISTER_ID}" "${FEE_LEDGER_DECIMALS}")"
 WRAP_ESTIMATE_OUT="$(icp canister call -e "${ICP_ENV}" --identity "${ICP_IDENTITY_NAME}" --query "${EVM_CANISTER_ID}" rpc_eth_estimate_gas_object "(record { to = opt $(WRAP_ESTIMATE_META="${WRAP_ESTIMATE_META}" python - <<'PY'
 import json, os
 print(json.loads(os.environ["WRAP_ESTIMATE_META"])["estimate_to_vec"])
@@ -270,7 +273,7 @@ print((value * 12 + 9) // 10)
 PY
 )"
 
-WRAP_META="$(helper_json wrap-meta "${CALLER_PRINCIPAL}" "${FEE_LEDGER_CANISTER_ID}" "${WRAP_AMOUNT_E8S}" "${EVM_WRAP_FACTORY}" "${WRAP_NONCE}" "${WRAP_GAS_LIMIT}" "${WRAP_CANISTER_ID}")"
+WRAP_META="$(helper_json wrap-meta "${CALLER_PRINCIPAL}" "${FEE_LEDGER_CANISTER_ID}" "${WRAP_AMOUNT_E8S}" "${EVM_WRAP_FACTORY}" "${WRAP_NONCE}" "${WRAP_GAS_LIMIT}" "${WRAP_CANISTER_ID}" "${FEE_LEDGER_DECIMALS}")"
 
 log "approve fee ledger if needed"
 icp canister call -e "${ICP_ENV}" --identity "${ICP_IDENTITY_NAME}" "${FEE_LEDGER_CANISTER_ID}" icrc2_approve "(record { from_subaccount = null; spender = record { owner = principal \"${WRAP_CANISTER_ID}\"; subaccount = null }; amount = ${WRAP_ALLOWANCE_E8S} : nat; expected_allowance = null; expires_at = null; fee = null; memo = null; created_at_time = null })" >/dev/null

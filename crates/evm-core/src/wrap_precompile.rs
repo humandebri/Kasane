@@ -1,13 +1,17 @@
 //! どこで: EVM custom precompile / 何を: unwrap request の起票 / なぜ: wrap/vault 連携を tx 内で確定するため
 
 use crate::hash;
+use evm_db::chain_data::{constants::CHAIN_ID, runtime_defaults::DEFAULT_WRAP_FACTORY_ADDRESS};
 use evm_db::chain_data::receipt::LogEntry;
 use revm::{
     context::Cfg,
-    context_interface::{ContextTr, JournalTr, LocalContextTr},
+    context_interface::{
+        journaled_state::account::JournaledAccountTr, ContextTr, JournalTr, LocalContextTr,
+        Transaction,
+    },
     handler::{EthPrecompiles, PrecompileProvider},
     interpreter::{CallInputs, Gas, InstructionResult, InterpreterResult},
-    primitives::{Address, Bytes, Log, B256},
+    primitives::{Address, Bytes, Log, B256, U256},
 };
 use std::boxed::Box;
 use std::cell::RefCell;
@@ -25,6 +29,11 @@ const COMPACT_UNWRAP_FORMAT_VERSION: u8 = 1;
 const COMPACT_PRINCIPAL_FIELD_LEN: usize = 1 + MAX_PRINCIPAL_LEN;
 const COMPACT_UNWRAP_INPUT_LEN: usize = 1 + COMPACT_PRINCIPAL_FIELD_LEN * 2 + 32;
 const ABI_DYNAMIC_FIELDS: usize = 2;
+const WRAP_FACTORY_STORAGE_TOKEN_BY_ASSET_KEY_SLOT: u64 = 0;
+const WRAPPED_TOKEN_TOTAL_SUPPLY_SLOT: u64 = 2;
+const WRAPPED_TOKEN_BALANCE_OF_SLOT: u64 = 3;
+const WRAPPED_TOKEN_ALLOWANCE_SLOT: u64 = 4;
+const UNWRAP_BURN_GAS_SURCHARGE: u64 = 45_000;
 const FIXED_PRECOMPILE_GAS_RATIO_NUMERATOR: u32 = 1;
 const FIXED_PRECOMPILE_GAS_RATIO_DENOMINATOR: u32 = 100;
 
@@ -147,6 +156,9 @@ fn run_wrap_precompile<CTX: ContextTr>(
         Ok(v) => v,
         Err(code) => return precompile_fail(context, gas_limit, code),
     };
+    if let Err(code) = burn_wrapped_asset(context, &parsed) {
+        return precompile_fail(context, gas_limit, &code);
+    }
     let log_data = encode_log_data(&parsed);
     let log_data_len = log_data.len();
     let log = Log::new_unchecked(
@@ -217,7 +229,7 @@ pub(crate) fn estimate_wrap_precompile_gas(
     log_data_len: usize,
     field_count: usize,
 ) -> u64 {
-    let base_gas = 25_000u64;
+    let base_gas = 25_000u64.saturating_add(UNWRAP_BURN_GAS_SURCHARGE);
     let per_byte_gas = 16u64.saturating_mul(input_len as u64);
     let per_field_gas = 200u64.saturating_mul(field_count as u64);
     let topic_count = 1u64;
@@ -228,6 +240,179 @@ pub(crate) fn estimate_wrap_precompile_gas(
         .saturating_add(per_byte_gas)
         .saturating_add(per_field_gas)
         .saturating_add(log_gas)
+}
+
+// 前提:
+// - unwrap は新 factory 配下 token のみを正とする
+// - storage layout は tools/wrapper/contracts 配下の現行 audited 実装に合わせる
+// - burn は precompile 内で完結させ、成功時のみ unwrap intent log を積む
+fn burn_wrapped_asset<CTX: ContextTr>(
+    context: &mut CTX,
+    intent: &UnwrapIntent,
+) -> Result<(), String> {
+    let factory = Address::new(DEFAULT_WRAP_FACTORY_ADDRESS);
+    let owner = context.tx().caller();
+    let amount = U256::from_be_bytes(intent.amount);
+    let asset_key = compute_asset_key(intent.asset_id.as_slice());
+    let token_address = load_factory_token_address(context, factory, asset_key)?;
+    if token_address == Address::ZERO {
+        return Err("unwrap.token_not_deployed".to_string());
+    }
+
+    let balance_slot = address_mapping_slot(owner, WRAPPED_TOKEN_BALANCE_OF_SLOT);
+    let allowance_slot = allowance_slot(owner, factory);
+    let total_supply_slot = U256::from(WRAPPED_TOKEN_TOTAL_SUPPLY_SLOT);
+    let mut approval_log_value = None;
+    {
+        let mut token_account = context
+            .journal_mut()
+            .load_account_mut(token_address)
+            .map_err(|err| format!("wrap.burn.account_load_failed:{err:?}"))?;
+        let token = &mut token_account.data;
+        let balance = token
+            .sload(balance_slot, false)
+            .map_err(|err| format!("wrap.burn.storage_read_failed:{err:?}"))?
+            .data
+            .present_value();
+        if balance < amount {
+            return Err("erc20.insufficient_balance".to_string());
+        }
+
+        let allowance = token
+            .sload(allowance_slot, false)
+            .map_err(|err| format!("wrap.burn.storage_read_failed:{err:?}"))?
+            .data
+            .present_value();
+        if allowance != U256::MAX {
+            if allowance < amount {
+                return Err("erc20.insufficient_allowance".to_string());
+            }
+            let next_allowance = allowance - amount;
+            token
+                .sstore(allowance_slot, next_allowance, false)
+                .map_err(|err| format!("wrap.burn.storage_write_failed:{err:?}"))?;
+            approval_log_value = Some(next_allowance);
+        }
+
+        let total_supply = token
+            .sload(total_supply_slot, false)
+            .map_err(|err| format!("wrap.burn.storage_read_failed:{err:?}"))?
+            .data
+            .present_value();
+        if total_supply < amount {
+            return Err("erc20.insufficient_balance".to_string());
+        }
+        let next_balance = balance - amount;
+        let next_total_supply = total_supply - amount;
+        token
+            .sstore(balance_slot, next_balance, false)
+            .map_err(|err| format!("wrap.burn.storage_write_failed:{err:?}"))?;
+        token
+            .sstore(total_supply_slot, next_total_supply, false)
+            .map_err(|err| format!("wrap.burn.storage_write_failed:{err:?}"))?;
+    }
+    if let Some(next_allowance) = approval_log_value {
+        emit_approval_log(context, token_address, owner, factory, next_allowance);
+    }
+    emit_transfer_log(context, token_address, owner, Address::ZERO, amount);
+    Ok(())
+}
+
+fn compute_asset_key(asset_id: &[u8]) -> [u8; 32] {
+    let mut payload = Vec::with_capacity(14 + 32 + asset_id.len());
+    payload.extend_from_slice(b"kasane.wrap.v1");
+    payload.extend_from_slice(&U256::from(CHAIN_ID).to_be_bytes::<32>());
+    payload.extend_from_slice(asset_id);
+    hash::keccak256(&payload)
+}
+
+fn load_factory_token_address<CTX: ContextTr>(
+    context: &mut CTX,
+    factory: Address,
+    asset_key: [u8; 32],
+) -> Result<Address, String> {
+    let slot = mapping_slot(
+        B256::from(asset_key),
+        U256::from(WRAP_FACTORY_STORAGE_TOKEN_BY_ASSET_KEY_SLOT),
+    );
+    let mut factory_account = context
+        .journal_mut()
+        .load_account_mut(factory)
+        .map_err(|err| format!("wrap.factory.account_load_failed:{err:?}"))?;
+    let raw = factory_account
+        .data
+        .sload(slot, false)
+        .map_err(|err| format!("wrap.factory.storage_read_failed:{err:?}"))?
+        .data
+        .present_value()
+        .to_be_bytes::<32>();
+    let mut address = [0u8; 20];
+    address.copy_from_slice(&raw[12..]);
+    Ok(Address::new(address))
+}
+
+fn mapping_slot(key: B256, slot: U256) -> U256 {
+    let mut input = [0u8; 64];
+    input[..32].copy_from_slice(key.as_slice());
+    input[32..].copy_from_slice(&slot.to_be_bytes::<32>());
+    U256::from_be_bytes(hash::keccak256(&input))
+}
+
+fn address_mapping_slot(key: Address, slot: u64) -> U256 {
+    let mut key_bytes = [0u8; 32];
+    key_bytes[12..].copy_from_slice(key.as_slice());
+    mapping_slot(B256::from(key_bytes), U256::from(slot))
+}
+
+fn allowance_slot(owner: Address, spender: Address) -> U256 {
+    let outer = address_mapping_slot(owner, WRAPPED_TOKEN_ALLOWANCE_SLOT);
+    let mut spender_bytes = [0u8; 32];
+    spender_bytes[12..].copy_from_slice(spender.as_slice());
+    mapping_slot(B256::from(spender_bytes), outer)
+}
+
+fn emit_approval_log<CTX: ContextTr>(
+    context: &mut CTX,
+    token: Address,
+    owner: Address,
+    spender: Address,
+    value: U256,
+) {
+    let log = Log::new_unchecked(
+        token,
+        vec![
+            B256::from(approval_event_topic0()),
+            topic_from_address(owner),
+            topic_from_address(spender),
+        ],
+        value.to_be_bytes_vec().into(),
+    );
+    context.journal_mut().log(log);
+}
+
+fn emit_transfer_log<CTX: ContextTr>(
+    context: &mut CTX,
+    token: Address,
+    from: Address,
+    to: Address,
+    value: U256,
+) {
+    let log = Log::new_unchecked(
+        token,
+        vec![
+            B256::from(transfer_event_topic0()),
+            topic_from_address(from),
+            topic_from_address(to),
+        ],
+        value.to_be_bytes_vec().into(),
+    );
+    context.journal_mut().log(log);
+}
+
+fn topic_from_address(address: Address) -> B256 {
+    let mut out = [0u8; 32];
+    out[12..].copy_from_slice(address.as_slice());
+    B256::from(out)
 }
 
 fn encode_log_data(intent: &UnwrapIntent) -> Vec<u8> {
@@ -265,6 +450,14 @@ pub fn unwrap_intent_from_log(log: &LogEntry) -> Option<UnwrapIntent> {
 
 fn wrap_event_topic0() -> [u8; 32] {
     hash::keccak256(b"KasaneUnwrapRequest(bytes)")
+}
+
+fn approval_event_topic0() -> [u8; 32] {
+    hash::keccak256(b"Approval(address,address,uint256)")
+}
+
+fn transfer_event_topic0() -> [u8; 32] {
+    hash::keccak256(b"Transfer(address,address,uint256)")
 }
 
 fn is_valid_principal_bytes(len: usize) -> bool {
@@ -393,10 +586,14 @@ pub fn clear_precompile_profile() {
 #[cfg(test)]
 mod tests {
     use super::{
-        compute_extra_gas, estimate_wrap_precompile_gas, extra_gas_by_instruction_ratio,
-        extra_gas_for_precompile, parse_input, unwrap_intent_from_log, wrap_event_topic0,
-        COMPACT_UNWRAP_FORMAT_VERSION, MAX_PRINCIPAL_LEN, WRAP_PRECOMPILE_ADDRESS,
+        allowance_slot, approval_event_topic0, compute_asset_key, compute_extra_gas,
+        estimate_wrap_precompile_gas, extra_gas_by_instruction_ratio, extra_gas_for_precompile,
+        parse_input, topic_from_address, transfer_event_topic0, unwrap_intent_from_log,
+        wrap_event_topic0, COMPACT_UNWRAP_FORMAT_VERSION, DEFAULT_WRAP_FACTORY_ADDRESS,
+        MAX_PRINCIPAL_LEN, WRAP_PRECOMPILE_ADDRESS,
     };
+    use crate::hash;
+    use revm::primitives::Address;
     use evm_db::chain_data::receipt::log_entry_from_parts;
 
     #[test]
@@ -519,6 +716,40 @@ mod tests {
     fn non_wrap_precompile_keeps_instruction_ratio_extra_gas() {
         let address = [0x11u8; 20];
         assert_eq!(extra_gas_for_precompile(address, 250), 3);
+    }
+
+    #[test]
+    fn compute_asset_key_matches_factory_domain_format() {
+        let mut chain_bytes = [0u8; 32];
+        chain_bytes[24..].copy_from_slice(&evm_db::chain_data::constants::CHAIN_ID.to_be_bytes());
+        let key = compute_asset_key(&[1, 2, 3]);
+        assert_eq!(
+            key,
+            hash::keccak256(
+                &[
+                    b"kasane.wrap.v1".as_slice(),
+                    chain_bytes.as_slice(),
+                    &[1, 2, 3],
+                ]
+                .concat()
+            )
+        );
+    }
+
+    #[test]
+    fn allowance_slot_uses_factory_as_spender() {
+        let owner = Address::new([0x11; 20]);
+        let spender = Address::new(DEFAULT_WRAP_FACTORY_ADDRESS);
+        assert_ne!(allowance_slot(owner, spender), allowance_slot(owner, Address::new([0x22; 20])));
+    }
+
+    #[test]
+    fn erc20_event_topics_match_standard_signatures() {
+        let owner = Address::new([0x11; 20]);
+        let topic = topic_from_address(owner);
+        assert_eq!(&topic.0[12..], owner.as_slice());
+        assert_eq!(approval_event_topic0(), hash::keccak256(b"Approval(address,address,uint256)"));
+        assert_eq!(transfer_event_topic0(), hash::keccak256(b"Transfer(address,address,uint256)"));
     }
 
     fn encode_compact(asset: Vec<u8>, amount: [u8; 32], recipient: Vec<u8>) -> Vec<u8> {

@@ -1,7 +1,7 @@
 // どこで: health API route / 何を: canister疎通と設定値の簡易確認を返却 / なぜ: 運用時の初期切り分けを簡単にするため
 
 import { NextResponse } from "next/server";
-import { getDispatchStatus } from "@/lib/canister/wrapper-client";
+import { getDispatchResult } from "@/lib/canister/wrapper-client";
 import { getExecutionResult } from "@/lib/canister/wrap-client";
 import { loadConfig } from "@/lib/config";
 import { toApiError, toErrorBody } from "@/lib/errors";
@@ -11,7 +11,7 @@ export async function GET(): Promise<Response> {
     const cfg = loadConfig();
     const probe = new Uint8Array(32);
     const [gatewayProbe, wrapProbe] = await Promise.allSettled([
-      getDispatchStatus(probe),
+      getDispatchResult(probe),
       getExecutionResult(probe),
     ]);
 

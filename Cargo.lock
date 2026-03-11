@@ -1780,7 +1780,7 @@ dependencies = [
  "candid",
  "hex",
  "ic-pub-key",
- "ic-secp256k1",
+ "k256",
 ]
 
 [[package]]
@@ -3910,8 +3910,10 @@ name = "wrap-canister"
 version = "0.1.0"
 dependencies = [
  "candid",
+ "getrandom 0.2.17",
  "ic-cdk",
  "ic-cdk-timers",
+ "ic-evm-address",
  "ic-stable-structures 0.6.9",
  "num-bigint",
  "serde",

@@ -35,6 +35,10 @@ type FeePolicyViewWire = {
 type WrapActor = ActorSubclass<{
   get_request_result: (requestId: Uint8Array) => Promise<[] | [UnwrapRequestResultWire]>;
   get_wrap_request_result: (requestId: Uint8Array) => Promise<[] | [WrapRequestResultWire]>;
+  retry_failed_unwrap: (args: { request_id: Uint8Array }) => Promise<
+    | { Ok: { request_id: Uint8Array } }
+    | { Err: string }
+  >;
   withdraw_failed_wrap: (args: { request_id: Uint8Array }) => Promise<
     | { Ok: { request_id: Uint8Array; ledger_tx_id: Uint8Array } }
     | { Err: string }
@@ -94,6 +98,9 @@ const wrapIdlFactory: IDL.InterfaceFactory = ({ IDL: I }) => {
   const WithdrawFailedWrapArgs = I.Record({
     request_id: I.Vec(I.Nat8),
   });
+  const RetryFailedUnwrapArgs = I.Record({
+    request_id: I.Vec(I.Nat8),
+  });
   const WithdrawFailedWrapOk = I.Record({
     request_id: I.Vec(I.Nat8),
     ledger_tx_id: I.Vec(I.Nat8),
@@ -114,6 +121,11 @@ const wrapIdlFactory: IDL.InterfaceFactory = ({ IDL: I }) => {
       []
     ),
     get_fee_policy: I.Func([], [I.Variant({ Ok: FeePolicyView, Err: I.Text })], ["query"]),
+    retry_failed_unwrap: I.Func(
+      [RetryFailedUnwrapArgs],
+      [I.Variant({ Ok: I.Record({ request_id: I.Vec(I.Nat8) }), Err: I.Text })],
+      []
+    ),
     withdraw_failed_wrap: I.Func(
       [WithdrawFailedWrapArgs],
       [I.Variant({ Ok: WithdrawFailedWrapOk, Err: I.Text })],
@@ -223,6 +235,19 @@ export async function withdrawFailedWrap(
     requestId: out.Ok.request_id,
     ledgerTxId: out.Ok.ledger_tx_id,
   };
+}
+
+export async function retryFailedUnwrap(
+  requestId: Uint8Array,
+  identity: Identity,
+): Promise<Uint8Array> {
+  const out = await (await getSubmitActor(identity)).retry_failed_unwrap({
+    request_id: requestId,
+  });
+  if ("Err" in out) {
+    throw new Error(out.Err);
+  }
+  return out.Ok.request_id;
 }
 
 export async function submitWrapRequest(

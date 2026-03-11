@@ -15,7 +15,9 @@ LEDGER_WASM="${LEDGER_CACHE_DIR}/ic-icrc1-ledger.wasm"
 WRAP_AMOUNT="${WRAP_AMOUNT:-1000000}"
 WRAP_GAS_LIMIT="${WRAP_GAS_LIMIT:-800000}"
 WRAP_EVM_NONCE="${WRAP_EVM_NONCE:-0}"
-WRAP_TOKEN_DECIMALS="${WRAP_TOKEN_DECIMALS:-18}"
+LEDGER_DECIMALS="${LEDGER_DECIMALS:-8}"
+CONTRACTS_DIR="${ROOT_DIR}/tools/wrapper/contracts"
+FACTORY_ARTIFACT_PATH="${CONTRACTS_DIR}/out/WrapTokenFactory.sol/WrapTokenFactory.json"
 FACTORY_DEPLOY_GAS_LIMIT="${FACTORY_DEPLOY_GAS_LIMIT:-3000000}"
 FACTORY_DEPLOY_FEE_BUMP="${FACTORY_DEPLOY_FEE_BUMP:-$(python - <<'PY'
 import time
@@ -464,7 +466,7 @@ else
   cargo build --release --target wasm32-unknown-unknown -p ic-evm-gateway -p wrap-canister
 fi
 log "build solidity factory contracts"
-(cd "${ROOT_DIR}/contracts" && forge build >/dev/null)
+(cd "${CONTRACTS_DIR}" && forge build >/dev/null)
 
 log "create canisters"
 LEDGER_CANISTER_ID="$(retry_command_output "create detached ledger canister" icp canister create -e "${NETWORK}" --identity "${ICP_IDENTITY_NAME}" --detached -q)"
@@ -483,7 +485,7 @@ LEDGER_INIT_ARGS="(variant { Init = record {
   minting_account = record { owner = principal \"${LEDGER_MINTER_PRINCIPAL}\"; subaccount = null; };
   fee_collector_account = null;
   transfer_fee = ${LEDGER_TRANSFER_FEE};
-  decimals = null;
+  decimals = opt ${LEDGER_DECIMALS};
   max_memo_length = null;
   metadata = vec {};
   feature_flags = opt record { icrc2 = true };
@@ -537,14 +539,15 @@ log "install gateway"
 icp canister install evm_canister -e "${NETWORK}" --identity "${ICP_IDENTITY_NAME}" --mode reinstall --wasm "${GATEWAY_WASM}" --args-format hex --args "${GATEWAY_INIT_ARGS_HEX}" >/dev/null
 
 FACTORY_CREATION_HEX="$(
-  python - <<'PY'
+  FACTORY_ARTIFACT_PATH="${FACTORY_ARTIFACT_PATH}" python - <<'PY'
 import json
+import os
 from pathlib import Path
-artifact = Path("/Users/0xhude/Desktop/ICP/Kasane/contracts/out/WrapTokenFactory.sol/WrapTokenFactory.json")
+artifact = Path(os.environ["FACTORY_ARTIFACT_PATH"])
 print(json.loads(artifact.read_text())["bytecode"]["object"].removeprefix("0x"))
 PY
 )"
-FACTORY_CONSTRUCTOR_HEX="$(cd "${ROOT_DIR}/contracts" && cast abi-encode "constructor(address,uint8)" "0x${WRAP_CANISTER_EVM_HEX}" "${WRAP_TOKEN_DECIMALS}")"
+FACTORY_CONSTRUCTOR_HEX="$(cd "${CONTRACTS_DIR}" && cast abi-encode "constructor(address)" "0x${WRAP_CANISTER_EVM_HEX}")"
 FACTORY_DEPLOY_DATA_HEX="${FACTORY_CREATION_HEX}${FACTORY_CONSTRUCTOR_HEX#0x}"
 log "deploy wrap token factory"
 FACTORY_DEPLOY_ARGS="(record {
@@ -569,7 +572,6 @@ FACTORY_ADDRESS_HEX="$(printf '%s' "${FACTORY_RECEIPT_OUT}" | extract_named_opt_
 WRAP_INIT_ARGS="(record {
   kasane_canister = principal \"${EVM_CANISTER_ID}\";
   evm_gateway_canister = principal \"${EVM_CANISTER_ID}\";
-  evm_wrap_factory = $(hex_to_candid_vec "${FACTORY_ADDRESS_HEX}");
   fee_ledger_canister = principal \"${LEDGER_CANISTER_ID}\";
   cycle_fee_e8s = ${CYCLE_FEE_E8S} : nat64;
   gas_price_buffer_bps = ${GAS_PRICE_BUFFER_BPS} : nat32;
@@ -660,8 +662,8 @@ WRAP_MINT_RECEIPT_OUT="$(wait_for_pattern "wrap mint receipt" "${WRAP_MINT_RECEI
 [[ "${WRAP_MINT_RECEIPT_OUT}" == *"variant { Found = record"* ]] || { echo "${WRAP_MINT_RECEIPT_OUT}" >&2; exit 1; }
 
 log "verify factory and wrapped token on evm"
-FACTORY_PREDICT_CALLDATA_HEX="$(cd "${ROOT_DIR}/contracts" && cast calldata "predictTokenAddress(bytes)" "0x${ASSET_ID_HEX}")"
-FACTORY_GET_TOKEN_CALLDATA_HEX="$(cd "${ROOT_DIR}/contracts" && cast calldata "getTokenAddress(bytes)" "0x${ASSET_ID_HEX}")"
+FACTORY_PREDICT_CALLDATA_HEX="$(cd "${CONTRACTS_DIR}" && cast calldata "predictTokenAddress(bytes,uint8)" "0x${ASSET_ID_HEX}" "${LEDGER_DECIMALS}")"
+FACTORY_GET_TOKEN_CALLDATA_HEX="$(cd "${CONTRACTS_DIR}" && cast calldata "getTokenAddress(bytes)" "0x${ASSET_ID_HEX}")"
 PREDICT_OUT="$(rpc_eth_call_hex "${FACTORY_ADDRESS_HEX}" "${FACTORY_PREDICT_CALLDATA_HEX}")"
 TOKEN_OUT="$(rpc_eth_call_hex "${FACTORY_ADDRESS_HEX}" "${FACTORY_GET_TOKEN_CALLDATA_HEX}")"
 [[ "${PREDICT_OUT}" == *"status = 1 : nat8"* ]] || { echo "${PREDICT_OUT}" >&2; exit 1; }
@@ -676,12 +678,20 @@ TOKEN_ADDRESS_HEX="$(printf '%s' "${TOKEN_OUT}" | extract_named_blob_hex "return
 TOKEN_CODE_OUT="$(query_pp "${ROOT_DIR}/crates/ic-evm-gateway/evm_canister.did" evm_canister rpc_eth_get_code "( $(hex_to_candid_vec "${TOKEN_ADDRESS_HEX}"), variant { Latest } )")"
 [[ "${TOKEN_CODE_OUT}" == *"variant { Ok = blob"* ]] || { echo "${TOKEN_CODE_OUT}" >&2; exit 1; }
 [[ "${TOKEN_CODE_OUT}" != *'variant { Ok = blob "" }'* ]] || { echo "${TOKEN_CODE_OUT}" >&2; exit 1; }
-BALANCE_CALLDATA_HEX="$(cd "${ROOT_DIR}/contracts" && cast calldata "balanceOf(address)" "0x5555555555555555555555555555555555555555")"
+BALANCE_CALLDATA_HEX="$(cd "${CONTRACTS_DIR}" && cast calldata "balanceOf(address)" "0x5555555555555555555555555555555555555555")"
 BALANCE_OUT="$(rpc_eth_call_hex "${TOKEN_ADDRESS_HEX}" "${BALANCE_CALLDATA_HEX}")"
 [[ "${BALANCE_OUT}" == *"status = 1 : nat8"* ]] || { echo "${BALANCE_OUT}" >&2; exit 1; }
 WRAP_TOKEN_BALANCE="$(printf '%s' "${BALANCE_OUT}" | extract_named_blob_hex "return_data" | u256_hex_to_decimal)"
 [[ "${WRAP_TOKEN_BALANCE}" == "${WRAP_AMOUNT}" ]] || {
   echo "[local-wrap-unwrap-ledger] wrapped token balance mismatch: expected=${WRAP_AMOUNT} actual=${WRAP_TOKEN_BALANCE}" >&2
+  exit 1
+}
+DECIMALS_CALLDATA_HEX="$(cd "${CONTRACTS_DIR}" && cast calldata "decimals()")"
+DECIMALS_OUT="$(rpc_eth_call_hex "${TOKEN_ADDRESS_HEX}" "${DECIMALS_CALLDATA_HEX}")"
+[[ "${DECIMALS_OUT}" == *"status = 1 : nat8"* ]] || { echo "${DECIMALS_OUT}" >&2; exit 1; }
+WRAP_TOKEN_DECIMALS_ACTUAL="$(printf '%s' "${DECIMALS_OUT}" | extract_named_blob_hex "return_data" | u256_hex_to_decimal)"
+[[ "${WRAP_TOKEN_DECIMALS_ACTUAL}" == "${LEDGER_DECIMALS}" ]] || {
+  echo "[local-wrap-unwrap-ledger] wrapped token decimals mismatch: expected=${LEDGER_DECIMALS} actual=${WRAP_TOKEN_DECIMALS_ACTUAL}" >&2
   exit 1
 }
 

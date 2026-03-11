@@ -20,6 +20,7 @@ import {
   wrapperClientTestHooks,
 } from "../lib/canister/wrapper-client";
 import { getExecutionResult } from "../lib/canister/wrap-client";
+import { resolveUnwrapBurnSpenderEvmAddress } from "../lib/canister/erc20-client";
 import {
   messageAfterRefreshSuccess,
   nextPollFailureState,
@@ -49,6 +50,14 @@ import {
 } from "../lib/asset-catalog";
 import { configTestHooks, loadConfig } from "../lib/config";
 import { iiTestHooks } from "../lib/wallet/ii";
+import {
+  decodeAddressReturnData,
+  decodeUint256ReturnData,
+  encodeAllowanceCall,
+  encodeApproveCall,
+  encodeFactoryGetTokenAddressCall,
+} from "../lib/erc20";
+import { icrcClientTestHooks } from "../lib/canister/icrc2-client";
 
 async function runUtilsTests(): Promise<void> {
   const value = Uint8Array.from([0x01, 0xab, 0x10]);
@@ -92,7 +101,6 @@ async function runRequestIdTests(): Promise<void> {
 async function runMergeTests(): Promise<void> {
   const merged = mergeStatus({
     requestIdHex: `0x${"11".repeat(32)}`,
-    dispatchStatus: "Queued",
     dispatchResult: {
       status: "Dispatched",
       errorCode: null,
@@ -193,6 +201,7 @@ async function runWrapInputValidationTests(): Promise<void> {
 async function runWrapEstimateEncodingTests(): Promise<void> {
   const data = encodeFactoryMintForAssetCallData({
     assetId: principalTextToBytes("2vxsx-fae"),
+    tokenDecimals: 8,
     evmRecipient: hexToBytes("0x1111111111111111111111111111111111111111"),
     amount: decimalToBytes32("1000000000000000000"),
   });
@@ -202,6 +211,7 @@ async function runWrapEstimateEncodingTests(): Promise<void> {
     wrapCanisterId: "4c52m-aiaaa-aaaam-agwwa-cai",
     evmWrapFactory: "0x2222222222222222222222222222222222222222",
     assetId: "2vxsx-fae",
+    tokenDecimals: 8,
     amount: "1000000000000000000",
     evmRecipient: "0x1111111111111111111111111111111111111111",
   });
@@ -228,12 +238,63 @@ async function runWrapEstimateEncodingTests(): Promise<void> {
   assert.equal(applyUnwrapGasHeadroom(300_000n), 360_000n);
 }
 
+async function runErc20EncodingTests(): Promise<void> {
+  const tokenCall = encodeFactoryGetTokenAddressCall("2vxsx-fae");
+  assert.equal(tokenCall.length % 32, 4);
+  assert.deepEqual(
+    resolveUnwrapBurnSpenderEvmAddress("0x5555555555555555555555555555555555555555"),
+    hexToBytes("0x5555555555555555555555555555555555555555"),
+  );
+
+  const allowanceCall = encodeAllowanceCall(
+    hexToBytes("0x1111111111111111111111111111111111111111"),
+    hexToBytes("0x2222222222222222222222222222222222222222"),
+  );
+  assert.equal(allowanceCall.length, 68);
+
+  const approveCall = encodeApproveCall(
+    hexToBytes("0x3333333333333333333333333333333333333333"),
+    7n,
+  );
+  assert.equal(approveCall.length, 68);
+
+  const addressWord = new Uint8Array(32);
+  addressWord.set(hexToBytes("0x4444444444444444444444444444444444444444"), 12);
+  assert.deepEqual(
+    decodeAddressReturnData(addressWord),
+    hexToBytes("0x4444444444444444444444444444444444444444"),
+  );
+
+  const amountWord = new Uint8Array(32);
+  amountWord[31] = 9;
+  assert.equal(decodeUint256ReturnData(amountWord), 9n);
+}
+
+async function runLedgerMetadataTests(): Promise<void> {
+  assert.equal(
+    icrcClientTestHooks.decodeLedgerDecimals([
+      ["icrc1:name", { Text: "Token" }],
+      ["icrc1:decimals", { Nat: 8n }],
+    ]),
+    8,
+  );
+  assert.throws(
+    () => icrcClientTestHooks.decodeLedgerDecimals([["icrc1:decimals", { Text: "8" }]]),
+    /wrap\.asset_decimals_invalid/,
+  );
+  assert.throws(
+    () => icrcClientTestHooks.decodeLedgerDecimals([["icrc1:name", { Text: "Token" }]]),
+    /wrap\.asset_metadata_failed:decimals_missing/,
+  );
+}
+
 async function runEstimateWrapGasClientTests(): Promise<void> {
   const gas = await estimateWrapGasLimit(
     {
       wrapCanisterId: "4c52m-aiaaa-aaaam-agwwa-cai",
       evmWrapFactory: "0x2222222222222222222222222222222222222222",
       assetId: "2vxsx-fae",
+      tokenDecimals: 8,
       amount: "1000000000000000000",
       evmRecipient: "0x1111111111111111111111111111111111111111",
     },
@@ -251,6 +312,7 @@ async function runEstimateWrapGasClientTests(): Promise<void> {
         wrapCanisterId: "4c52m-aiaaa-aaaam-agwwa-cai",
         evmWrapFactory: "0x2222222222222222222222222222222222222222",
         assetId: "2vxsx-fae",
+        tokenDecimals: 8,
         amount: "1000000000000000000",
         evmRecipient: "0x1111111111111111111111111111111111111111",
       },
@@ -550,12 +612,18 @@ function buildMockQueryActor(args: {
   gasPriceResult: { Ok: bigint } | { Err: { code: number; message: string; error_prefix: [] | [string] } };
   priorityFeeResult: { Ok: bigint } | { Err: { code: number; message: string; error_prefix: [] | [string] } };
 }) {
+  const noRevertData: [] = [];
   return {
     expected_nonce_by_address: async () => ({ Ok: 0n }),
     rpc_eth_gas_price: async () => args.gasPriceResult,
     rpc_eth_max_priority_fee_per_gas: async () => args.priorityFeeResult,
     rpc_eth_estimate_gas_object: async () => ({ Ok: 300_000n }),
-    get_request_dispatch_status: async (): Promise<[]> => [],
+    rpc_eth_call_object: async () => ({ Ok: {
+      status: 1,
+      gas_used: 21_000n,
+      return_data: new Uint8Array(32),
+      revert_data: noRevertData,
+    } }),
     get_request_dispatch_result: async (): Promise<[]> => [],
     get_unwrap_request_ids_by_tx_id: async () => [],
   };
@@ -659,6 +727,8 @@ async function main(): Promise<void> {
   await runAllowanceTests();
   await runWrapInputValidationTests();
   await runWrapEstimateEncodingTests();
+  await runErc20EncodingTests();
+  await runLedgerMetadataTests();
   await runEstimateWrapGasClientTests();
   await runEstimateUnwrapGasClientTests();
   await runWrapNonceClientTests();
