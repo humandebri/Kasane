@@ -136,6 +136,7 @@ scripts/measure_precompile_ratio.sh
 - `scripts/mainnet/ic_mainnet_post_upgrade_smoke.sh`: デプロイ後の最小RPC確認
 - `scripts/verify_submit_after_deploy.sh`: verify submit の手動/CIフック
 - `scripts/mainnet/mainnet_method_test.sh`: 本番メソッド検証（重い）
+- `scripts/mainnet/mainnet_wrap_unwrap_smoke.sh`: TESTICP を使った wrap -> unwrap 実経路確認
   - `MINING_IDLE_OBSERVE_SEC`: 冒頭の idle 観測秒数（既定: `6`）
   - `IDLE_MAX_CYCLE_DELTA`: idle 観測で許容する cycle 減少上限。`0` で閾値チェック無効（既定: `0`）
 
