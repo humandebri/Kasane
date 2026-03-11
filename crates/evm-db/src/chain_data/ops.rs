@@ -5,7 +5,7 @@ use ic_stable_structures::storable::Bound;
 use ic_stable_structures::Storable;
 use std::borrow::Cow;
 
-pub const OPS_CONFIG_SIZE_U32: u32 = 33;
+pub const OPS_CONFIG_SIZE_U32: u32 = 48;
 pub const OPS_STATE_SIZE_U32: u32 = 48;
 
 pub const DEFAULT_CYCLE_LOW_WATERMARK: u128 = 2_000_000_000_000;
