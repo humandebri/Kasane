@@ -60,8 +60,9 @@ Explorer の実装詳細（ルート一覧・lib層責務）は `tools/explorer/
   - `BLS12_PAIRING_CHECK`
   - `BLS12_MAP_FP_TO_G1`
   - `BLS12_MAP_FP2_TO_G2`
+- 既定ビルドでは Osaka の `0x0100 P256VERIFY` も無効化している。
 - これらを呼ぶコントラクトは既定ビルドでは `PrecompileError` / halt 系失敗になる。
-- 従来挙動が必要な場合は `revm` / `revm-precompile` の `bls12_381` feature を明示的に有効化する。
+- 従来挙動が必要な場合は `revm` / `revm-precompile` の `bls12_381`, `secp256r1` feature を明示的に有効化する。
 
 ## 運用上の決定事項（2026-02-04）
 
