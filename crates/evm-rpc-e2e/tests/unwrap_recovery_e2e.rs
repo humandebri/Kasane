@@ -3,6 +3,7 @@
 //! なぜ: gateway の Dispatching 再開と wrap 側 idempotency の回帰を防ぐため
 
 use candid::{CandidType, Decode, Deserialize, Encode, Nat, Principal};
+use evm_core::hash;
 use evm_core::wrap_precompile::WRAP_PRECOMPILE_ADDRESS;
 use pocket_ic::PocketIc;
 use std::path::PathBuf;

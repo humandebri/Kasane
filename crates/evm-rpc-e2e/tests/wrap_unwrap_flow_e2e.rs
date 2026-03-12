@@ -3,6 +3,7 @@
 //! なぜ: gas price の canister 間呼び出し種別と unwrap dispatch の実挙動を回帰から守るため
 
 use candid::{CandidType, Decode, Deserialize, Encode, Nat, Principal};
+use evm_core::hash;
 use evm_core::wrap_precompile::WRAP_PRECOMPILE_ADDRESS;
 use pocket_ic::PocketIc;
 use std::path::PathBuf;

@@ -382,10 +382,10 @@ service : (opt InitArgs) -> {
   get_prune_status : () -> (PruneStatusView) query;
   get_queue_snapshot : (nat32, opt nat64) -> (QueueSnapshotView) query;
   get_receipt : (blob) -> (Result_5) query;
-  get_unwrap_request_ids_by_tx_id : (blob) -> (vec blob) query;
   get_unwrap_dispatch_overview : (blob) -> (
       opt UnwrapDispatchOverviewView,
     ) query;
+  get_unwrap_request_ids_by_tx_id : (blob) -> (vec blob) query;
   health : () -> (HealthView) query;
   memory_breakdown : () -> (MemoryBreakdownView) query;
   metrics : (nat64) -> (MetricsView) query;
