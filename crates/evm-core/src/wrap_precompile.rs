@@ -1,13 +1,12 @@
 //! どこで: EVM custom precompile / 何を: unwrap request の起票 / なぜ: wrap/vault 連携を tx 内で確定するため
 
 use crate::hash;
-use evm_db::chain_data::{constants::CHAIN_ID, runtime_defaults::DEFAULT_WRAP_FACTORY_ADDRESS};
 use evm_db::chain_data::receipt::LogEntry;
+use evm_db::chain_data::{constants::CHAIN_ID, runtime_defaults::DEFAULT_WRAP_FACTORY_ADDRESS};
 use revm::{
     context::Cfg,
     context_interface::{
         journaled_state::account::JournaledAccountTr, ContextTr, JournalTr, LocalContextTr,
-        Transaction,
     },
     handler::{EthPrecompiles, PrecompileProvider},
     interpreter::{CallInputs, Gas, InstructionResult, InterpreterResult},
@@ -156,7 +155,7 @@ fn run_wrap_precompile<CTX: ContextTr>(
         Ok(v) => v,
         Err(code) => return precompile_fail(context, gas_limit, code),
     };
-    if let Err(code) = burn_wrapped_asset(context, &parsed) {
+    if let Err(code) = burn_wrapped_asset(context, unwrap_owner(inputs), &parsed) {
         return precompile_fail(context, gas_limit, &code);
     }
     let log_data = encode_log_data(&parsed);
@@ -246,12 +245,17 @@ pub(crate) fn estimate_wrap_precompile_gas(
 // - unwrap は新 factory 配下 token のみを正とする
 // - storage layout は tools/wrapper/contracts 配下の現行 audited 実装に合わせる
 // - burn は precompile 内で完結させ、成功時のみ unwrap intent log を積む
+fn unwrap_owner(inputs: &CallInputs) -> Address {
+    // unwrap の owner は tx origin ではなく、この precompile を呼んだ call frame の sender。
+    inputs.caller
+}
+
 fn burn_wrapped_asset<CTX: ContextTr>(
     context: &mut CTX,
+    owner: Address,
     intent: &UnwrapIntent,
 ) -> Result<(), String> {
     let factory = Address::new(DEFAULT_WRAP_FACTORY_ADDRESS);
-    let owner = context.tx().caller();
     let amount = U256::from_be_bytes(intent.amount);
     let asset_key = compute_asset_key(intent.asset_id.as_slice());
     let token_address = load_factory_token_address(context, factory, asset_key)?;
@@ -589,12 +593,13 @@ mod tests {
         allowance_slot, approval_event_topic0, compute_asset_key, compute_extra_gas,
         estimate_wrap_precompile_gas, extra_gas_by_instruction_ratio, extra_gas_for_precompile,
         parse_input, topic_from_address, transfer_event_topic0, unwrap_intent_from_log,
-        wrap_event_topic0, COMPACT_UNWRAP_FORMAT_VERSION, DEFAULT_WRAP_FACTORY_ADDRESS,
-        MAX_PRINCIPAL_LEN, WRAP_PRECOMPILE_ADDRESS,
+        unwrap_owner, wrap_event_topic0, COMPACT_UNWRAP_FORMAT_VERSION,
+        DEFAULT_WRAP_FACTORY_ADDRESS, MAX_PRINCIPAL_LEN, WRAP_PRECOMPILE_ADDRESS,
     };
     use crate::hash;
-    use revm::primitives::Address;
     use evm_db::chain_data::receipt::log_entry_from_parts;
+    use revm::interpreter::{CallInput, CallInputs, CallScheme, CallValue};
+    use revm::primitives::{Address, Bytes, U256};
 
     #[test]
     fn unwrap_intent_log_roundtrip_decodes() {
@@ -740,7 +745,10 @@ mod tests {
     fn allowance_slot_uses_factory_as_spender() {
         let owner = Address::new([0x11; 20]);
         let spender = Address::new(DEFAULT_WRAP_FACTORY_ADDRESS);
-        assert_ne!(allowance_slot(owner, spender), allowance_slot(owner, Address::new([0x22; 20])));
+        assert_ne!(
+            allowance_slot(owner, spender),
+            allowance_slot(owner, Address::new([0x22; 20]))
+        );
     }
 
     #[test]
@@ -748,8 +756,35 @@ mod tests {
         let owner = Address::new([0x11; 20]);
         let topic = topic_from_address(owner);
         assert_eq!(&topic.0[12..], owner.as_slice());
-        assert_eq!(approval_event_topic0(), hash::keccak256(b"Approval(address,address,uint256)"));
-        assert_eq!(transfer_event_topic0(), hash::keccak256(b"Transfer(address,address,uint256)"));
+        assert_eq!(
+            approval_event_topic0(),
+            hash::keccak256(b"Approval(address,address,uint256)")
+        );
+        assert_eq!(
+            transfer_event_topic0(),
+            hash::keccak256(b"Transfer(address,address,uint256)")
+        );
+    }
+
+    #[test]
+    fn unwrap_owner_uses_current_call_frame_caller() {
+        let tx_origin = Address::new([0x11; 20]);
+        let frame_caller = Address::new([0x22; 20]);
+        let inputs = CallInputs {
+            input: CallInput::Bytes(Bytes::new()),
+            return_memory_offset: 0..0,
+            gas_limit: 300_000,
+            bytecode_address: WRAP_PRECOMPILE_ADDRESS,
+            known_bytecode: None,
+            target_address: WRAP_PRECOMPILE_ADDRESS,
+            caller: frame_caller,
+            value: CallValue::Transfer(U256::ZERO),
+            scheme: CallScheme::Call,
+            is_static: false,
+        };
+
+        assert_ne!(frame_caller, tx_origin);
+        assert_eq!(unwrap_owner(&inputs), frame_caller);
     }
 
     fn encode_compact(asset: Vec<u8>, amount: [u8; 32], recipient: Vec<u8>) -> Vec<u8> {

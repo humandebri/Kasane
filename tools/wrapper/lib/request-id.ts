@@ -22,7 +22,6 @@ type WrapRequestIdInput = {
   assetId: Uint8Array;
   amount: Uint8Array;
   evmRecipient: Uint8Array;
-  evmNonce: bigint;
   gasLimit: bigint;
 };
 
@@ -139,13 +138,25 @@ export function deriveWrapRequestId(args: WrapRequestIdInput): Uint8Array {
   hashLenPrefixed(bytes, args.assetId);
   hashLenPrefixed(bytes, args.amount);
   hashLenPrefixed(bytes, args.evmRecipient);
-  const evmNonce = encodeU64Be(args.evmNonce, "arg.evm_nonce_invalid");
   const gasLimit = encodeU64Be(args.gasLimit, "arg.gas_limit_invalid");
-  for (let i = 0; i < evmNonce.length; i += 1) {
-    bytes.push(evmNonce[i] ?? 0);
-  }
   for (let i = 0; i < gasLimit.length; i += 1) {
     bytes.push(gasLimit[i] ?? 0);
   }
   return Uint8Array.from(keccak_256(Uint8Array.from(bytes)));
+}
+
+export function deriveUnwrapRequestId(txId: Uint8Array, logIndex: number): Uint8Array {
+  if (txId.length !== 32) {
+    throw new Error("arg.tx_id_invalid");
+  }
+  if (!Number.isInteger(logIndex) || logIndex < 0 || logIndex > 0xffff_ffff) {
+    throw new Error("arg.log_index_invalid");
+  }
+  const payload = new Uint8Array(36);
+  payload.set(txId, 0);
+  payload[32] = (logIndex >>> 24) & 0xff;
+  payload[33] = (logIndex >>> 16) & 0xff;
+  payload[34] = (logIndex >>> 8) & 0xff;
+  payload[35] = logIndex & 0xff;
+  return Uint8Array.from(keccak_256(payload));
 }

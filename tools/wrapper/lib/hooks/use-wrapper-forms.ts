@@ -227,7 +227,7 @@ export function useWrapperForms(params: {
     if (!params.walletPrincipalText) {
       return null;
     }
-    if (wrapNonceStatus !== "ready" || wrapGasEstimateStatus !== "ready") {
+    if (wrapGasEstimateStatus !== "ready") {
       return null;
     }
     try {
@@ -237,14 +237,13 @@ export function useWrapperForms(params: {
           assetId: principalTextToBytes(wrapForm.assetId.trim()),
           amount: decimalToBytes32(wrapForm.amount.trim()),
           evmRecipient: hexToBytes(wrapForm.evmRecipient.trim()),
-          evmNonce: parseU64(wrapForm.evmNonce, "validation.evm_nonce.invalid"),
           gasLimit: parsePositiveU64(wrapForm.gasLimit, "validation.gas_limit.invalid"),
         }),
       );
     } catch {
       return null;
     }
-  }, [params.walletPrincipalText, wrapForm, wrapGasEstimateStatus, wrapNonceStatus]);
+  }, [params.walletPrincipalText, wrapForm, wrapGasEstimateStatus]);
 
   function resetUnwrapNonceDeadline(): void {
     setUnwrapForm((current) => current);

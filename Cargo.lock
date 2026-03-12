@@ -1820,6 +1820,7 @@ dependencies = [
  "ic-evm-ops",
  "ic-evm-rpc",
  "ic-evm-rpc-types",
+ "num-bigint",
  "serde",
  "tracing",
  "tracing-subscriber",
@@ -2132,6 +2133,7 @@ version = "0.1.0"
 dependencies = [
  "candid",
  "ic-cdk",
+ "ic-evm-rpc-types",
  "serde",
 ]
 
@@ -3914,6 +3916,7 @@ dependencies = [
  "ic-cdk",
  "ic-cdk-timers",
  "ic-evm-address",
+ "ic-evm-rpc-types",
  "ic-stable-structures 0.6.9",
  "num-bigint",
  "serde",

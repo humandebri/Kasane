@@ -6,7 +6,9 @@ use evm_core::hash;
 use evm_core::wrap_precompile::unwrap_intent_from_log;
 use evm_db::chain_data::constants::CHAIN_ID;
 use evm_db::chain_data::constants::{MAX_QUEUE_SNAPSHOT_LIMIT, MAX_RETURN_DATA, MAX_TX_SIZE};
-use evm_db::chain_data::runtime_defaults::DEFAULT_WRAP_CANISTER_ID_TEXT;
+use evm_db::chain_data::runtime_defaults::{
+    DEFAULT_BLOCK_GAS_LIMIT, DEFAULT_MIN_FEE_FLOOR, DEFAULT_WRAP_CANISTER_ID_TEXT,
+};
 #[cfg(test)]
 use evm_db::chain_data::StoredTx;
 use evm_db::chain_data::DEFAULT_MINING_INTERVAL_MS;
@@ -18,14 +20,18 @@ use evm_db::chain_data::{
 use evm_db::memory::{all_memory_regions, memory_size_pages, WASM_PAGE_SIZE_BYTES};
 use evm_db::meta::{
     current_schema_version, ensure_meta_initialized, get_meta, mark_migration_applied,
-    schema_migration_state, set_needs_migration, set_schema_migration_state, set_tx_locs_v3_active,
+    schema_migration_state, set_needs_migration, set_schema_migration_state,
+    set_tx_locs_v3_active,
     SchemaMigrationPhase, SchemaMigrationState,
 };
+#[cfg(test)]
+use evm_db::meta::set_meta;
 use evm_db::stable_state::{init_stable_state, with_state, with_state_mut};
 use evm_db::upgrade;
 use ic_cdk::api::{
     accept_message, canister_cycle_balance, is_controller, msg_caller, msg_method_name, time,
 };
+use num_bigint::BigUint;
 use serde::Deserialize;
 use std::collections::BTreeSet;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -302,10 +308,6 @@ const INSPECT_METHOD_POLICIES: &[InspectMethodPolicy] = &[
         payload_limit: INSPECT_TX_PAYLOAD_LIMIT,
     },
     InspectMethodPolicy {
-        method: "set_block_gas_limit",
-        payload_limit: INSPECT_MANAGE_PAYLOAD_LIMIT,
-    },
-    InspectMethodPolicy {
         method: "set_instruction_soft_limit",
         payload_limit: INSPECT_MANAGE_PAYLOAD_LIMIT,
     },
@@ -484,6 +486,43 @@ fn submit_ic_tx(args: SubmitIcTxArgsDto) -> Result<Vec<u8>, SubmitTxError> {
     out
 }
 
+#[ic_cdk::query]
+fn estimate_ic_tx(args: SubmitIcTxArgsDto) -> Result<EstimateIcTxOk, ApiError> {
+    let from = args.from.clone().ok_or_else(|| {
+        api_invalid_argument("arg.from_required", "arg.from_required")
+    })?;
+    if from.len() != 20 {
+        return Err(api_invalid_argument(
+            "arg.from_invalid_length",
+            "arg.from_invalid_length",
+        ));
+    }
+    let tx = parse_submit_ic_tx_args(args).map_err(submit_tx_error_to_api_error)?;
+    let suggested_max_priority_fee_per_gas =
+        rpc_eth_max_priority_fee_per_gas().map_err(rpc_error_to_api_error)?;
+    let suggested_max_fee_per_gas = rpc_eth_gas_price().map_err(rpc_error_to_api_error)?;
+    let gas_limit = rpc_eth_estimate_gas_object(RpcCallObjectView {
+        to: tx.to.map(|value| value.to_vec()),
+        from: Some(from),
+        gas: Some(tx.gas_limit),
+        gas_price: None,
+        nonce: Some(tx.nonce),
+        max_fee_per_gas: Some(tx.max_fee_per_gas),
+        max_priority_fee_per_gas: Some(tx.max_priority_fee_per_gas),
+        chain_id: Some(CHAIN_ID),
+        tx_type: None,
+        access_list: None,
+        value: Some(tx.value.to_vec()),
+        data: Some(tx.data),
+    })
+    .map_err(rpc_error_to_api_error)?;
+    Ok(EstimateIcTxOk {
+        gas_limit,
+        suggested_max_fee_per_gas,
+        suggested_max_priority_fee_per_gas,
+    })
+}
+
 fn parse_submit_ic_tx_args(
     args: SubmitIcTxArgsDto,
 ) -> Result<evm_core::tx_decode::IcSyntheticTxInput, SubmitTxError> {
@@ -515,6 +554,49 @@ fn parse_submit_ic_tx_args(
         max_priority_fee_per_gas,
         data: args.data,
     })
+}
+
+fn api_invalid_argument(code: &str, message: &str) -> ApiError {
+    ApiError::InvalidArgument(ApiErrorDetail {
+        code: code.to_string(),
+        message: message.to_string(),
+    })
+}
+
+fn api_internal(code: &str, message: &str) -> ApiError {
+    ApiError::Internal(ApiErrorDetail {
+        code: code.to_string(),
+        message: message.to_string(),
+    })
+}
+
+fn submit_tx_error_to_api_error(err: SubmitTxError) -> ApiError {
+    match err {
+        SubmitTxError::InvalidArgument(code) => api_invalid_argument(&code, &code),
+        SubmitTxError::Rejected(code) => ApiError::Rejected(ApiErrorDetail {
+            code: code.clone(),
+            message: code,
+        }),
+        SubmitTxError::Internal(code) => api_internal(&code, &code),
+    }
+}
+
+fn rpc_error_to_api_error(err: RpcErrorView) -> ApiError {
+    let code = err
+        .error_prefix
+        .unwrap_or_else(|| format!("rpc.error.{}", err.code));
+    ApiError::Rejected(ApiErrorDetail {
+        message: err.message,
+        code,
+    })
+}
+
+fn api_error_code(err: ApiError) -> String {
+    match err {
+        ApiError::InvalidArgument(detail)
+        | ApiError::Rejected(detail)
+        | ApiError::Internal(detail) => detail.code,
+    }
 }
 
 fn nat_to_u128(value: &Nat) -> Option<u128> {
@@ -1085,23 +1167,6 @@ fn memory_breakdown() -> MemoryBreakdownView {
 }
 
 #[ic_cdk::update]
-fn set_block_gas_limit(limit: u64) -> Result<(), String> {
-    if let Some(reason) = reject_anonymous_update() {
-        return Err(reason);
-    }
-    require_control_plane_write()?;
-    if limit == 0 {
-        return Err("input.block_gas_limit.non_positive".to_string());
-    }
-    evm_db::stable_state::with_state_mut(|state| {
-        let mut chain_state = *state.chain_state.get();
-        chain_state.block_gas_limit = limit;
-        state.chain_state.set(chain_state);
-    });
-    Ok(())
-}
-
-#[ic_cdk::update]
 fn set_instruction_soft_limit(limit: u64) -> Result<(), String> {
     if let Some(reason) = reject_anonymous_update() {
         return Err(reason);
@@ -1180,21 +1245,16 @@ fn get_pending(tx_id: Vec<u8>) -> PendingStatusView {
 }
 
 #[ic_cdk::query]
-fn get_request_dispatch_result(
-    kind: RequestKindView,
-    request_id: Vec<u8>,
-) -> Option<RequestDispatchResultView> {
-    match kind {
-        RequestKindView::Unwrap => {}
-    }
+fn get_unwrap_dispatch_overview(request_id: Vec<u8>) -> Option<UnwrapDispatchOverviewView> {
     let request_id = request_id_from_bytes(request_id)?;
     with_state(|state| {
         state
             .unwrap_requests
             .get(&TxId(request_id))
-            .map(|value| RequestDispatchResultView {
+            .map(|value| UnwrapDispatchOverviewView {
+                request_id: request_id.to_vec(),
                 status: request_dispatch_status_to_view(value.status),
-                error_code: normalize_unwrap_error_code_for_view(value.error_code.as_deref()),
+                error: normalize_unwrap_error_code_for_view(value.error_code.as_deref()),
             })
     })
 }
@@ -1825,6 +1885,9 @@ fn apply_post_upgrade_migrations() {
     }
 
     let from = meta.schema_version;
+    if from < current {
+        sync_chain_runtime_defaults_for_schema_upgrade();
+    }
     if from >= 3 && !evm_db::meta::tx_locs_v3_active() {
         set_tx_locs_v3_active(true);
     }
@@ -1854,7 +1917,30 @@ fn apply_post_upgrade_migrations() {
             }
         });
     }
+    #[cfg(test)]
+    {
+        let mut next = get_meta();
+        next.schema_version = current;
+        next.needs_migration = false;
+        next.last_migration_from = from;
+        next.last_migration_to = current;
+        set_meta(next);
+        set_schema_migration_state(SchemaMigrationState::done());
+    }
+    #[cfg(not(test))]
     drive_migrations_tick(1024, 1024);
+}
+
+fn sync_chain_runtime_defaults_for_schema_upgrade() {
+    evm_db::stable_state::with_state_mut(|state| {
+        let mut chain_state = *state.chain_state.get();
+        // 運用パラメータの stale state を upgrade で矯正する。
+        // base_fee は市場状態として維持し、gas limit と fee floor だけ既定値へ戻す。
+        chain_state.block_gas_limit = DEFAULT_BLOCK_GAS_LIMIT;
+        chain_state.min_gas_price = DEFAULT_MIN_FEE_FLOOR;
+        chain_state.min_priority_fee = DEFAULT_MIN_FEE_FLOOR;
+        state.chain_state.set(chain_state);
+    });
 }
 
 fn schedule_cycle_observer() {
@@ -2023,9 +2109,9 @@ fn mining_tick_with_timer(timer_scheduler: fn(u64), reject_provider: fn() -> Opt
 #[derive(Clone, Debug, CandidType, Deserialize)]
 struct WrapSubmitUnwrapRequestArgs {
     request_id: Vec<u8>,
-    asset_id: Vec<u8>,
-    amount: Vec<u8>,
-    recipient: Vec<u8>,
+    asset_id: Principal,
+    amount_e8s: Nat,
+    recipient: Principal,
 }
 
 #[derive(Clone, Debug, CandidType, Deserialize)]
@@ -2231,10 +2317,12 @@ async fn unwrap_dispatch_tick() {
                 break;
             }
         };
-        let submit =
-            ic_cdk::call::Call::unbounded_wait(current_wrap_canister_id(), "submit_unwrap_request")
-                .with_arg(args)
-                .await;
+        let submit = ic_cdk::call::Call::unbounded_wait(
+            current_wrap_canister_id(),
+            "dispatch_unwrap_request",
+        )
+        .with_arg(args)
+        .await;
 
         finalize_unwrap_dispatch_attempt(
             request_id,
@@ -2255,9 +2343,9 @@ fn build_wrap_submit_unwrap_request_args(
 ) -> Result<WrapSubmitUnwrapRequestArgs, String> {
     Ok(WrapSubmitUnwrapRequestArgs {
         request_id: request_id.0.to_vec(),
-        asset_id: req.asset_id.clone(),
-        amount: req.amount.to_vec(),
-        recipient: req.recipient.clone(),
+        asset_id: Principal::from_slice(req.asset_id.as_slice()),
+        amount_e8s: Nat(BigUint::from_bytes_be(req.amount.as_slice())),
+        recipient: Principal::from_slice(req.recipient.as_slice()),
     })
 }
 
@@ -2266,9 +2354,9 @@ fn resolve_wrap_submit_outcome(
     submit: Result<ic_cdk::call::Response, ic_cdk::call::CallFailed>,
 ) -> WrapSubmitDispatchOutcome {
     match submit {
-        Ok(resp) => match resp.candid_tuple::<(Result<WrapSubmitUnwrapRequestOk, String>,)>() {
+        Ok(resp) => match resp.candid_tuple::<(Result<WrapSubmitUnwrapRequestOk, ApiError>,)>() {
             Ok((Ok(ok),)) => resolve_wrap_submit_ok(expected_request_id, &ok),
-            Ok((Err(code),)) => WrapSubmitDispatchOutcome::Rejected(code),
+            Ok((Err(err),)) => WrapSubmitDispatchOutcome::Rejected(api_error_code(err)),
             Err(err) => WrapSubmitDispatchOutcome::DecodeFailed(err.to_string()),
         },
         Err(err) => WrapSubmitDispatchOutcome::CallFailed(err.to_string()),
@@ -2408,8 +2496,8 @@ mod tests {
         receipt_lookup_status, reject_anonymous_principal, reject_write_reason,
         should_run_cycle_observer_migration_tick, should_schedule_mining_after_cycle_observer,
         tx_id_from_bytes, validate_prune_policy_input, EthLogFilterView, ExecuteTxError,
-        GetLogsErrorView, PrunePolicyView, SubmitIcTxArgsDto, INSPECT_METHOD_POLICIES,
-        MINING_ERROR_COUNT, PRUNE_ERROR_COUNT,
+        GetLogsErrorView, PrunePolicyView, SubmitIcTxArgsDto, DEFAULT_BLOCK_GAS_LIMIT,
+        DEFAULT_MIN_FEE_FLOOR, INSPECT_METHOD_POLICIES, MINING_ERROR_COUNT, PRUNE_ERROR_COUNT,
     };
     use candid::{encode_one, Nat, Principal};
     use evm_core::chain::{ChainError, ExecResult, TxIn};
@@ -2420,8 +2508,8 @@ mod tests {
     use evm_db::chain_data::constants::MAX_RETURN_DATA;
     use evm_db::chain_data::receipt::log_entry_from_parts;
     use evm_db::chain_data::{
-        BlockData, MigrationPhase, OpsMode, ReceiptLike, TxId, TxLoc,
-        UnwrapDispatchRequest, UnwrapRequestStatus,
+        BlockData, MigrationPhase, OpsMode, ReceiptLike, TxId, TxLoc, UnwrapDispatchRequest,
+        UnwrapRequestStatus,
     };
     use evm_db::memory::{get_memory, AppMemoryId, WASM_PAGE_SIZE_BYTES};
     use evm_db::meta::{
@@ -2482,6 +2570,7 @@ mod tests {
         .expect("nat parse");
         let err = parse_submit_ic_tx_args(SubmitIcTxArgsDto {
             to: Some(vec![0x11; 20]),
+            from: None,
             value: too_large,
             gas_limit: 50_000,
             nonce: 0,
@@ -2691,7 +2780,6 @@ mod tests {
     fn inspect_allowlist_accepts_known_methods() {
         assert!(inspect_payload_limit_for_method("submit_ic_tx").is_some());
         assert!(inspect_payload_limit_for_method("set_pruning_enabled").is_some());
-        assert!(inspect_payload_limit_for_method("set_block_gas_limit").is_some());
         assert!(inspect_payload_limit_for_method("set_instruction_soft_limit").is_some());
         assert!(inspect_payload_limit_for_method("set_precompile_gas_ratio").is_none());
         #[cfg(feature = "precompile-profile-admin")]
@@ -3175,7 +3263,7 @@ mod tests {
     #[test]
     fn inspect_payload_limit_applies_per_method() {
         let tx_limit = inspect_payload_limit_for_method("submit_ic_tx").expect("tx limit");
-        let manage_limit = inspect_payload_limit_for_method("set_block_gas_limit")
+        let manage_limit = inspect_payload_limit_for_method("set_instruction_soft_limit")
             .expect("manage limit should be configured");
         assert!(manage_limit > tx_limit);
         assert_eq!(
@@ -3236,7 +3324,7 @@ mod tests {
             "rpc_eth_send_raw_transaction",
             encode_one(vec![0x02u8, 0x01]).expect("encode")
         ));
-        assert!(inspect_lightweight_tx_guard("set_block_gas_limit"));
+        assert!(inspect_lightweight_tx_guard("set_instruction_soft_limit"));
     }
 
     fn inspect_lightweight_tx_guard_with_payload(method: &str, payload: Vec<u8>) -> bool {
@@ -3334,6 +3422,73 @@ mod tests {
         let ops = super::get_ops_status();
         assert_eq!(ops.block_gas_limit, 9_000_000);
         assert_eq!(ops.instruction_soft_limit, 123_456);
+    }
+
+    #[test]
+    fn apply_post_upgrade_migrations_resyncs_gas_limit_and_fee_floors_only() {
+        init_stable_state();
+        let current = evm_db::meta::current_schema_version();
+        evm_db::stable_state::with_state_mut(|state| {
+            let mut chain_state = *state.chain_state.get();
+            chain_state.base_fee = 333_000_000_000;
+            chain_state.min_gas_price = 111_000_000_000;
+            chain_state.min_priority_fee = 222_000_000_000;
+            chain_state.block_gas_limit = 6_000_000;
+            state.chain_state.set(chain_state);
+        });
+        let mut meta = evm_db::meta::Meta::new();
+        meta.schema_version = current.saturating_sub(1);
+        meta.last_migration_from = meta.schema_version;
+        meta.last_migration_to = meta.schema_version;
+        evm_db::meta::set_meta(meta);
+
+        super::apply_post_upgrade_migrations();
+
+        evm_db::stable_state::with_state(|state| {
+            let chain_state = *state.chain_state.get();
+            assert_eq!(chain_state.block_gas_limit, DEFAULT_BLOCK_GAS_LIMIT);
+            assert_eq!(chain_state.min_gas_price, DEFAULT_MIN_FEE_FLOOR);
+            assert_eq!(chain_state.min_priority_fee, DEFAULT_MIN_FEE_FLOOR);
+            assert_eq!(chain_state.base_fee, 333_000_000_000);
+        });
+        let health = super::health();
+        assert_eq!(health.block_gas_limit, DEFAULT_BLOCK_GAS_LIMIT);
+        let ops = super::get_ops_status();
+        assert_eq!(ops.block_gas_limit, DEFAULT_BLOCK_GAS_LIMIT);
+        let meta = evm_db::meta::get_meta();
+        assert_eq!(meta.schema_version, current);
+        assert!(!meta.needs_migration);
+        assert_eq!(meta.last_migration_from, current - 1);
+        assert_eq!(meta.last_migration_to, current);
+    }
+
+    #[test]
+    fn apply_post_upgrade_migrations_resyncs_any_stale_floor_values() {
+        init_stable_state();
+        let current = evm_db::meta::current_schema_version();
+        evm_db::stable_state::with_state_mut(|state| {
+            let mut chain_state = *state.chain_state.get();
+            chain_state.base_fee = 444_000_000_000;
+            chain_state.min_gas_price = 999_000_000_000;
+            chain_state.min_priority_fee = 888_000_000_000;
+            chain_state.block_gas_limit = 9_000_000;
+            state.chain_state.set(chain_state);
+        });
+        let mut meta = evm_db::meta::Meta::new();
+        meta.schema_version = current.saturating_sub(1);
+        meta.last_migration_from = meta.schema_version;
+        meta.last_migration_to = meta.schema_version;
+        evm_db::meta::set_meta(meta);
+
+        super::apply_post_upgrade_migrations();
+
+        evm_db::stable_state::with_state(|state| {
+            let chain_state = *state.chain_state.get();
+            assert_eq!(chain_state.block_gas_limit, DEFAULT_BLOCK_GAS_LIMIT);
+            assert_eq!(chain_state.min_gas_price, DEFAULT_MIN_FEE_FLOOR);
+            assert_eq!(chain_state.min_priority_fee, DEFAULT_MIN_FEE_FLOOR);
+            assert_eq!(chain_state.base_fee, 444_000_000_000);
+        });
     }
 
     #[test]
@@ -3914,7 +4069,7 @@ mod tests {
     }
 
     #[test]
-    fn get_request_dispatch_result_returns_status_without_vault_id() {
+    fn get_unwrap_dispatch_overview_returns_status_without_vault_id() {
         init_stable_state();
         let request_id = TxId([0x11u8; 32]);
         with_state_mut(|state| {
@@ -3928,18 +4083,14 @@ mod tests {
             );
         });
 
-        let result = super::get_request_dispatch_result(
-            super::RequestKindView::Unwrap,
-            request_id.0.to_vec(),
-        )
-        .expect("result");
+        let result = super::get_unwrap_dispatch_overview(request_id.0.to_vec()).expect("result");
         assert_eq!(result.status, super::RequestDispatchStatusView::Dispatched);
         let stored = with_state(|state| state.unwrap_requests.get(&request_id));
         assert!(stored.is_some());
     }
 
     #[test]
-    fn get_request_dispatch_result_returns_dispatch_failed_for_decode_marker() {
+    fn get_unwrap_dispatch_overview_returns_dispatch_failed_for_decode_marker() {
         init_stable_state();
         let request_id = TxId([0x12u8; 32]);
         with_state_mut(|state| {
@@ -3953,16 +4104,15 @@ mod tests {
             );
         });
 
-        let result = super::get_request_dispatch_result(
-            super::RequestKindView::Unwrap,
-            request_id.0.to_vec(),
-        )
-        .expect("result");
-        assert_eq!(result.status, super::RequestDispatchStatusView::DispatchFailed);
+        let result = super::get_unwrap_dispatch_overview(request_id.0.to_vec()).expect("result");
+        assert_eq!(
+            result.status,
+            super::RequestDispatchStatusView::DispatchFailed
+        );
     }
 
     #[test]
-    fn get_request_dispatch_result_normalizes_decode_failure_error_code() {
+    fn get_unwrap_dispatch_overview_normalizes_decode_failure_error_code() {
         init_stable_state();
         let request_id = TxId([0x13u8; 32]);
         with_state_mut(|state| {
@@ -3976,15 +4126,8 @@ mod tests {
             );
         });
 
-        let result = super::get_request_dispatch_result(
-            super::RequestKindView::Unwrap,
-            request_id.0.to_vec(),
-        )
-        .expect("result");
-        assert_eq!(
-            result.error_code,
-            Some(super::UNWRAP_QUARANTINE_ERROR.to_string())
-        );
+        let result = super::get_unwrap_dispatch_overview(request_id.0.to_vec()).expect("result");
+        assert_eq!(result.error, Some(super::UNWRAP_QUARANTINE_ERROR.to_string()));
         let stored = with_state(|state| state.unwrap_requests.get(&request_id));
         assert_eq!(
             stored.and_then(|value| value.error_code),
@@ -3993,7 +4136,7 @@ mod tests {
     }
 
     #[test]
-    fn get_unwrap_request_ids_by_tx_id_derives_one_id_per_unwrap_log() {
+    fn unwrap_request_ids_for_tx_derives_one_id_per_unwrap_log() {
         init_stable_state();
         let tx_id = TxId([0x21u8; 32]);
         let amount = [0x44u8; 32];
@@ -4034,7 +4177,10 @@ mod tests {
             state.receipts.insert(tx_id, ptr);
         });
 
-        let request_ids = super::get_unwrap_request_ids_by_tx_id(tx_id.0.to_vec());
+        let request_ids = super::unwrap_request_ids_for_tx(&tx_id)
+            .into_iter()
+            .map(|value| value.0.to_vec())
+            .collect::<Vec<_>>();
         assert_eq!(request_ids.len(), 2);
         assert_ne!(request_ids[0], request_ids[1]);
         assert_eq!(
@@ -4048,6 +4194,59 @@ mod tests {
             request_ids[1],
             super::derive_unwrap_request_id(&tx_id, 2)
                 .expect("second id")
+                .0
+                .to_vec()
+        );
+    }
+
+    #[test]
+    fn get_unwrap_request_ids_by_tx_id_returns_ids_for_matching_logs() {
+        init_stable_state();
+        let tx_id = TxId([0x22u8; 32]);
+        let amount = [0x55u8; 32];
+        let unwrap_topic = hash::keccak256(b"KasaneUnwrapRequest(bytes)");
+        let other_log = log_entry_from_parts(
+            [0x11u8; 20],
+            vec![[0x99u8; 32]],
+            vec![0x01, 0x02],
+        );
+        with_state_mut(|state| {
+            let receipt = ReceiptLike {
+                tx_id,
+                block_number: 8,
+                tx_index: 0,
+                status: 1,
+                gas_used: 1,
+                effective_gas_price: 1,
+                l1_data_fee: 0,
+                operator_fee: 0,
+                total_fee: 0,
+                return_data_hash: [0u8; 32],
+                return_data: Vec::new(),
+                contract_address: None,
+                logs: vec![
+                    other_log.clone(),
+                    log_entry_from_parts(
+                        WRAP_PRECOMPILE_ADDRESS.into_array(),
+                        vec![unwrap_topic],
+                        unwrap_log_data(&[0x44, 0x55, 0x66], amount, &[0x77, 0x88]),
+                    ),
+                    other_log,
+                ],
+            };
+            let ptr = state
+                .blob_store
+                .store_bytes(receipt.to_bytes().as_ref())
+                .expect("store receipt");
+            state.receipts.insert(tx_id, ptr);
+        });
+
+        let ids = super::get_unwrap_request_ids_by_tx_id(tx_id.0.to_vec());
+        assert_eq!(ids.len(), 1);
+        assert_eq!(
+            ids[0],
+            super::derive_unwrap_request_id(&tx_id, 1)
+                .expect("request id")
                 .0
                 .to_vec()
         );
@@ -4109,10 +4308,7 @@ mod tests {
         );
 
         let query_out = catch_unwind(AssertUnwindSafe(|| {
-            super::get_request_dispatch_result(
-                super::RequestKindView::Unwrap,
-                request_id.0.to_vec(),
-            )
+            super::get_unwrap_dispatch_overview(request_id.0.to_vec())
         }));
         assert!(
             query_out.is_ok(),
@@ -4126,7 +4322,7 @@ mod tests {
             super::RequestDispatchStatusView::DispatchFailed
         );
         assert_eq!(
-            query_result.error_code,
+            query_result.error,
             Some(super::UNWRAP_QUARANTINE_ERROR.to_string())
         );
 
@@ -4392,16 +4588,13 @@ mod tests {
     #[test]
     fn did_contains_dispatch_result_contract_shape() {
         let did = include_str!("../evm_canister.did");
-        assert!(did.contains("type RequestDispatchResultView = record {"));
-        assert!(!did.contains("wrap_canister_id : principal;"));
-        assert!(!did.contains("vault_canister_id : blob;"));
-        assert!(!did.contains("ledger_tx_id : opt blob;"));
+        assert!(did.contains("type UnwrapDispatchOverviewView = record {"));
+        assert!(did.contains("type ApiError = variant {"));
+        assert!(did.contains("estimate_ic_tx"));
         assert!(did.contains("type RequestDispatchStatusView = variant {"));
-        assert!(did.contains("type RequestKindView = variant { Unwrap };"));
-        assert!(!did.contains("get_unwrap_request_result"));
-        assert!(!did.contains("get_unwrap_request_status"));
-        assert!(did.contains("get_request_dispatch_result"));
+        assert!(!did.contains("get_request_dispatch_result"));
         assert!(did.contains("get_unwrap_request_ids_by_tx_id"));
+        assert!(did.contains("get_unwrap_dispatch_overview"));
         assert!(!did.contains("set_wrap_canister_id : (principal) -> (Result_15);"));
     }
 }

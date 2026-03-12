@@ -18,7 +18,7 @@ English version: [./README.md](./README.md)
 
 1. CI相当チェック（軽量）
 ```bash
-scripts/ci-local.sh github
+CI_LOCAL_MODE=github scripts/ci-local.sh
 ```
 
 2. デプロイ前スモーク（標準, PocketIC）
@@ -51,7 +51,7 @@ scripts/measure_precompile_ratio.sh
 ## 用途別
 
 ### 事前確認・品質ゲート
-- `scripts/ci-local.sh`: `github|smoke|all` の3モードで実行
+- `scripts/ci-local.sh`: `CI_LOCAL_MODE=<mode>` で `github|smoke|all` の3モードを切り替える
 - `scripts/check_gateway_api_compat_baseline.sh`: Gateway API compatibility baseline の破壊変更を検知（`--update` でベースライン更新）
 - `scripts/check_gateway_matrix_sync.sh`: `tools/rpc-gateway/README.md` の互換マトリクス行が `tools/rpc-gateway/package.json` のバージョン系列と一致するか検証
 - `scripts/check_precompile_feature_isolation.sh`: `ic-evm-core` の既定 wasm build に BLS/KZG backend crate（`ark-bls12-381`, `c-kzg`, `blst`）が流入していないか検証
@@ -137,6 +137,10 @@ scripts/measure_precompile_ratio.sh
 - `scripts/verify_submit_after_deploy.sh`: verify submit の手動/CIフック
 - `scripts/mainnet/mainnet_method_test.sh`: 本番メソッド検証（重い）
 - `scripts/mainnet/mainnet_wrap_unwrap_smoke.sh`: TESTICP を使った wrap -> unwrap 実経路確認
+  - wrap 側は `quote_wrap_request` -> `submit_wrap_request` の新 API で実行する
+  - unwrap の status 追跡は `get_unwrap_dispatch_overview` + `wrap_canister.get_request` を使う
+  - unwrap 前に wrapped token の `approve(factory, amount)` を自動投入する
+  - 破壊的 DID 変更後は script/client を canister と同時更新する前提
   - `MINING_IDLE_OBSERVE_SEC`: 冒頭の idle 観測秒数（既定: `6`）
   - `IDLE_MAX_CYCLE_DELTA`: idle 観測で許容する cycle 減少上限。`0` で閾値チェック無効（既定: `0`）
 

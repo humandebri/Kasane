@@ -14,6 +14,7 @@ import { bytesToHex, hexToBytes, parseRequestIdHex } from "../lib/utils";
 import {
   estimateUnwrapGasLimit,
   estimateWrapGasLimit,
+  getDispatchResult,
   getUnwrapRequestIdsByTxId,
   getWrapEvmNonce,
   submitIcTx,
@@ -92,7 +93,6 @@ async function runRequestIdTests(): Promise<void> {
     assetId: principalTextToBytes("2vxsx-fae"),
     amount: decimalToBytes32("1000000000000000000"),
     evmRecipient: hexToBytes("0x1111111111111111111111111111111111111111"),
-    evmNonce: 1n,
     gasLimit: 300_000n,
   });
   assert.equal(wrapRequestId.length, 32);
@@ -125,32 +125,38 @@ async function runExecutionBranchTests(): Promise<void> {
   const requestId = Uint8Array.from(new Array(32).fill(0x11));
 
   const unwrapOnly = await getExecutionResult(requestId, {
-    readUnwrapResult: async () => [{
+    readRequest: async () => [{
+      kind: { Unwrap: null },
+      request_id: requestId,
       status: { Succeeded: null },
+      error: [],
+      fee_ledger_tx_id: [],
+      pull_ledger_tx_id: [],
+      mint_tx_id: [],
+      withdraw_ledger_tx_id: [],
       ledger_tx_id: [Uint8Array.from([0xaa, 0xbb])],
-      error_code: [],
+      dispatch_status: [],
+      dispatch_error: [],
+      charged_fee_e8s: [],
+      charged_gas_price_wei: [],
     }],
-    readWrapResult: async () => [],
   });
   assert.equal(unwrapOnly?.status, "Succeeded");
   assert.deepEqual(unwrapOnly?.ledgerTxId, Uint8Array.from([0xaa, 0xbb]));
 
   const wrapPreferred = await getExecutionResult(requestId, {
-    readUnwrapResult: async () => [{
+    readRequest: async () => [{
+      kind: { Wrap: null },
+      request_id: requestId,
       status: { Failed: null },
-      ledger_tx_id: [],
-      error_code: ["unwrap_failed"],
-    }],
-    readWrapResult: async () => [{
-      status: { Failed: null },
+      error: [{ code: "wrap_failed", message: "wrap_failed" }],
+      fee_ledger_tx_id: [],
       pull_ledger_tx_id: [Uint8Array.from([0x01])],
       mint_tx_id: [],
-      error_code: ["wrap_failed"],
-      withdrawn: false,
       withdraw_ledger_tx_id: [],
-      withdraw_error_code: [],
-      mint_failed_recoverable: true,
-      fee_ledger_tx_id: [],
+      ledger_tx_id: [],
+      dispatch_status: [],
+      dispatch_error: [],
       charged_fee_e8s: [],
       charged_gas_price_wei: [],
     }],
@@ -624,12 +630,19 @@ function buildMockQueryActor(args: {
       return_data: new Uint8Array(32),
       revert_data: noRevertData,
     } }),
-    get_request_dispatch_result: async (): Promise<[]> => [],
+    estimate_ic_tx: async () => ({
+      Ok: {
+        gas_limit: 300_000n,
+        suggested_max_fee_per_gas: 1n,
+        suggested_max_priority_fee_per_gas: 1n,
+      },
+    }),
     get_unwrap_request_ids_by_tx_id: async () => [],
+    get_unwrap_dispatch_overview: async (): Promise<[]> => [],
   };
 }
 
-async function runGetUnwrapRequestIdsByTxIdTests(): Promise<void> {
+async function runGetGatewayRequestLookupTests(): Promise<void> {
   wrapperClientTestHooks.reset();
   wrapperClientTestHooks.setMockQueryActor({
     ...buildMockQueryActor({
@@ -640,17 +653,27 @@ async function runGetUnwrapRequestIdsByTxIdTests(): Promise<void> {
       Uint8Array.from(txId),
       Uint8Array.from(new Array(32).fill(0x22)),
     ],
+    get_unwrap_dispatch_overview: async (requestId) => [{
+      request_id: requestId,
+      status: { Dispatched: null },
+      error: [],
+    }],
   });
 
-  const out = await getUnwrapRequestIdsByTxId(Uint8Array.from(new Array(32).fill(0x11)));
-  assert.equal(out.length, 2);
-  assert.deepEqual(out[1], Uint8Array.from(new Array(32).fill(0x22)));
+  const ids = await getUnwrapRequestIdsByTxId(Uint8Array.from(new Array(32).fill(0x11)));
+  assert.equal(ids.length, 2);
+  assert.deepEqual(ids[1], Uint8Array.from(new Array(32).fill(0x22)));
+
+  const out = await getDispatchResult(Uint8Array.from(new Array(32).fill(0x11)));
+  assert.equal(out?.status, "Dispatched");
+  assert.equal(out?.errorCode, null);
 }
 
 async function runWrapperClientFeeTests(): Promise<void> {
   wrapperClientTestHooks.reset();
   const submittedArgsList: Array<{
     to: [] | [Uint8Array];
+    from: [] | [Uint8Array];
     value: bigint;
     max_priority_fee_per_gas: bigint;
     data: Uint8Array;
@@ -736,7 +759,7 @@ async function main(): Promise<void> {
   await runInternetIdentityConfigTests();
   await runStatusPhaseTests();
   await runStatusPollingRegressionTests();
-  await runGetUnwrapRequestIdsByTxIdTests();
+  await runGetGatewayRequestLookupTests();
   await runWrapperClientFeeTests();
   process.stdout.write("wrapper tests passed\n");
 }

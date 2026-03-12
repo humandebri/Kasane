@@ -122,6 +122,7 @@ enum PendingStatusView {
 #[derive(Clone, Debug, CandidType, Deserialize, Eq, PartialEq)]
 struct SubmitIcTxArgsDto {
     to: Option<Vec<u8>>,
+    from: Option<Vec<u8>>,
     value: candid::Nat,
     max_priority_fee_per_gas: candid::Nat,
     data: Vec<u8>,
@@ -468,6 +469,7 @@ fn build_submit_ic_tx_args(to: [u8; 20], nonce: u64) -> SubmitIcTxArgsDto {
     // max_fee(600 gwei) >= base_fee + min_priority (500 gwei).
     SubmitIcTxArgsDto {
         to: Some(to.to_vec()),
+        from: None,
         value: candid::Nat::from(0u8),
         max_priority_fee_per_gas: candid::Nat::from(300_000_000_000u64),
         data: Vec::new(),

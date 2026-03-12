@@ -260,6 +260,10 @@ sudo systemctl restart kasane-explorer.service
 sudo journalctl -u kasane-explorer.service -n 200 --no-pager
 ```
 
+- schema v6 以降の upgrade では、`block_gas_limit` と fee floor（`min_gas_price` / `min_priority_fee`）を既定値へ再同期する。
+- `base_fee` は市場状態維持のため upgrade 前の state を保持する。
+- そのため、`scripts/query_smoke.sh` の後に `health` / `get_ops_status` で `block_gas_limit` が既定値へ戻っていることを確認する。
+
 ## 4. ロールバック方針
 1. snapshot を事前取得する。
 2. 障害時は snapshot を load し、直前安定 wasm を reinstall する。
@@ -317,6 +321,15 @@ CANISTER_ID=<canister_id> \
 ICP_IDENTITY_NAME=ci-local \
 scripts/mainnet/mainnet_method_test.sh
 ```
+
+`scripts/mainnet/mainnet_wrap_unwrap_smoke.sh` は現行 unwrap 仕様に追従している。
+
+- wrap submit は `quote_wrap_request` -> `submit_wrap_request` の順で行い、caller 側で `request_id` を事前計算しない
+- unwrap 前に wrapped token の `approve(factory, amount)` が必要
+- unwrap burn は token 直接 burn ではなく `WrapTokenFactory.burnFromAsset` 経由で行われ、factory allowance を消費する
+- 現行 smoke script は wrap 成功後に `get_unwrap_requirements` で wrapped token を確認し、この approve を自動投入してから `submit_ic_tx` を送る
+- unwrap の進行確認は `evm_canister.get_unwrap_dispatch_overview(request_id)` と `wrap_canister.get_request(request_id)` を併用する
+- この導線は breaking DID change 前提なので、client / script の同時更新を必須とする
 
 ## 6. `caller_principal` と `canister_id` の扱い
 - 用語:

@@ -58,7 +58,6 @@ REPORT_DIR="${REPORT_DIR:-docs/ops/reports}"
 TIMESTAMP="$(date +%Y%m%d-%H%M%S)"
 REPORT_FILE="${REPORT_DIR}/mainnet-method-test-${TIMESTAMP}.md"
 
-INITIAL_BLOCK_GAS_LIMIT=""
 INITIAL_INSTR_LIMIT=""
 FINALIZE_DONE=0
 EVENT_SEQ=0
@@ -274,9 +273,6 @@ finalize_state() {
 
   set +e
   run_update_with_cycles "set_pruning_enabled" "(false)" "finalize: enforce disabled" "1" >/dev/null
-  if [[ -n "${INITIAL_BLOCK_GAS_LIMIT}" ]]; then
-    run_update_with_cycles "set_block_gas_limit" "(${INITIAL_BLOCK_GAS_LIMIT}:nat64)" "finalize: restore gas" "1" >/dev/null
-  fi
   if [[ -n "${INITIAL_INSTR_LIMIT}" ]]; then
     run_update_with_cycles "set_instruction_soft_limit" "(${INITIAL_INSTR_LIMIT}:nat64)" "finalize: restore instruction" "1" >/dev/null
   fi
@@ -356,7 +352,6 @@ QUERY_OK_COUNT="$(awk -F'"ok":' '/"ok":/{if ($2 ~ /^true/) c++} END{print c+0}' 
 QUERY_TOTAL_COUNT="$(wc -l < "${QUERY_JSONL}" | tr -d ' ')"
 record_method_row "query_matrix_baseline" "query" "ok=${QUERY_OK_COUNT}/${QUERY_TOTAL_COUNT}" "agent.query baseline completed"
 
-INITIAL_BLOCK_GAS_LIMIT="$(node -e 'const fs=require("fs");const j=JSON.parse(fs.readFileSync(process.argv[1],"utf8"));console.log(j.get_ops_status?.block_gas_limit ?? "3000000");' "${QUERY_SUMMARY}")"
 INITIAL_INSTR_LIMIT="$(node -e 'const fs=require("fs");const j=JSON.parse(fs.readFileSync(process.argv[1],"utf8"));console.log(j.get_ops_status?.instruction_soft_limit ?? "4000000000");' "${QUERY_SUMMARY}")"
 
 run_update_with_cycles "set_pruning_enabled" "(false)" "baseline setup" "0" >/dev/null
@@ -488,25 +483,6 @@ else
   record_method_row "raw_tx_pending_status_pre" "query" "skipped" "rpc_eth_send_raw_transaction skipped"
   record_method_row "raw_tx_pending_status_post" "query" "skipped" "rpc_eth_send_raw_transaction skipped"
 fi
-
-GAS_LIMITS=()
-while IFS= read -r _gas_limit; do
-  [[ -z "${_gas_limit}" ]] && continue
-  GAS_LIMITS+=("${_gas_limit}")
-done < <(python - <<PY
-base = int("${INITIAL_BLOCK_GAS_LIMIT}")
-factors = [0.5, 0.75, 1.0, 1.25, 1.5, 2.0]
-for f in factors:
-    v = int(base * f)
-    print(v if v >= 21000 else 21000)
-PY
-)
-for limit in "${GAS_LIMITS[@]}"; do
-  run_update_with_cycles "set_block_gas_limit" "(${limit}:nat64)" "gas sweep set" "0" >/dev/null
-  submit_ic_tx_with_retry_standard "gas sweep submit limit=${limit}" "3"
-  wait_for_auto_production_block "gas sweep produce limit=${limit}"
-done
-run_update_with_cycles "set_block_gas_limit" "(${INITIAL_BLOCK_GAS_LIMIT}:nat64)" "gas sweep restore" "0" >/dev/null
 
 if [[ "${RUN_HEAVY_MATRIX}" == "1" ]]; then
   append_file ""
@@ -664,7 +640,6 @@ append_file "- raw_tx_drop_label_pre: ${RAW_TX_DROP_LABEL_PRE:-n/a}"
 append_file "- raw_tx_pending_status_post: ${RAW_TX_PENDING_STATUS_POST:-n/a}"
 append_file "- raw_tx_drop_code_post: ${RAW_TX_DROP_CODE_POST:-n/a}"
 append_file "- raw_tx_drop_label_post: ${RAW_TX_DROP_LABEL_POST:-n/a}"
-append_file "- initial_block_gas_limit: ${INITIAL_BLOCK_GAS_LIMIT}"
 append_file "- initial_instruction_soft_limit: ${INITIAL_INSTR_LIMIT}"
 append_file "- report_generated_utc: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
 

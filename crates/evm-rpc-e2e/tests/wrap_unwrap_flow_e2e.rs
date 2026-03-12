@@ -3,12 +3,10 @@
 //! なぜ: gas price の canister 間呼び出し種別と unwrap dispatch の実挙動を回帰から守るため
 
 use candid::{CandidType, Decode, Deserialize, Encode, Nat, Principal};
-use evm_core::hash;
 use evm_core::wrap_precompile::WRAP_PRECOMPILE_ADDRESS;
 use pocket_ic::PocketIc;
 use std::path::PathBuf;
 use std::time::Duration;
-use tiny_keccak::{Hasher, Keccak};
 
 #[derive(Clone, Debug, CandidType, Deserialize, Eq, PartialEq)]
 struct GenesisBalanceView {
@@ -33,6 +31,7 @@ struct WrapInitArgs {
 #[derive(Clone, Debug, CandidType, Deserialize, Eq, PartialEq)]
 struct SubmitIcTxArgsDto {
     to: Option<Vec<u8>>,
+    from: Option<Vec<u8>>,
     value: Nat,
     max_priority_fee_per_gas: Nat,
     data: Vec<u8>,
@@ -43,17 +42,18 @@ struct SubmitIcTxArgsDto {
 
 #[derive(Clone, Debug, CandidType, Deserialize, Eq, PartialEq)]
 struct SubmitWrapRequestArgs {
-    request_id: Vec<u8>,
-    asset_id: Vec<u8>,
-    amount: Vec<u8>,
+    asset_id: Principal,
+    amount_e8s: Nat,
     evm_recipient: Vec<u8>,
-    evm_nonce: u64,
     gas_limit: u64,
 }
 
 #[derive(Clone, Debug, CandidType, Deserialize, Eq, PartialEq)]
 struct SubmitWrapRequestOk {
     request_id: Vec<u8>,
+    charged_fee_e8s: Nat,
+    charged_gas_price_wei: Nat,
+    fee_ledger_tx_id: Vec<u8>,
 }
 
 #[derive(Clone, Debug, CandidType, Deserialize, Eq, PartialEq)]
@@ -64,8 +64,16 @@ enum SubmitTxError {
 }
 
 #[derive(Clone, Debug, CandidType, Deserialize, Eq, PartialEq)]
-enum RequestKindView {
-    Unwrap,
+struct ApiErrorDetail {
+    code: String,
+    message: String,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize, Eq, PartialEq)]
+enum ApiError {
+    InvalidArgument(ApiErrorDetail),
+    Rejected(ApiErrorDetail),
+    Internal(ApiErrorDetail),
 }
 
 #[derive(Clone, Debug, CandidType, Deserialize, Eq, PartialEq)]
@@ -77,9 +85,16 @@ enum RequestDispatchStatusView {
 }
 
 #[derive(Clone, Debug, CandidType, Deserialize, Eq, PartialEq)]
-struct RequestDispatchResultView {
+struct UnwrapDispatchOverviewView {
+    request_id: Vec<u8>,
     status: RequestDispatchStatusView,
-    error_code: Option<String>,
+    error: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, CandidType, Deserialize, Eq, PartialEq)]
+enum RequestKind {
+    Wrap,
+    Unwrap,
 }
 
 #[derive(Clone, Copy, Debug, CandidType, Deserialize, Eq, PartialEq)]
@@ -88,6 +103,13 @@ enum WrapRequestStatus {
     Running,
     Succeeded,
     Failed,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize, Eq, PartialEq)]
+struct RequestOverview {
+    kind: RequestKind,
+    request_id: Vec<u8>,
+    status: WrapRequestStatus,
 }
 
 fn gateway_wasm_path() -> PathBuf {
@@ -156,6 +178,7 @@ fn settle(pic: &PocketIc, rounds: usize) {
 fn build_submit_ic_tx_args(to: [u8; 20], nonce: u64, data: Vec<u8>, gas_limit: u64) -> SubmitIcTxArgsDto {
     SubmitIcTxArgsDto {
         to: Some(to.to_vec()),
+        from: None,
         value: Nat::from(0u8),
         max_priority_fee_per_gas: Nat::from(300_000_000_000u64),
         data,
@@ -197,44 +220,6 @@ fn encode_unwrap_payload(asset: Principal, recipient: Principal) -> Vec<u8> {
     out
 }
 
-fn wrap_request_id(principal: Principal, asset_id: &[u8], amount: &[u8], evm_recipient: &[u8], evm_nonce: u64, gas_limit: u64) -> Vec<u8> {
-    fn hash_len_prefixed(hasher: &mut Keccak, bytes: &[u8]) { hasher.update(&(bytes.len() as u32).to_be_bytes()); hasher.update(bytes); }
-    let mut keccak = Keccak::v256();
-    keccak.update(b"kasane.wrap.request.v1");
-    hash_len_prefixed(&mut keccak, principal.as_slice());
-    hash_len_prefixed(&mut keccak, asset_id);
-    hash_len_prefixed(&mut keccak, amount);
-    hash_len_prefixed(&mut keccak, evm_recipient);
-    keccak.update(&evm_nonce.to_be_bytes());
-    keccak.update(&gas_limit.to_be_bytes());
-    let mut out = [0u8; 32];
-    keccak.finalize(&mut out);
-    out.to_vec()
-}
-
-#[test]
-fn wrap_submit_request_reaches_fee_collection_after_gateway_gas_quote() {
-    let pic = PocketIc::new();
-    let (gateway_id, wrap_id, fee_ledger_id) = install_pair(&pic);
-    submit_ic_tx(&pic, gateway_id, build_submit_ic_tx_args([0x10; 20], 0, Vec::new(), 50_000));
-    settle(&pic, 3);
-
-    let asset_id = fee_ledger_id.as_slice().to_vec();
-    let amount = {
-        let mut out = [0u8; 32];
-        out[16..].copy_from_slice(&1_000_000u128.to_be_bytes());
-        out.to_vec()
-    };
-    let evm_recipient = vec![0x55; 20];
-    let request_id = wrap_request_id(test_caller(), &asset_id, &amount, &evm_recipient, 7, 150_000);
-    let args = SubmitWrapRequestArgs { request_id, asset_id, amount, evm_recipient, evm_nonce: 7, gas_limit: 150_000 };
-    let out = pic.update_call(wrap_id, test_caller(), "submit_wrap_request", Encode!(&args).expect("encode wrap submit")).unwrap();
-    let result: Result<SubmitWrapRequestOk, String> = Decode!(&out, Result<SubmitWrapRequestOk, String>).expect("decode wrap submit");
-    let err = result.expect_err("dummy fee ledger should fail");
-    assert!(err.starts_with("fee.call_failed:"), "unexpected wrap submit error: {err}");
-    assert!(!err.contains("fee.quote_"), "gas quote path should already be fixed: {err}");
-}
-
 fn gateway_unwrap_request_ids_by_tx_id(
     pic: &PocketIc,
     gateway_id: Principal,
@@ -249,6 +234,30 @@ fn gateway_unwrap_request_ids_by_tx_id(
         )
         .unwrap();
     Decode!(&out, Vec<Vec<u8>>).expect("decode unwrap ids")
+}
+
+#[test]
+fn wrap_submit_request_reaches_fee_collection_after_gateway_gas_quote() {
+    let pic = PocketIc::new();
+    let (gateway_id, wrap_id, fee_ledger_id) = install_pair(&pic);
+    submit_ic_tx(&pic, gateway_id, build_submit_ic_tx_args([0x10; 20], 0, Vec::new(), 50_000));
+    settle(&pic, 3);
+
+    let evm_recipient = vec![0x55; 20];
+    let args = SubmitWrapRequestArgs {
+        asset_id: fee_ledger_id,
+        amount_e8s: Nat::from(1_000_000u64),
+        evm_recipient,
+        gas_limit: 150_000,
+    };
+    let out = pic.update_call(wrap_id, test_caller(), "submit_wrap_request", Encode!(&args).expect("encode wrap submit")).unwrap();
+    let result: Result<SubmitWrapRequestOk, ApiError> = Decode!(&out, Result<SubmitWrapRequestOk, ApiError>).expect("decode wrap submit");
+    let err = result.expect_err("dummy fee ledger should fail");
+    let code = match err {
+        ApiError::Rejected(detail) | ApiError::InvalidArgument(detail) | ApiError::Internal(detail) => detail.code,
+    };
+    assert!(code.starts_with("fee.call_failed:"), "unexpected wrap submit error: {code}");
+    assert!(!code.contains("fee.quote_"), "gas quote path should already be fixed: {code}");
 }
 
 #[test]
@@ -279,8 +288,8 @@ fn unwrap_dispatch_succeeds_with_real_wrap_canister() {
         let Some(ref request_id) = request_id else {
             continue;
         };
-        let out = pic.query_call(gateway_id, Principal::anonymous(), "get_request_dispatch_result", Encode!(&RequestKindView::Unwrap, request_id).unwrap()).unwrap();
-        let result: Option<RequestDispatchResultView> = Decode!(&out, Option<RequestDispatchResultView>).expect("decode dispatch result");
+        let out = pic.query_call(gateway_id, Principal::anonymous(), "get_unwrap_dispatch_overview", Encode!(request_id).unwrap()).unwrap();
+        let result: Option<UnwrapDispatchOverviewView> = Decode!(&out, Option<UnwrapDispatchOverviewView>).expect("decode dispatch result");
         last_result = result.clone();
         if result.as_ref().map(|value| &value.status) == Some(&RequestDispatchStatusView::Dispatched) {
             final_result = result;
@@ -290,9 +299,9 @@ fn unwrap_dispatch_succeeds_with_real_wrap_canister() {
 
     let result = final_result.unwrap_or_else(|| panic!("unwrap should dispatch, last_result={last_result:?}"));
     assert_eq!(result.status, RequestDispatchStatusView::Dispatched);
-    assert_eq!(result.error_code, None);
+    assert_eq!(result.error, None);
     let request_id = request_id.expect("unwrap request id must resolve from tx");
-    let wrap_status_out = pic.query_call(wrap_id, Principal::anonymous(), "get_request_status", Encode!(&request_id).unwrap()).unwrap();
-    let wrap_status: Option<WrapRequestStatus> = Decode!(&wrap_status_out, Option<WrapRequestStatus>).expect("decode wrap request status");
-    assert_eq!(wrap_status, Some(WrapRequestStatus::Queued));
+    let wrap_status_out = pic.query_call(wrap_id, Principal::anonymous(), "get_request", Encode!(&request_id).unwrap()).unwrap();
+    let wrap_status: Option<RequestOverview> = Decode!(&wrap_status_out, Option<RequestOverview>).expect("decode wrap request status");
+    assert_eq!(wrap_status.map(|value| value.status), Some(WrapRequestStatus::Queued));
 }

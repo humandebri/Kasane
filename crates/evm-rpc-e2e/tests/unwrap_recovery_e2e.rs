@@ -2,8 +2,7 @@
 //! 何を: upgrade 後の unwrap 再送が idempotent に復旧することを確認
 //! なぜ: gateway の Dispatching 再開と wrap 側 idempotency の回帰を防ぐため
 
-use candid::{CandidType, Decode, Deserialize, Encode, Principal};
-use evm_core::hash;
+use candid::{CandidType, Decode, Deserialize, Encode, Nat, Principal};
 use evm_core::wrap_precompile::WRAP_PRECOMPILE_ADDRESS;
 use pocket_ic::PocketIc;
 use std::path::PathBuf;
@@ -23,6 +22,7 @@ struct GatewayInitArgs {
 #[derive(Clone, Debug, CandidType, Deserialize, Eq, PartialEq)]
 struct SubmitIcTxArgsDto {
     to: Option<Vec<u8>>,
+    from: Option<Vec<u8>>,
     value: candid::Nat,
     max_priority_fee_per_gas: candid::Nat,
     data: Vec<u8>,
@@ -39,11 +39,6 @@ enum SubmitTxError {
 }
 
 #[derive(Clone, Debug, CandidType, Deserialize, Eq, PartialEq)]
-enum RequestKindView {
-    Unwrap,
-}
-
-#[derive(Clone, Debug, CandidType, Deserialize, Eq, PartialEq)]
 enum RequestDispatchStatusView {
     Queued,
     Dispatching,
@@ -52,9 +47,10 @@ enum RequestDispatchStatusView {
 }
 
 #[derive(Clone, Debug, CandidType, Deserialize, Eq, PartialEq)]
-struct RequestDispatchResultView {
+struct UnwrapDispatchOverviewView {
+    request_id: Vec<u8>,
     status: RequestDispatchStatusView,
-    error_code: Option<String>,
+    error: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, CandidType, Deserialize, Eq, PartialEq)]
@@ -66,16 +62,41 @@ enum WrapRequestStatus {
 }
 
 #[derive(Clone, Debug, CandidType, Deserialize, Eq, PartialEq)]
-struct SubmitUnwrapRequestArgs {
+struct DispatchUnwrapRequestArgs {
     request_id: Vec<u8>,
-    asset_id: Vec<u8>,
-    amount: Vec<u8>,
-    recipient: Vec<u8>,
+    asset_id: Principal,
+    amount_e8s: Nat,
+    recipient: Principal,
 }
 
 #[derive(Clone, Debug, CandidType, Deserialize, Eq, PartialEq)]
-struct SubmitUnwrapRequestOk {
+struct DispatchUnwrapRequestOk {
     request_id: Vec<u8>,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize, Eq, PartialEq)]
+struct ApiErrorDetail {
+    code: String,
+    message: String,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize, Eq, PartialEq)]
+enum ApiError {
+    InvalidArgument(ApiErrorDetail),
+    Rejected(ApiErrorDetail),
+    Internal(ApiErrorDetail),
+}
+
+#[derive(Clone, Copy, Debug, CandidType, Deserialize, Eq, PartialEq)]
+enum RequestKind {
+    Unwrap,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize, Eq, PartialEq)]
+struct RequestOverview {
+    kind: RequestKind,
+    request_id: Vec<u8>,
+    status: WrapRequestStatus,
 }
 
 fn gateway_wasm_path() -> PathBuf {
@@ -177,6 +198,7 @@ fn submit_unwrap_tx(pic: &PocketIc, gateway_id: Principal, data: Vec<u8>) -> Vec
             "submit_ic_tx",
             Encode!(&SubmitIcTxArgsDto {
                 to: Some(WRAP_PRECOMPILE_ADDRESS.into_array().to_vec()),
+                from: None,
                 value: candid::Nat::from(0u8),
                 max_priority_fee_per_gas: candid::Nat::from(300_000_000_000u64),
                 data,
@@ -203,32 +225,32 @@ fn seed_wrap_request(
         .update_call(
             wrap_id,
             Principal::anonymous(),
-            "submit_unwrap_request",
-            Encode!(&SubmitUnwrapRequestArgs {
+            "dispatch_unwrap_request",
+            Encode!(&DispatchUnwrapRequestArgs {
                 request_id: request_id.to_vec(),
-                asset_id: asset_id.as_slice().to_vec(),
-                amount: abi_word_from_u128(1_000_000_000_000u128).to_vec(),
-                recipient: recipient.as_slice().to_vec(),
+                asset_id,
+                amount_e8s: Nat::from(1_000_000_000_000u128),
+                recipient,
             })
             .expect("encode mock wrap submit"),
         )
         .unwrap_or_else(|err| panic!("seed wrap update failed: {err}"));
-    let result: Result<SubmitUnwrapRequestOk, String> =
-        Decode!(&out, Result<SubmitUnwrapRequestOk, String>)
+    let result: Result<DispatchUnwrapRequestOk, ApiError> =
+        Decode!(&out, Result<DispatchUnwrapRequestOk, ApiError>)
             .expect("decode mock wrap seed result");
     assert!(result.is_ok(), "seed wrap request failed: {result:?}");
 }
 
-fn gateway_dispatch_result(pic: &PocketIc, gateway_id: Principal, request_id: &[u8]) -> Option<RequestDispatchResultView> {
+fn gateway_dispatch_result(pic: &PocketIc, gateway_id: Principal, request_id: &[u8]) -> Option<UnwrapDispatchOverviewView> {
     let out = pic
         .query_call(
             gateway_id,
             Principal::anonymous(),
-            "get_request_dispatch_result",
-            Encode!(&RequestKindView::Unwrap, &request_id.to_vec()).expect("encode result query"),
+            "get_unwrap_dispatch_overview",
+            Encode!(&request_id.to_vec()).expect("encode result query"),
         )
         .unwrap_or_else(|err| panic!("gateway result query failed: {err}"));
-    Decode!(&out, Option<RequestDispatchResultView>).expect("decode gateway result")
+    Decode!(&out, Option<UnwrapDispatchOverviewView>).expect("decode gateway result")
 }
 
 fn gateway_unwrap_request_ids_by_tx_id(
@@ -252,11 +274,12 @@ fn wrap_request_status(pic: &PocketIc, wrap_id: Principal, request_id: &[u8]) ->
         .query_call(
             wrap_id,
             Principal::anonymous(),
-            "get_request_status",
+            "get_request",
             Encode!(&request_id.to_vec()).expect("encode wrap status query"),
         )
         .unwrap_or_else(|err| panic!("wrap status query failed: {err}"));
-    Decode!(&out, Option<WrapRequestStatus>).expect("decode wrap status")
+    Decode!(&out, Option<RequestOverview>).expect("decode wrap status")
+        .map(|value| value.status)
 }
 
 #[test]
@@ -275,12 +298,12 @@ fn upgrade_retries_dispatching_unwrap_via_idempotent_submit() {
     assert_eq!(request_ids.len(), 1);
     let request_id = request_ids[0].clone();
     assert_eq!(
-        gateway_dispatch_result(&pic, gateway_id, &request_id)
+        gateway_dispatch_result(&pic, gateway_id, request_id.as_slice())
             .map(|value| value.status),
         Some(RequestDispatchStatusView::Queued)
     );
-    seed_wrap_request(&pic, wrap_id, &request_id, asset, recipient);
-    assert_eq!(wrap_request_status(&pic, wrap_id, &request_id), Some(WrapRequestStatus::Queued));
+    seed_wrap_request(&pic, wrap_id, request_id.as_slice(), asset, recipient);
+    assert_eq!(wrap_request_status(&pic, wrap_id, request_id.as_slice()), Some(WrapRequestStatus::Queued));
 
     pic.upgrade_canister(
         gateway_id,
@@ -307,6 +330,6 @@ fn upgrade_retries_dispatching_unwrap_via_idempotent_submit() {
         panic!("gateway did not recover idempotent unwrap after upgrade: {last_result:?}")
     });
     assert_eq!(result.status, RequestDispatchStatusView::Dispatched);
-    assert_eq!(result.error_code, None);
-    assert!(wrap_request_status(&pic, wrap_id, &request_id).is_some());
+    assert_eq!(result.error, None);
+    assert!(wrap_request_status(&pic, wrap_id, request_id.as_slice()).is_some());
 }

@@ -35,10 +35,7 @@ fn test_lock() -> &'static Mutex<()> {
     LOCK.get_or_init(|| Mutex::new(()))
 }
 
-fn store_fee_sample_block(
-    max_fee_per_gas: u128,
-    max_priority_fee_per_gas: u128,
-) {
+fn store_fee_sample_block(max_fee_per_gas: u128, max_priority_fee_per_gas: u128) {
     let caller_principal = vec![0x11];
     with_state_mut(|state| {
         let mut chain_state = *state.chain_state.get();

@@ -1,49 +1,26 @@
 // どこで: wrapper の EVM token/factory client
 // 何を: unwrap 前の token 解決・allowance 確認・approve 送信を提供
-// なぜ: approve -> unwrap の順を強制して burn 前提の unwrap を成立させるため
+// なぜ: canister の preflight API を使って unwrap 前提を揃えるため
 
 import type { Identity } from "@dfinity/agent";
-import { loadConfig } from "../config";
 import {
-  callReadonlyContract,
   estimateContractGasLimit,
   getExpectedNonce,
   submitIcTx,
 } from "./wrapper-client";
-import {
-  decodeAddressReturnData,
-  decodeUint256ReturnData,
-  encodeAllowanceCall,
-  encodeApproveCall,
-  encodeFactoryGetTokenAddressCall,
-} from "../erc20";
+import { encodeApproveCall } from "../erc20";
 import { callerEvmAddressFromPrincipalText } from "../principal";
-import { hexToBytes } from "../utils";
+import { getUnwrapRequirements } from "./wrap-client";
 
 export function resolveUnwrapBurnSpenderEvmAddress(factoryAddressHex: string): Uint8Array {
-  return hexToBytes(factoryAddressHex);
-}
-
-export async function getWrappedTokenAddress(assetId: string): Promise<Uint8Array | null> {
-  const cfg = loadConfig();
-  const returnData = await callReadonlyContract({
-    to: hexToBytes(cfg.evmWrapFactory),
-    data: encodeFactoryGetTokenAddressCall(assetId),
-  });
-  return decodeAddressReturnData(returnData);
-}
-
-export async function getWrappedTokenAllowance(args: {
-  tokenAddress: Uint8Array;
-  ownerEvmAddress: Uint8Array;
-  spenderEvmAddress: Uint8Array;
-}): Promise<bigint> {
-  const returnData = await callReadonlyContract({
-    to: args.tokenAddress,
-    data: encodeAllowanceCall(args.ownerEvmAddress, args.spenderEvmAddress),
-    from: args.ownerEvmAddress,
-  });
-  return decodeUint256ReturnData(returnData);
+  return factoryAddressHex
+    .replace(/^0x/, "")
+    .match(/.{1,2}/g)
+    ?.reduce<Uint8Array>((acc, value, index) => {
+      const next = new Uint8Array(acc);
+      next[index] = Number.parseInt(value, 16);
+      return next;
+    }, new Uint8Array(20)) ?? new Uint8Array(20);
 }
 
 export async function approveWrappedTokenIfNeeded(args: {
@@ -52,31 +29,28 @@ export async function approveWrappedTokenIfNeeded(args: {
   principalText: string;
   identity: Identity;
 }): Promise<void> {
-  const cfg = loadConfig();
-  const tokenAddress = await getWrappedTokenAddress(args.assetId);
-  if (!tokenAddress) {
+  const ownerEvmAddress = callerEvmAddressFromPrincipalText(args.principalText);
+  const requirements = await getUnwrapRequirements({
+    assetId: args.assetId,
+    amountE8s: args.amount,
+    callerEvmAddress: ownerEvmAddress,
+  });
+  if (requirements.wrappedTokenAddress === null) {
     throw new Error("unwrap.token_not_deployed");
   }
-  const ownerEvmAddress = callerEvmAddressFromPrincipalText(args.principalText);
-  const spenderEvmAddress = resolveUnwrapBurnSpenderEvmAddress(cfg.evmWrapFactory);
-  const allowance = await getWrappedTokenAllowance({
-    tokenAddress,
-    ownerEvmAddress,
-    spenderEvmAddress,
-  });
-  if (allowance >= args.amount) {
+  if (!requirements.approveRequired) {
     return;
   }
   const nonce = await getExpectedNonce(ownerEvmAddress);
-  const data = encodeApproveCall(spenderEvmAddress, args.amount);
+  const data = encodeApproveCall(requirements.factoryAddress, args.amount);
   const gasLimit = await estimateContractGasLimit({
-    to: tokenAddress,
+    to: requirements.wrappedTokenAddress,
     from: ownerEvmAddress,
     nonce,
     data,
   });
   await submitIcTx({
-    to: tokenAddress,
+    to: requirements.wrappedTokenAddress,
     data,
     nonce,
     gasLimit,

@@ -18,3 +18,4 @@ num-bigint = "0.4"
 serde = { version = "1", features = ["derive"] }
 tiny-keccak = { version = "2", features = ["keccak"] }
 ic_evm_address = { package = "ic-evm-address", path = "../../crates/ic-evm-address" }
+ic_evm_rpc_types = { package = "ic-evm-rpc-types", path = "../../crates/ic-evm-rpc-types" }
