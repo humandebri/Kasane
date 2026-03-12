@@ -1,11 +1,11 @@
 //! どこで: Phase1.6 E2E / 何を: RPC互換メソッドをPocketICで確認 / なぜ: 実環境に近い互換確認のため
 
-use candid::{Decode, Encode, Principal, CandidType};
 use candid::Deserialize;
+use candid::{CandidType, Decode, Encode, Principal};
 use evm_core::hash;
 use pocket_ic::PocketIc;
-use std::path::PathBuf;
 use std::panic::{self, AssertUnwindSafe};
+use std::path::PathBuf;
 use std::time::Duration;
 
 #[derive(Clone, Debug, CandidType, Deserialize, Eq, PartialEq)]
@@ -84,7 +84,11 @@ struct GenesisBalanceView {
 #[derive(Clone, Debug, CandidType, Deserialize, Eq, PartialEq)]
 struct InitArgs {
     genesis_balances: Vec<GenesisBalanceView>,
+    wrap_canister_id: Principal,
+    wrap_factory_address: Vec<u8>,
 }
+
+const TEST_WRAP_FACTORY_ADDRESS: [u8; 20] = [0x90u8; 20];
 
 #[derive(Clone, Debug, CandidType, Deserialize, Eq, PartialEq)]
 enum SubmitTxError {
@@ -147,6 +151,7 @@ fn test_caller() -> Principal {
 
 fn install_canister(pic: &PocketIc) -> Principal {
     let caller = test_caller();
+    let wrap_canister_id = pic.create_canister();
     let init = Some(InitArgs {
         genesis_balances: vec![GenesisBalanceView {
             address: hash::derive_evm_address_from_principal(caller.as_slice())
@@ -154,8 +159,11 @@ fn install_canister(pic: &PocketIc) -> Principal {
                 .to_vec(),
             amount: 1_000_000_000_000_000_000u128,
         }],
+        wrap_canister_id,
+        wrap_factory_address: TEST_WRAP_FACTORY_ADDRESS.to_vec(),
     });
     let init_arg = Encode!(&init).expect("encode init args");
+    pic.add_cycles(wrap_canister_id, 5_000_000_000_000u128);
     let canister_id = install_canister_with_arg(pic, init_arg);
     pic.set_controllers(canister_id, Some(Principal::anonymous()), vec![caller])
         .unwrap_or_else(|err| panic!("set_controllers error: {err}"));
@@ -252,8 +260,8 @@ fn rpc_get_block_by_number_accepts_flags() {
 
     let arg = Encode!(&0u64, &false).expect("encode");
     let block_bytes = call_query(&pic, canister_id, "rpc_eth_get_block_by_number", arg);
-    let block: Option<EthBlockView> = Decode!(&block_bytes, Option<EthBlockView>)
-        .expect("decode block");
+    let block: Option<EthBlockView> =
+        Decode!(&block_bytes, Option<EthBlockView>).expect("decode block");
     assert!(block.is_none());
 }
 
@@ -264,7 +272,12 @@ fn rpc_get_transaction_by_eth_hash_and_receipt_return_none() {
 
     let tx_hash = vec![0u8; 32];
     let arg = Encode!(&tx_hash).expect("encode");
-    let tx_bytes = call_query(&pic, canister_id, "rpc_eth_get_transaction_by_eth_hash", arg);
+    let tx_bytes = call_query(
+        &pic,
+        canister_id,
+        "rpc_eth_get_transaction_by_eth_hash",
+        arg,
+    );
     let tx: Option<EthTxView> = Decode!(&tx_bytes, Option<EthTxView>).expect("decode tx");
     assert!(tx.is_none());
 
@@ -422,6 +435,8 @@ fn install_rejects_invalid_init_args() {
             address: vec![0u8; 19],
             amount: 1,
         }],
+        wrap_canister_id: Principal::self_authenticating(b"wrap"),
+        wrap_factory_address: TEST_WRAP_FACTORY_ADDRESS.to_vec(),
     });
     let bad_address_arg = Encode!(&bad_address).expect("encode bad address init args");
     expect_install_trap(
@@ -435,6 +450,8 @@ fn install_rejects_invalid_init_args() {
             address: vec![0u8; 20],
             amount: 0,
         }],
+        wrap_canister_id: Principal::self_authenticating(b"wrap"),
+        wrap_factory_address: TEST_WRAP_FACTORY_ADDRESS.to_vec(),
     });
     let zero_amount_arg = Encode!(&zero_amount).expect("encode zero amount init args");
     expect_install_trap(
@@ -454,12 +471,29 @@ fn install_rejects_invalid_init_args() {
                 amount: 2,
             },
         ],
+        wrap_canister_id: Principal::self_authenticating(b"wrap"),
+        wrap_factory_address: TEST_WRAP_FACTORY_ADDRESS.to_vec(),
     });
     let duplicate_arg = Encode!(&duplicate).expect("encode duplicate init args");
     expect_install_trap(
         &pic,
         duplicate_arg,
         "InvalidInitArgs: duplicate genesis address at balance[1]",
+    );
+
+    let bad_factory = Some(InitArgs {
+        genesis_balances: vec![GenesisBalanceView {
+            address: vec![0u8; 20],
+            amount: 1,
+        }],
+        wrap_canister_id: Principal::self_authenticating(b"wrap"),
+        wrap_factory_address: vec![0u8; 19],
+    });
+    let bad_factory_arg = Encode!(&bad_factory).expect("encode bad factory init args");
+    expect_install_trap(
+        &pic,
+        bad_factory_arg,
+        "InvalidInitArgs: wrap_factory_address must be 20 bytes",
     );
 }
 
