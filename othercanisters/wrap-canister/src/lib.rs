@@ -33,6 +33,7 @@ const MEM_WRAP_REQUESTS: MemoryId = MemoryId::new(5);
 const MEM_WRAP_QUEUE: MemoryId = MemoryId::new(6);
 const MEM_WRAP_QUEUE_META: MemoryId = MemoryId::new(7);
 const MEM_FEE_POLICY: MemoryId = MemoryId::new(9);
+const MEM_WRAP_EVM_CONFIG: MemoryId = MemoryId::new(10);
 const PRINCIPAL_MAX_BYTES: usize = 29;
 const AMOUNT_BYTES: usize = 32;
 const EVM_ADDRESS_BYTES: usize = 20;
@@ -41,15 +42,11 @@ const MAX_ERROR_CODE_BYTES: usize = 192;
 const STORED_REQUEST_MAX_BYTES: u32 = 768;
 const WRAP_STORED_REQUEST_MAX_BYTES: u32 = 768;
 const FEE_POLICY_MAX_BYTES: u32 = 128;
+const WRAP_EVM_CONFIG_MAX_BYTES: u32 = 32;
 const DEFAULT_CYCLE_FEE_E8S: u64 = 1_000_000;
 const DEFAULT_GAS_PRICE_BUFFER_BPS: u32 = 12_000;
 const GAS_PRICE_DENOMINATOR_BPS: u128 = 10_000;
 const WEI_PER_E8S: u128 = 10_000_000_000;
-const DEFAULT_EVM_WRAP_FACTORY: [u8; 20] = [
-    0x90, 0x57, 0xeb, 0x7d, 0x90, 0x95, 0xe5, 0xe0, 0xff, 0x20, 0x91, 0xb8, 0x87, 0x0c, 0x75, 0x3f,
-    0xb1, 0x6d, 0x3e, 0xbb,
-];
-
 type Memory = VirtualMemory<DefaultMemoryImpl>;
 
 #[derive(Clone, Debug, CandidType, Deserialize)]
@@ -57,6 +54,7 @@ pub struct InitArgs {
     pub kasane_canister: Principal,
     pub evm_gateway_canister: Principal,
     pub fee_ledger_canister: Principal,
+    pub wrap_factory_address: Vec<u8>,
     pub cycle_fee_e8s: u64,
     pub gas_price_buffer_bps: u32,
 }
@@ -256,6 +254,11 @@ struct FeePolicyStored {
     gas_price_buffer_bps: u32,
 }
 
+#[derive(Clone, Debug, CandidType, Deserialize)]
+struct WrapEvmConfigStored {
+    wrap_factory_address: Vec<u8>,
+}
+
 #[derive(Clone, Debug)]
 struct FeeCharge {
     ledger_tx_id: Vec<u8>,
@@ -423,10 +426,29 @@ impl Storable for FeePolicyStored {
     };
 }
 
+impl Storable for WrapEvmConfigStored {
+    fn to_bytes(&self) -> Cow<'_, [u8]> {
+        let encoded =
+            candid::encode_one(self).unwrap_or_else(|_| panic!("wrap_evm_config.encode_failed"));
+        Cow::Owned(encoded)
+    }
+
+    fn from_bytes(bytes: Cow<'_, [u8]>) -> Self {
+        candid::decode_one::<WrapEvmConfigStored>(bytes.as_ref())
+            .unwrap_or_else(|_| panic!("wrap_evm_config.decode_failed"))
+    }
+
+    const BOUND: Bound = Bound::Bounded {
+        max_size: WRAP_EVM_CONFIG_MAX_BYTES,
+        is_fixed_size: false,
+    };
+}
+
 struct StableState {
     kasane_canister: StableCell<Vec<u8>, Memory>,
     evm_gateway_canister: StableCell<Vec<u8>, Memory>,
     fee_policy: StableCell<FeePolicyStored, Memory>,
+    wrap_evm_config: StableCell<WrapEvmConfigStored, Memory>,
     requests: StableBTreeMap<RequestId, StoredRequest, Memory>,
     queue: StableBTreeMap<u64, RequestId, Memory>,
     queue_meta: StableCell<QueueMeta, Memory>,
@@ -482,6 +504,15 @@ fn init_state() {
             )
             .unwrap_or_else(|_| ic_cdk::trap("stable cell init failed: fee_policy"))
         });
+        let wrap_evm_config = with_memory(MEM_WRAP_EVM_CONFIG, |memory| {
+            StableCell::init(
+                memory,
+                WrapEvmConfigStored {
+                    wrap_factory_address: Vec::new(),
+                },
+            )
+            .unwrap_or_else(|_| ic_cdk::trap("stable cell init failed: wrap_evm_config"))
+        });
         let wrap_requests = with_memory(MEM_WRAP_REQUESTS, StableBTreeMap::init);
         let wrap_queue = with_memory(MEM_WRAP_QUEUE, StableBTreeMap::init);
         let wrap_queue_meta = with_memory(MEM_WRAP_QUEUE_META, |memory| {
@@ -492,6 +523,7 @@ fn init_state() {
             kasane_canister,
             evm_gateway_canister,
             fee_policy,
+            wrap_evm_config,
             requests,
             queue,
             queue_meta,
@@ -525,26 +557,29 @@ fn with_state_mut<R>(f: impl FnOnce(&mut StableState) -> R) -> R {
 #[ic_cdk::init]
 fn init(args: InitArgs) {
     init_state();
-    if let Err(code) =
-        validate_non_anonymous_principal(&args.kasane_canister, "arg.kasane_canister_anonymous")
-    {
-        ic_cdk::trap(&code);
+    apply_runtime_config(args);
+}
+
+#[ic_cdk::post_upgrade]
+fn post_upgrade(args: Option<InitArgs>) {
+    init_state();
+    let args = args.unwrap_or_else(|| {
+        ic_cdk::trap(
+            "UpgradeArgsRequired: InitArgs is required on upgrade; pass (opt record {...})",
+        )
+    });
+    apply_runtime_config(args);
+    let now = ic_cdk::api::time();
+    if recover_request_state_after_upgrade(now) {
+        schedule_worker();
     }
-    if let Err(code) = validate_non_anonymous_principal(
-        &args.evm_gateway_canister,
-        "arg.evm_gateway_canister_anonymous",
-    ) {
-        ic_cdk::trap(&code);
+    if recover_wrap_request_state_after_upgrade(now) {
+        schedule_wrap_worker();
     }
-    if let Err(code) = validate_non_anonymous_principal(
-        &args.fee_ledger_canister,
-        "arg.fee_ledger_canister_anonymous",
-    ) {
-        ic_cdk::trap(&code);
-    }
-    if let Err(code) = validate_gas_price_buffer_bps(args.gas_price_buffer_bps) {
-        ic_cdk::trap(&code);
-    }
+}
+
+fn apply_runtime_config(args: InitArgs) {
+    validate_runtime_config(&args).unwrap_or_else(|code| ic_cdk::trap(&code));
     with_state_mut(|state| {
         state
             .kasane_canister
@@ -562,19 +597,31 @@ fn init(args: InitArgs) {
                 gas_price_buffer_bps: args.gas_price_buffer_bps,
             })
             .unwrap_or_else(|_| ic_cdk::trap("stable cell set failed: fee_policy"));
+        state
+            .wrap_evm_config
+            .set(WrapEvmConfigStored {
+                wrap_factory_address: args.wrap_factory_address,
+            })
+            .unwrap_or_else(|_| ic_cdk::trap("stable cell set failed: wrap_evm_config"));
     });
 }
 
-#[ic_cdk::post_upgrade]
-fn post_upgrade() {
-    init_state();
-    let now = ic_cdk::api::time();
-    if recover_request_state_after_upgrade(now) {
-        schedule_worker();
-    }
-    if recover_wrap_request_state_after_upgrade(now) {
-        schedule_wrap_worker();
-    }
+fn validate_runtime_config(args: &InitArgs) -> Result<(), String> {
+    validate_non_anonymous_principal(&args.kasane_canister, "arg.kasane_canister_anonymous")?;
+    validate_non_anonymous_principal(
+        &args.evm_gateway_canister,
+        "arg.evm_gateway_canister_anonymous",
+    )?;
+    validate_non_anonymous_principal(
+        &args.fee_ledger_canister,
+        "arg.fee_ledger_canister_anonymous",
+    )?;
+    validate_gas_price_buffer_bps(args.gas_price_buffer_bps)?;
+    validate_evm_address(
+        args.wrap_factory_address.as_slice(),
+        "arg.wrap_factory_address_invalid",
+    )?;
+    Ok(())
 }
 
 #[ic_cdk::update]
@@ -1118,10 +1165,9 @@ fn encode_factory_get_token_address_call_data(asset_id: &[u8]) -> Vec<u8> {
 
 async fn with_expected_wrap_nonce_from_gateway() -> Result<u64, String> {
     let gateway = expected_evm_gateway_canister()?;
-    let wrap_evm = ic_evm_address::derive_evm_address_from_principal(
-        ic_cdk::api::canister_self().as_slice(),
-    )
-        .map_err(|_| "wrap.evm_address_derivation_failed".to_string())?;
+    let wrap_evm =
+        ic_evm_address::derive_evm_address_from_principal(ic_cdk::api::canister_self().as_slice())
+            .map_err(|_| "wrap.evm_address_derivation_failed".to_string())?;
     let call_result = ic_cdk::call::Call::unbounded_wait(gateway, "expected_nonce_by_address")
         .with_arg(wrap_evm.to_vec())
         .await;
@@ -1187,10 +1233,18 @@ fn decode_u256_be(bytes: &[u8]) -> Result<[u8; 32], ApiError> {
     Ok(out)
 }
 
-async fn fetch_wrapped_token_address(asset_id: &[u8]) -> Result<Option<Vec<u8>>, ApiError> {
+fn zero_eth_value_word() -> Vec<u8> {
+    vec![0u8; 32]
+}
+
+async fn fetch_wrapped_token_address(
+    asset_id: &[u8],
+    caller_evm_address: &[u8],
+) -> Result<Option<Vec<u8>>, ApiError> {
+    let factory = expected_evm_wrap_factory().map_err(api_internal)?;
     let result = gateway_rpc_eth_call(RpcCallObjectView {
-        to: Some(DEFAULT_EVM_WRAP_FACTORY.to_vec()),
-        from: None,
+        to: Some(factory),
+        from: Some(caller_evm_address.to_vec()),
         gas: Some(500_000),
         gas_price: None,
         nonce: None,
@@ -1199,7 +1253,7 @@ async fn fetch_wrapped_token_address(asset_id: &[u8]) -> Result<Option<Vec<u8>>,
         chain_id: None,
         tx_type: None,
         access_list: None,
-        value: None,
+        value: Some(zero_eth_value_word()),
         data: Some(encode_factory_get_token_address_call_data(asset_id)),
     })
     .await?;
@@ -1216,7 +1270,7 @@ async fn fetch_wrapped_token_address(asset_id: &[u8]) -> Result<Option<Vec<u8>>,
 async fn fetch_erc20_balance(token: &[u8], owner: &[u8]) -> Result<Nat, ApiError> {
     let result = gateway_rpc_eth_call(RpcCallObjectView {
         to: Some(token.to_vec()),
-        from: None,
+        from: Some(owner.to_vec()),
         gas: Some(500_000),
         gas_price: None,
         nonce: None,
@@ -1225,13 +1279,13 @@ async fn fetch_erc20_balance(token: &[u8], owner: &[u8]) -> Result<Nat, ApiError
         chain_id: None,
         tx_type: None,
         access_list: None,
-        value: None,
+        value: Some(zero_eth_value_word()),
         data: Some(encode_balance_of_call_data(owner)),
     })
     .await?;
-    Ok(Nat(BigUint::from_bytes_be(
-        &decode_u256_be(result.return_data.as_slice())?,
-    )))
+    Ok(Nat(BigUint::from_bytes_be(&decode_u256_be(
+        result.return_data.as_slice(),
+    )?)))
 }
 
 async fn fetch_erc20_allowance(
@@ -1241,7 +1295,7 @@ async fn fetch_erc20_allowance(
 ) -> Result<Nat, ApiError> {
     let result = gateway_rpc_eth_call(RpcCallObjectView {
         to: Some(token.to_vec()),
-        from: None,
+        from: Some(owner.to_vec()),
         gas: Some(500_000),
         gas_price: None,
         nonce: None,
@@ -1250,13 +1304,13 @@ async fn fetch_erc20_allowance(
         chain_id: None,
         tx_type: None,
         access_list: None,
-        value: None,
+        value: Some(zero_eth_value_word()),
         data: Some(encode_allowance_call_data(owner, spender)),
     })
     .await?;
-    Ok(Nat(BigUint::from_bytes_be(
-        &decode_u256_be(result.return_data.as_slice())?,
-    )))
+    Ok(Nat(BigUint::from_bytes_be(&decode_u256_be(
+        result.return_data.as_slice(),
+    )?)))
 }
 
 fn derive_wrap_request_id(
@@ -1344,10 +1398,15 @@ async fn get_unwrap_requirements(
 ) -> Result<GetUnwrapRequirementsOk, ApiError> {
     init_state();
     let normalized = normalize_unwrap_requirements_args(args).map_err(api_invalid_argument)?;
-    let token_address = fetch_wrapped_token_address(normalized.asset_id.as_slice()).await?;
+    let factory_address = expected_evm_wrap_factory().map_err(api_internal)?;
+    let token_address = fetch_wrapped_token_address(
+        normalized.asset_id.as_slice(),
+        normalized.caller_evm_address.as_slice(),
+    )
+    .await?;
     if token_address.is_none() {
         return Ok(GetUnwrapRequirementsOk {
-            factory_address: DEFAULT_EVM_WRAP_FACTORY.to_vec(),
+            factory_address,
             wrapped_token_address: None,
             balance: Nat::from(0u8),
             allowance: Nat::from(0u8),
@@ -1364,7 +1423,7 @@ async fn get_unwrap_requirements(
     let allowance = fetch_erc20_allowance(
         token_address.as_slice(),
         normalized.caller_evm_address.as_slice(),
-        DEFAULT_EVM_WRAP_FACTORY.as_slice(),
+        factory_address.as_slice(),
     )
     .await?;
     let amount = normalized.amount_e8s;
@@ -1376,7 +1435,7 @@ async fn get_unwrap_requirements(
         UnwrapReadiness::Ready
     };
     Ok(GetUnwrapRequirementsOk {
-        factory_address: DEFAULT_EVM_WRAP_FACTORY.to_vec(),
+        factory_address,
         wrapped_token_address: Some(token_address),
         balance,
         allowance,
@@ -1667,14 +1726,7 @@ async fn wrap_worker_tick() {
                 )
             })
         });
-        let Some((
-            caller,
-            asset_id,
-            amount,
-            evm_recipient,
-            gas_limit,
-            charged_gas_price_wei,
-        )) = req
+        let Some((caller, asset_id, amount, evm_recipient, gas_limit, charged_gas_price_wei)) = req
         else {
             continue;
         };
@@ -2245,7 +2297,12 @@ fn expected_evm_gateway_canister() -> Result<Principal, String> {
 }
 
 fn expected_evm_wrap_factory() -> Result<Vec<u8>, String> {
-    Ok(DEFAULT_EVM_WRAP_FACTORY.to_vec())
+    let stored = with_state(|state| state.wrap_evm_config.get().clone());
+    validate_evm_address(
+        stored.wrap_factory_address.as_slice(),
+        "config.wrap_factory_address_invalid",
+    )?;
+    Ok(stored.wrap_factory_address)
 }
 
 fn encode_factory_mint_for_asset_call_data(
@@ -2463,23 +2520,21 @@ fn export_did() -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        apply_insert_request_outcome, decode_asset_decimals, decode_stored_request,
-        decode_u256_be,
-        dequeue_request, derive_wrap_request_id, encode_factory_mint_for_asset_call_data,
-        encode_stored_request, enqueue_request, init_state, insert_request, insert_wrap_request,
-        is_withdrawable, map_transfer_reply, mark_request_running, mark_wrap_request_running,
-        nat_from_32_be, nat_to_be_bytes, on_worker_queue_drain, on_wrap_worker_queue_drain,
-        normalize_submit_wrap_args,
+        apply_insert_request_outcome, apply_runtime_config, decode_asset_decimals,
+        decode_stored_request, decode_u256_be, dequeue_request, derive_wrap_request_id,
+        encode_factory_mint_for_asset_call_data, encode_stored_request, enqueue_request,
+        init_state, insert_request, insert_wrap_request, is_withdrawable, map_transfer_reply,
+        mark_request_running, mark_wrap_request_running, nat_from_32_be, nat_to_be_bytes,
+        normalize_submit_wrap_args, on_worker_queue_drain, on_wrap_worker_queue_drain,
         principal_from_bytes, recover_request_state_after_upgrade,
         recover_wrap_request_state_after_upgrade, schedule_worker, schedule_wrap_worker,
         submit_error_to_code, to_request_id, to_withdraw_error_code, transfer_error_to_code,
         transfer_from_error_to_code, u256_from_u64, validate_non_anonymous_principal,
-        validate_withdraw_request, with_state, with_state_mut,
-        FeeCharge, Icrc1MetadataValue, Icrc1TransferError, Icrc2TransferFromError,
-        InsertRequestOutcome, NormalizedDispatchUnwrapRequest, NormalizedSubmitWrapRequest,
-        QueueMeta, RequestResult, RequestStatus, StoredRequest, SubmitTxError,
-        SubmitWrapRequestArgs, WrapRequestResult, WrapStoredRequest, WORKER_SCHEDULED,
-        WRAP_WORKER_SCHEDULED,
+        validate_withdraw_request, with_state, with_state_mut, FeeCharge, Icrc1MetadataValue,
+        Icrc1TransferError, Icrc2TransferFromError, InitArgs, InsertRequestOutcome,
+        NormalizedDispatchUnwrapRequest, NormalizedSubmitWrapRequest, QueueMeta, RequestResult,
+        RequestStatus, StoredRequest, SubmitTxError, SubmitWrapRequestArgs, WrapRequestResult,
+        WrapStoredRequest, WORKER_SCHEDULED, WRAP_WORKER_SCHEDULED,
     };
     use candid::{decode_one, encode_one, Nat, Principal};
     use num_bigint::BigUint;
@@ -2528,10 +2583,27 @@ mod tests {
                     gas_price_buffer_bps: super::DEFAULT_GAS_PRICE_BUFFER_BPS,
                 })
                 .unwrap_or_else(|_| ic_cdk::trap("stable cell set failed: fee_policy"));
+            state
+                .wrap_evm_config
+                .set(super::WrapEvmConfigStored {
+                    wrap_factory_address: Vec::new(),
+                })
+                .unwrap_or_else(|_| ic_cdk::trap("stable cell set failed: wrap_evm_config"));
         });
         super::PENDING_WRAP_SUBMISSIONS.with(|pending| {
             pending.borrow_mut().clear();
         });
+    }
+
+    fn sample_init_args(seed: u8, factory: [u8; 20]) -> InitArgs {
+        InitArgs {
+            kasane_canister: Principal::self_authenticating(&[seed, 1]),
+            evm_gateway_canister: Principal::self_authenticating(&[seed, 2]),
+            fee_ledger_canister: Principal::self_authenticating(&[seed, 3]),
+            wrap_factory_address: factory.to_vec(),
+            cycle_fee_e8s: u64::from(seed) + 1_000,
+            gas_price_buffer_bps: 12_000 + u32::from(seed),
+        }
     }
 
     fn no_schedule() {}
@@ -2616,6 +2688,35 @@ mod tests {
         )
         .expect_err("must reject anonymous");
         assert_eq!(err, "arg.fee_ledger_canister_anonymous");
+    }
+
+    #[test]
+    fn apply_runtime_config_overwrites_all_runtime_settings() {
+        reset_state();
+        apply_runtime_config(sample_init_args(1, [0x11; 20]));
+        apply_runtime_config(sample_init_args(9, [0x99; 20]));
+
+        let (kasane, gateway, fee_ledger, cycle_fee, gas_buffer, factory) = with_state(|state| {
+            let fee_policy = state.fee_policy.get().clone();
+            let wrap_config = state.wrap_evm_config.get().clone();
+            (
+                principal_from_bytes(state.kasane_canister.get()).expect("kasane principal"),
+                principal_from_bytes(state.evm_gateway_canister.get()).expect("gateway principal"),
+                principal_from_bytes(fee_policy.fee_ledger_canister.as_slice())
+                    .expect("fee ledger principal"),
+                fee_policy.cycle_fee_e8s,
+                fee_policy.gas_price_buffer_bps,
+                wrap_config.wrap_factory_address,
+            )
+        });
+
+        let expected = sample_init_args(9, [0x99; 20]);
+        assert_eq!(kasane, expected.kasane_canister);
+        assert_eq!(gateway, expected.evm_gateway_canister);
+        assert_eq!(fee_ledger, expected.fee_ledger_canister);
+        assert_eq!(cycle_fee, expected.cycle_fee_e8s);
+        assert_eq!(gas_buffer, expected.gas_price_buffer_bps);
+        assert_eq!(factory, expected.wrap_factory_address);
     }
 
     #[test]

@@ -15,6 +15,7 @@ pub mod prune_config;
 pub mod prune_state;
 pub mod queue;
 pub mod receipt;
+pub mod runtime_config;
 pub mod runtime_defaults;
 pub mod state_root_meta;
 pub mod state_root_ops;
@@ -40,6 +41,7 @@ pub use prune_config::{PruneConfigV1, PrunePolicy};
 pub use prune_state::{PruneJournal, PruneStateV1};
 pub use queue::QueueMeta;
 pub use receipt::ReceiptLike;
+pub use runtime_config::{RuntimeConfigV1, RUNTIME_CONFIG_SIZE_U32};
 pub use runtime_defaults::{
     DEFAULT_BASE_FEE, DEFAULT_BLOCK_GAS_LIMIT, DEFAULT_DECODE_SUPPRESS_STRIKES_PER_BLOCK,
     DEFAULT_DECODE_SUPPRESS_WINDOW_SECS, DEFAULT_INSTRUCTION_SOFT_LIMIT,

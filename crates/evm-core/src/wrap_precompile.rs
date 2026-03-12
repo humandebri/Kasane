@@ -1,8 +1,9 @@
 //! どこで: EVM custom precompile / 何を: unwrap request の起票 / なぜ: wrap/vault 連携を tx 内で確定するため
 
 use crate::hash;
+use evm_db::chain_data::constants::CHAIN_ID;
 use evm_db::chain_data::receipt::LogEntry;
-use evm_db::chain_data::{constants::CHAIN_ID, runtime_defaults::DEFAULT_WRAP_FACTORY_ADDRESS};
+use evm_db::stable_state::current_runtime_config;
 use revm::{
     context::Cfg,
     context_interface::{
@@ -255,7 +256,7 @@ fn burn_wrapped_asset<CTX: ContextTr>(
     owner: Address,
     intent: &UnwrapIntent,
 ) -> Result<(), String> {
-    let factory = Address::new(DEFAULT_WRAP_FACTORY_ADDRESS);
+    let factory = current_wrap_factory_address();
     let amount = U256::from_be_bytes(intent.amount);
     let asset_key = compute_asset_key(intent.asset_id.as_slice());
     let token_address = load_factory_token_address(context, factory, asset_key)?;
@@ -320,6 +321,13 @@ fn burn_wrapped_asset<CTX: ContextTr>(
     }
     emit_transfer_log(context, token_address, owner, Address::ZERO, amount);
     Ok(())
+}
+
+fn current_wrap_factory_address() -> Address {
+    let raw = current_runtime_config()
+        .wrap_factory_address()
+        .unwrap_or_else(|err| ic_cdk::trap(format!("InvalidRuntimeConfig: {err}")));
+    Address::new(raw)
 }
 
 fn compute_asset_key(asset_id: &[u8]) -> [u8; 32] {
@@ -593,13 +601,23 @@ mod tests {
         allowance_slot, approval_event_topic0, compute_asset_key, compute_extra_gas,
         estimate_wrap_precompile_gas, extra_gas_by_instruction_ratio, extra_gas_for_precompile,
         parse_input, topic_from_address, transfer_event_topic0, unwrap_intent_from_log,
-        unwrap_owner, wrap_event_topic0, COMPACT_UNWRAP_FORMAT_VERSION,
-        DEFAULT_WRAP_FACTORY_ADDRESS, MAX_PRINCIPAL_LEN, WRAP_PRECOMPILE_ADDRESS,
+        unwrap_owner, wrap_event_topic0, COMPACT_UNWRAP_FORMAT_VERSION, MAX_PRINCIPAL_LEN,
+        WRAP_PRECOMPILE_ADDRESS,
     };
     use crate::hash;
     use evm_db::chain_data::receipt::log_entry_from_parts;
+    use evm_db::chain_data::RuntimeConfigV1;
+    use evm_db::stable_state::{init_stable_state, set_runtime_config};
     use revm::interpreter::{CallInput, CallInputs, CallScheme, CallValue};
     use revm::primitives::{Address, Bytes, U256};
+
+    fn configure_runtime(factory: [u8; 20]) {
+        init_stable_state();
+        set_runtime_config(RuntimeConfigV1::new(
+            candid::Principal::self_authenticating(b"wrap-precompile-test"),
+            factory,
+        ));
+    }
 
     #[test]
     fn unwrap_intent_log_roundtrip_decodes() {
@@ -743,8 +761,10 @@ mod tests {
 
     #[test]
     fn allowance_slot_uses_factory_as_spender() {
+        let factory = [0x33u8; 20];
+        configure_runtime(factory);
         let owner = Address::new([0x11; 20]);
-        let spender = Address::new(DEFAULT_WRAP_FACTORY_ADDRESS);
+        let spender = Address::new(factory);
         assert_ne!(
             allowance_slot(owner, spender),
             allowance_slot(owner, Address::new([0x22; 20]))

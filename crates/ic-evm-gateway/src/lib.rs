@@ -6,27 +6,27 @@ use evm_core::hash;
 use evm_core::wrap_precompile::unwrap_intent_from_log;
 use evm_db::chain_data::constants::CHAIN_ID;
 use evm_db::chain_data::constants::{MAX_QUEUE_SNAPSHOT_LIMIT, MAX_RETURN_DATA, MAX_TX_SIZE};
-use evm_db::chain_data::runtime_defaults::{
-    DEFAULT_BLOCK_GAS_LIMIT, DEFAULT_MIN_FEE_FLOOR, DEFAULT_WRAP_CANISTER_ID_TEXT,
-};
+use evm_db::chain_data::runtime_defaults::{DEFAULT_BLOCK_GAS_LIMIT, DEFAULT_MIN_FEE_FLOOR};
 #[cfg(test)]
 use evm_db::chain_data::StoredTx;
 use evm_db::chain_data::DEFAULT_MINING_INTERVAL_MS;
 use evm_db::chain_data::MIN_PRUNE_MAX_OPS_PER_TICK;
 use evm_db::chain_data::{
-    BlockData, MigrationPhase, OpsMode, ReceiptLike, TxId, TxKind, TxLoc, TxLocKind,
-    UnwrapDispatchRequest, UnwrapRequestStatus, LOG_CONFIG_FILTER_MAX, UNWRAP_DECODE_FAILURE_CODE,
+    BlockData, MigrationPhase, OpsMode, ReceiptLike, RuntimeConfigV1, TxId, TxKind, TxLoc,
+    TxLocKind, UnwrapDispatchRequest, UnwrapRequestStatus, LOG_CONFIG_FILTER_MAX,
+    UNWRAP_DECODE_FAILURE_CODE,
 };
 use evm_db::memory::{all_memory_regions, memory_size_pages, WASM_PAGE_SIZE_BYTES};
-use evm_db::meta::{
-    current_schema_version, ensure_meta_initialized, get_meta, mark_migration_applied,
-    schema_migration_state, set_needs_migration, set_schema_migration_state,
-    set_tx_locs_v3_active,
-    SchemaMigrationPhase, SchemaMigrationState,
-};
 #[cfg(test)]
 use evm_db::meta::set_meta;
-use evm_db::stable_state::{init_stable_state, with_state, with_state_mut};
+use evm_db::meta::{
+    current_schema_version, ensure_meta_initialized, get_meta, mark_migration_applied,
+    schema_migration_state, set_needs_migration, set_schema_migration_state, set_tx_locs_v3_active,
+    SchemaMigrationPhase, SchemaMigrationState,
+};
+use evm_db::stable_state::{
+    current_runtime_config, init_stable_state, set_runtime_config, with_state, with_state_mut,
+};
 use evm_db::upgrade;
 use ic_cdk::api::{
     accept_message, canister_cycle_balance, is_controller, msg_caller, msg_method_name, time,
@@ -107,6 +107,8 @@ const CODE_INTERNAL_UNEXPECTED: &str = "internal.unexpected";
 #[derive(Clone, Debug, CandidType, Deserialize)]
 pub struct InitArgs {
     pub genesis_balances: Vec<GenesisBalanceView>,
+    pub wrap_canister_id: Principal,
+    pub wrap_factory_address: Vec<u8>,
 }
 
 impl InitArgs {
@@ -126,20 +128,25 @@ impl InitArgs {
                 return Err(format!("duplicate genesis address at balance[{idx}]"));
             }
         }
+        if self.wrap_canister_id == Principal::anonymous() {
+            return Err("wrap_canister_id must not be anonymous".to_string());
+        }
+        if self.wrap_factory_address.len() != 20 {
+            return Err("wrap_factory_address must be 20 bytes".to_string());
+        }
         Ok(())
+    }
+
+    fn runtime_config(&self) -> RuntimeConfigV1 {
+        let mut wrap_factory_address = [0u8; 20];
+        wrap_factory_address.copy_from_slice(&self.wrap_factory_address);
+        RuntimeConfigV1::new(self.wrap_canister_id, wrap_factory_address)
     }
 }
 
-#[cfg(not(feature = "canbench-rs"))]
 #[ic_cdk::init]
 fn init(args: Option<InitArgs>) {
     init_inner(args, true);
-}
-
-#[cfg(feature = "canbench-rs")]
-#[ic_cdk::init]
-fn init() {
-    init_inner(None, false);
 }
 
 fn init_inner(args: Option<InitArgs>, require_args: bool) {
@@ -153,12 +160,17 @@ fn init_inner(args: Option<InitArgs>, require_args: bool) {
     } else {
         args.unwrap_or(InitArgs {
             genesis_balances: Vec::new(),
+            wrap_canister_id: Principal::anonymous(),
+            wrap_factory_address: Vec::new(),
         })
     };
     if require_args || !args.genesis_balances.is_empty() {
         if let Err(reason) = args.validate() {
             ic_cdk::trap(format!("InvalidInitArgs: {reason}"));
         }
+    }
+    if require_args {
+        set_runtime_config(args.runtime_config());
     }
     if !args.genesis_balances.is_empty() {
         for alloc in args.genesis_balances.iter() {
@@ -182,16 +194,26 @@ fn init_inner(args: Option<InitArgs>, require_args: bool) {
 }
 
 fn current_wrap_canister_id() -> Principal {
-    Principal::from_text(DEFAULT_WRAP_CANISTER_ID_TEXT)
-        .unwrap_or_else(|err| ic_cdk::trap(format!("InvalidDefaultWrapCanisterId: {err}")))
+    current_runtime_config()
+        .wrap_canister_id()
+        .unwrap_or_else(|err| ic_cdk::trap(format!("InvalidRuntimeConfig: {err}")))
 }
 
 #[ic_cdk::post_upgrade]
-fn post_upgrade() {
+fn post_upgrade(args: Option<InitArgs>) {
     upgrade::post_upgrade();
     init_stable_state();
     let _ = ensure_meta_initialized();
     init_tracing();
+    let args = args.unwrap_or_else(|| {
+        ic_cdk::trap(
+            "UpgradeArgsRequired: InitArgs is required on upgrade; pass (opt record {...})",
+        )
+    });
+    if let Err(reason) = args.validate() {
+        ic_cdk::trap(format!("InvalidInitArgs: {reason}"));
+    }
+    set_runtime_config(args.runtime_config());
     apply_post_upgrade_migrations();
     let (quarantined, dropped_from_dispatch_queue) =
         quarantine_decode_failed_unwrap_requests(time());
@@ -488,9 +510,10 @@ fn submit_ic_tx(args: SubmitIcTxArgsDto) -> Result<Vec<u8>, SubmitTxError> {
 
 #[ic_cdk::query]
 fn estimate_ic_tx(args: SubmitIcTxArgsDto) -> Result<EstimateIcTxOk, ApiError> {
-    let from = args.from.clone().ok_or_else(|| {
-        api_invalid_argument("arg.from_required", "arg.from_required")
-    })?;
+    let from = args
+        .from
+        .clone()
+        .ok_or_else(|| api_invalid_argument("arg.from_required", "arg.from_required"))?;
     if from.len() != 20 {
         return Err(api_invalid_argument(
             "arg.from_invalid_length",
@@ -4127,7 +4150,10 @@ mod tests {
         });
 
         let result = super::get_unwrap_dispatch_overview(request_id.0.to_vec()).expect("result");
-        assert_eq!(result.error, Some(super::UNWRAP_QUARANTINE_ERROR.to_string()));
+        assert_eq!(
+            result.error,
+            Some(super::UNWRAP_QUARANTINE_ERROR.to_string())
+        );
         let stored = with_state(|state| state.unwrap_requests.get(&request_id));
         assert_eq!(
             stored.and_then(|value| value.error_code),
@@ -4205,11 +4231,7 @@ mod tests {
         let tx_id = TxId([0x22u8; 32]);
         let amount = [0x55u8; 32];
         let unwrap_topic = hash::keccak256(b"KasaneUnwrapRequest(bytes)");
-        let other_log = log_entry_from_parts(
-            [0x11u8; 20],
-            vec![[0x99u8; 32]],
-            vec![0x01, 0x02],
-        );
+        let other_log = log_entry_from_parts([0x11u8; 20], vec![[0x99u8; 32]], vec![0x01, 0x02]);
         with_state_mut(|state| {
             let receipt = ReceiptLike {
                 tx_id,
@@ -4592,6 +4614,8 @@ mod tests {
         assert!(did.contains("type ApiError = variant {"));
         assert!(did.contains("estimate_ic_tx"));
         assert!(did.contains("type RequestDispatchStatusView = variant {"));
+        assert!(did.contains("wrap_canister_id : principal"));
+        assert!(did.contains("wrap_factory_address : blob"));
         assert!(!did.contains("get_request_dispatch_result"));
         assert!(did.contains("get_unwrap_request_ids_by_tx_id"));
         assert!(did.contains("get_unwrap_dispatch_overview"));

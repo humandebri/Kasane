@@ -7,8 +7,8 @@ use evm_db::chain_data::constants::{
 use evm_db::chain_data::receipt::LogEntry;
 use evm_db::chain_data::{
     BlockData, CallerKey, ChainStateV1, Head, OpsMetricsV1, PruneJournal, QueueMeta, ReceiptLike,
-    StoredTx, StoredTxBytes, TxId, TxIndexEntry, TxKind, TxLoc, UnwrapDispatchRequest,
-    UnwrapRequestStatus, UNWRAP_DECODE_FAILURE_CODE,
+    RuntimeConfigV1, StoredTx, StoredTxBytes, TxId, TxIndexEntry, TxKind, TxLoc,
+    UnwrapDispatchRequest, UnwrapRequestStatus, UNWRAP_DECODE_FAILURE_CODE,
 };
 use evm_db::chain_data::{LogConfigV1, LOG_CONFIG_FILTER_MAX};
 use evm_db::chain_data::{
@@ -467,6 +467,26 @@ fn chain_state_invalid_len_returns_safe_default_and_sets_needs_migration() {
     assert_eq!(
         decoded.instruction_soft_limit,
         DEFAULT_INSTRUCTION_SOFT_LIMIT
+    );
+}
+
+#[test]
+fn runtime_config_roundtrip() {
+    let config = RuntimeConfigV1::new(
+        candid::Principal::self_authenticating(b"runtime-config"),
+        [0x44u8; 20],
+    );
+    let decoded = RuntimeConfigV1::from_bytes(config.to_bytes());
+    assert_eq!(decoded, config);
+    assert_eq!(
+        decoded.wrap_canister_id().expect("wrap canister id"),
+        candid::Principal::self_authenticating(b"runtime-config")
+    );
+    assert_eq!(
+        decoded
+            .wrap_factory_address()
+            .expect("wrap factory address"),
+        [0x44u8; 20]
     );
 }
 

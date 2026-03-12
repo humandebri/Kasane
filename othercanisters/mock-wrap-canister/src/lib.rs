@@ -78,10 +78,12 @@ async fn dispatch_unwrap_request(
         );
         Ok(InsertRequestOutcome::Inserted)
     });
-    let outcome = outcome.map_err(|code| ApiError::InvalidArgument(ApiErrorDetail {
-        code: code.clone(),
-        message: code,
-    }))?;
+    let outcome = outcome.map_err(|code| {
+        ApiError::InvalidArgument(ApiErrorDetail {
+            code: code.clone(),
+            message: code,
+        })
+    })?;
 
     if outcome == InsertRequestOutcome::Inserted {
         // 1 round 遅延させて、gateway が Dispatching のまま upgrade される窓を作る。

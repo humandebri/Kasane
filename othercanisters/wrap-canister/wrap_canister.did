@@ -25,6 +25,7 @@ type InitArgs = record {
   kasane_canister : principal;
   evm_gateway_canister : principal;
   fee_ledger_canister : principal;
+  wrap_factory_address : blob;
   cycle_fee_e8s : nat64;
   gas_price_buffer_bps : nat32;
 };

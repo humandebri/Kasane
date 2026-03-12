@@ -1,15 +1,5 @@
 //! どこで: chain_data の実行時デフォルト / 何を: 運用調整しうる既定値を集約 / なぜ: 仕様固定値と責務分離するため
 
-// unwrap dispatch の既定許可先。
-// mainnet では同一 subnet 上の wrap_canister を固定で使う。
-pub const DEFAULT_WRAP_CANISTER_ID_TEXT: &str = "lpuz5-uyaaa-aaaam-ah4da-cai";
-// unwrap burn の既定 factory。
-// precompile はこの factory 配下の wrapped token だけを正として burn する。
-pub const DEFAULT_WRAP_FACTORY_ADDRESS: [u8; 20] = [
-    0x90, 0x57, 0xeb, 0x7d, 0x90, 0x95, 0xe5, 0xe0, 0xff, 0x20, 0x91, 0xb8, 0x87, 0x0c, 0x75, 0x3f,
-    0xb1, 0x6d, 0x3e, 0xbb,
-];
-
 // 自動ブロック生成の既定間隔（ms）
 pub const DEFAULT_MINING_INTERVAL_MS: u64 = 2_000;
 

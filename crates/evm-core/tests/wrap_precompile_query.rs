@@ -6,8 +6,8 @@ use evm_core::chain::{self, CallObjectInput};
 use evm_core::hash;
 use evm_core::tx_decode::IcSyntheticTxInput;
 use evm_core::wrap_precompile::WRAP_PRECOMPILE_ADDRESS;
-use evm_db::chain_data::{constants::CHAIN_ID, runtime_defaults::DEFAULT_WRAP_FACTORY_ADDRESS};
-use evm_db::stable_state::{init_stable_state, with_state, with_state_mut};
+use evm_db::chain_data::{constants::CHAIN_ID, RuntimeConfigV1};
+use evm_db::stable_state::{init_stable_state, set_runtime_config, with_state, with_state_mut};
 use evm_db::types::keys::{make_account_key, make_storage_key};
 use evm_db::types::values::{AccountVal, U256Val};
 use revm::primitives::{Address, B256, U256};
@@ -16,6 +16,7 @@ mod common;
 
 const WRAPPED_TOKEN_ADDRESS: [u8; 20] = [0x42u8; 20];
 const FORWARDER_ADDRESS: [u8; 20] = [0x66u8; 20];
+const TEST_FACTORY_ADDRESS: [u8; 20] = [0x55u8; 20];
 const TEST_AMOUNT: u64 = 1_000_000_000_000;
 
 fn encode_unwrap_input() -> Vec<u8> {
@@ -57,7 +58,7 @@ fn build_call_input(data: Vec<u8>) -> CallObjectInput {
 }
 
 fn seed_unwrap_burn_state(caller: [u8; 20]) {
-    let factory = DEFAULT_WRAP_FACTORY_ADDRESS;
+    let factory = TEST_FACTORY_ADDRESS;
     let asset = vec![0x44u8, 0x55, 0x66];
     let amount = U256::from(TEST_AMOUNT);
 
@@ -163,6 +164,10 @@ fn keccak(data: &[u8]) -> [u8; 32] {
 #[test]
 fn wrap_precompile_eth_call_object_succeeds_in_query_path() {
     init_stable_state();
+    set_runtime_config(RuntimeConfigV1::new(
+        candid::Principal::self_authenticating(b"wrap-precompile-query"),
+        TEST_FACTORY_ADDRESS,
+    ));
     let caller = [0x31u8; 20];
     chain::credit_balance(caller, 1_000_000_000_000_000_000u128).expect("fund caller");
     seed_unwrap_burn_state(caller);
@@ -177,6 +182,10 @@ fn wrap_precompile_eth_call_object_succeeds_in_query_path() {
 #[test]
 fn wrap_precompile_eth_estimate_gas_succeeds_in_query_path() {
     init_stable_state();
+    set_runtime_config(RuntimeConfigV1::new(
+        candid::Principal::self_authenticating(b"wrap-precompile-query"),
+        TEST_FACTORY_ADDRESS,
+    ));
     let caller = [0x31u8; 20];
     chain::credit_balance(caller, 1_000_000_000_000_000_000u128).expect("fund caller");
     seed_unwrap_burn_state(caller);
@@ -190,6 +199,10 @@ fn wrap_precompile_eth_estimate_gas_succeeds_in_query_path() {
 #[test]
 fn wrap_precompile_burns_contract_balance_when_called_through_forwarder() {
     init_stable_state();
+    set_runtime_config(RuntimeConfigV1::new(
+        candid::Principal::self_authenticating(b"wrap-precompile-query"),
+        TEST_FACTORY_ADDRESS,
+    ));
     relax_fee_floor_for_tests();
 
     let caller_principal = vec![0x31u8];
@@ -221,13 +234,11 @@ fn wrap_precompile_burns_contract_balance_when_called_through_forwarder() {
 
     let caller_balance_slot = address_mapping_slot(Address::new(caller), 3);
     let contract_balance_slot = address_mapping_slot(Address::new(FORWARDER_ADDRESS), 3);
-    let caller_allowance_slot = allowance_slot(
-        Address::new(caller),
-        Address::new(DEFAULT_WRAP_FACTORY_ADDRESS),
-    );
+    let caller_allowance_slot =
+        allowance_slot(Address::new(caller), Address::new(TEST_FACTORY_ADDRESS));
     let contract_allowance_slot = allowance_slot(
         Address::new(FORWARDER_ADDRESS),
-        Address::new(DEFAULT_WRAP_FACTORY_ADDRESS),
+        Address::new(TEST_FACTORY_ADDRESS),
     );
 
     assert_eq!(read_token_storage(U256::from(2u64)), U256::ZERO);
