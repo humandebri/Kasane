@@ -29,6 +29,10 @@ require_wrap_canister_id() {
     log "WRAP_CANISTER_ID is required"
     exit 1
   fi
+  if [[ -z "${EVM_WRAP_FACTORY:-}" ]]; then
+    log "EVM_WRAP_FACTORY is required"
+    exit 1
+  fi
 }
 
 build_release() {

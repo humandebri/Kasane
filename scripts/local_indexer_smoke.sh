@@ -68,6 +68,14 @@ resolve_wrap_canister_id_for_smoke() {
   icp canister status -e "${NETWORK}" --identity "${ICP_IDENTITY_NAME}" --id-only wrap_canister
 }
 
+resolve_wrap_factory_for_smoke() {
+  if [[ -z "${EVM_WRAP_FACTORY:-}" ]]; then
+    echo "[local-indexer-smoke] EVM_WRAP_FACTORY is required" >&2
+    exit 1
+  fi
+  printf '%s\n' "${EVM_WRAP_FACTORY}"
+}
+
 get_canister_id() {
   if [[ -n "${RESOLVED_CANISTER_ID}" ]]; then
     echo "${RESOLVED_CANISTER_ID}"
@@ -177,7 +185,9 @@ build_and_install() {
   log "install wasm (mode=${MODE})"
   local init_args
   WRAP_CANISTER_ID="$(resolve_wrap_canister_id_for_smoke)"
+  EVM_WRAP_FACTORY="$(resolve_wrap_factory_for_smoke)"
   export WRAP_CANISTER_ID
+  export EVM_WRAP_FACTORY
   init_args="$(build_init_args_for_current_identity 1000000000000000000)"
   icp canister install -e "${NETWORK}" --identity "${ICP_IDENTITY_NAME}" --mode "${MODE}" --wasm "${wasm_out}" --args "${init_args}" "${CANISTER_NAME}"
   RESOLVED_CANISTER_ID="$(resolve_canister_id)"

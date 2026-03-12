@@ -33,5 +33,13 @@ For exact command sequences and environment-specific snippets, see the Japanese 
 - The default mainnet deploy path ships a fixed precompile ratio `1/100`; changing it later requires a redeploy.
 
 ## Important Note
-- `wrap_canister_id` is no longer passed via `InitArgs`; the gateway uses the runtime default configured in code.
-- `WRAP_CANISTER_ID` is still needed only for scripts that interact with the wrap canister itself.
+- `InitArgs` must include both `wrap_canister_id` and `wrap_factory_address`; code defaults are no longer used.
+- `build_init_args_for_current_identity(...)` now requires both `WRAP_CANISTER_ID` and `EVM_WRAP_FACTORY` to be exported first.
+- `MODE=upgrade` also passes `InitArgs` via `--args`; the same Candid payload is delivered to `post_upgrade`.
+
+`InitArgs` fields:
+- `genesis_balances`: initial EVM balance allocation used for install / reinstall. Each entry requires a 20-byte `address` and non-zero `amount`; duplicate addresses are rejected.
+- `wrap_canister_id`: IC principal used as the unwrap dispatch destination. Anonymous is rejected.
+- `wrap_factory_address`: 20-byte EVM factory address used by the unwrap precompile for burn / allowance checks.
+
+Operationally, config changes are applied only through install / upgrade arguments, not through a runtime admin API.

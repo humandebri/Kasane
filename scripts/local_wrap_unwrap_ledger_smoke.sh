@@ -476,6 +476,7 @@ LEDGER_INIT_ARGS_HEX="$(
     -t '(LedgerArg)' \
     "${LEDGER_INIT_ARGS}"
 )"
+FACTORY_ADDRESS_HEX="$(cast compute-address --nonce 0 "0x${CALLER_EVM_HEX}")"
 GATEWAY_INIT_ARGS="(opt record {
   genesis_balances = vec {
     record { address = vec { $(python - <<PY
@@ -490,6 +491,11 @@ PY
 ) }; amount = ${GENESIS_BALANCE_WEI} : nat; };
   };
   wrap_canister_id = principal \"${WRAP_CANISTER_ID}\";
+  wrap_factory_address = vec { $(python - <<PY
+hexv = "${FACTORY_ADDRESS_HEX}".removeprefix("0x").strip()
+print("; ".join(str(b) for b in bytes.fromhex(hexv)))
+PY
+) };
 })"
 GATEWAY_INIT_ARGS_HEX="$(
   didc encode \
@@ -532,7 +538,12 @@ FACTORY_DEPLOY_TX_ID_HEX="$(printf '%s' "${FACTORY_DEPLOY_OUT}" | extract_result
 FACTORY_RECEIPT_CMD="query_pp '${ROOT_DIR}/crates/ic-evm-gateway/evm_canister.did' evm_canister rpc_eth_get_transaction_receipt_with_status_by_tx_id '( $(hex_to_candid_vec "${FACTORY_DEPLOY_TX_ID_HEX}") )'"
 FACTORY_RECEIPT_OUT="$(wait_for_pattern "factory deploy receipt" "${FACTORY_RECEIPT_CMD}" "contract_address = opt blob")"
 [[ "${FACTORY_RECEIPT_OUT}" == *"status = 1 : nat8"* ]] || { echo "${FACTORY_RECEIPT_OUT}" >&2; exit 1; }
-FACTORY_ADDRESS_HEX="$(printf '%s' "${FACTORY_RECEIPT_OUT}" | extract_named_opt_blob_hex "contract_address")"
+FACTORY_DEPLOYED_ADDRESS_HEX="$(printf '%s' "${FACTORY_RECEIPT_OUT}" | extract_named_opt_blob_hex "contract_address")"
+[[ "${FACTORY_DEPLOYED_ADDRESS_HEX}" == "${FACTORY_ADDRESS_HEX#0x}" ]] || {
+  echo "predicted factory address mismatch: predicted=${FACTORY_ADDRESS_HEX} actual=0x${FACTORY_DEPLOYED_ADDRESS_HEX}" >&2
+  exit 1
+}
+FACTORY_ADDRESS_HEX="${FACTORY_DEPLOYED_ADDRESS_HEX}"
 
 WRAP_INIT_ARGS="(record {
   kasane_canister = principal \"${EVM_CANISTER_ID}\";

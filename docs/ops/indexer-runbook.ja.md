@@ -50,10 +50,11 @@ scripts/indexer_env_sanity_check.sh
 
 注記:
 - `null` / `opt none` / 引数省略はすべて拒否されるため、必ず `opt record` を渡す。
-- `WRAP_CANISTER_ID` を事前に解決して export しておく。未設定のまま `build_init_args_for_current_identity` は呼べない。
+- `WRAP_CANISTER_ID` と `EVM_WRAP_FACTORY` を事前に export しておく。未設定のまま `build_init_args_for_current_identity` は呼べない。
 
 ```bash
 export WRAP_CANISTER_ID="$(icp canister status -e local --identity "${ICP_IDENTITY_NAME:-ci-local}" --id-only wrap_canister)"
+export EVM_WRAP_FACTORY="<deployed_factory_0x_address>"
 source scripts/lib_init_args.sh
 INIT_ARGS="$(build_init_args_for_current_identity 1000000000000000000)"
 icp canister install -e local evm_canister \

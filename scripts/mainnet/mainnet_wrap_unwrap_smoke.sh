@@ -15,7 +15,7 @@ EVM_CANISTER_ID="${EVM_CANISTER_ID:-4c52m-aiaaa-aaaam-agwwa-cai}"
 WRAP_CANISTER_ID="${WRAP_CANISTER_ID:-lpuz5-uyaaa-aaaam-ah4da-cai}"
 FEE_LEDGER_CANISTER_ID="${FEE_LEDGER_CANISTER_ID:-xafvr-biaaa-aaaai-aql5q-cai}"
 FEE_LEDGER_DECIMALS="${FEE_LEDGER_DECIMALS:-8}"
-EVM_WRAP_FACTORY="${EVM_WRAP_FACTORY:-0x9057eb7d9095e5e0ff2091b8870c753fb16d3ebb}"
+EVM_WRAP_FACTORY="${EVM_WRAP_FACTORY:-}"
 WRAP_AMOUNT_E8S="${WRAP_AMOUNT_E8S:-1000000}"
 WRAP_ALLOWANCE_E8S="${WRAP_ALLOWANCE_E8S:-500000000}"
 UNWRAP_AMOUNT_E8S="${UNWRAP_AMOUNT_E8S:-${WRAP_AMOUNT_E8S}}"
@@ -50,6 +50,11 @@ require_cmd() {
 require_cmd icp
 require_cmd node
 require_cmd python
+
+if [[ -z "${EVM_WRAP_FACTORY}" ]]; then
+  echo "[mainnet-wrap-unwrap] EVM_WRAP_FACTORY is required" >&2
+  exit 1
+fi
 
 mkdir -p "${REPORT_DIR}"
 
