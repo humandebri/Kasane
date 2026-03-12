@@ -107,7 +107,7 @@ jobs:
           version: stable
 
       - name: Solidity build and tests
-        working-directory: contracts
+        working-directory: tools/wrapper/contracts
         run: |
           forge build
           forge test -vv
