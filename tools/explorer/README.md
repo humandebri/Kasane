@@ -12,7 +12,7 @@
 
 ```bash
 cd tools/explorer
-npm install
+pnpm install
 cp .env.example .env.local
 ```
 
@@ -31,7 +31,7 @@ EXPLORER_VERIFY_DEFAULT_CHAIN_ID=0
 ## 起動
 
 ```bash
-npm run dev
+pnpm run dev
 ```
 
 - Home: `http://localhost:3000/`
@@ -81,9 +81,9 @@ Search の入力判定:
 - Verify重複判定は `submitted_by + input_hash` のユーザー単位です。同一入力でも別ユーザーは別requestになります。
 - 公開参照は `GET /api/contracts/:address/verified`（`chainId`クエリ任意）を利用します。
 - 公開参照APIは `abi_json` が壊れていても 200 を返し、`abi: null` と `abiParseError: true` を返します。
-- deploy直後の自動投入は `npm run verify:submit` を使います（`VERIFY_PAYLOAD_FILE` にJSONを渡す）。
-- Verifyワーカー起動前に `npm run verify:preflight` を実行し、allowlist全 `solc-<version>` の存在を確認します。
-- Verifyワーカーは `npm run verify:worker` で起動します（indexer同期処理とは分離）。
+- deploy直後の自動投入は `pnpm run verify:submit` を使います（`VERIFY_PAYLOAD_FILE` にJSONを渡す）。
+- Verifyワーカー起動前に `pnpm run verify:preflight` を実行し、allowlist全 `solc-<version>` の存在を確認します。
+- Verifyワーカーは `pnpm run verify:worker` で起動します（indexer同期処理とは分離）。
 - 運用手順（鍵ローテーション / preflight / jti掃除）は `/Users/0xhude/Desktop/ICP/Kasane/docs/ops/verify_runbook.md` を参照してください。
 - Verifyメトリクスは固定サンプル窓（`EXPLORER_VERIFY_METRICS_SAMPLE_INTERVAL_MS`）で集計します。ワーカー再起動直後は見え方が揺れるため、アラートは緩めの閾値から開始してください。
 - Logsページは `EXPLORER_RPC_GATEWAY_URL` で指定した RPC gateway を `eth_getLogs` で呼び出します。`topic1` / `topics OR配列` は未対応です。
@@ -116,12 +116,12 @@ Search の入力判定:
 ## スクリプト
 
 ```bash
-npm run test   # utility + db の単体テスト
-npm run lint   # TypeScript型検査
-npm run build  # Next.js本番ビルド
-npm run verify:preflight  # verify実行前のsolc可用性チェック
-npm run verify:submit  # deploy直後のverify submit
-npm run verify:worker  # verify非同期ワーカー
+pnpm run test   # utility + db の単体テスト
+pnpm run lint   # TypeScript型検査
+pnpm run build  # Next.js本番ビルド
+pnpm run verify:preflight  # verify実行前のsolc可用性チェック
+pnpm run verify:submit  # deploy直後のverify submit
+pnpm run verify:worker  # verify非同期ワーカー
 ```
 
 ### deploy直後の自動verify submit（例）
@@ -148,5 +148,5 @@ VERIFY_PAYLOAD_FILE=/tmp/verify_payload.json \
 VERIFY_AUTH_KID=kid1 \
 VERIFY_AUTH_SECRET='replace_me' \
 VERIFY_AUTH_SUB=deploy-bot \
-npm run verify:submit
+pnpm run verify:submit
 ```

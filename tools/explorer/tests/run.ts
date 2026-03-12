@@ -709,16 +709,14 @@ async function runDependencyPinTests(): Promise<void> {
   const packageJsonRaw = await fs.readFile(new URL("../package.json", import.meta.url), "utf8");
   const packageJson = JSON.parse(packageJsonRaw) as {
     dependencies?: Record<string, string>;
+    packageManager?: string;
   };
   const pinned = packageJson.dependencies?.["@dfinity/ic-pub-key"];
   assert.equal(pinned, "1.0.1");
+  assert.equal(packageJson.packageManager, "pnpm@10.29.2");
 
-  const lockRaw = await fs.readFile(new URL("../package-lock.json", import.meta.url), "utf8");
-  const lockJson = JSON.parse(lockRaw) as {
-    packages?: Record<string, { version?: string }>;
-  };
-  const lockVersion = lockJson.packages?.["node_modules/@dfinity/ic-pub-key"]?.version;
-  assert.equal(lockVersion, "1.0.1");
+  const lockRaw = await fs.readFile(new URL("../pnpm-lock.yaml", import.meta.url), "utf8");
+  assert.match(lockRaw, /'@dfinity\/ic-pub-key@1\.0\.1':/);
 }
 
 async function runLogsTests(): Promise<void> {
