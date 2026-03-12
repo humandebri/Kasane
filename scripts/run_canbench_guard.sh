@@ -4,20 +4,45 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT_DIR"
 
-if ! command -v canbench >/dev/null 2>&1; then
-  echo "[canbench-guard] installing canbench"
-  cargo install --locked canbench
+REQUIRED_CANBENCH_VERSION="0.4.1"
+CANBENCH_ROOT="${ROOT_DIR}/.canbench-tools"
+CANBENCH_BIN="${CANBENCH_ROOT}/bin/canbench"
+installed_canbench_version=""
+if [[ -x "${CANBENCH_BIN}" ]]; then
+  installed_canbench_version="$("${CANBENCH_BIN}" --version 2>/dev/null | awk '{print $2}')"
 fi
 
-# Prefer a local PocketIC binary to avoid flaky network downloads during canbench startup.
-if [[ -z "${POCKET_IC_BIN:-}" ]]; then
-  if [[ -x "${ROOT_DIR}/crates/evm-rpc-e2e/pocket-ic" ]]; then
-    export POCKET_IC_BIN="${ROOT_DIR}/crates/evm-rpc-e2e/pocket-ic"
-    echo "[canbench-guard] using local PocketIC binary: ${POCKET_IC_BIN}"
-  elif [[ -x "${ROOT_DIR}/pocket-ic" ]]; then
-    export POCKET_IC_BIN="${ROOT_DIR}/pocket-ic"
-    echo "[canbench-guard] using local PocketIC binary: ${POCKET_IC_BIN}"
+if [[ "${installed_canbench_version}" != "${REQUIRED_CANBENCH_VERSION}" ]]; then
+  echo "[canbench-guard] installing canbench ${REQUIRED_CANBENCH_VERSION} into ${CANBENCH_ROOT}"
+  cargo install \
+    --root "${CANBENCH_ROOT}" \
+    --locked \
+    --force \
+    canbench \
+    --version "${REQUIRED_CANBENCH_VERSION}"
+fi
+
+# canbench uses --runtime-path to choose the PocketIC binary.
+declare -a CANBENCH_ARGS=()
+if [[ -n "${POCKET_IC_BIN:-}" ]]; then
+  if [[ -x "${POCKET_IC_BIN}" ]]; then
+    echo "[canbench-guard] using PocketIC binary from POCKET_IC_BIN: ${POCKET_IC_BIN}"
+    CANBENCH_ARGS+=(--runtime-path "${POCKET_IC_BIN}")
+  else
+    echo "[canbench-guard] WARN: POCKET_IC_BIN is not executable: ${POCKET_IC_BIN}" >&2
   fi
+else
+  for candidate in \
+    "${ROOT_DIR}/.canbench/pocket-ic" \
+    "${ROOT_DIR}/pocket-ic" \
+    "${ROOT_DIR}/crates/evm-rpc-e2e/pocket-ic"
+  do
+    if [[ -x "${candidate}" ]]; then
+      echo "[canbench-guard] using PocketIC binary: ${candidate}"
+      CANBENCH_ARGS+=(--runtime-path "${candidate}")
+      break
+    fi
+  done
 fi
 
 BASELINE_FILE="canbench_results.yml"
@@ -45,7 +70,7 @@ fi
 attempt=1
 max_attempts=3
 while true; do
-  if canbench --persist; then
+  if "${CANBENCH_BIN}" --persist "${CANBENCH_ARGS[@]}"; then
     break
   fi
   if [[ "$attempt" -ge "$max_attempts" ]]; then

@@ -49,8 +49,8 @@ build_init_args_for_principal() {
   require_wrap_runtime_config
   local blob
   blob=$(caller_evm_blob_from_principal "${principal}")
-  local factory_vec
-  factory_vec="$(
+  local factory_blob
+  factory_blob="$(
     EVM_WRAP_FACTORY="${EVM_WRAP_FACTORY}" python - <<'PY'
 import os
 
@@ -60,7 +60,7 @@ if value.startswith("0x"):
 if len(value) != 40:
     raise SystemExit("EVM_WRAP_FACTORY must be 20 bytes")
 raw = bytes.fromhex(value)
-print("; ".join(str(byte) for byte in raw))
+print(''.join(f'\\{byte:02x}' for byte in raw))
 PY
   )"
   local out
@@ -68,7 +68,7 @@ PY
 (opt record {
   genesis_balances = vec { record { address = blob "${blob}"; amount = ${amount} : nat } };
   wrap_canister_id = principal "${WRAP_CANISTER_ID}";
-  wrap_factory_address = vec { ${factory_vec} };
+  wrap_factory_address = blob "${factory_blob}";
 })
 EOF
 )

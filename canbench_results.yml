@@ -37,15 +37,15 @@ benches:
   submit_ic_tx_path:
     total:
       calls: 1
-      instructions: 72415
+      instructions: 72413
       heap_increase: 0
       stable_memory_increase: 0
     scopes: {}
   submit_ic_tx_path_cold:
     total:
       calls: 1
-      instructions: 12440758
+      instructions: 12441264
       heap_increase: 0
       stable_memory_increase: 0
     scopes: {}
-version: 0.4.0
+version: 0.4.1
