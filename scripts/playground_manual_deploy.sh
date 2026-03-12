@@ -3,6 +3,7 @@
 # what: build wasm with cargo and install via icp-cli
 # why: keep wasm small and reproducible; avoid hidden build-time behavior
 # note: this is intended for playground use only (size issues); not needed for mainnet deploys
+# note: gateway install now requires WRAP_CANISTER_ID and EVM_WRAP_FACTORY to be exported first
 set -euo pipefail
 source "$(dirname "$0")/lib_init_args.sh"
 
@@ -16,12 +17,24 @@ log() {
   echo "[manual-deploy] $*"
 }
 
+require_runtime_config() {
+  if [[ -z "${WRAP_CANISTER_ID:-}" ]]; then
+    log "WRAP_CANISTER_ID is required"
+    exit 1
+  fi
+  if [[ -z "${EVM_WRAP_FACTORY:-}" ]]; then
+    log "EVM_WRAP_FACTORY is required"
+    exit 1
+  fi
+}
+
 build_wasm() {
   log "cargo build --release --target wasm32-unknown-unknown -p ic-evm-gateway"
   cargo build --release --target wasm32-unknown-unknown -p ic-evm-gateway
 }
 
 install_wasm() {
+  require_runtime_config
   local wasm_path="target/wasm32-unknown-unknown/release/ic_evm_gateway.wasm"
   if [[ ! -f "${wasm_path}" ]]; then
     log "wasm not found: ${wasm_path}"
@@ -60,6 +73,7 @@ install_wasm() {
   fi
 }
 
+require_runtime_config
 build_wasm
 install_wasm
 
