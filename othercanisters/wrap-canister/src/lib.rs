@@ -1735,33 +1735,43 @@ async fn wrap_worker_tick() {
         let pull = attempt_icrc2_transfer_from(caller, asset_id.clone(), amount.clone()).await;
         let outcome = match pull {
             Ok(pull_tx_id) => match with_expected_wrap_nonce_from_gateway().await {
-                Ok(evm_nonce) => {
-                    let mint = submit_mint_tx(
-                        asset_id,
-                        evm_recipient,
-                        amount,
-                        evm_nonce,
-                        gas_limit,
-                        charged_gas_price_wei,
-                    )
-                    .await;
-                    match mint {
-                        Ok(mint_tx_id) => WrapExecutionOutcome {
-                            status: RequestStatus::Succeeded,
-                            pull_ledger_tx_id: Some(pull_tx_id),
-                            mint_tx_id: Some(mint_tx_id),
-                            error_code: None,
-                            mint_failed_recoverable: false,
-                        },
-                        Err(code) => WrapExecutionOutcome {
-                            status: RequestStatus::Failed,
-                            pull_ledger_tx_id: Some(pull_tx_id),
-                            mint_tx_id: None,
-                            error_code: Some(code),
-                            mint_failed_recoverable: true,
-                        },
+                Ok(evm_nonce) => match fetch_max_priority_fee_wei_from_gateway().await {
+                    Ok(suggested_priority_fee_wei) => {
+                        let mint = submit_mint_tx(
+                            asset_id,
+                            evm_recipient,
+                            amount,
+                            evm_nonce,
+                            gas_limit,
+                            charged_gas_price_wei,
+                            suggested_priority_fee_wei,
+                        )
+                        .await;
+                        match mint {
+                            Ok(mint_tx_id) => WrapExecutionOutcome {
+                                status: RequestStatus::Succeeded,
+                                pull_ledger_tx_id: Some(pull_tx_id),
+                                mint_tx_id: Some(mint_tx_id),
+                                error_code: None,
+                                mint_failed_recoverable: false,
+                            },
+                            Err(code) => WrapExecutionOutcome {
+                                status: RequestStatus::Failed,
+                                pull_ledger_tx_id: Some(pull_tx_id),
+                                mint_tx_id: None,
+                                error_code: Some(code),
+                                mint_failed_recoverable: true,
+                            },
+                        }
                     }
-                }
+                    Err(code) => WrapExecutionOutcome {
+                        status: RequestStatus::Failed,
+                        pull_ledger_tx_id: Some(pull_tx_id),
+                        mint_tx_id: None,
+                        error_code: Some(code),
+                        mint_failed_recoverable: true,
+                    },
+                },
                 Err(code) => WrapExecutionOutcome {
                     status: RequestStatus::Failed,
                     pull_ledger_tx_id: Some(pull_tx_id),
@@ -2003,29 +2013,19 @@ async fn submit_mint_tx(
     nonce: u64,
     gas_limit: u64,
     charged_gas_price_wei: u128,
+    suggested_priority_fee_wei: u128,
 ) -> Result<Vec<u8>, String> {
-    validate_principal_bytes(asset_id.as_slice())?;
-    validate_evm_address(evm_recipient.as_slice(), "arg.evm_recipient_invalid")?;
-    validate_amount_bytes(amount.as_slice())?;
     let gateway = expected_evm_gateway_canister()?;
-    let factory = expected_evm_wrap_factory()?;
-    let token_decimals = fetch_asset_decimals(asset_id.as_slice()).await?;
-    let data = encode_factory_mint_for_asset_call_data(
-        asset_id.as_slice(),
-        token_decimals,
-        evm_recipient.as_slice(),
-        amount.as_slice(),
-    )?;
-    let args = SubmitIcTxArgsDto {
-        to: Some(factory),
-        from: None,
-        value: Nat::from(0u8),
-        gas_limit,
+    let args = build_submit_mint_tx_args(
+        asset_id,
+        evm_recipient,
+        amount,
         nonce,
-        max_fee_per_gas: Nat::from(charged_gas_price_wei),
-        max_priority_fee_per_gas: Nat::from(charged_gas_price_wei),
-        data,
-    };
+        gas_limit,
+        charged_gas_price_wei,
+        suggested_priority_fee_wei,
+    )
+    .await?;
 
     let call_result = ic_cdk::call::Call::unbounded_wait(gateway, "submit_ic_tx")
         .with_arg(args)
@@ -2059,6 +2059,75 @@ async fn fetch_gas_price_wei_from_gateway() -> Result<u128, String> {
             Err(err) => Err(format!("fee.quote_decode_failed:{err}")),
         },
         Err(err) => Err(format!("fee.quote_call_failed:{err}")),
+    }
+}
+
+async fn fetch_max_priority_fee_wei_from_gateway() -> Result<u128, String> {
+    let gateway = expected_evm_gateway_canister()?;
+    let call_result =
+        ic_cdk::call::Call::unbounded_wait(gateway, "rpc_eth_max_priority_fee_per_gas").await;
+    match call_result {
+        Ok(resp) => match resp.candid_tuple::<(Result<Nat, RpcErrorView>,)>() {
+            Ok((result,)) => match result {
+                Ok(value) => {
+                    nat_to_u128(&value).ok_or_else(|| "fee.priority_out_of_range".to_string())
+                }
+                Err(err) => Err(format!("fee.priority_failed:{}:{}", err.code, err.message)),
+            },
+            Err(err) => Err(format!("fee.priority_decode_failed:{err}")),
+        },
+        Err(err) => Err(format!("fee.priority_call_failed:{err}")),
+    }
+}
+
+async fn build_submit_mint_tx_args(
+    asset_id: Vec<u8>,
+    evm_recipient: Vec<u8>,
+    amount: Vec<u8>,
+    nonce: u64,
+    gas_limit: u64,
+    charged_gas_price_wei: u128,
+    suggested_priority_fee_wei: u128,
+) -> Result<SubmitIcTxArgsDto, String> {
+    validate_principal_bytes(asset_id.as_slice())?;
+    validate_evm_address(evm_recipient.as_slice(), "arg.evm_recipient_invalid")?;
+    validate_amount_bytes(amount.as_slice())?;
+    let factory = expected_evm_wrap_factory()?;
+    let token_decimals = fetch_asset_decimals(asset_id.as_slice()).await?;
+    let data = encode_factory_mint_for_asset_call_data(
+        asset_id.as_slice(),
+        token_decimals,
+        evm_recipient.as_slice(),
+        amount.as_slice(),
+    )?;
+    Ok(build_submit_ic_tx_args(
+        factory,
+        nonce,
+        gas_limit,
+        charged_gas_price_wei,
+        suggested_priority_fee_wei,
+        data,
+    ))
+}
+
+fn build_submit_ic_tx_args(
+    factory: Vec<u8>,
+    nonce: u64,
+    gas_limit: u64,
+    charged_gas_price_wei: u128,
+    suggested_priority_fee_wei: u128,
+    data: Vec<u8>,
+) -> SubmitIcTxArgsDto {
+    let capped_priority_fee_wei = suggested_priority_fee_wei.min(charged_gas_price_wei);
+    SubmitIcTxArgsDto {
+        to: Some(factory),
+        from: None,
+        value: Nat::from(0u8),
+        gas_limit,
+        nonce,
+        max_fee_per_gas: Nat::from(charged_gas_price_wei),
+        max_priority_fee_per_gas: Nat::from(capped_priority_fee_wei),
+        data,
     }
 }
 
@@ -3277,6 +3346,66 @@ mod tests {
     fn submit_error_to_code_formats_variant() {
         let code = submit_error_to_code(SubmitTxError::Rejected("nonce_low".to_string()));
         assert_eq!(code, "rejected:nonce_low");
+    }
+
+    #[test]
+    fn build_submit_ic_tx_args_keeps_charge_as_max_fee_and_splits_priority_fee() {
+        let charged_gas_price_wei = 300_000_000_000u128;
+        let suggested_priority_fee_wei = 150_000_000_000u128;
+        let args = super::build_submit_ic_tx_args(
+            vec![0x11; 20],
+            7,
+            450_000,
+            charged_gas_price_wei,
+            suggested_priority_fee_wei,
+            vec![0xaa, 0xbb],
+        );
+
+        assert_eq!(args.to, Some(vec![0x11; 20]));
+        assert_eq!(args.from, None);
+        assert_eq!(args.gas_limit, 450_000);
+        assert_eq!(args.nonce, 7);
+        assert_eq!(
+            super::nat_to_u128(&args.max_fee_per_gas),
+            Some(charged_gas_price_wei)
+        );
+        assert_eq!(
+            super::nat_to_u128(&args.max_priority_fee_per_gas),
+            Some(suggested_priority_fee_wei)
+        );
+        assert_ne!(args.max_fee_per_gas, args.max_priority_fee_per_gas);
+        assert_eq!(args.data, vec![0xaa, 0xbb]);
+    }
+
+    #[test]
+    fn build_submit_ic_tx_args_caps_priority_fee_at_max_fee() {
+        let charged_gas_price_wei = 300_000_000_000u128;
+        let suggested_priority_fee_wei = 450_000_000_000u128;
+        let args = super::build_submit_ic_tx_args(
+            vec![0x11; 20],
+            7,
+            450_000,
+            charged_gas_price_wei,
+            suggested_priority_fee_wei,
+            vec![0xaa, 0xbb],
+        );
+
+        assert_eq!(
+            super::nat_to_u128(&args.max_fee_per_gas),
+            Some(charged_gas_price_wei)
+        );
+        assert_eq!(
+            super::nat_to_u128(&args.max_priority_fee_per_gas),
+            Some(charged_gas_price_wei)
+        );
+    }
+
+    #[test]
+    fn compute_total_fee_e8s_keeps_existing_charge_formula() {
+        let charged =
+            super::compute_total_fee_e8s(21_000, 300_000_000_000, 1_000_000).expect("fee");
+        let expected_gas_fee_e8s = (21_000u128 * 300_000_000_000u128).div_ceil(super::WEI_PER_E8S);
+        assert_eq!(charged, expected_gas_fee_e8s + 1_000_000u128);
     }
 
     #[test]
