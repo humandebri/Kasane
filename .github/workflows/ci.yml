@@ -29,97 +29,10 @@ jobs:
       - name: Cache Rust artifacts
         uses: Swatinem/rust-cache@v2
 
-      - name: RNG callsite guard
-        run: scripts/check_rng_paths.sh
-
-      - name: getrandom wasm feature guard
-        run: scripts/check_getrandom_wasm_features.sh
-
-      - name: DID sync guard
-        run: scripts/check_did_sync.sh
-
-      - name: Gateway API compatibility baseline guard
-        run: scripts/check_gateway_api_compat_baseline.sh
-
-      - name: Alloy dependency isolation guard
-        run: scripts/check_alloy_isolation.sh
-
-      - name: Precompile feature isolation guard
-        run: scripts/check_precompile_feature_isolation.sh
-
-      - name: Deny OP stack references
-        shell: bash
-        run: |
-          set -euo pipefail
-          DENY_PATTERN='op-revm|op_revm|op-node|op-geth|optimism|superchain|OpDeposit|L1BlockInfo'
-          if grep -RInE "$DENY_PATTERN" \
-            --exclude-dir=.git \
-            --exclude-dir=target \
-            --exclude-dir=vendor \
-            --exclude-dir=node_modules \
-            --exclude='ci-local.sh' \
-            --exclude='pr0-differential-runbook.md' \
-            crates docs scripts README.md Cargo.toml; then
-            echo "[guard] forbidden OP stack reference found"
-            exit 1
-          fi
-
-      - name: Install supply-chain tools
-        run: cargo install --locked cargo-deny cargo-audit
-
-      - name: Cargo deny
-        run: cargo deny check
-
-      - name: Cargo audit
-        run: cargo audit --deny warnings --ignore RUSTSEC-2024-0388 --ignore RUSTSEC-2024-0436
-
-      - name: Generate dependency SBOM snapshot
-        run: |
-          mkdir -p /tmp/kasane-supply-chain
-          cargo metadata --locked --format-version 1 > /tmp/kasane-supply-chain/cargo-metadata.sbom.json
-
-      - name: Generate vendor digest snapshot
-        shell: bash
-        run: |
-          set -euo pipefail
-          mkdir -p /tmp/kasane-supply-chain
-          find vendor/revm -type f -print0 | sort -z | xargs -0 sha256sum > /tmp/kasane-supply-chain/vendor-revm.sha256
-          find vendor/ark-relations -type f -print0 | sort -z | xargs -0 sha256sum > /tmp/kasane-supply-chain/vendor-ark-relations.sha256
-
-      - name: Upload supply-chain snapshots
-        uses: actions/upload-artifact@v4
-        with:
-          name: supply-chain-snapshots
-          path: |
-            /tmp/kasane-supply-chain/cargo-metadata.sbom.json
-            /tmp/kasane-supply-chain/vendor-revm.sha256
-            /tmp/kasane-supply-chain/vendor-ark-relations.sha256
-
-      - name: Run workspace tests
-        run: cargo test -p evm-db -p ic-evm-core -p ic-evm-gateway --locked --lib --tests
-
-      - name: Check evm-rpc-e2e manifest builds
-        run: cargo test --manifest-path crates/evm-rpc-e2e/Cargo.toml --no-run --locked
-
-      - name: Build wrap/unwrap E2E wasm
-        run: cargo build --release --target wasm32-unknown-unknown -p wrap-canister -p mock-wrap-canister -p ic-evm-gateway --locked
-
-      - name: Prepare official ICRC-1 ledger wasm
-        run: bash scripts/prepare_ci_icrc1_ledger_wasm.sh
-
-      - name: Run wrap/unwrap E2E
-        run: cargo test --manifest-path crates/evm-rpc-e2e/Cargo.toml --test wrap_unwrap_flow_e2e --locked -- --test-threads=1
-
       - name: Install Foundry
         uses: foundry-rs/foundry-toolchain@v1
         with:
           version: stable
-
-      - name: Solidity build and tests
-        working-directory: tools/wrapper/contracts
-        run: |
-          forge build
-          forge test -vv
 
       - name: Setup Node
         uses: actions/setup-node@v4
@@ -128,20 +41,9 @@ jobs:
           cache: "npm"
           cache-dependency-path: tools/rpc-gateway/package-lock.json
 
-      - name: Gateway matrix sync guard
-        run: scripts/check_gateway_matrix_sync.sh
-
-      - name: RPC gateway tests and build
-        working-directory: tools/rpc-gateway
+      - name: Run GitHub-equivalent CI script
         env:
           EVM_CANISTER_ID: aaaaa-aa
-        run: |
-          npm ci
-          npm test
-          npm run build
-
-      - name: Canbench regression guard
-        env:
           CANBENCH_MAX_REGRESSION_PCT: "2.0"
           CANBENCH_TARGET_IMPROVEMENT_PCT: "5.0"
-        run: scripts/run_canbench_guard.sh
+        run: scripts/ci_github_equivalent.sh

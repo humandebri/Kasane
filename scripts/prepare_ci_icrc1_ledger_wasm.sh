@@ -20,6 +20,7 @@ if [[ ! -f "${LEDGER_WASM}" ]]; then
 fi
 
 echo "[prepare-ci-ledger] using ledger wasm at ${LEDGER_WASM}"
+export ICP_LEDGER_WASM="${LEDGER_WASM}"
 
 if [[ -n "${GITHUB_ENV:-}" ]]; then
   echo "ICP_LEDGER_WASM=${LEDGER_WASM}" >> "${GITHUB_ENV}"
