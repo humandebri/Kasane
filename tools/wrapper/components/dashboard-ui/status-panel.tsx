@@ -48,9 +48,11 @@ export function StatusPanel(props: {
   statusLoading: boolean;
   message: string | null;
   walletConnected: boolean;
+  retryLoading: boolean;
   withdrawLoading: boolean;
   onChangeRequestId: (value: string) => void;
   onQuery: () => void;
+  onRetry: () => void;
   onWithdraw: () => void;
 }): ReactElement {
   const currentStep = phaseToStepIndex(props.status);
@@ -61,13 +63,13 @@ export function StatusPanel(props: {
       <CardHeader>
         <CardTitle>Status</CardTitle>
         <CardDescription>
-          request_id を追跡し、dispatch/executionを自動更新します。
+          request_id または unwrap の tx_id を追跡し、dispatch/executionを自動更新します。
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-3">
         <div className="flex gap-2">
           <Input
-            placeholder="0x... (32 bytes)"
+            placeholder="0x... (request_id / tx_id)"
             value={props.requestIdInput}
             onChange={(event) => props.onChangeRequestId(event.target.value)}
           />
@@ -126,7 +128,6 @@ export function StatusPanel(props: {
                 {props.status.executionStatus ?? "null"}
               </Badge>
             </div>
-            <KeyValue label="vault_canister_id" value={props.status.vaultCanisterId} />
             <KeyValue label="ledger_tx_id" value={props.status.ledgerTxId} />
             <KeyValue label="error_code" value={props.status.errorCode} />
             <KeyValue label="withdrawn" value={String(props.status.withdrawn)} />
@@ -134,6 +135,18 @@ export function StatusPanel(props: {
               label="withdraw_error_code"
               value={props.status.withdrawErrorCode}
             />
+            {props.status.dispatchStatus !== null
+            && props.status.executionStatus === "Failed"
+            && !props.status.mintFailedRecoverable ? (
+              <Button
+                variant="outline"
+                className="w-full"
+                onClick={props.onRetry}
+                disabled={props.retryLoading || !props.walletConnected}
+              >
+                {props.retryLoading ? "Retrying..." : "Retry Failed Unwrap"}
+              </Button>
+            ) : null}
             {props.status.mintFailedRecoverable && !props.status.withdrawn ? (
               <Button
                 variant="outline"

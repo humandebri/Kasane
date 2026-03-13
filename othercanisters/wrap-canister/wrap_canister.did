@@ -1,66 +1,102 @@
-type RequestStatus = variant { Queued; Running; Succeeded; Failed };
-type RequestResult = record {
-  status : RequestStatus;
-  ledger_tx_id : opt blob;
-  error_code : opt text;
-};
-type WrapRequestResult = record {
-  status : RequestStatus;
-  pull_ledger_tx_id : opt blob;
-  mint_tx_id : opt blob;
-  error_code : opt text;
-  withdrawn : bool;
-  withdraw_ledger_tx_id : opt blob;
-  withdraw_error_code : opt text;
-  mint_failed_recoverable : bool;
-  fee_ledger_tx_id : opt blob;
-  charged_fee_e8s : opt nat;
-  charged_gas_price_wei : opt nat;
+type ApiError = variant {
+  InvalidArgument : record { code : text; message : text };
+  Rejected : record { code : text; message : text };
+  Internal : record { code : text; message : text };
 };
 type FeePolicyView = record {
   fee_ledger_canister : principal;
   cycle_fee_e8s : nat64;
   gas_price_buffer_bps : nat32;
 };
-type SubmitUnwrapRequestArgs = record {
-  request_id : blob;
-  asset_id : blob;
-  amount : blob;
-  recipient : blob;
+type GetUnwrapRequirementsArgs = record {
+  asset_id : principal;
+  amount_e8s : nat;
+  caller_evm_address : blob;
 };
-type SubmitUnwrapRequestOk = record { request_id : blob };
-type SubmitWrapRequestArgs = record {
-  request_id : blob;
-  asset_id : blob;
-  amount : blob;
+type GetUnwrapRequirementsOk = record {
+  factory_address : blob;
+  wrapped_token_address : opt blob;
+  balance : nat;
+  allowance : nat;
+  approve_required : bool;
+  readiness : UnwrapReadiness;
+};
+type InitArgs = record {
+  kasane_canister : principal;
+  evm_gateway_canister : principal;
+  fee_ledger_canister : principal;
+  wrap_factory_address : blob;
+  cycle_fee_e8s : nat64;
+  gas_price_buffer_bps : nat32;
+};
+type QuoteWrapRequestArgs = record {
+  asset_id : principal;
+  amount_e8s : nat;
   evm_recipient : blob;
-  evm_nonce : nat64;
   gas_limit : nat64;
 };
-type SubmitWrapRequestOk = record { request_id : blob };
+type QuoteWrapRequestOk = record {
+  charged_fee_e8s : nat;
+  charged_gas_price_wei : nat;
+  cycle_fee_e8s : nat64;
+  fee_ledger_canister : principal;
+};
+type RecoverFailedWrapArgs = record { request_id : blob };
+type RequestDispatchStatusView = variant {
+  Queued;
+  Dispatching;
+  Dispatched;
+  DispatchFailed;
+};
+type RequestErrorView = record { code : text; message : text };
+type RequestKind = variant { Wrap; Unwrap };
+type RequestOverview = record {
+  kind : RequestKind;
+  request_id : blob;
+  status : RequestStatus;
+  error : opt RequestErrorView;
+  fee_ledger_tx_id : opt blob;
+  pull_ledger_tx_id : opt blob;
+  mint_tx_id : opt blob;
+  withdraw_ledger_tx_id : opt blob;
+  ledger_tx_id : opt blob;
+  dispatch_status : opt RequestDispatchStatusView;
+  dispatch_error : opt text;
+  charged_fee_e8s : opt nat;
+  charged_gas_price_wei : opt nat;
+};
+type RequestStatus = variant { Queued; Running; Succeeded; Failed };
+type RetryRequestArgs = record { request_id : blob };
 type SetFeePolicyArgs = record {
   fee_ledger_canister : principal;
   cycle_fee_e8s : nat64;
   gas_price_buffer_bps : nat32;
 };
-type WithdrawFailedWrapArgs = record { request_id : blob };
-type WithdrawFailedWrapOk = record { request_id : blob; ledger_tx_id : blob };
-type InitArgs = record {
-  kasane_canister : principal;
-  evm_gateway_canister : principal;
-  evm_wrap_factory : blob;
-  fee_ledger_canister : principal;
-  cycle_fee_e8s : nat64;
-  gas_price_buffer_bps : nat32;
+type SubmitWrapRequestArgs = record {
+  asset_id : principal;
+  amount_e8s : nat;
+  evm_recipient : blob;
+  gas_limit : nat64;
+};
+type SubmitWrapRequestOk = record {
+  request_id : blob;
+  charged_fee_e8s : nat;
+  charged_gas_price_wei : nat;
+  fee_ledger_tx_id : blob;
+};
+type UnwrapReadiness = variant {
+  Ready;
+  TokenNotDeployed;
+  InsufficientBalance;
+  InsufficientAllowance;
 };
 service : (InitArgs) -> {
-  submit_unwrap_request : (SubmitUnwrapRequestArgs) -> (variant { Ok : SubmitUnwrapRequestOk; Err : text });
-  submit_wrap_request : (SubmitWrapRequestArgs) -> (variant { Ok : SubmitWrapRequestOk; Err : text });
-  withdraw_failed_wrap : (WithdrawFailedWrapArgs) -> (variant { Ok : WithdrawFailedWrapOk; Err : text });
+  quote_wrap_request : (QuoteWrapRequestArgs) -> (variant { Ok : QuoteWrapRequestOk; Err : ApiError }) query;
+  submit_wrap_request : (SubmitWrapRequestArgs) -> (variant { Ok : SubmitWrapRequestOk; Err : ApiError });
+  get_unwrap_requirements : (GetUnwrapRequirementsArgs) -> (variant { Ok : GetUnwrapRequirementsOk; Err : ApiError }) query;
+  get_request : (blob) -> (opt RequestOverview) query;
+  retry_request : (RetryRequestArgs) -> (variant { Ok : RequestOverview; Err : ApiError });
+  recover_failed_wrap : (RecoverFailedWrapArgs) -> (variant { Ok : RequestOverview; Err : ApiError });
   get_fee_policy : () -> (variant { Ok : FeePolicyView; Err : text }) query;
-  get_request_status : (blob) -> (opt RequestStatus) query;
-  get_request_result : (blob) -> (opt RequestResult) query;
-  get_wrap_request_status : (blob) -> (opt RequestStatus) query;
-  get_wrap_request_result : (blob) -> (opt WrapRequestResult) query;
   set_fee_policy : (SetFeePolicyArgs) -> (variant { Ok; Err : text });
 }

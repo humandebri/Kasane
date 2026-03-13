@@ -3,6 +3,10 @@
 //! why: split asset execution from kasane core
 
 use candid::{CandidType, Deserialize, Nat, Principal};
+use ic_evm_rpc_types::{
+    ApiError, ApiErrorDetail, RequestDispatchStatusView, RpcCallObjectView, RpcCallResultView,
+    RpcErrorView,
+};
 use ic_stable_structures::memory_manager::{MemoryId, MemoryManager, VirtualMemory};
 use ic_stable_structures::storable::Bound;
 use ic_stable_structures::{DefaultMemoryImpl, StableBTreeMap, StableCell, Storable};
@@ -12,6 +16,14 @@ use std::cell::{Cell, RefCell};
 use std::collections::BTreeSet;
 use tiny_keccak::{Hasher, Keccak};
 
+#[cfg(target_arch = "wasm32")]
+getrandom::register_custom_getrandom!(always_fail_getrandom);
+
+#[cfg(target_arch = "wasm32")]
+fn always_fail_getrandom(_buf: &mut [u8]) -> Result<(), getrandom::Error> {
+    Err(getrandom::Error::UNSUPPORTED)
+}
+
 const MEM_KASANE_CANISTER: MemoryId = MemoryId::new(0);
 const MEM_REQUESTS: MemoryId = MemoryId::new(1);
 const MEM_QUEUE: MemoryId = MemoryId::new(2);
@@ -20,70 +32,103 @@ const MEM_EVM_GATEWAY_CANISTER: MemoryId = MemoryId::new(4);
 const MEM_WRAP_REQUESTS: MemoryId = MemoryId::new(5);
 const MEM_WRAP_QUEUE: MemoryId = MemoryId::new(6);
 const MEM_WRAP_QUEUE_META: MemoryId = MemoryId::new(7);
-const MEM_EVM_WRAP_FACTORY: MemoryId = MemoryId::new(8);
 const MEM_FEE_POLICY: MemoryId = MemoryId::new(9);
+const MEM_WRAP_EVM_CONFIG: MemoryId = MemoryId::new(10);
 const PRINCIPAL_MAX_BYTES: usize = 29;
 const AMOUNT_BYTES: usize = 32;
 const EVM_ADDRESS_BYTES: usize = 20;
 const MAX_LEDGER_TX_ID_BYTES: usize = 128;
 const MAX_ERROR_CODE_BYTES: usize = 192;
-const STORED_REQUEST_MAX_BYTES: u32 = 448;
+const STORED_REQUEST_MAX_BYTES: u32 = 768;
 const WRAP_STORED_REQUEST_MAX_BYTES: u32 = 768;
 const FEE_POLICY_MAX_BYTES: u32 = 128;
+const WRAP_EVM_CONFIG_MAX_BYTES: u32 = 32;
 const DEFAULT_CYCLE_FEE_E8S: u64 = 1_000_000;
 const DEFAULT_GAS_PRICE_BUFFER_BPS: u32 = 12_000;
 const GAS_PRICE_DENOMINATOR_BPS: u128 = 10_000;
 const WEI_PER_E8S: u128 = 10_000_000_000;
-
 type Memory = VirtualMemory<DefaultMemoryImpl>;
 
 #[derive(Clone, Debug, CandidType, Deserialize)]
 pub struct InitArgs {
     pub kasane_canister: Principal,
     pub evm_gateway_canister: Principal,
-    pub evm_wrap_factory: Vec<u8>,
     pub fee_ledger_canister: Principal,
+    pub wrap_factory_address: Vec<u8>,
     pub cycle_fee_e8s: u64,
     pub gas_price_buffer_bps: u32,
 }
 
 #[derive(Clone, Debug, CandidType, Deserialize)]
-pub struct SubmitUnwrapRequestArgs {
-    pub request_id: Vec<u8>,
-    pub asset_id: Vec<u8>,
-    pub amount: Vec<u8>,
-    pub recipient: Vec<u8>,
+pub struct QuoteWrapRequestArgs {
+    pub asset_id: Principal,
+    pub amount_e8s: Nat,
+    pub evm_recipient: Vec<u8>,
+    pub gas_limit: u64,
 }
 
 #[derive(Clone, Debug, CandidType, Deserialize)]
-pub struct SubmitUnwrapRequestOk {
-    pub request_id: Vec<u8>,
+pub struct QuoteWrapRequestOk {
+    pub charged_fee_e8s: Nat,
+    pub charged_gas_price_wei: Nat,
+    pub cycle_fee_e8s: u64,
+    pub fee_ledger_canister: Principal,
 }
 
 #[derive(Clone, Debug, CandidType, Deserialize)]
 pub struct SubmitWrapRequestArgs {
-    pub request_id: Vec<u8>,
-    pub asset_id: Vec<u8>,
-    pub amount: Vec<u8>,
+    pub asset_id: Principal,
+    pub amount_e8s: Nat,
     pub evm_recipient: Vec<u8>,
-    pub evm_nonce: u64,
     pub gas_limit: u64,
 }
 
 #[derive(Clone, Debug, CandidType, Deserialize)]
 pub struct SubmitWrapRequestOk {
     pub request_id: Vec<u8>,
+    pub charged_fee_e8s: Nat,
+    pub charged_gas_price_wei: Nat,
+    pub fee_ledger_tx_id: Vec<u8>,
 }
 
 #[derive(Clone, Debug, CandidType, Deserialize)]
-pub struct WithdrawFailedWrapArgs {
+pub struct GetUnwrapRequirementsArgs {
+    pub asset_id: Principal,
+    pub amount_e8s: Nat,
+    pub caller_evm_address: Vec<u8>,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize)]
+pub struct GetUnwrapRequirementsOk {
+    pub factory_address: Vec<u8>,
+    pub wrapped_token_address: Option<Vec<u8>>,
+    pub balance: Nat,
+    pub allowance: Nat,
+    pub approve_required: bool,
+    pub readiness: UnwrapReadiness,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize)]
+pub struct DispatchUnwrapRequestArgs {
+    pub request_id: Vec<u8>,
+    pub asset_id: Principal,
+    pub amount_e8s: Nat,
+    pub recipient: Principal,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize)]
+pub struct DispatchUnwrapRequestOk {
     pub request_id: Vec<u8>,
 }
 
 #[derive(Clone, Debug, CandidType, Deserialize)]
-pub struct WithdrawFailedWrapOk {
+pub struct RetryRequestArgs {
     pub request_id: Vec<u8>,
-    pub ledger_tx_id: Vec<u8>,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize)]
+pub struct RecoverFailedWrapArgs {
+    pub request_id: Vec<u8>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -105,6 +150,10 @@ pub struct RequestResult {
     pub status: RequestStatus,
     pub ledger_tx_id: Option<Vec<u8>>,
     pub error_code: Option<String>,
+    #[serde(default)]
+    pub dispatch_status: Option<RequestDispatchStatusView>,
+    #[serde(default)]
+    pub dispatch_error: Option<String>,
 }
 
 #[derive(Clone, Debug, CandidType, Deserialize)]
@@ -136,6 +185,43 @@ pub struct FeePolicyView {
     pub gas_price_buffer_bps: u32,
 }
 
+#[derive(Clone, Copy, Debug, CandidType, Deserialize, Eq, PartialEq)]
+pub enum RequestKind {
+    Wrap,
+    Unwrap,
+}
+
+#[derive(Clone, Copy, Debug, CandidType, Deserialize, Eq, PartialEq)]
+pub enum UnwrapReadiness {
+    Ready,
+    TokenNotDeployed,
+    InsufficientBalance,
+    InsufficientAllowance,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize, Eq, PartialEq)]
+pub struct RequestErrorView {
+    pub code: String,
+    pub message: String,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize)]
+pub struct RequestOverview {
+    pub kind: RequestKind,
+    pub request_id: Vec<u8>,
+    pub status: RequestStatus,
+    pub error: Option<RequestErrorView>,
+    pub fee_ledger_tx_id: Option<Vec<u8>>,
+    pub pull_ledger_tx_id: Option<Vec<u8>>,
+    pub mint_tx_id: Option<Vec<u8>>,
+    pub withdraw_ledger_tx_id: Option<Vec<u8>>,
+    pub ledger_tx_id: Option<Vec<u8>>,
+    pub dispatch_status: Option<RequestDispatchStatusView>,
+    pub dispatch_error: Option<String>,
+    pub charged_fee_e8s: Option<Nat>,
+    pub charged_gas_price_wei: Option<Nat>,
+}
+
 #[derive(Clone, Debug, CandidType, Deserialize)]
 pub struct SetFeePolicyArgs {
     pub fee_ledger_canister: Principal,
@@ -157,7 +243,6 @@ struct WrapStoredRequest {
     asset_id: Vec<u8>,
     amount: Vec<u8>,
     evm_recipient: Vec<u8>,
-    evm_nonce: u64,
     gas_limit: u64,
     result: WrapRequestResult,
 }
@@ -169,11 +254,53 @@ struct FeePolicyStored {
     gas_price_buffer_bps: u32,
 }
 
+#[derive(Clone, Debug, CandidType, Deserialize)]
+struct WrapEvmConfigStored {
+    wrap_factory_address: Vec<u8>,
+}
+
 #[derive(Clone, Debug)]
 struct FeeCharge {
     ledger_tx_id: Vec<u8>,
     charged_fee_e8s: u128,
     charged_gas_price_wei: u128,
+}
+
+#[derive(Clone, Debug)]
+struct WrapQuote {
+    charged_fee_e8s: u128,
+    charged_gas_price_wei: u128,
+    cycle_fee_e8s: u64,
+    fee_ledger_canister: Principal,
+}
+
+#[derive(Clone, Debug)]
+struct NormalizedDispatchUnwrapRequest {
+    request_id: Vec<u8>,
+    asset_id: Vec<u8>,
+    amount: Vec<u8>,
+    recipient: Vec<u8>,
+}
+
+#[derive(Clone, Debug)]
+struct NormalizedSubmitWrapRequest {
+    request_id: RequestId,
+    asset_id: Vec<u8>,
+    amount: Vec<u8>,
+    evm_recipient: Vec<u8>,
+    gas_limit: u64,
+}
+
+#[derive(Clone, Debug)]
+struct NormalizedQuoteWrapRequest {
+    gas_limit: u64,
+}
+
+#[derive(Clone, Debug)]
+struct NormalizedUnwrapRequirementsArgs {
+    asset_id: Vec<u8>,
+    amount_e8s: Nat,
+    caller_evm_address: Vec<u8>,
 }
 
 #[derive(Clone, Copy, Debug, CandidType, Deserialize, Eq, PartialEq, Ord, PartialOrd)]
@@ -299,11 +426,29 @@ impl Storable for FeePolicyStored {
     };
 }
 
+impl Storable for WrapEvmConfigStored {
+    fn to_bytes(&self) -> Cow<'_, [u8]> {
+        let encoded =
+            candid::encode_one(self).unwrap_or_else(|_| panic!("wrap_evm_config.encode_failed"));
+        Cow::Owned(encoded)
+    }
+
+    fn from_bytes(bytes: Cow<'_, [u8]>) -> Self {
+        candid::decode_one::<WrapEvmConfigStored>(bytes.as_ref())
+            .unwrap_or_else(|_| panic!("wrap_evm_config.decode_failed"))
+    }
+
+    const BOUND: Bound = Bound::Bounded {
+        max_size: WRAP_EVM_CONFIG_MAX_BYTES,
+        is_fixed_size: false,
+    };
+}
+
 struct StableState {
     kasane_canister: StableCell<Vec<u8>, Memory>,
     evm_gateway_canister: StableCell<Vec<u8>, Memory>,
-    evm_wrap_factory: StableCell<Vec<u8>, Memory>,
     fee_policy: StableCell<FeePolicyStored, Memory>,
+    wrap_evm_config: StableCell<WrapEvmConfigStored, Memory>,
     requests: StableBTreeMap<RequestId, StoredRequest, Memory>,
     queue: StableBTreeMap<u64, RequestId, Memory>,
     queue_meta: StableCell<QueueMeta, Memory>,
@@ -348,10 +493,6 @@ fn init_state() {
             StableCell::init(memory, Vec::<u8>::new())
                 .unwrap_or_else(|_| ic_cdk::trap("stable cell init failed: evm_gateway_canister"))
         });
-        let evm_wrap_factory = with_memory(MEM_EVM_WRAP_FACTORY, |memory| {
-            StableCell::init(memory, Vec::<u8>::new())
-                .unwrap_or_else(|_| ic_cdk::trap("stable cell init failed: evm_wrap_factory"))
-        });
         let fee_policy = with_memory(MEM_FEE_POLICY, |memory| {
             StableCell::init(
                 memory,
@@ -363,6 +504,15 @@ fn init_state() {
             )
             .unwrap_or_else(|_| ic_cdk::trap("stable cell init failed: fee_policy"))
         });
+        let wrap_evm_config = with_memory(MEM_WRAP_EVM_CONFIG, |memory| {
+            StableCell::init(
+                memory,
+                WrapEvmConfigStored {
+                    wrap_factory_address: Vec::new(),
+                },
+            )
+            .unwrap_or_else(|_| ic_cdk::trap("stable cell init failed: wrap_evm_config"))
+        });
         let wrap_requests = with_memory(MEM_WRAP_REQUESTS, StableBTreeMap::init);
         let wrap_queue = with_memory(MEM_WRAP_QUEUE, StableBTreeMap::init);
         let wrap_queue_meta = with_memory(MEM_WRAP_QUEUE_META, |memory| {
@@ -372,8 +522,8 @@ fn init_state() {
         *cell.borrow_mut() = Some(StableState {
             kasane_canister,
             evm_gateway_canister,
-            evm_wrap_factory,
             fee_policy,
+            wrap_evm_config,
             requests,
             queue,
             queue_meta,
@@ -407,32 +557,29 @@ fn with_state_mut<R>(f: impl FnOnce(&mut StableState) -> R) -> R {
 #[ic_cdk::init]
 fn init(args: InitArgs) {
     init_state();
-    if let Err(code) =
-        validate_non_anonymous_principal(&args.kasane_canister, "arg.kasane_canister_anonymous")
-    {
-        ic_cdk::trap(&code);
+    apply_runtime_config(args);
+}
+
+#[ic_cdk::post_upgrade]
+fn post_upgrade(args: Option<InitArgs>) {
+    init_state();
+    let args = args.unwrap_or_else(|| {
+        ic_cdk::trap(
+            "UpgradeArgsRequired: InitArgs is required on upgrade; pass (opt record {...})",
+        )
+    });
+    apply_runtime_config(args);
+    let now = ic_cdk::api::time();
+    if recover_request_state_after_upgrade(now) {
+        schedule_worker();
     }
-    if let Err(code) = validate_non_anonymous_principal(
-        &args.evm_gateway_canister,
-        "arg.evm_gateway_canister_anonymous",
-    ) {
-        ic_cdk::trap(&code);
+    if recover_wrap_request_state_after_upgrade(now) {
+        schedule_wrap_worker();
     }
-    if let Err(code) = validate_evm_address(
-        args.evm_wrap_factory.as_slice(),
-        "arg.evm_wrap_factory_invalid",
-    ) {
-        ic_cdk::trap(&code);
-    }
-    if let Err(code) = validate_non_anonymous_principal(
-        &args.fee_ledger_canister,
-        "arg.fee_ledger_canister_anonymous",
-    ) {
-        ic_cdk::trap(&code);
-    }
-    if let Err(code) = validate_gas_price_buffer_bps(args.gas_price_buffer_bps) {
-        ic_cdk::trap(&code);
-    }
+}
+
+fn apply_runtime_config(args: InitArgs) {
+    validate_runtime_config(&args).unwrap_or_else(|code| ic_cdk::trap(&code));
     with_state_mut(|state| {
         state
             .kasane_canister
@@ -443,10 +590,6 @@ fn init(args: InitArgs) {
             .set(args.evm_gateway_canister.as_slice().to_vec())
             .unwrap_or_else(|_| ic_cdk::trap("stable cell set failed: evm_gateway_canister"));
         state
-            .evm_wrap_factory
-            .set(args.evm_wrap_factory)
-            .unwrap_or_else(|_| ic_cdk::trap("stable cell set failed: evm_wrap_factory"));
-        state
             .fee_policy
             .set(FeePolicyStored {
                 fee_ledger_canister: args.fee_ledger_canister.as_slice().to_vec(),
@@ -454,27 +597,45 @@ fn init(args: InitArgs) {
                 gas_price_buffer_bps: args.gas_price_buffer_bps,
             })
             .unwrap_or_else(|_| ic_cdk::trap("stable cell set failed: fee_policy"));
+        state
+            .wrap_evm_config
+            .set(WrapEvmConfigStored {
+                wrap_factory_address: args.wrap_factory_address,
+            })
+            .unwrap_or_else(|_| ic_cdk::trap("stable cell set failed: wrap_evm_config"));
     });
 }
 
-#[ic_cdk::post_upgrade]
-fn post_upgrade() {
-    init_state();
-    let now = ic_cdk::api::time();
-    if recover_request_state_after_upgrade(now) {
-        schedule_worker();
-    }
-    if recover_wrap_request_state_after_upgrade(now) {
-        schedule_wrap_worker();
-    }
+fn validate_runtime_config(args: &InitArgs) -> Result<(), String> {
+    validate_non_anonymous_principal(&args.kasane_canister, "arg.kasane_canister_anonymous")?;
+    validate_non_anonymous_principal(
+        &args.evm_gateway_canister,
+        "arg.evm_gateway_canister_anonymous",
+    )?;
+    validate_non_anonymous_principal(
+        &args.fee_ledger_canister,
+        "arg.fee_ledger_canister_anonymous",
+    )?;
+    validate_gas_price_buffer_bps(args.gas_price_buffer_bps)?;
+    validate_evm_address(
+        args.wrap_factory_address.as_slice(),
+        "arg.wrap_factory_address_invalid",
+    )?;
+    Ok(())
 }
 
 #[ic_cdk::update]
-fn submit_unwrap_request(args: SubmitUnwrapRequestArgs) -> Result<SubmitUnwrapRequestOk, String> {
+fn dispatch_unwrap_request(
+    args: DispatchUnwrapRequestArgs,
+) -> Result<DispatchUnwrapRequestOk, ApiError> {
     init_state();
-    ensure_kasane_caller()?;
-    let request_id = apply_insert_request_outcome(insert_request(args)?, schedule_worker);
-    Ok(SubmitUnwrapRequestOk {
+    map_string_result(ensure_kasane_caller())?;
+    let normalized = normalize_dispatch_unwrap_args(args).map_err(api_invalid_argument)?;
+    let request_id = apply_insert_request_outcome(
+        map_string_result(insert_request(normalized))?,
+        schedule_worker,
+    );
+    Ok(DispatchUnwrapRequestOk {
         request_id: request_id.0.to_vec(),
     })
 }
@@ -490,63 +651,77 @@ fn apply_insert_request_outcome(outcome: InsertRequestOutcome, scheduler: fn()) 
     }
 }
 
+#[ic_cdk::query(composite = true)]
+async fn quote_wrap_request(args: QuoteWrapRequestArgs) -> Result<QuoteWrapRequestOk, ApiError> {
+    init_state();
+    let normalized = normalize_quote_wrap_args(args).map_err(api_invalid_argument)?;
+    let quote = quote_wrap_request_inner(normalized.gas_limit).await?;
+    Ok(QuoteWrapRequestOk {
+        charged_fee_e8s: Nat::from(quote.charged_fee_e8s),
+        charged_gas_price_wei: Nat::from(quote.charged_gas_price_wei),
+        cycle_fee_e8s: quote.cycle_fee_e8s,
+        fee_ledger_canister: quote.fee_ledger_canister,
+    })
+}
+
 #[ic_cdk::update]
-async fn submit_wrap_request(args: SubmitWrapRequestArgs) -> Result<SubmitWrapRequestOk, String> {
+async fn submit_wrap_request(args: SubmitWrapRequestArgs) -> Result<SubmitWrapRequestOk, ApiError> {
     init_state();
     let caller = ic_cdk::api::msg_caller();
-    validate_non_anonymous_principal(&caller, "auth.caller_anonymous")?;
-    let request_id = validate_wrap_request_args(&args, caller)?;
-    reserve_pending_wrap_submission(request_id)?;
+    map_string_result(validate_non_anonymous_principal(
+        &caller,
+        "auth.caller_anonymous",
+    ))?;
+    let normalized = build_submit_wrap_request(args, caller).await?;
+    let request_id = normalized.request_id;
+    map_string_result(reserve_pending_wrap_submission(request_id))?;
 
-    let out = submit_wrap_request_inner(args, caller, request_id).await;
+    let out = submit_wrap_request_inner(normalized, caller, request_id).await;
     release_pending_wrap_submission(request_id);
-    let request_id = out?;
+    let (request_id, fee_charge) = out?;
     enqueue_wrap_request(request_id);
     schedule_wrap_worker();
     Ok(SubmitWrapRequestOk {
         request_id: request_id.0.to_vec(),
+        charged_fee_e8s: Nat::from(fee_charge.charged_fee_e8s),
+        charged_gas_price_wei: Nat::from(fee_charge.charged_gas_price_wei),
+        fee_ledger_tx_id: fee_charge.ledger_tx_id,
     })
 }
 
 async fn submit_wrap_request_inner(
-    args: SubmitWrapRequestArgs,
+    args: NormalizedSubmitWrapRequest,
     caller: Principal,
     request_id: RequestId,
-) -> Result<RequestId, String> {
-    let fee_policy = get_fee_policy_stored()?;
-    let gas_price_wei = fetch_gas_price_wei_from_gateway().await?;
-    let charged_gas_price_wei = ceil_mul_ratio_u128(
-        gas_price_wei,
-        u128::from(fee_policy.gas_price_buffer_bps),
-        GAS_PRICE_DENOMINATOR_BPS,
-    );
-    let charged_fee_e8s = compute_total_fee_e8s(
-        args.gas_limit,
-        charged_gas_price_wei,
-        fee_policy.cycle_fee_e8s,
-    )?;
-    let fee_amount = u256_from_u128(charged_fee_e8s);
+) -> Result<(RequestId, FeeCharge), ApiError> {
+    let quote = quote_wrap_request_inner(args.gas_limit).await?;
+    let fee_amount = u256_from_u128(quote.charged_fee_e8s);
     let fee_ledger_tx_id = attempt_icrc2_transfer_from(
         caller.as_slice().to_vec(),
-        fee_policy.fee_ledger_canister.clone(),
+        quote.fee_ledger_canister.as_slice().to_vec(),
         fee_amount.to_vec(),
     )
     .await
-    .map_err(map_fee_collection_error)?;
+    .map_err(map_fee_collection_error)
+    .map_err(api_rejected)?;
     let fee_charge = FeeCharge {
         ledger_tx_id: fee_ledger_tx_id,
-        charged_fee_e8s,
-        charged_gas_price_wei,
+        charged_fee_e8s: quote.charged_fee_e8s,
+        charged_gas_price_wei: quote.charged_gas_price_wei,
     };
-    insert_wrap_request(args, caller, request_id, fee_charge)
+    let request_id = map_string_result(insert_wrap_request(
+        args,
+        caller,
+        request_id,
+        fee_charge.clone(),
+    ))?;
+    Ok((request_id, fee_charge))
 }
 
 #[ic_cdk::update]
-async fn withdraw_failed_wrap(
-    args: WithdrawFailedWrapArgs,
-) -> Result<WithdrawFailedWrapOk, String> {
+async fn recover_failed_wrap(args: RecoverFailedWrapArgs) -> Result<RequestOverview, ApiError> {
     init_state();
-    let request_id = to_request_id(args.request_id.as_slice())?;
+    let request_id = request_id_or_invalid_argument(args.request_id.as_slice())?;
     let caller = ic_cdk::api::msg_caller();
     let (asset_id, amount) = with_state(|state| {
         let req = state.wrap_requests.get(&request_id);
@@ -557,7 +732,8 @@ async fn withdraw_failed_wrap(
             }
             None => Err("withdraw.invalid_state".to_string()),
         }
-    })?;
+    })
+    .map_err(api_invalid_argument)?;
 
     let transfer = attempt_icrc1_transfer(asset_id, amount, caller.as_slice().to_vec()).await;
     match transfer {
@@ -571,10 +747,7 @@ async fn withdraw_failed_wrap(
                     state.wrap_requests.insert(request_id, req);
                 }
             });
-            Ok(WithdrawFailedWrapOk {
-                request_id: request_id.0.to_vec(),
-                ledger_tx_id: tx_id,
-            })
+            request_overview_or_internal(request_id)
         }
         Err(code) => {
             let withdraw_code = to_withdraw_error_code(&code);
@@ -584,12 +757,43 @@ async fn withdraw_failed_wrap(
                     state.wrap_requests.insert(request_id, req);
                 }
             });
-            Err(withdraw_code)
+            Err(api_rejected(withdraw_code))
         }
     }
 }
 
-fn insert_request(args: SubmitUnwrapRequestArgs) -> Result<InsertRequestOutcome, String> {
+#[ic_cdk::update]
+async fn retry_request(args: RetryRequestArgs) -> Result<RequestOverview, ApiError> {
+    init_state();
+    let request_id = request_id_or_invalid_argument(args.request_id.as_slice())?;
+    let caller = ic_cdk::api::msg_caller();
+    map_string_result(validate_non_anonymous_principal(
+        &caller,
+        "auth.caller_anonymous",
+    ))?;
+    let (asset_id, amount, recipient) =
+        map_string_result(reserve_failed_unwrap_retry(request_id, caller))?;
+    let transfer = attempt_icrc1_transfer(asset_id, amount, recipient).await;
+    with_state_mut(|state| {
+        if let Some(mut req) = state.requests.get(&request_id) {
+            apply_unwrap_transfer_result(&mut req, transfer);
+            state.requests.insert(request_id, req);
+        }
+    });
+    let status = with_state(|state| state.requests.get(&request_id).map(|req| req.result.status));
+    if status != Some(RequestStatus::Succeeded) {
+        return Err(api_rejected(with_state(|state| {
+            state
+                .requests
+                .get(&request_id)
+                .and_then(|req| req.result.error_code.clone())
+                .unwrap_or_else(|| "unwrap.retry_failed".to_string())
+        })));
+    }
+    request_overview_or_internal(request_id)
+}
+
+fn insert_request(args: NormalizedDispatchUnwrapRequest) -> Result<InsertRequestOutcome, String> {
     let request_id = to_request_id(args.request_id.as_slice())?;
     validate_principal_bytes(args.asset_id.as_slice())?;
     validate_principal_bytes(args.recipient.as_slice())?;
@@ -614,10 +818,43 @@ fn insert_request(args: SubmitUnwrapRequestArgs) -> Result<InsertRequestOutcome,
                     status: RequestStatus::Queued,
                     ledger_tx_id: None,
                     error_code: None,
+                    dispatch_status: Some(RequestDispatchStatusView::Dispatched),
+                    dispatch_error: None,
                 },
             },
         );
         Ok(InsertRequestOutcome::Inserted(request_id))
+    })
+}
+
+fn reserve_failed_unwrap_retry(
+    request_id: RequestId,
+    caller: Principal,
+) -> Result<(Vec<u8>, Vec<u8>, Vec<u8>), String> {
+    with_state_mut(|state| {
+        let Some(mut req) = state.requests.get(&request_id) else {
+            return Err("unwrap.retry_invalid_state".to_string());
+        };
+        let recipient = principal_from_bytes(req.recipient.as_slice())?;
+        if recipient != caller {
+            return Err("unwrap.retry_not_recipient".to_string());
+        }
+        if req.result.status == RequestStatus::Running {
+            return Err("unwrap.retry_already_running".to_string());
+        }
+        if req.result.status != RequestStatus::Failed || req.result.ledger_tx_id.is_some() {
+            return Err("unwrap.retry_invalid_state".to_string());
+        }
+        req.result.status = RequestStatus::Running;
+        req.result.error_code = None;
+        req.result.ledger_tx_id = None;
+        let out = (
+            req.asset_id.clone(),
+            req.amount.clone(),
+            req.recipient.clone(),
+        );
+        state.requests.insert(request_id, req);
+        Ok(out)
     })
 }
 
@@ -657,34 +894,6 @@ fn dequeue_request() -> Option<RequestId> {
     })
 }
 
-fn validate_wrap_request_args(
-    args: &SubmitWrapRequestArgs,
-    caller: Principal,
-) -> Result<RequestId, String> {
-    let request_id = to_request_id(args.request_id.as_slice())?;
-    if with_state(|state| state.wrap_requests.contains_key(&request_id)) {
-        return Err("wrap.request.duplicate".to_string());
-    }
-    validate_principal_bytes(args.asset_id.as_slice())?;
-    validate_amount_bytes(args.amount.as_slice())?;
-    validate_evm_address(args.evm_recipient.as_slice(), "arg.evm_recipient_invalid")?;
-    if args.gas_limit == 0 {
-        return Err("arg.gas_limit_invalid".to_string());
-    }
-    let expected_request_id = derive_wrap_request_id(
-        caller.as_slice(),
-        args.asset_id.as_slice(),
-        args.amount.as_slice(),
-        args.evm_recipient.as_slice(),
-        args.evm_nonce,
-        args.gas_limit,
-    );
-    if request_id.0 != expected_request_id {
-        return Err("arg.request_id_mismatch".to_string());
-    }
-    Ok(request_id)
-}
-
 fn reserve_pending_wrap_submission(request_id: RequestId) -> Result<(), String> {
     let inserted = PENDING_WRAP_SUBMISSIONS.with(|pending| {
         let mut pending = pending.borrow_mut();
@@ -707,7 +916,7 @@ fn release_pending_wrap_submission(request_id: RequestId) {
 }
 
 fn insert_wrap_request(
-    args: SubmitWrapRequestArgs,
+    args: NormalizedSubmitWrapRequest,
     caller: Principal,
     request_id: RequestId,
     fee_charge: FeeCharge,
@@ -723,7 +932,6 @@ fn insert_wrap_request(
                 asset_id: args.asset_id,
                 amount: args.amount,
                 evm_recipient: args.evm_recipient,
-                evm_nonce: args.evm_nonce,
                 gas_limit: args.gas_limit,
                 result: WrapRequestResult {
                     status: RequestStatus::Queued,
@@ -748,12 +956,368 @@ fn insert_wrap_request(
     Ok(request_id)
 }
 
+fn normalize_dispatch_unwrap_args(
+    args: DispatchUnwrapRequestArgs,
+) -> Result<NormalizedDispatchUnwrapRequest, String> {
+    validate_principal_bytes(args.asset_id.as_slice())?;
+    validate_principal_bytes(args.recipient.as_slice())?;
+    let amount = nat_to_fixed_be::<32>(&args.amount_e8s)
+        .ok_or_else(|| "arg.amount_out_of_range".to_string())?
+        .to_vec();
+    validate_amount_bytes(amount.as_slice())?;
+    Ok(NormalizedDispatchUnwrapRequest {
+        request_id: args.request_id,
+        asset_id: args.asset_id.as_slice().to_vec(),
+        amount,
+        recipient: args.recipient.as_slice().to_vec(),
+    })
+}
+
+fn normalize_quote_wrap_args(
+    args: QuoteWrapRequestArgs,
+) -> Result<NormalizedQuoteWrapRequest, String> {
+    validate_principal_bytes(args.asset_id.as_slice())?;
+    let amount = nat_to_fixed_be::<32>(&args.amount_e8s)
+        .ok_or_else(|| "arg.amount_out_of_range".to_string())?;
+    validate_amount_bytes(amount.as_slice())?;
+    validate_evm_address(args.evm_recipient.as_slice(), "arg.evm_recipient_invalid")?;
+    if args.gas_limit == 0 {
+        return Err("arg.gas_limit_invalid".to_string());
+    }
+    Ok(NormalizedQuoteWrapRequest {
+        gas_limit: args.gas_limit,
+    })
+}
+
+fn normalize_submit_wrap_args(
+    args: SubmitWrapRequestArgs,
+) -> Result<(Vec<u8>, Vec<u8>, Vec<u8>, u64), String> {
+    validate_principal_bytes(args.asset_id.as_slice())?;
+    let amount = nat_to_fixed_be::<32>(&args.amount_e8s)
+        .ok_or_else(|| "arg.amount_out_of_range".to_string())?
+        .to_vec();
+    validate_amount_bytes(amount.as_slice())?;
+    validate_evm_address(args.evm_recipient.as_slice(), "arg.evm_recipient_invalid")?;
+    if args.gas_limit == 0 {
+        return Err("arg.gas_limit_invalid".to_string());
+    }
+    Ok((
+        args.asset_id.as_slice().to_vec(),
+        amount,
+        args.evm_recipient,
+        args.gas_limit,
+    ))
+}
+
+fn normalize_unwrap_requirements_args(
+    args: GetUnwrapRequirementsArgs,
+) -> Result<NormalizedUnwrapRequirementsArgs, String> {
+    validate_principal_bytes(args.asset_id.as_slice())?;
+    validate_evm_address(
+        args.caller_evm_address.as_slice(),
+        "arg.caller_evm_address_invalid",
+    )?;
+    let amount_e8s = args.amount_e8s;
+    let amount =
+        nat_to_fixed_be::<32>(&amount_e8s).ok_or_else(|| "arg.amount_out_of_range".to_string())?;
+    validate_amount_bytes(amount.as_slice())?;
+    Ok(NormalizedUnwrapRequirementsArgs {
+        asset_id: args.asset_id.as_slice().to_vec(),
+        amount_e8s,
+        caller_evm_address: args.caller_evm_address,
+    })
+}
+
+fn api_invalid_argument(code: String) -> ApiError {
+    ApiError::InvalidArgument(ApiErrorDetail {
+        message: code.clone(),
+        code,
+    })
+}
+
+fn api_rejected(code: String) -> ApiError {
+    ApiError::Rejected(ApiErrorDetail {
+        message: code.clone(),
+        code,
+    })
+}
+
+fn api_internal(code: String) -> ApiError {
+    ApiError::Internal(ApiErrorDetail {
+        message: code.clone(),
+        code,
+    })
+}
+
+fn map_string_result<T>(result: Result<T, String>) -> Result<T, ApiError> {
+    result.map_err(api_invalid_argument)
+}
+
+fn request_id_or_invalid_argument(bytes: &[u8]) -> Result<RequestId, ApiError> {
+    to_request_id(bytes).map_err(api_invalid_argument)
+}
+
+fn request_error(code: Option<&str>) -> Option<RequestErrorView> {
+    code.map(|value| RequestErrorView {
+        code: value.to_string(),
+        message: value.to_string(),
+    })
+}
+
+fn wrap_request_overview(request_id: RequestId, req: &WrapStoredRequest) -> RequestOverview {
+    RequestOverview {
+        kind: RequestKind::Wrap,
+        request_id: request_id.0.to_vec(),
+        status: req.result.status,
+        error: request_error(req.result.error_code.as_deref()),
+        fee_ledger_tx_id: req.result.fee_ledger_tx_id.clone(),
+        pull_ledger_tx_id: req.result.pull_ledger_tx_id.clone(),
+        mint_tx_id: req.result.mint_tx_id.clone(),
+        withdraw_ledger_tx_id: req.result.withdraw_ledger_tx_id.clone(),
+        ledger_tx_id: None,
+        dispatch_status: None,
+        dispatch_error: None,
+        charged_fee_e8s: req.result.charged_fee_e8s.map(Nat::from),
+        charged_gas_price_wei: req.result.charged_gas_price_wei.map(Nat::from),
+    }
+}
+
+fn unwrap_request_overview(request_id: RequestId, req: &StoredRequest) -> RequestOverview {
+    RequestOverview {
+        kind: RequestKind::Unwrap,
+        request_id: request_id.0.to_vec(),
+        status: req.result.status,
+        error: request_error(req.result.error_code.as_deref()),
+        fee_ledger_tx_id: None,
+        pull_ledger_tx_id: None,
+        mint_tx_id: None,
+        withdraw_ledger_tx_id: None,
+        ledger_tx_id: req.result.ledger_tx_id.clone(),
+        dispatch_status: req.result.dispatch_status,
+        dispatch_error: req.result.dispatch_error.clone(),
+        charged_fee_e8s: None,
+        charged_gas_price_wei: None,
+    }
+}
+
+fn request_overview_or_internal(request_id: RequestId) -> Result<RequestOverview, ApiError> {
+    get_request(request_id.0.to_vec()).ok_or_else(|| api_internal("request.not_found".to_string()))
+}
+
+async fn quote_wrap_request_inner(gas_limit: u64) -> Result<WrapQuote, ApiError> {
+    let fee_policy = map_string_result(get_fee_policy_stored())?;
+    let gas_price_wei = fetch_gas_price_wei_from_gateway()
+        .await
+        .map_err(api_rejected)?;
+    let charged_gas_price_wei = ceil_mul_ratio_u128(
+        gas_price_wei,
+        u128::from(fee_policy.gas_price_buffer_bps),
+        GAS_PRICE_DENOMINATOR_BPS,
+    );
+    let charged_fee_e8s =
+        compute_total_fee_e8s(gas_limit, charged_gas_price_wei, fee_policy.cycle_fee_e8s)
+            .map_err(api_rejected)?;
+    Ok(WrapQuote {
+        charged_fee_e8s,
+        charged_gas_price_wei,
+        cycle_fee_e8s: fee_policy.cycle_fee_e8s,
+        fee_ledger_canister: principal_from_bytes(fee_policy.fee_ledger_canister.as_slice())
+            .map_err(api_internal)?,
+    })
+}
+
+fn selector(signature: &[u8]) -> [u8; 4] {
+    let mut keccak = Keccak::v256();
+    keccak.update(signature);
+    let mut out = [0u8; 32];
+    keccak.finalize(&mut out);
+    [out[0], out[1], out[2], out[3]]
+}
+
+fn encode_balance_of_call_data(owner: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(4 + 32);
+    out.extend_from_slice(&selector(b"balanceOf(address)"));
+    out.extend_from_slice(&[0u8; 12]);
+    out.extend_from_slice(owner);
+    out
+}
+
+fn encode_allowance_call_data(owner: &[u8], spender: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(4 + 64);
+    out.extend_from_slice(&selector(b"allowance(address,address)"));
+    out.extend_from_slice(&[0u8; 12]);
+    out.extend_from_slice(owner);
+    out.extend_from_slice(&[0u8; 12]);
+    out.extend_from_slice(spender);
+    out
+}
+
+fn encode_factory_get_token_address_call_data(asset_id: &[u8]) -> Vec<u8> {
+    let padded_len = ((asset_id.len() + 31) / 32) * 32;
+    let mut out = Vec::with_capacity(4 + 32 * 3 + padded_len);
+    out.extend_from_slice(&selector(b"getTokenAddress(bytes)"));
+    out.extend_from_slice(&u256_from_u128(32));
+    out.extend_from_slice(&u256_from_u128(asset_id.len() as u128));
+    out.extend_from_slice(asset_id);
+    out.resize(4 + 32 * 2 + padded_len, 0);
+    out
+}
+
+async fn with_expected_wrap_nonce_from_gateway() -> Result<u64, String> {
+    let gateway = expected_evm_gateway_canister()?;
+    let wrap_evm =
+        ic_evm_address::derive_evm_address_from_principal(ic_cdk::api::canister_self().as_slice())
+            .map_err(|_| "wrap.evm_address_derivation_failed".to_string())?;
+    let call_result = ic_cdk::call::Call::unbounded_wait(gateway, "expected_nonce_by_address")
+        .with_arg(wrap_evm.to_vec())
+        .await;
+    match call_result {
+        Ok(resp) => match resp.candid_tuple::<(Result<u64, String>,)>() {
+            Ok((Ok(nonce),)) => Ok(nonce),
+            Ok((Err(code),)) => Err(format!("wrap.nonce_failed:{code}")),
+            Err(err) => Err(format!("wrap.nonce_decode_failed:{err}")),
+        },
+        Err(err) => Err(format!("wrap.nonce_call_failed:{err}")),
+    }
+}
+
+async fn build_submit_wrap_request(
+    args: SubmitWrapRequestArgs,
+    caller: Principal,
+) -> Result<NormalizedSubmitWrapRequest, ApiError> {
+    let (asset_id, amount, evm_recipient, gas_limit) =
+        normalize_submit_wrap_args(args).map_err(api_invalid_argument)?;
+    let request_id = RequestId(derive_wrap_request_id(
+        caller.as_slice(),
+        asset_id.as_slice(),
+        amount.as_slice(),
+        evm_recipient.as_slice(),
+        gas_limit,
+    ));
+    if with_state(|state| state.wrap_requests.contains_key(&request_id)) {
+        return Err(api_invalid_argument("wrap.request.duplicate".to_string()));
+    }
+    Ok(NormalizedSubmitWrapRequest {
+        request_id,
+        asset_id,
+        amount,
+        evm_recipient,
+        gas_limit,
+    })
+}
+
+async fn gateway_rpc_eth_call(call: RpcCallObjectView) -> Result<RpcCallResultView, ApiError> {
+    let gateway = expected_evm_gateway_canister().map_err(api_internal)?;
+    let call_result = ic_cdk::call::Call::unbounded_wait(gateway, "rpc_eth_call_object")
+        .with_arg(call)
+        .await;
+    match call_result {
+        Ok(resp) => match resp.candid_tuple::<(Result<RpcCallResultView, RpcErrorView>,)>() {
+            Ok((Ok(value),)) => Ok(value),
+            Ok((Err(err),)) => Err(api_rejected(format!(
+                "rpc.call_failed:{}:{}",
+                err.code, err.message
+            ))),
+            Err(err) => Err(api_internal(format!("rpc.call_decode_failed:{err}"))),
+        },
+        Err(err) => Err(api_rejected(format!("rpc.call_transport_failed:{err}"))),
+    }
+}
+
+fn decode_u256_be(bytes: &[u8]) -> Result<[u8; 32], ApiError> {
+    if bytes.len() < 32 {
+        return Err(api_internal("rpc.return_data_short".to_string()));
+    }
+    let mut out = [0u8; 32];
+    out.copy_from_slice(&bytes[..32]);
+    Ok(out)
+}
+
+fn zero_eth_value_word() -> Vec<u8> {
+    vec![0u8; 32]
+}
+
+async fn fetch_wrapped_token_address(
+    asset_id: &[u8],
+    caller_evm_address: &[u8],
+) -> Result<Option<Vec<u8>>, ApiError> {
+    let factory = expected_evm_wrap_factory().map_err(api_internal)?;
+    let result = gateway_rpc_eth_call(RpcCallObjectView {
+        to: Some(factory),
+        from: Some(caller_evm_address.to_vec()),
+        gas: Some(500_000),
+        gas_price: None,
+        nonce: None,
+        max_fee_per_gas: None,
+        max_priority_fee_per_gas: None,
+        chain_id: None,
+        tx_type: None,
+        access_list: None,
+        value: Some(zero_eth_value_word()),
+        data: Some(encode_factory_get_token_address_call_data(asset_id)),
+    })
+    .await?;
+    if result.return_data.len() < 32 {
+        return Ok(None);
+    }
+    let address = result.return_data[result.return_data.len() - 20..].to_vec();
+    if address.iter().all(|byte| *byte == 0) {
+        return Ok(None);
+    }
+    Ok(Some(address))
+}
+
+async fn fetch_erc20_balance(token: &[u8], owner: &[u8]) -> Result<Nat, ApiError> {
+    let result = gateway_rpc_eth_call(RpcCallObjectView {
+        to: Some(token.to_vec()),
+        from: Some(owner.to_vec()),
+        gas: Some(500_000),
+        gas_price: None,
+        nonce: None,
+        max_fee_per_gas: None,
+        max_priority_fee_per_gas: None,
+        chain_id: None,
+        tx_type: None,
+        access_list: None,
+        value: Some(zero_eth_value_word()),
+        data: Some(encode_balance_of_call_data(owner)),
+    })
+    .await?;
+    Ok(Nat(BigUint::from_bytes_be(&decode_u256_be(
+        result.return_data.as_slice(),
+    )?)))
+}
+
+async fn fetch_erc20_allowance(
+    token: &[u8],
+    owner: &[u8],
+    spender: &[u8],
+) -> Result<Nat, ApiError> {
+    let result = gateway_rpc_eth_call(RpcCallObjectView {
+        to: Some(token.to_vec()),
+        from: Some(owner.to_vec()),
+        gas: Some(500_000),
+        gas_price: None,
+        nonce: None,
+        max_fee_per_gas: None,
+        max_priority_fee_per_gas: None,
+        chain_id: None,
+        tx_type: None,
+        access_list: None,
+        value: Some(zero_eth_value_word()),
+        data: Some(encode_allowance_call_data(owner, spender)),
+    })
+    .await?;
+    Ok(Nat(BigUint::from_bytes_be(&decode_u256_be(
+        result.return_data.as_slice(),
+    )?)))
+}
+
 fn derive_wrap_request_id(
     from_owner: &[u8],
     asset_id: &[u8],
     amount: &[u8],
     evm_recipient: &[u8],
-    evm_nonce: u64,
     gas_limit: u64,
 ) -> [u8; 32] {
     let mut keccak = Keccak::v256();
@@ -762,7 +1326,6 @@ fn derive_wrap_request_id(
     hash_len_prefixed(&mut keccak, asset_id);
     hash_len_prefixed(&mut keccak, amount);
     hash_len_prefixed(&mut keccak, evm_recipient);
-    keccak.update(&evm_nonce.to_be_bytes());
     keccak.update(&gas_limit.to_be_bytes());
     let mut out = [0u8; 32];
     keccak.finalize(&mut out);
@@ -812,40 +1375,72 @@ fn dequeue_wrap_request() -> Option<RequestId> {
 }
 
 #[ic_cdk::query]
-fn get_request_status(request_id: Vec<u8>) -> Option<RequestStatus> {
-    init_state();
-    let request_id = to_request_id(request_id.as_slice()).ok()?;
-    with_state(|state| state.requests.get(&request_id).map(|v| v.result.status))
-}
-
-#[ic_cdk::query]
-fn get_request_result(request_id: Vec<u8>) -> Option<RequestResult> {
-    init_state();
-    let request_id = to_request_id(request_id.as_slice()).ok()?;
-    with_state(|state| state.requests.get(&request_id).map(|v| v.result.clone()))
-}
-
-#[ic_cdk::query]
-fn get_wrap_request_status(request_id: Vec<u8>) -> Option<RequestStatus> {
+fn get_request(request_id: Vec<u8>) -> Option<RequestOverview> {
     init_state();
     let request_id = to_request_id(request_id.as_slice()).ok()?;
     with_state(|state| {
         state
             .wrap_requests
             .get(&request_id)
-            .map(|v| v.result.status)
+            .map(|v| wrap_request_overview(request_id, &v))
+            .or_else(|| {
+                state
+                    .requests
+                    .get(&request_id)
+                    .map(|v| unwrap_request_overview(request_id, &v))
+            })
     })
 }
 
-#[ic_cdk::query]
-fn get_wrap_request_result(request_id: Vec<u8>) -> Option<WrapRequestResult> {
+#[ic_cdk::query(composite = true)]
+async fn get_unwrap_requirements(
+    args: GetUnwrapRequirementsArgs,
+) -> Result<GetUnwrapRequirementsOk, ApiError> {
     init_state();
-    let request_id = to_request_id(request_id.as_slice()).ok()?;
-    with_state(|state| {
-        state
-            .wrap_requests
-            .get(&request_id)
-            .map(|v| v.result.clone())
+    let normalized = normalize_unwrap_requirements_args(args).map_err(api_invalid_argument)?;
+    let factory_address = expected_evm_wrap_factory().map_err(api_internal)?;
+    let token_address = fetch_wrapped_token_address(
+        normalized.asset_id.as_slice(),
+        normalized.caller_evm_address.as_slice(),
+    )
+    .await?;
+    if token_address.is_none() {
+        return Ok(GetUnwrapRequirementsOk {
+            factory_address,
+            wrapped_token_address: None,
+            balance: Nat::from(0u8),
+            allowance: Nat::from(0u8),
+            approve_required: true,
+            readiness: UnwrapReadiness::TokenNotDeployed,
+        });
+    }
+    let token_address = token_address.expect("checked");
+    let balance = fetch_erc20_balance(
+        token_address.as_slice(),
+        normalized.caller_evm_address.as_slice(),
+    )
+    .await?;
+    let allowance = fetch_erc20_allowance(
+        token_address.as_slice(),
+        normalized.caller_evm_address.as_slice(),
+        factory_address.as_slice(),
+    )
+    .await?;
+    let amount = normalized.amount_e8s;
+    let readiness = if balance < amount {
+        UnwrapReadiness::InsufficientBalance
+    } else if allowance < amount {
+        UnwrapReadiness::InsufficientAllowance
+    } else {
+        UnwrapReadiness::Ready
+    };
+    Ok(GetUnwrapRequirementsOk {
+        factory_address,
+        wrapped_token_address: Some(token_address),
+        balance,
+        allowance,
+        approve_required: readiness != UnwrapReadiness::Ready,
+        readiness,
     })
 }
 
@@ -1084,25 +1679,32 @@ async fn worker_tick() {
             continue;
         };
         mark_request_running(request_id);
-
         let result = attempt_icrc1_transfer(asset_id, amount, recipient).await;
         with_state_mut(|state| {
             if let Some(mut req) = state.requests.get(&request_id) {
-                match result {
-                    Ok(tx_id) => {
-                        req.result.status = RequestStatus::Succeeded;
-                        req.result.ledger_tx_id = Some(tx_id);
-                        req.result.error_code = None;
-                    }
-                    Err(code) => {
-                        req.result.status = RequestStatus::Failed;
-                        req.result.ledger_tx_id = None;
-                        req.result.error_code = Some(code);
-                    }
-                }
+                apply_unwrap_transfer_result(&mut req, result);
                 state.requests.insert(request_id, req);
             }
         });
+    }
+}
+
+fn apply_unwrap_transfer_result(req: &mut StoredRequest, result: Result<Vec<u8>, String>) {
+    match result {
+        Ok(tx_id) => {
+            req.result.status = RequestStatus::Succeeded;
+            req.result.ledger_tx_id = Some(tx_id);
+            req.result.error_code = None;
+            req.result.dispatch_status = Some(RequestDispatchStatusView::Dispatched);
+            req.result.dispatch_error = None;
+        }
+        Err(code) => {
+            req.result.status = RequestStatus::Failed;
+            req.result.ledger_tx_id = None;
+            req.result.error_code = Some(code);
+            req.result.dispatch_status = Some(RequestDispatchStatusView::Dispatched);
+            req.result.dispatch_error = None;
+        }
     }
 }
 
@@ -1119,21 +1721,12 @@ async fn wrap_worker_tick() {
                     req.asset_id.clone(),
                     req.amount.clone(),
                     req.evm_recipient.clone(),
-                    req.evm_nonce,
                     req.gas_limit,
                     req.result.charged_gas_price_wei.unwrap_or(0),
                 )
             })
         });
-        let Some((
-            caller,
-            asset_id,
-            amount,
-            evm_recipient,
-            evm_nonce,
-            gas_limit,
-            charged_gas_price_wei,
-        )) = req
+        let Some((caller, asset_id, amount, evm_recipient, gas_limit, charged_gas_price_wei)) = req
         else {
             continue;
         };
@@ -1141,33 +1734,44 @@ async fn wrap_worker_tick() {
 
         let pull = attempt_icrc2_transfer_from(caller, asset_id.clone(), amount.clone()).await;
         let outcome = match pull {
-            Ok(pull_tx_id) => {
-                let mint = submit_mint_tx(
-                    asset_id,
-                    evm_recipient,
-                    amount,
-                    evm_nonce,
-                    gas_limit,
-                    charged_gas_price_wei,
-                )
-                .await;
-                match mint {
-                    Ok(mint_tx_id) => WrapExecutionOutcome {
-                        status: RequestStatus::Succeeded,
-                        pull_ledger_tx_id: Some(pull_tx_id),
-                        mint_tx_id: Some(mint_tx_id),
-                        error_code: None,
-                        mint_failed_recoverable: false,
-                    },
-                    Err(code) => WrapExecutionOutcome {
-                        status: RequestStatus::Failed,
-                        pull_ledger_tx_id: Some(pull_tx_id),
-                        mint_tx_id: None,
-                        error_code: Some(code),
-                        mint_failed_recoverable: true,
-                    },
+            Ok(pull_tx_id) => match with_expected_wrap_nonce_from_gateway().await {
+                Ok(evm_nonce) => {
+                    let mint = submit_mint_tx(
+                        asset_id,
+                        evm_recipient,
+                        amount,
+                        evm_nonce,
+                        gas_limit,
+                        charged_gas_price_wei,
+                    )
+                    .await;
+                    match mint {
+                        Ok(mint_tx_id) => WrapExecutionOutcome {
+                            status: RequestStatus::Succeeded,
+                            pull_ledger_tx_id: Some(pull_tx_id),
+                            mint_tx_id: Some(mint_tx_id),
+                            error_code: None,
+                            mint_failed_recoverable: false,
+                        },
+                        Err(code) => WrapExecutionOutcome {
+                            status: RequestStatus::Failed,
+                            pull_ledger_tx_id: Some(pull_tx_id),
+                            mint_tx_id: None,
+                            error_code: Some(code),
+                            mint_failed_recoverable: true,
+                        },
+                    }
                 }
-            }
+                Err(code) => WrapExecutionOutcome {
+                    status: RequestStatus::Failed,
+                    pull_ledger_tx_id: Some(pull_tx_id),
+                    mint_tx_id: None,
+                    error_code: Some(format!(
+                        "evm_gateway.submit_failed:rejected:nonce_allocation_failed:{code}"
+                    )),
+                    mint_failed_recoverable: true,
+                },
+            },
             Err(code) => WrapExecutionOutcome {
                 status: RequestStatus::Failed,
                 pull_ledger_tx_id: None,
@@ -1265,8 +1869,17 @@ enum Icrc2TransferFromError {
 }
 
 #[derive(Clone, Debug, CandidType, Deserialize)]
+enum Icrc1MetadataValue {
+    Int(candid::Int),
+    Nat(Nat),
+    Blob(Vec<u8>),
+    Text(String),
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize)]
 struct SubmitIcTxArgsDto {
     to: Option<Vec<u8>>,
+    from: Option<Vec<u8>>,
     value: Nat,
     gas_limit: u64,
     nonce: u64,
@@ -1280,13 +1893,6 @@ enum SubmitTxError {
     InvalidArgument(String),
     Rejected(String),
     Internal(String),
-}
-
-#[derive(Clone, Debug, CandidType, Deserialize)]
-struct RpcErrorView {
-    error_prefix: Option<String>,
-    code: u32,
-    message: String,
 }
 
 async fn attempt_icrc1_transfer(
@@ -1362,6 +1968,34 @@ async fn attempt_icrc2_transfer_from(
     }
 }
 
+async fn fetch_asset_decimals(asset_id: &[u8]) -> Result<u8, String> {
+    validate_principal_bytes(asset_id)?;
+    let ledger = principal_from_bytes(asset_id)?;
+    let call_result = ic_cdk::call::Call::unbounded_wait(ledger, "icrc1_metadata").await;
+    match call_result {
+        Ok(resp) => match resp.candid_tuple::<(Vec<(String, Icrc1MetadataValue)>,)>() {
+            Ok((metadata,)) => decode_asset_decimals(metadata.as_slice()),
+            Err(err) => Err(format!("wrap.asset_metadata_failed:decode_failed:{err}")),
+        },
+        Err(err) => Err(format!("wrap.asset_metadata_failed:call_failed:{err}")),
+    }
+}
+
+fn decode_asset_decimals(metadata: &[(String, Icrc1MetadataValue)]) -> Result<u8, String> {
+    for (key, value) in metadata {
+        if key != "icrc1:decimals" {
+            continue;
+        }
+        let Icrc1MetadataValue::Nat(value) = value else {
+            return Err("wrap.asset_decimals_invalid".to_string());
+        };
+        let decimals =
+            nat_to_u128(value).ok_or_else(|| "wrap.asset_decimals_invalid".to_string())?;
+        return u8::try_from(decimals).map_err(|_| "wrap.asset_decimals_invalid".to_string());
+    }
+    Err("wrap.asset_metadata_failed:decimals_missing".to_string())
+}
+
 async fn submit_mint_tx(
     asset_id: Vec<u8>,
     evm_recipient: Vec<u8>,
@@ -1375,13 +2009,16 @@ async fn submit_mint_tx(
     validate_amount_bytes(amount.as_slice())?;
     let gateway = expected_evm_gateway_canister()?;
     let factory = expected_evm_wrap_factory()?;
+    let token_decimals = fetch_asset_decimals(asset_id.as_slice()).await?;
     let data = encode_factory_mint_for_asset_call_data(
         asset_id.as_slice(),
+        token_decimals,
         evm_recipient.as_slice(),
         amount.as_slice(),
     )?;
     let args = SubmitIcTxArgsDto {
         to: Some(factory),
+        from: None,
         value: Nat::from(0u8),
         gas_limit,
         nonce,
@@ -1520,12 +2157,24 @@ fn nat_to_u128(value: &Nat) -> Option<u128> {
     Some(u128::from_be_bytes(out))
 }
 
+fn nat_to_fixed_be<const N: usize>(value: &Nat) -> Option<[u8; N]> {
+    let bytes = value.0.to_bytes_be();
+    if bytes.len() > N {
+        return None;
+    }
+    let mut out = [0u8; N];
+    out[N - bytes.len()..].copy_from_slice(&bytes);
+    Some(out)
+}
+
 fn mark_request_running(request_id: RequestId) {
     with_state_mut(|state| {
         if let Some(mut req) = state.requests.get(&request_id) {
             req.result.status = RequestStatus::Running;
             req.result.ledger_tx_id = None;
             req.result.error_code = None;
+            req.result.dispatch_status = Some(RequestDispatchStatusView::Dispatched);
+            req.result.dispatch_error = None;
             state.requests.insert(request_id, req);
         }
     });
@@ -1648,25 +2297,27 @@ fn expected_evm_gateway_canister() -> Result<Principal, String> {
 }
 
 fn expected_evm_wrap_factory() -> Result<Vec<u8>, String> {
-    let expected = with_state(|state| state.evm_wrap_factory.get().clone());
-    if expected.is_empty() {
-        return Err("config.evm_wrap_factory_missing".to_string());
-    }
-    validate_evm_address(expected.as_slice(), "config.evm_wrap_factory_invalid")?;
-    Ok(expected)
+    let stored = with_state(|state| state.wrap_evm_config.get().clone());
+    validate_evm_address(
+        stored.wrap_factory_address.as_slice(),
+        "config.wrap_factory_address_invalid",
+    )?;
+    Ok(stored.wrap_factory_address)
 }
 
 fn encode_factory_mint_for_asset_call_data(
     asset_id: &[u8],
+    token_decimals: u8,
     recipient: &[u8],
     amount: &[u8],
 ) -> Result<Vec<u8>, String> {
     validate_principal_bytes(asset_id)?;
     validate_evm_address(recipient, "arg.evm_recipient_invalid")?;
     validate_amount_bytes(amount)?;
-    let mut data = Vec::with_capacity(4 + 32 * 4 + 64);
+    let mut data = Vec::with_capacity(4 + 32 * 5 + 64);
     data.extend_from_slice(&factory_mint_for_asset_selector());
-    data.extend_from_slice(&u256_from_u64(96));
+    data.extend_from_slice(&u256_from_u64(128));
+    data.extend_from_slice(&u256_from_u64(u64::from(token_decimals)));
     data.extend_from_slice(&[0u8; 12]);
     data.extend_from_slice(recipient);
     data.extend_from_slice(amount);
@@ -1693,7 +2344,7 @@ fn u256_from_u128(value: u128) -> [u8; 32] {
 
 fn factory_mint_for_asset_selector() -> [u8; 4] {
     let mut keccak = Keccak::v256();
-    keccak.update(b"mintForAsset(bytes,address,uint256)");
+    keccak.update(b"mintForAsset(bytes,uint8,address,uint256)");
     let mut out = [0u8; 32];
     keccak.finalize(&mut out);
     [out[0], out[1], out[2], out[3]]
@@ -1782,15 +2433,15 @@ fn encode_stored_request(value: &StoredRequest) -> Option<Vec<u8>> {
 fn decode_stored_request(bytes: &[u8]) -> Option<StoredRequest> {
     let mut offset = 0usize;
     let version = *bytes.get(offset)?;
-    if version != 1 {
-        return None;
-    }
     offset += 1;
     let asset_id = read_u8_len_bytes(bytes, &mut offset, PRINCIPAL_MAX_BYTES)?;
     let amount_end = offset.checked_add(AMOUNT_BYTES)?;
     let amount = bytes.get(offset..amount_end)?.to_vec();
     offset = amount_end;
     let recipient = read_u8_len_bytes(bytes, &mut offset, PRINCIPAL_MAX_BYTES)?;
+    if version != 1 {
+        return None;
+    }
     let status = RequestStatus::from_u8(*bytes.get(offset)?)?;
     offset += 1;
 
@@ -1832,6 +2483,8 @@ fn decode_stored_request(bytes: &[u8]) -> Option<StoredRequest> {
             status,
             ledger_tx_id,
             error_code,
+            dispatch_status: Some(RequestDispatchStatusView::Dispatched),
+            dispatch_error: None,
         },
     })
 }
@@ -1867,18 +2520,20 @@ fn export_did() -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        apply_insert_request_outcome, decode_stored_request, dequeue_request,
-        derive_wrap_request_id, encode_factory_mint_for_asset_call_data, encode_stored_request,
-        enqueue_request, init_state, insert_request, insert_wrap_request, is_withdrawable,
-        map_transfer_reply, mark_request_running, mark_wrap_request_running, nat_from_32_be,
-        nat_to_be_bytes, on_worker_queue_drain, on_wrap_worker_queue_drain, principal_from_bytes,
-        recover_request_state_after_upgrade, recover_wrap_request_state_after_upgrade,
-        schedule_worker, schedule_wrap_worker, submit_error_to_code, to_request_id,
-        to_withdraw_error_code, transfer_error_to_code, transfer_from_error_to_code, u256_from_u64,
-        validate_non_anonymous_principal, validate_withdraw_request, validate_wrap_request_args,
-        with_state, with_state_mut, FeeCharge, Icrc1TransferError, Icrc2TransferFromError,
-        InsertRequestOutcome, QueueMeta, RequestResult, RequestStatus, StoredRequest,
-        SubmitTxError, SubmitUnwrapRequestArgs, SubmitWrapRequestArgs, WrapRequestResult,
+        apply_insert_request_outcome, apply_runtime_config, decode_asset_decimals,
+        decode_stored_request, decode_u256_be, dequeue_request, derive_wrap_request_id,
+        encode_factory_mint_for_asset_call_data, encode_stored_request, enqueue_request,
+        init_state, insert_request, insert_wrap_request, is_withdrawable, map_transfer_reply,
+        mark_request_running, mark_wrap_request_running, nat_from_32_be, nat_to_be_bytes,
+        normalize_submit_wrap_args, on_worker_queue_drain, on_wrap_worker_queue_drain,
+        principal_from_bytes, recover_request_state_after_upgrade,
+        recover_wrap_request_state_after_upgrade, schedule_worker, schedule_wrap_worker,
+        submit_error_to_code, to_request_id, to_withdraw_error_code, transfer_error_to_code,
+        transfer_from_error_to_code, u256_from_u64, validate_non_anonymous_principal,
+        validate_withdraw_request, with_state, with_state_mut, FeeCharge, Icrc1MetadataValue,
+        Icrc1TransferError, Icrc2TransferFromError, InitArgs, InsertRequestOutcome,
+        NormalizedDispatchUnwrapRequest, NormalizedSubmitWrapRequest, QueueMeta, RequestResult,
+        RequestStatus, StoredRequest, SubmitTxError, SubmitWrapRequestArgs, WrapRequestResult,
         WrapStoredRequest, WORKER_SCHEDULED, WRAP_WORKER_SCHEDULED,
     };
     use candid::{decode_one, encode_one, Nat, Principal};
@@ -1921,10 +2576,6 @@ mod tests {
                 .set(Vec::new())
                 .unwrap_or_else(|_| ic_cdk::trap("stable cell set failed: evm_gateway_canister"));
             state
-                .evm_wrap_factory
-                .set(Vec::new())
-                .unwrap_or_else(|_| ic_cdk::trap("stable cell set failed: evm_wrap_factory"));
-            state
                 .fee_policy
                 .set(super::FeePolicyStored {
                     fee_ledger_canister: Vec::new(),
@@ -1932,10 +2583,27 @@ mod tests {
                     gas_price_buffer_bps: super::DEFAULT_GAS_PRICE_BUFFER_BPS,
                 })
                 .unwrap_or_else(|_| ic_cdk::trap("stable cell set failed: fee_policy"));
+            state
+                .wrap_evm_config
+                .set(super::WrapEvmConfigStored {
+                    wrap_factory_address: Vec::new(),
+                })
+                .unwrap_or_else(|_| ic_cdk::trap("stable cell set failed: wrap_evm_config"));
         });
         super::PENDING_WRAP_SUBMISSIONS.with(|pending| {
             pending.borrow_mut().clear();
         });
+    }
+
+    fn sample_init_args(seed: u8, factory: [u8; 20]) -> InitArgs {
+        InitArgs {
+            kasane_canister: Principal::self_authenticating(&[seed, 1]),
+            evm_gateway_canister: Principal::self_authenticating(&[seed, 2]),
+            fee_ledger_canister: Principal::self_authenticating(&[seed, 3]),
+            wrap_factory_address: factory.to_vec(),
+            cycle_fee_e8s: u64::from(seed) + 1_000,
+            gas_price_buffer_bps: 12_000 + u32::from(seed),
+        }
     }
 
     fn no_schedule() {}
@@ -1945,6 +2613,49 @@ mod tests {
             ledger_tx_id: vec![0x44, 0x55],
             charged_fee_e8s: 1_000_000,
             charged_gas_price_wei: 300_000_000_000,
+        }
+    }
+
+    fn sample_unwrap_args(request_id: [u8; 32]) -> NormalizedDispatchUnwrapRequest {
+        NormalizedDispatchUnwrapRequest {
+            request_id: request_id.to_vec(),
+            asset_id: vec![2u8; 29],
+            amount: vec![0u8; 32],
+            recipient: vec![3u8; 29],
+        }
+    }
+
+    fn sample_request_result(status: RequestStatus) -> RequestResult {
+        RequestResult {
+            status,
+            ledger_tx_id: None,
+            error_code: None,
+            dispatch_status: Some(super::RequestDispatchStatusView::Dispatched),
+            dispatch_error: None,
+        }
+    }
+
+    fn sample_stored_request(status: RequestStatus) -> StoredRequest {
+        StoredRequest {
+            asset_id: vec![2u8; 29],
+            amount: vec![0u8; 32],
+            recipient: vec![3u8; 29],
+            result: sample_request_result(status),
+        }
+    }
+
+    fn sample_failed_unwrap_request_for(recipient: Principal) -> StoredRequest {
+        StoredRequest {
+            asset_id: vec![2u8; 29],
+            amount: vec![0u8; 32],
+            recipient: recipient.as_slice().to_vec(),
+            result: RequestResult {
+                status: RequestStatus::Failed,
+                ledger_tx_id: None,
+                error_code: Some("ledger.call_failed:oops".to_string()),
+                dispatch_status: Some(super::RequestDispatchStatusView::Dispatched),
+                dispatch_error: None,
+            },
         }
     }
 
@@ -1980,14 +2691,38 @@ mod tests {
     }
 
     #[test]
+    fn apply_runtime_config_overwrites_all_runtime_settings() {
+        reset_state();
+        apply_runtime_config(sample_init_args(1, [0x11; 20]));
+        apply_runtime_config(sample_init_args(9, [0x99; 20]));
+
+        let (kasane, gateway, fee_ledger, cycle_fee, gas_buffer, factory) = with_state(|state| {
+            let fee_policy = state.fee_policy.get().clone();
+            let wrap_config = state.wrap_evm_config.get().clone();
+            (
+                principal_from_bytes(state.kasane_canister.get()).expect("kasane principal"),
+                principal_from_bytes(state.evm_gateway_canister.get()).expect("gateway principal"),
+                principal_from_bytes(fee_policy.fee_ledger_canister.as_slice())
+                    .expect("fee ledger principal"),
+                fee_policy.cycle_fee_e8s,
+                fee_policy.gas_price_buffer_bps,
+                wrap_config.wrap_factory_address,
+            )
+        });
+
+        let expected = sample_init_args(9, [0x99; 20]);
+        assert_eq!(kasane, expected.kasane_canister);
+        assert_eq!(gateway, expected.evm_gateway_canister);
+        assert_eq!(fee_ledger, expected.fee_ledger_canister);
+        assert_eq!(cycle_fee, expected.cycle_fee_e8s);
+        assert_eq!(gas_buffer, expected.gas_price_buffer_bps);
+        assert_eq!(factory, expected.wrap_factory_address);
+    }
+
+    #[test]
     fn insert_request_is_idempotent_for_same_payload() {
         reset_state();
-        let args = SubmitUnwrapRequestArgs {
-            request_id: vec![1u8; 32],
-            asset_id: vec![2u8; 29],
-            amount: vec![0u8; 32],
-            recipient: vec![3u8; 29],
-        };
+        let args = sample_unwrap_args([1u8; 32]);
         let first = insert_request(args.clone()).expect("first should pass");
         assert_eq!(
             first,
@@ -2011,18 +2746,11 @@ mod tests {
     #[test]
     fn insert_request_rejects_duplicate_with_asset_mismatch() {
         reset_state();
-        let args = SubmitUnwrapRequestArgs {
-            request_id: vec![1u8; 32],
-            asset_id: vec![2u8; 29],
-            amount: vec![0u8; 32],
-            recipient: vec![3u8; 29],
-        };
+        let args = sample_unwrap_args([1u8; 32]);
         insert_request(args).expect("first should pass");
-        let err = insert_request(SubmitUnwrapRequestArgs {
-            request_id: vec![1u8; 32],
+        let err = insert_request(NormalizedDispatchUnwrapRequest {
             asset_id: vec![9u8; 29],
-            amount: vec![0u8; 32],
-            recipient: vec![3u8; 29],
+            ..sample_unwrap_args([1u8; 32])
         })
         .expect_err("asset mismatch should fail");
         assert_eq!(err, "request.idempotency_mismatch");
@@ -2031,18 +2759,11 @@ mod tests {
     #[test]
     fn insert_request_rejects_duplicate_with_amount_mismatch() {
         reset_state();
-        let args = SubmitUnwrapRequestArgs {
-            request_id: vec![1u8; 32],
-            asset_id: vec![2u8; 29],
-            amount: vec![0u8; 32],
-            recipient: vec![3u8; 29],
-        };
+        let args = sample_unwrap_args([1u8; 32]);
         insert_request(args).expect("first should pass");
-        let err = insert_request(SubmitUnwrapRequestArgs {
-            request_id: vec![1u8; 32],
-            asset_id: vec![2u8; 29],
+        let err = insert_request(NormalizedDispatchUnwrapRequest {
             amount: vec![8u8; 32],
-            recipient: vec![3u8; 29],
+            ..sample_unwrap_args([1u8; 32])
         })
         .expect_err("amount mismatch should fail");
         assert_eq!(err, "request.idempotency_mismatch");
@@ -2051,18 +2772,11 @@ mod tests {
     #[test]
     fn insert_request_rejects_duplicate_with_recipient_mismatch() {
         reset_state();
-        let args = SubmitUnwrapRequestArgs {
-            request_id: vec![1u8; 32],
-            asset_id: vec![2u8; 29],
-            amount: vec![0u8; 32],
-            recipient: vec![3u8; 29],
-        };
+        let args = sample_unwrap_args([1u8; 32]);
         insert_request(args).expect("first should pass");
-        let err = insert_request(SubmitUnwrapRequestArgs {
-            request_id: vec![1u8; 32],
-            asset_id: vec![2u8; 29],
-            amount: vec![0u8; 32],
+        let err = insert_request(NormalizedDispatchUnwrapRequest {
             recipient: vec![7u8; 29],
+            ..sample_unwrap_args([1u8; 32])
         })
         .expect_err("recipient mismatch should fail");
         assert_eq!(err, "request.idempotency_mismatch");
@@ -2076,19 +2790,9 @@ mod tests {
                 .kasane_canister
                 .set(Principal::anonymous().as_slice().to_vec());
             let request_id = to_request_id(&[1u8; 32]).expect("id");
-            state.requests.insert(
-                request_id,
-                StoredRequest {
-                    asset_id: vec![2u8; 29],
-                    amount: vec![0u8; 32],
-                    recipient: vec![3u8; 29],
-                    result: RequestResult {
-                        status: RequestStatus::Queued,
-                        ledger_tx_id: None,
-                        error_code: None,
-                    },
-                },
-            );
+            state
+                .requests
+                .insert(request_id, sample_stored_request(RequestStatus::Queued));
             let mut meta = *state.queue_meta.get();
             let seq = meta.tail;
             meta.tail = meta.tail.saturating_add(1);
@@ -2120,19 +2824,9 @@ mod tests {
         reset_state();
         let request_id = to_request_id(&[9u8; 32]).expect("id");
         with_state_mut(|state| {
-            state.requests.insert(
-                request_id,
-                StoredRequest {
-                    asset_id: vec![2u8; 29],
-                    amount: vec![0u8; 32],
-                    recipient: vec![3u8; 29],
-                    result: RequestResult {
-                        status: RequestStatus::Queued,
-                        ledger_tx_id: None,
-                        error_code: None,
-                    },
-                },
-            );
+            state
+                .requests
+                .insert(request_id, sample_stored_request(RequestStatus::Queued));
         });
 
         let returned =
@@ -2159,19 +2853,9 @@ mod tests {
                     .kasane_canister
                     .set(Principal::anonymous().as_slice().to_vec());
                 let request_id = to_request_id(&[status as u8 + 1; 32]).expect("id");
-                state.requests.insert(
-                    request_id,
-                    StoredRequest {
-                        asset_id: vec![2u8; 29],
-                        amount: vec![0u8; 32],
-                        recipient: vec![3u8; 29],
-                        result: RequestResult {
-                            status,
-                            ledger_tx_id: None,
-                            error_code: None,
-                        },
-                    },
-                );
+                state
+                    .requests
+                    .insert(request_id, sample_stored_request(status));
                 if status == RequestStatus::Queued {
                     let mut meta = *state.queue_meta.get();
                     let seq = meta.tail;
@@ -2217,6 +2901,8 @@ mod tests {
                 status: RequestStatus::Succeeded,
                 ledger_tx_id: Some(vec![4u8; 16]),
                 error_code: None,
+                dispatch_status: Some(super::RequestDispatchStatusView::Dispatched),
+                dispatch_error: None,
             },
         };
         let encoded = encode_stored_request(&req).expect("encode");
@@ -2234,14 +2920,90 @@ mod tests {
             asset_id: vec![1u8; 30],
             amount: vec![2u8; 32],
             recipient: vec![3u8; 29],
-            result: RequestResult {
-                status: RequestStatus::Queued,
-                ledger_tx_id: None,
-                error_code: None,
-            },
+            result: sample_request_result(RequestStatus::Queued),
         };
         assert!(encode_stored_request(&req).is_none());
         assert!(decode_stored_request(&[0xFF]).is_none());
+    }
+
+    #[test]
+    fn recover_request_state_after_upgrade_requeues_running_request() {
+        reset_state();
+        let request_id = to_request_id(&[0x31u8; 32]).expect("id");
+        with_state_mut(|state| {
+            state
+                .requests
+                .insert(request_id, sample_stored_request(RequestStatus::Running));
+            let mut meta = *state.queue_meta.get();
+            let seq = meta.tail;
+            meta.tail = meta.tail.saturating_add(1);
+            state.queue.insert(seq, request_id);
+            state
+                .queue_meta
+                .set(meta)
+                .unwrap_or_else(|_| panic!("queue meta set failed"));
+        });
+
+        assert!(recover_request_state_after_upgrade(123));
+
+        with_state(|state| {
+            assert_eq!(state.queue.len(), 1);
+            assert_eq!(state.queue_meta.get().head, 0);
+            assert_eq!(state.queue_meta.get().tail, 1);
+            assert_eq!(
+                state.requests.get(&request_id).map(|req| req.result.status),
+                Some(RequestStatus::Queued)
+            );
+            assert_eq!(state.queue.get(&0), Some(request_id));
+        });
+    }
+
+    #[test]
+    fn recover_request_state_after_upgrade_fills_missing_queued_request_once() {
+        reset_state();
+        let request_id = to_request_id(&[0x32u8; 32]).expect("id");
+        with_state_mut(|state| {
+            state
+                .requests
+                .insert(request_id, sample_stored_request(RequestStatus::Queued));
+        });
+
+        assert!(recover_request_state_after_upgrade(123));
+        assert!(recover_request_state_after_upgrade(124));
+        with_state(|state| {
+            assert_eq!(state.queue.len(), 1);
+            assert_eq!(state.queue_meta.get().tail, 1);
+            assert_eq!(state.queue.get(&0), Some(request_id));
+        });
+    }
+
+    #[test]
+    fn recover_request_state_after_upgrade_keeps_terminal_requests_out_of_queue() {
+        reset_state();
+        let succeeded = to_request_id(&[0x33u8; 32]).expect("id");
+        let failed = to_request_id(&[0x34u8; 32]).expect("id");
+        with_state_mut(|state| {
+            let mut succeeded_req = sample_stored_request(RequestStatus::Succeeded);
+            succeeded_req.result.ledger_tx_id = Some(vec![1u8; 2]);
+            state.requests.insert(succeeded, succeeded_req);
+
+            let mut failed_req = sample_stored_request(RequestStatus::Failed);
+            failed_req.result.error_code = Some("ledger.call_failed:oops".to_string());
+            state.requests.insert(failed, failed_req);
+        });
+
+        assert!(!recover_request_state_after_upgrade(123));
+        with_state(|state| {
+            assert_eq!(state.queue.len(), 0);
+            assert_eq!(
+                state.requests.get(&succeeded).map(|req| req.result.status),
+                Some(RequestStatus::Succeeded)
+            );
+            assert_eq!(
+                state.requests.get(&failed).map(|req| req.result.status),
+                Some(RequestStatus::Failed)
+            );
+        });
     }
 
     #[test]
@@ -2260,11 +3022,10 @@ mod tests {
     fn mark_request_running_sets_running_status() {
         reset_state();
         let request_id = to_request_id(&[1u8; 32]).expect("id");
-        insert_request(SubmitUnwrapRequestArgs {
-            request_id: request_id.0.to_vec(),
-            asset_id: vec![2u8; 29],
+        insert_request(NormalizedDispatchUnwrapRequest {
             amount: vec![3u8; 32],
             recipient: vec![4u8; 29],
+            ..sample_unwrap_args(request_id.0)
         })
         .expect("insert");
         mark_request_running(request_id);
@@ -2273,11 +3034,100 @@ mod tests {
     }
 
     #[test]
+    fn apply_unwrap_transfer_result_marks_failure_without_requeue_shape() {
+        let mut req = sample_stored_request(RequestStatus::Running);
+        super::apply_unwrap_transfer_result(
+            &mut req,
+            Err("ledger.transfer_failed:temporarily_unavailable".to_string()),
+        );
+        assert_eq!(req.result.status, RequestStatus::Failed);
+        assert_eq!(req.result.ledger_tx_id, None);
+        assert_eq!(
+            req.result.error_code.as_deref(),
+            Some("ledger.transfer_failed:temporarily_unavailable")
+        );
+    }
+
+    #[test]
+    fn apply_unwrap_transfer_result_marks_success_shape() {
+        let mut req = sample_stored_request(RequestStatus::Running);
+        super::apply_unwrap_transfer_result(&mut req, Ok(vec![0x12, 0x34]));
+        assert_eq!(req.result.status, RequestStatus::Succeeded);
+        assert_eq!(req.result.ledger_tx_id, Some(vec![0x12, 0x34]));
+        assert_eq!(req.result.error_code, None);
+    }
+
+    #[test]
+    fn reserve_failed_unwrap_retry_requires_recipient_caller() {
+        reset_state();
+        let request_id = to_request_id(&[0x55u8; 32]).expect("id");
+        let recipient = Principal::self_authenticating(b"unwrap-recipient");
+        with_state_mut(|state| {
+            state
+                .requests
+                .insert(request_id, sample_failed_unwrap_request_for(recipient));
+        });
+
+        let err = super::reserve_failed_unwrap_retry(
+            request_id,
+            Principal::self_authenticating(b"other-caller"),
+        )
+        .expect_err("non recipient must fail");
+        assert_eq!(err, "unwrap.retry_not_recipient");
+    }
+
+    #[test]
+    fn reserve_failed_unwrap_retry_marks_running_once() {
+        reset_state();
+        let request_id = to_request_id(&[0x56u8; 32]).expect("id");
+        let recipient = Principal::self_authenticating(b"unwrap-recipient-running");
+        with_state_mut(|state| {
+            state
+                .requests
+                .insert(request_id, sample_failed_unwrap_request_for(recipient));
+        });
+
+        let reserved = super::reserve_failed_unwrap_retry(request_id, recipient).expect("reserve");
+        assert_eq!(reserved.0, vec![2u8; 29]);
+        assert_eq!(
+            with_state(|state| state.requests.get(&request_id).map(|req| req.result.status)),
+            Some(RequestStatus::Running)
+        );
+        let err =
+            super::reserve_failed_unwrap_retry(request_id, recipient).expect_err("second reserve");
+        assert_eq!(err, "unwrap.retry_already_running");
+    }
+
+    #[test]
+    fn reserve_failed_unwrap_retry_rejects_terminal_success() {
+        reset_state();
+        let request_id = to_request_id(&[0x57u8; 32]).expect("id");
+        let recipient = Principal::self_authenticating(b"unwrap-recipient-succeeded");
+        let mut req = sample_failed_unwrap_request_for(recipient);
+        req.result.status = RequestStatus::Succeeded;
+        req.result.ledger_tx_id = Some(vec![0x99]);
+        with_state_mut(|state| {
+            state.requests.insert(request_id, req);
+        });
+
+        let err = super::reserve_failed_unwrap_retry(request_id, recipient).expect_err("succeeded");
+        assert_eq!(err, "unwrap.retry_invalid_state");
+    }
+
+    #[test]
     fn nat_to_be_bytes_preserves_high_bit_width() {
         let value = Nat(BigUint::from(1u8) << 200usize);
         let encoded = nat_to_be_bytes(&value);
         assert!(encoded.len() > 16);
         assert_eq!(encoded.first().copied(), Some(1u8));
+    }
+
+    #[test]
+    fn decode_u256_be_accepts_max_uint256() {
+        let decoded = decode_u256_be(&[0xffu8; 32]).expect("must decode");
+        assert_eq!(decoded, [0xffu8; 32]);
+        let nat = Nat(BigUint::from_bytes_be(&decoded));
+        assert!(nat > Nat::from(u128::MAX));
     }
 
     #[test]
@@ -2336,116 +3186,6 @@ mod tests {
     }
 
     #[test]
-    fn recover_request_state_after_upgrade_requeues_running_request() {
-        reset_state();
-        let request_id = to_request_id(&[0x31u8; 32]).expect("id");
-        with_state_mut(|state| {
-            state.requests.insert(
-                request_id,
-                StoredRequest {
-                    asset_id: vec![2u8; 29],
-                    amount: vec![3u8; 32],
-                    recipient: vec![4u8; 29],
-                    result: RequestResult {
-                        status: RequestStatus::Running,
-                        ledger_tx_id: None,
-                        error_code: None,
-                    },
-                },
-            );
-        });
-
-        assert!(recover_request_state_after_upgrade(123));
-        with_state(|state| {
-            assert_eq!(state.queue.len(), 1);
-            assert_eq!(state.queue_meta.get().head, 0);
-            assert_eq!(state.queue_meta.get().tail, 1);
-            assert_eq!(
-                state.requests.get(&request_id).map(|req| req.result.status),
-                Some(RequestStatus::Queued)
-            );
-            assert_eq!(state.queue.get(&0), Some(request_id));
-        });
-    }
-
-    #[test]
-    fn recover_request_state_after_upgrade_fills_missing_queued_request_once() {
-        reset_state();
-        let request_id = to_request_id(&[0x32u8; 32]).expect("id");
-        with_state_mut(|state| {
-            state.requests.insert(
-                request_id,
-                StoredRequest {
-                    asset_id: vec![2u8; 29],
-                    amount: vec![3u8; 32],
-                    recipient: vec![4u8; 29],
-                    result: RequestResult {
-                        status: RequestStatus::Queued,
-                        ledger_tx_id: None,
-                        error_code: None,
-                    },
-                },
-            );
-        });
-
-        assert!(recover_request_state_after_upgrade(123));
-        assert!(recover_request_state_after_upgrade(124));
-        with_state(|state| {
-            assert_eq!(state.queue.len(), 1);
-            assert_eq!(state.queue_meta.get().tail, 1);
-            assert_eq!(state.queue.get(&0), Some(request_id));
-        });
-    }
-
-    #[test]
-    fn recover_request_state_after_upgrade_keeps_terminal_requests_out_of_queue() {
-        reset_state();
-        let succeeded = to_request_id(&[0x33u8; 32]).expect("id");
-        let failed = to_request_id(&[0x34u8; 32]).expect("id");
-        with_state_mut(|state| {
-            state.requests.insert(
-                succeeded,
-                StoredRequest {
-                    asset_id: vec![2u8; 29],
-                    amount: vec![3u8; 32],
-                    recipient: vec![4u8; 29],
-                    result: RequestResult {
-                        status: RequestStatus::Succeeded,
-                        ledger_tx_id: Some(vec![1u8; 2]),
-                        error_code: None,
-                    },
-                },
-            );
-            state.requests.insert(
-                failed,
-                StoredRequest {
-                    asset_id: vec![2u8; 29],
-                    amount: vec![3u8; 32],
-                    recipient: vec![4u8; 29],
-                    result: RequestResult {
-                        status: RequestStatus::Failed,
-                        ledger_tx_id: None,
-                        error_code: Some("ledger.call_failed:oops".to_string()),
-                    },
-                },
-            );
-        });
-
-        assert!(!recover_request_state_after_upgrade(123));
-        with_state(|state| {
-            assert_eq!(state.queue.len(), 0);
-            assert_eq!(
-                state.requests.get(&succeeded).map(|req| req.result.status),
-                Some(RequestStatus::Succeeded)
-            );
-            assert_eq!(
-                state.requests.get(&failed).map(|req| req.result.status),
-                Some(RequestStatus::Failed)
-            );
-        });
-    }
-
-    #[test]
     fn wrap_insert_request_rejects_duplicate() {
         reset_state();
         let caller = Principal::self_authenticating(b"wrap-caller-dup");
@@ -2457,15 +3197,13 @@ mod tests {
             asset_id.as_slice(),
             amount.as_slice(),
             evm_recipient.as_slice(),
-            1,
             200_000,
         );
-        let args = SubmitWrapRequestArgs {
-            request_id: request_id.to_vec(),
+        let args = NormalizedSubmitWrapRequest {
+            request_id: to_request_id(&request_id).expect("id"),
             asset_id,
             amount,
             evm_recipient,
-            evm_nonce: 1,
             gas_limit: 200_000,
         };
         let request_id = to_request_id(&request_id).expect("id");
@@ -2488,17 +3226,15 @@ mod tests {
             asset_id.as_slice(),
             amount.as_slice(),
             evm_recipient.as_slice(),
-            1,
             300_000,
         );
         let request_id = to_request_id(&request_id_raw).expect("id");
         insert_wrap_request(
-            SubmitWrapRequestArgs {
-                request_id: request_id_raw.to_vec(),
+            NormalizedSubmitWrapRequest {
+                request_id,
                 asset_id,
                 amount,
                 evm_recipient,
-                evm_nonce: 1,
                 gas_limit: 300_000,
             },
             caller,
@@ -2517,50 +3253,14 @@ mod tests {
     }
 
     #[test]
-    fn wrap_validate_request_rejects_request_id_mismatch() {
+    fn wrap_normalize_submit_rejects_zero_gas_limit() {
         reset_state();
-        let caller = Principal::self_authenticating(b"wrap-caller-mismatch");
-        let err = validate_wrap_request_args(
-            &SubmitWrapRequestArgs {
-                request_id: vec![8u8; 32],
-                asset_id: vec![2u8; 29],
-                amount: vec![3u8; 32],
-                evm_recipient: vec![5u8; 20],
-                evm_nonce: 1,
-                gas_limit: 300_000,
-            },
-            caller,
-        )
-        .expect_err("mismatch must fail");
-        assert_eq!(err, "arg.request_id_mismatch");
-    }
-
-    #[test]
-    fn wrap_validate_request_rejects_zero_gas_limit() {
-        reset_state();
-        let caller = Principal::self_authenticating(b"wrap-caller-zero-gas");
-        let asset_id = vec![2u8; 29];
-        let amount = vec![3u8; 32];
-        let evm_recipient = vec![5u8; 20];
-        let request_id = derive_wrap_request_id(
-            caller.as_slice(),
-            asset_id.as_slice(),
-            amount.as_slice(),
-            evm_recipient.as_slice(),
-            1,
-            0,
-        );
-        let err = validate_wrap_request_args(
-            &SubmitWrapRequestArgs {
-                request_id: request_id.to_vec(),
-                asset_id,
-                amount,
-                evm_recipient,
-                evm_nonce: 1,
-                gas_limit: 0,
-            },
-            caller,
-        )
+        let err = normalize_submit_wrap_args(SubmitWrapRequestArgs {
+            asset_id: Principal::self_authenticating(b"wrap-asset-zero-gas"),
+            amount_e8s: Nat::from(3u8),
+            evm_recipient: vec![5u8; 20],
+            gas_limit: 0,
+        })
         .expect_err("zero gas limit must fail");
         assert_eq!(err, "arg.gas_limit_invalid");
     }
@@ -2582,16 +3282,50 @@ mod tests {
     #[test]
     fn encode_factory_mint_for_asset_call_data_encodes_selector_and_words() {
         let data =
-            encode_factory_mint_for_asset_call_data(&[0x33u8; 29], &[0x11u8; 20], &[0x22u8; 32])
+            encode_factory_mint_for_asset_call_data(&[0x33u8; 29], 8, &[0x11u8; 20], &[0x22u8; 32])
                 .expect("encode");
-        assert_eq!(data.len(), 164);
+        assert_eq!(data.len(), 196);
         assert_ne!(&data[0..4], &[0u8; 4]);
-        assert_eq!(&data[4..36], &u256_from_u64(96));
-        assert_eq!(&data[36..48], &[0u8; 12]);
-        assert_eq!(&data[48..68], &[0x11u8; 20]);
-        assert_eq!(&data[68..100], &[0x22u8; 32]);
-        assert_eq!(&data[100..132], &u256_from_u64(29));
-        assert_eq!(&data[132..161], &[0x33u8; 29]);
+        assert_eq!(&data[4..36], &u256_from_u64(128));
+        assert_eq!(&data[36..68], &u256_from_u64(8));
+        assert_eq!(&data[68..80], &[0u8; 12]);
+        assert_eq!(&data[80..100], &[0x11u8; 20]);
+        assert_eq!(&data[100..132], &[0x22u8; 32]);
+        assert_eq!(&data[132..164], &u256_from_u64(29));
+        assert_eq!(&data[164..193], &[0x33u8; 29]);
+    }
+
+    #[test]
+    fn decode_asset_decimals_reads_nat_value() {
+        let decimals = decode_asset_decimals(&[
+            (
+                "icrc1:name".to_string(),
+                Icrc1MetadataValue::Text("Token".to_string()),
+            ),
+            (
+                "icrc1:decimals".to_string(),
+                Icrc1MetadataValue::Nat(Nat::from(8u8)),
+            ),
+        ])
+        .expect("decimals");
+        assert_eq!(decimals, 8);
+    }
+
+    #[test]
+    fn decode_asset_decimals_rejects_missing_or_invalid_value() {
+        let missing = decode_asset_decimals(&[(
+            "icrc1:name".to_string(),
+            Icrc1MetadataValue::Text("Token".to_string()),
+        )])
+        .expect_err("missing");
+        assert_eq!(missing, "wrap.asset_metadata_failed:decimals_missing");
+
+        let invalid = decode_asset_decimals(&[(
+            "icrc1:decimals".to_string(),
+            Icrc1MetadataValue::Text("8".to_string()),
+        )])
+        .expect_err("invalid");
+        assert_eq!(invalid, "wrap.asset_decimals_invalid");
     }
 
     #[test]
@@ -2628,7 +3362,6 @@ mod tests {
             asset_id: vec![7u8; 29],
             amount: vec![0u8; 32],
             evm_recipient: vec![9u8; 20],
-            evm_nonce: 1,
             gas_limit: 300_000,
             result: WrapRequestResult {
                 status: RequestStatus::Failed,
@@ -2657,7 +3390,6 @@ mod tests {
             asset_id: vec![7u8; 29],
             amount: vec![0u8; 32],
             evm_recipient: vec![9u8; 20],
-            evm_nonce: 1,
             gas_limit: 300_000,
             result: WrapRequestResult {
                 status: RequestStatus::Failed,
@@ -2696,7 +3428,6 @@ mod tests {
             asset_id: vec![7u8; 29],
             amount: vec![0u8; 32],
             evm_recipient: vec![9u8; 20],
-            evm_nonce: 1,
             gas_limit: 300_000,
             result: WrapRequestResult {
                 status: RequestStatus::Failed,
@@ -2763,7 +3494,6 @@ mod tests {
                     asset_id: vec![7u8; 29],
                     amount: vec![8u8; 32],
                     evm_recipient: vec![9u8; 20],
-                    evm_nonce: 1,
                     gas_limit: 300_000,
                     result: WrapRequestResult {
                         status: RequestStatus::Running,
@@ -2809,7 +3539,6 @@ mod tests {
                     asset_id: vec![7u8; 29],
                     amount: vec![8u8; 32],
                     evm_recipient: vec![9u8; 20],
-                    evm_nonce: 1,
                     gas_limit: 300_000,
                     result: WrapRequestResult {
                         status: RequestStatus::Queued,
@@ -2858,7 +3587,6 @@ mod tests {
                     asset_id: vec![7u8; 29],
                     amount: vec![8u8; 32],
                     evm_recipient: vec![9u8; 20],
-                    evm_nonce: 1,
                     gas_limit: 300_000,
                     result: WrapRequestResult {
                         status: RequestStatus::Failed,

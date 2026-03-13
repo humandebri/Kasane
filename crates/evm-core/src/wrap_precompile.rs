@@ -1,13 +1,17 @@
 //! どこで: EVM custom precompile / 何を: unwrap request の起票 / なぜ: wrap/vault 連携を tx 内で確定するため
 
 use crate::hash;
+use evm_db::chain_data::constants::CHAIN_ID;
 use evm_db::chain_data::receipt::LogEntry;
+use evm_db::stable_state::current_runtime_config;
 use revm::{
     context::Cfg,
-    context_interface::{ContextTr, JournalTr, LocalContextTr},
+    context_interface::{
+        journaled_state::account::JournaledAccountTr, ContextTr, JournalTr, LocalContextTr,
+    },
     handler::{EthPrecompiles, PrecompileProvider},
     interpreter::{CallInputs, Gas, InstructionResult, InterpreterResult},
-    primitives::{Address, Bytes, Log, B256},
+    primitives::{Address, Bytes, Log, B256, U256},
 };
 use std::boxed::Box;
 use std::cell::RefCell;
@@ -21,9 +25,15 @@ pub const WRAP_PRECOMPILE_ADDRESS: Address = Address::new([
 ]);
 const MAX_FIELD_LEN: usize = 120;
 const MAX_PRINCIPAL_LEN: usize = 29;
-const ABI_WORD_SIZE: usize = 32;
-const ABI_HEAD_WORDS: usize = 6;
-const ABI_DYNAMIC_FIELDS: usize = 3;
+const COMPACT_UNWRAP_FORMAT_VERSION: u8 = 1;
+const COMPACT_PRINCIPAL_FIELD_LEN: usize = 1 + MAX_PRINCIPAL_LEN;
+const COMPACT_UNWRAP_INPUT_LEN: usize = 1 + COMPACT_PRINCIPAL_FIELD_LEN * 2 + 32;
+const ABI_DYNAMIC_FIELDS: usize = 2;
+const WRAP_FACTORY_STORAGE_TOKEN_BY_ASSET_KEY_SLOT: u64 = 0;
+const WRAPPED_TOKEN_TOTAL_SUPPLY_SLOT: u64 = 2;
+const WRAPPED_TOKEN_BALANCE_OF_SLOT: u64 = 3;
+const WRAPPED_TOKEN_ALLOWANCE_SLOT: u64 = 4;
+const UNWRAP_BURN_GAS_SURCHARGE: u64 = 45_000;
 const FIXED_PRECOMPILE_GAS_RATIO_NUMERATOR: u32 = 1;
 const FIXED_PRECOMPILE_GAS_RATIO_DENOMINATOR: u32 = 100;
 
@@ -54,13 +64,9 @@ thread_local! {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct UnwrapIntent {
-    pub request_id: [u8; 32],
-    pub vault_canister_id: Vec<u8>,
     pub asset_id: Vec<u8>,
     pub amount: [u8; 32],
     pub recipient: Vec<u8>,
-    pub user_nonce: u64,
-    pub deadline: u64,
 }
 
 #[derive(Clone, Debug)]
@@ -108,7 +114,7 @@ where
         };
 
         let elapsed_instruction = current_instruction_counter().saturating_sub(started_instruction);
-        let extra_gas = extra_gas_by_instruction_ratio(elapsed_instruction);
+        let extra_gas = extra_gas_for_precompile(address, elapsed_instruction);
         if extra_gas != 0 && !out.gas.record_cost(extra_gas) {
             out = InterpreterResult {
                 result: InstructionResult::PrecompileOOG,
@@ -145,22 +151,19 @@ fn run_wrap_precompile<CTX: ContextTr>(
         return precompile_fail(context, gas_limit, "wrap.precompile.static_disallowed");
     }
 
-    let input = inputs.input.bytes(context).to_vec();
+    let input = inputs.input.bytes(context);
     let parsed = match parse_input(&input) {
         Ok(v) => v,
         Err(code) => return precompile_fail(context, gas_limit, code),
     };
-    let mut hash_input = Vec::with_capacity(20 + input.len());
-    hash_input.extend_from_slice(inputs.caller.as_slice());
-    hash_input.extend_from_slice(&input);
-    let request_id = hash::keccak256(&hash_input);
-
-    let log_data = encode_log_data(&parsed, &request_id);
+    if let Err(code) = burn_wrapped_asset(context, unwrap_owner(inputs), &parsed) {
+        return precompile_fail(context, gas_limit, &code);
+    }
+    let log_data = encode_log_data(&parsed);
     let log_data_len = log_data.len();
-    let topic1 = B256::from(request_id);
     let log = Log::new_unchecked(
         WRAP_PRECOMPILE_ADDRESS,
-        vec![B256::from(wrap_event_topic0()), topic1],
+        vec![B256::from(wrap_event_topic0())],
         log_data.into(),
     );
     context.journal_mut().log(log);
@@ -168,7 +171,7 @@ fn run_wrap_precompile<CTX: ContextTr>(
     let mut out = InterpreterResult {
         result: InstructionResult::Return,
         gas: Gas::new(gas_limit),
-        output: Bytes::from(request_id.to_vec()),
+        output: Bytes::new(),
     };
     let estimated_gas = estimate_wrap_precompile_gas(input.len(), log_data_len, ABI_DYNAMIC_FIELDS);
     if !out.gas.record_cost(estimated_gas) {
@@ -197,60 +200,27 @@ fn precompile_fail<CTX: ContextTr>(
 }
 
 fn parse_input(input: &[u8]) -> Result<UnwrapIntent, &'static str> {
-    if input.len() < ABI_WORD_SIZE * ABI_HEAD_WORDS || !input.len().is_multiple_of(ABI_WORD_SIZE) {
+    parse_compact_input(input)
+}
+
+fn parse_compact_input(input: &[u8]) -> Result<UnwrapIntent, &'static str> {
+    if input.len() != COMPACT_UNWRAP_INPUT_LEN {
         return Err("wrap.arg.abi_invalid");
     }
-    let vault_offset = decode_offset(
-        read_word(input, 0).ok_or("wrap.arg.abi_invalid")?,
-        input.len(),
-    )?;
-    let asset_offset = decode_offset(
-        read_word(input, 1).ok_or("wrap.arg.abi_invalid")?,
-        input.len(),
-    )?;
-    let amount = read_word(input, 2).ok_or("wrap.arg.amount_invalid")?;
-    let recipient_offset = decode_offset(
-        read_word(input, 3).ok_or("wrap.arg.abi_invalid")?,
-        input.len(),
-    )?;
-    let user_nonce = decode_u64(read_word(input, 4).ok_or("wrap.arg.nonce_invalid")?)?;
-    let deadline = decode_u64(read_word(input, 5).ok_or("wrap.arg.deadline_invalid")?)?;
-
-    if !(vault_offset < asset_offset && asset_offset < recipient_offset) {
-        return Err("wrap.arg.offset_invalid");
-    }
-    let (vault_canister_id, vault_end) =
-        read_dynamic_bytes(input, vault_offset, MAX_FIELD_LEN).ok_or("wrap.arg.offset_invalid")?;
-    let (asset_id, asset_end) =
-        read_dynamic_bytes(input, asset_offset, MAX_FIELD_LEN).ok_or("wrap.arg.offset_invalid")?;
-    let (recipient, recipient_end) = read_dynamic_bytes(input, recipient_offset, MAX_FIELD_LEN)
-        .ok_or("wrap.arg.offset_invalid")?;
-
-    if vault_end != asset_offset || asset_end != recipient_offset {
-        return Err("wrap.arg.offset_invalid");
-    }
-    if recipient_end != input.len() {
+    if input[0] != COMPACT_UNWRAP_FORMAT_VERSION {
         return Err("wrap.arg.abi_invalid");
     }
-
-    if vault_canister_id.is_empty() || asset_id.is_empty() || recipient.is_empty() {
-        return Err("wrap.arg.length_invalid");
+    let mut offset = 1usize;
+    let asset_id = read_compact_principal(input, &mut offset)?;
+    let amount = read_array_32(input, &mut offset).ok_or("wrap.arg.amount_invalid")?;
+    let recipient = read_compact_principal(input, &mut offset)?;
+    if offset != input.len() {
+        return Err("wrap.arg.abi_invalid");
     }
-    if !is_valid_principal_bytes(vault_canister_id.len())
-        || !is_valid_principal_bytes(asset_id.len())
-        || !is_valid_principal_bytes(recipient.len())
-    {
-        return Err("wrap.arg.principal_invalid");
-    }
-
     Ok(UnwrapIntent {
-        request_id: [0u8; 32],
-        vault_canister_id,
         asset_id,
         amount,
         recipient,
-        user_nonce,
-        deadline,
     })
 }
 
@@ -259,10 +229,10 @@ pub(crate) fn estimate_wrap_precompile_gas(
     log_data_len: usize,
     field_count: usize,
 ) -> u64 {
-    let base_gas = 25_000u64;
+    let base_gas = 25_000u64.saturating_add(UNWRAP_BURN_GAS_SURCHARGE);
     let per_byte_gas = 16u64.saturating_mul(input_len as u64);
     let per_field_gas = 200u64.saturating_mul(field_count as u64);
-    let topic_count = 2u64;
+    let topic_count = 1u64;
     let log_gas = 375u64
         .saturating_add(375u64.saturating_mul(topic_count))
         .saturating_add(8u64.saturating_mul(log_data_len as u64));
@@ -272,18 +242,198 @@ pub(crate) fn estimate_wrap_precompile_gas(
         .saturating_add(log_gas)
 }
 
-fn encode_log_data(intent: &UnwrapIntent, request_id: &[u8; 32]) -> Vec<u8> {
-    let mut out = Vec::with_capacity(2 + 2 + 32 + 2 + 16);
-    out.extend_from_slice(request_id);
-    out.push(intent.vault_canister_id.len() as u8);
-    out.extend_from_slice(&intent.vault_canister_id);
+// 前提:
+// - unwrap は新 factory 配下 token のみを正とする
+// - storage layout は tools/wrapper/contracts 配下の現行 audited 実装に合わせる
+// - burn は precompile 内で完結させ、成功時のみ unwrap intent log を積む
+fn unwrap_owner(inputs: &CallInputs) -> Address {
+    // unwrap の owner は tx origin ではなく、この precompile を呼んだ call frame の sender。
+    inputs.caller
+}
+
+fn burn_wrapped_asset<CTX: ContextTr>(
+    context: &mut CTX,
+    owner: Address,
+    intent: &UnwrapIntent,
+) -> Result<(), String> {
+    let factory = current_wrap_factory_address();
+    let amount = U256::from_be_bytes(intent.amount);
+    let asset_key = compute_asset_key(intent.asset_id.as_slice());
+    let token_address = load_factory_token_address(context, factory, asset_key)?;
+    if token_address == Address::ZERO {
+        return Err("unwrap.token_not_deployed".to_string());
+    }
+
+    let balance_slot = address_mapping_slot(owner, WRAPPED_TOKEN_BALANCE_OF_SLOT);
+    let allowance_slot = allowance_slot(owner, factory);
+    let total_supply_slot = U256::from(WRAPPED_TOKEN_TOTAL_SUPPLY_SLOT);
+    let mut approval_log_value = None;
+    {
+        let mut token_account = context
+            .journal_mut()
+            .load_account_mut(token_address)
+            .map_err(|err| format!("wrap.burn.account_load_failed:{err:?}"))?;
+        let token = &mut token_account.data;
+        let balance = token
+            .sload(balance_slot, false)
+            .map_err(|err| format!("wrap.burn.storage_read_failed:{err:?}"))?
+            .data
+            .present_value();
+        if balance < amount {
+            return Err("erc20.insufficient_balance".to_string());
+        }
+
+        let allowance = token
+            .sload(allowance_slot, false)
+            .map_err(|err| format!("wrap.burn.storage_read_failed:{err:?}"))?
+            .data
+            .present_value();
+        if allowance != U256::MAX {
+            if allowance < amount {
+                return Err("erc20.insufficient_allowance".to_string());
+            }
+            let next_allowance = allowance - amount;
+            token
+                .sstore(allowance_slot, next_allowance, false)
+                .map_err(|err| format!("wrap.burn.storage_write_failed:{err:?}"))?;
+            approval_log_value = Some(next_allowance);
+        }
+
+        let total_supply = token
+            .sload(total_supply_slot, false)
+            .map_err(|err| format!("wrap.burn.storage_read_failed:{err:?}"))?
+            .data
+            .present_value();
+        if total_supply < amount {
+            return Err("erc20.insufficient_balance".to_string());
+        }
+        let next_balance = balance - amount;
+        let next_total_supply = total_supply - amount;
+        token
+            .sstore(balance_slot, next_balance, false)
+            .map_err(|err| format!("wrap.burn.storage_write_failed:{err:?}"))?;
+        token
+            .sstore(total_supply_slot, next_total_supply, false)
+            .map_err(|err| format!("wrap.burn.storage_write_failed:{err:?}"))?;
+    }
+    if let Some(next_allowance) = approval_log_value {
+        emit_approval_log(context, token_address, owner, factory, next_allowance);
+    }
+    emit_transfer_log(context, token_address, owner, Address::ZERO, amount);
+    Ok(())
+}
+
+fn current_wrap_factory_address() -> Address {
+    let raw = current_runtime_config()
+        .wrap_factory_address()
+        .unwrap_or_else(|err| ic_cdk::trap(format!("InvalidRuntimeConfig: {err}")));
+    Address::new(raw)
+}
+
+fn compute_asset_key(asset_id: &[u8]) -> [u8; 32] {
+    let mut payload = Vec::with_capacity(14 + 32 + asset_id.len());
+    payload.extend_from_slice(b"kasane.wrap.v1");
+    payload.extend_from_slice(&U256::from(CHAIN_ID).to_be_bytes::<32>());
+    payload.extend_from_slice(asset_id);
+    hash::keccak256(&payload)
+}
+
+fn load_factory_token_address<CTX: ContextTr>(
+    context: &mut CTX,
+    factory: Address,
+    asset_key: [u8; 32],
+) -> Result<Address, String> {
+    let slot = mapping_slot(
+        B256::from(asset_key),
+        U256::from(WRAP_FACTORY_STORAGE_TOKEN_BY_ASSET_KEY_SLOT),
+    );
+    let mut factory_account = context
+        .journal_mut()
+        .load_account_mut(factory)
+        .map_err(|err| format!("wrap.factory.account_load_failed:{err:?}"))?;
+    let raw = factory_account
+        .data
+        .sload(slot, false)
+        .map_err(|err| format!("wrap.factory.storage_read_failed:{err:?}"))?
+        .data
+        .present_value()
+        .to_be_bytes::<32>();
+    let mut address = [0u8; 20];
+    address.copy_from_slice(&raw[12..]);
+    Ok(Address::new(address))
+}
+
+fn mapping_slot(key: B256, slot: U256) -> U256 {
+    let mut input = [0u8; 64];
+    input[..32].copy_from_slice(key.as_slice());
+    input[32..].copy_from_slice(&slot.to_be_bytes::<32>());
+    U256::from_be_bytes(hash::keccak256(&input))
+}
+
+fn address_mapping_slot(key: Address, slot: u64) -> U256 {
+    let mut key_bytes = [0u8; 32];
+    key_bytes[12..].copy_from_slice(key.as_slice());
+    mapping_slot(B256::from(key_bytes), U256::from(slot))
+}
+
+fn allowance_slot(owner: Address, spender: Address) -> U256 {
+    let outer = address_mapping_slot(owner, WRAPPED_TOKEN_ALLOWANCE_SLOT);
+    let mut spender_bytes = [0u8; 32];
+    spender_bytes[12..].copy_from_slice(spender.as_slice());
+    mapping_slot(B256::from(spender_bytes), outer)
+}
+
+fn emit_approval_log<CTX: ContextTr>(
+    context: &mut CTX,
+    token: Address,
+    owner: Address,
+    spender: Address,
+    value: U256,
+) {
+    let log = Log::new_unchecked(
+        token,
+        vec![
+            B256::from(approval_event_topic0()),
+            topic_from_address(owner),
+            topic_from_address(spender),
+        ],
+        value.to_be_bytes_vec().into(),
+    );
+    context.journal_mut().log(log);
+}
+
+fn emit_transfer_log<CTX: ContextTr>(
+    context: &mut CTX,
+    token: Address,
+    from: Address,
+    to: Address,
+    value: U256,
+) {
+    let log = Log::new_unchecked(
+        token,
+        vec![
+            B256::from(transfer_event_topic0()),
+            topic_from_address(from),
+            topic_from_address(to),
+        ],
+        value.to_be_bytes_vec().into(),
+    );
+    context.journal_mut().log(log);
+}
+
+fn topic_from_address(address: Address) -> B256 {
+    let mut out = [0u8; 32];
+    out[12..].copy_from_slice(address.as_slice());
+    B256::from(out)
+}
+
+fn encode_log_data(intent: &UnwrapIntent) -> Vec<u8> {
+    let mut out = Vec::with_capacity(2 + 32 + 2);
     out.push(intent.asset_id.len() as u8);
     out.extend_from_slice(&intent.asset_id);
     out.extend_from_slice(&intent.amount);
     out.push(intent.recipient.len() as u8);
     out.extend_from_slice(&intent.recipient);
-    out.extend_from_slice(&intent.user_nonce.to_be_bytes());
-    out.extend_from_slice(&intent.deadline.to_be_bytes());
     out
 }
 
@@ -292,98 +442,56 @@ pub fn unwrap_intent_from_log(log: &LogEntry) -> Option<UnwrapIntent> {
         return None;
     }
     let topics = log.topics();
-    if topics.len() < 2 || topics[0].0 != wrap_event_topic0() {
+    if topics.len() != 1 || topics[0].0 != wrap_event_topic0() {
         return None;
     }
     let data = log.data.data.as_ref();
     let mut offset = 0usize;
-    let request_id = read_array_32(data, &mut offset)?;
-    let vault_canister_id = read_len_prefixed(data, &mut offset)?;
     let asset_id = read_len_prefixed(data, &mut offset)?;
     let amount = read_array_32(data, &mut offset)?;
     let recipient = read_len_prefixed(data, &mut offset)?;
-    let user_nonce = read_u64(data, &mut offset)?;
-    let deadline = read_u64(data, &mut offset)?;
-    if offset != data.len() || request_id != topics[1].0 {
+    if offset != data.len() {
         return None;
     }
     Some(UnwrapIntent {
-        request_id,
-        vault_canister_id,
         asset_id,
         amount,
         recipient,
-        user_nonce,
-        deadline,
     })
 }
 
 fn wrap_event_topic0() -> [u8; 32] {
-    hash::keccak256(b"KasaneUnwrapRequest(bytes32,bytes)")
+    hash::keccak256(b"KasaneUnwrapRequest(bytes)")
 }
 
-fn read_word(input: &[u8], word_index: usize) -> Option<[u8; 32]> {
-    let start = word_index.checked_mul(ABI_WORD_SIZE)?;
-    let end = start.checked_add(ABI_WORD_SIZE)?;
-    let raw = input.get(start..end)?;
-    let mut out = [0u8; 32];
-    out.copy_from_slice(raw);
-    Some(out)
+fn approval_event_topic0() -> [u8; 32] {
+    hash::keccak256(b"Approval(address,address,uint256)")
 }
 
-fn decode_offset(word: [u8; 32], input_len: usize) -> Result<usize, &'static str> {
-    if word[0..24] != [0u8; 24] {
-        return Err("wrap.arg.offset_invalid");
-    }
-    let mut low = [0u8; 8];
-    low.copy_from_slice(&word[24..32]);
-    let raw_offset = u64::from_be_bytes(low);
-    let offset = usize::try_from(raw_offset).map_err(|_| "wrap.arg.offset_invalid")?;
-    if offset % ABI_WORD_SIZE != 0 {
-        return Err("wrap.arg.offset_invalid");
-    }
-    if offset < ABI_WORD_SIZE * ABI_HEAD_WORDS {
-        return Err("wrap.arg.offset_invalid");
-    }
-    if offset > input_len.saturating_sub(ABI_WORD_SIZE) {
-        return Err("wrap.arg.offset_invalid");
-    }
-    Ok(offset)
-}
-
-fn decode_u64(word: [u8; 32]) -> Result<u64, &'static str> {
-    if word[0..24] != [0u8; 24] {
-        return Err("wrap.arg.length_invalid");
-    }
-    let mut out = [0u8; 8];
-    out.copy_from_slice(&word[24..32]);
-    Ok(u64::from_be_bytes(out))
-}
-
-fn read_dynamic_bytes(input: &[u8], offset: usize, max_len: usize) -> Option<(Vec<u8>, usize)> {
-    let len_end = offset.checked_add(ABI_WORD_SIZE)?;
-    let len_word = input.get(offset..len_end)?;
-    if len_word[0..24] != [0u8; 24] {
-        return None;
-    }
-    let mut low = [0u8; 8];
-    low.copy_from_slice(&len_word[24..32]);
-    let len = u64::from_be_bytes(low) as usize;
-    if len == 0 || len > max_len {
-        return None;
-    }
-    let data_start = offset.checked_add(ABI_WORD_SIZE)?;
-    let data_end = data_start.checked_add(len)?;
-    let padded_end = data_start.checked_add(len.checked_add(31)? / 32 * 32)?;
-    if padded_end > input.len() {
-        return None;
-    }
-    let bytes = input.get(data_start..data_end)?.to_vec();
-    Some((bytes, padded_end))
+fn transfer_event_topic0() -> [u8; 32] {
+    hash::keccak256(b"Transfer(address,address,uint256)")
 }
 
 fn is_valid_principal_bytes(len: usize) -> bool {
     (1..=MAX_PRINCIPAL_LEN).contains(&len)
+}
+
+fn read_compact_principal(input: &[u8], offset: &mut usize) -> Result<Vec<u8>, &'static str> {
+    let len = *input.get(*offset).ok_or("wrap.arg.abi_invalid")? as usize;
+    *offset = offset.saturating_add(1);
+    if !is_valid_principal_bytes(len) {
+        return Err("wrap.arg.principal_invalid");
+    }
+    let end = offset
+        .checked_add(MAX_PRINCIPAL_LEN)
+        .ok_or("wrap.arg.abi_invalid")?;
+    let slot = input.get(*offset..end).ok_or("wrap.arg.abi_invalid")?;
+    if slot[len..].iter().any(|&byte| byte != 0) {
+        return Err("wrap.arg.padding_invalid");
+    }
+    let bytes = slot[..len].to_vec();
+    *offset = end;
+    Ok(bytes)
 }
 
 fn read_len_prefixed(data: &[u8], offset: &mut usize) -> Option<Vec<u8>> {
@@ -407,15 +515,6 @@ fn read_array_32(data: &[u8], offset: &mut usize) -> Option<[u8; 32]> {
     Some(out)
 }
 
-fn read_u64(data: &[u8], offset: &mut usize) -> Option<u64> {
-    let end = offset.checked_add(8)?;
-    let slice = data.get(*offset..end)?;
-    let mut out = [0u8; 8];
-    out.copy_from_slice(slice);
-    *offset = end;
-    Some(u64::from_be_bytes(out))
-}
-
 fn current_instruction_counter() -> u64 {
     #[cfg(target_arch = "wasm32")]
     {
@@ -435,6 +534,13 @@ fn extra_gas_by_instruction_ratio(elapsed_instruction: u64) -> u64 {
         FIXED_PRECOMPILE_GAS_RATIO_NUMERATOR,
         FIXED_PRECOMPILE_GAS_RATIO_DENOMINATOR,
     )
+}
+
+fn extra_gas_for_precompile(address: [u8; 20], elapsed_instruction: u64) -> u64 {
+    if address == WRAP_PRECOMPILE_ADDRESS.into_array() {
+        return 0;
+    }
+    extra_gas_by_instruction_ratio(elapsed_instruction)
 }
 
 fn compute_extra_gas(elapsed_instruction: u64, numerator: u32, denominator: u32) -> u64 {
@@ -492,44 +598,47 @@ pub fn clear_precompile_profile() {
 #[cfg(test)]
 mod tests {
     use super::{
-        compute_extra_gas, estimate_wrap_precompile_gas, extra_gas_by_instruction_ratio,
-        parse_input, unwrap_intent_from_log, wrap_event_topic0, WRAP_PRECOMPILE_ADDRESS,
+        allowance_slot, approval_event_topic0, compute_asset_key, compute_extra_gas,
+        estimate_wrap_precompile_gas, extra_gas_by_instruction_ratio, extra_gas_for_precompile,
+        parse_input, topic_from_address, transfer_event_topic0, unwrap_intent_from_log,
+        unwrap_owner, wrap_event_topic0, COMPACT_UNWRAP_FORMAT_VERSION, MAX_PRINCIPAL_LEN,
+        WRAP_PRECOMPILE_ADDRESS,
     };
+    use crate::hash;
     use evm_db::chain_data::receipt::log_entry_from_parts;
+    use evm_db::chain_data::RuntimeConfigV1;
+    use evm_db::stable_state::{init_stable_state, set_runtime_config};
+    use revm::interpreter::{CallInput, CallInputs, CallScheme, CallValue};
+    use revm::primitives::{Address, Bytes, U256};
+
+    fn configure_runtime(factory: [u8; 20]) {
+        init_stable_state();
+        set_runtime_config(RuntimeConfigV1::new(
+            candid::Principal::self_authenticating(b"wrap-precompile-test"),
+            factory,
+        ));
+    }
 
     #[test]
     fn unwrap_intent_log_roundtrip_decodes() {
-        let request_id = [7u8; 32];
-        let vault = vec![1, 2, 3];
         let asset = vec![4, 5, 6];
         let amount = [8u8; 32];
         let recipient = vec![9, 10, 11];
-        let nonce = 12u64;
-        let deadline = 34u64;
         let mut data = Vec::new();
-        data.extend_from_slice(&request_id);
-        data.push(vault.len() as u8);
-        data.extend_from_slice(&vault);
         data.push(asset.len() as u8);
         data.extend_from_slice(&asset);
         data.extend_from_slice(&amount);
         data.push(recipient.len() as u8);
         data.extend_from_slice(&recipient);
-        data.extend_from_slice(&nonce.to_be_bytes());
-        data.extend_from_slice(&deadline.to_be_bytes());
         let log = log_entry_from_parts(
             WRAP_PRECOMPILE_ADDRESS.into_array(),
-            vec![wrap_event_topic0(), request_id],
+            vec![wrap_event_topic0()],
             data,
         );
         let parsed = unwrap_intent_from_log(&log).expect("must decode");
-        assert_eq!(parsed.request_id, request_id);
-        assert_eq!(parsed.vault_canister_id, vault);
         assert_eq!(parsed.asset_id, asset);
         assert_eq!(parsed.amount, amount);
         assert_eq!(parsed.recipient, recipient);
-        assert_eq!(parsed.user_nonce, nonce);
-        assert_eq!(parsed.deadline, deadline);
     }
 
     #[test]
@@ -543,25 +652,16 @@ mod tests {
     #[test]
     fn unwrap_intent_from_log_rejects_legacy_precompile_address() {
         let legacy = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1];
-        let request_id = [7u8; 32];
-        let vault = vec![1, 2, 3];
         let asset = vec![4, 5, 6];
         let amount = [8u8; 32];
         let recipient = vec![9, 10, 11];
-        let nonce = 12u64;
-        let deadline = 34u64;
         let mut data = Vec::new();
-        data.extend_from_slice(&request_id);
-        data.push(vault.len() as u8);
-        data.extend_from_slice(&vault);
         data.push(asset.len() as u8);
         data.extend_from_slice(&asset);
         data.extend_from_slice(&amount);
         data.push(recipient.len() as u8);
         data.extend_from_slice(&recipient);
-        data.extend_from_slice(&nonce.to_be_bytes());
-        data.extend_from_slice(&deadline.to_be_bytes());
-        let log = log_entry_from_parts(legacy, vec![wrap_event_topic0(), request_id], data);
+        let log = log_entry_from_parts(legacy, vec![wrap_event_topic0()], data);
         assert!(unwrap_intent_from_log(&log).is_none());
     }
 
@@ -573,80 +673,42 @@ mod tests {
     }
 
     #[test]
-    fn abi_decode_valid_input() {
-        let encoded = encode_abi(
-            vec![1, 2, 3],
-            vec![4, 5, 6],
-            [8u8; 32],
-            vec![9, 10, 11],
-            12,
-            34,
-        );
+    fn compact_decode_valid_input() {
+        let encoded = encode_compact(vec![4, 5, 6], [8u8; 32], vec![9, 10, 11]);
         let parsed = parse_input(&encoded).expect("must decode");
-        assert_eq!(parsed.vault_canister_id, vec![1, 2, 3]);
         assert_eq!(parsed.asset_id, vec![4, 5, 6]);
         assert_eq!(parsed.amount, [8u8; 32]);
         assert_eq!(parsed.recipient, vec![9, 10, 11]);
-        assert_eq!(parsed.user_nonce, 12);
-        assert_eq!(parsed.deadline, 34);
     }
 
     #[test]
-    fn abi_decode_rejects_invalid_offset() {
-        let mut encoded = encode_abi(
-            vec![1, 2, 3],
-            vec![4, 5, 6],
-            [8u8; 32],
-            vec![9, 10, 11],
-            12,
-            34,
-        );
-        encoded[31] = 1; // first offset must be >= head size
+    fn compact_decode_rejects_non_zero_padding() {
+        let mut encoded = encode_compact(vec![4, 5, 6], [8u8; 32], vec![9, 10, 11]);
+        encoded[5] = 0x7f;
         let err = parse_input(&encoded).expect_err("must reject");
-        assert_eq!(err, "wrap.arg.offset_invalid");
+        assert_eq!(err, "wrap.arg.padding_invalid");
     }
 
     #[test]
-    fn abi_decode_rejects_trailing_data() {
-        let mut encoded = encode_abi(
-            vec![1, 2, 3],
-            vec![4, 5, 6],
-            [8u8; 32],
-            vec![9, 10, 11],
-            12,
-            34,
-        );
-        encoded.extend_from_slice(&[0u8; 32]);
+    fn compact_decode_rejects_wrong_version() {
+        let mut encoded = encode_compact(vec![4, 5, 6], [8u8; 32], vec![9, 10, 11]);
+        encoded[0] = 2;
         let err = parse_input(&encoded).expect_err("must reject");
         assert_eq!(err, "wrap.arg.abi_invalid");
     }
 
     #[test]
-    fn abi_decode_rejects_descending_offsets() {
-        let mut encoded = encode_abi(
-            vec![1, 2, 3],
-            vec![4, 5, 6],
-            [8u8; 32],
-            vec![9, 10, 11],
-            12,
-            34,
-        );
-        let vault_offset = 32u64 * 6;
-        encoded[56..64].copy_from_slice(&vault_offset.to_be_bytes());
+    fn compact_decode_rejects_trailing_data() {
+        let mut encoded = encode_compact(vec![4, 5, 6], [8u8; 32], vec![9, 10, 11]);
+        encoded.push(0);
         let err = parse_input(&encoded).expect_err("must reject");
-        assert_eq!(err, "wrap.arg.offset_invalid");
+        assert_eq!(err, "wrap.arg.abi_invalid");
     }
 
     #[test]
-    fn abi_decode_rejects_too_long_principal() {
-        let encoded = encode_abi(
-            vec![1u8; 30],
-            vec![4, 5, 6],
-            [8u8; 32],
-            vec![9, 10, 11],
-            12,
-            34,
-        );
+    fn compact_decode_rejects_too_long_principal() {
+        let mut encoded = encode_compact(vec![4, 5, 6], [8u8; 32], vec![9, 10, 11]);
+        encoded[1] = 30;
         let err = parse_input(&encoded).expect_err("must reject");
         assert_eq!(err, "wrap.arg.principal_invalid");
     }
@@ -665,39 +727,99 @@ mod tests {
         assert_eq!(extra_gas_by_instruction_ratio(250), 3);
     }
 
-    fn encode_abi(
-        vault: Vec<u8>,
-        asset: Vec<u8>,
-        amount: [u8; 32],
-        recipient: Vec<u8>,
-        nonce: u64,
-        deadline: u64,
-    ) -> Vec<u8> {
-        let mut out = vec![0u8; 32 * 6];
-        let vault_tail = encode_dynamic(vault);
-        let asset_tail = encode_dynamic(asset);
-        let recipient_tail = encode_dynamic(recipient);
-        let vault_offset = 32 * 6;
-        let asset_offset = vault_offset + vault_tail.len();
-        let recipient_offset = asset_offset + asset_tail.len();
-        out[24..32].copy_from_slice(&(vault_offset as u64).to_be_bytes());
-        out[56..64].copy_from_slice(&(asset_offset as u64).to_be_bytes());
-        out[64..96].copy_from_slice(&amount);
-        out[120..128].copy_from_slice(&(recipient_offset as u64).to_be_bytes());
-        out[152..160].copy_from_slice(&nonce.to_be_bytes());
-        out[184..192].copy_from_slice(&deadline.to_be_bytes());
-        out.extend_from_slice(&vault_tail);
-        out.extend_from_slice(&asset_tail);
-        out.extend_from_slice(&recipient_tail);
-        out
+    #[test]
+    fn unwrap_precompile_skips_instruction_ratio_extra_gas() {
+        assert_eq!(
+            extra_gas_for_precompile(WRAP_PRECOMPILE_ADDRESS.into_array(), 1_000),
+            0
+        );
     }
 
-    fn encode_dynamic(bytes: Vec<u8>) -> Vec<u8> {
-        let mut out = vec![0u8; 32];
-        out[24..32].copy_from_slice(&(bytes.len() as u64).to_be_bytes());
-        out.extend_from_slice(&bytes);
-        let pad = (32 - (bytes.len() % 32)) % 32;
-        out.extend(std::iter::repeat_n(0u8, pad));
+    #[test]
+    fn non_wrap_precompile_keeps_instruction_ratio_extra_gas() {
+        let address = [0x11u8; 20];
+        assert_eq!(extra_gas_for_precompile(address, 250), 3);
+    }
+
+    #[test]
+    fn compute_asset_key_matches_factory_domain_format() {
+        let mut chain_bytes = [0u8; 32];
+        chain_bytes[24..].copy_from_slice(&evm_db::chain_data::constants::CHAIN_ID.to_be_bytes());
+        let key = compute_asset_key(&[1, 2, 3]);
+        assert_eq!(
+            key,
+            hash::keccak256(
+                &[
+                    b"kasane.wrap.v1".as_slice(),
+                    chain_bytes.as_slice(),
+                    &[1, 2, 3],
+                ]
+                .concat()
+            )
+        );
+    }
+
+    #[test]
+    fn allowance_slot_uses_factory_as_spender() {
+        let factory = [0x33u8; 20];
+        configure_runtime(factory);
+        let owner = Address::new([0x11; 20]);
+        let spender = Address::new(factory);
+        assert_ne!(
+            allowance_slot(owner, spender),
+            allowance_slot(owner, Address::new([0x22; 20]))
+        );
+    }
+
+    #[test]
+    fn erc20_event_topics_match_standard_signatures() {
+        let owner = Address::new([0x11; 20]);
+        let topic = topic_from_address(owner);
+        assert_eq!(&topic.0[12..], owner.as_slice());
+        assert_eq!(
+            approval_event_topic0(),
+            hash::keccak256(b"Approval(address,address,uint256)")
+        );
+        assert_eq!(
+            transfer_event_topic0(),
+            hash::keccak256(b"Transfer(address,address,uint256)")
+        );
+    }
+
+    #[test]
+    fn unwrap_owner_uses_current_call_frame_caller() {
+        let tx_origin = Address::new([0x11; 20]);
+        let frame_caller = Address::new([0x22; 20]);
+        let inputs = CallInputs {
+            input: CallInput::Bytes(Bytes::new()),
+            return_memory_offset: 0..0,
+            gas_limit: 300_000,
+            bytecode_address: WRAP_PRECOMPILE_ADDRESS,
+            known_bytecode: None,
+            target_address: WRAP_PRECOMPILE_ADDRESS,
+            caller: frame_caller,
+            value: CallValue::Transfer(U256::ZERO),
+            scheme: CallScheme::Call,
+            is_static: false,
+        };
+
+        assert_ne!(frame_caller, tx_origin);
+        assert_eq!(unwrap_owner(&inputs), frame_caller);
+    }
+
+    fn encode_compact(asset: Vec<u8>, amount: [u8; 32], recipient: Vec<u8>) -> Vec<u8> {
+        fn encode_principal(bytes: Vec<u8>) -> Vec<u8> {
+            let mut out = vec![0u8; 1 + MAX_PRINCIPAL_LEN];
+            out[0] = bytes.len() as u8;
+            out[1..1 + bytes.len()].copy_from_slice(&bytes);
+            out
+        }
+
+        let mut out = Vec::new();
+        out.push(COMPACT_UNWRAP_FORMAT_VERSION);
+        out.extend_from_slice(&encode_principal(asset));
+        out.extend_from_slice(&amount);
+        out.extend_from_slice(&encode_principal(recipient));
         out
     }
 }

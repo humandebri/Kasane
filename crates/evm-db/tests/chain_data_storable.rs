@@ -7,13 +7,12 @@ use evm_db::chain_data::constants::{
 use evm_db::chain_data::receipt::LogEntry;
 use evm_db::chain_data::{
     BlockData, CallerKey, ChainStateV1, Head, OpsMetricsV1, PruneJournal, QueueMeta, ReceiptLike,
-    StoredTx, StoredTxBytes, TxId, TxIndexEntry, TxKind, TxLoc, UnwrapDispatchRequest,
-    UnwrapRequestStatus, UNWRAP_DECODE_FAILURE_CODE,
+    RuntimeConfigV1, StoredTx, StoredTxBytes, TxId, TxIndexEntry, TxKind, TxLoc,
+    UnwrapDispatchRequest, UnwrapRequestStatus, UNWRAP_DECODE_FAILURE_CODE,
 };
 use evm_db::chain_data::{LogConfigV1, LOG_CONFIG_FILTER_MAX};
 use evm_db::chain_data::{
-    DEFAULT_BLOCK_GAS_LIMIT, DEFAULT_INSTRUCTION_SOFT_LIMIT, DEFAULT_MIN_GAS_PRICE,
-    DEFAULT_MIN_PRIORITY_FEE,
+    DEFAULT_BLOCK_GAS_LIMIT, DEFAULT_INSTRUCTION_SOFT_LIMIT, DEFAULT_MIN_FEE_FLOOR,
 };
 use evm_db::meta::{clear_needs_migration, needs_migration};
 use evm_db::stable_state::init_stable_state;
@@ -445,8 +444,8 @@ fn chain_state_roundtrip() {
 fn chain_state_default_fees_follow_runtime_defaults() {
     let state = ChainStateV1::new(4_801_360);
     assert!(state.auto_production_enabled);
-    assert_eq!(state.min_gas_price, DEFAULT_MIN_GAS_PRICE);
-    assert_eq!(state.min_priority_fee, DEFAULT_MIN_PRIORITY_FEE);
+    assert_eq!(state.min_gas_price, DEFAULT_MIN_FEE_FLOOR);
+    assert_eq!(state.min_priority_fee, DEFAULT_MIN_FEE_FLOOR);
     assert_eq!(state.block_gas_limit, DEFAULT_BLOCK_GAS_LIMIT);
     assert_eq!(state.instruction_soft_limit, DEFAULT_INSTRUCTION_SOFT_LIMIT);
 }
@@ -462,12 +461,32 @@ fn chain_state_invalid_len_returns_safe_default_and_sets_needs_migration() {
     assert!(!decoded.auto_production_enabled);
     assert!(!decoded.is_producing);
     assert!(!decoded.mining_scheduled);
-    assert_eq!(decoded.min_gas_price, DEFAULT_MIN_GAS_PRICE);
-    assert_eq!(decoded.min_priority_fee, DEFAULT_MIN_PRIORITY_FEE);
+    assert_eq!(decoded.min_gas_price, DEFAULT_MIN_FEE_FLOOR);
+    assert_eq!(decoded.min_priority_fee, DEFAULT_MIN_FEE_FLOOR);
     assert_eq!(decoded.block_gas_limit, DEFAULT_BLOCK_GAS_LIMIT);
     assert_eq!(
         decoded.instruction_soft_limit,
         DEFAULT_INSTRUCTION_SOFT_LIMIT
+    );
+}
+
+#[test]
+fn runtime_config_roundtrip() {
+    let config = RuntimeConfigV1::new(
+        candid::Principal::self_authenticating(b"runtime-config"),
+        [0x44u8; 20],
+    );
+    let decoded = RuntimeConfigV1::from_bytes(config.to_bytes());
+    assert_eq!(decoded, config);
+    assert_eq!(
+        decoded.wrap_canister_id().expect("wrap canister id"),
+        candid::Principal::self_authenticating(b"runtime-config")
+    );
+    assert_eq!(
+        decoded
+            .wrap_factory_address()
+            .expect("wrap factory address"),
+        [0x44u8; 20]
     );
 }
 

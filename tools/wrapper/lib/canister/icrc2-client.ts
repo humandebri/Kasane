@@ -1,4 +1,4 @@
-// どこで: ICRC-2 クライアント / 何を: ウォレット署名で icrc2_approve を実行 / なぜ: approve 成功後に wrap submit を進めるため
+// どこで: ICRC ledger client / 何を: allowance/approve と metadata(decimals) を取得 / なぜ: wrap submit と gas estimate を同じ ledger 仕様に揃えるため
 
 import { Actor, type ActorSubclass, type Identity } from "@dfinity/agent";
 import { IDL } from "@dfinity/candid";
@@ -21,6 +21,11 @@ type AllowanceResult = {
   allowance: bigint;
   expires_at: [] | [bigint];
 };
+type MetadataValue =
+  | { Int: bigint }
+  | { Nat: bigint }
+  | { Blob: Uint8Array }
+  | { Text: string };
 
 type Icrc2Actor = ActorSubclass<{
   icrc2_approve: (args: {
@@ -37,6 +42,7 @@ type Icrc2Actor = ActorSubclass<{
     account: { owner: Principal; subaccount: [] | [Uint8Array] };
     spender: { owner: Principal; subaccount: [] | [Uint8Array] };
   }) => Promise<AllowanceResult>;
+  icrc1_metadata: () => Promise<Array<[string, MetadataValue]>>;
 }>;
 
 const icrc2IdlFactory: IDL.InterfaceFactory = ({ IDL: I }) => {
@@ -71,8 +77,31 @@ const icrc2IdlFactory: IDL.InterfaceFactory = ({ IDL: I }) => {
       allowance: I.Nat,
       expires_at: I.Opt(I.Nat64),
     })], ["query"]),
+    icrc1_metadata: I.Func([], [I.Vec(I.Tuple(I.Text, I.Variant({
+      Int: I.Int,
+      Nat: I.Nat,
+      Blob: I.Vec(I.Nat8),
+      Text: I.Text,
+    })))], ["query"]),
   });
 };
+
+function decodeLedgerDecimals(metadata: Array<[string, MetadataValue]>): number {
+  for (const [key, value] of metadata) {
+    if (key !== "icrc1:decimals") {
+      continue;
+    }
+    if (!("Nat" in value)) {
+      throw new Error("wrap.asset_decimals_invalid");
+    }
+    const decimals = value.Nat;
+    if (decimals < 0n || decimals > 255n) {
+      throw new Error("wrap.asset_decimals_invalid");
+    }
+    return Number(decimals);
+  }
+  throw new Error("wrap.asset_metadata_failed:decimals_missing");
+}
 
 function decodeApproveError(err: ApproveError): string {
   if ("BadFee" in err) {
@@ -146,3 +175,27 @@ export async function getLedgerAllowance(args: {
   });
   return out.allowance;
 }
+
+export async function getLedgerDecimals(ledgerCanisterId: string): Promise<number> {
+  try {
+    const actor = Actor.createActor<Icrc2Actor>(icrc2IdlFactory, {
+      canisterId: ledgerCanisterId,
+      agent: await getQueryAgent(),
+    });
+    return decodeLedgerDecimals(await actor.icrc1_metadata());
+  } catch (error) {
+    if (error instanceof Error && (
+      error.message === "wrap.asset_decimals_invalid"
+      || error.message.startsWith("wrap.asset_metadata_failed:")
+    )) {
+      throw error;
+    }
+    throw new Error(
+      `wrap.asset_metadata_failed:${error instanceof Error ? error.message : "query_failed"}`,
+    );
+  }
+}
+
+export const icrcClientTestHooks = {
+  decodeLedgerDecimals,
+};

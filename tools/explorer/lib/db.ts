@@ -568,7 +568,7 @@ export async function getTokenTransfersByAddress(
       to_address: Buffer;
       amount_numeric: string | number;
     }>(
-      "SELECT tt.tx_hash, tt.block_number, b.timestamp AS block_timestamp, tt.tx_index, tt.log_index, t.receipt_status, t.tx_selector, tt.token_address, tt.from_address, tt.to_address, tt.amount_numeric FROM token_transfers tt LEFT JOIN txs t ON t.tx_hash = tt.tx_hash LEFT JOIN blocks b ON b.number = tt.block_number WHERE tt.from_address = $1 OR tt.to_address = $1 ORDER BY tt.block_number DESC, tt.tx_index DESC, tt.log_index DESC, tt.tx_hash DESC LIMIT $2",
+      "SELECT tt.tx_hash, tt.block_number, b.timestamp AS block_timestamp, tt.tx_index, tt.log_index, t.receipt_status, t.tx_selector, tt.token_address, tt.from_address, tt.to_address, tt.amount_numeric FROM token_transfers tt LEFT JOIN txs t ON t.tx_hash = tt.tx_hash LEFT JOIN blocks b ON b.number = tt.block_number WHERE tt.from_address = $1 OR tt.to_address = $1 OR tt.token_address = $1 ORDER BY tt.block_number DESC, tt.tx_index DESC, tt.log_index DESC, tt.tx_hash DESC LIMIT $2",
       [addressBuf, fetchLimit]
     );
     return rows.rows.map((row) => ({
@@ -598,7 +598,7 @@ export async function getTokenTransfersByAddress(
     to_address: Buffer;
     amount_numeric: string | number;
   }>(
-    "SELECT tt.tx_hash, tt.block_number, b.timestamp AS block_timestamp, tt.tx_index, tt.log_index, t.receipt_status, t.tx_selector, tt.token_address, tt.from_address, tt.to_address, tt.amount_numeric FROM token_transfers tt LEFT JOIN txs t ON t.tx_hash = tt.tx_hash LEFT JOIN blocks b ON b.number = tt.block_number WHERE (tt.from_address = $1 OR tt.to_address = $1) AND (tt.block_number < $2 OR (tt.block_number = $2 AND tt.tx_index < $3) OR (tt.block_number = $2 AND tt.tx_index = $3 AND tt.log_index < $4) OR (tt.block_number = $2 AND tt.tx_index = $3 AND tt.log_index = $4 AND tt.tx_hash < $5)) ORDER BY tt.block_number DESC, tt.tx_index DESC, tt.log_index DESC, tt.tx_hash DESC LIMIT $6",
+    "SELECT tt.tx_hash, tt.block_number, b.timestamp AS block_timestamp, tt.tx_index, tt.log_index, t.receipt_status, t.tx_selector, tt.token_address, tt.from_address, tt.to_address, tt.amount_numeric FROM token_transfers tt LEFT JOIN txs t ON t.tx_hash = tt.tx_hash LEFT JOIN blocks b ON b.number = tt.block_number WHERE (tt.from_address = $1 OR tt.to_address = $1 OR tt.token_address = $1) AND (tt.block_number < $2 OR (tt.block_number = $2 AND tt.tx_index < $3) OR (tt.block_number = $2 AND tt.tx_index = $3 AND tt.log_index < $4) OR (tt.block_number = $2 AND tt.tx_index = $3 AND tt.log_index = $4 AND tt.tx_hash < $5)) ORDER BY tt.block_number DESC, tt.tx_index DESC, tt.log_index DESC, tt.tx_hash DESC LIMIT $6",
     [addressBuf, cursor.blockNumber, cursor.txIndex, cursor.logIndex, Buffer.from(cursor.txHash), fetchLimit]
   );
   return rows.rows.map((row) => ({

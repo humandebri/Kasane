@@ -331,7 +331,8 @@ pub fn rpc_eth_max_priority_fee_per_gas() -> Result<u128, RpcErrorView> {
             "exec.state.unavailable fee sample is unavailable",
         )
     })?;
-    Ok(estimate_priority_fee_from_sample(&sample))
+    let min_priority_fee = with_state(|state| u128::from(state.chain_state.get().min_priority_fee));
+    Ok(estimate_priority_fee_from_sample(&sample).max(min_priority_fee))
 }
 
 pub fn rpc_eth_gas_price() -> Result<u128, RpcErrorView> {
@@ -1468,9 +1469,10 @@ mod tests {
         init_stable_state();
         let tx_id = TxId([0x91u8; 32]);
         with_state_mut(|state| {
-            state
-                .tx_store
-                .insert(tx_id, StoredTxBytes::from_bytes(std::borrow::Cow::Owned(vec![0u8; 1])));
+            state.tx_store.insert(
+                tx_id,
+                StoredTxBytes::from_bytes(std::borrow::Cow::Owned(vec![0u8; 1])),
+            );
             state.tx_locs.insert(tx_id, TxLoc::included(7, 0));
         });
 

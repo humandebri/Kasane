@@ -67,7 +67,6 @@ export function WrapperDashboard({ cfg, configError }: WrapperDashboardConfigSta
           wrapNonceStatus={forms.wrapNonceStatus}
           wrapNonceError={forms.wrapNonceError}
           wrapFeeEstimateText={actions.wrapFeeEstimateText}
-          unwrapPreviewRequestId={forms.unwrapPreviewRequestId}
           wrapPreviewRequestId={forms.wrapPreviewRequestId}
           submitLoading={actions.submitLoading}
           walletConnected={wallet.session !== null}
@@ -86,9 +85,11 @@ export function WrapperDashboard({ cfg, configError }: WrapperDashboardConfigSta
           statusLoading={tracker.statusLoading}
           message={tracker.message}
           walletConnected={wallet.session !== null}
+          retryLoading={actions.retryLoading}
           withdrawLoading={actions.withdrawLoading}
           onChangeRequestId={setRequestIdInput}
           onQuery={() => void actions.queryAndStartPolling(requestIdInput)}
+          onRetry={() => void actions.retryUnwrap()}
           onWithdraw={() => void actions.withdraw()}
         />
       </section>

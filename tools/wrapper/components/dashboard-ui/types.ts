@@ -9,8 +9,6 @@ export type UnwrapFormState = {
   assetId: string;
   amount: string;
   recipient: string;
-  userNonce: string;
-  deadline: string;
 };
 
 export type WrapFormState = {
@@ -63,7 +61,6 @@ export type StatusPanelView = {
   requestId: string;
   dispatchStatus: DispatchStatus | null;
   executionStatus: ExecutionStatus | null;
-  vaultCanisterId: string | null;
   ledgerTxId: string | null;
   errorCode: string | null;
   mintFailedRecoverable: boolean;

@@ -1,4 +1,4 @@
-// どこで: Explorerトークン補助層 / 何を: ERC-20 symbol/decimals取得にTTL付き上限キャッシュを適用 / なぜ: メモリ増大とRPC増幅を防ぐため
+// どこで: Explorerトークン補助層 / 何を: ERC-20 metadata取得にTTL付き上限キャッシュを適用 / なぜ: メモリ増大とRPC増幅を防ぐため
 
 import { getRpcCallObject } from "./rpc";
 import { parseAddressHex, toHexLower } from "./hex";
@@ -8,58 +8,96 @@ export type TokenMetaView = {
   decimals: number | null;
 };
 
-type CacheEntry = {
-  value: TokenMetaView;
+export type ExtendedTokenMetaView = TokenMetaView & {
+  name: string | null;
+  totalSupplyRaw: bigint | null;
+};
+
+type CacheEntry<TValue> = {
+  value: TValue;
   expiresAtMs: number;
   isError: boolean;
 };
 
 type TokenMetaFetcher = (normalizedAddressHex: string) => Promise<TokenMetaView>;
+type ExtendedTokenMetaFetcher = (normalizedAddressHex: string) => Promise<ExtendedTokenMetaView>;
 
+const NAME_SELECTOR = Buffer.from("06fdde03", "hex");
 const SYMBOL_SELECTOR = Buffer.from("95d89b41", "hex");
 const DECIMALS_SELECTOR = Buffer.from("313ce567", "hex");
+const TOTAL_SUPPLY_SELECTOR = Buffer.from("18160ddd", "hex");
 const MAX_CACHE_ENTRIES = 1000;
 const SUCCESS_TTL_MS = 24 * 60 * 60 * 1000;
 const ERROR_TTL_MS = 5 * 60 * 1000;
 const MAX_CONCURRENT_FETCHES = 5;
 
-const cache = new Map<string, CacheEntry>();
-const inFlight = new Map<string, Promise<TokenMetaView>>();
+const tokenMetaCache = new Map<string, CacheEntry<TokenMetaView>>();
+const tokenMetaInFlight = new Map<string, Promise<TokenMetaView>>();
+const extendedTokenMetaCache = new Map<string, CacheEntry<ExtendedTokenMetaView>>();
+const extendedTokenMetaInFlight = new Map<string, Promise<ExtendedTokenMetaView>>();
 const semaphoreQueue: Array<() => void> = [];
 let activeFetches = 0;
 let nowProvider = () => Date.now();
 let tokenMetaFetcher: TokenMetaFetcher = fetchTokenMetaFromRpc;
+let extendedTokenMetaFetcher: ExtendedTokenMetaFetcher = fetchExtendedTokenMetaFromRpc;
 
 export async function getTokenMeta(addressHex: string): Promise<TokenMetaView> {
   const normalized = toHexLower(parseAddressHex(addressHex));
-  const cached = getFreshCacheEntry(normalized);
+  return getCachedMeta(normalized, tokenMetaCache, tokenMetaInFlight, tokenMetaFetcher, {
+    symbol: null,
+    decimals: null,
+  });
+}
+
+export async function getExtendedTokenMeta(addressHex: string): Promise<ExtendedTokenMetaView> {
+  const normalized = toHexLower(parseAddressHex(addressHex));
+  return getCachedMeta(normalized, extendedTokenMetaCache, extendedTokenMetaInFlight, extendedTokenMetaFetcher, {
+    name: null,
+    symbol: null,
+    decimals: null,
+    totalSupplyRaw: null,
+  });
+}
+
+async function getCachedMeta<TValue>(
+  normalizedAddressHex: string,
+  cache: Map<string, CacheEntry<TValue>>,
+  inFlight: Map<string, Promise<TValue>>,
+  fetcher: (normalizedAddressHex: string) => Promise<TValue>,
+  fallback: TValue
+): Promise<TValue> {
+  const cached = getFreshCacheEntry(normalizedAddressHex, cache);
   if (cached) {
     return cached.value;
   }
-  const pending = inFlight.get(normalized);
+  const pending = inFlight.get(normalizedAddressHex);
   if (pending) {
     return pending;
   }
-  const task = fetchAndCache(normalized).finally(() => {
-    inFlight.delete(normalized);
+  const task = fetchAndCache(normalizedAddressHex, cache, fetcher, fallback).finally(() => {
+    inFlight.delete(normalizedAddressHex);
   });
-  inFlight.set(normalized, task);
+  inFlight.set(normalizedAddressHex, task);
   return task;
 }
 
-async function fetchAndCache(normalizedAddressHex: string): Promise<TokenMetaView> {
+async function fetchAndCache<TValue>(
+  normalizedAddressHex: string,
+  cache: Map<string, CacheEntry<TValue>>,
+  fetcher: (normalizedAddressHex: string) => Promise<TValue>,
+  fallback: TValue
+): Promise<TValue> {
   await acquireSemaphoreSlot();
   try {
-    const value = await tokenMetaFetcher(normalizedAddressHex);
-    setCacheEntry(normalizedAddressHex, {
+    const value = await fetcher(normalizedAddressHex);
+    setCacheEntry(normalizedAddressHex, cache, {
       value,
       expiresAtMs: nowProvider() + SUCCESS_TTL_MS,
       isError: false,
     });
     return value;
   } catch {
-    const fallback: TokenMetaView = { symbol: null, decimals: null };
-    setCacheEntry(normalizedAddressHex, {
+    setCacheEntry(normalizedAddressHex, cache, {
       value: fallback,
       expiresAtMs: nowProvider() + ERROR_TTL_MS,
       isError: true,
@@ -102,13 +140,84 @@ async function fetchTokenMetaFromRpc(addressHex: string): Promise<TokenMetaView>
       gas_price: [],
     }),
   ]);
-
   const symbol = "Ok" in symbolOut && symbolOut.Ok.status === 1 ? decodeSymbol(symbolOut.Ok.return_data) : null;
   const decimals = "Ok" in decimalsOut && decimalsOut.Ok.status === 1 ? decodeDecimals(decimalsOut.Ok.return_data) : null;
   return { symbol, decimals };
 }
 
-function getFreshCacheEntry(normalizedAddressHex: string): CacheEntry | null {
+async function fetchExtendedTokenMetaFromRpc(addressHex: string): Promise<ExtendedTokenMetaView> {
+  const address = parseAddressHex(addressHex);
+  const [nameOut, symbolOut, decimalsOut, totalSupplyOut] = await Promise.all([
+    getRpcCallObject({
+      to: [address],
+      gas: [],
+      value: [],
+      max_priority_fee_per_gas: [],
+      data: [NAME_SELECTOR],
+      from: [],
+      max_fee_per_gas: [],
+      chain_id: [],
+      nonce: [],
+      tx_type: [],
+      access_list: [],
+      gas_price: [],
+    }),
+    getRpcCallObject({
+      to: [address],
+      gas: [],
+      value: [],
+      max_priority_fee_per_gas: [],
+      data: [SYMBOL_SELECTOR],
+      from: [],
+      max_fee_per_gas: [],
+      chain_id: [],
+      nonce: [],
+      tx_type: [],
+      access_list: [],
+      gas_price: [],
+    }),
+    getRpcCallObject({
+      to: [address],
+      gas: [],
+      value: [],
+      max_priority_fee_per_gas: [],
+      data: [DECIMALS_SELECTOR],
+      from: [],
+      max_fee_per_gas: [],
+      chain_id: [],
+      nonce: [],
+      tx_type: [],
+      access_list: [],
+      gas_price: [],
+    }),
+    getRpcCallObject({
+      to: [address],
+      gas: [],
+      value: [],
+      max_priority_fee_per_gas: [],
+      data: [TOTAL_SUPPLY_SELECTOR],
+      from: [],
+      max_fee_per_gas: [],
+      chain_id: [],
+      nonce: [],
+      tx_type: [],
+      access_list: [],
+      gas_price: [],
+    }),
+  ]);
+
+  const name = "Ok" in nameOut && nameOut.Ok.status === 1 ? decodeAbiString(nameOut.Ok.return_data) : null;
+  const symbol = "Ok" in symbolOut && symbolOut.Ok.status === 1 ? decodeSymbol(symbolOut.Ok.return_data) : null;
+  const decimals = "Ok" in decimalsOut && decimalsOut.Ok.status === 1 ? decodeDecimals(decimalsOut.Ok.return_data) : null;
+  const totalSupplyRaw =
+    "Ok" in totalSupplyOut && totalSupplyOut.Ok.status === 1 ? decodeUint256(totalSupplyOut.Ok.return_data) : null;
+  return { name, symbol, decimals, totalSupplyRaw };
+}
+
+function getFreshCacheEntry<TValue>(
+  normalizedAddressHex: string,
+  cache: Map<string, CacheEntry<TValue>>
+): CacheEntry<TValue> | null {
   const entry = cache.get(normalizedAddressHex);
   if (!entry) {
     return null;
@@ -117,22 +226,31 @@ function getFreshCacheEntry(normalizedAddressHex: string): CacheEntry | null {
     cache.delete(normalizedAddressHex);
     return null;
   }
-  touchCacheEntry(normalizedAddressHex, entry);
+  touchCacheEntry(normalizedAddressHex, cache, entry);
   return entry;
 }
 
-function setCacheEntry(normalizedAddressHex: string, entry: CacheEntry): void {
+function setCacheEntry<TValue>(normalizedAddressHex: string, cache: Map<string, CacheEntry<TValue>>, entry: CacheEntry<TValue>): void {
   cache.delete(normalizedAddressHex);
   cache.set(normalizedAddressHex, entry);
   evictOldestIfNeeded();
 }
 
-function touchCacheEntry(normalizedAddressHex: string, entry: CacheEntry): void {
+function touchCacheEntry<TValue>(
+  normalizedAddressHex: string,
+  cache: Map<string, CacheEntry<TValue>>,
+  entry: CacheEntry<TValue>
+): void {
   cache.delete(normalizedAddressHex);
   cache.set(normalizedAddressHex, entry);
 }
 
 function evictOldestIfNeeded(): void {
+  evictOldestFromCache(tokenMetaCache);
+  evictOldestFromCache(extendedTokenMetaCache);
+}
+
+function evictOldestFromCache<TValue>(cache: Map<string, CacheEntry<TValue>>): void {
   while (cache.size > MAX_CACHE_ENTRIES) {
     const oldestKey = cache.keys().next().value;
     if (typeof oldestKey !== "string") {
@@ -163,7 +281,7 @@ function releaseSemaphoreSlot(): void {
   }
 }
 
-function decodeSymbol(data: Uint8Array): string | null {
+function decodeAbiString(data: Uint8Array): string | null {
   if (data.length === 0) {
     return null;
   }
@@ -181,6 +299,10 @@ function decodeSymbol(data: Uint8Array): string | null {
     return text.length > 0 ? text : null;
   }
   return decodeBytes32Symbol(data);
+}
+
+function decodeSymbol(data: Uint8Array): string | null {
+  return decodeAbiString(data);
 }
 
 function decodeBytes32Symbol(data: Uint8Array): string | null {
@@ -213,6 +335,17 @@ function decodeDecimals(data: Uint8Array): number | null {
   return Number(out);
 }
 
+function decodeUint256(data: Uint8Array): bigint | null {
+  if (data.length < 32) {
+    return null;
+  }
+  let out = 0n;
+  for (const value of data.subarray(0, 32)) {
+    out = (out << 8n) + BigInt(value);
+  }
+  return out;
+}
+
 function wordToNumber(word: Uint8Array): number | null {
   if (word.length !== 32) {
     return null;
@@ -238,17 +371,22 @@ function bytesToAscii(data: Uint8Array): string {
 }
 
 function resetForTest(): void {
-  cache.clear();
-  inFlight.clear();
+  tokenMetaCache.clear();
+  tokenMetaInFlight.clear();
+  extendedTokenMetaCache.clear();
+  extendedTokenMetaInFlight.clear();
   semaphoreQueue.length = 0;
   activeFetches = 0;
   nowProvider = () => Date.now();
   tokenMetaFetcher = fetchTokenMetaFromRpc;
+  extendedTokenMetaFetcher = fetchExtendedTokenMetaFromRpc;
 }
 
 export const tokenMetaTestHooks = {
+  decodeAbiString,
   decodeSymbol,
   decodeDecimals,
+  decodeUint256,
   resetForTest,
   setNowProviderForTest: (provider: () => number): void => {
     nowProvider = provider;
@@ -256,11 +394,20 @@ export const tokenMetaTestHooks = {
   setFetcherForTest: (fetcher: TokenMetaFetcher): void => {
     tokenMetaFetcher = fetcher;
   },
-  getCacheSizeForTest: (): number => cache.size,
-  getInFlightSizeForTest: (): number => inFlight.size,
+  setExtendedFetcherForTest: (fetcher: ExtendedTokenMetaFetcher): void => {
+    extendedTokenMetaFetcher = fetcher;
+  },
+  getCacheSizeForTest: (): number => tokenMetaCache.size,
+  getExtendedCacheSizeForTest: (): number => extendedTokenMetaCache.size,
+  getInFlightSizeForTest: (): number => tokenMetaInFlight.size + extendedTokenMetaInFlight.size,
   getIsErrorForTest: (addressHex: string): boolean | null => {
     const normalized = toHexLower(parseAddressHex(addressHex));
-    const entry = cache.get(normalized);
+    const entry = tokenMetaCache.get(normalized);
+    return entry ? entry.isError : null;
+  },
+  getExtendedIsErrorForTest: (addressHex: string): boolean | null => {
+    const normalized = toHexLower(parseAddressHex(addressHex));
+    const entry = extendedTokenMetaCache.get(normalized);
     return entry ? entry.isError : null;
   },
   constants: {

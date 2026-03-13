@@ -15,6 +15,7 @@ pub mod prune_config;
 pub mod prune_state;
 pub mod queue;
 pub mod receipt;
+pub mod runtime_config;
 pub mod runtime_defaults;
 pub mod state_root_meta;
 pub mod state_root_ops;
@@ -40,13 +41,13 @@ pub use prune_config::{PruneConfigV1, PrunePolicy};
 pub use prune_state::{PruneJournal, PruneStateV1};
 pub use queue::QueueMeta;
 pub use receipt::ReceiptLike;
+pub use runtime_config::{RuntimeConfigV1, RUNTIME_CONFIG_SIZE_U32};
 pub use runtime_defaults::{
     DEFAULT_BASE_FEE, DEFAULT_BLOCK_GAS_LIMIT, DEFAULT_DECODE_SUPPRESS_STRIKES_PER_BLOCK,
     DEFAULT_DECODE_SUPPRESS_WINDOW_SECS, DEFAULT_INSTRUCTION_SOFT_LIMIT,
     DEFAULT_MAX_DECODE_DROPS_PER_BLOCK, DEFAULT_MAX_DECODE_SUPPRESS_PRINCIPALS,
-    DEFAULT_MINING_INTERVAL_MS, DEFAULT_MIN_GAS_PRICE, DEFAULT_MIN_PRIORITY_FEE,
-    DEFAULT_PRUNE_MAX_OPS_PER_TICK, DEFAULT_PRUNE_TIMER_INTERVAL_MS, MIN_PRUNE_MAX_OPS_PER_TICK,
-    MIN_PRUNE_TIMER_INTERVAL_MS,
+    DEFAULT_MINING_INTERVAL_MS, DEFAULT_MIN_FEE_FLOOR, DEFAULT_PRUNE_MAX_OPS_PER_TICK,
+    DEFAULT_PRUNE_TIMER_INTERVAL_MS, MIN_PRUNE_MAX_OPS_PER_TICK, MIN_PRUNE_TIMER_INTERVAL_MS,
 };
 pub use state_root_meta::{StateRootMetaV1, STATE_ROOT_META_SIZE_U32};
 pub use state_root_ops::{

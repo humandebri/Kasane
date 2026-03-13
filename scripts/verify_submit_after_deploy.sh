@@ -51,7 +51,7 @@ log "submit verify payload: ${VERIFY_PAYLOAD_FILE}"
   VERIFY_AUTH_SUB="${VERIFY_AUTH_SUB:-deploy-bot}" \
   VERIFY_AUTH_SCOPE="${VERIFY_AUTH_SCOPE:-verify.submit}" \
   VERIFY_AUTH_TTL_SEC="${VERIFY_AUTH_TTL_SEC:-300}" \
-  npm run verify:submit
+  corepack pnpm run verify:submit
 )
 
 log "verify submit done"

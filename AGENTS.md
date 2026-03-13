@@ -21,7 +21,7 @@
 - まず実行:
   - `cargo check --workspace`
 - ユニット/統合（主要）:
-  - `scripts/ci-local.sh github`
+  - `CI_LOCAL_MODE=github scripts/ci-local.sh`
 - デプロイ前スモーク:
   - `scripts/predeploy_smoke.sh`
 - スクリプト全体の使い方:

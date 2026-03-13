@@ -93,6 +93,18 @@ export default async function AddressPage({
                 </Link>
               ) : null}
             </dd>
+            {data.erc20Meta ? (
+              <>
+                <dt className="text-slate-500">Token Name</dt>
+                <dd>{data.erc20Meta.name === "" ? "N/A" : data.erc20Meta.name}</dd>
+                <dt className="text-slate-500">Symbol</dt>
+                <dd className="font-mono">{data.erc20Meta.symbol}</dd>
+                <dt className="text-slate-500">Decimals</dt>
+                <dd>{data.erc20Meta.decimals.toString()}</dd>
+                <dt className="text-slate-500">Total Supply</dt>
+                <dd className="font-mono">{data.erc20Meta.totalSupplyFormatted}</dd>
+              </>
+            ) : null}
             {verified ? (
               <>
                 <dt className="text-slate-500">Contract Name</dt>
@@ -165,7 +177,9 @@ export default async function AddressPage({
             <>
               {data.history.length === 0 ? (
                 <div className="rounded-md border bg-slate-50 p-3 text-sm text-muted-foreground">
-                  No indexed transactions for this address.
+                  {data.isContract === true && data.tokenTransfers.length > 0
+                    ? "No direct from/to transactions for this contract. Check Token Transfers for mint/burn activity."
+                    : "No indexed transactions for this address."}
                 </div>
               ) : (
                 <Table>
@@ -291,10 +305,10 @@ export default async function AddressPage({
                               {shortHex(item.toAddressHex)}
                             </Link>
                           </TableCell>
-                          <TableCell className="font-mono text-xs break-all">{item.amount.toString()}</TableCell>
+                          <TableCell className="font-mono text-xs break-all">{item.amountText}</TableCell>
                           <TableCell className="font-mono text-xs">
                             <Link href={`/address/${item.tokenAddressHex}`} className="text-sky-700 hover:underline" title={item.tokenAddressHex}>
-                              {shortHex(item.tokenAddressHex)}
+                              {item.tokenLabel}
                             </Link>
                           </TableCell>
                         </TableRow>

@@ -4,7 +4,7 @@ use crate::chain_data::codec::{encode_guarded, mark_decode_failure};
 use crate::chain_data::constants::{CHAIN_ID, CHAIN_STATE_SIZE_U32};
 use crate::chain_data::runtime_defaults::{
     DEFAULT_BASE_FEE, DEFAULT_BLOCK_GAS_LIMIT, DEFAULT_INSTRUCTION_SOFT_LIMIT,
-    DEFAULT_MINING_INTERVAL_MS, DEFAULT_MIN_GAS_PRICE, DEFAULT_MIN_PRIORITY_FEE,
+    DEFAULT_MINING_INTERVAL_MS, DEFAULT_MIN_FEE_FLOOR,
 };
 use ic_stable_structures::storable::Bound;
 use ic_stable_structures::Storable;
@@ -83,8 +83,8 @@ impl ChainStateV1 {
             next_queue_seq: 0,
             mining_interval_ms: DEFAULT_MINING_INTERVAL_MS,
             base_fee: DEFAULT_BASE_FEE,
-            min_gas_price: DEFAULT_MIN_GAS_PRICE,
-            min_priority_fee: DEFAULT_MIN_PRIORITY_FEE,
+            min_gas_price: DEFAULT_MIN_FEE_FLOOR,
+            min_priority_fee: DEFAULT_MIN_FEE_FLOOR,
             block_gas_limit: DEFAULT_BLOCK_GAS_LIMIT,
             instruction_soft_limit: DEFAULT_INSTRUCTION_SOFT_LIMIT,
         }

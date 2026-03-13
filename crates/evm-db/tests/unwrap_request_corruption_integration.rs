@@ -14,14 +14,12 @@ type TestMemory = VirtualMemory<DefaultMemoryImpl>;
 
 fn sample_request() -> UnwrapDispatchRequest {
     UnwrapDispatchRequest {
-        vault_canister_id: vec![0xA1u8; 12],
         asset_id: vec![0xB2u8; 12],
-        amount: vec![0xC3u8; 32],
+        amount: [0xC3u8; 32],
         recipient: vec![0xD4u8; 20],
         status: UnwrapRequestStatus::Queued,
         ledger_tx_id: Some(vec![0xE5u8; 16]),
         error_code: Some("wrap.integration.sample".to_string()),
-        created_at: 123_456_789,
         updated_at: 123_456_799,
     }
 }

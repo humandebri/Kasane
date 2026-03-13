@@ -17,7 +17,7 @@ If unsure, run the commands in the order below.
 
 1. CI-equivalent checks (light)
 ```bash
-scripts/ci-local.sh github
+CI_LOCAL_MODE=github scripts/ci-local.sh
 ```
 
 2. Pre-deploy smoke (standard, PocketIC)
@@ -50,7 +50,7 @@ scripts/measure_precompile_ratio.sh
 ## By Purpose
 
 ### Pre-checks and Quality Gates
-- `scripts/ci-local.sh`: runs in `github|smoke|all` modes
+- `scripts/ci-local.sh`: runs in `github|smoke|all` modes via `CI_LOCAL_MODE=<mode>`
 - `scripts/check_gateway_api_compat_baseline.sh`: detects breaking changes in gateway API compatibility baseline (`--update` updates baseline)
 - `scripts/check_gateway_matrix_sync.sh`: verifies compatibility matrix row in `tools/rpc-gateway/README.md` matches `tools/rpc-gateway/package.json` version line
 - `scripts/check_precompile_feature_isolation.sh`: verifies the default wasm build of `ic-evm-core` does not pull BLS/KZG backend crates (`ark-bls12-381`, `c-kzg`, `blst`)

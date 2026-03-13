@@ -17,7 +17,11 @@ struct GenesisBalanceView {
 #[derive(Clone, Debug, CandidType, Deserialize)]
 struct InitArgs {
     genesis_balances: Vec<GenesisBalanceView>,
+    wrap_canister_id: Principal,
+    wrap_factory_address: Vec<u8>,
 }
+
+const TEST_WRAP_FACTORY_ADDRESS: [u8; 20] = [0x90u8; 20];
 
 #[derive(Clone, Debug, CandidType, Deserialize)]
 struct RpcCallObjectView {
@@ -98,6 +102,7 @@ fn test_caller() -> Principal {
 
 fn install_canister(pic: &PocketIc) -> Principal {
     let caller = test_caller();
+    let wrap_canister_id = pic.create_canister();
     let init = Some(InitArgs {
         genesis_balances: vec![GenesisBalanceView {
             address: hash::derive_evm_address_from_principal(caller.as_slice())
@@ -105,10 +110,13 @@ fn install_canister(pic: &PocketIc) -> Principal {
                 .to_vec(),
             amount: 10_000_000_000_000_000_000_000_000u128,
         }],
+        wrap_canister_id,
+        wrap_factory_address: TEST_WRAP_FACTORY_ADDRESS.to_vec(),
     });
     let wasm = fs::read(wasm_path()).expect("read gateway wasm");
     let canister_id = pic.create_canister();
     pic.add_cycles(canister_id, 5_000_000_000_000u128);
+    pic.add_cycles(wrap_canister_id, 5_000_000_000_000u128);
     pic.install_canister(
         canister_id,
         wasm,
@@ -246,7 +254,12 @@ fn configured_runs() -> usize {
         .unwrap_or(30)
 }
 
-fn precompile_call(address_u64: u64, gas_limit: u64, from: [u8; 20], data: Vec<u8>) -> RpcCallObjectView {
+fn precompile_call(
+    address_u64: u64,
+    gas_limit: u64,
+    from: [u8; 20],
+    data: Vec<u8>,
+) -> RpcCallObjectView {
     RpcCallObjectView {
         to: Some(address_from_u64(address_u64)),
         from: Some(from.to_vec()),
@@ -272,20 +285,26 @@ fn precompile_profile_is_measurable_with_pocket_ic() {
     let pic = PocketIc::new();
     let canister_id = install_canister(&pic);
 
-    let caller_address = hash::derive_evm_address_from_principal(test_caller().as_slice())
-        .expect("derive caller");
+    let caller_address =
+        hash::derive_evm_address_from_principal(test_caller().as_slice()).expect("derive caller");
     for _ in 0..runs {
         for (name, address_u64, gas_limit, data) in &specs {
             let call_out = call_update(
                 &pic,
                 canister_id,
                 "profile_precompile_call",
-                Encode!(&precompile_call(*address_u64, *gas_limit, caller_address, data.clone()))
-                    .expect("encode precompile call"),
+                Encode!(&precompile_call(
+                    *address_u64,
+                    *gas_limit,
+                    caller_address,
+                    data.clone()
+                ))
+                .expect("encode precompile call"),
             );
             let call_result: Result<RpcCallResultView, String> =
                 Decode!(&call_out, Result<RpcCallResultView, String>).expect("decode call");
-            let call_result = call_result.unwrap_or_else(|err| panic!("call failed for {name}: {err}"));
+            let call_result =
+                call_result.unwrap_or_else(|err| panic!("call failed for {name}: {err}"));
             assert_eq!(call_result.status, 1, "call must succeed for {name}");
         }
     }
@@ -308,11 +327,23 @@ fn precompile_profile_is_measurable_with_pocket_ic() {
             .find(|item| item.address == address)
             .unwrap_or_else(|| panic!("missing profile entry for {name}"));
         assert_eq!(entry.calls, runs as u64, "unexpected calls for {name}");
-        assert!(entry.avg_instructions > 0, "avg_instructions must be > 0 for {name}");
-        assert!(entry.avg_extra_gas > 0, "avg_extra_gas must be > 0 for {name}");
+        assert!(
+            entry.avg_instructions > 0,
+            "avg_instructions must be > 0 for {name}"
+        );
+        assert!(
+            entry.avg_extra_gas > 0,
+            "avg_extra_gas must be > 0 for {name}"
+        );
         entries.push(ProfileEntryReport {
             name: name.clone(),
-            address: format!("0x{}", address.iter().map(|byte| format!("{byte:02x}")).collect::<String>()),
+            address: format!(
+                "0x{}",
+                address
+                    .iter()
+                    .map(|byte| format!("{byte:02x}"))
+                    .collect::<String>()
+            ),
             calls: entry.calls,
             avg_instructions: entry.avg_instructions,
             max_instructions: entry.max_instructions,
@@ -321,7 +352,11 @@ fn precompile_profile_is_measurable_with_pocket_ic() {
         });
     }
 
-    let report = ProfileReport { runs, targets, entries };
+    let report = ProfileReport {
+        runs,
+        targets,
+        entries,
+    };
     let report_json = serde_json::to_string_pretty(&report).expect("serialize report");
     println!("{report_json}");
     if let Ok(path) = std::env::var("PRECOMPILE_PROFILE_JSON_PATH") {

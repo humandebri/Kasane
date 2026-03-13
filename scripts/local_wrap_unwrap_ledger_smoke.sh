@@ -15,7 +15,9 @@ LEDGER_WASM="${LEDGER_CACHE_DIR}/ic-icrc1-ledger.wasm"
 WRAP_AMOUNT="${WRAP_AMOUNT:-1000000}"
 WRAP_GAS_LIMIT="${WRAP_GAS_LIMIT:-800000}"
 WRAP_EVM_NONCE="${WRAP_EVM_NONCE:-0}"
-WRAP_TOKEN_DECIMALS="${WRAP_TOKEN_DECIMALS:-18}"
+LEDGER_DECIMALS="${LEDGER_DECIMALS:-8}"
+CONTRACTS_DIR="${ROOT_DIR}/tools/wrapper/contracts"
+FACTORY_ARTIFACT_PATH="${CONTRACTS_DIR}/out/WrapTokenFactory.sol/WrapTokenFactory.json"
 FACTORY_DEPLOY_GAS_LIMIT="${FACTORY_DEPLOY_GAS_LIMIT:-3000000}"
 FACTORY_DEPLOY_FEE_BUMP="${FACTORY_DEPLOY_FEE_BUMP:-$(python - <<'PY'
 import time
@@ -138,13 +140,11 @@ fi
 
 cat > "${HELPER_TS}" <<'TS'
 import { Principal } from "@dfinity/principal";
+// HELPER_TS is created under tools/wrapper, so ./lib/* stays portable across hosts.
 import {
   WRAP_PRECOMPILE_ADDRESS,
-  decimalToBytes32,
-  deriveRequestId,
-  deriveWrapRequestId,
   toSubmitIcTxData,
-} from "/Users/0xhude/Desktop/ICP/Kasane/tools/wrapper/lib/request-id.ts";
+} from "./lib/request-id.ts";
 
 function toVec(bytes: Uint8Array): string {
   return `vec { ${Array.from(bytes).join("; ")} }`;
@@ -159,56 +159,14 @@ if (mode === "principal-vec") {
   console.log(toVec(Principal.fromText(process.argv[3] ?? "").toUint8Array()));
 } else if (mode === "principal-hex") {
   console.log(Buffer.from(Principal.fromText(process.argv[3] ?? "").toUint8Array()).toString("hex"));
-} else if (mode === "wrap-request-id-vec") {
-  const owner = Principal.fromText(process.argv[3] ?? "").toUint8Array();
-  const assetId = Principal.fromText(process.argv[4] ?? "").toUint8Array();
-  const amount = decimalToBytes32(process.argv[5] ?? "");
-  const evmRecipient = Uint8Array.from(Buffer.from((process.argv[6] ?? "").replace(/^0x/, ""), "hex"));
-  const evmNonce = BigInt(process.argv[7] ?? "0");
-  const gasLimit = BigInt(process.argv[8] ?? "0");
-  console.log(
-    toVec(
-      deriveWrapRequestId({
-        fromOwner: owner,
-        assetId,
-        amount,
-        evmRecipient,
-        evmNonce,
-        gasLimit,
-      }),
-    ),
-  );
 } else if (mode === "unwrap-json") {
-  const callerPrincipal = process.argv[3] ?? "";
-  const vaultCanisterId = process.argv[4] ?? "";
-  const assetId = process.argv[5] ?? "";
-  const amount = BigInt(process.argv[6] ?? "0");
-  const recipient = process.argv[7] ?? "";
-  const userNonce = BigInt(process.argv[8] ?? "0");
-  const deadline = BigInt(process.argv[9] ?? "0");
-  const callerHex = process.argv[10] ?? "";
-  const callerEvmAddress = Uint8Array.from(Buffer.from(callerHex.replace(/^0x/, ""), "hex"));
-  const data = toSubmitIcTxData({
-    vaultCanisterId,
-    assetId,
-    amount,
-    recipient,
-    userNonce,
-    deadline,
-  });
-  const requestId = deriveRequestId({
-    callerEvmAddress,
-    vaultCanisterId,
-    assetId,
-    amount,
-    recipient,
-    userNonce,
-    deadline,
-  });
+  const assetId = process.argv[3] ?? "";
+  const amount = BigInt(process.argv[4] ?? "0");
+  const recipient = process.argv[5] ?? "";
+  const data = toSubmitIcTxData({ assetId, amount, recipient });
   process.stdout.write(
     JSON.stringify({
       dataVec: toVec(data),
-      requestIdVec: toVec(requestId),
       precompileHex: `0x${Buffer.from(WRAP_PRECOMPILE_ADDRESS).toString("hex")}`,
     }),
   );
@@ -362,6 +320,15 @@ while i < len(blob):
 print(out.hex())' "$field"
 }
 
+extract_nat_ok() {
+  python -c 'import re, sys
+text = sys.stdin.read()
+match = re.search(r"Ok = ([0-9_]+) : nat(?:64)?", text)
+if not match:
+    raise SystemExit("nat Ok not found")
+print(match.group(1).replace("_", ""))'
+}
+
 u256_hex_to_address_hex() {
   python -c 'import sys
 hexv = sys.stdin.read().strip().lower()
@@ -464,7 +431,7 @@ else
   cargo build --release --target wasm32-unknown-unknown -p ic-evm-gateway -p wrap-canister
 fi
 log "build solidity factory contracts"
-(cd "${ROOT_DIR}/contracts" && forge build >/dev/null)
+(cd "${CONTRACTS_DIR}" && forge build >/dev/null)
 
 log "create canisters"
 LEDGER_CANISTER_ID="$(retry_command_output "create detached ledger canister" icp canister create -e "${NETWORK}" --identity "${ICP_IDENTITY_NAME}" --detached -q)"
@@ -483,7 +450,7 @@ LEDGER_INIT_ARGS="(variant { Init = record {
   minting_account = record { owner = principal \"${LEDGER_MINTER_PRINCIPAL}\"; subaccount = null; };
   fee_collector_account = null;
   transfer_fee = ${LEDGER_TRANSFER_FEE};
-  decimals = null;
+  decimals = opt ${LEDGER_DECIMALS};
   max_memo_length = null;
   metadata = vec {};
   feature_flags = opt record { icrc2 = true };
@@ -509,6 +476,7 @@ LEDGER_INIT_ARGS_HEX="$(
     -t '(LedgerArg)' \
     "${LEDGER_INIT_ARGS}"
 )"
+FACTORY_ADDRESS_HEX="$(cast compute-address --nonce 0 "0x${CALLER_EVM_HEX}")"
 GATEWAY_INIT_ARGS="(opt record {
   genesis_balances = vec {
     record { address = vec { $(python - <<PY
@@ -523,6 +491,11 @@ PY
 ) }; amount = ${GENESIS_BALANCE_WEI} : nat; };
   };
   wrap_canister_id = principal \"${WRAP_CANISTER_ID}\";
+  wrap_factory_address = vec { $(python - <<PY
+hexv = "${FACTORY_ADDRESS_HEX}".removeprefix("0x").strip()
+print("; ".join(str(b) for b in bytes.fromhex(hexv)))
+PY
+) };
 })"
 GATEWAY_INIT_ARGS_HEX="$(
   didc encode \
@@ -537,14 +510,15 @@ log "install gateway"
 icp canister install evm_canister -e "${NETWORK}" --identity "${ICP_IDENTITY_NAME}" --mode reinstall --wasm "${GATEWAY_WASM}" --args-format hex --args "${GATEWAY_INIT_ARGS_HEX}" >/dev/null
 
 FACTORY_CREATION_HEX="$(
-  python - <<'PY'
+  FACTORY_ARTIFACT_PATH="${FACTORY_ARTIFACT_PATH}" python - <<'PY'
 import json
+import os
 from pathlib import Path
-artifact = Path("/Users/0xhude/Desktop/ICP/Kasane/contracts/out/WrapTokenFactory.sol/WrapTokenFactory.json")
+artifact = Path(os.environ["FACTORY_ARTIFACT_PATH"])
 print(json.loads(artifact.read_text())["bytecode"]["object"].removeprefix("0x"))
 PY
 )"
-FACTORY_CONSTRUCTOR_HEX="$(cd "${ROOT_DIR}/contracts" && cast abi-encode "constructor(address,uint8)" "0x${WRAP_CANISTER_EVM_HEX}" "${WRAP_TOKEN_DECIMALS}")"
+FACTORY_CONSTRUCTOR_HEX="$(cd "${CONTRACTS_DIR}" && cast abi-encode "constructor(address)" "0x${WRAP_CANISTER_EVM_HEX}")"
 FACTORY_DEPLOY_DATA_HEX="${FACTORY_CREATION_HEX}${FACTORY_CONSTRUCTOR_HEX#0x}"
 log "deploy wrap token factory"
 FACTORY_DEPLOY_ARGS="(record {
@@ -564,12 +538,16 @@ FACTORY_DEPLOY_TX_ID_HEX="$(printf '%s' "${FACTORY_DEPLOY_OUT}" | extract_result
 FACTORY_RECEIPT_CMD="query_pp '${ROOT_DIR}/crates/ic-evm-gateway/evm_canister.did' evm_canister rpc_eth_get_transaction_receipt_with_status_by_tx_id '( $(hex_to_candid_vec "${FACTORY_DEPLOY_TX_ID_HEX}") )'"
 FACTORY_RECEIPT_OUT="$(wait_for_pattern "factory deploy receipt" "${FACTORY_RECEIPT_CMD}" "contract_address = opt blob")"
 [[ "${FACTORY_RECEIPT_OUT}" == *"status = 1 : nat8"* ]] || { echo "${FACTORY_RECEIPT_OUT}" >&2; exit 1; }
-FACTORY_ADDRESS_HEX="$(printf '%s' "${FACTORY_RECEIPT_OUT}" | extract_named_opt_blob_hex "contract_address")"
+FACTORY_DEPLOYED_ADDRESS_HEX="$(printf '%s' "${FACTORY_RECEIPT_OUT}" | extract_named_opt_blob_hex "contract_address")"
+[[ "${FACTORY_DEPLOYED_ADDRESS_HEX}" == "${FACTORY_ADDRESS_HEX#0x}" ]] || {
+  echo "predicted factory address mismatch: predicted=${FACTORY_ADDRESS_HEX} actual=0x${FACTORY_DEPLOYED_ADDRESS_HEX}" >&2
+  exit 1
+}
+FACTORY_ADDRESS_HEX="${FACTORY_DEPLOYED_ADDRESS_HEX}"
 
 WRAP_INIT_ARGS="(record {
   kasane_canister = principal \"${EVM_CANISTER_ID}\";
   evm_gateway_canister = principal \"${EVM_CANISTER_ID}\";
-  evm_wrap_factory = $(hex_to_candid_vec "${FACTORY_ADDRESS_HEX}");
   fee_ledger_canister = principal \"${LEDGER_CANISTER_ID}\";
   cycle_fee_e8s = ${CYCLE_FEE_E8S} : nat64;
   gas_price_buffer_bps = ${GAS_PRICE_BUFFER_BPS} : nat32;
@@ -589,23 +567,14 @@ wait_for_pattern \
   "query_pp '${ROOT_DIR}/crates/ic-evm-gateway/evm_canister.did' evm_canister rpc_eth_gas_price '()'" \
   "Ok ="
 
-WRAP_REQUEST_ID_VEC="$(tsx_eval wrap-request-id-vec "${CALLER_PRINCIPAL}" "${LEDGER_CANISTER_ID}" "${WRAP_AMOUNT}" "0x5555555555555555555555555555555555555555" "${WRAP_EVM_NONCE}" "${WRAP_GAS_LIMIT}")"
-
 log "wrap should fail before approve with insufficient allowance"
 WRAP_NO_APPROVE_OUT="$(update_call "${ROOT_DIR}/othercanisters/wrap-canister/wrap_canister.did" wrap_canister submit_wrap_request "(record {
-  request_id = ${WRAP_REQUEST_ID_VEC};
-  asset_id = $(tsx_eval principal-vec "${LEDGER_CANISTER_ID}");
-  amount = $(python - <<PY
-value = int("${WRAP_AMOUNT}")
-raw = value.to_bytes(32, "big")
-print("vec { " + "; ".join(str(b) for b in raw) + " }")
-PY
-);
+  asset_id = principal \"${LEDGER_CANISTER_ID}\";
+  amount_e8s = ${WRAP_AMOUNT} : nat;
   evm_recipient = vec { $(python - <<'PY'
 print("; ".join(["85"] * 20))
 PY
   ) };
-  evm_nonce = ${WRAP_EVM_NONCE} : nat64;
   gas_limit = ${WRAP_GAS_LIMIT} : nat64;
 })" 2>&1 || true)"
 [[ "${WRAP_NO_APPROVE_OUT}" == *"fee.transfer_from_failed:insufficient_allowance:"* ]] || {
@@ -627,19 +596,12 @@ update_call "${LEDGER_DID}" "${LEDGER_CANISTER_ID}" icrc2_approve "(record {
 
 log "submit wrap request and wait for successful mint"
 WRAP_SUBMIT_OUT="$(update_call "${ROOT_DIR}/othercanisters/wrap-canister/wrap_canister.did" wrap_canister submit_wrap_request "(record {
-  request_id = ${WRAP_REQUEST_ID_VEC};
-  asset_id = $(tsx_eval principal-vec "${LEDGER_CANISTER_ID}");
-  amount = $(python - <<PY
-value = int("${WRAP_AMOUNT}")
-raw = value.to_bytes(32, "big")
-print("vec { " + "; ".join(str(b) for b in raw) + " }")
-PY
-);
+  asset_id = principal \"${LEDGER_CANISTER_ID}\";
+  amount_e8s = ${WRAP_AMOUNT} : nat;
   evm_recipient = vec { $(python - <<'PY'
 print("; ".join(["85"] * 20))
 PY
   ) };
-  evm_nonce = ${WRAP_EVM_NONCE} : nat64;
   gas_limit = ${WRAP_GAS_LIMIT} : nat64;
 })")"
 [[ "${WRAP_SUBMIT_OUT}" == *"variant { Ok ="* ]] || {
@@ -647,21 +609,21 @@ PY
   exit 1
 }
 
-WRAP_RESULT_CMD="query_pp '${ROOT_DIR}/othercanisters/wrap-canister/wrap_canister.did' wrap_canister get_wrap_request_result '( ${WRAP_REQUEST_ID_VEC} )'"
+WRAP_REQUEST_ID_HEX="$(printf '%s' "${WRAP_SUBMIT_OUT}" | extract_result_ok_blob_hex)"
+WRAP_REQUEST_ID_VEC="$(hex_to_candid_vec "${WRAP_REQUEST_ID_HEX}")"
+WRAP_RESULT_CMD="query_pp '${ROOT_DIR}/othercanisters/wrap-canister/wrap_canister.did' wrap_canister get_request '( ${WRAP_REQUEST_ID_VEC} )'"
 WRAP_SUCCESS_OUT="$(wait_for_pattern "wrap success result" "${WRAP_RESULT_CMD}" "status = variant { Succeeded }")"
 [[ "${WRAP_SUCCESS_OUT}" == *"fee_ledger_tx_id = opt blob"* ]] || { echo "${WRAP_SUCCESS_OUT}" >&2; exit 1; }
 [[ "${WRAP_SUCCESS_OUT}" == *"pull_ledger_tx_id = opt blob"* ]] || { echo "${WRAP_SUCCESS_OUT}" >&2; exit 1; }
 [[ "${WRAP_SUCCESS_OUT}" == *"mint_tx_id = opt blob"* ]] || { echo "${WRAP_SUCCESS_OUT}" >&2; exit 1; }
-[[ "${WRAP_SUCCESS_OUT}" == *"mint_failed_recoverable = false"* ]] || { echo "${WRAP_SUCCESS_OUT}" >&2; exit 1; }
-[[ "${WRAP_SUCCESS_OUT}" == *"error_code = null"* ]] || { echo "${WRAP_SUCCESS_OUT}" >&2; exit 1; }
 WRAP_MINT_TX_ID_HEX="$(printf '%s' "${WRAP_SUCCESS_OUT}" | extract_named_opt_blob_hex "mint_tx_id")"
 WRAP_MINT_RECEIPT_CMD="query_pp '${ROOT_DIR}/crates/ic-evm-gateway/evm_canister.did' evm_canister rpc_eth_get_transaction_receipt_with_status_by_tx_id '( $(hex_to_candid_vec "${WRAP_MINT_TX_ID_HEX}") )'"
 WRAP_MINT_RECEIPT_OUT="$(wait_for_pattern "wrap mint receipt" "${WRAP_MINT_RECEIPT_CMD}" "status = 1 : nat8")"
 [[ "${WRAP_MINT_RECEIPT_OUT}" == *"variant { Found = record"* ]] || { echo "${WRAP_MINT_RECEIPT_OUT}" >&2; exit 1; }
 
 log "verify factory and wrapped token on evm"
-FACTORY_PREDICT_CALLDATA_HEX="$(cd "${ROOT_DIR}/contracts" && cast calldata "predictTokenAddress(bytes)" "0x${ASSET_ID_HEX}")"
-FACTORY_GET_TOKEN_CALLDATA_HEX="$(cd "${ROOT_DIR}/contracts" && cast calldata "getTokenAddress(bytes)" "0x${ASSET_ID_HEX}")"
+FACTORY_PREDICT_CALLDATA_HEX="$(cd "${CONTRACTS_DIR}" && cast calldata "predictTokenAddress(bytes,uint8)" "0x${ASSET_ID_HEX}" "${LEDGER_DECIMALS}")"
+FACTORY_GET_TOKEN_CALLDATA_HEX="$(cd "${CONTRACTS_DIR}" && cast calldata "getTokenAddress(bytes)" "0x${ASSET_ID_HEX}")"
 PREDICT_OUT="$(rpc_eth_call_hex "${FACTORY_ADDRESS_HEX}" "${FACTORY_PREDICT_CALLDATA_HEX}")"
 TOKEN_OUT="$(rpc_eth_call_hex "${FACTORY_ADDRESS_HEX}" "${FACTORY_GET_TOKEN_CALLDATA_HEX}")"
 [[ "${PREDICT_OUT}" == *"status = 1 : nat8"* ]] || { echo "${PREDICT_OUT}" >&2; exit 1; }
@@ -676,7 +638,7 @@ TOKEN_ADDRESS_HEX="$(printf '%s' "${TOKEN_OUT}" | extract_named_blob_hex "return
 TOKEN_CODE_OUT="$(query_pp "${ROOT_DIR}/crates/ic-evm-gateway/evm_canister.did" evm_canister rpc_eth_get_code "( $(hex_to_candid_vec "${TOKEN_ADDRESS_HEX}"), variant { Latest } )")"
 [[ "${TOKEN_CODE_OUT}" == *"variant { Ok = blob"* ]] || { echo "${TOKEN_CODE_OUT}" >&2; exit 1; }
 [[ "${TOKEN_CODE_OUT}" != *'variant { Ok = blob "" }'* ]] || { echo "${TOKEN_CODE_OUT}" >&2; exit 1; }
-BALANCE_CALLDATA_HEX="$(cd "${ROOT_DIR}/contracts" && cast calldata "balanceOf(address)" "0x5555555555555555555555555555555555555555")"
+BALANCE_CALLDATA_HEX="$(cd "${CONTRACTS_DIR}" && cast calldata "balanceOf(address)" "0x5555555555555555555555555555555555555555")"
 BALANCE_OUT="$(rpc_eth_call_hex "${TOKEN_ADDRESS_HEX}" "${BALANCE_CALLDATA_HEX}")"
 [[ "${BALANCE_OUT}" == *"status = 1 : nat8"* ]] || { echo "${BALANCE_OUT}" >&2; exit 1; }
 WRAP_TOKEN_BALANCE="$(printf '%s' "${BALANCE_OUT}" | extract_named_blob_hex "return_data" | u256_hex_to_decimal)"
@@ -684,18 +646,34 @@ WRAP_TOKEN_BALANCE="$(printf '%s' "${BALANCE_OUT}" | extract_named_blob_hex "ret
   echo "[local-wrap-unwrap-ledger] wrapped token balance mismatch: expected=${WRAP_AMOUNT} actual=${WRAP_TOKEN_BALANCE}" >&2
   exit 1
 }
+DECIMALS_CALLDATA_HEX="$(cd "${CONTRACTS_DIR}" && cast calldata "decimals()")"
+DECIMALS_OUT="$(rpc_eth_call_hex "${TOKEN_ADDRESS_HEX}" "${DECIMALS_CALLDATA_HEX}")"
+[[ "${DECIMALS_OUT}" == *"status = 1 : nat8"* ]] || { echo "${DECIMALS_OUT}" >&2; exit 1; }
+WRAP_TOKEN_DECIMALS_ACTUAL="$(printf '%s' "${DECIMALS_OUT}" | extract_named_blob_hex "return_data" | u256_hex_to_decimal)"
+[[ "${WRAP_TOKEN_DECIMALS_ACTUAL}" == "${LEDGER_DECIMALS}" ]] || {
+  echo "[local-wrap-unwrap-ledger] wrapped token decimals mismatch: expected=${LEDGER_DECIMALS} actual=${WRAP_TOKEN_DECIMALS_ACTUAL}" >&2
+  exit 1
+}
 
-UNWRAP_JSON="$(tsx_eval unwrap-json "${CALLER_PRINCIPAL}" "${WRAP_CANISTER_ID}" "${LEDGER_CANISTER_ID}" "${UNWRAP_AMOUNT}" "${CALLER_PRINCIPAL}" "${UNWRAP_USER_NONCE}" "${UNWRAP_DEADLINE}" "${CALLER_EVM_HEX}")"
+log "approve wrapped token for unwrap burn"
+APPROVE_CALLDATA_HEX="$(cd "${CONTRACTS_DIR}" && cast calldata "approve(address,uint256)" "0x${FACTORY_ADDRESS_HEX}" "${UNWRAP_AMOUNT}")"
+APPROVE_NONCE="$(query_pp "${ROOT_DIR}/crates/ic-evm-gateway/evm_canister.did" evm_canister expected_nonce_by_address "( $(hex_to_candid_vec "${CALLER_EVM_HEX}") )" | extract_nat_ok)"
+update_call "${ROOT_DIR}/crates/ic-evm-gateway/evm_canister.did" evm_canister submit_ic_tx "(record {
+  to = opt $(hex_to_candid_vec "${TOKEN_ADDRESS_HEX}");
+  value = 0 : nat;
+  gas_limit = 300000 : nat64;
+  nonce = ${APPROVE_NONCE} : nat64;
+  max_fee_per_gas = ${UNWRAP_MAX_FEE_PER_GAS} : nat;
+  max_priority_fee_per_gas = 300000000000 : nat;
+  data = $(hex_to_candid_vec "${APPROVE_CALLDATA_HEX}");
+})" >/dev/null
+
+UNWRAP_NONCE="$(query_pp "${ROOT_DIR}/crates/ic-evm-gateway/evm_canister.did" evm_canister expected_nonce_by_address "( $(hex_to_candid_vec "${CALLER_EVM_HEX}") )" | extract_nat_ok)"
+UNWRAP_JSON="$(tsx_eval unwrap-json "${LEDGER_CANISTER_ID}" "${UNWRAP_AMOUNT}" "${CALLER_PRINCIPAL}")"
 UNWRAP_DATA_VEC="$(UNWRAP_JSON="${UNWRAP_JSON}" python - <<'PY'
 import json
 import os
 print(json.loads(os.environ["UNWRAP_JSON"])["dataVec"])
-PY
-)"
-UNWRAP_REQUEST_ID_VEC="$(UNWRAP_JSON="${UNWRAP_JSON}" python - <<'PY'
-import json
-import os
-print(json.loads(os.environ["UNWRAP_JSON"])["requestIdVec"])
 PY
 )"
 UNWRAP_PRECOMPILE_HEX="$(UNWRAP_JSON="${UNWRAP_JSON}" python - <<'PY'
@@ -706,7 +684,7 @@ PY
 )"
 
 log "submit unwrap tx and wait for dispatch"
-update_call "${ROOT_DIR}/crates/ic-evm-gateway/evm_canister.did" evm_canister submit_ic_tx "(record {
+UNWRAP_SUBMIT_OUT="$(update_call "${ROOT_DIR}/crates/ic-evm-gateway/evm_canister.did" evm_canister submit_ic_tx "(record {
   to = opt vec { $(python - <<PY
 hexv = "${UNWRAP_PRECOMPILE_HEX}".replace("0x", "")
 print("; ".join(str(b) for b in bytes.fromhex(hexv)))
@@ -714,17 +692,31 @@ PY
 ) };
   value = 0 : nat;
   gas_limit = ${UNWRAP_GAS_LIMIT} : nat64;
-  nonce = ${UNWRAP_USER_NONCE} : nat64;
+  nonce = ${UNWRAP_NONCE} : nat64;
   max_fee_per_gas = ${UNWRAP_MAX_FEE_PER_GAS} : nat;
   max_priority_fee_per_gas = 300000000000 : nat;
   data = ${UNWRAP_DATA_VEC};
-})" >/dev/null
+})")"
+UNWRAP_TX_ID_HEX="$(printf '%s' "${UNWRAP_SUBMIT_OUT}" | extract_result_ok_blob_hex)"
+UNWRAP_REQUEST_IDS_CMD="query_pp '${ROOT_DIR}/crates/ic-evm-gateway/evm_canister.did' evm_canister get_unwrap_request_ids_by_tx_id '( $(hex_to_candid_vec "${UNWRAP_TX_ID_HEX}") )'"
+UNWRAP_REQUEST_IDS_OUT="$(wait_for_pattern "unwrap request ids" "${UNWRAP_REQUEST_IDS_CMD}" "vec {")"
+UNWRAP_REQUEST_ID_VEC="$(printf '%s' "${UNWRAP_REQUEST_IDS_OUT}" | python - <<'PY'
+import re, sys
+text = sys.stdin.read()
+match = re.search(r"vec\s*\{\s*blob\s+\"([^\"]+)\"", text)
+if not match:
+    raise SystemExit("unwrap request id not found")
+blob = match.group(1)
+parts = [part for part in blob.split("\\") if part]
+values = "; ".join(str(int(part, 16)) for part in parts)
+print(f"vec {{ {values} }}")
+PY
+)"
 
-DISPATCH_CMD="query_pp '${ROOT_DIR}/crates/ic-evm-gateway/evm_canister.did' evm_canister get_request_dispatch_result '(variant { Unwrap }, ${UNWRAP_REQUEST_ID_VEC})'"
+DISPATCH_CMD="query_pp '${ROOT_DIR}/crates/ic-evm-gateway/evm_canister.did' evm_canister get_unwrap_dispatch_overview '( ${UNWRAP_REQUEST_ID_VEC} )'"
 DISPATCH_OUT="$(wait_for_pattern "unwrap dispatch" "${DISPATCH_CMD}" "status = variant { Dispatched }")"
-[[ "${DISPATCH_OUT}" == *"error_code = null"* ]] || { echo "${DISPATCH_OUT}" >&2; exit 1; }
 
-WRAP_UNWRAP_CMD="query_pp '${ROOT_DIR}/othercanisters/wrap-canister/wrap_canister.did' wrap_canister get_request_result '( ${UNWRAP_REQUEST_ID_VEC} )'"
+WRAP_UNWRAP_CMD="query_pp '${ROOT_DIR}/othercanisters/wrap-canister/wrap_canister.did' wrap_canister get_request '( ${UNWRAP_REQUEST_ID_VEC} )'"
 UNWRAP_RESULT_OUT="$(wait_for_pattern "unwrap execution" "${WRAP_UNWRAP_CMD}" "status = variant { Succeeded }")"
 [[ "${UNWRAP_RESULT_OUT}" == *"ledger_tx_id = opt blob"* ]] || { echo "${UNWRAP_RESULT_OUT}" >&2; exit 1; }
 

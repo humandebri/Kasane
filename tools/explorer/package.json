@@ -3,6 +3,7 @@
   "private": true,
   "version": "0.1.0",
   "type": "module",
+  "packageManager": "pnpm@10.29.2",
   "scripts": {
     "dev": "next dev",
     "build": "next build --webpack",
@@ -32,8 +33,11 @@
     "tailwind-merge": "^3.3.1",
     "tw-animate-css": "^1.3.7"
   },
-  "overrides": {
-    "tmp": "^0.2.5"
+  "pnpm": {
+    "overrides": {
+      "immutable": "^4.3.8",
+      "tmp": "^0.2.5"
+    }
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4.1.12",

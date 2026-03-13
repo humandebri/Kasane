@@ -9,18 +9,18 @@ REPO_URL="${REPO_URL:-$(git config --get remote.origin.url)}"
 REF="${REF:-$(git rev-parse HEAD)}"
 REMOTE_REPO_DIR="${REMOTE_REPO_DIR:-/opt/kasane-repo}"
 REMOTE_RUNTIME_DIR="${REMOTE_RUNTIME_DIR:-/opt/kasane}"
-EXPLORER_INSTALL_CMD="${EXPLORER_INSTALL_CMD:-npm ci}"
+EXPLORER_INSTALL_CMD="${EXPLORER_INSTALL_CMD:-pnpm install --frozen-lockfile}"
 EXPLORER_INSTALL_STEP=""
 
 case "${EXPLORER_INSTALL_CMD}" in
-  "npm ci" | "ci")
-    EXPLORER_INSTALL_STEP="npm ci"
+  "pnpm install --frozen-lockfile" | "frozen")
+    EXPLORER_INSTALL_STEP="corepack pnpm install --frozen-lockfile"
     ;;
-  "npm install" | "install")
-    EXPLORER_INSTALL_STEP="npm install"
+  "pnpm install" | "install")
+    EXPLORER_INSTALL_STEP="corepack pnpm install"
     ;;
   *)
-    echo "[contabo-deploy-tools] EXPLORER_INSTALL_CMD must be one of: 'npm ci', 'ci', 'npm install', 'install'" >&2
+    echo "[contabo-deploy-tools] EXPLORER_INSTALL_CMD must be one of: 'pnpm install --frozen-lockfile', 'frozen', 'pnpm install', 'install'" >&2
     exit 1
     ;;
 esac
@@ -92,7 +92,7 @@ echo "[contabo-deploy-tools] build indexer"
 sudo -u rpcgw bash -lc "cd '${REMOTE_RUNTIME_DIR}/tools/indexer' && npm ci && npm run build"
 
 echo "[contabo-deploy-tools] build explorer (${EXPLORER_INSTALL_STEP})"
-sudo -u rpcgw bash -lc "cd '${REMOTE_RUNTIME_DIR}/tools/explorer' && ${EXPLORER_INSTALL_STEP} && npm run build"
+sudo -u rpcgw bash -lc "cd '${REMOTE_RUNTIME_DIR}/tools/explorer' && ${EXPLORER_INSTALL_STEP} && corepack pnpm run build"
 
 echo "[contabo-deploy-tools] restart services"
 sudo systemctl restart kasane-indexer.service

@@ -43,6 +43,12 @@ PY
 )"
 ```
 
+注意:
+
+- 既存 factory / token が未稼働なら、監査対応後は新 factory を deploy してこの値へ切り替えてください。
+- backward compatibility は持たない前提です。旧 factory は参照しません。
+- 新しい `WrapTokenFactory` は `constructor(address minter_)` です。deploy 時は `wrap_canister` 由来の EVM address を constructor に必ず入れてください。
+
 前提確認:
 
 ```bash
@@ -91,8 +97,8 @@ icp canister install wrap_canister \
   --args "(record {
     kasane_canister = principal \"${KASANE_CANISTER_ID}\";
     evm_gateway_canister = principal \"${EVM_CANISTER_ID}\";
-    evm_wrap_factory = vec { ${EVM_WRAP_FACTORY_BYTES} };
     fee_ledger_canister = principal \"${FEE_LEDGER_CANISTER_ID}\";
+    wrap_factory_address = vec { <EVM_WRAP_FACTORY_BYTES> };
     cycle_fee_e8s = ${CYCLE_FEE_E8S} : nat64;
     gas_price_buffer_bps = ${GAS_PRICE_BUFFER_BPS} : nat32;
   })"
@@ -100,12 +106,22 @@ icp canister install wrap_canister \
 
 ### 4-2. 更新 upgrade
 
+`upgrade` でも `InitArgs` は必須です。install と同じ Candid を `--args` で渡し、runtime config を明示的に上書きします。
+
 ```bash
 icp canister install wrap_canister \
   -e "${ICP_ENV}" \
   --identity "${ICP_IDENTITY_NAME}" \
   --mode upgrade \
-  --wasm target/wasm32-unknown-unknown/release/wrap_canister.wasm
+  --wasm target/wasm32-unknown-unknown/release/wrap_canister.wasm \
+  --args "(record {
+    kasane_canister = principal \"${KASANE_CANISTER_ID}\";
+    evm_gateway_canister = principal \"${EVM_CANISTER_ID}\";
+    fee_ledger_canister = principal \"${FEE_LEDGER_CANISTER_ID}\";
+    wrap_factory_address = vec { <EVM_WRAP_FACTORY_BYTES> };
+    cycle_fee_e8s = ${CYCLE_FEE_E8S} : nat64;
+    gas_price_buffer_bps = ${GAS_PRICE_BUFFER_BPS} : nat32;
+  })"
 ```
 
 ---
@@ -128,6 +144,8 @@ dfx canister call --query wrap_canister export_did '()' --network "${ICP_ENV}"
 
 - `submit_wrap_request` は wallet caller 本人で実行され、`from_owner` は canister 側で `msg_caller` 固定です（引数で渡しません）。
 - Wrap手数料（`cycles + gas`）は `fee_ledger_canister` から `icrc2_transfer_from` で前払い徴収されます。
+- wrap mint 時の decimals は対象 ledger の `icrc1_metadata` を一次情報として取得します。metadata が壊れている ledger は wrap できません。
+- `set_fee_policy` は controller のみ実行可能です。例:
 - `set_fee_policy` は controller のみ実行可能です。例:
 
 ```bash

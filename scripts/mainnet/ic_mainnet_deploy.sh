@@ -129,10 +129,12 @@ log "wasm=$(realpath "${WASM_PATH}")"
 confirm_or_abort
 
 if [[ "${MODE}" == "upgrade" ]]; then
-  log "install upgrade (no init args)"
+  INIT_ARGS="$(build_init_args)"
+  log "install upgrade with init args"
   run_icp_canister install \
     --mode "${MODE}" \
     --wasm "${WASM_PATH}" \
+    --args "${INIT_ARGS}" \
     "${TARGET}"
 else
   INIT_ARGS="$(build_init_args)"

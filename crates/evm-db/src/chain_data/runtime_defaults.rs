@@ -1,9 +1,5 @@
 //! どこで: chain_data の実行時デフォルト / 何を: 運用調整しうる既定値を集約 / なぜ: 仕様固定値と責務分離するため
 
-// unwrap dispatch の既定許可先。
-// 運用で固定 principal を採るまでの暫定値として management canister を使う。
-pub const DEFAULT_WRAP_CANISTER_ID_TEXT: &str = "aaaaa-aa";
-
 // 自動ブロック生成の既定間隔（ms）
 pub const DEFAULT_MINING_INTERVAL_MS: u64 = 2_000;
 
@@ -12,10 +8,9 @@ pub const DEFAULT_MINING_INTERVAL_MS: u64 = 2_000;
 // staging計測手順（失敗ゼロ最大候補 + 20% headroom）で根拠を取ってから変更する。
 // 運用方針: 1.00 gwei から引き上げ検討後、250 gwei を初期デフォルトに採用。
 pub const DEFAULT_BASE_FEE: u64 = 250_000_000_000;
-// legacy Tx の最低 gas_price。0 だと legacy 下限チェックが実質無効になるため非0を維持する。
-pub const DEFAULT_MIN_GAS_PRICE: u64 = 250_000_000_000;
-pub const DEFAULT_MIN_PRIORITY_FEE: u64 = 250_000_000_000;
-pub const DEFAULT_BLOCK_GAS_LIMIT: u64 = 6_000_000;
+// 現行運用では legacy gas_price 下限と EIP-1559 priority fee 下限を同値で扱う。
+pub const DEFAULT_MIN_FEE_FLOOR: u64 = 150_000_000_000;
+pub const DEFAULT_BLOCK_GAS_LIMIT: u64 = 12_000_000;
 // 0 の場合は命令数ベースの早期打ち切りを無効化する。
 // 既定値は「上限手前で安全に止める」ための保守値。
 pub const DEFAULT_INSTRUCTION_SOFT_LIMIT: u64 = 4_000_000_000;

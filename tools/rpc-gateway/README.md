@@ -106,8 +106,8 @@ This section reflects the current implementation and is treated as the canonical
 | --- | --- | --- | --- | --- |
 | `eth_chainId` | Supported | Returns canister `rpc_eth_chain_id` | None | `net_version` returns the same value in decimal string |
 | `eth_blockNumber` | Supported | Returns canister `rpc_eth_block_number` | None | - |
-| `eth_gasPrice` | Partially supported | Returns canister `rpc_eth_gas_price` (`max(base_fee + max(estimated_priority,min_priority), min_gas_price)`) | `-32000 state unavailable` when observation data is insufficient | Returns a constrained estimate aligned with acceptance rules |
-| `eth_maxPriorityFeePerGas` | Partially supported | Returns canister `rpc_eth_max_priority_fee_per_gas` | `-32000 state unavailable` when observation data is insufficient | Simplified EIP-1559 estimate |
+| `eth_gasPrice` | Partially supported | Returns canister `rpc_eth_gas_price` (`max(base_fee + max(estimated_priority,min_priority), min_gas_price)`) | `-32000 state unavailable` when observation data is insufficient | Uses the same `min_priority_fee` floor as `eth_maxPriorityFeePerGas` to stay aligned with acceptance rules |
+| `eth_maxPriorityFeePerGas` | Partially supported | Returns canister `rpc_eth_max_priority_fee_per_gas` (`max(estimated_priority, min_priority_fee)`) | `-32000 state unavailable` when observation data is insufficient | Simplified EIP-1559 estimate with acceptance-rule floor |
 | `eth_feeHistory` | Partially supported | Returns canister `rpc_eth_fee_history` | `blockCount` accepts number / QUANTITY(hex) / decimal string, max 256. `pending` currently behaves as `latest` | reward is estimated with gasUsed weight |
 | `eth_syncing` | Supported | Always returns `false` | Sync progress object is not supported | Designed for immediate execution model |
 | `eth_getBlockByNumber` | Partially supported | Resolves `blockTag` and returns block | `latest/pending/safe/finalized` are treated as head. Pruned range returns `-32001` | canister method: `rpc_eth_get_block_by_number_with_status` |

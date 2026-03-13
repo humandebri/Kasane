@@ -7,8 +7,8 @@ use crate::chain_data::{
     CallerKey, ChainStateV1, DroppedRingStateV1, GcStateV1, HashKey, Head, LogConfigV1,
     MetricsStateV1, MigrationStateV1, MismatchRecordV1, NodeRecord, OpsConfigV1, OpsMetricsV1,
     OpsStateV1, PendingFeeKey, PruneConfigV1, PruneJournal, PruneStateV1, QueueMeta, ReadyKey,
-    ReadySeqKey, SenderKey, SenderNonceKey, StateRootMetaV1, StateRootMetricsV1, StoredTxBytes,
-    TxId, UnwrapDispatchRequest,
+    ReadySeqKey, RuntimeConfigV1, SenderKey, SenderNonceKey, StateRootMetaV1, StateRootMetricsV1,
+    StoredTxBytes, TxId, UnwrapDispatchRequest,
 };
 use crate::memory::{get_memory, AppMemoryId, VMem};
 use crate::types::keys::{AccountKey, CodeKey, StorageKey};
@@ -89,6 +89,7 @@ pub struct StableState {
     pub unwrap_requests: UnwrapRequests,
     pub unwrap_dispatch_queue: UnwrapDispatchQueue,
     pub unwrap_dispatch_meta: StableCell<QueueMeta, VMem>,
+    pub runtime_config: StableCell<RuntimeConfigV1, VMem>,
     pub dropped_ring_state: StableCell<DroppedRingStateV1, VMem>,
     pub dropped_ring: DroppedRing,
     pub state_storage_roots: StateStorageRoots,
@@ -178,6 +179,10 @@ pub fn init_stable_state() {
         get_memory(AppMemoryId::UnwrapDispatchMeta),
         QueueMeta::new(),
     );
+    let runtime_config = StableCell::init(
+        get_memory(AppMemoryId::RuntimeConfig),
+        RuntimeConfigV1::new_unconfigured(),
+    );
     let dropped_ring_state = StableCell::init(
         get_memory(AppMemoryId::DroppedRingState),
         DroppedRingStateV1::new(),
@@ -244,6 +249,7 @@ pub fn init_stable_state() {
             unwrap_requests,
             unwrap_dispatch_queue,
             unwrap_dispatch_meta,
+            runtime_config,
             dropped_ring_state,
             dropped_ring,
             state_storage_roots,
@@ -279,4 +285,14 @@ pub fn with_state_mut<R>(f: impl FnOnce(&mut StableState) -> R) -> R {
             .unwrap_or_else(|| ic_cdk::trap("stable_state: not initialized"));
         f(state)
     })
+}
+
+pub fn current_runtime_config() -> RuntimeConfigV1 {
+    with_state(|state| *state.runtime_config.get())
+}
+
+pub fn set_runtime_config(config: RuntimeConfigV1) {
+    with_state_mut(|state| {
+        state.runtime_config.set(config);
+    });
 }

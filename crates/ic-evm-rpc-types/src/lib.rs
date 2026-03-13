@@ -80,9 +80,23 @@ pub enum SubmitTxError {
     Internal(String),
 }
 
+#[derive(Clone, Debug, CandidType, Deserialize, Eq, PartialEq)]
+pub struct ApiErrorDetail {
+    pub code: String,
+    pub message: String,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize, Eq, PartialEq)]
+pub enum ApiError {
+    InvalidArgument(ApiErrorDetail),
+    Rejected(ApiErrorDetail),
+    Internal(ApiErrorDetail),
+}
+
 #[derive(Clone, Debug, CandidType, Deserialize)]
 pub struct SubmitIcTxArgsDto {
     pub to: Option<Vec<u8>>,
+    pub from: Option<Vec<u8>>,
     pub value: Nat,
     pub gas_limit: u64,
     pub nonce: u64,
@@ -453,8 +467,21 @@ pub enum RequestDispatchStatusView {
 #[derive(Clone, Debug, CandidType, Deserialize, Eq, PartialEq)]
 pub struct RequestDispatchResultView {
     pub status: RequestDispatchStatusView,
-    pub vault_canister_id: Vec<u8>,
     pub error_code: Option<String>,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize, Eq, PartialEq)]
+pub struct UnwrapDispatchOverviewView {
+    pub request_id: Vec<u8>,
+    pub status: RequestDispatchStatusView,
+    pub error: Option<String>,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize, Eq, PartialEq)]
+pub struct EstimateIcTxOk {
+    pub gas_limit: u64,
+    pub suggested_max_fee_per_gas: Nat,
+    pub suggested_max_priority_fee_per_gas: Nat,
 }
 
 #[derive(Clone, Copy, Debug, CandidType, Deserialize, Eq, PartialEq)]

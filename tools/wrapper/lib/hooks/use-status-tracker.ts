@@ -1,7 +1,7 @@
 // どこで: wrapper dashboard hook / 何を: status照会と自動ポーリング停止制御を提供 / なぜ: 通信失敗時の無限再試行を防ぐため
 
 import { useCallback, useEffect, useState } from "react";
-import { getDispatchResult, getDispatchStatus } from "@/lib/canister/wrapper-client";
+import { getDispatchResult } from "@/lib/canister/wrapper-client";
 import { getExecutionResult } from "@/lib/canister/wrap-client";
 import { mergeStatus } from "@/lib/merge";
 import {
@@ -29,15 +29,13 @@ export function useStatusTracker() {
       }
       try {
         const requestId = parseRequestIdHex(requestIdHex.trim());
-        const [dispatchStatus, dispatchResult, executionResult] = await Promise.all([
-          getDispatchStatus(requestId),
+        const [dispatchResult, executionResult] = await Promise.all([
           getDispatchResult(requestId),
           getExecutionResult(requestId),
         ]);
         setStatus(
           mergeStatus({
             requestIdHex: requestIdHex.trim(),
-            dispatchStatus,
             dispatchResult,
             executionResult,
           }),

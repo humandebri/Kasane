@@ -45,6 +45,8 @@ scripts/mainnet/ic_mainnet_deploy.sh
 - mainnet deploy 後に計測専用 API を叩く前提では運用しない。
 - 既定 build は precompile 追加課金 ratio `1/100` を固定で含む。
 - ratio を変更する場合は、PocketIC / local で再計測したうえで再デプロイする。
+- `MODE=upgrade` でも `InitArgs` は必須で、deploy script が `--args` として `post_upgrade` に同じ Candid を渡す。
+- つまり設定変更は runtime API ではなく、install / upgrade 時の引数更新でのみ行う。
 
 初回 install/reinstall（`InitArgs` 必須）:
 
@@ -58,8 +60,26 @@ scripts/mainnet/ic_mainnet_deploy.sh
 ```
 
 注記:
-- `wrap_canister_id` は `InitArgs` で渡さず、gateway コード内の runtime default を使う。
-- `WRAP_CANISTER_ID` は wrap canister 自体を扱うスクリプトでのみ必要。
+- `InitArgs` には `wrap_canister_id` と `wrap_factory_address` の両方が必須。
+- `build_init_args_for_current_identity(...)` を呼ぶ前に `WRAP_CANISTER_ID` と `EVM_WRAP_FACTORY` を export しておく。
+
+`InitArgs` の設定内容:
+- `genesis_balances`: install / reinstall 時にのみ使う初期残高配布。各要素は `address` が 20 byte の EVM address、`amount` が `nat`。重複 address と `amount = 0` は拒否される。
+- `wrap_canister_id`: unwrap dispatch の送信先となる IC principal。anonymous は不可。gateway は実行時にこの stable 設定のみを参照する。
+- `wrap_factory_address`: unwrap burn 対象とみなす EVM factory address。20 byte 必須。precompile はこの factory 配下 token だけを正として burn / allowance 判定する。
+
+upgrade 時の扱い:
+- `MODE=upgrade` でも `scripts/mainnet/ic_mainnet_deploy.sh` は `build_init_args_for_current_identity(...)` を呼び、`--args` 付きで canister upgrade を実行する。
+- この `--args` が Rust 側の `post_upgrade(args: Option<InitArgs>)` に渡る。
+- `wrap_canister_id` / `wrap_factory_address` を切り替えたい場合は、環境変数を更新して upgrade を実行する。
+- `genesis_balances` は upgrade 時にも wire 互換のため渡すが、実質的な意味を持つのは install / reinstall 時のみ。
+
+事前 export 例:
+
+```bash
+export WRAP_CANISTER_ID="<wrap_canister_principal>"
+export EVM_WRAP_FACTORY="0x<40_hex_chars>"
+```
 
 ## 3. デプロイ後確認
 1. `icp canister status -e ic <canister_id>` で module hash / settings / balance を確認する。
@@ -260,6 +280,10 @@ sudo systemctl restart kasane-explorer.service
 sudo journalctl -u kasane-explorer.service -n 200 --no-pager
 ```
 
+- schema v6 以降の upgrade では、`block_gas_limit` と fee floor（`min_gas_price` / `min_priority_fee`）を既定値へ再同期する。
+- `base_fee` は市場状態維持のため upgrade 前の state を保持する。
+- そのため、`scripts/query_smoke.sh` の後に `health` / `get_ops_status` で `block_gas_limit` が既定値へ戻っていることを確認する。
+
 ## 4. ロールバック方針
 1. snapshot を事前取得する。
 2. 障害時は snapshot を load し、直前安定 wasm を reinstall する。
@@ -317,6 +341,15 @@ CANISTER_ID=<canister_id> \
 ICP_IDENTITY_NAME=ci-local \
 scripts/mainnet/mainnet_method_test.sh
 ```
+
+`scripts/mainnet/mainnet_wrap_unwrap_smoke.sh` は現行 unwrap 仕様に追従している。
+
+- wrap submit は `quote_wrap_request` -> `submit_wrap_request` の順で行い、caller 側で `request_id` を事前計算しない
+- unwrap 前に wrapped token の `approve(factory, amount)` が必要
+- unwrap burn は token 直接 burn ではなく `WrapTokenFactory.burnFromAsset` 経由で行われ、factory allowance を消費する
+- 現行 smoke script は wrap 成功後に `get_unwrap_requirements` で wrapped token を確認し、この approve を自動投入してから `submit_ic_tx` を送る
+- unwrap の進行確認は `evm_canister.get_unwrap_dispatch_overview(request_id)` と `wrap_canister.get_request(request_id)` を併用する
+- この導線は breaking DID change 前提なので、client / script の同時更新を必須とする
 
 ## 6. `caller_principal` と `canister_id` の扱い
 - 用語:

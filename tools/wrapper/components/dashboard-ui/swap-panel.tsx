@@ -44,7 +44,6 @@ export function SwapPanel(props: {
   wrapNonceStatus: WrapNonceStatus;
   wrapNonceError: string | null;
   wrapFeeEstimateText: string | null;
-  unwrapPreviewRequestId: string | null;
   wrapPreviewRequestId: string | null;
   submitLoading: boolean;
   walletConnected: boolean;
@@ -146,33 +145,10 @@ export function SwapPanel(props: {
                     })
                   }
                 />
-                <Input
-                  placeholder="user nonce (u64)"
-                  value={props.unwrapForm.userNonce}
-                  onChange={(event) =>
-                    props.onUnwrapChange({
-                      ...props.unwrapForm,
-                      userNonce: event.target.value,
-                    })
-                  }
-                />
-                <Input
-                  placeholder="deadline unix sec"
-                  value={props.unwrapForm.deadline}
-                  onChange={(event) =>
-                    props.onUnwrapChange({
-                      ...props.unwrapForm,
-                      deadline: event.target.value,
-                    })
-                  }
-                />
               </div>
             </details>
-            <p className="rounded-lg bg-zinc-50 px-3 py-2 font-mono text-xs text-zinc-600">
-              request_id: {props.unwrapPreviewRequestId ?? "(入力待ち)"}
-            </p>
             <p className="text-xs text-zinc-600">
-              recipient / deadline は Advanced で必ず確認してください。
+              recipient は Advanced で必ず確認してください。
             </p>
           </TabsContent>
 

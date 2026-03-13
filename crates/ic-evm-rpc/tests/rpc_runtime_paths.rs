@@ -2,10 +2,12 @@
 //! 何を: 実運用で使うRPC経路のエラーマッピングと基本挙動を検証
 //! なぜ: wrapper側テストと実運用実装の乖離を防ぐため
 
+use evm_core::chain::{self, TxIn};
 use evm_core::hash;
+use evm_core::tx_decode::IcSyntheticTxInput;
 use evm_db::chain_data::constants::MAX_TX_SIZE;
 use evm_db::chain_data::receipt::log_entry_from_parts;
-use evm_db::chain_data::runtime_defaults::{DEFAULT_BASE_FEE, DEFAULT_MIN_GAS_PRICE};
+use evm_db::chain_data::runtime_defaults::{DEFAULT_BASE_FEE, DEFAULT_MIN_FEE_FLOOR};
 use evm_db::chain_data::{
     BlockData, Head, ReceiptLike, SenderKey, StoredTxBytes, TxId, TxIndexEntry, TxKind,
 };
@@ -31,6 +33,36 @@ use std::sync::{Mutex, OnceLock};
 fn test_lock() -> &'static Mutex<()> {
     static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
     LOCK.get_or_init(|| Mutex::new(()))
+}
+
+fn store_fee_sample_block(max_fee_per_gas: u128, max_priority_fee_per_gas: u128) {
+    let caller_principal = vec![0x11];
+    with_state_mut(|state| {
+        let mut chain_state = *state.chain_state.get();
+        chain_state.base_fee = 1_000_000_000;
+        chain_state.min_priority_fee = 0;
+        chain_state.min_gas_price = 0;
+        state.chain_state.set(chain_state);
+    });
+    let caller = hash::derive_evm_address_from_principal(&caller_principal).expect("must derive");
+    chain::credit_balance(caller, 1_000_000_000_000_000_000u128).expect("fund caller");
+    let tx = IcSyntheticTxInput {
+        to: Some([0x10; 20]),
+        value: [0u8; 32],
+        gas_limit: 50_000,
+        nonce: 0,
+        max_fee_per_gas,
+        max_priority_fee_per_gas,
+        data: Vec::new(),
+    };
+    let tx_id = chain::submit_tx_in(TxIn::IcSynthetic {
+        caller_principal,
+        canister_id: vec![0x22],
+        tx,
+    })
+    .expect("submit tx");
+    let outcome = chain::produce_block(1).expect("produce block");
+    assert_eq!(outcome.block.tx_ids, vec![tx_id]);
 }
 
 #[test]
@@ -529,6 +561,34 @@ fn rpc_eth_gas_price_respects_min_gas_price_floor() {
 }
 
 #[test]
+fn rpc_eth_max_priority_fee_per_gas_respects_min_priority_fee_floor() {
+    let _guard = test_lock().lock().expect("lock");
+    init_stable_state();
+    store_fee_sample_block(2_000_000_000, 1_000_000_000);
+    with_state_mut(|state| {
+        let mut chain_state = *state.chain_state.get();
+        chain_state.min_priority_fee = 2_000_000_000;
+        state.chain_state.set(chain_state);
+    });
+    let tip = rpc_eth_max_priority_fee_per_gas().expect("priority fee should be available");
+    assert_eq!(tip, 2_000_000_000);
+}
+
+#[test]
+fn rpc_eth_max_priority_fee_per_gas_uses_observed_value_when_above_floor() {
+    let _guard = test_lock().lock().expect("lock");
+    init_stable_state();
+    store_fee_sample_block(4_000_000_000, 3_000_000_000);
+    with_state_mut(|state| {
+        let mut chain_state = *state.chain_state.get();
+        chain_state.min_priority_fee = 2_000_000_000;
+        state.chain_state.set(chain_state);
+    });
+    let tip = rpc_eth_max_priority_fee_per_gas().expect("priority fee should be available");
+    assert_eq!(tip, 3_000_000_000);
+}
+
+#[test]
 fn rpc_eth_gas_price_respects_base_plus_min_priority_floor() {
     let _guard = test_lock().lock().expect("lock");
     init_stable_state();
@@ -797,7 +857,7 @@ fn rpc_eth_call_object_uses_account_nonce_when_nonce_omitted() {
         to: Some(vec![0u8; 20]),
         from: Some(from.to_vec()),
         gas: Some(30_000),
-        gas_price: Some(u128::from(DEFAULT_MIN_GAS_PRICE).saturating_add(1_000_000_000)),
+        gas_price: Some(u128::from(DEFAULT_MIN_FEE_FLOOR).saturating_add(1_000_000_000)),
         nonce: None,
         max_fee_per_gas: None,
         max_priority_fee_per_gas: None,

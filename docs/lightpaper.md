@@ -87,7 +87,7 @@ Kasane uses an **EIP-1559-style fee model**. Key points:
    - `base_fee`: `250_000_000_000` wei (250 gwei)
    - `min_gas_price`: `250_000_000_000` wei (legacy lower bound)
    - `min_priority_fee`: `250_000_000_000` wei
-   - `block_gas_limit`: `6_000_000` (we’re validating a phased expansion of this upper bound)
+   - `block_gas_limit`: `12_000_000` (we’re validating a phased expansion of this upper bound)
 2. Effective gas price (EIP-1559)
    - `effective_gas_price = min(max_fee_per_gas, base_fee + max_priority_fee_per_gas)`
    - Reject if `max_priority_fee_per_gas > max_fee_per_gas` or `max_fee_per_gas < base_fee`

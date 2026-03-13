@@ -1278,6 +1278,7 @@ name = "evm-rpc-e2e"
 version = "0.1.0"
 dependencies = [
  "candid",
+ "hex",
  "ic-evm-core",
  "pocket-ic",
  "serde",
@@ -1800,7 +1801,7 @@ version = "0.1.0"
 dependencies = [
  "alloy-primitives",
  "ic-pub-key",
- "ic-secp256k1",
+ "k256",
 ]
 
 [[package]]

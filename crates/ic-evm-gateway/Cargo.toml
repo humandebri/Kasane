@@ -19,9 +19,10 @@ candid = "0.10"
 ic-cdk = "0.19.0"
 ic-cdk-timers = "1.0.0"
 serde = { version = "1", features = ["derive"] }
+num-bigint = "0.4"
 getrandom = { version = "0.2", default-features = false, features = ["custom"] }
 tracing = { version = "0.1.41", features = ["max_level_info", "release_max_level_warn"] }
-canbench-rs = { version = "0.4.0", optional = true }
+canbench-rs = { version = "0.4.1", optional = true }
 ic-evm-rpc-types = { path = "../ic-evm-rpc-types" }
 ic-evm-metrics = { path = "../ic-evm-metrics" }
 ic-evm-ops = { path = "../ic-evm-ops" }

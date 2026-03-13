@@ -8,7 +8,7 @@ use std::borrow::Cow;
 const MAX_BLOB_LEN: usize = 256;
 const MAX_ERROR_LEN: usize = 192;
 const MAX_LEDGER_TX_ID_LEN: usize = 128;
-const MAX_ENCODED_LEN: u32 = 1_512;
+const MAX_ENCODED_LEN: u32 = 1_088;
 const CHECKSUM_LEN: usize = 4;
 pub const UNWRAP_DECODE_FAILURE_CODE: &str = "stable.decode.unwrap_request";
 
@@ -43,14 +43,12 @@ impl UnwrapRequestStatus {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct UnwrapDispatchRequest {
-    pub vault_canister_id: Vec<u8>,
     pub asset_id: Vec<u8>,
-    pub amount: Vec<u8>,
+    pub amount: [u8; 32],
     pub recipient: Vec<u8>,
     pub status: UnwrapRequestStatus,
     pub ledger_tx_id: Option<Vec<u8>>,
     pub error_code: Option<String>,
-    pub created_at: u64,
     pub updated_at: u64,
 }
 
@@ -83,24 +81,19 @@ impl Storable for UnwrapDispatchRequest {
 impl UnwrapDispatchRequest {
     fn decode_failure_placeholder() -> Self {
         Self {
-            vault_canister_id: vec![0u8],
             asset_id: vec![0u8],
-            amount: vec![0u8; 32],
+            amount: [0u8; 32],
             recipient: vec![0u8],
             status: UnwrapRequestStatus::DispatchFailed,
             ledger_tx_id: None,
             error_code: Some(UNWRAP_DECODE_FAILURE_CODE.to_string()),
-            created_at: 0,
             updated_at: 0,
         }
     }
 
     fn encode_checked(&self) -> Option<Vec<u8>> {
-        if self.vault_canister_id.is_empty()
-            || self.vault_canister_id.len() > MAX_BLOB_LEN
-            || self.asset_id.is_empty()
+        if self.asset_id.is_empty()
             || self.asset_id.len() > MAX_BLOB_LEN
-            || self.amount.len() != 32
             || self.recipient.is_empty()
             || self.recipient.len() > MAX_BLOB_LEN
         {
@@ -122,9 +115,8 @@ impl UnwrapDispatchRequest {
         }
         let mut out = Vec::with_capacity(256);
         out.push(1u8);
-        write_bytes(&mut out, &self.vault_canister_id)?;
         write_bytes(&mut out, &self.asset_id)?;
-        write_bytes(&mut out, &self.amount)?;
+        out.extend_from_slice(&self.amount);
         write_bytes(&mut out, &self.recipient)?;
         out.push(self.status.to_u8());
         match self.ledger_tx_id.as_ref() {
@@ -141,7 +133,6 @@ impl UnwrapDispatchRequest {
             }
             None => out.push(0u8),
         }
-        out.extend_from_slice(&self.created_at.to_be_bytes());
         out.extend_from_slice(&self.updated_at.to_be_bytes());
         let checksum = crc32_ieee(&out);
         out.extend_from_slice(&checksum.to_be_bytes());
@@ -151,16 +142,12 @@ impl UnwrapDispatchRequest {
     fn decode_checked(data: &[u8]) -> Option<Self> {
         let mut offset = 0usize;
         let version = *data.get(offset)?;
+        offset += 1;
         if version != 1 {
             return None;
         }
-        offset += 1;
-        let vault_canister_id = read_bytes(data, &mut offset, MAX_BLOB_LEN)?;
         let asset_id = read_bytes(data, &mut offset, MAX_BLOB_LEN)?;
-        let amount = read_bytes(data, &mut offset, 32)?;
-        if amount.len() != 32 {
-            return None;
-        }
+        let amount = read_array_32(data, &mut offset)?;
         let recipient = read_bytes(data, &mut offset, MAX_BLOB_LEN)?;
         let status = UnwrapRequestStatus::from_u8(*data.get(offset)?)?;
         offset += 1;
@@ -186,7 +173,6 @@ impl UnwrapDispatchRequest {
             }
             _ => return None,
         };
-        let created_at = read_u64(data, &mut offset)?;
         let updated_at = read_u64(data, &mut offset)?;
         let remaining = data.len().checked_sub(offset)?;
         if remaining != CHECKSUM_LEN {
@@ -200,14 +186,12 @@ impl UnwrapDispatchRequest {
             return None;
         }
         Some(Self {
-            vault_canister_id,
             asset_id,
             amount,
             recipient,
             status,
             ledger_tx_id,
             error_code,
-            created_at,
             updated_at,
         })
     }
@@ -241,6 +225,15 @@ fn read_u64(data: &[u8], offset: &mut usize) -> Option<u64> {
     Some(u64::from_be_bytes(raw.try_into().ok()?))
 }
 
+fn read_array_32(data: &[u8], offset: &mut usize) -> Option<[u8; 32]> {
+    let end = offset.checked_add(32)?;
+    let raw = data.get(*offset..end)?;
+    let mut out = [0u8; 32];
+    out.copy_from_slice(raw);
+    *offset = end;
+    Some(out)
+}
+
 fn crc32_ieee(data: &[u8]) -> u32 {
     let mut crc = !0u32;
     for byte in data.iter().copied() {
@@ -263,14 +256,12 @@ mod tests {
 
     fn sample_request() -> UnwrapDispatchRequest {
         UnwrapDispatchRequest {
-            vault_canister_id: vec![0x11u8; 10],
             asset_id: vec![0x22u8; 10],
-            amount: vec![0x33u8; 32],
+            amount: [0x33u8; 32],
             recipient: vec![0x44u8; 10],
             status: UnwrapRequestStatus::Queued,
             ledger_tx_id: Some(vec![0x55u8; 8]),
             error_code: Some("wrap.sample".to_string()),
-            created_at: 7,
             updated_at: 11,
         }
     }
