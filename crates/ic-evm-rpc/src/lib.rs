@@ -189,6 +189,8 @@ const MAX_ACCESS_LIST_STORAGE_KEYS_PER_ITEM: usize = 2_048;
 const MAX_FEE_HISTORY_PERCENTILES: usize = 128;
 const EIP1559_BASE_FEE_MAX_CHANGE_DENOM: u128 = 8;
 const EIP1559_ELASTICITY_MULTIPLIER: u128 = 2;
+const FEE_SUGGESTION_SCAN_BLOCKS: u64 = 64;
+const FEE_SUGGESTION_SAMPLE_BLOCKS: usize = 20;
 
 fn rpc_error(code: u32, prefix: Option<&str>, message: impl Into<String>) -> RpcErrorView {
     RpcErrorView {
@@ -325,7 +327,7 @@ pub fn rpc_eth_estimate_gas_object_at(
 
 pub fn rpc_eth_max_priority_fee_per_gas() -> Result<u128, RpcErrorView> {
     let head = chain::get_head_number();
-    let sample = load_fee_history_sample(head).ok_or_else(|| {
+    let sample = load_fee_suggestion_sample(head).ok_or_else(|| {
         execution_error(
             "exec.state.unavailable",
             "exec.state.unavailable fee sample is unavailable",
@@ -337,7 +339,7 @@ pub fn rpc_eth_max_priority_fee_per_gas() -> Result<u128, RpcErrorView> {
 
 pub fn rpc_eth_gas_price() -> Result<u128, RpcErrorView> {
     let head = chain::get_head_number();
-    let sample = load_fee_history_sample(head).ok_or_else(|| {
+    let sample = load_fee_suggestion_sample(head).ok_or_else(|| {
         execution_error(
             "exec.state.unavailable",
             "exec.state.unavailable fee sample is unavailable",
@@ -1074,26 +1076,61 @@ fn load_fee_history_sample(number: u64) -> Option<FeeHistorySample> {
     let block = chain::get_block(number)?;
     let mut tx_tips = Vec::new();
     for tx_id in &block.tx_ids {
-        let Some(tx) = tx_to_view(*tx_id) else {
-            continue;
-        };
-        let Some(decoded) = tx.decoded else {
-            continue;
-        };
-        let gas_used = chain::get_receipt(tx_id)
-            .map(|r| r.gas_used)
-            .unwrap_or(decoded.gas_limit);
-        if gas_used == 0 {
-            continue;
+        if let Some(sample) = load_tx_tip_sample(*tx_id, block.base_fee_per_gas as u128, None) {
+            tx_tips.push(sample);
         }
-        let tip = effective_priority_fee(&decoded, block.base_fee_per_gas as u128);
-        tx_tips.push(FeeTipSample { tip, gas_used });
     }
     Some(FeeHistorySample {
         number: block.number,
         base_fee_per_gas: block.base_fee_per_gas,
         gas_used: block.gas_used,
         gas_limit: block.block_gas_limit,
+        tx_tips,
+    })
+}
+
+// Suggestion APIs should not learn from internal IcSynthetic fee policy, otherwise wrap txs
+// can recursively inflate future quotes.
+fn load_fee_suggestion_sample(head: u64) -> Option<FeeHistorySample> {
+    let head_block = chain::get_block(head)?;
+    let mut tx_tips = Vec::new();
+    let mut sampled_blocks = 0usize;
+    let mut scanned_blocks = 0u64;
+    let mut number = head;
+
+    loop {
+        if let Some(block) = chain::get_block(number) {
+            let mut block_has_external = false;
+            for tx_id in &block.tx_ids {
+                if let Some(sample) = load_tx_tip_sample(
+                    *tx_id,
+                    block.base_fee_per_gas as u128,
+                    Some(TxKind::EthSigned),
+                ) {
+                    tx_tips.push(sample);
+                    block_has_external = true;
+                }
+            }
+            if block_has_external {
+                sampled_blocks = sampled_blocks.saturating_add(1);
+            }
+        }
+
+        scanned_blocks = scanned_blocks.saturating_add(1);
+        if sampled_blocks >= FEE_SUGGESTION_SAMPLE_BLOCKS
+            || scanned_blocks >= FEE_SUGGESTION_SCAN_BLOCKS
+            || number == 0
+        {
+            break;
+        }
+        number = number.saturating_sub(1);
+    }
+
+    Some(FeeHistorySample {
+        number: head_block.number,
+        base_fee_per_gas: head_block.base_fee_per_gas,
+        gas_used: head_block.gas_used,
+        gas_limit: head_block.block_gas_limit,
         tx_tips,
     })
 }
@@ -1110,6 +1147,32 @@ fn estimate_priority_fee_from_sample(sample: &FeeHistorySample) -> u128 {
         .map(|item| item.tip)
         .min()
         .unwrap_or(0)
+}
+
+fn load_tx_tip_sample(
+    tx_id: TxId,
+    base_fee: u128,
+    kind_filter: Option<TxKind>,
+) -> Option<FeeTipSample> {
+    let tx = tx_to_view(tx_id)?;
+    if let Some(expected_kind) = kind_filter {
+        let actual_kind = match tx.kind {
+            TxKindView::EthSigned => TxKind::EthSigned,
+            TxKindView::IcSynthetic => TxKind::IcSynthetic,
+        };
+        if actual_kind != expected_kind {
+            return None;
+        }
+    }
+    let decoded = tx.decoded?;
+    let gas_used = chain::get_receipt(&tx_id)
+        .map(|r| r.gas_used)
+        .unwrap_or(decoded.gas_limit);
+    if gas_used == 0 {
+        return None;
+    }
+    let tip = effective_priority_fee(&decoded, base_fee);
+    Some(FeeTipSample { tip, gas_used })
 }
 
 fn effective_priority_fee(decoded: &DecodedTxView, base_fee: u128) -> u128 {

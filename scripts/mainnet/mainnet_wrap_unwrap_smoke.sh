@@ -93,6 +93,7 @@ if (mode === "wrap-meta") {
   const assetId = process.argv[4] ?? "";
   const amount = process.argv[5] ?? "";
   const factory = process.argv[6] ?? "";
+  const evmNonce = BigInt(process.argv[7] ?? "0");
   const gasLimit = BigInt(process.argv[8] ?? "0");
   const tokenDecimals = Number(process.argv[10] ?? "0");
   const callerPrincipal = Principal.fromText(principal);
@@ -111,6 +112,7 @@ if (mode === "wrap-meta") {
     assetId: assetPrincipal.toUint8Array(),
     amount: decimalToBytes32(amount),
     evmRecipient,
+    evmNonce,
     gasLimit,
   });
   process.stdout.write(JSON.stringify({
@@ -119,6 +121,7 @@ if (mode === "wrap-meta") {
     asset_hex: Buffer.from(assetPrincipal.toUint8Array()).toString("hex"),
     amount_hex: Buffer.from(decimalToBytes32(amount)).toString("hex"),
     evm_recipient_hex: Buffer.from(evmRecipient).toString("hex"),
+    evm_nonce: evmNonce.toString(),
     request_id_hex: Buffer.from(requestId).toString("hex"),
     asset_vec: toVec(assetPrincipal.toUint8Array()),
     amount_vec: toVec(decimalToBytes32(amount)),

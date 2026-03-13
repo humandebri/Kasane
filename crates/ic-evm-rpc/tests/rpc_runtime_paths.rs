@@ -2,10 +2,16 @@
 //! 何を: 実運用で使うRPC経路のエラーマッピングと基本挙動を検証
 //! なぜ: wrapper側テストと実運用実装の乖離を防ぐため
 
+use alloy_consensus::{SignableTransaction, TxEip1559};
+use alloy_eips::eip2718::Encodable2718;
+use alloy_eips::eip2930::AccessList;
+use alloy_primitives::{Address, Bytes, TxKind as EthTxKind, U256 as AlloyU256};
+use alloy_signer::SignerSync;
+use alloy_signer_local::PrivateKeySigner;
 use evm_core::chain::{self, TxIn};
 use evm_core::hash;
 use evm_core::tx_decode::IcSyntheticTxInput;
-use evm_db::chain_data::constants::MAX_TX_SIZE;
+use evm_db::chain_data::constants::{CHAIN_ID, MAX_TX_SIZE};
 use evm_db::chain_data::receipt::log_entry_from_parts;
 use evm_db::chain_data::runtime_defaults::{DEFAULT_BASE_FEE, DEFAULT_MIN_FEE_FLOOR};
 use evm_db::chain_data::{
@@ -61,6 +67,52 @@ fn store_fee_sample_block(max_fee_per_gas: u128, max_priority_fee_per_gas: u128)
         tx,
     })
     .expect("submit tx");
+    let outcome = chain::produce_block(1).expect("produce block");
+    assert_eq!(outcome.block.tx_ids, vec![tx_id]);
+}
+
+fn test_signer() -> PrivateKeySigner {
+    "0x59c6995e998f97a5a0044966f094538e0d7f4f4e4d5d8dd6a8c4f9d5f8b1e8a1"
+        .parse()
+        .expect("signer")
+}
+
+fn build_eth_signed_1559(
+    nonce: u64,
+    max_fee_per_gas: u128,
+    max_priority_fee_per_gas: u128,
+) -> Vec<u8> {
+    let signer = test_signer();
+    let tx = TxEip1559 {
+        chain_id: CHAIN_ID,
+        nonce,
+        gas_limit: 50_000,
+        max_fee_per_gas,
+        max_priority_fee_per_gas,
+        to: EthTxKind::Call(Address::from([0x21u8; 20])),
+        value: AlloyU256::ZERO,
+        access_list: AccessList::default(),
+        input: Bytes::new(),
+    };
+    let hash = tx.signature_hash();
+    let signature = signer.sign_hash_sync(&hash).expect("sign");
+    tx.into_signed(signature).encoded_2718()
+}
+
+fn fund_eth_signer() {
+    let signer = test_signer();
+    chain::credit_balance(signer.address().into_array(), 1_000_000_000_000_000_000u128)
+        .expect("fund signer");
+}
+
+fn store_eth_signed_fee_sample_block(
+    nonce: u64,
+    max_fee_per_gas: u128,
+    max_priority_fee_per_gas: u128,
+) {
+    fund_eth_signer();
+    let raw = build_eth_signed_1559(nonce, max_fee_per_gas, max_priority_fee_per_gas);
+    let tx_id = chain::submit_tx(TxKind::EthSigned, raw, vec![0x89]).expect("submit eth tx");
     let outcome = chain::produce_block(1).expect("produce block");
     assert_eq!(outcome.block.tx_ids, vec![tx_id]);
 }
@@ -578,7 +630,14 @@ fn rpc_eth_max_priority_fee_per_gas_respects_min_priority_fee_floor() {
 fn rpc_eth_max_priority_fee_per_gas_uses_observed_value_when_above_floor() {
     let _guard = test_lock().lock().expect("lock");
     init_stable_state();
-    store_fee_sample_block(4_000_000_000, 3_000_000_000);
+    with_state_mut(|state| {
+        let mut chain_state = *state.chain_state.get();
+        chain_state.base_fee = 1_000_000_000;
+        chain_state.min_priority_fee = 0;
+        chain_state.min_gas_price = 0;
+        state.chain_state.set(chain_state);
+    });
+    store_eth_signed_fee_sample_block(0, 4_000_000_000, 3_000_000_000);
     with_state_mut(|state| {
         let mut chain_state = *state.chain_state.get();
         chain_state.min_priority_fee = 2_000_000_000;
@@ -623,6 +682,87 @@ fn rpc_eth_gas_price_respects_base_plus_min_priority_floor() {
     });
     let gas_price = rpc_eth_gas_price().expect("gas price should be available");
     assert_eq!(gas_price, 5_000_000_000);
+}
+
+#[test]
+fn rpc_fee_suggestions_ignore_ic_synthetic_only_head_block() {
+    let _guard = test_lock().lock().expect("lock");
+    init_stable_state();
+    with_state_mut(|state| {
+        let mut chain_state = *state.chain_state.get();
+        chain_state.base_fee = 1_000_000_000;
+        chain_state.min_priority_fee = 0;
+        chain_state.min_gas_price = 0;
+        state.chain_state.set(chain_state);
+    });
+    store_eth_signed_fee_sample_block(0, 4_000_000_000, 3_000_000_000);
+    store_fee_sample_block(120_000_000_000, 120_000_000_000);
+
+    let tip = rpc_eth_max_priority_fee_per_gas().expect("priority fee should be available");
+    let gas_price = rpc_eth_gas_price().expect("gas price should be available");
+    assert_eq!(tip, 3_000_000_000);
+    assert_eq!(gas_price, 4_000_000_000);
+}
+
+#[test]
+fn rpc_fee_suggestions_fall_back_to_floor_when_no_eth_signed_samples_exist() {
+    let _guard = test_lock().lock().expect("lock");
+    init_stable_state();
+    store_fee_sample_block(120_000_000_000, 120_000_000_000);
+    with_state_mut(|state| {
+        let mut chain_state = *state.chain_state.get();
+        chain_state.min_priority_fee = 2_000_000_000;
+        chain_state.min_gas_price = 10_000_000_000;
+        state.chain_state.set(chain_state);
+    });
+
+    let tip = rpc_eth_max_priority_fee_per_gas().expect("priority fee should be available");
+    let gas_price = rpc_eth_gas_price().expect("gas price should be available");
+    assert_eq!(tip, 2_000_000_000);
+    assert_eq!(gas_price, 10_000_000_000);
+}
+
+#[test]
+fn rpc_fee_suggestions_ignore_ic_synthetic_when_window_contains_mixed_kinds() {
+    let _guard = test_lock().lock().expect("lock");
+    init_stable_state();
+    with_state_mut(|state| {
+        let mut chain_state = *state.chain_state.get();
+        chain_state.base_fee = 1_000_000_000;
+        chain_state.min_priority_fee = 0;
+        chain_state.min_gas_price = 0;
+        state.chain_state.set(chain_state);
+    });
+    store_fee_sample_block(90_000_000_000, 90_000_000_000);
+    store_eth_signed_fee_sample_block(0, 6_000_000_000, 5_000_000_000);
+
+    let tip = rpc_eth_max_priority_fee_per_gas().expect("priority fee should be available");
+    let gas_price = rpc_eth_gas_price().expect("gas price should be available");
+    let head_base_fee = chain::get_block(chain::get_head_number())
+        .expect("head block")
+        .base_fee_per_gas as u128;
+    assert_eq!(tip, 5_000_000_000);
+    assert_eq!(gas_price, head_base_fee.saturating_add(tip));
+}
+
+#[test]
+fn rpc_eth_fee_history_keeps_ic_synthetic_rewards_raw() {
+    let _guard = test_lock().lock().expect("lock");
+    init_stable_state();
+    with_state_mut(|state| {
+        let mut chain_state = *state.chain_state.get();
+        chain_state.base_fee = 1_000_000_000;
+        chain_state.min_priority_fee = 0;
+        chain_state.min_gas_price = 0;
+        state.chain_state.set(chain_state);
+    });
+    store_fee_sample_block(90_000_000_000, 90_000_000_000);
+
+    let history = rpc_eth_fee_history(1, RpcBlockTagView::Latest, Some(vec![50.0]))
+        .expect("fee history should succeed");
+    assert_eq!(history.reward.as_ref().map(Vec::len), Some(1));
+    let reward = &history.reward.expect("reward exists")[0];
+    assert_eq!(reward, &vec![89_000_000_000]);
 }
 
 #[test]
@@ -857,7 +997,9 @@ fn rpc_eth_call_object_uses_account_nonce_when_nonce_omitted() {
         to: Some(vec![0u8; 20]),
         from: Some(from.to_vec()),
         gas: Some(30_000),
-        gas_price: Some(u128::from(DEFAULT_MIN_FEE_FLOOR).saturating_add(1_000_000_000)),
+        gas_price: Some(
+            u128::from(DEFAULT_BASE_FEE.max(DEFAULT_MIN_FEE_FLOOR)).saturating_add(1_000_000_000),
+        ),
         nonce: None,
         max_fee_per_gas: None,
         max_priority_fee_per_gas: None,

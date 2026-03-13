@@ -32,7 +32,7 @@ import {
   computeRequiredAllowances,
   formatE8sToIcpText,
 } from "@/lib/wrap-flow";
-import { parsePositiveBigInt, parsePositiveU64 } from "@/lib/wrap-input";
+import { parsePositiveBigInt, parsePositiveU64, parseU64 } from "@/lib/wrap-input";
 import type { WalletSession } from "@/lib/wallet/types";
 
 type AppConfig = ReturnType<typeof loadConfig>;
@@ -52,6 +52,7 @@ type WrapperFormsState = {
   wrapNonceStatus: "idle" | "loading" | "ready" | "error";
   wrapNonceError: string | null;
   resetUnwrapNonceDeadline: () => void;
+  refreshWrapNonce: () => Promise<void>;
 };
 
 export function useWrapperActions(params: {
@@ -92,7 +93,10 @@ export function useWrapperActions(params: {
     for (let attempt = 0; attempt < 20; attempt += 1) {
       const requestIds = await getUnwrapRequestIdsByTxId(txId);
       if (requestIds.length === 1) {
-        return bytesToHex(requestIds[0]);
+        const requestId = requestIds[0];
+        if (requestId !== undefined) {
+          return bytesToHex(requestId);
+        }
       }
       if (requestIds.length > 1) {
         throw new Error("status.unwrap_tx.multiple_request_ids");
@@ -194,6 +198,10 @@ export function useWrapperActions(params: {
         params.forms.wrapForm.gasLimit,
         "validation.gas_limit.invalid",
       );
+      const evmNonce = parseU64(
+        params.forms.wrapForm.evmNonce,
+        "validation.evm_nonce.invalid",
+      );
       const quote = await quoteWrapRequest({
         assetId: params.forms.wrapForm.assetId.trim(),
         amountE8s: amount,
@@ -249,6 +257,7 @@ export function useWrapperActions(params: {
         assetId: params.forms.wrapForm.assetId.trim(),
         amountE8s: amount,
         evmRecipient: hexToBytes(params.forms.wrapForm.evmRecipient.trim()),
+        evmNonce,
         gasLimit,
       }, params.walletSession.identity);
       const requestIdHex = bytesToHex(submitResult.requestId);
@@ -259,6 +268,7 @@ export function useWrapperActions(params: {
         submittedAt: new Date().toISOString(),
       });
       await queryAndStartPolling(requestIdHex);
+      await params.forms.refreshWrapNonce().catch(() => undefined);
       setWrapActionStep("done");
       params.tracker.setMessage(`wrap.submit.success fee=${submitResult.chargedFeeE8s.toString()}e8s`);
     } catch (error) {

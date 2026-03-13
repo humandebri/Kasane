@@ -75,6 +75,7 @@ type WrapActor = ActorSubclass<{
     asset_id: Principal;
     amount_e8s: bigint;
     evm_recipient: Uint8Array;
+    evm_nonce: bigint;
     gas_limit: bigint;
   }) => Promise<{ Ok: SubmitWrapRequestOkWire } | { Err: ApiErrorWire }>;
   quote_wrap_request: (args: {
@@ -94,9 +95,19 @@ type WrapActor = ActorSubclass<{
 type ExecutionResultDeps = {
   readRequest: (requestId: Uint8Array) => Promise<[] | [RequestOverviewWire]>;
 };
+type QueryActorLike = Pick<
+  WrapActor,
+  "get_request" | "quote_wrap_request" | "get_unwrap_requirements" | "get_fee_policy"
+>;
+type SubmitActorLike = Pick<
+  WrapActor,
+  "retry_request" | "recover_failed_wrap" | "submit_wrap_request"
+>;
 
 let cachedQueryActor: WrapActor | null = null;
 const cachedSubmitActors = new Map<string, WrapActor>();
+let mockQueryActor: QueryActorLike | null = null;
+let mockSubmitActor: SubmitActorLike | null = null;
 
 const wrapIdlFactory: IDL.InterfaceFactory = ({ IDL: I }) => {
   const ApiErrorDetail = I.Record({ code: I.Text, message: I.Text });
@@ -147,6 +158,7 @@ const wrapIdlFactory: IDL.InterfaceFactory = ({ IDL: I }) => {
         asset_id: I.Principal,
         amount_e8s: I.Nat,
         evm_recipient: I.Vec(I.Nat8),
+        evm_nonce: I.Nat64,
         gas_limit: I.Nat64,
       })],
       [I.Variant({
@@ -206,6 +218,9 @@ const wrapIdlFactory: IDL.InterfaceFactory = ({ IDL: I }) => {
 };
 
 async function getQueryActor(): Promise<WrapActor> {
+  if (mockQueryActor) {
+    return mockQueryActor as WrapActor;
+  }
   if (cachedQueryActor) {
     return cachedQueryActor;
   }
@@ -218,6 +233,9 @@ async function getQueryActor(): Promise<WrapActor> {
 }
 
 async function getSubmitActor(identity: Identity): Promise<WrapActor> {
+  if (mockSubmitActor) {
+    return mockSubmitActor as WrapActor;
+  }
   const key = identity.getPrincipal().toText();
   const cached = cachedSubmitActors.get(key);
   if (cached) {
@@ -325,6 +343,7 @@ export async function submitWrapRequest(args: {
   assetId: string;
   amountE8s: bigint;
   evmRecipient: Uint8Array;
+  evmNonce: bigint;
   gasLimit: bigint;
 }, identity: Identity): Promise<{
   requestId: Uint8Array;
@@ -336,6 +355,7 @@ export async function submitWrapRequest(args: {
     asset_id: Principal.fromText(args.assetId),
     amount_e8s: args.amountE8s,
     evm_recipient: args.evmRecipient,
+    evm_nonce: args.evmNonce,
     gas_limit: args.gasLimit,
   });
   if ("Err" in out) {
@@ -434,5 +454,13 @@ export const wrapClientTestHooks = {
   reset(): void {
     cachedQueryActor = null;
     cachedSubmitActors.clear();
+    mockQueryActor = null;
+    mockSubmitActor = null;
+  },
+  setMockQueryActor(actor: QueryActorLike | null): void {
+    mockQueryActor = actor;
+  },
+  setMockSubmitActor(actor: SubmitActorLike | null): void {
+    mockSubmitActor = actor;
   },
 };

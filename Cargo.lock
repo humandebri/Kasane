@@ -1846,6 +1846,11 @@ dependencies = [
 name = "ic-evm-rpc"
 version = "0.1.0"
 dependencies = [
+ "alloy-consensus",
+ "alloy-eips",
+ "alloy-primitives",
+ "alloy-signer",
+ "alloy-signer-local",
  "evm-db",
  "ic-evm-core",
  "ic-evm-rpc-types",

@@ -58,6 +58,7 @@ struct SubmitWrapRequestArgs {
     asset_id: Principal,
     amount_e8s: Nat,
     evm_recipient: Vec<u8>,
+    evm_nonce: u64,
     gas_limit: u64,
 }
 
@@ -328,6 +329,14 @@ struct RpcErrorView {
 }
 
 #[derive(Clone, Debug, CandidType, Deserialize, Eq, PartialEq)]
+struct RpcCallResultView {
+    status: u8,
+    gas_used: u64,
+    return_data: Vec<u8>,
+    revert_data: Option<Vec<u8>>,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize, Eq, PartialEq)]
 enum RpcBlockTagView {
     Latest,
     Safe,
@@ -353,10 +362,15 @@ fn mock_wrap_wasm_path() -> PathBuf {
 }
 
 fn mock_ledger_wasm_path() -> PathBuf {
-    if let Some(path) = std::env::var_os("ICP_LEDGER_WASM") {
-        return PathBuf::from(path);
-    }
-    PathBuf::from("/tmp/kasane-ledger-cache/ic-icrc1-ledger.wasm")
+    let path = std::env::var_os("ICP_LEDGER_WASM")
+        .unwrap_or_else(|| {
+            panic!(
+                "ICP_LEDGER_WASM must point to the official ic-icrc1-ledger.wasm; run scripts/prepare_ci_icrc1_ledger_wasm.sh first"
+            )
+        });
+    let path = PathBuf::from(path);
+    println!("using ICP_LEDGER_WASM at {:?}", path);
+    path
 }
 
 fn read_wasm(path: PathBuf) -> Vec<u8> {
@@ -510,6 +524,26 @@ fn install_mock_ledger(
     );
 }
 
+fn reinstall_mock_ledger(
+    pic: &PocketIc,
+    ledger_id: Principal,
+    gateway_id: Principal,
+    wrap_id: Principal,
+    wrap_balance: u128,
+) {
+    let caller = test_caller();
+    let ledger_init = build_ledger_init(gateway_id, wrap_id, caller, wrap_balance);
+    pic.reinstall_canister(
+        ledger_id,
+        read_wasm(mock_ledger_wasm_path()),
+        Encode!(&ledger_init).expect("encode ledger init"),
+        None,
+    )
+    .unwrap_or_else(|err| panic!("reinstall mock ledger failed: {err}"));
+    pic.start_canister(ledger_id, None)
+        .unwrap_or_else(|err| panic!("start mock ledger failed: {err}"));
+}
+
 fn settle(pic: &PocketIc, rounds: usize) {
     for _ in 0..rounds {
         pic.advance_time(Duration::from_secs(60));
@@ -643,8 +677,89 @@ fn gateway_estimate_gas(pic: &PocketIc, gateway_id: Principal, call: RpcCallObje
     result.expect("estimate gas")
 }
 
+fn gateway_call(pic: &PocketIc, gateway_id: Principal, call: RpcCallObjectView) -> RpcCallResultView {
+    let out = pic
+        .query_call(
+            gateway_id,
+            Principal::anonymous(),
+            "rpc_eth_call_object",
+            Encode!(&call).expect("encode eth_call"),
+        )
+        .unwrap();
+    let result =
+        Decode!(&out, Result<RpcCallResultView, RpcErrorView>).expect("decode eth_call");
+    result.expect("eth_call")
+}
+
 fn zero_value_word() -> Vec<u8> {
     vec![0u8; 32]
+}
+
+fn encode_balance_of(owner: [u8; 20]) -> Vec<u8> {
+    let mut out = function_selector("balanceOf(address)").to_vec();
+    out.extend_from_slice(&abi_word_from_address(owner));
+    out
+}
+
+fn wrapped_token_balance_of(
+    pic: &PocketIc,
+    gateway_id: Principal,
+    token: [u8; 20],
+    owner: [u8; 20],
+) -> u128 {
+    let result = gateway_call(
+        pic,
+        gateway_id,
+        RpcCallObjectView {
+            to: Some(token.to_vec()),
+            from: Some(owner.to_vec()),
+            gas: None,
+            gas_price: None,
+            nonce: None,
+            max_fee_per_gas: None,
+            max_priority_fee_per_gas: None,
+            chain_id: None,
+            tx_type: None,
+            access_list: None,
+            value: Some(zero_value_word()),
+            data: Some(encode_balance_of(owner)),
+        },
+    );
+    assert_eq!(result.status, 1, "balanceOf eth_call must succeed");
+    decode_u256_return_to_u128(&result.return_data)
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct TrackedBalances {
+    caller_fee_ledger: u128,
+    wrap_fee_ledger: u128,
+    gateway_fee_ledger: u128,
+    caller_wrapped_token: u128,
+}
+
+fn tracked_balances(
+    pic: &PocketIc,
+    gateway_id: Principal,
+    fee_ledger_id: Principal,
+    wrap_id: Principal,
+    caller: Principal,
+    caller_evm: [u8; 20],
+    wrapped_token: Option<[u8; 20]>,
+) -> TrackedBalances {
+    TrackedBalances {
+        caller_fee_ledger: ledger_balance_of(pic, fee_ledger_id, caller),
+        wrap_fee_ledger: ledger_balance_of(pic, fee_ledger_id, wrap_id),
+        gateway_fee_ledger: ledger_balance_of(pic, fee_ledger_id, gateway_id),
+        caller_wrapped_token: wrapped_token
+            .map(|token| {
+                if gateway_get_code(pic, gateway_id, token).is_empty() {
+                    0
+                } else {
+                    wrapped_token_balance_of(pic, gateway_id, token, caller_evm)
+                }
+            })
+            .unwrap_or(0),
+    }
 }
 
 fn gateway_get_code(pic: &PocketIc, gateway_id: Principal, address: [u8; 20]) -> Vec<u8> {
@@ -1006,25 +1121,55 @@ fn nat_to_u128(value: &Nat) -> u128 {
     u128::from_be_bytes(out)
 }
 
+fn decode_u256_return_to_u128(bytes: &[u8]) -> u128 {
+    assert!(
+        bytes.len() <= 32,
+        "unexpected u256 return size: {}",
+        bytes.len()
+    );
+    assert!(
+        bytes.iter()
+            .take(bytes.len().saturating_sub(16))
+            .all(|value| *value == 0),
+        "u256 return value exceeds u128 range"
+    );
+    let mut out = [0u8; 16];
+    let tail = &bytes[bytes.len().saturating_sub(16)..];
+    out[16 - tail.len()..].copy_from_slice(tail);
+    u128::from_be_bytes(out)
+}
+
 #[test]
 fn wrap_submit_request_succeeds_with_real_ledger_and_factory() {
     let pic = PocketIc::new();
     let (gateway_id, wrap_id, fee_ledger_id) = install_pair(&pic);
-    let caller_evm = hash::derive_evm_address_from_principal(test_caller().as_slice())
+    let caller = test_caller();
+    let caller_evm = hash::derive_evm_address_from_principal(caller.as_slice())
         .expect("derive caller evm");
     let factory = deploy_factory(&pic, gateway_id, wrap_id);
+    let token = predict_wrapped_token_address(factory, fee_ledger_id, TEST_ASSET_DECIMALS);
+    let balances_before = tracked_balances(
+        &pic,
+        gateway_id,
+        fee_ledger_id,
+        wrap_id,
+        caller,
+        caller_evm,
+        Some(token),
+    );
     approve_fee_ledger_for_wrap(&pic, fee_ledger_id, wrap_id, WRAP_AMOUNT_E8S * 2);
 
     let args = SubmitWrapRequestArgs {
         asset_id: fee_ledger_id,
         amount_e8s: Nat::from(WRAP_AMOUNT_E8S),
         evm_recipient: caller_evm.to_vec(),
+        evm_nonce: 0,
         gas_limit: TEST_WRAP_GAS_LIMIT,
     };
     let out = pic
         .update_call(
             wrap_id,
-            test_caller(),
+            caller,
             "submit_wrap_request",
             Encode!(&args).expect("encode wrap submit"),
         )
@@ -1040,10 +1185,31 @@ fn wrap_submit_request_succeeds_with_real_ledger_and_factory() {
         mint_receipt.status, 1,
         "mint receipt should succeed: {mint_receipt:?}"
     );
-    let token = predict_wrapped_token_address(factory, fee_ledger_id, TEST_ASSET_DECIMALS);
     assert!(
         !gateway_get_code(&pic, gateway_id, token).is_empty(),
         "wrapped token should be deployed"
+    );
+    let balances_after = tracked_balances(
+        &pic,
+        gateway_id,
+        fee_ledger_id,
+        wrap_id,
+        caller,
+        caller_evm,
+        Some(token),
+    );
+    assert!(
+        balances_after.caller_fee_ledger < balances_before.caller_fee_ledger,
+        "caller fee-ledger balance should decrease after wrap"
+    );
+    assert_eq!(
+        balances_after.wrap_fee_ledger,
+        balances_before.wrap_fee_ledger + WRAP_AMOUNT_E8S + nat_to_u128(&ok.charged_fee_e8s)
+    );
+    assert_eq!(balances_after.gateway_fee_ledger, balances_before.gateway_fee_ledger);
+    assert_eq!(
+        balances_after.caller_wrapped_token,
+        balances_before.caller_wrapped_token + WRAP_AMOUNT_E8S
     );
 }
 
@@ -1065,6 +1231,7 @@ fn unwrap_dispatch_succeeds_with_real_wrap_canister() {
                 asset_id: fee_ledger_id,
                 amount_e8s: Nat::from(WRAP_AMOUNT_E8S),
                 evm_recipient: caller_evm.to_vec(),
+                evm_nonce: 0,
                 gas_limit: TEST_WRAP_GAS_LIMIT,
             })
             .expect("encode wrap submit"),
@@ -1214,7 +1381,8 @@ fn unwrap_completes_and_credits_recipient_ledger_balance() {
     let pic = PocketIc::new();
     let (gateway_id, wrap_id, fee_ledger_id) = install_pair(&pic);
     let recipient = Principal::self_authenticating(b"wrap-unwrap-ledger-recipient");
-    let caller_evm = hash::derive_evm_address_from_principal(test_caller().as_slice())
+    let caller = test_caller();
+    let caller_evm = hash::derive_evm_address_from_principal(caller.as_slice())
         .expect("derive caller evm");
     let factory = deploy_factory(&pic, gateway_id, wrap_id);
     approve_fee_ledger_for_wrap(&pic, fee_ledger_id, wrap_id, WRAP_AMOUNT_E8S * 2);
@@ -1222,12 +1390,13 @@ fn unwrap_completes_and_credits_recipient_ledger_balance() {
     let wrap_out = pic
         .update_call(
             wrap_id,
-            test_caller(),
+            caller,
             "submit_wrap_request",
             Encode!(&SubmitWrapRequestArgs {
                 asset_id: fee_ledger_id,
                 amount_e8s: Nat::from(WRAP_AMOUNT_E8S),
                 evm_recipient: caller_evm.to_vec(),
+                evm_nonce: 0,
                 gas_limit: TEST_WRAP_GAS_LIMIT,
             })
             .expect("encode wrap submit"),
@@ -1250,6 +1419,15 @@ fn unwrap_completes_and_credits_recipient_ledger_balance() {
     );
 
     let token = predict_wrapped_token_address(factory, fee_ledger_id, TEST_ASSET_DECIMALS);
+    let balances_after_wrap = tracked_balances(
+        &pic,
+        gateway_id,
+        fee_ledger_id,
+        wrap_id,
+        caller,
+        caller_evm,
+        Some(token),
+    );
     let gas_price = gateway_gas_price(&pic, gateway_id);
     let priority_fee = gateway_priority_fee(&pic, gateway_id);
     let approve_nonce = gateway_expected_nonce(&pic, gateway_id, caller_evm);
@@ -1347,6 +1525,53 @@ fn unwrap_completes_and_credits_recipient_ledger_balance() {
     let recipient_after = ledger_balance_of(&pic, fee_ledger_id, recipient);
     assert_eq!(recipient_before, 0);
     assert_eq!(recipient_after, WRAP_AMOUNT_E8S);
+    let balances_after_unwrap = tracked_balances(
+        &pic,
+        gateway_id,
+        fee_ledger_id,
+        wrap_id,
+        caller,
+        caller_evm,
+        Some(token),
+    );
+    assert_tracked_balance_delta(
+        balances_after_wrap,
+        balances_after_unwrap,
+        0,
+        -(WRAP_AMOUNT_E8S as i128) - 10,
+        0,
+        -(WRAP_AMOUNT_E8S as i128),
+    );
+}
+
+fn assert_tracked_balance_delta(
+    before: TrackedBalances,
+    after: TrackedBalances,
+    caller_fee_ledger_delta: i128,
+    wrap_fee_ledger_delta: i128,
+    gateway_fee_ledger_delta: i128,
+    caller_wrapped_token_delta: i128,
+) {
+    assert_eq!(
+        after.caller_fee_ledger as i128 - before.caller_fee_ledger as i128,
+        caller_fee_ledger_delta,
+        "unexpected caller fee-ledger delta"
+    );
+    assert_eq!(
+        after.wrap_fee_ledger as i128 - before.wrap_fee_ledger as i128,
+        wrap_fee_ledger_delta,
+        "unexpected wrap fee-ledger delta"
+    );
+    assert_eq!(
+        after.gateway_fee_ledger as i128 - before.gateway_fee_ledger as i128,
+        gateway_fee_ledger_delta,
+        "unexpected gateway fee-ledger delta"
+    );
+    assert_eq!(
+        after.caller_wrapped_token as i128 - before.caller_wrapped_token as i128,
+        caller_wrapped_token_delta,
+        "unexpected wrapped token delta"
+    );
 }
 
 #[test]
@@ -1370,7 +1595,7 @@ fn unwrap_requirements_report_readiness_transitions() {
     assert_eq!(missing.factory_address, factory.to_vec());
     assert_eq!(missing.wrapped_token_address, None);
     assert_eq!(missing.readiness, UnwrapReadiness::TokenNotDeployed);
-    assert!(missing.approve_required);
+    assert!(!missing.approve_required);
 
     approve_fee_ledger_for_wrap(&pic, fee_ledger_id, wrap_id, WRAP_AMOUNT_E8S * 2);
     let wrap_out = pic
@@ -1382,6 +1607,7 @@ fn unwrap_requirements_report_readiness_transitions() {
                 asset_id: fee_ledger_id,
                 amount_e8s: Nat::from(WRAP_AMOUNT_E8S),
                 evm_recipient: caller_evm.to_vec(),
+                evm_nonce: 0,
                 gas_limit: TEST_WRAP_GAS_LIMIT,
             })
             .expect("encode wrap submit"),
@@ -1476,7 +1702,7 @@ fn unwrap_requirements_report_readiness_transitions() {
         insufficient_balance.readiness,
         UnwrapReadiness::InsufficientBalance
     );
-    assert!(insufficient_balance.approve_required);
+    assert!(!insufficient_balance.approve_required);
 
     let ready = wrap_get_unwrap_requirements(
         &pic,
@@ -1604,25 +1830,246 @@ fn unwrap_retry_request_succeeds_after_ledger_is_installed() {
 }
 
 #[test]
+fn unwrap_burn_then_ledger_transfer_failure_is_retryable_without_double_refund() {
+    let pic = PocketIc::new();
+    let (gateway_id, wrap_id, fee_ledger_id) = install_pair(&pic);
+    let broken_ledger_id = pic.create_canister();
+    let caller = test_caller();
+    let caller_evm = hash::derive_evm_address_from_principal(caller.as_slice())
+        .expect("derive caller evm");
+    let factory = deploy_factory(&pic, gateway_id, wrap_id);
+    install_mock_ledger(
+        &pic,
+        broken_ledger_id,
+        gateway_id,
+        wrap_id,
+        WRAP_AMOUNT_E8S * 2,
+    );
+    approve_fee_ledger_for_wrap(&pic, fee_ledger_id, wrap_id, WRAP_AMOUNT_E8S * 2);
+    approve_fee_ledger_for_wrap(&pic, broken_ledger_id, wrap_id, WRAP_AMOUNT_E8S * 2);
+
+    let wrap_out = pic
+        .update_call(
+            wrap_id,
+            caller,
+            "submit_wrap_request",
+            Encode!(&SubmitWrapRequestArgs {
+                asset_id: broken_ledger_id,
+                amount_e8s: Nat::from(WRAP_AMOUNT_E8S),
+                evm_recipient: caller_evm.to_vec(),
+                evm_nonce: 0,
+                gas_limit: TEST_WRAP_GAS_LIMIT,
+            })
+            .expect("encode wrap submit"),
+        )
+        .unwrap();
+    let wrap_result: Result<SubmitWrapRequestOk, ApiError> =
+        Decode!(&wrap_out, Result<SubmitWrapRequestOk, ApiError>).expect("decode wrap submit");
+    let wrap_ok = wrap_result.expect("wrap submit should succeed");
+    let wrap_overview =
+        wait_for_wrap_status(&pic, wrap_id, &wrap_ok.request_id, WrapRequestStatus::Succeeded);
+    let mint_tx_id = wrap_overview.mint_tx_id.expect("mint tx id should exist");
+    let mint_receipt = wait_for_receipt(&pic, gateway_id, &mint_tx_id);
+    assert_eq!(mint_receipt.status, 1, "mint receipt should succeed");
+
+    let token = predict_wrapped_token_address(factory, broken_ledger_id, TEST_ASSET_DECIMALS);
+    let after_wrap = tracked_balances(
+        &pic,
+        gateway_id,
+        broken_ledger_id,
+        wrap_id,
+        caller,
+        caller_evm,
+        Some(token),
+    );
+    assert_eq!(after_wrap.wrap_fee_ledger, (WRAP_AMOUNT_E8S * 2) + WRAP_AMOUNT_E8S);
+    assert_eq!(after_wrap.caller_wrapped_token, WRAP_AMOUNT_E8S);
+
+    let approve_nonce = gateway_expected_nonce(&pic, gateway_id, caller_evm);
+    let approve_data = encode_approve(factory, WRAP_AMOUNT_E8S);
+    let approve_gas = gateway_estimate_gas(
+        &pic,
+        gateway_id,
+        RpcCallObjectView {
+            to: Some(token.to_vec()),
+            from: Some(caller_evm.to_vec()),
+            gas: None,
+            gas_price: None,
+            nonce: Some(approve_nonce),
+            max_fee_per_gas: None,
+            max_priority_fee_per_gas: None,
+            chain_id: None,
+            tx_type: None,
+            access_list: None,
+            value: Some(zero_value_word()),
+            data: Some(approve_data.clone()),
+        },
+    );
+    let approve_tx = submit_ic_tx(
+        &pic,
+        gateway_id,
+        SubmitIcTxArgsDto {
+            to: Some(token.to_vec()),
+            from: None,
+            value: Nat::from(0u8),
+            max_priority_fee_per_gas: Nat::from(gateway_priority_fee(&pic, gateway_id)),
+            data: approve_data,
+            max_fee_per_gas: Nat::from(gateway_gas_price(&pic, gateway_id)),
+            nonce: approve_nonce,
+            gas_limit: approve_gas.saturating_mul(12) / 10,
+        },
+    );
+    let approve_receipt = wait_for_receipt(&pic, gateway_id, &approve_tx);
+    assert_eq!(approve_receipt.status, 1, "approve tx failed");
+
+    pic.stop_canister(broken_ledger_id, None)
+        .unwrap_or_else(|err| panic!("stop broken ledger failed: {err}"));
+
+    let unwrap_nonce = gateway_expected_nonce(&pic, gateway_id, caller_evm);
+    let unwrap_data = encode_unwrap_payload(broken_ledger_id, caller);
+    let unwrap_gas = gateway_estimate_gas(
+        &pic,
+        gateway_id,
+        RpcCallObjectView {
+            to: Some(WRAP_PRECOMPILE_ADDRESS.into_array().to_vec()),
+            from: Some(caller_evm.to_vec()),
+            gas: None,
+            gas_price: None,
+            nonce: Some(unwrap_nonce),
+            max_fee_per_gas: None,
+            max_priority_fee_per_gas: None,
+            chain_id: None,
+            tx_type: None,
+            access_list: None,
+            value: Some(zero_value_word()),
+            data: Some(unwrap_data.clone()),
+        },
+    );
+    let tx_id = submit_ic_tx(
+        &pic,
+        gateway_id,
+        SubmitIcTxArgsDto {
+            to: Some(WRAP_PRECOMPILE_ADDRESS.into_array().to_vec()),
+            from: None,
+            value: Nat::from(0u8),
+            max_priority_fee_per_gas: Nat::from(gateway_priority_fee(&pic, gateway_id)),
+            data: unwrap_data,
+            max_fee_per_gas: Nat::from(gateway_gas_price(&pic, gateway_id)),
+            nonce: unwrap_nonce,
+            gas_limit: unwrap_gas.saturating_mul(12) / 10,
+        },
+    );
+
+    let mut request_id = None;
+    for _ in 0..12 {
+        settle(&pic, 1);
+        let request_ids = gateway_unwrap_request_ids_by_tx_id(&pic, gateway_id, &tx_id);
+        if request_ids.len() == 1 {
+            request_id = request_ids.into_iter().next();
+            break;
+        }
+    }
+    let request_id = request_id.expect("unwrap request id must resolve from tx");
+    let failed = wait_for_unwrap_status(&pic, wrap_id, &request_id, WrapRequestStatus::Failed);
+    let failed_error = failed.error.expect("failed unwrap should expose an error");
+    assert!(
+        failed_error.code.starts_with("ledger.call_failed:"),
+        "unexpected unwrap failure code: {}",
+        failed_error.code
+    );
+    assert_eq!(
+        wrapped_token_balance_of(&pic, gateway_id, token, caller_evm),
+        0,
+        "burned wrapped tokens must not reappear after ledger failure"
+    );
+
+    reinstall_mock_ledger(
+        &pic,
+        broken_ledger_id,
+        gateway_id,
+        wrap_id,
+        after_wrap.wrap_fee_ledger,
+    );
+    let after_reinstall = tracked_balances(
+        &pic,
+        gateway_id,
+        broken_ledger_id,
+        wrap_id,
+        caller,
+        caller_evm,
+        Some(token),
+    );
+    assert_eq!(after_reinstall.wrap_fee_ledger, after_wrap.wrap_fee_ledger);
+    assert_eq!(after_reinstall.caller_wrapped_token, 0);
+    let recipient_before = ledger_balance_of(&pic, broken_ledger_id, caller);
+
+    let retry_out = pic
+        .update_call(
+            wrap_id,
+            caller,
+            "retry_request",
+            Encode!(&RetryRequestArgs {
+                request_id: request_id.clone(),
+            })
+            .expect("encode retry request"),
+        )
+        .unwrap();
+    let retry_result: Result<RequestOverview, ApiError> =
+        Decode!(&retry_out, Result<RequestOverview, ApiError>).expect("decode retry request");
+    let retry_ok = retry_result.expect("retry should succeed after ledger reinstall");
+    assert_eq!(retry_ok.status, WrapRequestStatus::Succeeded);
+    assert!(retry_ok.ledger_tx_id.is_some(), "retry should produce ledger tx");
+
+    let recipient_after = ledger_balance_of(&pic, broken_ledger_id, caller);
+    assert_eq!(recipient_after - recipient_before, WRAP_AMOUNT_E8S);
+    let after_retry = tracked_balances(
+        &pic,
+        gateway_id,
+        broken_ledger_id,
+        wrap_id,
+        caller,
+        caller_evm,
+        Some(token),
+    );
+    assert_eq!(after_retry.caller_wrapped_token, 0);
+    assert_eq!(
+        after_retry.wrap_fee_ledger,
+        after_wrap.wrap_fee_ledger - WRAP_AMOUNT_E8S - 10,
+        "retry should produce exactly one ledger refund and one transfer fee"
+    );
+}
+
+#[test]
 fn wrap_recover_failed_wrap_returns_funds_after_gateway_reinstall_breaks_mint_step() {
     let pic = PocketIc::new();
     let (gateway_id, wrap_id, fee_ledger_id) = install_pair(&pic);
-    let caller_evm = hash::derive_evm_address_from_principal(test_caller().as_slice())
+    let caller = test_caller();
+    let caller_evm = hash::derive_evm_address_from_principal(caller.as_slice())
         .expect("derive caller evm");
     let _factory = deploy_factory(&pic, gateway_id, wrap_id);
     approve_fee_ledger_for_wrap(&pic, fee_ledger_id, wrap_id, WRAP_AMOUNT_E8S * 2);
+    let balances_before = tracked_balances(
+        &pic,
+        gateway_id,
+        fee_ledger_id,
+        wrap_id,
+        caller,
+        caller_evm,
+        None,
+    );
 
-    let caller_before = ledger_balance_of(&pic, fee_ledger_id, test_caller());
+    let caller_before = ledger_balance_of(&pic, fee_ledger_id, caller);
     let wrap_before = ledger_balance_of(&pic, fee_ledger_id, wrap_id);
     let wrap_out = pic
         .update_call(
             wrap_id,
-            test_caller(),
+            caller,
             "submit_wrap_request",
             Encode!(&SubmitWrapRequestArgs {
                 asset_id: fee_ledger_id,
                 amount_e8s: Nat::from(WRAP_AMOUNT_E8S),
                 evm_recipient: caller_evm.to_vec(),
+                evm_nonce: 0,
                 gas_limit: TEST_WRAP_GAS_LIMIT,
             })
             .expect("encode wrap submit"),
@@ -1636,7 +2083,7 @@ fn wrap_recover_failed_wrap_returns_funds_after_gateway_reinstall_breaks_mint_st
         gateway_id,
         read_wasm(mock_wrap_wasm_path()),
         Encode!(&()).expect("encode mock wrap init"),
-        Some(test_caller()),
+        Some(caller),
     )
     .unwrap_or_else(|err| panic!("reinstall gateway failed: {err}"));
 
@@ -1662,7 +2109,7 @@ fn wrap_recover_failed_wrap_returns_funds_after_gateway_reinstall_breaks_mint_st
         failed_error.code
     );
 
-    let caller_mid = ledger_balance_of(&pic, fee_ledger_id, test_caller());
+    let caller_mid = ledger_balance_of(&pic, fee_ledger_id, caller);
     let wrap_mid = ledger_balance_of(&pic, fee_ledger_id, wrap_id);
     assert!(
         caller_mid < caller_before,
@@ -1676,7 +2123,7 @@ fn wrap_recover_failed_wrap_returns_funds_after_gateway_reinstall_breaks_mint_st
     let recover_out = pic
         .update_call(
             wrap_id,
-            test_caller(),
+            caller,
             "recover_failed_wrap",
             Encode!(&RecoverFailedWrapArgs {
                 request_id: wrap_ok.request_id.clone(),
@@ -1694,7 +2141,7 @@ fn wrap_recover_failed_wrap_returns_funds_after_gateway_reinstall_breaks_mint_st
         "withdraw tx should exist"
     );
 
-    let caller_after = ledger_balance_of(&pic, fee_ledger_id, test_caller());
+    let caller_after = ledger_balance_of(&pic, fee_ledger_id, caller);
     let wrap_after = ledger_balance_of(&pic, fee_ledger_id, wrap_id);
     assert_eq!(
         caller_after - caller_mid,
@@ -1713,4 +2160,266 @@ fn wrap_recover_failed_wrap_returns_funds_after_gateway_reinstall_breaks_mint_st
         caller_after < caller_before,
         "charged wrap fee should still remain deducted after recover"
     );
+    let balances_after = tracked_balances(
+        &pic,
+        gateway_id,
+        fee_ledger_id,
+        wrap_id,
+        caller,
+        caller_evm,
+        None,
+    );
+    assert!(
+        balances_after.caller_fee_ledger < balances_before.caller_fee_ledger,
+        "caller fee-ledger balance should only retain wrap-side charges after recover"
+    );
+    assert_eq!(
+        balances_after.wrap_fee_ledger,
+        balances_before.wrap_fee_ledger + nat_to_u128(&wrap_ok.charged_fee_e8s) - 10
+    );
+    assert_eq!(balances_after.gateway_fee_ledger, balances_before.gateway_fee_ledger);
+    assert_eq!(balances_after.caller_wrapped_token, balances_before.caller_wrapped_token);
+
+    let recover_again_out = pic
+        .update_call(
+            wrap_id,
+            caller,
+            "recover_failed_wrap",
+            Encode!(&RecoverFailedWrapArgs {
+                request_id: wrap_ok.request_id.clone(),
+            })
+            .expect("encode recover failed wrap retry"),
+        )
+        .unwrap();
+    let recover_again_result: Result<RequestOverview, ApiError> =
+        Decode!(&recover_again_out, Result<RequestOverview, ApiError>)
+            .expect("decode recover failed wrap retry");
+    let recover_again_err = recover_again_result.expect_err("second recover should fail");
+    match recover_again_err {
+        ApiError::InvalidArgument(detail) => {
+            assert_eq!(detail.code, "withdraw.already_withdrawn");
+        }
+        other => panic!("unexpected second recover error: {other:?}"),
+    }
+}
+
+#[test]
+fn unwrap_retry_request_rejects_concurrent_second_call_while_first_is_in_progress() {
+    let pic = PocketIc::new();
+    let (gateway_id, wrap_id, _) = install_pair(&pic);
+    let delayed_ledger_id = pic.create_canister();
+    let caller = test_caller();
+    let request_id = vec![0x55u8; 32];
+
+    let out = pic
+        .update_call(
+            wrap_id,
+            gateway_id,
+            "dispatch_unwrap_request",
+            Encode!(&DispatchUnwrapRequestArgs {
+                request_id: request_id.clone(),
+                asset_id: delayed_ledger_id,
+                amount_e8s: Nat::from(WRAP_AMOUNT_E8S),
+                recipient: caller,
+            })
+            .expect("encode dispatch unwrap"),
+        )
+        .unwrap();
+    let result: Result<DispatchUnwrapRequestOk, ApiError> =
+        Decode!(&out, Result<DispatchUnwrapRequestOk, ApiError>)
+            .expect("decode dispatch unwrap");
+    result.expect("dispatch should enqueue");
+
+    let failed = wait_for_unwrap_status(&pic, wrap_id, &request_id, WrapRequestStatus::Failed);
+    let failed_error = failed.error.expect("failed unwrap should expose error");
+    assert!(
+        failed_error.code.starts_with("ledger.call_failed:"),
+        "unexpected unwrap failure code: {}",
+        failed_error.code
+    );
+
+    install_mock_ledger(
+        &pic,
+        delayed_ledger_id,
+        gateway_id,
+        wrap_id,
+        WRAP_AMOUNT_E8S * 2,
+    );
+    let recipient_before = ledger_balance_of(&pic, delayed_ledger_id, caller);
+    let wrap_before = ledger_balance_of(&pic, delayed_ledger_id, wrap_id);
+
+    let retry_arg = Encode!(&RetryRequestArgs {
+        request_id: request_id.clone(),
+    })
+    .expect("encode retry arg");
+    let first_call = pic
+        .submit_call(wrap_id, caller, "retry_request", retry_arg.clone())
+        .unwrap_or_else(|err| panic!("submit first retry failed: {err}"));
+    let second_call = pic
+        .submit_call(wrap_id, caller, "retry_request", retry_arg)
+        .unwrap_or_else(|err| panic!("submit second retry failed: {err}"));
+
+    let first_out = pic
+        .await_call(first_call)
+        .unwrap_or_else(|err| panic!("await first retry failed: {err:?}"));
+    let second_out = pic
+        .await_call(second_call)
+        .unwrap_or_else(|err| panic!("await second retry failed: {err:?}"));
+
+    let first_result: Result<RequestOverview, ApiError> =
+        Decode!(&first_out, Result<RequestOverview, ApiError>).expect("decode first retry");
+    let second_result: Result<RequestOverview, ApiError> =
+        Decode!(&second_out, Result<RequestOverview, ApiError>).expect("decode second retry");
+    let (successes, failures): (Vec<_>, Vec<_>) =
+        [first_result, second_result].into_iter().partition(Result::is_ok);
+
+    assert_eq!(successes.len(), 1, "exactly one retry should succeed");
+    assert_eq!(failures.len(), 1, "exactly one retry should fail");
+    let retried = successes
+        .into_iter()
+        .next()
+        .expect("missing successful retry")
+        .expect("successful retry payload");
+    assert_eq!(retried.status, WrapRequestStatus::Succeeded);
+    assert!(retried.ledger_tx_id.is_some(), "retry should record ledger tx");
+    let retry_err = failures
+        .into_iter()
+        .next()
+        .expect("missing failed retry")
+        .expect_err("failed retry payload");
+    match retry_err {
+        ApiError::InvalidArgument(detail) => {
+            assert_eq!(detail.code, "unwrap.retry_already_running");
+        }
+        other => panic!("unexpected concurrent retry error: {other:?}"),
+    }
+
+    let recipient_after = ledger_balance_of(&pic, delayed_ledger_id, caller);
+    let wrap_after = ledger_balance_of(&pic, delayed_ledger_id, wrap_id);
+    assert_eq!(recipient_after - recipient_before, WRAP_AMOUNT_E8S);
+    assert_eq!(
+        wrap_before - wrap_after,
+        WRAP_AMOUNT_E8S + 10,
+        "wrap canister should pay one retry refund plus one transfer fee"
+    );
+}
+
+#[test]
+fn wrap_recover_failed_wrap_rejects_concurrent_second_call_while_first_is_in_progress() {
+    let pic = PocketIc::new();
+    let (gateway_id, wrap_id, fee_ledger_id) = install_pair(&pic);
+    let caller = test_caller();
+    let caller_evm = hash::derive_evm_address_from_principal(caller.as_slice())
+        .expect("derive caller evm");
+    let _factory = deploy_factory(&pic, gateway_id, wrap_id);
+    approve_fee_ledger_for_wrap(&pic, fee_ledger_id, wrap_id, WRAP_AMOUNT_E8S * 2);
+
+    let caller_before = ledger_balance_of(&pic, fee_ledger_id, caller);
+    let wrap_before = ledger_balance_of(&pic, fee_ledger_id, wrap_id);
+    let wrap_out = pic
+        .update_call(
+            wrap_id,
+            caller,
+            "submit_wrap_request",
+            Encode!(&SubmitWrapRequestArgs {
+                asset_id: fee_ledger_id,
+                amount_e8s: Nat::from(WRAP_AMOUNT_E8S),
+                evm_recipient: caller_evm.to_vec(),
+                evm_nonce: 0,
+                gas_limit: TEST_WRAP_GAS_LIMIT,
+            })
+            .expect("encode wrap submit"),
+        )
+        .unwrap();
+    let wrap_result: Result<SubmitWrapRequestOk, ApiError> =
+        Decode!(&wrap_out, Result<SubmitWrapRequestOk, ApiError>).expect("decode wrap submit");
+    let wrap_ok = wrap_result.expect("wrap submit should accept and queue");
+
+    pic.reinstall_canister(
+        gateway_id,
+        read_wasm(mock_wrap_wasm_path()),
+        Encode!(&()).expect("encode mock wrap init"),
+        Some(caller),
+    )
+    .unwrap_or_else(|err| panic!("reinstall gateway failed: {err}"));
+
+    let failed = wait_for_wrap_status(
+        &pic,
+        wrap_id,
+        &wrap_ok.request_id,
+        WrapRequestStatus::Failed,
+    );
+    assert!(failed.pull_ledger_tx_id.is_some(), "pull should complete before recover");
+    assert!(failed.mint_tx_id.is_none(), "mint tx must be absent");
+
+    let caller_mid = ledger_balance_of(&pic, fee_ledger_id, caller);
+    let wrap_mid = ledger_balance_of(&pic, fee_ledger_id, wrap_id);
+    assert!(caller_mid < caller_before, "caller balance should decrease after pull");
+    assert!(wrap_mid > wrap_before, "wrap balance should increase after pull");
+
+    let recover_arg = Encode!(&RecoverFailedWrapArgs {
+        request_id: wrap_ok.request_id.clone(),
+    })
+    .expect("encode recover arg");
+    let first_call = pic
+        .submit_call(wrap_id, caller, "recover_failed_wrap", recover_arg.clone())
+        .unwrap_or_else(|err| panic!("submit first recover failed: {err}"));
+    let second_call = pic
+        .submit_call(wrap_id, caller, "recover_failed_wrap", recover_arg)
+        .unwrap_or_else(|err| panic!("submit second recover failed: {err}"));
+
+    let first_out = pic
+        .await_call(first_call)
+        .unwrap_or_else(|err| panic!("await first recover failed: {err:?}"));
+    let second_out = pic
+        .await_call(second_call)
+        .unwrap_or_else(|err| panic!("await second recover failed: {err:?}"));
+
+    let first_result: Result<RequestOverview, ApiError> =
+        Decode!(&first_out, Result<RequestOverview, ApiError>).expect("decode first recover");
+    let second_result: Result<RequestOverview, ApiError> =
+        Decode!(&second_out, Result<RequestOverview, ApiError>).expect("decode second recover");
+    let (successes, failures): (Vec<_>, Vec<_>) =
+        [first_result, second_result].into_iter().partition(Result::is_ok);
+
+    assert_eq!(successes.len(), 1, "exactly one recover should succeed");
+    assert_eq!(failures.len(), 1, "exactly one recover should fail");
+    let recovered = successes
+        .into_iter()
+        .next()
+        .expect("missing successful recover")
+        .expect("successful recover payload");
+    assert_eq!(recovered.status, WrapRequestStatus::Failed);
+    assert!(
+        recovered.withdraw_ledger_tx_id.is_some(),
+        "successful recover should record withdraw tx"
+    );
+    let second_err = failures
+        .into_iter()
+        .next()
+        .expect("missing failed recover")
+        .expect_err("failed recover payload");
+    match second_err {
+        ApiError::InvalidArgument(detail) => {
+            assert_eq!(detail.code, "withdraw.in_progress");
+        }
+        other => panic!("unexpected concurrent recover error: {other:?}"),
+    }
+
+    let caller_after = ledger_balance_of(&pic, fee_ledger_id, caller);
+    let wrap_after = ledger_balance_of(&pic, fee_ledger_id, wrap_id);
+    assert_eq!(
+        caller_after - caller_mid,
+        WRAP_AMOUNT_E8S,
+        "caller should receive exactly one refund"
+    );
+    assert_eq!(
+        wrap_mid - wrap_after,
+        WRAP_AMOUNT_E8S + 10,
+        "wrap canister should pay one refund plus the ledger transfer fee"
+    );
+
+    let overview = wrap_get_request(&pic, wrap_id, &wrap_ok.request_id).expect("final overview");
+    assert_eq!(overview.status, WrapRequestStatus::Failed);
+    assert!(overview.withdraw_ledger_tx_id.is_some());
 }
