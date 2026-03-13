@@ -22,6 +22,7 @@ type WrapRequestIdInput = {
   assetId: Uint8Array;
   amount: Uint8Array;
   evmRecipient: Uint8Array;
+  evmNonce: bigint;
   gasLimit: bigint;
 };
 
@@ -138,6 +139,10 @@ export function deriveWrapRequestId(args: WrapRequestIdInput): Uint8Array {
   hashLenPrefixed(bytes, args.assetId);
   hashLenPrefixed(bytes, args.amount);
   hashLenPrefixed(bytes, args.evmRecipient);
+  const evmNonce = encodeU64Be(args.evmNonce, "arg.evm_nonce_invalid");
+  for (let i = 0; i < evmNonce.length; i += 1) {
+    bytes.push(evmNonce[i] ?? 0);
+  }
   const gasLimit = encodeU64Be(args.gasLimit, "arg.gas_limit_invalid");
   for (let i = 0; i < gasLimit.length; i += 1) {
     bytes.push(gasLimit[i] ?? 0);

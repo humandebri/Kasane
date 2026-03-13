@@ -12,6 +12,15 @@ import { encodeApproveCall } from "../erc20";
 import { callerEvmAddressFromPrincipalText } from "../principal";
 import { getUnwrapRequirements } from "./wrap-client";
 
+type Erc20ClientDeps = {
+  readRequirements: typeof getUnwrapRequirements;
+  readExpectedNonce: typeof getExpectedNonce;
+  readEstimateContractGasLimit: typeof estimateContractGasLimit;
+  submitTx: typeof submitIcTx;
+};
+
+let testDeps: Erc20ClientDeps | null = null;
+
 export function resolveUnwrapBurnSpenderEvmAddress(factoryAddressHex: string): Uint8Array {
   return factoryAddressHex
     .replace(/^0x/, "")
@@ -29,8 +38,14 @@ export async function approveWrappedTokenIfNeeded(args: {
   principalText: string;
   identity: Identity;
 }): Promise<void> {
+  const deps = testDeps ?? {
+    readRequirements: getUnwrapRequirements,
+    readExpectedNonce: getExpectedNonce,
+    readEstimateContractGasLimit: estimateContractGasLimit,
+    submitTx: submitIcTx,
+  };
   const ownerEvmAddress = callerEvmAddressFromPrincipalText(args.principalText);
-  const requirements = await getUnwrapRequirements({
+  const requirements = await deps.readRequirements({
     assetId: args.assetId,
     amountE8s: args.amount,
     callerEvmAddress: ownerEvmAddress,
@@ -38,18 +53,24 @@ export async function approveWrappedTokenIfNeeded(args: {
   if (requirements.wrappedTokenAddress === null) {
     throw new Error("unwrap.token_not_deployed");
   }
-  if (!requirements.approveRequired) {
+  if (requirements.readiness === "TokenNotDeployed") {
+    throw new Error("unwrap.token_not_deployed");
+  }
+  if (requirements.readiness === "InsufficientBalance") {
+    throw new Error("erc20.insufficient_balance");
+  }
+  if (requirements.readiness !== "InsufficientAllowance" || !requirements.approveRequired) {
     return;
   }
-  const nonce = await getExpectedNonce(ownerEvmAddress);
+  const nonce = await deps.readExpectedNonce(ownerEvmAddress);
   const data = encodeApproveCall(requirements.factoryAddress, args.amount);
-  const gasLimit = await estimateContractGasLimit({
+  const gasLimit = await deps.readEstimateContractGasLimit({
     to: requirements.wrappedTokenAddress,
     from: ownerEvmAddress,
     nonce,
     data,
   });
-  await submitIcTx({
+  await deps.submitTx({
     to: requirements.wrappedTokenAddress,
     data,
     nonce,
@@ -57,3 +78,12 @@ export async function approveWrappedTokenIfNeeded(args: {
     identity: args.identity,
   });
 }
+
+export const erc20ClientTestHooks = {
+  reset(): void {
+    testDeps = null;
+  },
+  setDeps(deps: Erc20ClientDeps | null): void {
+    testDeps = deps;
+  },
+};

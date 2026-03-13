@@ -57,7 +57,18 @@ cargo build --release --target wasm32-unknown-unknown -p ic-evm-gateway -p wrap-
 - `target/wasm32-unknown-unknown/release/ic_evm_gateway.wasm`
 - `target/wasm32-unknown-unknown/release/wrap_canister.wasm`
 
-### 3. wrap / unwrap の PocketIC E2E
+### 3. official ledger wasm を準備
+
+```bash
+bash scripts/prepare_ci_icrc1_ledger_wasm.sh && export ICP_LEDGER_WASM=/tmp/kasane-ledger-cache/ic-icrc1-ledger.wasm
+```
+
+期待:
+
+- `ICP_LEDGER_WASM` が official `ic-icrc1-ledger.wasm` を指す
+- `wrap_unwrap_flow_e2e` が CI と同じ ledger wasm を使う
+
+### 4. wrap / unwrap の PocketIC E2E
 
 ```bash
 cargo test --manifest-path crates/evm-rpc-e2e/Cargo.toml --test wrap_unwrap_flow_e2e -- --nocapture
@@ -73,7 +84,7 @@ cargo test --manifest-path crates/evm-rpc-e2e/Cargo.toml --test wrap_unwrap_flow
 - wrap は `fee.quote_*` では失敗せず、dummy ledger による `fee.call_failed:*` まで進む
 - unwrap は real `wrap_canister` 相手に `Dispatched` まで到達する
 
-### 4. request_id 検証の回帰
+### 5. request_id 検証の回帰
 
 ```bash
 cargo test -p ic-evm-gateway resolve_wrap_submit_ok -- --nocapture
@@ -90,7 +101,7 @@ cargo test -p ic-evm-gateway resolve_wrap_submit_ok -- --nocapture
 - local 実機では `Dispatched` 到達を確認し、不一致検知そのものはこの unit test を正とする
 - real-ledger smoke で見る `wrap` の `Succeeded` は mint tx 受理の意味で、EVM inclusion 完了は別途 receipt で確認する
 
-### 5. query 経路の wrap precompile 回帰
+### 6. query 経路の wrap precompile 回帰
 
 ```bash
 cargo test -p ic-evm-core --test wrap_precompile_query -- --nocapture
@@ -101,7 +112,7 @@ cargo test -p ic-evm-core --test wrap_precompile_query -- --nocapture
 - `wrap_precompile_eth_call_object_succeeds_in_query_path ... ok`
 - `wrap_precompile_eth_estimate_gas_succeeds_in_query_path ... ok`
 
-### 6. 必要なら local query smoke
+### 7. 必要なら local query smoke
 
 ```bash
 scripts/query_smoke.sh

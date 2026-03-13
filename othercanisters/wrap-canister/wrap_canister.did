@@ -76,6 +76,7 @@ type SubmitWrapRequestArgs = record {
   asset_id : principal;
   amount_e8s : nat;
   evm_recipient : blob;
+  evm_nonce : nat64;
   gas_limit : nat64;
 };
 type SubmitWrapRequestOk = record {

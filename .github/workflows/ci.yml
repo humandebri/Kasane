@@ -101,6 +101,15 @@ jobs:
       - name: Check evm-rpc-e2e manifest builds
         run: cargo test --manifest-path crates/evm-rpc-e2e/Cargo.toml --no-run --locked
 
+      - name: Build wrap/unwrap E2E wasm
+        run: cargo build --release --target wasm32-unknown-unknown -p wrap-canister -p mock-wrap-canister -p ic-evm-gateway --locked
+
+      - name: Prepare official ICRC-1 ledger wasm
+        run: bash scripts/prepare_ci_icrc1_ledger_wasm.sh
+
+      - name: Run wrap/unwrap E2E
+        run: cargo test --manifest-path crates/evm-rpc-e2e/Cargo.toml --test wrap_unwrap_flow_e2e --locked -- --test-threads=1
+
       - name: Install Foundry
         uses: foundry-rs/foundry-toolchain@v1
         with:

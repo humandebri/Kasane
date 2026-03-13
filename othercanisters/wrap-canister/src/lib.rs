@@ -80,6 +80,7 @@ pub struct SubmitWrapRequestArgs {
     pub asset_id: Principal,
     pub amount_e8s: Nat,
     pub evm_recipient: Vec<u8>,
+    pub evm_nonce: u64,
     pub gas_limit: u64,
 }
 
@@ -168,6 +169,8 @@ pub struct WrapRequestResult {
     pub withdraw_ledger_tx_id: Option<Vec<u8>>,
     #[serde(default)]
     pub withdraw_error_code: Option<String>,
+    #[serde(default)]
+    pub withdraw_in_progress: bool,
     #[serde(default)]
     pub mint_failed_recoverable: bool,
     #[serde(default)]
@@ -723,17 +726,8 @@ async fn recover_failed_wrap(args: RecoverFailedWrapArgs) -> Result<RequestOverv
     init_state();
     let request_id = request_id_or_invalid_argument(args.request_id.as_slice())?;
     let caller = ic_cdk::api::msg_caller();
-    let (asset_id, amount) = with_state(|state| {
-        let req = state.wrap_requests.get(&request_id);
-        match req {
-            Some(req) => {
-                validate_withdraw_request(&req, caller)?;
-                Ok((req.asset_id.clone(), req.amount.clone()))
-            }
-            None => Err("withdraw.invalid_state".to_string()),
-        }
-    })
-    .map_err(api_invalid_argument)?;
+    let (asset_id, amount) =
+        map_string_result(reserve_failed_wrap_withdraw(request_id, caller))?;
 
     let transfer = attempt_icrc1_transfer(asset_id, amount, caller.as_slice().to_vec()).await;
     match transfer {
@@ -743,6 +737,7 @@ async fn recover_failed_wrap(args: RecoverFailedWrapArgs) -> Result<RequestOverv
                     req.result.withdrawn = true;
                     req.result.withdraw_ledger_tx_id = Some(tx_id.clone());
                     req.result.withdraw_error_code = None;
+                    req.result.withdraw_in_progress = false;
                     req.result.mint_failed_recoverable = false;
                     state.wrap_requests.insert(request_id, req);
                 }
@@ -754,6 +749,7 @@ async fn recover_failed_wrap(args: RecoverFailedWrapArgs) -> Result<RequestOverv
             with_state_mut(|state| {
                 if let Some(mut req) = state.wrap_requests.get(&request_id) {
                     req.result.withdraw_error_code = Some(withdraw_code.clone());
+                    req.result.withdraw_in_progress = false;
                     state.wrap_requests.insert(request_id, req);
                 }
             });
@@ -941,6 +937,7 @@ fn insert_wrap_request(
                     withdrawn: false,
                     withdraw_ledger_tx_id: None,
                     withdraw_error_code: None,
+                    withdraw_in_progress: false,
                     mint_failed_recoverable: false,
                     fee_ledger_tx_id: Some(fee_charge.ledger_tx_id),
                     charged_fee_e8s: Some(fee_charge.charged_fee_e8s),
@@ -991,7 +988,7 @@ fn normalize_quote_wrap_args(
 
 fn normalize_submit_wrap_args(
     args: SubmitWrapRequestArgs,
-) -> Result<(Vec<u8>, Vec<u8>, Vec<u8>, u64), String> {
+) -> Result<(Vec<u8>, Vec<u8>, Vec<u8>, u64, u64), String> {
     validate_principal_bytes(args.asset_id.as_slice())?;
     let amount = nat_to_fixed_be::<32>(&args.amount_e8s)
         .ok_or_else(|| "arg.amount_out_of_range".to_string())?
@@ -1005,6 +1002,7 @@ fn normalize_submit_wrap_args(
         args.asset_id.as_slice().to_vec(),
         amount,
         args.evm_recipient,
+        args.evm_nonce,
         args.gas_limit,
     ))
 }
@@ -1185,13 +1183,14 @@ async fn build_submit_wrap_request(
     args: SubmitWrapRequestArgs,
     caller: Principal,
 ) -> Result<NormalizedSubmitWrapRequest, ApiError> {
-    let (asset_id, amount, evm_recipient, gas_limit) =
+    let (asset_id, amount, evm_recipient, evm_nonce, gas_limit) =
         normalize_submit_wrap_args(args).map_err(api_invalid_argument)?;
     let request_id = RequestId(derive_wrap_request_id(
         caller.as_slice(),
         asset_id.as_slice(),
         amount.as_slice(),
         evm_recipient.as_slice(),
+        evm_nonce,
         gas_limit,
     ));
     if with_state(|state| state.wrap_requests.contains_key(&request_id)) {
@@ -1318,6 +1317,7 @@ fn derive_wrap_request_id(
     asset_id: &[u8],
     amount: &[u8],
     evm_recipient: &[u8],
+    evm_nonce: u64,
     gas_limit: u64,
 ) -> [u8; 32] {
     let mut keccak = Keccak::v256();
@@ -1326,10 +1326,15 @@ fn derive_wrap_request_id(
     hash_len_prefixed(&mut keccak, asset_id);
     hash_len_prefixed(&mut keccak, amount);
     hash_len_prefixed(&mut keccak, evm_recipient);
+    keccak.update(&evm_nonce.to_be_bytes());
     keccak.update(&gas_limit.to_be_bytes());
     let mut out = [0u8; 32];
     keccak.finalize(&mut out);
     out
+}
+
+fn approval_required_for_readiness(readiness: UnwrapReadiness) -> bool {
+    readiness == UnwrapReadiness::InsufficientAllowance
 }
 
 fn hash_len_prefixed(hasher: &mut Keccak, bytes: &[u8]) {
@@ -1410,7 +1415,7 @@ async fn get_unwrap_requirements(
             wrapped_token_address: None,
             balance: Nat::from(0u8),
             allowance: Nat::from(0u8),
-            approve_required: true,
+            approve_required: approval_required_for_readiness(UnwrapReadiness::TokenNotDeployed),
             readiness: UnwrapReadiness::TokenNotDeployed,
         });
     }
@@ -1439,7 +1444,7 @@ async fn get_unwrap_requirements(
         wrapped_token_address: Some(token_address),
         balance,
         allowance,
-        approve_required: readiness != UnwrapReadiness::Ready,
+        approve_required: approval_required_for_readiness(readiness),
         readiness,
     })
 }
@@ -1509,9 +1514,14 @@ fn recover_wrap_request_state_after_upgrade(_now: u64) -> bool {
             queued_ids.insert(request_id);
         }
 
+        let mut in_progress_to_clear = Vec::new();
         let mut candidates = Vec::new();
         for (request_id, stored) in state.wrap_requests.range(..) {
             let mut req = stored.clone();
+            if req.result.withdraw_in_progress {
+                req.result.withdraw_in_progress = false;
+                in_progress_to_clear.push((request_id, req.clone()));
+            }
             match req.result.status {
                 RequestStatus::Queued => {
                     if !queued_ids.contains(&request_id) {
@@ -1524,6 +1534,10 @@ fn recover_wrap_request_state_after_upgrade(_now: u64) -> bool {
                 }
                 RequestStatus::Succeeded | RequestStatus::Failed => {}
             }
+        }
+
+        for (request_id, req) in in_progress_to_clear {
+            state.wrap_requests.insert(request_id, req);
         }
 
         if candidates.is_empty() {
@@ -1601,6 +1615,9 @@ fn validate_withdraw_request(req: &WrapStoredRequest, caller: Principal) -> Resu
     if req.result.withdrawn {
         return Err("withdraw.already_withdrawn".to_string());
     }
+    if req.result.withdraw_in_progress {
+        return Err("withdraw.in_progress".to_string());
+    }
     if !is_withdrawable(req) {
         return Err("withdraw.invalid_state".to_string());
     }
@@ -1626,6 +1643,23 @@ fn to_withdraw_error_code(code: &str) -> String {
         return format!("withdraw.call_failed:{suffix}");
     }
     "withdraw.invalid_state".to_string()
+}
+
+fn reserve_failed_wrap_withdraw(
+    request_id: RequestId,
+    caller: Principal,
+) -> Result<(Vec<u8>, Vec<u8>), String> {
+    with_state_mut(|state| {
+        let Some(mut req) = state.wrap_requests.get(&request_id) else {
+            return Err("withdraw.invalid_state".to_string());
+        };
+        validate_withdraw_request(&req, caller)?;
+        req.result.withdraw_in_progress = true;
+        req.result.withdraw_error_code = None;
+        let out = (req.asset_id.clone(), req.amount.clone());
+        state.wrap_requests.insert(request_id, req);
+        Ok(out)
+    })
 }
 
 fn schedule_worker() {
@@ -2259,6 +2293,7 @@ fn mark_wrap_request_running(request_id: RequestId) {
             req.result.withdrawn = false;
             req.result.withdraw_ledger_tx_id = None;
             req.result.withdraw_error_code = None;
+            req.result.withdraw_in_progress = false;
             req.result.mint_failed_recoverable = false;
             state.wrap_requests.insert(request_id, req);
         }
@@ -2589,7 +2624,8 @@ fn export_did() -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        apply_insert_request_outcome, apply_runtime_config, decode_asset_decimals,
+        apply_insert_request_outcome, apply_runtime_config, approval_required_for_readiness,
+        decode_asset_decimals,
         decode_stored_request, decode_u256_be, dequeue_request, derive_wrap_request_id,
         encode_factory_mint_for_asset_call_data, encode_stored_request, enqueue_request,
         init_state, insert_request, insert_wrap_request, is_withdrawable, map_transfer_reply,
@@ -2602,8 +2638,8 @@ mod tests {
         validate_withdraw_request, with_state, with_state_mut, FeeCharge, Icrc1MetadataValue,
         Icrc1TransferError, Icrc2TransferFromError, InitArgs, InsertRequestOutcome,
         NormalizedDispatchUnwrapRequest, NormalizedSubmitWrapRequest, QueueMeta, RequestResult,
-        RequestStatus, StoredRequest, SubmitTxError, SubmitWrapRequestArgs, WrapRequestResult,
-        WrapStoredRequest, WORKER_SCHEDULED, WRAP_WORKER_SCHEDULED,
+        RequestStatus, StoredRequest, SubmitTxError, SubmitWrapRequestArgs, UnwrapReadiness,
+        WrapRequestResult, WrapStoredRequest, WORKER_SCHEDULED, WRAP_WORKER_SCHEDULED,
     };
     use candid::{decode_one, encode_one, Nat, Principal};
     use num_bigint::BigUint;
@@ -3266,6 +3302,7 @@ mod tests {
             asset_id.as_slice(),
             amount.as_slice(),
             evm_recipient.as_slice(),
+            7,
             200_000,
         );
         let args = NormalizedSubmitWrapRequest {
@@ -3284,6 +3321,48 @@ mod tests {
     }
 
     #[test]
+    fn wrap_request_id_changes_when_evm_nonce_changes() {
+        reset_state();
+        let caller = Principal::self_authenticating(b"wrap-caller-nonce");
+        let asset_id = vec![2u8; 29];
+        let amount = vec![3u8; 32];
+        let evm_recipient = vec![4u8; 20];
+
+        let first = derive_wrap_request_id(
+            caller.as_slice(),
+            asset_id.as_slice(),
+            amount.as_slice(),
+            evm_recipient.as_slice(),
+            10,
+            200_000,
+        );
+        let second = derive_wrap_request_id(
+            caller.as_slice(),
+            asset_id.as_slice(),
+            amount.as_slice(),
+            evm_recipient.as_slice(),
+            11,
+            200_000,
+        );
+
+        assert_ne!(first, second);
+    }
+
+    #[test]
+    fn approval_required_only_for_allowance_shortage() {
+        assert!(!approval_required_for_readiness(UnwrapReadiness::Ready));
+        assert!(!approval_required_for_readiness(
+            UnwrapReadiness::TokenNotDeployed
+        ));
+        assert!(!approval_required_for_readiness(
+            UnwrapReadiness::InsufficientBalance
+        ));
+        assert!(approval_required_for_readiness(
+            UnwrapReadiness::InsufficientAllowance
+        ));
+    }
+
+    #[test]
     fn mark_wrap_request_running_sets_running_status() {
         reset_state();
         let caller = Principal::self_authenticating(b"wrap-caller-running");
@@ -3295,6 +3374,7 @@ mod tests {
             asset_id.as_slice(),
             amount.as_slice(),
             evm_recipient.as_slice(),
+            9,
             300_000,
         );
         let request_id = to_request_id(&request_id_raw).expect("id");
@@ -3316,9 +3396,9 @@ mod tests {
             state
                 .wrap_requests
                 .get(&request_id)
-                .map(|v| v.result.status)
+                .map(|v| (v.result.status, v.result.withdraw_in_progress))
         });
-        assert_eq!(status, Some(RequestStatus::Running));
+        assert_eq!(status, Some((RequestStatus::Running, false)));
     }
 
     #[test]
@@ -3328,6 +3408,7 @@ mod tests {
             asset_id: Principal::self_authenticating(b"wrap-asset-zero-gas"),
             amount_e8s: Nat::from(3u8),
             evm_recipient: vec![5u8; 20],
+            evm_nonce: 0,
             gas_limit: 0,
         })
         .expect_err("zero gas limit must fail");
@@ -3467,6 +3548,7 @@ mod tests {
             withdrawn: true,
             withdraw_ledger_tx_id: Some(vec![2u8; 4]),
             withdraw_error_code: Some("withdraw.call_failed:oops".to_string()),
+            withdraw_in_progress: true,
             mint_failed_recoverable: false,
             fee_ledger_tx_id: Some(vec![3u8; 4]),
             charged_fee_e8s: Some(1_000_000),
@@ -3480,6 +3562,7 @@ mod tests {
             decoded.withdraw_error_code.as_deref(),
             Some("withdraw.call_failed:oops")
         );
+        assert!(decoded.withdraw_in_progress);
     }
 
     #[test]
@@ -3500,6 +3583,7 @@ mod tests {
                 withdrawn: false,
                 withdraw_ledger_tx_id: None,
                 withdraw_error_code: None,
+                withdraw_in_progress: false,
                 mint_failed_recoverable: true,
                 fee_ledger_tx_id: Some(vec![3u8; 4]),
                 charged_fee_e8s: Some(1_000_000),
@@ -3528,6 +3612,7 @@ mod tests {
                 withdrawn: false,
                 withdraw_ledger_tx_id: None,
                 withdraw_error_code: None,
+                withdraw_in_progress: false,
                 mint_failed_recoverable: true,
                 fee_ledger_tx_id: Some(vec![3u8; 4]),
                 charged_fee_e8s: Some(1_000_000),
@@ -3547,6 +3632,11 @@ mod tests {
         withdrawn.result.withdrawn = true;
         let already = validate_withdraw_request(&withdrawn, owner).expect_err("withdrawn");
         assert_eq!(already, "withdraw.already_withdrawn");
+
+        let mut in_progress = base;
+        in_progress.result.withdraw_in_progress = true;
+        let blocked = validate_withdraw_request(&in_progress, owner).expect_err("in progress");
+        assert_eq!(blocked, "withdraw.in_progress");
     }
 
     #[test]
@@ -3566,6 +3656,7 @@ mod tests {
                 withdrawn: false,
                 withdraw_ledger_tx_id: None,
                 withdraw_error_code: None,
+                withdraw_in_progress: false,
                 mint_failed_recoverable: true,
                 fee_ledger_tx_id: Some(vec![3u8; 4]),
                 charged_fee_e8s: Some(1_000_000),
@@ -3632,6 +3723,7 @@ mod tests {
                         withdrawn: false,
                         withdraw_ledger_tx_id: None,
                         withdraw_error_code: None,
+                        withdraw_in_progress: false,
                         mint_failed_recoverable: false,
                         fee_ledger_tx_id: Some(vec![3u8; 4]),
                         charged_fee_e8s: Some(1_000_000),
@@ -3677,6 +3769,7 @@ mod tests {
                         withdrawn: false,
                         withdraw_ledger_tx_id: None,
                         withdraw_error_code: None,
+                        withdraw_in_progress: false,
                         mint_failed_recoverable: false,
                         fee_ledger_tx_id: Some(vec![3u8; 4]),
                         charged_fee_e8s: Some(1_000_000),
@@ -3725,6 +3818,7 @@ mod tests {
                         withdrawn: false,
                         withdraw_ledger_tx_id: None,
                         withdraw_error_code: None,
+                        withdraw_in_progress: false,
                         mint_failed_recoverable: true,
                         fee_ledger_tx_id: Some(vec![3u8; 4]),
                         charged_fee_e8s: Some(1_000_000),
@@ -3740,6 +3834,48 @@ mod tests {
             assert_eq!(req.result.status, RequestStatus::Failed);
             assert_eq!(req.result.pull_ledger_tx_id, Some(vec![1u8; 4]));
             assert_eq!(req.result.mint_failed_recoverable, true);
+            assert_eq!(state.wrap_queue.len(), 0);
+        });
+    }
+
+    #[test]
+    fn recover_wrap_request_state_after_upgrade_clears_withdraw_in_progress() {
+        reset_state();
+        let request_id = to_request_id(&[0x44u8; 32]).expect("id");
+        with_state_mut(|state| {
+            state.wrap_requests.insert(
+                request_id,
+                WrapStoredRequest {
+                    caller: Principal::self_authenticating(b"wrap-withdraw-in-progress")
+                        .as_slice()
+                        .to_vec(),
+                    asset_id: vec![7u8; 29],
+                    amount: vec![8u8; 32],
+                    evm_recipient: vec![9u8; 20],
+                    gas_limit: 300_000,
+                    result: WrapRequestResult {
+                        status: RequestStatus::Failed,
+                        pull_ledger_tx_id: Some(vec![1u8; 4]),
+                        mint_tx_id: None,
+                        error_code: Some("recover_failed".to_string()),
+                        withdrawn: false,
+                        withdraw_ledger_tx_id: None,
+                        withdraw_error_code: None,
+                        withdraw_in_progress: true,
+                        mint_failed_recoverable: true,
+                        fee_ledger_tx_id: Some(vec![3u8; 4]),
+                        charged_fee_e8s: Some(1_000_000),
+                        charged_gas_price_wei: Some(300_000_000_000),
+                    },
+                },
+            );
+        });
+
+        assert!(!recover_wrap_request_state_after_upgrade(123));
+        with_state(|state| {
+            let req = state.wrap_requests.get(&request_id).expect("request");
+            assert!(!req.result.withdraw_in_progress);
+            assert_eq!(req.result.status, RequestStatus::Failed);
             assert_eq!(state.wrap_queue.len(), 0);
         });
     }

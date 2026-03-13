@@ -20,8 +20,18 @@ import {
   submitIcTx,
   wrapperClientTestHooks,
 } from "../lib/canister/wrapper-client";
-import { getExecutionResult } from "../lib/canister/wrap-client";
-import { resolveUnwrapBurnSpenderEvmAddress } from "../lib/canister/erc20-client";
+import {
+  getExecutionResult,
+  getUnwrapRequirements,
+  submitWrapRequest,
+  withdrawFailedWrap,
+  wrapClientTestHooks,
+} from "../lib/canister/wrap-client";
+import {
+  approveWrappedTokenIfNeeded,
+  erc20ClientTestHooks,
+  resolveUnwrapBurnSpenderEvmAddress,
+} from "../lib/canister/erc20-client";
 import {
   messageAfterRefreshSuccess,
   nextPollFailureState,
@@ -59,6 +69,7 @@ import {
   encodeFactoryGetTokenAddressCall,
 } from "../lib/erc20";
 import { icrcClientTestHooks } from "../lib/canister/icrc2-client";
+import { refreshWrapNonceState } from "../lib/hooks/use-wrapper-forms";
 
 async function runUtilsTests(): Promise<void> {
   const value = Uint8Array.from([0x01, 0xab, 0x10]);
@@ -93,9 +104,19 @@ async function runRequestIdTests(): Promise<void> {
     assetId: principalTextToBytes("2vxsx-fae"),
     amount: decimalToBytes32("1000000000000000000"),
     evmRecipient: hexToBytes("0x1111111111111111111111111111111111111111"),
+    evmNonce: 1n,
+    gasLimit: 300_000n,
+  });
+  const wrapRequestIdWithDifferentNonce = deriveWrapRequestId({
+    fromOwner: principalTextToBytes("4c52m-aiaaa-aaaam-agwwa-cai"),
+    assetId: principalTextToBytes("2vxsx-fae"),
+    amount: decimalToBytes32("1000000000000000000"),
+    evmRecipient: hexToBytes("0x1111111111111111111111111111111111111111"),
+    evmNonce: 2n,
     gasLimit: 300_000n,
   });
   assert.equal(wrapRequestId.length, 32);
+  assert.notDeepEqual(wrapRequestId, wrapRequestIdWithDifferentNonce);
 }
 
 async function runMergeTests(): Promise<void> {
@@ -364,6 +385,256 @@ async function runEstimateUnwrapGasClientTests(): Promise<void> {
     ),
     /evm_gateway\.estimate_gas_failed:32000:revert/,
   );
+}
+
+async function runWrapClientSubmitTests(): Promise<void> {
+  wrapClientTestHooks.reset();
+  wrapClientTestHooks.setMockSubmitActor({
+    submit_wrap_request: async (args) => {
+      assert.equal(args.evm_nonce, 7n);
+      return {
+        Ok: {
+          request_id: Uint8Array.from([0x01]),
+          charged_fee_e8s: 9n,
+          charged_gas_price_wei: 11n,
+          fee_ledger_tx_id: Uint8Array.from([0x02]),
+        },
+      };
+    },
+    retry_request: async () => {
+      throw new Error("unused retry_request");
+    },
+    recover_failed_wrap: async () => {
+      throw new Error("unused recover_failed_wrap");
+    },
+  });
+  const submitResult = await submitWrapRequest({
+    assetId: "2vxsx-fae",
+    amountE8s: 5n,
+    evmRecipient: hexToBytes("0x1111111111111111111111111111111111111111"),
+    evmNonce: 7n,
+    gasLimit: 300_000n,
+  }, new AnonymousIdentity());
+  assert.deepEqual(submitResult.requestId, Uint8Array.from([0x01]));
+  assert.equal(submitResult.chargedFeeE8s, 9n);
+  wrapClientTestHooks.reset();
+}
+
+async function runWrapClientWithdrawErrorTests(): Promise<void> {
+  wrapClientTestHooks.reset();
+  wrapClientTestHooks.setMockSubmitActor({
+    submit_wrap_request: async () => {
+      throw new Error("unused submit_wrap_request");
+    },
+    retry_request: async () => {
+      throw new Error("unused retry_request");
+    },
+    recover_failed_wrap: async () => ({
+      Err: {
+        InvalidArgument: {
+          code: "withdraw.in_progress",
+          message: "withdraw.in_progress",
+        },
+      },
+    }),
+  });
+
+  await assert.rejects(
+    () => withdrawFailedWrap(Uint8Array.from([0x11]), new AnonymousIdentity()),
+    /withdraw\.in_progress:withdraw\.in_progress/,
+  );
+  wrapClientTestHooks.reset();
+}
+
+async function runUnwrapRequirementsTests(): Promise<void> {
+  wrapClientTestHooks.reset();
+  wrapClientTestHooks.setMockQueryActor({
+    get_request: async () => {
+      throw new Error("unused get_request");
+    },
+    quote_wrap_request: async () => {
+      throw new Error("unused quote_wrap_request");
+    },
+    get_fee_policy: async () => {
+      throw new Error("unused get_fee_policy");
+    },
+    get_unwrap_requirements: async () => ({
+      Ok: {
+        factory_address: hexToBytes("0x2222222222222222222222222222222222222222"),
+        wrapped_token_address: [hexToBytes("0x3333333333333333333333333333333333333333")],
+        balance: 1n,
+        allowance: 9n,
+        approve_required: false,
+        readiness: { InsufficientBalance: null },
+      },
+    }),
+  });
+  const insufficientBalance = await getUnwrapRequirements({
+    assetId: "2vxsx-fae",
+    amountE8s: 5n,
+    callerEvmAddress: hexToBytes("0x1111111111111111111111111111111111111111"),
+  });
+  assert.equal(insufficientBalance.readiness, "InsufficientBalance");
+  assert.equal(insufficientBalance.approveRequired, false);
+
+  wrapClientTestHooks.setMockQueryActor({
+    get_request: async () => {
+      throw new Error("unused get_request");
+    },
+    quote_wrap_request: async () => {
+      throw new Error("unused quote_wrap_request");
+    },
+    get_fee_policy: async () => {
+      throw new Error("unused get_fee_policy");
+    },
+    get_unwrap_requirements: async () => ({
+      Ok: {
+        factory_address: hexToBytes("0x2222222222222222222222222222222222222222"),
+        wrapped_token_address: [hexToBytes("0x3333333333333333333333333333333333333333")],
+        balance: 9n,
+        allowance: 1n,
+        approve_required: true,
+        readiness: { InsufficientAllowance: null },
+      },
+    }),
+  });
+  const insufficientAllowance = await getUnwrapRequirements({
+    assetId: "2vxsx-fae",
+    amountE8s: 5n,
+    callerEvmAddress: hexToBytes("0x1111111111111111111111111111111111111111"),
+  });
+  assert.equal(insufficientAllowance.readiness, "InsufficientAllowance");
+  assert.equal(insufficientAllowance.approveRequired, true);
+  wrapClientTestHooks.reset();
+}
+
+async function runApproveWrappedTokenTests(): Promise<void> {
+  erc20ClientTestHooks.reset();
+  erc20ClientTestHooks.setDeps({
+    readRequirements: async () => ({
+      factoryAddress: hexToBytes("0x2222222222222222222222222222222222222222"),
+      wrappedTokenAddress: hexToBytes("0x3333333333333333333333333333333333333333"),
+      balance: 1n,
+      allowance: 9n,
+      approveRequired: false,
+      readiness: "InsufficientBalance",
+    }),
+    readExpectedNonce: async () => {
+      throw new Error("nonce should not be requested");
+    },
+    readEstimateContractGasLimit: async () => {
+      throw new Error("estimate should not run");
+    },
+    submitTx: async () => {
+      throw new Error("submit should not run");
+    },
+  });
+  await assert.rejects(
+    () => approveWrappedTokenIfNeeded({
+      assetId: "2vxsx-fae",
+      amount: 5n,
+      principalText: "4c52m-aiaaa-aaaam-agwwa-cai",
+      identity: new AnonymousIdentity(),
+    }),
+    /erc20\.insufficient_balance/,
+  );
+
+  let approved = false;
+  erc20ClientTestHooks.setDeps({
+    readRequirements: async () => ({
+      factoryAddress: hexToBytes("0x2222222222222222222222222222222222222222"),
+      wrappedTokenAddress: hexToBytes("0x3333333333333333333333333333333333333333"),
+      balance: 9n,
+      allowance: 1n,
+      approveRequired: true,
+      readiness: "InsufficientAllowance",
+    }),
+    readExpectedNonce: async () => 7n,
+    readEstimateContractGasLimit: async () => 99n,
+    submitTx: async () => {
+      approved = true;
+      return Uint8Array.from([0xaa]);
+    },
+  });
+  await approveWrappedTokenIfNeeded({
+    assetId: "2vxsx-fae",
+    amount: 5n,
+    principalText: "4c52m-aiaaa-aaaam-agwwa-cai",
+    identity: new AnonymousIdentity(),
+  });
+  assert.equal(approved, true);
+  erc20ClientTestHooks.reset();
+}
+
+async function runWrapNonceRefreshTests(): Promise<void> {
+  let state = "";
+  let nonceText = "9";
+  let errorText: string | null = "old";
+  let readCalls = 0;
+
+  await refreshWrapNonceState({
+    walletPrincipalText: "4c52m-aiaaa-aaaam-agwwa-cai",
+    wrapCanisterId: "lpuz5-uyaaa-aaaam-ah4da-cai",
+    readWrapNonce: async () => {
+      readCalls += 1;
+      return 7n;
+    },
+    onIdle: () => {
+      state = "idle";
+      errorText = null;
+      nonceText = "";
+    },
+    onLoading: () => {
+      state = "loading";
+      errorText = null;
+    },
+    onReady: (nonce) => {
+      state = "ready";
+      errorText = null;
+      nonceText = nonce.toString();
+    },
+    onError: (message) => {
+      state = "error";
+      errorText = message;
+      nonceText = "";
+    },
+    isCurrent: () => true,
+  });
+  assert.equal(readCalls, 1);
+  assert.equal(state, "ready");
+  assert.equal(errorText, null);
+  assert.equal(nonceText, "7");
+
+  await refreshWrapNonceState({
+    walletPrincipalText: "4c52m-aiaaa-aaaam-agwwa-cai",
+    wrapCanisterId: "lpuz5-uyaaa-aaaam-ah4da-cai",
+    readWrapNonce: async () => {
+      throw new Error("wrap.nonce_failed");
+    },
+    onIdle: () => {
+      state = "idle";
+      errorText = null;
+      nonceText = "";
+    },
+    onLoading: () => {
+      state = "loading";
+      errorText = null;
+    },
+    onReady: (nonce) => {
+      state = "ready";
+      errorText = null;
+      nonceText = nonce.toString();
+    },
+    onError: (message) => {
+      state = "error";
+      errorText = message;
+      nonceText = "";
+    },
+    isCurrent: () => true,
+  });
+  assert.equal(state, "error");
+  assert.equal(errorText, "wrap.nonce_failed");
+  assert.equal(nonceText, "");
 }
 
 async function runWrapNonceClientTests(): Promise<void> {
@@ -754,6 +1025,11 @@ async function main(): Promise<void> {
   await runLedgerMetadataTests();
   await runEstimateWrapGasClientTests();
   await runEstimateUnwrapGasClientTests();
+  await runWrapClientSubmitTests();
+  await runWrapClientWithdrawErrorTests();
+  await runUnwrapRequirementsTests();
+  await runApproveWrappedTokenTests();
+  await runWrapNonceRefreshTests();
   await runWrapNonceClientTests();
   await runAssetCatalogTests();
   await runInternetIdentityConfigTests();
