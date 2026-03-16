@@ -273,9 +273,6 @@ finalize_state() {
 
   set +e
   run_update_with_cycles "set_pruning_enabled" "(false)" "finalize: enforce disabled" "1" >/dev/null
-  if [[ -n "${INITIAL_INSTR_LIMIT}" ]]; then
-    run_update_with_cycles "set_instruction_soft_limit" "(${INITIAL_INSTR_LIMIT}:nat64)" "finalize: restore instruction" "1" >/dev/null
-  fi
   run_update_with_cycles "set_log_filter" "(null)" "finalize: clear log filter" "1" >/dev/null
   record_suite_event "suite_end" "finalize completed"
   set -e
@@ -352,7 +349,8 @@ QUERY_OK_COUNT="$(awk -F'"ok":' '/"ok":/{if ($2 ~ /^true/) c++} END{print c+0}' 
 QUERY_TOTAL_COUNT="$(wc -l < "${QUERY_JSONL}" | tr -d ' ')"
 record_method_row "query_matrix_baseline" "query" "ok=${QUERY_OK_COUNT}/${QUERY_TOTAL_COUNT}" "agent.query baseline completed"
 
-INITIAL_INSTR_LIMIT="$(node -e 'const fs=require("fs");const j=JSON.parse(fs.readFileSync(process.argv[1],"utf8"));console.log(j.get_ops_status?.instruction_soft_limit ?? "4000000000");' "${QUERY_SUMMARY}")"
+INITIAL_QUERY_INSTR_LIMIT="$(node -e 'const fs=require("fs");const j=JSON.parse(fs.readFileSync(process.argv[1],"utf8"));console.log(j.get_ops_status?.query_instruction_soft_limit ?? "10000000");' "${QUERY_SUMMARY}")"
+INITIAL_UPDATE_INSTR_LIMIT="$(node -e 'const fs=require("fs");const j=JSON.parse(fs.readFileSync(process.argv[1],"utf8"));console.log(j.get_ops_status?.update_instruction_soft_limit ?? "4000000000");' "${QUERY_SUMMARY}")"
 
 run_update_with_cycles "set_pruning_enabled" "(false)" "baseline setup" "0" >/dev/null
 observe_idle_mining_cycles "${MINING_IDLE_OBSERVE_SEC}"
@@ -584,14 +582,6 @@ PY
   fi
 fi
 
-TEST_INSTR_LIMIT="$(python - <<PY
-v = int("${INITIAL_INSTR_LIMIT}")
-t = int(v * 0.9)
-print(t if t > 1000 else v)
-PY
-)"
-run_update_with_cycles "set_instruction_soft_limit" "(${TEST_INSTR_LIMIT}:nat64)" "admin set" "0" >/dev/null
-run_update_with_cycles "set_instruction_soft_limit" "(${INITIAL_INSTR_LIMIT}:nat64)" "admin restore" "0" >/dev/null
 run_update_with_cycles "set_log_filter" "(opt \"info\")" "admin set" "0" >/dev/null
 run_update_with_cycles "set_log_filter" "(null)" "admin restore" "0" >/dev/null
 
@@ -640,7 +630,8 @@ append_file "- raw_tx_drop_label_pre: ${RAW_TX_DROP_LABEL_PRE:-n/a}"
 append_file "- raw_tx_pending_status_post: ${RAW_TX_PENDING_STATUS_POST:-n/a}"
 append_file "- raw_tx_drop_code_post: ${RAW_TX_DROP_CODE_POST:-n/a}"
 append_file "- raw_tx_drop_label_post: ${RAW_TX_DROP_LABEL_POST:-n/a}"
-append_file "- initial_instruction_soft_limit: ${INITIAL_INSTR_LIMIT}"
+append_file "- initial_query_instruction_soft_limit: ${INITIAL_QUERY_INSTR_LIMIT}"
+append_file "- initial_update_instruction_soft_limit: ${INITIAL_UPDATE_INSTR_LIMIT}"
 append_file "- report_generated_utc: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
 echo "report=${REPORT_FILE}"

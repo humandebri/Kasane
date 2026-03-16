@@ -88,6 +88,8 @@ struct InitArgs {
     genesis_balances: Vec<GenesisBalanceView>,
     wrap_canister_id: Principal,
     wrap_factory_address: Vec<u8>,
+    query_instruction_soft_limit: Option<u64>,
+    update_instruction_soft_limit: Option<u64>,
 }
 
 const TEST_WRAP_FACTORY_ADDRESS: [u8; 20] = [0x90u8; 20];
@@ -116,8 +118,6 @@ struct PruneResultView {
 }
 
 type PruneBlocksResult = Result<PruneResultView, ProduceBlockError>;
-type ManageWriteResult = Result<(), String>;
-
 #[derive(Clone, Debug, CandidType, Deserialize, Eq, PartialEq)]
 enum PendingStatusView {
     Queued { seq: u64 },
@@ -224,6 +224,8 @@ fn install_canister(pic: &PocketIc) -> Principal {
         }],
         wrap_canister_id,
         wrap_factory_address: TEST_WRAP_FACTORY_ADDRESS.to_vec(),
+        query_instruction_soft_limit: None,
+        update_instruction_soft_limit: None,
     });
     let init_arg = Encode!(&init).expect("encode init args");
     pic.add_cycles(wrap_canister_id, 5_000_000_000_000u128);
@@ -312,6 +314,8 @@ fn install_canister_for_factory_trace(pic: &PocketIc) -> Principal {
         }],
         wrap_canister_id,
         wrap_factory_address: predict_create_address(caller_evm, 0).to_vec(),
+        query_instruction_soft_limit: None,
+        update_instruction_soft_limit: None,
     });
     let init_arg = Encode!(&init).expect("encode init args");
     pic.add_cycles(wrap_canister_id, 5_000_000_000_000u128);
@@ -587,19 +591,32 @@ fn prune_blocks_requires_controller() {
 
 #[test]
 #[ignore = "manual_pocket_ic_timing_sensitive"]
-fn instruction_soft_limit_blocks_inclusion_in_pending_status() {
+fn query_instruction_soft_limit_blocks_inclusion_in_pending_status() {
     let pic = PocketIc::new();
     let canister_id = install_canister(&pic);
-
-    let set_limit_out = call_update(
-        &pic,
+    let caller = test_caller();
+    let wrap_canister_id = pic.create_canister();
+    pic.add_cycles(wrap_canister_id, 5_000_000_000_000u128);
+    let upgrade_args = Some(InitArgs {
+        genesis_balances: vec![GenesisBalanceView {
+            address: hash::derive_evm_address_from_principal(caller.as_slice())
+                .expect("must derive")
+                .to_vec(),
+            amount: 1_000_000_000_000_000_000u128,
+        }],
+        wrap_canister_id,
+        wrap_factory_address: TEST_WRAP_FACTORY_ADDRESS.to_vec(),
+        query_instruction_soft_limit: Some(1),
+        update_instruction_soft_limit: None,
+    });
+    let wasm = std::fs::read(wasm_path()).expect("read wasm");
+    pic.upgrade_canister(
         canister_id,
-        "set_instruction_soft_limit",
-        Encode!(&1u64).expect("encode limit"),
-    );
-    let set_limit: ManageWriteResult =
-        Decode!(&set_limit_out, ManageWriteResult).expect("decode set_instruction_soft_limit");
-    assert_eq!(set_limit, Ok(()));
+        wasm,
+        Encode!(&upgrade_args).expect("encode upgrade args"),
+        None,
+    )
+    .expect("upgrade canister");
 
     let submit_args = build_submit_ic_tx_args([0x22u8; 20], 0);
     let submit_out = call_update(
@@ -652,6 +669,8 @@ fn install_rejects_invalid_init_args() {
         }],
         wrap_canister_id: Principal::self_authenticating(b"wrap"),
         wrap_factory_address: TEST_WRAP_FACTORY_ADDRESS.to_vec(),
+        query_instruction_soft_limit: None,
+        update_instruction_soft_limit: None,
     });
     let bad_address_arg = Encode!(&bad_address).expect("encode bad address init args");
     expect_install_trap(
@@ -667,6 +686,8 @@ fn install_rejects_invalid_init_args() {
         }],
         wrap_canister_id: Principal::self_authenticating(b"wrap"),
         wrap_factory_address: TEST_WRAP_FACTORY_ADDRESS.to_vec(),
+        query_instruction_soft_limit: None,
+        update_instruction_soft_limit: None,
     });
     let zero_amount_arg = Encode!(&zero_amount).expect("encode zero amount init args");
     expect_install_trap(
@@ -688,6 +709,8 @@ fn install_rejects_invalid_init_args() {
         ],
         wrap_canister_id: Principal::self_authenticating(b"wrap"),
         wrap_factory_address: TEST_WRAP_FACTORY_ADDRESS.to_vec(),
+        query_instruction_soft_limit: None,
+        update_instruction_soft_limit: None,
     });
     let duplicate_arg = Encode!(&duplicate).expect("encode duplicate init args");
     expect_install_trap(
@@ -703,6 +726,8 @@ fn install_rejects_invalid_init_args() {
         }],
         wrap_canister_id: Principal::self_authenticating(b"wrap"),
         wrap_factory_address: vec![0u8; 19],
+        query_instruction_soft_limit: None,
+        update_instruction_soft_limit: None,
     });
     let bad_factory_arg = Encode!(&bad_factory).expect("encode bad factory init args");
     expect_install_trap(

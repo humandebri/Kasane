@@ -136,6 +136,7 @@ scripts/measure_precompile_ratio.sh
   - the default build does not enable the `precompile-profile-admin` feature
   - measure precompile ratio before deploy with `scripts/run_precompile_profile_e2e.sh` / `scripts/measure_precompile_ratio.sh`; if you need to change the default fixed ratio `1/100`, rebuild and redeploy
   - even with `MODE=upgrade`, `WRAP_CANISTER_ID` and `EVM_WRAP_FACTORY` are required
+  - set `QUERY_INSTRUCTION_SOFT_LIMIT` / `UPDATE_INSTRUCTION_SOFT_LIMIT` only when you intentionally want install / upgrade to overwrite the current soft limits
   - this script targets `evm_canister`; upgrade `wrap_canister` separately via [docs/ops/wrap-canister-deploy-runbook.ja.md](/Users/0xhude/Desktop/ICP/Kasane/docs/ops/wrap-canister-deploy-runbook.ja.md)
 - `scripts/mainnet/ic_mainnet_post_upgrade_smoke.sh`: minimum RPC checks after deploy
 - `scripts/verify_submit_after_deploy.sh`: manual/CI hook for verify submit
@@ -158,6 +159,10 @@ scripts/measure_precompile_ratio.sh
   - used by wrap/unwrap smoke and ledger scripts that need the actual wrap canister principal
 - `EVM_WRAP_FACTORY`
   - required by `scripts/mainnet/ic_mainnet_deploy.sh`; pass the 20-byte EVM factory address as `0x...`
+- `QUERY_INSTRUCTION_SOFT_LIMIT`
+  - optional; when set, `build_init_args_for_current_identity(...)` emits `InitArgs.query_instruction_soft_limit`
+- `UPDATE_INSTRUCTION_SOFT_LIMIT`
+  - optional; when set, `build_init_args_for_current_identity(...)` emits `InitArgs.update_instruction_soft_limit`
 - `ICP_IDENTITY_NAME`
 - `POCKET_IC_BIN` (PocketIC binary used by `predeploy_smoke.sh` / `run_rpc_compat_e2e.sh`)
   - Recommended: point this to an existing local binary first to reduce flaky downloads

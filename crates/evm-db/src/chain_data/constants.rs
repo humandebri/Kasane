@@ -31,7 +31,7 @@ pub const MAX_PRINCIPAL_LEN: usize = 29;
 pub const CALLER_KEY_LEN: usize = 30;
 
 // StableCellの固定長ヘッダ
-pub const CHAIN_STATE_SIZE_U32: u32 = 88;
+pub const CHAIN_STATE_SIZE_U32: u32 = 96;
 // TxLocの固定長
 pub const TX_LOC_SIZE_U32: u32 = 32;
 

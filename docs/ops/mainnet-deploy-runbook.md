@@ -41,5 +41,7 @@ For exact command sequences and environment-specific snippets, see the Japanese 
 - `genesis_balances`: initial EVM balance allocation used for install / reinstall. Each entry requires a 20-byte `address` and non-zero `amount`; duplicate addresses are rejected.
 - `wrap_canister_id`: IC principal used as the unwrap dispatch destination. Anonymous is rejected.
 - `wrap_factory_address`: 20-byte EVM factory address used by the unwrap precompile for burn / allowance checks.
+- `query_instruction_soft_limit`: optional. When provided, install / upgrade overwrites the query-side soft limit; when omitted, the default or existing state remains.
+- `update_instruction_soft_limit`: optional. When provided, install / upgrade overwrites the update-side soft limit; when omitted, the default or existing state remains.
 
 Operationally, config changes are applied only through install / upgrade arguments, not through a runtime admin API.

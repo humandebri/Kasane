@@ -136,6 +136,7 @@ scripts/measure_precompile_ratio.sh
   - 既定 build では `precompile-profile-admin` feature を有効化しない
   - precompile ratio の計測は deploy 前に `scripts/run_precompile_profile_e2e.sh` / `scripts/measure_precompile_ratio.sh` で実施し、既定の fixed ratio `1/100` を見直す場合は再デプロイする
   - `MODE=upgrade` でも `WRAP_CANISTER_ID` と `EVM_WRAP_FACTORY` が必須
+  - instruction soft limit を install / upgrade で上書きしたい場合だけ `QUERY_INSTRUCTION_SOFT_LIMIT` / `UPDATE_INSTRUCTION_SOFT_LIMIT` を事前 export する
   - 対象は `evm_canister`。`wrap_canister` の upgrade は [docs/ops/wrap-canister-deploy-runbook.ja.md](/Users/0xhude/Desktop/ICP/Kasane/docs/ops/wrap-canister-deploy-runbook.ja.md) の手順で別途実行する
 - `scripts/mainnet/ic_mainnet_post_upgrade_smoke.sh`: デプロイ後の最小RPC確認
 - `scripts/verify_submit_after_deploy.sh`: verify submit の手動/CIフック
@@ -163,6 +164,10 @@ scripts/measure_precompile_ratio.sh
   - 実際の `wrap_canister` principal が必要な wrap/unwrap smoke・ledger 系スクリプトで使用
 - `EVM_WRAP_FACTORY`
   - `scripts/mainnet/ic_mainnet_deploy.sh` の必須値。20-byte EVM factory address を `0x...` 形式で渡す
+- `QUERY_INSTRUCTION_SOFT_LIMIT`
+  - 任意。設定すると `build_init_args_for_current_identity(...)` が `InitArgs.query_instruction_soft_limit` を出力する
+- `UPDATE_INSTRUCTION_SOFT_LIMIT`
+  - 任意。設定すると `build_init_args_for_current_identity(...)` が `InitArgs.update_instruction_soft_limit` を出力する
 - `ICP_IDENTITY_NAME`
 - `POCKET_IC_BIN`（`predeploy_smoke.sh` / `run_rpc_compat_e2e.sh` で使用するPocketICバイナリ）
   - 推奨: まず既存のローカルバイナリを指して、都度ダウンロードを避ける

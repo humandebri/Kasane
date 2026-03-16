@@ -37,8 +37,8 @@ icp canister start -e ic <canister_id>
 ```
 
 ## Validation
-1. Check `health` for `tip_number`, `queue_len`, `block_gas_limit`, and `instruction_soft_limit`.
-2. Check `get_ops_status` for `mode`, `needs_migration`, `block_gas_limit`, and `instruction_soft_limit`.
+1. Check `health` for `tip_number`, `queue_len`, `block_gas_limit`, `query_instruction_soft_limit`, and `update_instruction_soft_limit`.
+2. Check `get_ops_status` for `mode`, `needs_migration`, `block_gas_limit`, `query_instruction_soft_limit`, and `update_instruction_soft_limit`.
 3. Submit one small transaction and confirm that auto-mining succeeds.
 4. Read the receipt and confirm `gas_used` is non-zero.
 

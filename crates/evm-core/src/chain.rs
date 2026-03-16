@@ -958,12 +958,12 @@ pub fn produce_block(max_txs: usize) -> Result<ProduceBlockOutcome, ChainError> 
     let mut included_tx_ids: Vec<TxId> = Vec::new();
     let mut dropped_total = 0u64;
     let mut dropped_by_code = [0u64; evm_db::chain_data::metrics::DROP_CODE_SLOTS];
-    let (min_priority_fee, min_gas_price, instruction_soft_limit) = with_state(|state| {
+    let (min_priority_fee, min_gas_price, update_instruction_soft_limit) = with_state(|state| {
         let chain_state = state.chain_state.get();
         (
             chain_state.min_priority_fee,
             chain_state.min_gas_price,
-            chain_state.instruction_soft_limit,
+            chain_state.update_instruction_soft_limit,
         )
     });
     let mut tx_ids = Vec::new();
@@ -989,7 +989,7 @@ pub fn produce_block(max_txs: usize) -> Result<ProduceBlockOutcome, ChainError> 
         if should_stop_block_execution(
             block_gas_used,
             exec_ctx.block_gas_limit,
-            instruction_soft_limit,
+            update_instruction_soft_limit,
             instruction_start,
             current_instruction_counter(),
         ) {
@@ -1124,7 +1124,7 @@ pub fn produce_block(max_txs: usize) -> Result<ProduceBlockOutcome, ChainError> 
         if should_stop_block_execution(
             block_gas_used,
             exec_ctx.block_gas_limit,
-            instruction_soft_limit,
+            update_instruction_soft_limit,
             instruction_start,
             current_instruction_counter(),
         ) {
@@ -1178,14 +1178,14 @@ pub fn produce_block(max_txs: usize) -> Result<ProduceBlockOutcome, ChainError> 
         if should_stop_block_execution(
             block_gas_used,
             exec_ctx.block_gas_limit,
-            instruction_soft_limit,
+            update_instruction_soft_limit,
             instruction_start,
             instruction_now,
         ) {
             break;
         }
         let remaining_instruction_budget = remaining_instruction_budget(
-            instruction_soft_limit,
+            update_instruction_soft_limit,
             instruction_start,
             instruction_now,
         );
@@ -1315,7 +1315,7 @@ pub fn produce_block(max_txs: usize) -> Result<ProduceBlockOutcome, ChainError> 
         if should_stop_block_execution(
             block_gas_used,
             exec_ctx.block_gas_limit,
-            instruction_soft_limit,
+            update_instruction_soft_limit,
             instruction_start,
             current_instruction_counter(),
         ) {
@@ -1609,6 +1609,7 @@ pub fn eth_call(raw_tx: Vec<u8>) -> Result<Vec<u8>, ChainError> {
         None,
         None,
     ));
+    let instruction_soft_limit = query_instruction_soft_limit();
     let db = CacheDB::new(crate::revm_db::RevmStableDb);
     let (outcome, _) = execute_tx_on(
         db,
@@ -1618,7 +1619,7 @@ pub fn eth_call(raw_tx: Vec<u8>) -> Result<Vec<u8>, ChainError> {
         &exec_ctx,
         ExecPath::UserTx,
         false,
-        None,
+        instruction_soft_limit,
         true,
     )
     .map_err(|err| ChainError::ExecFailed(Some(err)))?;
@@ -1701,6 +1702,7 @@ pub fn eth_call_object(input: CallObjectInput) -> Result<CallObjectResult, Chain
         base_fee,
         block_gas_limit,
     };
+    let instruction_soft_limit = query_instruction_soft_limit();
     let db = CacheDB::new(crate::revm_db::RevmStableDb);
     let (outcome, _) = execute_tx_on(
         db,
@@ -1710,7 +1712,7 @@ pub fn eth_call_object(input: CallObjectInput) -> Result<CallObjectResult, Chain
         &exec_ctx,
         ExecPath::UserTx,
         false,
-        None,
+        instruction_soft_limit,
         true,
     )
     .map_err(|err| ChainError::ExecFailed(Some(err)))?;
@@ -1771,6 +1773,10 @@ fn eth_call_object_with_gas_limit(
     let mut bounded = input.clone();
     bounded.gas_limit = Some(gas_limit);
     eth_call_object(bounded)
+}
+
+fn query_instruction_soft_limit() -> Option<u64> {
+    with_state(|state| Some(state.chain_state.get().query_instruction_soft_limit))
 }
 
 fn is_estimate_candidate_failure(err: &ChainError) -> bool {
@@ -2152,7 +2158,7 @@ pub fn prune_blocks(retain: u64, max_ops: u32) -> Result<PruneResult, ChainError
                     continue;
                 }
             };
-            let needed = 1u64 + (block.tx_ids.len() as u64).saturating_mul(6);
+            let needed = prune_ops_needed_for_block(state, next, &block);
             if ops_used.saturating_add(needed) > max_ops {
                 break;
             }
@@ -2205,6 +2211,59 @@ pub fn prune_blocks(retain: u64, max_ops: u32) -> Result<PruneResult, ChainError
             pruned_before_block: prune_state.pruned_before(),
         })
     })
+}
+
+fn prune_ops_needed_for_block(
+    state: &evm_db::stable_state::StableState,
+    block_number: u64,
+    block: &BlockData,
+) -> u64 {
+    let mut needed = 0u64;
+    if state.blocks.get(&block_number).is_some() {
+        needed = needed.saturating_add(1);
+    }
+    for tx_id in block.tx_ids.iter() {
+        needed = needed.saturating_add(prune_ops_needed_for_tx(state, *tx_id));
+    }
+    needed
+}
+
+fn prune_ops_needed_for_tx(state: &evm_db::stable_state::StableState, tx_id: TxId) -> u64 {
+    let mut needed = 0u64;
+    if state.pending_fee_key_by_tx_id.get(&tx_id).is_some() {
+        needed = needed.saturating_add(1);
+    }
+    if let Some(envelope) = state.tx_store.get(&tx_id) {
+        if let Ok(stored) = StoredTx::try_from(envelope.clone()) {
+            let principal_key = CallerKey::from_principal_bytes(stored.caller_principal.as_slice());
+            if state.principal_pending_count.get(&principal_key).is_some() {
+                needed = needed.saturating_add(1);
+            }
+            if stored.kind == TxKind::EthSigned {
+                let eth_hash = TxId(hash::keccak256(&stored.raw));
+                if state.eth_tx_hash_index.get(&eth_hash).is_some() {
+                    needed = needed.saturating_add(1);
+                }
+            }
+        }
+        needed = needed.saturating_add(1);
+    }
+    if state.receipts.get(&tx_id).is_some() {
+        needed = needed.saturating_add(1);
+    }
+    if state.tx_index.get(&tx_id).is_some() {
+        needed = needed.saturating_add(1);
+    }
+    if state.internal_traces.get(&tx_id).is_some() {
+        needed = needed.saturating_add(1);
+    }
+    if tx_locs_get(state, &tx_id).is_some() {
+        needed = needed.saturating_add(1);
+    }
+    if state.seen_tx.get(&tx_id).is_some() {
+        needed = needed.saturating_add(1);
+    }
+    needed
 }
 
 fn recover_prune_journal(state: &mut evm_db::stable_state::StableState) -> Result<(), ChainError> {
@@ -3114,140 +3173,5 @@ enum RekeyError {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::{
-        derive_caller_evm_cached, is_principal_decode_suppressed, note_decode_drop_for_principal,
-        remaining_instruction_budget, should_stop_block_execution, store_internal_traces,
-        CALLER_EVM_BY_PRINCIPAL, CALLER_EVM_CACHE_CAPACITY, DECODE_SUPPRESS_UNTIL_BY_PRINCIPAL,
-    };
-    use evm_db::chain_data::{InternalTrace, InternalTraceActionKind, InternalTraceSet, TxId};
-    use evm_db::stable_state::{init_stable_state, with_state, with_state_mut};
-    use evm_db::Storable;
-    use std::borrow::Cow;
-    use std::collections::BTreeMap;
-
-    #[test]
-    fn should_stop_block_execution_stops_on_gas_limit() {
-        assert!(should_stop_block_execution(10, 10, 0, 0, 0));
-        assert!(should_stop_block_execution(11, 10, 0, 0, 0));
-    }
-
-    #[test]
-    fn should_stop_block_execution_stops_on_instruction_budget() {
-        assert!(should_stop_block_execution(1, 0, 5, 100, 105));
-        assert!(should_stop_block_execution(1, 0, 5, 100, 120));
-        assert!(!should_stop_block_execution(1, 0, 5, 100, 104));
-    }
-
-    #[test]
-    fn should_stop_block_execution_ignores_instruction_budget_when_disabled() {
-        assert!(!should_stop_block_execution(1, 0, 0, 100, 100_000));
-    }
-
-    #[test]
-    fn remaining_instruction_budget_returns_none_when_disabled() {
-        assert_eq!(remaining_instruction_budget(0, 100, 1_000), None);
-    }
-
-    #[test]
-    fn remaining_instruction_budget_saturates_to_zero() {
-        assert_eq!(remaining_instruction_budget(5, 100, 103), Some(2));
-        assert_eq!(remaining_instruction_budget(5, 100, 105), Some(0));
-        assert_eq!(remaining_instruction_budget(5, 100, 999), Some(0));
-    }
-
-    #[test]
-    fn decode_suppression_activates_after_threshold_and_expires() {
-        DECODE_SUPPRESS_UNTIL_BY_PRINCIPAL.with(|cell| cell.borrow_mut().clear());
-        let principal = b"p-1".to_vec();
-        let now = 1_000u64;
-        let mut per_block = BTreeMap::new();
-        for _ in 0..evm_db::chain_data::DEFAULT_DECODE_SUPPRESS_STRIKES_PER_BLOCK {
-            note_decode_drop_for_principal(principal.as_slice(), now, &mut per_block);
-        }
-        assert!(is_principal_decode_suppressed(principal.as_slice(), now));
-        assert!(!is_principal_decode_suppressed(
-            principal.as_slice(),
-            now + evm_db::chain_data::DEFAULT_DECODE_SUPPRESS_WINDOW_SECS + 1
-        ));
-    }
-
-    #[test]
-    fn decode_suppression_map_is_bounded() {
-        DECODE_SUPPRESS_UNTIL_BY_PRINCIPAL.with(|cell| cell.borrow_mut().clear());
-        let now = 2_000u64;
-        let mut per_block = BTreeMap::new();
-        for i in 0..(evm_db::chain_data::DEFAULT_MAX_DECODE_SUPPRESS_PRINCIPALS + 128) {
-            let principal = format!("principal-{i}").into_bytes();
-            per_block.insert(
-                principal.clone(),
-                evm_db::chain_data::DEFAULT_DECODE_SUPPRESS_STRIKES_PER_BLOCK - 1,
-            );
-            note_decode_drop_for_principal(principal.as_slice(), now, &mut per_block);
-        }
-        DECODE_SUPPRESS_UNTIL_BY_PRINCIPAL.with(|cell| {
-            assert!(
-                cell.borrow().len() <= evm_db::chain_data::DEFAULT_MAX_DECODE_SUPPRESS_PRINCIPALS
-            );
-        });
-    }
-
-    #[test]
-    fn caller_evm_cache_hits_for_same_principal() {
-        CALLER_EVM_BY_PRINCIPAL.with(|cell| cell.borrow_mut().clear());
-        let principal = b"cache-hit-principal";
-        let first = derive_caller_evm_cached(principal).expect("first derive must succeed");
-        let second = derive_caller_evm_cached(principal).expect("second derive must succeed");
-        assert_eq!(first, second);
-        CALLER_EVM_BY_PRINCIPAL.with(|cell| {
-            assert_eq!(cell.borrow().len(), 1);
-        });
-    }
-
-    #[test]
-    fn caller_evm_cache_is_bounded() {
-        CALLER_EVM_BY_PRINCIPAL.with(|cell| cell.borrow_mut().clear());
-        for i in 0..(CALLER_EVM_CACHE_CAPACITY + 1) {
-            let principal = format!("cache-cap-{i}").into_bytes();
-            let _ = derive_caller_evm_cached(principal.as_slice()).expect("derive must succeed");
-        }
-        CALLER_EVM_BY_PRINCIPAL.with(|cell| {
-            assert!(cell.borrow().len() <= CALLER_EVM_CACHE_CAPACITY);
-        });
-    }
-
-    #[test]
-    fn store_internal_traces_stores_failed_marker_on_encode_failure() {
-        init_stable_state();
-        let traces = InternalTraceSet::new(vec![InternalTrace {
-            block_number: 1,
-            tx_index: 0,
-            trace_id: "x".repeat(65),
-            depth: 1,
-            action_kind: InternalTraceActionKind::Call,
-            from_address: [0x11; 20],
-            to_address: Some([0x22; 20]),
-            value: [0x33; 32],
-            created_contract_address: None,
-            success: true,
-            error_code: None,
-        }]);
-        let tx_id = TxId([0x44; 32]);
-        let ptr = with_state_mut(|state| {
-            store_internal_traces(state, tx_id, &traces)
-                .expect("failed marker ptr must be returned")
-        });
-        with_state(|state| {
-            let bytes = state
-                .blob_store
-                .read(&ptr)
-                .expect("failed marker bytes must be readable");
-            let decoded = InternalTraceSet::from_bytes(Cow::Owned(bytes));
-            assert!(decoded.encode_failed);
-            assert!(!decoded.truncated);
-            assert_eq!(decoded.captured_count, 0);
-            assert_eq!(decoded.total_count, 1);
-            assert!(decoded.items.is_empty());
-        });
-    }
-}
+#[path = "chain_tests.rs"]
+mod tests;

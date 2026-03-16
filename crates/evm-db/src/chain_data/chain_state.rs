@@ -4,11 +4,12 @@ use crate::chain_data::codec::{encode_guarded, mark_decode_failure};
 use crate::chain_data::constants::{CHAIN_ID, CHAIN_STATE_SIZE_U32};
 use crate::chain_data::runtime_defaults::{
     DEFAULT_BASE_FEE, DEFAULT_BLOCK_GAS_LIMIT, DEFAULT_INSTRUCTION_SOFT_LIMIT,
-    DEFAULT_MINING_INTERVAL_MS, DEFAULT_MIN_FEE_FLOOR,
+    DEFAULT_MINING_INTERVAL_MS, DEFAULT_MIN_FEE_FLOOR, DEFAULT_QUERY_INSTRUCTION_SOFT_LIMIT,
 };
 use ic_stable_structures::storable::Bound;
 use ic_stable_structures::Storable;
 use std::borrow::Cow;
+use std::mem::size_of;
 use zerocopy::byteorder::big_endian::{U32, U64};
 use zerocopy::{FromBytes, Immutable, IntoBytes, KnownLayout, Unaligned};
 
@@ -27,7 +28,8 @@ pub struct ChainStateV1 {
     pub min_gas_price: u64,
     pub min_priority_fee: u64,
     pub block_gas_limit: u64,
-    pub instruction_soft_limit: u64,
+    pub query_instruction_soft_limit: u64,
+    pub update_instruction_soft_limit: u64,
 }
 
 #[derive(
@@ -50,7 +52,28 @@ struct ChainStateWireV3 {
     instruction_soft_limit: U64,
 }
 
-impl ChainStateWireV3 {
+#[derive(
+    Clone, Copy, Debug, Eq, PartialEq, FromBytes, IntoBytes, KnownLayout, Immutable, Unaligned,
+)]
+#[repr(C)]
+struct ChainStateWireV4 {
+    schema_version: U32,
+    chain_id: U64,
+    last_block_number: U64,
+    last_block_time: U64,
+    flags: u8,
+    _pad0: [u8; 3],
+    next_queue_seq: U64,
+    mining_interval_ms: U64,
+    base_fee: U64,
+    min_gas_price: U64,
+    min_priority_fee: U64,
+    block_gas_limit: U64,
+    query_instruction_soft_limit: U64,
+    update_instruction_soft_limit: U64,
+}
+
+impl ChainStateWireV4 {
     fn new(state: &ChainStateV1) -> Self {
         Self {
             schema_version: U32::new(state.schema_version),
@@ -65,7 +88,8 @@ impl ChainStateWireV3 {
             min_gas_price: U64::new(state.min_gas_price),
             min_priority_fee: U64::new(state.min_priority_fee),
             block_gas_limit: U64::new(state.block_gas_limit),
-            instruction_soft_limit: U64::new(state.instruction_soft_limit),
+            query_instruction_soft_limit: U64::new(state.query_instruction_soft_limit),
+            update_instruction_soft_limit: U64::new(state.update_instruction_soft_limit),
         }
     }
 }
@@ -73,7 +97,7 @@ impl ChainStateWireV3 {
 impl ChainStateV1 {
     pub fn new(chain_id: u64) -> Self {
         Self {
-            schema_version: 2,
+            schema_version: 3,
             chain_id,
             last_block_number: 0,
             last_block_time: 0,
@@ -86,7 +110,8 @@ impl ChainStateV1 {
             min_gas_price: DEFAULT_MIN_FEE_FLOOR,
             min_priority_fee: DEFAULT_MIN_FEE_FLOOR,
             block_gas_limit: DEFAULT_BLOCK_GAS_LIMIT,
-            instruction_soft_limit: DEFAULT_INSTRUCTION_SOFT_LIMIT,
+            query_instruction_soft_limit: DEFAULT_QUERY_INSTRUCTION_SOFT_LIMIT,
+            update_instruction_soft_limit: DEFAULT_INSTRUCTION_SOFT_LIMIT,
         }
     }
 
@@ -122,7 +147,7 @@ impl ChainStateV1 {
 
 impl Storable for ChainStateV1 {
     fn to_bytes(&self) -> Cow<'_, [u8]> {
-        let wire = ChainStateWireV3::new(self);
+        let wire = ChainStateWireV4::new(self);
         match encode_guarded(
             b"chain_state",
             Cow::Owned(wire.as_bytes().to_vec()),
@@ -139,11 +164,39 @@ impl Storable for ChainStateV1 {
 
     fn from_bytes(bytes: Cow<'_, [u8]>) -> Self {
         let data = bytes.as_ref();
+        if data.len() == size_of::<ChainStateWireV3>() {
+            let wire = match ChainStateWireV3::read_from_bytes(data) {
+                Ok(value) => value,
+                Err(_) => {
+                    mark_decode_failure(b"chain_state", true);
+                    return Self::decode_failure_default();
+                }
+            };
+            let mut state = Self {
+                schema_version: wire.schema_version.get().max(3),
+                chain_id: wire.chain_id.get(),
+                last_block_number: wire.last_block_number.get(),
+                last_block_time: wire.last_block_time.get(),
+                auto_production_enabled: false,
+                is_producing: false,
+                mining_scheduled: false,
+                next_queue_seq: wire.next_queue_seq.get(),
+                mining_interval_ms: wire.mining_interval_ms.get(),
+                base_fee: wire.base_fee.get(),
+                min_gas_price: wire.min_gas_price.get(),
+                min_priority_fee: wire.min_priority_fee.get(),
+                block_gas_limit: wire.block_gas_limit.get(),
+                query_instruction_soft_limit: DEFAULT_QUERY_INSTRUCTION_SOFT_LIMIT,
+                update_instruction_soft_limit: wire.instruction_soft_limit.get(),
+            };
+            state.apply_flags(wire.flags);
+            return state;
+        }
         if data.len() != CHAIN_STATE_SIZE_U32 as usize {
             mark_decode_failure(b"chain_state", true);
             return Self::decode_failure_default();
         }
-        let wire = match ChainStateWireV3::read_from_bytes(data) {
+        let wire = match ChainStateWireV4::read_from_bytes(data) {
             Ok(value) => value,
             Err(_) => {
                 mark_decode_failure(b"chain_state", true);
@@ -151,7 +204,7 @@ impl Storable for ChainStateV1 {
             }
         };
         let mut state = Self {
-            schema_version: wire.schema_version.get(),
+            schema_version: wire.schema_version.get().max(3),
             chain_id: wire.chain_id.get(),
             last_block_number: wire.last_block_number.get(),
             last_block_time: wire.last_block_time.get(),
@@ -164,7 +217,8 @@ impl Storable for ChainStateV1 {
             min_gas_price: wire.min_gas_price.get(),
             min_priority_fee: wire.min_priority_fee.get(),
             block_gas_limit: wire.block_gas_limit.get(),
-            instruction_soft_limit: wire.instruction_soft_limit.get(),
+            query_instruction_soft_limit: wire.query_instruction_soft_limit.get(),
+            update_instruction_soft_limit: wire.update_instruction_soft_limit.get(),
         };
         state.apply_flags(wire.flags);
         state

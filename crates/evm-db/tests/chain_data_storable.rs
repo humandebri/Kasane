@@ -14,6 +14,7 @@ use evm_db::chain_data::{
 use evm_db::chain_data::{LogConfigV1, LOG_CONFIG_FILTER_MAX};
 use evm_db::chain_data::{
     DEFAULT_BLOCK_GAS_LIMIT, DEFAULT_INSTRUCTION_SOFT_LIMIT, DEFAULT_MIN_FEE_FLOOR,
+    DEFAULT_QUERY_INSTRUCTION_SOFT_LIMIT,
 };
 use evm_db::meta::{clear_needs_migration, needs_migration};
 use evm_db::stable_state::init_stable_state;
@@ -530,7 +531,8 @@ fn chain_state_roundtrip() {
     state.min_gas_price = 2;
     state.min_priority_fee = 3;
     state.block_gas_limit = 4_500_000;
-    state.instruction_soft_limit = 123_456;
+    state.query_instruction_soft_limit = 123_456;
+    state.update_instruction_soft_limit = 654_321;
     let bytes = state.to_bytes();
     let decoded = ChainStateV1::from_bytes(bytes);
     assert_eq!(state, decoded);
@@ -543,7 +545,14 @@ fn chain_state_default_fees_follow_runtime_defaults() {
     assert_eq!(state.min_gas_price, DEFAULT_MIN_FEE_FLOOR);
     assert_eq!(state.min_priority_fee, DEFAULT_MIN_FEE_FLOOR);
     assert_eq!(state.block_gas_limit, DEFAULT_BLOCK_GAS_LIMIT);
-    assert_eq!(state.instruction_soft_limit, DEFAULT_INSTRUCTION_SOFT_LIMIT);
+    assert_eq!(
+        state.query_instruction_soft_limit,
+        DEFAULT_QUERY_INSTRUCTION_SOFT_LIMIT
+    );
+    assert_eq!(
+        state.update_instruction_soft_limit,
+        DEFAULT_INSTRUCTION_SOFT_LIMIT
+    );
 }
 
 #[test]
@@ -561,9 +570,25 @@ fn chain_state_invalid_len_returns_safe_default_and_sets_needs_migration() {
     assert_eq!(decoded.min_priority_fee, DEFAULT_MIN_FEE_FLOOR);
     assert_eq!(decoded.block_gas_limit, DEFAULT_BLOCK_GAS_LIMIT);
     assert_eq!(
-        decoded.instruction_soft_limit,
+        decoded.query_instruction_soft_limit,
+        DEFAULT_QUERY_INSTRUCTION_SOFT_LIMIT
+    );
+    assert_eq!(
+        decoded.update_instruction_soft_limit,
         DEFAULT_INSTRUCTION_SOFT_LIMIT
     );
+}
+
+#[test]
+fn chain_state_legacy_v3_maps_single_limit_to_update_limit() {
+    let mut legacy = vec![0u8; 88];
+    legacy[80..88].copy_from_slice(&123_456u64.to_be_bytes());
+    let decoded = ChainStateV1::from_bytes(Cow::Owned(legacy));
+    assert_eq!(
+        decoded.query_instruction_soft_limit,
+        DEFAULT_QUERY_INSTRUCTION_SOFT_LIMIT
+    );
+    assert_eq!(decoded.update_instruction_soft_limit, 123_456);
 }
 
 #[test]

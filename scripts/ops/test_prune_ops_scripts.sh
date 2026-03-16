@@ -45,7 +45,7 @@ run_apply_reject_case() {
   set +e
   MOCK_CALLS_LOG="${CALLS_LOG}" \
   MOCK_PRUNE_STATUS_JSON='{"pruning_enabled":true,"need_prune":true}' \
-  MOCK_OPS_STATUS_JSON='{"prune_error_count":0,"mining_error_count":0,"instruction_soft_limit":4000000000}' \
+  MOCK_OPS_STATUS_JSON='{"prune_error_count":0,"mining_error_count":0,"query_instruction_soft_limit":10000000,"update_instruction_soft_limit":4000000000}' \
   CANISTER_CLI_BIN="${MOCK_ICP}" \
   CANISTER_NAME_OR_ID="abcd" \
   NETWORK="ic" \
@@ -62,7 +62,7 @@ run_apply_success_case() {
   : > "${CALLS_LOG}"
   MOCK_CALLS_LOG="${CALLS_LOG}" \
   MOCK_PRUNE_STATUS_JSON='{"pruning_enabled":true,"need_prune":false,"estimated_kept_bytes":100,"high_water_bytes":200,"hard_emergency_bytes":300,"pruned_before_block":null}' \
-  MOCK_OPS_STATUS_JSON='{"prune_error_count":1,"mining_error_count":2,"instruction_soft_limit":4000000000}' \
+  MOCK_OPS_STATUS_JSON='{"prune_error_count":1,"mining_error_count":2,"query_instruction_soft_limit":10000000,"update_instruction_soft_limit":4000000000}' \
   CANISTER_CLI_BIN="${MOCK_ICP}" \
   CANISTER_NAME_OR_ID="abcd" \
   NETWORK="ic" \

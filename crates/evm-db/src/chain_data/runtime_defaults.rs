@@ -11,9 +11,11 @@ pub const DEFAULT_BASE_FEE: u64 = 250_000_000_000;
 // 現行運用では legacy gas_price 下限と EIP-1559 priority fee 下限を同値で扱う。
 pub const DEFAULT_MIN_FEE_FLOOR: u64 = 150_000_000_000;
 pub const DEFAULT_BLOCK_GAS_LIMIT: u64 = 12_000_000;
-// 0 の場合は命令数ベースの早期打ち切りを無効化する。
+// update 実行の既定値。0 の場合は命令数ベースの早期打ち切りを無効化する。
 // 既定値は「上限手前で安全に止める」ための保守値。
 pub const DEFAULT_INSTRUCTION_SOFT_LIMIT: u64 = 4_000_000_000;
+// query は未認証でも叩かれるため、update より厳しく切る。
+pub const DEFAULT_QUERY_INSTRUCTION_SOFT_LIMIT: u64 = 10_000_000;
 
 // prune 実行の既定値
 pub const DEFAULT_PRUNE_TIMER_INTERVAL_MS: u64 = 3_600_000;

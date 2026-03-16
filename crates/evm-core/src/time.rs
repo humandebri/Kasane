@@ -21,12 +21,6 @@ pub(crate) fn now_sec() -> u64 {
     now_ns() / 1_000_000_000
 }
 
-#[cfg(test)]
-#[allow(dead_code)]
-pub(crate) fn set_test_now_sec(value: u64) {
-    TEST_NOW_SEC.store(value, Ordering::Relaxed);
-}
-
 #[cfg(target_arch = "wasm32")]
 #[allow(dead_code)]
 fn now_ns() -> u64 {

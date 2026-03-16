@@ -38,8 +38,8 @@ icp canister start -e ic <canister_id>
 ```
 
 ## 検証チェック
-1. `health` で `tip_number`, `queue_len`, `block_gas_limit`, `instruction_soft_limit` を確認する。
-2. `get_ops_status` で `mode`, `needs_migration`, `block_gas_limit`, `instruction_soft_limit` を確認する。
+1. `health` で `tip_number`, `queue_len`, `block_gas_limit`, `query_instruction_soft_limit`, `update_instruction_soft_limit` を確認する。
+2. `get_ops_status` で `mode`, `needs_migration`, `block_gas_limit`, `query_instruction_soft_limit`, `update_instruction_soft_limit` を確認する。
 3. 小さなトランザクションを1件投入し、`auto-mine` が成功することを確認する。
 4. `get_receipt` で receipt を確認し、`gas_used` が非0であることを確認する。
 

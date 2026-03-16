@@ -135,7 +135,8 @@ type GetLogsErrorView = variant {
   UnsupportedFilter : text;
 };
 type HealthView = record {
-  instruction_soft_limit : nat64;
+  query_instruction_soft_limit : nat64;
+  update_instruction_soft_limit : nat64;
   is_producing : bool;
   mining_scheduled : bool;
   block_gas_limit : nat64;
@@ -147,6 +148,8 @@ type HealthView = record {
 };
 type InitArgs = record {
   genesis_balances : vec GenesisBalanceView;
+  query_instruction_soft_limit : opt nat64;
+  update_instruction_soft_limit : opt nat64;
   wrap_canister_id : principal;
   wrap_factory_address : blob;
 };
@@ -202,11 +205,12 @@ type OpsStatusView = record {
   log_filter_override : opt text;
   last_cycle_balance : nat;
   mode : OpsModeView;
-  instruction_soft_limit : nat64;
   last_check_ts : nat64;
   mining_error_count : nat64;
   log_truncated_count : nat64;
+  query_instruction_soft_limit : nat64;
   schema_version : nat32;
+  update_instruction_soft_limit : nat64;
   safe_stop_latched : bool;
   decode_failure_last_label : opt text;
   prune_error_count : nat64;
@@ -426,7 +430,6 @@ service : (opt InitArgs) -> {
   rpc_eth_history_window : () -> (RpcHistoryWindowView) query;
   rpc_eth_max_priority_fee_per_gas : () -> (Result_11) query;
   rpc_eth_send_raw_transaction : (blob) -> (Result_15);
-  set_instruction_soft_limit : (nat64) -> (Result_16);
   set_log_filter : (opt text) -> (Result_16);
   set_prune_policy : (PrunePolicyView) -> (Result_16);
   set_pruning_enabled : (bool) -> (Result_16);

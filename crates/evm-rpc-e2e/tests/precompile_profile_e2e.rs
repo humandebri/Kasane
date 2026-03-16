@@ -19,6 +19,8 @@ struct InitArgs {
     genesis_balances: Vec<GenesisBalanceView>,
     wrap_canister_id: Principal,
     wrap_factory_address: Vec<u8>,
+    query_instruction_soft_limit: Option<u64>,
+    update_instruction_soft_limit: Option<u64>,
 }
 
 const TEST_WRAP_FACTORY_ADDRESS: [u8; 20] = [0x90u8; 20];
@@ -112,6 +114,8 @@ fn install_canister(pic: &PocketIc) -> Principal {
         }],
         wrap_canister_id,
         wrap_factory_address: TEST_WRAP_FACTORY_ADDRESS.to_vec(),
+        query_instruction_soft_limit: None,
+        update_instruction_soft_limit: None,
     });
     let wasm = fs::read(wasm_path()).expect("read gateway wasm");
     let canister_id = pic.create_canister();

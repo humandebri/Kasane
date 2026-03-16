@@ -16,3 +16,4 @@ alloy-eips = { version = "1.5.2", default-features = false, features = ["kzg-sid
 alloy-primitives = { version = "=1.5.3", default-features = false, features = ["std"] }
 alloy-signer = { version = "1.5.2", default-features = false }
 alloy-signer-local = { version = "1.5.2", default-features = false }
+candid = "0.10"
