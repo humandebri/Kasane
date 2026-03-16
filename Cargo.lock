@@ -1467,7 +1467,7 @@ dependencies = [
  "ic-cdk",
  "ic-cdk-timers",
  "ic-evm-address",
- "ic-stable-structures 0.7.2",
+ "ic-stable-structures",
  "proptest",
  "tracing",
  "wincode",
@@ -1851,6 +1851,7 @@ dependencies = [
  "alloy-primitives",
  "alloy-signer",
  "alloy-signer-local",
+ "candid",
  "evm-db",
  "ic-evm-core",
  "ic-evm-rpc-types",
@@ -1919,15 +1920,6 @@ dependencies = [
  "sha2",
  "simple_asn1",
  "zeroize",
-]
-
-[[package]]
-name = "ic-stable-structures"
-version = "0.6.9"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4d30d4cf17aff1024e13133897048bcba580e063c9000571ab766ca37e2996f4"
-dependencies = [
- "ic_principal",
 ]
 
 [[package]]
@@ -3922,7 +3914,7 @@ dependencies = [
  "ic-cdk-timers",
  "ic-evm-address",
  "ic-evm-rpc-types",
- "ic-stable-structures 0.6.9",
+ "ic-stable-structures",
  "num-bigint",
  "serde",
  "tiny-keccak",
