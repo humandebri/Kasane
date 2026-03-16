@@ -388,7 +388,9 @@ impl InternalTraceInspector {
         if self.active_paths.is_empty() {
             return;
         }
-        let trace_id = self.allocate_trace_id();
+        let Some(trace_id) = self.allocate_event_trace_id() else {
+            return;
+        };
         self.total_count = self.total_count.saturating_add(1);
         if self.traces.len() < MAX_INTERNAL_TRACES_PER_TX_U32 as usize {
             self.traces.push(InternalTraceDraft {
@@ -408,6 +410,15 @@ impl InternalTraceInspector {
                 },
             });
         }
+    }
+
+    fn allocate_event_trace_id(&mut self) -> Option<Vec<u32>> {
+        let next_child = self.frame_children.last_mut()?;
+        let child_index = *next_child;
+        *next_child = next_child.saturating_add(1);
+        let mut trace_id = self.active_paths.last().cloned().flatten().unwrap_or_default();
+        trace_id.push(child_index);
+        Some(trace_id)
     }
 
     fn start_action(
@@ -716,7 +727,7 @@ mod tests {
     use revm::context_interface::result::{HaltReason, OutOfGasError};
     use revm::context_interface::CreateScheme;
     use revm::interpreter::{
-        CallInput, CallInputs, CallScheme, CallValue, CreateInputs, CreateOutcome, Gas,
+        CallInput, CallInputs, CallOutcome, CallScheme, CallValue, CreateInputs, CreateOutcome, Gas,
         InstructionResult, InterpreterResult,
     };
     use revm::primitives::{Address, Bytes as RevmBytes, B256, U256};
@@ -868,5 +879,88 @@ mod tests {
             traces.items[0].created_contract_address,
             Some(created.into_array())
         );
+    }
+
+    #[test]
+    fn internal_trace_selfdestruct_does_not_shift_sibling_trace_ids() {
+        let caller = Address::with_last_byte(0x11);
+        let target = Address::with_last_byte(0x22);
+        let created = Address::with_last_byte(0x33);
+        let sibling_target = Address::with_last_byte(0x66);
+        let mut inspector = InternalTraceInspector::new(9, 4);
+        let outer = CallInputs {
+            input: CallInput::Bytes(RevmBytes::default()),
+            return_memory_offset: 0..0,
+            gas_limit: 100_000,
+            bytecode_address: target,
+            known_bytecode: None,
+            target_address: target,
+            caller,
+            value: CallValue::Transfer(U256::ZERO),
+            scheme: CallScheme::Call,
+            is_static: false,
+        };
+        inspector.start_call(&outer);
+        let inner = CallInputs {
+            target_address: Address::with_last_byte(0x44),
+            ..outer.clone()
+        };
+        inspector.start_call(&inner);
+        inspector.record_selfdestruct(inner.target_address, Address::with_last_byte(0x55), U256::from(7));
+        let create = CreateInputs::new(
+            inner.target_address,
+            CreateScheme::Create,
+            U256::from(9),
+            Bytes::default(),
+            100_000,
+        );
+        inspector.start_create(&create);
+        let outcome = CreateOutcome::new(
+            InterpreterResult::new(
+                InstructionResult::Return,
+                Bytes::default(),
+                Gas::new(100_000),
+            ),
+            Some(created),
+        );
+        inspector.end_create(&outcome);
+        let sibling_call = CallInputs {
+            target_address: sibling_target,
+            bytecode_address: sibling_target,
+            ..outer.clone()
+        };
+        inspector.start_call(&sibling_call);
+        inspector.end_call(&CallOutcome::new(
+            InterpreterResult::new(
+                InstructionResult::Return,
+                Bytes::default(),
+                Gas::new(100_000),
+            ),
+            0..0,
+        ));
+        inspector.end_call(&CallOutcome::new(
+            InterpreterResult::new(
+                InstructionResult::Return,
+                Bytes::default(),
+                Gas::new(100_000),
+            ),
+            0..0,
+        ));
+
+        let traces = inspector.finish();
+        assert_eq!(traces.total_count, 4);
+        assert_eq!(traces.items.len(), 4);
+        assert_eq!(traces.items[0].trace_id, "0");
+        assert_eq!(traces.items[1].trace_id, "0_0");
+        assert_eq!(traces.items[1].action_kind, InternalTraceActionKind::Selfdestruct);
+        assert_eq!(traces.items[2].trace_id, "0_1");
+        assert_eq!(traces.items[2].action_kind, InternalTraceActionKind::Create);
+        assert_eq!(
+            traces.items[2].created_contract_address,
+            Some(created.into_array())
+        );
+        assert_eq!(traces.items[3].trace_id, "0_2");
+        assert_eq!(traces.items[3].action_kind, InternalTraceActionKind::Call);
+        assert_eq!(traces.items[3].to_address, Some(sibling_target.into_array()));
     }
 }

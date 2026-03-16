@@ -13,6 +13,7 @@ ICP_ENV="${ICP_ENV:-ic}"
 ICP_IDENTITY_NAME="${ICP_IDENTITY_NAME:-ci-local}"
 EVM_CANISTER_ID="${EVM_CANISTER_ID:-4c52m-aiaaa-aaaam-agwwa-cai}"
 WRAP_CANISTER_ID="${WRAP_CANISTER_ID:-lpuz5-uyaaa-aaaam-ah4da-cai}"
+WRAP_CANISTER_DID="${REPO_ROOT}/othercanisters/wrap-canister/wrap_canister.did"
 FEE_LEDGER_CANISTER_ID="${FEE_LEDGER_CANISTER_ID:-xafvr-biaaa-aaaai-aql5q-cai}"
 FEE_LEDGER_DECIMALS="${FEE_LEDGER_DECIMALS:-8}"
 EVM_WRAP_FACTORY="${EVM_WRAP_FACTORY:-}"
@@ -26,10 +27,6 @@ WAIT_SECONDS="${WAIT_SECONDS:-2}"
 HELPER_TS="$(mktemp "${REPO_ROOT}/tools/wrapper/.mainnet-wrap-unwrap-helper.XXXXXX.mts")"
 TIMESTAMP="$(date +%Y%m%d-%H%M%S)"
 REPORT_FILE="${REPORT_DIR}/mainnet-wrap-unwrap-smoke-${TIMESTAMP}.md"
-REQUEST_STATUS_HASH="100_394_802"
-REQUEST_STATUS_SUCCEEDED_HASH="2_633_774_657"
-WRAP_RESULT_CHARGED_FEE_HASH="435_439_640"
-WRAP_RESULT_MINT_TX_ID_HASH="3_860_632_153"
 
 cleanup() {
   rm -f "${HELPER_TS}"
@@ -50,6 +47,7 @@ require_cmd() {
 require_cmd icp
 require_cmd node
 require_cmd python
+require_cmd didc
 
 if [[ -z "${EVM_WRAP_FACTORY}" ]]; then
   echo "[mainnet-wrap-unwrap] EVM_WRAP_FACTORY is required" >&2
@@ -236,6 +234,112 @@ print(out.hex())
 PY
 }
 
+parse_get_request_json() {
+  local text
+  if [[ $# -eq 0 ]]; then
+    text="$(cat)"
+  else
+    text="$1"
+  fi
+  OUTPUT_TEXT="${text}" python - <<'PY'
+import json, os, re, sys
+
+text = os.environ["OUTPUT_TEXT"]
+
+def decode_blob(raw: str | None) -> str | None:
+    if raw is None:
+        return None
+    out = bytearray()
+    i = 0
+    while i < len(raw):
+        if raw[i] == "\\" and i + 2 < len(raw) and all(c in "0123456789abcdefABCDEF" for c in raw[i + 1:i + 3]):
+            out.append(int(raw[i + 1:i + 3], 16))
+            i += 3
+        elif raw[i] == "\\" and i + 1 < len(raw):
+            out.append(ord(raw[i + 1]))
+            i += 2
+        else:
+            out.append(ord(raw[i]))
+            i += 1
+    return out.hex()
+
+status = re.search(r"status\s*=\s*variant\s*\{\s*([A-Za-z_][A-Za-z0-9_]*)\s*\}", text)
+if not status:
+    raise SystemExit(1)
+
+def capture_opt_blob(label: str) -> str | None:
+    m = re.search(rf"{re.escape(label)}\s*=\s*opt\s+blob\s+\"((?:[^\"\\\\]|\\\\.)*)\"", text)
+    return decode_blob(m.group(1)) if m else None
+
+def capture_opt_nat(label: str) -> int | None:
+    m = re.search(rf"{re.escape(label)}\s*=\s*opt\s+\(([0-9_]+)\s*:\s*(?:nat|nat64)\)", text)
+    return int(m.group(1).replace("_", "")) if m else None
+
+print(json.dumps({
+    "status": status.group(1),
+    "mint_tx_id_hex": capture_opt_blob("mint_tx_id"),
+    "ledger_tx_id_hex": capture_opt_blob("ledger_tx_id"),
+    "charged_fee_e8s": capture_opt_nat("charged_fee_e8s"),
+}))
+PY
+}
+
+parse_get_unwrap_requirements_json() {
+  local text
+  if [[ $# -eq 0 ]]; then
+    text="$(cat)"
+  else
+    text="$1"
+  fi
+  OUTPUT_TEXT="${text}" python - <<'PY'
+import json, os, re
+
+text = os.environ["OUTPUT_TEXT"]
+
+ok = re.search(r"variant\s*\{\s*Ok\s*=\s*record\s*\{", text)
+if not ok:
+    raise SystemExit(1)
+
+def decode_blob(raw: str | None) -> str | None:
+    if raw is None:
+        return None
+    out = bytearray()
+    i = 0
+    while i < len(raw):
+        if raw[i] == "\\" and i + 2 < len(raw) and all(c in "0123456789abcdefABCDEF" for c in raw[i + 1:i + 3]):
+            out.append(int(raw[i + 1:i + 3], 16))
+            i += 3
+        elif raw[i] == "\\" and i + 1 < len(raw):
+            out.append(ord(raw[i + 1]))
+            i += 2
+        else:
+            out.append(ord(raw[i]))
+            i += 1
+    return out.hex()
+
+wrapped = re.search(r"wrapped_token_address\s*=\s*opt\s+blob\s+\"((?:[^\"\\\\]|\\\\.)*)\"", text)
+
+print(json.dumps({
+    "wrapped_token_address_hex": decode_blob(wrapped.group(1)) if wrapped else None,
+}))
+PY
+}
+
+json_field() {
+  local json_text="$1"
+  local field="$2"
+  JSON_TEXT="${json_text}" FIELD_NAME="${field}" python - <<'PY'
+import json, os
+value = json.loads(os.environ["JSON_TEXT"])[os.environ["FIELD_NAME"]]
+if value is None:
+    raise SystemExit(1)
+if isinstance(value, bool):
+    print("true" if value else "false")
+else:
+    print(value)
+PY
+}
+
 extract_first_blob_hex() {
   OUTPUT_TEXT="$1" python - <<'PY'
 import os, re
@@ -297,6 +401,18 @@ rpc_eth_call_hex() {
   icp canister call -e "${ICP_ENV}" --identity "${ICP_IDENTITY_NAME}" --query "${EVM_CANISTER_ID}" rpc_eth_call_object "(record { to = opt $(hex_to_candid_vec "${to_hex}"); gas = opt 500000 : opt nat64; value = null; data = opt $(hex_to_candid_vec "${data_hex}"); from = opt $(hex_to_candid_vec "${CALLER_EVM_HEX}"); max_fee_per_gas = null; max_priority_fee_per_gas = null; chain_id = null; nonce = null; tx_type = null; access_list = null; gas_price = null })"
 }
 
+query_pp() {
+  local did_file="$1"
+  local canister="$2"
+  local method="$3"
+  local args="$4"
+  local encoded
+  local hex
+  encoded="$(didc encode -d "${did_file}" -m "${method}" "${args}")"
+  hex="$(icp canister call --query -e "${ICP_ENV}" --identity "${ICP_IDENTITY_NAME}" --args-format hex -o hex "${canister}" "${method}" "${encoded}")"
+  didc decode -f hex -d "${did_file}" -m "${method}" "${hex}" | python -c 'import sys; print(" ".join(sys.stdin.read().split()))'
+}
+
 wait_until() {
   local label="$1"
   local pattern="$2"
@@ -312,6 +428,33 @@ wait_until() {
     sleep "${WAIT_SECONDS}"
   done
   echo "[mainnet-wrap-unwrap] ${label} timeout: ${pattern}" >&2
+  printf '%s\n' "${out}" >&2
+  return 1
+}
+
+wait_until_json_field_equals() {
+  local label="$1"
+  local parser="$2"
+  local field="$3"
+  local expected="$4"
+  shift 4
+  local out=""
+  local parsed=""
+  local actual=""
+  local i
+  for i in $(seq 1 "${WAIT_RETRIES}"); do
+    out="$("$@" 2>&1)"
+    if parsed="$(${parser} "${out}" 2>/dev/null)"; then
+      if actual="$(json_field "${parsed}" "${field}" 2>/dev/null)"; then
+        if [[ "${actual}" == "${expected}" ]]; then
+          printf '%s\n' "${out}"
+          return 0
+        fi
+      fi
+    fi
+    sleep "${WAIT_SECONDS}"
+  done
+  echo "[mainnet-wrap-unwrap] ${label} timeout: ${field}=${expected}" >&2
   printf '%s\n' "${out}" >&2
   return 1
 }
@@ -389,18 +532,14 @@ WRAP_SUBMIT_OUT="$(icp canister call -e "${ICP_ENV}" --identity "${ICP_IDENTITY_
 candid_is_ok "${WRAP_SUBMIT_OUT}" >/dev/null
 
 WRAP_REQUEST_ID_HEX="$(extract_first_blob_hex "${WRAP_SUBMIT_OUT}")"
-WRAP_RESULT_OUT="$(wait_until "wrap_result" "${REQUEST_STATUS_HASH} = variant { ${REQUEST_STATUS_SUCCEEDED_HASH} }" icp canister call -e "${ICP_ENV}" --identity "${ICP_IDENTITY_NAME}" --query "${WRAP_CANISTER_ID}" get_request "(blob \"$(python - <<PY
+WRAP_RESULT_OUT="$(wait_until_json_field_equals "wrap_result" parse_get_request_json "status" "Succeeded" query_pp "${WRAP_CANISTER_DID}" "${WRAP_CANISTER_ID}" get_request "(blob \"$(python - <<PY
 hexv = "${WRAP_REQUEST_ID_HEX}"
 print(''.join(f'\\\\{hexv[i:i+2]}' for i in range(0, len(hexv), 2)))
 PY
 )\")")"
-MINT_TX_ID_HEX="$(extract_named_blob_hex "${WRAP_RESULT_OUT}" "${WRAP_RESULT_MINT_TX_ID_HASH}")"
-WRAP_FEE_E8S="$(OUTPUT_TEXT="${WRAP_RESULT_OUT}" python - <<'PY'
-import os, re
-m = re.search(r'435_439_640 = opt \(([0-9_]+) : nat\)', os.environ["OUTPUT_TEXT"])
-print(m.group(1).replace('_', '') if m else '')
-PY
-)"
+WRAP_RESULT_JSON="$(parse_get_request_json "${WRAP_RESULT_OUT}")"
+MINT_TX_ID_HEX="$(json_field "${WRAP_RESULT_JSON}" "mint_tx_id_hex")"
+WRAP_FEE_E8S="$(json_field "${WRAP_RESULT_JSON}" "charged_fee_e8s")"
 MINT_RECEIPT_OUT="$(wait_until "mint_receipt" "status = 1 : nat8" icp canister call -e "${ICP_ENV}" --identity "${ICP_IDENTITY_NAME}" --query "${EVM_CANISTER_ID}" rpc_eth_get_transaction_receipt_with_status_by_tx_id "(blob \"$(python - <<PY
 hexv = "${MINT_TX_ID_HEX}"
 print(''.join(f'\\\\{hexv[i:i+2]}' for i in range(0, len(hexv), 2)))
@@ -409,8 +548,9 @@ PY
 
 GAS_PRICE="$(extract_nat "$(icp canister call -e "${ICP_ENV}" --identity "${ICP_IDENTITY_NAME}" --query "${EVM_CANISTER_ID}" rpc_eth_gas_price '()')")"
 PRIORITY_FEE="$(extract_nat "$(icp canister call -e "${ICP_ENV}" --identity "${ICP_IDENTITY_NAME}" --query "${EVM_CANISTER_ID}" rpc_eth_max_priority_fee_per_gas '()')")"
-UNWRAP_REQS_OUT="$(icp canister call -e "${ICP_ENV}" --identity "${ICP_IDENTITY_NAME}" --query "${WRAP_CANISTER_ID}" get_unwrap_requirements "(record { asset_id = principal \"${FEE_LEDGER_CANISTER_ID}\"; amount_e8s = ${UNWRAP_AMOUNT_E8S} : nat; caller_evm_address = $(hex_to_candid_blob "${CALLER_EVM_HEX}") })")"
-WRAPPED_TOKEN_HEX="$(printf '%s' "${UNWRAP_REQS_OUT}" | extract_named_blob_hex "1_216_611_188")"
+UNWRAP_REQS_OUT="$(query_pp "${WRAP_CANISTER_DID}" "${WRAP_CANISTER_ID}" get_unwrap_requirements "(record { asset_id = principal \"${FEE_LEDGER_CANISTER_ID}\"; amount_e8s = ${UNWRAP_AMOUNT_E8S} : nat; caller_evm_address = $(hex_to_candid_blob "${CALLER_EVM_HEX}") })")"
+UNWRAP_REQS_JSON="$(parse_get_unwrap_requirements_json "${UNWRAP_REQS_OUT}")"
+WRAPPED_TOKEN_HEX="$(json_field "${UNWRAP_REQS_JSON}" "wrapped_token_address_hex")"
 APPROVE_ESTIMATE_META="$(helper_json approve-estimate "${CALLER_EVM_HEX}" "${WRAPPED_TOKEN_HEX}" "${EVM_WRAP_FACTORY}" "${UNWRAP_AMOUNT_E8S}")"
 APPROVE_ESTIMATE_OUT="$(icp canister call -e "${ICP_ENV}" --identity "${ICP_IDENTITY_NAME}" --query "${EVM_CANISTER_ID}" rpc_eth_estimate_gas_object "(record { to = opt $(APPROVE_ESTIMATE_META="${APPROVE_ESTIMATE_META}" python - <<'PY'
 import json, os
@@ -510,12 +650,13 @@ hexv = "${UNWRAP_REQUEST_ID_HEX}"
 print(''.join(f'\\\\{hexv[i:i+2]}' for i in range(0, len(hexv), 2)))
 PY
 )\")")"
-UNWRAP_RESULT_OUT="$(wait_until "unwrap_result" "${REQUEST_STATUS_HASH} = variant { ${REQUEST_STATUS_SUCCEEDED_HASH} }" icp canister call -e "${ICP_ENV}" --identity "${ICP_IDENTITY_NAME}" --query "${WRAP_CANISTER_ID}" get_request "(blob \"$(python - <<PY
+UNWRAP_RESULT_OUT="$(wait_until_json_field_equals "unwrap_result" parse_get_request_json "status" "Succeeded" query_pp "${WRAP_CANISTER_DID}" "${WRAP_CANISTER_ID}" get_request "(blob \"$(python - <<PY
 hexv = "${UNWRAP_REQUEST_ID_HEX}"
 print(''.join(f'\\\\{hexv[i:i+2]}' for i in range(0, len(hexv), 2)))
 PY
 )\")")"
-UNWRAP_LEDGER_TX_ID_HEX="$(extract_named_blob_hex "${UNWRAP_RESULT_OUT}" "3_157_076_128")"
+UNWRAP_RESULT_JSON="$(parse_get_request_json "${UNWRAP_RESULT_OUT}")"
+UNWRAP_LEDGER_TX_ID_HEX="$(json_field "${UNWRAP_RESULT_JSON}" "ledger_tx_id_hex")"
 
 cat > "${REPORT_FILE}" <<EOF
 # mainnet wrap/unwrap smoke
