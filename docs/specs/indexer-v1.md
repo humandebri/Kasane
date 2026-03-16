@@ -266,7 +266,8 @@ BlockBundle {
   block_number: u64,
   block: bytes,         // block header + tx_ids などの本体
   receipts: bytes,      // receipts一式（同一ブロック分）
-  tx_index: bytes       // tx_id -> (block, idx)
+  tx_index: bytes,      // tx_id -> (block, idx)
+  internal_traces: bytes // txごとの内部トレース一式
 }
 ```
 
@@ -281,10 +282,11 @@ BlockBundle {
 
 ### 7.5 BlockBundle と Chunk の関係（v1）
 
-* BlockBundle は **論理的に3 payload** を持つ  
+* BlockBundle は **論理的に4 payload** を持つ  
   * `block`
   * `receipts`
   * `tx_index`
+  * `internal_traces`
 * export API は **Chunk 単位**で返す  
   * Chunk は **payload のスライス**であり、prefix は含めない
 
@@ -315,9 +317,14 @@ length-prefix 形式は **export API では使わない**。
 
 **tx_index payload:**
 * 同一ブロック内の tx_index を列挙  
-* v1/v2 では **エントリ本体は 12 bytes 固定**（block_number: u64 + tx_index: u32）
-* 取り込み側は len != 12 を検出したら **Decode 扱いで停止**（ブロック単位のスキップは禁止）
+* v1/v2 では **エントリ本体は可変長**（先頭に `block_number: u64 + tx_index: u32` を含む）
+* caller principal / from / to / selector / eth_tx_hash を後続に含める
 * 形式: `repeat { tx_id(32) + u32be(len) + bytes }`
+
+**internal_traces payload:**
+* 同一ブロック内の internal traces を列挙
+* 形式: `repeat { tx_id(32) + u32be(len) + bytes }`
+* `bytes` は version byte を含む internal trace payload 本体
 
 **バージョニング:**
 * export API は **v1 固定**（フィールド追加なし）  
@@ -330,7 +337,7 @@ length-prefix 形式は **export API では使わない**。
 ```
 type Cursor = record {
   block_number: nat64;
-  segment: nat8;      // 0=block, 1=receipts, 2=tx_index
+  segment: nat8;      // 0=block, 1=receipts, 2=tx_index, 3=internal_traces
   byte_offset: nat32; // payload 内 offset（prefix は含めない）
 };
 
@@ -342,6 +349,7 @@ cursor: opt Cursor
   * `0 = block`
   * `1 = receipts`
   * `2 = tx_index`
+  * `3 = internal_traces`
 * `byte_offset: nat32`（payload 内 offset。prefix は含めない）
 
 前提:
@@ -354,7 +362,7 @@ cursor: opt Cursor
 * 次セグメントへ進む場合:
   * `segment += 1`
   * `byte_offset = 0`
-* `segment == 2` を完走したら:
+* `segment == 3` を完走したら:
   * `block_number += 1`
   * `segment = 0`
   * `byte_offset = 0`
@@ -380,13 +388,13 @@ cursor: opt Cursor
 ### 7.9 返却範囲の固定（v1）
 
 * **1レスポンスで block_number は最大1つ**
-* segment は **block → receipts → tx_index の順で跨いでよい**
+* segment は **block → receipts → tx_index → internal_traces の順で跨いでよい**
 * もし将来「複数 block を同時返却」するなら  
   * Chunk に `block_number: nat64` を追加すること
 
 ### 7.10 バリデーション（必須）
 
-* `segment > 2` → `InvalidCursor`
+* `segment > 3` → `InvalidCursor`
 * `byte_offset > payload_len` → `InvalidCursor`  
   * `byte_offset == payload_len` は **有効**（完走状態）
 * `start + bytes.len <= payload_len` を必ず満たす
@@ -413,7 +421,7 @@ cursor: opt Cursor
 ```
 
 * `block_number` は **10進ASCIIの文字列**（先頭0なし、"0"は許可）
-* `segment` は **0/1/2**
+* `segment` は **0/1/2/3**
 * `byte_offset` は **0..=u32**
 
 ### 7.12 export API と BlockBundle の分離（明確化）
@@ -692,7 +700,7 @@ cursor は JSON で保存し、互換性と可読性を固定する。
 Cursor {
   v: 1,
   block_number: "u64(文字列)", // JSの安全範囲超えを避けるため文字列固定
-  segment: u8,                // 0=block, 1=receipts, 2=tx_index
+  segment: u8,                // 0=block, 1=receipts, 2=tx_index, 3=internal_traces
   byte_offset: u32            // payload offset (prefixは含めない)
 }
 ```
@@ -701,7 +709,7 @@ Cursor {
 
 * cursor が存在しない場合は None とみなす（初回同期）
 * block_number は **10進ASCII、先頭0なし**（"0" は許可）
-* segment は **0/1/2 のみ**
+* segment は **0/1/2/3 のみ**
 * byte_offset は **0..=u32**
 
 理由: JSの安全整数範囲（2^53-1）を越えたときのサイレント破壊を避ける。

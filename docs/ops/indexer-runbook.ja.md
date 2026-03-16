@@ -16,7 +16,7 @@ English version: [./indexer-runbook.md](./indexer-runbook.md)
   - export を poll
   - Chunk を復元して payload decode
   - Postgres に upsert
-  - raw(3seg) を zstd 圧縮して `*.bundle.zst` として保存（任意キャッシュ）
+  - raw(4seg) を zstd 圧縮して `*.bundle.zst` として保存（任意キャッシュ）
   - 起動時に archive GC（tmp削除 + orphan削除）
 
 ## 1.5 icp-cli ローカル復旧（503/timeout対策）
@@ -164,7 +164,7 @@ fatal の代表:
 
 ### 6.1 保存形式
 - 1ブロック1ファイル: `<archiveDir>/<chainId>/<blockNumber>.bundle.zst`
-- raw は 3seg を `u32be(len)+payload` で連結してから zstd 圧縮
+- raw は 4seg を `u32be(len)+payload` で連結してから zstd 圧縮
 
 ### 6.2 atomicity
 - `*.tmp` に書いて `rename`（同一FS内で原子的）
