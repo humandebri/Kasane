@@ -13,6 +13,7 @@ export type ArchiveInput = {
   blockPayload: Uint8Array;
   receiptsPayload: Uint8Array;
   txIndexPayload: Uint8Array;
+  internalTracesPayload?: Uint8Array;
   zstdLevel: number;
 };
 
@@ -24,7 +25,12 @@ export type ArchiveResult = {
 };
 
 export async function archiveBlock(input: ArchiveInput): Promise<ArchiveResult> {
-  const raw = buildRaw(input.blockPayload, input.receiptsPayload, input.txIndexPayload);
+  const raw = buildRaw(
+    input.blockPayload,
+    input.receiptsPayload,
+    input.txIndexPayload,
+    input.internalTracesPayload ?? new Uint8Array()
+  );
   const outPath = buildPath(input.archiveDir, input.chainId, input.blockNumber);
   const existing = await readExistingArchive(outPath);
   if (existing) {
@@ -61,11 +67,17 @@ export async function archiveBlock(input: ArchiveInput): Promise<ArchiveResult> 
   };
 }
 
-function buildRaw(block: Uint8Array, receipts: Uint8Array, txIndex: Uint8Array): Buffer {
+function buildRaw(
+  block: Uint8Array,
+  receipts: Uint8Array,
+  txIndex: Uint8Array,
+  internalTraces: Uint8Array
+): Buffer {
   const blockLen = toU32(block.length, "block_len");
   const receiptsLen = toU32(receipts.length, "receipts_len");
   const txIndexLen = toU32(txIndex.length, "tx_index_len");
-  const total = 4 + blockLen + 4 + receiptsLen + 4 + txIndexLen;
+  const internalTracesLen = toU32(internalTraces.length, "internal_traces_len");
+  const total = 4 + blockLen + 4 + receiptsLen + 4 + txIndexLen + 4 + internalTracesLen;
   const out = Buffer.allocUnsafe(total);
   let offset = 0;
   offset = writeLen(out, offset, blockLen);
@@ -77,6 +89,9 @@ function buildRaw(block: Uint8Array, receipts: Uint8Array, txIndex: Uint8Array):
   offset = writeLen(out, offset, txIndexLen);
   Buffer.from(txIndex).copy(out, offset);
   offset += txIndexLen;
+  offset = writeLen(out, offset, internalTracesLen);
+  Buffer.from(internalTraces).copy(out, offset);
+  offset += internalTracesLen;
   if (offset !== total) {
     throw new Error("buildRaw size mismatch");
   }

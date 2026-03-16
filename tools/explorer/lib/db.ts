@@ -63,6 +63,13 @@ export type AddressTokenTransferCursor = {
   txHash: Uint8Array;
 };
 
+export type AddressInternalTxCursor = {
+  blockNumber: bigint;
+  txIndex: number;
+  traceId: string;
+  txHash: Uint8Array;
+};
+
 export type TokenTransferSummary = {
   txHashHex: string;
   blockNumber: bigint;
@@ -75,6 +82,38 @@ export type TokenTransferSummary = {
   fromAddress: Buffer;
   toAddress: Buffer;
   amount: bigint;
+};
+
+export type InternalTransactionSummary = {
+  txHashHex: string;
+  blockNumber: bigint;
+  blockTimestamp: bigint | null;
+  txIndex: number;
+  traceId: string;
+  traceSortKey: string;
+  depth: number;
+  actionType: string;
+  fromAddress: Buffer;
+  toAddress: Buffer | null;
+  createdContractAddress: Buffer | null;
+  value: bigint;
+  success: boolean;
+  errorCode: string | null;
+  internalTraceFailed: boolean;
+  internalTraceTruncated: boolean;
+  internalTraceCapturedCount: number | null;
+  internalTraceTotalCount: number | null;
+};
+
+export type InternalTraceMeta = {
+  internalTraceFailed: boolean;
+  internalTraceTruncated: boolean;
+  internalTraceCapturedCount: number | null;
+  internalTraceTotalCount: number | null;
+};
+
+export type AddressInternalTraceMetaSummary = InternalTraceMeta & {
+  txHashHex: string;
 };
 
 export type OpsMetricsSample = {
@@ -127,6 +166,11 @@ export type VerifiedContract = {
   sourceBlobId: string;
   metadataBlobId: string;
   publishedAt: bigint;
+};
+
+export type ContractCreationInfo = {
+  creatorAddress: Buffer;
+  creationTxHashHex: string;
 };
 
 export type VerifyMetricsSample = {
@@ -406,6 +450,32 @@ export async function getTx(txHash: Uint8Array): Promise<TxSummary | null> {
   };
 }
 
+export async function getInternalTraceMetaByTxHash(txHash: Uint8Array): Promise<InternalTraceMeta | null> {
+  const pool = getPool();
+  const row = await pool.query<{
+    internal_trace_failed: boolean;
+    internal_trace_truncated: boolean;
+    internal_trace_captured_count: number | null;
+    internal_trace_total_count: number | null;
+  }>(
+    "SELECT internal_trace_failed, internal_trace_truncated, internal_trace_captured_count, internal_trace_total_count FROM txs WHERE tx_hash = $1",
+    [Buffer.from(txHash)]
+  );
+  if (row.rowCount === 0) {
+    return null;
+  }
+  const hit = row.rows[0];
+  if (!hit) {
+    return null;
+  }
+  return {
+    internalTraceFailed: hit.internal_trace_failed,
+    internalTraceTruncated: hit.internal_trace_truncated,
+    internalTraceCapturedCount: hit.internal_trace_captured_count,
+    internalTraceTotalCount: hit.internal_trace_total_count,
+  };
+}
+
 export async function getTxByHashOrEthHash(hash: Uint8Array): Promise<TxLookup | null> {
   const pool = getPool();
   const row = await pool.query<{
@@ -613,6 +683,98 @@ export async function getTokenTransfersByAddress(
     fromAddress: row.from_address,
     toAddress: row.to_address,
     amount: BigInt(row.amount_numeric),
+  }));
+}
+
+export async function getInternalTxsByAddress(
+  address: Uint8Array,
+  limit: number,
+  cursor: AddressInternalTxCursor | null
+): Promise<InternalTransactionSummary[]> {
+  const pool = getPool();
+  const addressBuf = Buffer.from(address);
+  const fetchLimit = limit + 1;
+  const args = cursor
+    ? [
+        addressBuf,
+        cursor.blockNumber,
+        cursor.txIndex,
+        cursor.traceId,
+        Buffer.from(cursor.txHash),
+        fetchLimit,
+      ]
+    : [addressBuf, fetchLimit];
+  const query = cursor
+    ? "SELECT it.tx_hash, it.block_number, b.timestamp AS block_timestamp, it.tx_index, it.trace_id, it.trace_sort_key, it.depth, it.action_type, it.from_address, it.to_address, it.created_contract_address, it.value_numeric, it.success, it.error_code, t.internal_trace_failed, t.internal_trace_truncated, t.internal_trace_captured_count, t.internal_trace_total_count FROM internal_transactions it LEFT JOIN blocks b ON b.number = it.block_number LEFT JOIN txs t ON t.tx_hash = it.tx_hash WHERE (it.from_address = $1 OR it.to_address = $1 OR it.created_contract_address = $1) AND (it.block_number < $2 OR (it.block_number = $2 AND it.tx_index < $3) OR (it.block_number = $2 AND it.tx_index = $3 AND it.trace_sort_key > (select string_agg(lpad(segment, 10, '0'), '_' order by ordinality) from unnest(string_to_array($4, '_')) with ordinality as parts(segment, ordinality))) OR (it.block_number = $2 AND it.tx_index = $3 AND it.trace_sort_key = (select string_agg(lpad(segment, 10, '0'), '_' order by ordinality) from unnest(string_to_array($4, '_')) with ordinality as parts(segment, ordinality)) AND it.tx_hash < $5)) ORDER BY it.block_number DESC, it.tx_index DESC, it.trace_sort_key ASC, it.tx_hash DESC LIMIT $6"
+    : "SELECT it.tx_hash, it.block_number, b.timestamp AS block_timestamp, it.tx_index, it.trace_id, it.trace_sort_key, it.depth, it.action_type, it.from_address, it.to_address, it.created_contract_address, it.value_numeric, it.success, it.error_code, t.internal_trace_failed, t.internal_trace_truncated, t.internal_trace_captured_count, t.internal_trace_total_count FROM internal_transactions it LEFT JOIN blocks b ON b.number = it.block_number LEFT JOIN txs t ON t.tx_hash = it.tx_hash WHERE it.from_address = $1 OR it.to_address = $1 OR it.created_contract_address = $1 ORDER BY it.block_number DESC, it.tx_index DESC, it.trace_sort_key ASC, it.tx_hash DESC LIMIT $2";
+  const rows = await pool.query<{
+    tx_hash: Buffer;
+    block_number: string | number;
+    block_timestamp: string | number | null;
+    tx_index: number;
+    trace_id: string;
+    trace_sort_key: string;
+    depth: number;
+    action_type: string;
+    from_address: Buffer;
+    to_address: Buffer | null;
+    created_contract_address: Buffer | null;
+    value_numeric: string | number;
+    success: boolean;
+    error_code: string | null;
+    internal_trace_failed: boolean;
+    internal_trace_truncated: boolean;
+    internal_trace_captured_count: number | null;
+    internal_trace_total_count: number | null;
+  }>(query, args);
+  return rows.rows.map((row) => ({
+    txHashHex: `0x${row.tx_hash.toString("hex")}`,
+    blockNumber: BigInt(row.block_number),
+    blockTimestamp: row.block_timestamp === null ? null : BigInt(row.block_timestamp),
+    txIndex: row.tx_index,
+    traceId: row.trace_id,
+    traceSortKey: row.trace_sort_key,
+    depth: row.depth,
+    actionType: row.action_type,
+    fromAddress: row.from_address,
+    toAddress: row.to_address,
+    createdContractAddress: row.created_contract_address,
+    value: BigInt(row.value_numeric),
+    success: row.success,
+    errorCode: row.error_code,
+    internalTraceFailed: row.internal_trace_failed,
+    internalTraceTruncated: row.internal_trace_truncated,
+    internalTraceCapturedCount: row.internal_trace_captured_count,
+    internalTraceTotalCount: row.internal_trace_total_count,
+  }));
+}
+
+export async function getInternalTraceMetaByAddress(
+  address: Uint8Array
+): Promise<AddressInternalTraceMetaSummary[]> {
+  const pool = getPool();
+  const addressBuf = Buffer.from(address);
+  const rows = await pool.query<{
+    tx_hash: Buffer;
+    internal_trace_failed: boolean;
+    internal_trace_truncated: boolean;
+    internal_trace_captured_count: number | null;
+    internal_trace_total_count: number | null;
+  }>(
+    "SELECT DISTINCT t.tx_hash, t.internal_trace_failed, t.internal_trace_truncated, t.internal_trace_captured_count, t.internal_trace_total_count " +
+      "FROM txs t " +
+      "LEFT JOIN tx_receipts_index r ON r.tx_hash = t.tx_hash " +
+      "WHERE (t.from_address = $1 OR t.to_address = $1 OR r.contract_address = $1) " +
+      "AND (t.internal_trace_failed = true OR t.internal_trace_truncated = true) " +
+      "ORDER BY t.tx_hash DESC",
+    [addressBuf]
+  );
+  return rows.rows.map((row) => ({
+    txHashHex: `0x${row.tx_hash.toString("hex")}`,
+    internalTraceFailed: row.internal_trace_failed,
+    internalTraceTruncated: row.internal_trace_truncated,
+    internalTraceCapturedCount: row.internal_trace_captured_count,
+    internalTraceTotalCount: row.internal_trace_total_count,
   }));
 }
 
@@ -1130,6 +1292,22 @@ export async function getDeployTxInputByContractAddress(contractAddress: Uint8Ar
     return { found: true, txInput: null };
   }
   return { found: true, txInput: new Uint8Array(row.tx_input) };
+}
+
+export async function getContractCreationInfoByAddress(contractAddress: string): Promise<ContractCreationInfo | null> {
+  const pool = getPool();
+  const out = await pool.query<{ tx_hash: Buffer; from_address: Buffer }>(
+    "SELECT r.tx_hash, t.from_address FROM tx_receipts_index r JOIN txs t ON t.tx_hash = r.tx_hash WHERE r.contract_address = $1 ORDER BY r.block_number DESC, r.tx_index DESC LIMIT 1",
+    [Buffer.from(contractAddress.slice(2), "hex")]
+  );
+  const row = out.rows[0];
+  if (!row) {
+    return null;
+  }
+  return {
+    creatorAddress: row.from_address,
+    creationTxHashHex: `0x${row.tx_hash.toString("hex")}`,
+  };
 }
 
 export async function consumeVerifyReplayJti(params: {

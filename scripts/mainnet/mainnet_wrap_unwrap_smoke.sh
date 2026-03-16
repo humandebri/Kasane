@@ -385,7 +385,7 @@ log "approve fee ledger if needed"
 icp canister call -e "${ICP_ENV}" --identity "${ICP_IDENTITY_NAME}" "${FEE_LEDGER_CANISTER_ID}" icrc2_approve "(record { from_subaccount = null; spender = record { owner = principal \"${WRAP_CANISTER_ID}\"; subaccount = null }; amount = ${WRAP_ALLOWANCE_E8S} : nat; expected_allowance = null; expires_at = null; fee = null; memo = null; created_at_time = null })" >/dev/null
 
 log "submit wrap request"
-WRAP_SUBMIT_OUT="$(icp canister call -e "${ICP_ENV}" --identity "${ICP_IDENTITY_NAME}" "${WRAP_CANISTER_ID}" submit_wrap_request "(record { asset_id = principal \"${FEE_LEDGER_CANISTER_ID}\"; amount_e8s = ${WRAP_AMOUNT_E8S} : nat; evm_recipient = blob \"${WRAP_RECIPIENT_BLOB}\"; gas_limit = ${WRAP_GAS_LIMIT} : nat64 })")"
+WRAP_SUBMIT_OUT="$(icp canister call -e "${ICP_ENV}" --identity "${ICP_IDENTITY_NAME}" "${WRAP_CANISTER_ID}" submit_wrap_request "(record { asset_id = principal \"${FEE_LEDGER_CANISTER_ID}\"; amount_e8s = ${WRAP_AMOUNT_E8S} : nat; evm_recipient = blob \"${WRAP_RECIPIENT_BLOB}\"; evm_nonce = ${WRAP_NONCE} : nat64; gas_limit = ${WRAP_GAS_LIMIT} : nat64 })")"
 candid_is_ok "${WRAP_SUBMIT_OUT}" >/dev/null
 
 WRAP_REQUEST_ID_HEX="$(extract_first_blob_hex "${WRAP_SUBMIT_OUT}")"
@@ -410,7 +410,7 @@ PY
 GAS_PRICE="$(extract_nat "$(icp canister call -e "${ICP_ENV}" --identity "${ICP_IDENTITY_NAME}" --query "${EVM_CANISTER_ID}" rpc_eth_gas_price '()')")"
 PRIORITY_FEE="$(extract_nat "$(icp canister call -e "${ICP_ENV}" --identity "${ICP_IDENTITY_NAME}" --query "${EVM_CANISTER_ID}" rpc_eth_max_priority_fee_per_gas '()')")"
 UNWRAP_REQS_OUT="$(icp canister call -e "${ICP_ENV}" --identity "${ICP_IDENTITY_NAME}" --query "${WRAP_CANISTER_ID}" get_unwrap_requirements "(record { asset_id = principal \"${FEE_LEDGER_CANISTER_ID}\"; amount_e8s = ${UNWRAP_AMOUNT_E8S} : nat; caller_evm_address = $(hex_to_candid_blob "${CALLER_EVM_HEX}") })")"
-WRAPPED_TOKEN_HEX="$(printf '%s' "${UNWRAP_REQS_OUT}" | extract_named_blob_hex "wrapped_token_address")"
+WRAPPED_TOKEN_HEX="$(printf '%s' "${UNWRAP_REQS_OUT}" | extract_named_blob_hex "1_216_611_188")"
 APPROVE_ESTIMATE_META="$(helper_json approve-estimate "${CALLER_EVM_HEX}" "${WRAPPED_TOKEN_HEX}" "${EVM_WRAP_FACTORY}" "${UNWRAP_AMOUNT_E8S}")"
 APPROVE_ESTIMATE_OUT="$(icp canister call -e "${ICP_ENV}" --identity "${ICP_IDENTITY_NAME}" --query "${EVM_CANISTER_ID}" rpc_eth_estimate_gas_object "(record { to = opt $(APPROVE_ESTIMATE_META="${APPROVE_ESTIMATE_META}" python - <<'PY'
 import json, os
@@ -510,12 +510,12 @@ hexv = "${UNWRAP_REQUEST_ID_HEX}"
 print(''.join(f'\\\\{hexv[i:i+2]}' for i in range(0, len(hexv), 2)))
 PY
 )\")")"
-UNWRAP_RESULT_OUT="$(wait_until "unwrap_result" "status = variant { Succeeded }" icp canister call -e "${ICP_ENV}" --identity "${ICP_IDENTITY_NAME}" --query "${WRAP_CANISTER_ID}" get_request "(blob \"$(python - <<PY
+UNWRAP_RESULT_OUT="$(wait_until "unwrap_result" "${REQUEST_STATUS_HASH} = variant { ${REQUEST_STATUS_SUCCEEDED_HASH} }" icp canister call -e "${ICP_ENV}" --identity "${ICP_IDENTITY_NAME}" --query "${WRAP_CANISTER_ID}" get_request "(blob \"$(python - <<PY
 hexv = "${UNWRAP_REQUEST_ID_HEX}"
 print(''.join(f'\\\\{hexv[i:i+2]}' for i in range(0, len(hexv), 2)))
 PY
 )\")")"
-UNWRAP_LEDGER_TX_ID_HEX="$(extract_named_blob_hex "${UNWRAP_RESULT_OUT}" "ledger_tx_id")"
+UNWRAP_LEDGER_TX_ID_HEX="$(extract_named_blob_hex "${UNWRAP_RESULT_OUT}" "3_157_076_128")"
 
 cat > "${REPORT_FILE}" <<EOF
 # mainnet wrap/unwrap smoke

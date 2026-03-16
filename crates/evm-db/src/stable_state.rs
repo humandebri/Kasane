@@ -25,6 +25,7 @@ pub type TxStore = StableBTreeMap<TxId, StoredTxBytes, VMem>;
 pub type TxIndex = StableBTreeMap<TxId, BlobPtr, VMem>;
 pub type Receipts = StableBTreeMap<TxId, BlobPtr, VMem>;
 pub type Blocks = StableBTreeMap<u64, BlobPtr, VMem>;
+pub type InternalTraces = StableBTreeMap<TxId, BlobPtr, VMem>;
 pub type CallerNonces = StableBTreeMap<CallerKey, u64, VMem>;
 pub type TxLocs = StableBTreeMap<TxId, crate::chain_data::TxLoc, VMem>;
 pub type ReadyQueue = StableBTreeMap<ReadyKey, TxId, VMem>;
@@ -59,6 +60,7 @@ pub struct StableState {
     pub tx_index: TxIndex,
     pub receipts: Receipts,
     pub blocks: Blocks,
+    pub internal_traces: InternalTraces,
     pub blob_store: BlobStore,
     pub queue_meta: StableCell<QueueMeta, VMem>,
     pub head: StableCell<Head, VMem>,
@@ -127,6 +129,7 @@ pub fn init_stable_state() {
     let tx_index = StableBTreeMap::init(get_memory(AppMemoryId::TxIndex));
     let receipts = StableBTreeMap::init(get_memory(AppMemoryId::Receipts));
     let blocks = StableBTreeMap::init(get_memory(AppMemoryId::Blocks));
+    let internal_traces = StableBTreeMap::init(get_memory(AppMemoryId::InternalTraces));
     let blob_store = BlobStore::new(
         get_memory(AppMemoryId::BlobArena),
         StableCell::init(get_memory(AppMemoryId::BlobArenaMeta), 0u64),
@@ -219,6 +222,7 @@ pub fn init_stable_state() {
             tx_index,
             receipts,
             blocks,
+            internal_traces,
             blob_store,
             queue_meta,
             head,

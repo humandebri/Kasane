@@ -19,9 +19,9 @@ use evm_db::chain_data::constants::{
     READY_CANDIDATE_LIMIT,
 };
 use evm_db::chain_data::{
-    BlockData, CallerKey, Head, PendingFeeKey, PruneJournal, PrunePolicy, ReadyKey, ReadySeqKey,
-    ReceiptLike, SenderKey, SenderNonceKey, StoredTx, StoredTxBytes, StoredTxError, TxId,
-    TxIndexEntry, TxKind, TxLoc, TxLocKind,
+    BlockData, CallerKey, Head, InternalTraceSet, PendingFeeKey, PruneJournal, PrunePolicy,
+    ReadyKey, ReadySeqKey, ReceiptLike, SenderKey, SenderNonceKey, StoredTx, StoredTxBytes,
+    StoredTxError, TxId, TxIndexEntry, TxKind, TxLoc, TxLocKind,
 };
 use evm_db::memory::{chain_data_memory_ids_for_estimate, memory_size_pages, WASM_PAGE_SIZE_BYTES};
 use evm_db::meta::tx_locs_v3_active;
@@ -1380,6 +1380,7 @@ pub fn produce_block(max_txs: usize) -> Result<ProduceBlockOutcome, ChainError> 
             tx_index: u32,
             tx_index_ptr: evm_db::blob_ptr::BlobPtr,
             receipt_ptr: evm_db::blob_ptr::BlobPtr,
+            internal_traces_ptr: Option<evm_db::blob_ptr::BlobPtr>,
             sender_bytes: [u8; 20],
             sender_nonce: u64,
         }
@@ -1411,11 +1412,14 @@ pub fn produce_block(max_txs: usize) -> Result<ProduceBlockOutcome, ChainError> 
                 },
             );
             let receipt_ptr = store_receipt(state, &outcome.receipt);
+            let internal_traces_ptr =
+                store_internal_traces(state, *tx_id, &outcome.internal_traces);
             staged_persisted.push(StagedPersist {
                 tx_id: *tx_id,
                 tx_index: outcome.tx_index,
                 tx_index_ptr,
                 receipt_ptr,
+                internal_traces_ptr,
                 sender_bytes: *sender_bytes,
                 sender_nonce: *sender_nonce,
             });
@@ -1429,6 +1433,9 @@ pub fn produce_block(max_txs: usize) -> Result<ProduceBlockOutcome, ChainError> 
             state
                 .receipts
                 .insert(persisted.tx_id, persisted.receipt_ptr);
+            if let Some(ptr) = persisted.internal_traces_ptr {
+                state.internal_traces.insert(persisted.tx_id, ptr);
+            }
             tx_locs_insert(
                 state,
                 persisted.tx_id,
@@ -1857,6 +1864,37 @@ fn store_receipt(state: &mut StableState, receipt: &ReceiptLike) -> evm_db::blob
     })
 }
 
+fn store_internal_traces(
+    state: &mut StableState,
+    tx_id: TxId,
+    traces: &InternalTraceSet,
+) -> Option<evm_db::blob_ptr::BlobPtr> {
+    if traces.total_count == 0 {
+        return None;
+    }
+    let block_number = traces
+        .items
+        .first()
+        .map(|trace| trace.block_number)
+        .unwrap_or(0);
+    before_store_write_for_test("store_internal_traces", Some(block_number), Some(tx_id));
+    let bytes = match traces.to_bytes_checked() {
+        Ok(bytes) => bytes.into_owned(),
+        Err(_) => InternalTraceSet::failed(traces.total_count)
+            .to_bytes_checked()
+            .expect("internal trace failed marker must encode")
+            .into_owned(),
+    };
+    Some(state.blob_store.store_bytes(&bytes).unwrap_or_else(|_| {
+        trap_store_err(
+            "store_internal_traces",
+            Some(block_number),
+            Some(tx_id),
+            "blob_store",
+        );
+    }))
+}
+
 fn store_tx_index_entry(state: &mut StableState, entry: TxIndexEntry) -> evm_db::blob_ptr::BlobPtr {
     before_store_write_for_test("store_tx_index_entry", Some(entry.block_number), None);
     let bytes = entry.to_bytes().into_owned();
@@ -2017,6 +2055,7 @@ fn execute_and_seal_with_caller(
             block_ptr: evm_db::blob_ptr::BlobPtr,
             tx_index_ptr: evm_db::blob_ptr::BlobPtr,
             receipt_ptr: evm_db::blob_ptr::BlobPtr,
+            internal_traces_ptr: Option<evm_db::blob_ptr::BlobPtr>,
         }
 
         trie_commit::apply(state, prepared_root);
@@ -2030,10 +2069,14 @@ fn execute_and_seal_with_caller(
                 },
             ),
             receipt_ptr: store_receipt(state, &outcome.receipt),
+            internal_traces_ptr: store_internal_traces(state, tx_id, &outcome.internal_traces),
         };
         state.blocks.insert(number, staged.block_ptr);
         state.tx_index.insert(tx_id, staged.tx_index_ptr);
         state.receipts.insert(tx_id, staged.receipt_ptr);
+        if let Some(ptr) = staged.internal_traces_ptr {
+            state.internal_traces.insert(tx_id, ptr);
+        }
         tx_locs_insert(state, tx_id, TxLoc::included(number, outcome.tx_index));
         state.head.set(Head {
             number,
@@ -2109,7 +2152,7 @@ pub fn prune_blocks(retain: u64, max_ops: u32) -> Result<PruneResult, ChainError
                     continue;
                 }
             };
-            let needed = 1u64 + (block.tx_ids.len() as u64).saturating_mul(5);
+            let needed = 1u64 + (block.tx_ids.len() as u64).saturating_mul(6);
             if ops_used.saturating_add(needed) > max_ops {
                 break;
             }
@@ -2127,6 +2170,7 @@ pub fn prune_blocks(retain: u64, max_ops: u32) -> Result<PruneResult, ChainError
                 decrement_principal_pending_count_for_tx(state, *tx_id);
                 state.receipts.remove(tx_id);
                 state.tx_index.remove(tx_id);
+                state.internal_traces.remove(tx_id);
                 tx_locs_remove(state, tx_id);
                 remove_eth_tx_hash_index_for_tx_id(state, *tx_id);
                 state.tx_store.remove(tx_id);
@@ -2195,6 +2239,7 @@ fn recover_prune_journal(state: &mut evm_db::stable_state::StableState) -> Resul
                 decrement_principal_pending_count_for_tx(state, *tx_id);
                 state.receipts.remove(tx_id);
                 state.tx_index.remove(tx_id);
+                state.internal_traces.remove(tx_id);
                 tx_locs_remove(state, tx_id);
                 remove_eth_tx_hash_index_for_tx_id(state, *tx_id);
                 state.tx_store.remove(tx_id);
@@ -2242,6 +2287,9 @@ fn collect_ptrs_for_block(
             out.push(ptr);
         }
         if let Some(ptr) = state.tx_index.get(tx_id) {
+            out.push(ptr);
+        }
+        if let Some(ptr) = state.internal_traces.get(tx_id) {
             out.push(ptr);
         }
     }
@@ -3069,9 +3117,13 @@ enum RekeyError {
 mod tests {
     use super::{
         derive_caller_evm_cached, is_principal_decode_suppressed, note_decode_drop_for_principal,
-        remaining_instruction_budget, should_stop_block_execution, CALLER_EVM_BY_PRINCIPAL,
-        CALLER_EVM_CACHE_CAPACITY, DECODE_SUPPRESS_UNTIL_BY_PRINCIPAL,
+        remaining_instruction_budget, should_stop_block_execution, store_internal_traces,
+        CALLER_EVM_BY_PRINCIPAL, CALLER_EVM_CACHE_CAPACITY, DECODE_SUPPRESS_UNTIL_BY_PRINCIPAL,
     };
+    use evm_db::chain_data::{InternalTrace, InternalTraceActionKind, InternalTraceSet, TxId};
+    use evm_db::stable_state::{init_stable_state, with_state, with_state_mut};
+    use evm_db::Storable;
+    use std::borrow::Cow;
     use std::collections::BTreeMap;
 
     #[test]
@@ -3161,6 +3213,41 @@ mod tests {
         }
         CALLER_EVM_BY_PRINCIPAL.with(|cell| {
             assert!(cell.borrow().len() <= CALLER_EVM_CACHE_CAPACITY);
+        });
+    }
+
+    #[test]
+    fn store_internal_traces_stores_failed_marker_on_encode_failure() {
+        init_stable_state();
+        let traces = InternalTraceSet::new(vec![InternalTrace {
+            block_number: 1,
+            tx_index: 0,
+            trace_id: "x".repeat(65),
+            depth: 1,
+            action_kind: InternalTraceActionKind::Call,
+            from_address: [0x11; 20],
+            to_address: Some([0x22; 20]),
+            value: [0x33; 32],
+            created_contract_address: None,
+            success: true,
+            error_code: None,
+        }]);
+        let tx_id = TxId([0x44; 32]);
+        let ptr = with_state_mut(|state| {
+            store_internal_traces(state, tx_id, &traces)
+                .expect("failed marker ptr must be returned")
+        });
+        with_state(|state| {
+            let bytes = state
+                .blob_store
+                .read(&ptr)
+                .expect("failed marker bytes must be readable");
+            let decoded = InternalTraceSet::from_bytes(Cow::Owned(bytes));
+            assert!(decoded.encode_failed);
+            assert!(!decoded.truncated);
+            assert_eq!(decoded.captured_count, 0);
+            assert_eq!(decoded.total_count, 1);
+            assert!(decoded.items.is_empty());
         });
     }
 }

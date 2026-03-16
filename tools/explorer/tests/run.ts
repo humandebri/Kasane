@@ -69,10 +69,11 @@ import { getExtendedTokenMeta, getTokenMeta } from "../lib/token_meta";
 import { createOrGetVerifyRequest } from "../lib/verify/submit";
 import { runBackgroundTask, shouldRunPeriodicTask } from "../lib/verify/worker_tasks";
 import { parseChainId, parseVerifiedAbi } from "../lib/verify/verified_contract_api";
+import { encodeSourceBundle } from "../lib/verify/source_bundle";
 import { verifyWorkerTestHooks } from "../scripts/verify-worker";
 import { tokenMetaTestHooks } from "../lib/token_meta";
 import { buildTimelineFromReceiptLogs } from "../lib/tx_timeline";
-import { decodeKnownLog } from "../lib/tx_log_decode";
+import { decodeKnownLog, resolveEventLabel } from "../lib/tx_log_decode";
 import { deriveTxDirection } from "../lib/tx_direction";
 import { inferMethodLabel } from "../lib/tx_method";
 import { extractUnwrapRequestFromReceipt, isConfirmedKasaneWrapTx, WRAP_PRECOMPILE_ADDRESS_HEX } from "../lib/kasane_wrap";
@@ -1087,9 +1088,12 @@ async function runDbTests(): Promise<void> {
   const mem = newDb({ noAstCoverageCheck: true });
   mem.public.none(`
     CREATE TABLE blocks(number bigint primary key, hash bytea, timestamp bigint not null, tx_count integer not null, gas_used bigint);
-    CREATE TABLE txs(tx_hash bytea primary key, eth_tx_hash bytea, block_number bigint not null, tx_index integer not null, caller_principal bytea, from_address bytea not null, to_address bytea, tx_selector bytea, receipt_status smallint);
+    CREATE TABLE txs(tx_hash bytea primary key, eth_tx_hash bytea, block_number bigint not null, tx_index integer not null, caller_principal bytea, from_address bytea not null, to_address bytea, tx_selector bytea, receipt_status smallint, internal_trace_failed boolean not null default false, internal_trace_truncated boolean not null default false, internal_trace_captured_count integer, internal_trace_total_count integer);
     CREATE TABLE tx_receipts_index(tx_hash bytea primary key, contract_address bytea, status smallint not null, block_number bigint not null, tx_index integer not null);
+    CREATE TABLE internal_transactions(tx_hash bytea not null, block_number bigint not null, tx_index integer not null, trace_id text not null, trace_sort_key text not null, depth integer not null, action_type text not null, from_address bytea not null, to_address bytea, created_contract_address bytea, value_numeric numeric(78,0) not null, success boolean not null, error_code text, primary key(tx_hash, trace_id));
     CREATE TABLE token_transfers(tx_hash bytea not null, block_number bigint not null, tx_index integer not null, log_index integer not null, token_address bytea not null, from_address bytea not null, to_address bytea not null, amount_numeric numeric(78,0) not null, primary key(tx_hash, log_index));
+    CREATE TABLE verified_contracts(id text primary key, contract_address text not null, chain_id integer not null, contract_name text not null, compiler_version text not null, optimizer_enabled boolean not null, optimizer_runs integer not null, evm_version text, creation_match boolean not null, runtime_match boolean not null, abi_json text not null, source_blob_id text not null, metadata_blob_id text not null, published_at bigint not null);
+    CREATE TABLE verify_blobs(id text primary key, encoding text not null, raw_size integer not null, blob bytea not null);
     CREATE TABLE metrics_daily(day integer primary key, raw_bytes bigint not null default 0, compressed_bytes bigint not null default 0, archive_bytes bigint, blocks_ingested bigint not null default 0, errors bigint not null default 0);
     CREATE TABLE ops_metrics_samples(sampled_at_ms bigint primary key, queue_len bigint not null, cycles bigint not null default 0, pruned_before_block bigint, estimated_kept_bytes bigint, low_water_bytes bigint, high_water_bytes bigint, hard_emergency_bytes bigint, total_submitted bigint not null, total_included bigint not null, total_dropped bigint not null, drop_counts_json text not null);
     CREATE TABLE meta(key text primary key, value text);
@@ -1361,6 +1365,8 @@ async function runTxMethodTests(): Promise<void> {
   assert.equal(inferMethodLabel(null, null), "create");
   assert.equal(inferMethodLabel("0x" + "11".repeat(20), null), "call");
   assert.equal(inferMethodLabel("0x" + "11".repeat(20), Buffer.from("a9059cbb", "hex")), "transfer");
+  assert.equal(inferMethodLabel("0x" + "11".repeat(20), Buffer.from("086302c2", "hex")), "wrap");
+  assert.equal(inferMethodLabel("0x" + "11".repeat(20), Buffer.from("d14444c6", "hex")), "unwrap");
   assert.equal(inferMethodLabel(WRAP_PRECOMPILE_ADDRESS_HEX, Buffer.from("010a0000", "hex")), "unwrap");
   assert.equal(inferMethodLabel("0x" + "11".repeat(20), Buffer.from("4fdb8cbf", "hex")), "0x4fdb8cbf");
   assert.equal(inferMethodLabel("0x" + "11".repeat(20), Buffer.from("60e06040", "hex")), "0x60e06040");
@@ -1439,9 +1445,12 @@ async function runAddressViewErc20Tests(): Promise<void> {
   const mem = newDb({ noAstCoverageCheck: true });
   mem.public.none(`
     CREATE TABLE blocks(number bigint primary key, hash bytea, timestamp bigint not null, tx_count integer not null, gas_used bigint);
-    CREATE TABLE txs(tx_hash bytea primary key, eth_tx_hash bytea, block_number bigint not null, tx_index integer not null, caller_principal bytea, from_address bytea not null, to_address bytea, tx_selector bytea, receipt_status smallint);
+    CREATE TABLE txs(tx_hash bytea primary key, eth_tx_hash bytea, block_number bigint not null, tx_index integer not null, caller_principal bytea, from_address bytea not null, to_address bytea, tx_selector bytea, receipt_status smallint, internal_trace_failed boolean not null default false, internal_trace_truncated boolean not null default false, internal_trace_captured_count integer, internal_trace_total_count integer);
     CREATE TABLE tx_receipts_index(tx_hash bytea primary key, contract_address bytea, status smallint not null, block_number bigint not null, tx_index integer not null);
+    CREATE TABLE internal_transactions(tx_hash bytea not null, block_number bigint not null, tx_index integer not null, trace_id text not null, trace_sort_key text not null, depth integer not null, action_type text not null, from_address bytea not null, to_address bytea, created_contract_address bytea, value_numeric numeric(78,0) not null, success boolean not null, error_code text, primary key(tx_hash, trace_id));
     CREATE TABLE token_transfers(tx_hash bytea not null, block_number bigint not null, tx_index integer not null, log_index integer not null, token_address bytea not null, from_address bytea not null, to_address bytea not null, amount_numeric numeric(78,0) not null, primary key(tx_hash, log_index));
+    CREATE TABLE verified_contracts(id text primary key, contract_address text not null, chain_id integer not null, contract_name text not null, compiler_version text not null, optimizer_enabled boolean not null, optimizer_runs integer not null, evm_version text, creation_match boolean not null, runtime_match boolean not null, abi_json text not null, source_blob_id text not null, metadata_blob_id text not null, published_at bigint not null);
+    CREATE TABLE verify_blobs(id text primary key, encoding text not null, raw_size integer not null, blob bytea not null);
   `);
   const adapter = mem.adapters.createPg();
   const pool = new adapter.Pool();
@@ -1515,6 +1524,408 @@ async function runAddressViewErc20Tests(): Promise<void> {
   }
 }
 
+async function runAddressViewContractEventsTests(): Promise<void> {
+  const mem = newDb({ noAstCoverageCheck: true });
+  mem.public.none(`
+    CREATE TABLE blocks(number bigint primary key, hash bytea, timestamp bigint not null, tx_count integer not null, gas_used bigint);
+    CREATE TABLE txs(tx_hash bytea primary key, eth_tx_hash bytea, block_number bigint not null, tx_index integer not null, caller_principal bytea, from_address bytea not null, to_address bytea, tx_selector bytea, receipt_status smallint, internal_trace_failed boolean not null default false, internal_trace_truncated boolean not null default false, internal_trace_captured_count integer, internal_trace_total_count integer);
+    CREATE TABLE tx_receipts_index(tx_hash bytea primary key, contract_address bytea, status smallint not null, block_number bigint not null, tx_index integer not null);
+    CREATE TABLE internal_transactions(tx_hash bytea not null, block_number bigint not null, tx_index integer not null, trace_id text not null, trace_sort_key text not null, depth integer not null, action_type text not null, from_address bytea not null, to_address bytea, created_contract_address bytea, value_numeric numeric(78,0) not null, success boolean not null, error_code text, primary key(tx_hash, trace_id));
+    CREATE TABLE token_transfers(tx_hash bytea not null, block_number bigint not null, tx_index integer not null, log_index integer not null, token_address bytea not null, from_address bytea not null, to_address bytea not null, amount_numeric numeric(78,0) not null, primary key(tx_hash, log_index));
+    CREATE TABLE verified_contracts(id text primary key, contract_address text not null, chain_id integer not null, contract_name text not null, compiler_version text not null, optimizer_enabled boolean not null, optimizer_runs integer not null, evm_version text, creation_match boolean not null, runtime_match boolean not null, abi_json text not null, source_blob_id text not null, metadata_blob_id text not null, published_at bigint not null);
+    CREATE TABLE verify_blobs(id text primary key, encoding text not null, raw_size integer not null, blob bytea not null);
+  `);
+  const adapter = mem.adapters.createPg();
+  const pool = new adapter.Pool();
+  setExplorerPool(pool);
+
+  const contractAddressHex = "0x" + "90".repeat(20);
+  const txHashHex = "0x" + "12".repeat(32);
+
+  await pool.query("INSERT INTO blocks(number, hash, timestamp, tx_count, gas_used) VALUES($1, $2, $3, $4, $5)", [
+    50,
+    Buffer.from("ab".repeat(32), "hex"),
+    1_800,
+    1,
+    21_000,
+  ]);
+  await pool.query("INSERT INTO txs(tx_hash, block_number, tx_index, caller_principal, from_address, to_address, tx_selector, receipt_status) VALUES($1, $2, $3, $4, $5, $6, $7, $8)", [
+    Buffer.from(txHashHex.slice(2), "hex"),
+    50,
+    2,
+    null,
+    Buffer.from("11".repeat(20), "hex"),
+    Buffer.from(contractAddressHex.slice(2), "hex"),
+    Buffer.from("086302c2", "hex"),
+    1,
+  ]);
+
+  dataTestHooks.setAddressViewRpcFetchersForTest({
+    code: async () => Uint8Array.from([0x60, 0x00]),
+    balance: async () => 0n,
+    nonce: async () => 2n,
+    events: async () => ({
+      items: [
+        {
+          txHashHex,
+          blockNumber: 50n,
+          txIndex: 2,
+          logIndex: 1,
+          receiptStatus: 1,
+          addressHex: contractAddressHex,
+          topic0Hex: "0xc24c0b635304dd6d5692e0452892191032dd98f7af780e92e277fcd453a50aa0",
+          eventLabel: "Minted",
+        },
+        {
+          txHashHex: "0x" + "34".repeat(32),
+          blockNumber: 49n,
+          txIndex: 1,
+          logIndex: 0,
+          receiptStatus: null,
+          addressHex: contractAddressHex,
+          topic0Hex: "0x" + "ff".repeat(32),
+          eventLabel: "unknown",
+        },
+      ],
+      nextCursor: "49:1:0",
+    }),
+  });
+
+  try {
+    const view = await getAddressView(contractAddressHex, undefined, undefined, undefined, null, undefined, {
+      includeContractEvents: true,
+    });
+    assert.equal(view.contractEventsUnavailable, false);
+    assert.equal(view.contractEvents.length, 2);
+    assert.equal(view.contractEvents[0]?.eventLabel, "Minted");
+    assert.equal(view.contractEvents[0]?.receiptStatus, 1);
+    assert.equal(view.contractEvents[1]?.eventLabel, "unknown");
+    assert.equal(view.eventsNextCursor, "49:1:0");
+  } finally {
+    dataTestHooks.resetAddressViewRpcFetchersForTest();
+    await closeExplorerPool();
+  }
+}
+
+async function runAddressViewInternalAndContractTests(): Promise<void> {
+  const mem = newDb({ noAstCoverageCheck: true });
+  mem.public.none(`
+    CREATE TABLE blocks(number bigint primary key, hash bytea, timestamp bigint not null, tx_count integer not null, gas_used bigint);
+    CREATE TABLE txs(tx_hash bytea primary key, eth_tx_hash bytea, block_number bigint not null, tx_index integer not null, caller_principal bytea, from_address bytea not null, to_address bytea, tx_selector bytea, receipt_status smallint, tx_input bytea, internal_trace_failed boolean not null default false, internal_trace_truncated boolean not null default false, internal_trace_captured_count integer, internal_trace_total_count integer);
+    CREATE TABLE tx_receipts_index(tx_hash bytea primary key, contract_address bytea, status smallint not null, block_number bigint not null, tx_index integer not null);
+    CREATE TABLE internal_transactions(tx_hash bytea not null, block_number bigint not null, tx_index integer not null, trace_id text not null, trace_sort_key text not null, depth integer not null, action_type text not null, from_address bytea not null, to_address bytea, created_contract_address bytea, value_numeric numeric(78,0) not null, success boolean not null, error_code text, primary key(tx_hash, trace_id));
+    CREATE TABLE token_transfers(tx_hash bytea not null, block_number bigint not null, tx_index integer not null, log_index integer not null, token_address bytea not null, from_address bytea not null, to_address bytea not null, amount_numeric numeric(78,0) not null, primary key(tx_hash, log_index));
+    CREATE TABLE verified_contracts(id text primary key, contract_address text not null, chain_id integer not null, contract_name text not null, compiler_version text not null, optimizer_enabled boolean not null, optimizer_runs integer not null, evm_version text, creation_match boolean not null, runtime_match boolean not null, abi_json text not null, source_blob_id text not null, metadata_blob_id text not null, published_at bigint not null);
+    CREATE TABLE verify_blobs(id text primary key, encoding text not null, raw_size integer not null, blob bytea not null);
+  `);
+  const adapter = mem.adapters.createPg();
+  const pool = new adapter.Pool();
+  setExplorerPool(pool);
+
+  const contractAddressHex = "0x" + "90".repeat(20);
+  const txHash = Buffer.from("12".repeat(32), "hex");
+  const source = encodeSourceBundle({ "src/Token.sol": "contract Token {}" });
+
+  await pool.query("INSERT INTO blocks(number, hash, timestamp, tx_count, gas_used) VALUES($1, $2, $3, $4, $5)", [
+    60,
+    Buffer.from("ab".repeat(32), "hex"),
+    2_000,
+    1,
+    21_000,
+  ]);
+  await pool.query("INSERT INTO txs(tx_hash, block_number, tx_index, caller_principal, from_address, to_address, tx_selector, receipt_status, tx_input, internal_trace_failed, internal_trace_truncated, internal_trace_captured_count, internal_trace_total_count) VALUES($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)", [
+    txHash,
+    60,
+    1,
+    null,
+    Buffer.from("11".repeat(20), "hex"),
+    Buffer.from(contractAddressHex.slice(2), "hex"),
+    Buffer.from("086302c2", "hex"),
+    1,
+    Buffer.from("abcd", "hex"),
+    true,
+    false,
+    null,
+    5,
+  ]);
+  await pool.query("INSERT INTO tx_receipts_index(tx_hash, contract_address, status, block_number, tx_index) VALUES($1, $2, $3, $4, $5)", [
+    txHash,
+    Buffer.from(contractAddressHex.slice(2), "hex"),
+    1,
+    60,
+    1,
+  ]);
+  await pool.query("INSERT INTO internal_transactions(tx_hash, block_number, tx_index, trace_id, trace_sort_key, depth, action_type, from_address, to_address, created_contract_address, value_numeric, success, error_code) VALUES($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)", [
+    txHash,
+    60,
+    1,
+    "0",
+    "0000000000",
+    1,
+    "custom",
+    Buffer.from("11".repeat(20), "hex"),
+    Buffer.from(contractAddressHex.slice(2), "hex"),
+    null,
+    "42",
+    true,
+    null,
+  ]);
+  await pool.query("INSERT INTO internal_transactions(tx_hash, block_number, tx_index, trace_id, trace_sort_key, depth, action_type, from_address, to_address, created_contract_address, value_numeric, success, error_code) VALUES($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)", [
+    Buffer.from("34".repeat(32), "hex"),
+    60,
+    1,
+    "0_10",
+    "0000000000_0000000010",
+    2,
+    "call",
+    Buffer.from("11".repeat(20), "hex"),
+    Buffer.from(contractAddressHex.slice(2), "hex"),
+    null,
+    "1",
+    true,
+    null,
+  ]);
+  await pool.query("INSERT INTO internal_transactions(tx_hash, block_number, tx_index, trace_id, trace_sort_key, depth, action_type, from_address, to_address, created_contract_address, value_numeric, success, error_code) VALUES($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)", [
+    Buffer.from("56".repeat(32), "hex"),
+    60,
+    1,
+    "0_2",
+    "0000000000_0000000002",
+    2,
+    "call",
+    Buffer.from("11".repeat(20), "hex"),
+    Buffer.from(contractAddressHex.slice(2), "hex"),
+    null,
+    "2",
+    true,
+    null,
+  ]);
+  await pool.query("INSERT INTO verify_blobs(id, encoding, raw_size, blob) VALUES($1, $2, $3, $4)", [
+    "source-1",
+    "gzip-json",
+    source.raw.length,
+    Buffer.from(source.gzip),
+  ]);
+  await pool.query("INSERT INTO verified_contracts(id, contract_address, chain_id, contract_name, compiler_version, optimizer_enabled, optimizer_runs, evm_version, creation_match, runtime_match, abi_json, source_blob_id, metadata_blob_id, published_at) VALUES($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)", [
+    "vc-1",
+    contractAddressHex,
+    0,
+    "WrappedToken",
+    "solc-0.8.28",
+    true,
+    200,
+    "shanghai",
+    true,
+    true,
+    "[{\"type\":\"function\",\"name\":\"balanceOf\"}]",
+    "source-1",
+    "meta-1",
+    1234,
+  ]);
+
+  dataTestHooks.setAddressViewRpcFetchersForTest({
+    code: async () => Uint8Array.from([0x60, 0x00]),
+    balance: async () => 0n,
+    nonce: async () => 1n,
+    events: async () => ({ items: [], nextCursor: null }),
+    verifyBlob: async (id) =>
+      id === "source-1"
+        ? {
+            encoding: "gzip-json",
+            rawSize: source.raw.length,
+            blob: source.gzip,
+          }
+        : null,
+  });
+
+  try {
+    const view = await getAddressView(contractAddressHex);
+    assert.equal(view.internalTransactions.length, 3);
+    assert.equal(view.internalTransactions[0]?.traceId, "0");
+    assert.equal(view.internalTransactions[0]?.actionType, "custom");
+    assert.equal(view.internalTransactions[1]?.traceId, "0_2");
+    assert.equal(view.internalTransactions[2]?.traceId, "0_10");
+    assert.equal(view.internalTraceOverflowTxs.length, 0);
+    assert.equal(view.internalTraceFailedTxs.length, 1);
+    assert.equal(view.internalTraceFailedTxs[0]?.txHashHex, "0x" + txHash.toString("hex"));
+    assert.equal(view.internalTransactions[0]?.valueText, "<0.00000001");
+    assert.equal(view.contractInfo?.verified, true);
+    assert.equal(view.contractInfo?.creatorAddressHex, "0x" + "11".repeat(20));
+    assert.equal(view.contractInfo?.creationTxHashHex, "0x" + txHash.toString("hex"));
+    assert.equal(view.contractInfo?.contractName, "WrappedToken");
+    assert.equal(view.contractInfo?.abiParseError, false);
+    assert.equal(view.contractInfo?.abiJson, "[{\"type\":\"function\",\"name\":\"balanceOf\"}]");
+    assert.equal(view.contractInfo?.sourceBundle?.["src/Token.sol"], "contract Token {}");
+    assert.equal(view.contractEvents.length, 0);
+    assert.equal(view.contractEventsUnavailable, false);
+  } finally {
+    dataTestHooks.resetAddressViewRpcFetchersForTest();
+    await closeExplorerPool();
+  }
+}
+
+async function runAddressViewInternalTraceMetadataOnlyTests(): Promise<void> {
+  const mem = newDb({ noAstCoverageCheck: true });
+  mem.public.none(`
+    CREATE TABLE blocks(number bigint primary key, hash bytea, timestamp bigint not null, tx_count integer not null, gas_used bigint);
+    CREATE TABLE txs(tx_hash bytea primary key, eth_tx_hash bytea, block_number bigint not null, tx_index integer not null, caller_principal bytea, from_address bytea not null, to_address bytea, tx_selector bytea, receipt_status smallint, internal_trace_failed boolean not null default false, internal_trace_truncated boolean not null default false, internal_trace_captured_count integer, internal_trace_total_count integer);
+    CREATE TABLE tx_receipts_index(tx_hash bytea primary key, contract_address bytea, status smallint not null, block_number bigint not null, tx_index integer not null);
+    CREATE TABLE internal_transactions(tx_hash bytea not null, block_number bigint not null, tx_index integer not null, trace_id text not null, trace_sort_key text not null, depth integer not null, action_type text not null, from_address bytea not null, to_address bytea, created_contract_address bytea, value_numeric numeric(78,0) not null, success boolean not null, error_code text, primary key(tx_hash, trace_id));
+    CREATE TABLE token_transfers(tx_hash bytea not null, block_number bigint not null, tx_index integer not null, log_index integer not null, token_address bytea not null, from_address bytea not null, to_address bytea not null, amount_numeric numeric(78,0) not null, primary key(tx_hash, log_index));
+    CREATE TABLE verified_contracts(id text primary key, contract_address text not null, chain_id integer not null, contract_name text not null, compiler_version text not null, optimizer_enabled boolean not null, optimizer_runs integer not null, evm_version text, creation_match boolean not null, runtime_match boolean not null, abi_json text not null, source_blob_id text not null, metadata_blob_id text not null, published_at bigint not null);
+    CREATE TABLE verify_blobs(id text primary key, encoding text not null, raw_size integer not null, blob bytea not null);
+  `);
+  const adapter = mem.adapters.createPg();
+  const pool = new adapter.Pool();
+  setExplorerPool(pool);
+
+  const contractAddressHex = "0x" + "91".repeat(20);
+  const txHashFailed = Buffer.from("aa".repeat(32), "hex");
+
+  await pool.query("INSERT INTO blocks(number, hash, timestamp, tx_count, gas_used) VALUES($1, $2, $3, $4, $5)", [
+    61,
+    Buffer.from("cd".repeat(32), "hex"),
+    2_100,
+    1,
+    21_000,
+  ]);
+  await pool.query("INSERT INTO txs(tx_hash, block_number, tx_index, caller_principal, from_address, to_address, tx_selector, receipt_status, internal_trace_failed, internal_trace_truncated, internal_trace_captured_count, internal_trace_total_count) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)", [
+    txHashFailed,
+    61,
+    1,
+    null,
+    Buffer.from("11".repeat(20), "hex"),
+    Buffer.from(contractAddressHex.slice(2), "hex"),
+    Buffer.from("086302c2", "hex"),
+    1,
+    true,
+    false,
+    0,
+    5,
+  ]);
+
+  dataTestHooks.setAddressViewRpcFetchersForTest({
+    code: async () => Uint8Array.from([0x60, 0x00]),
+    balance: async () => 0n,
+    nonce: async () => 1n,
+    events: async () => ({ items: [], nextCursor: null }),
+  });
+
+  try {
+    const view = await getAddressView(contractAddressHex);
+    assert.equal(view.internalTransactions.length, 0);
+    assert.equal(view.internalTraceFailedTxs.length, 1);
+    assert.equal(view.internalTraceFailedTxs[0]?.totalCount, 5);
+    assert.equal(view.internalTraceOverflowTxs.length, 0);
+  } finally {
+    dataTestHooks.resetAddressViewRpcFetchersForTest();
+    await closeExplorerPool();
+  }
+}
+
+async function runAddressViewInternalTraceOverflowMetadataOnlyTests(): Promise<void> {
+  const mem = newDb({ noAstCoverageCheck: true });
+  mem.public.none(`
+    CREATE TABLE blocks(number bigint primary key, hash bytea, timestamp bigint not null, tx_count integer not null, gas_used bigint);
+    CREATE TABLE txs(tx_hash bytea primary key, eth_tx_hash bytea, block_number bigint not null, tx_index integer not null, caller_principal bytea, from_address bytea not null, to_address bytea, tx_selector bytea, receipt_status smallint, internal_trace_failed boolean not null default false, internal_trace_truncated boolean not null default false, internal_trace_captured_count integer, internal_trace_total_count integer);
+    CREATE TABLE tx_receipts_index(tx_hash bytea primary key, contract_address bytea, status smallint not null, block_number bigint not null, tx_index integer not null);
+    CREATE TABLE internal_transactions(tx_hash bytea not null, block_number bigint not null, tx_index integer not null, trace_id text not null, trace_sort_key text not null, depth integer not null, action_type text not null, from_address bytea not null, to_address bytea, created_contract_address bytea, value_numeric numeric(78,0) not null, success boolean not null, error_code text, primary key(tx_hash, trace_id));
+    CREATE TABLE token_transfers(tx_hash bytea not null, block_number bigint not null, tx_index integer not null, log_index integer not null, token_address bytea not null, from_address bytea not null, to_address bytea not null, amount_numeric numeric(78,0) not null, primary key(tx_hash, log_index));
+    CREATE TABLE verified_contracts(id text primary key, contract_address text not null, chain_id integer not null, contract_name text not null, compiler_version text not null, optimizer_enabled boolean not null, optimizer_runs integer not null, evm_version text, creation_match boolean not null, runtime_match boolean not null, abi_json text not null, source_blob_id text not null, metadata_blob_id text not null, published_at bigint not null);
+    CREATE TABLE verify_blobs(id text primary key, encoding text not null, raw_size integer not null, blob bytea not null);
+  `);
+  const adapter = mem.adapters.createPg();
+  const pool = new adapter.Pool();
+  setExplorerPool(pool);
+
+  const contractAddressHex = "0x" + "92".repeat(20);
+  const txHashTruncated = Buffer.from("bb".repeat(32), "hex");
+
+  await pool.query("INSERT INTO blocks(number, hash, timestamp, tx_count, gas_used) VALUES($1, $2, $3, $4, $5)", [
+    62,
+    Buffer.from("ef".repeat(32), "hex"),
+    2_200,
+    1,
+    21_000,
+  ]);
+  await pool.query("INSERT INTO txs(tx_hash, block_number, tx_index, caller_principal, from_address, to_address, tx_selector, receipt_status, internal_trace_failed, internal_trace_truncated, internal_trace_captured_count, internal_trace_total_count) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)", [
+    txHashTruncated,
+    62,
+    1,
+    null,
+    Buffer.from("22".repeat(20), "hex"),
+    Buffer.from("33".repeat(20), "hex"),
+    Buffer.from("086302c2", "hex"),
+    1,
+    false,
+    true,
+    1,
+    9,
+  ]);
+  await pool.query("INSERT INTO tx_receipts_index(tx_hash, contract_address, status, block_number, tx_index) VALUES($1, $2, $3, $4, $5)", [
+    txHashTruncated,
+    Buffer.from(contractAddressHex.slice(2), "hex"),
+    1,
+    62,
+    1,
+  ]);
+
+  dataTestHooks.setAddressViewRpcFetchersForTest({
+    code: async () => Uint8Array.from([0x60, 0x00]),
+    balance: async () => 0n,
+    nonce: async () => 1n,
+    events: async () => ({ items: [], nextCursor: null }),
+  });
+
+  try {
+    const view = await getAddressView(contractAddressHex);
+    assert.equal(view.internalTransactions.length, 0);
+    assert.equal(view.internalTraceFailedTxs.length, 0);
+    assert.equal(view.internalTraceOverflowTxs.length, 1);
+    assert.equal(view.internalTraceOverflowTxs[0]?.capturedCount, 1);
+    assert.equal(view.internalTraceOverflowTxs[0]?.totalCount, 9);
+  } finally {
+    dataTestHooks.resetAddressViewRpcFetchersForTest();
+    await closeExplorerPool();
+  }
+}
+
+async function runAddressViewSkipsContractEventsWhenTabIsNotEventsTests(): Promise<void> {
+  const mem = newDb({ noAstCoverageCheck: true });
+  mem.public.none(`
+    CREATE TABLE blocks(number bigint primary key, hash bytea, timestamp bigint not null, tx_count integer not null, gas_used bigint);
+    CREATE TABLE txs(tx_hash bytea primary key, eth_tx_hash bytea, block_number bigint not null, tx_index integer not null, caller_principal bytea, from_address bytea not null, to_address bytea, tx_selector bytea, receipt_status smallint, internal_trace_failed boolean not null default false, internal_trace_truncated boolean not null default false, internal_trace_captured_count integer, internal_trace_total_count integer);
+    CREATE TABLE tx_receipts_index(tx_hash bytea primary key, contract_address bytea, status smallint not null, block_number bigint not null, tx_index integer not null);
+    CREATE TABLE internal_transactions(tx_hash bytea not null, block_number bigint not null, tx_index integer not null, trace_id text not null, trace_sort_key text not null, depth integer not null, action_type text not null, from_address bytea not null, to_address bytea, created_contract_address bytea, value_numeric numeric(78,0) not null, success boolean not null, error_code text, primary key(tx_hash, trace_id));
+    CREATE TABLE token_transfers(tx_hash bytea not null, block_number bigint not null, tx_index integer not null, log_index integer not null, token_address bytea not null, from_address bytea not null, to_address bytea not null, amount_numeric numeric(78,0) not null, primary key(tx_hash, log_index));
+    CREATE TABLE verified_contracts(id text primary key, contract_address text not null, chain_id integer not null, contract_name text not null, compiler_version text not null, optimizer_enabled boolean not null, optimizer_runs integer not null, evm_version text, creation_match boolean not null, runtime_match boolean not null, abi_json text not null, source_blob_id text not null, metadata_blob_id text not null, published_at bigint not null);
+    CREATE TABLE verify_blobs(id text primary key, encoding text not null, raw_size integer not null, blob bytea not null);
+  `);
+  const adapter = mem.adapters.createPg();
+  const pool = new adapter.Pool();
+  setExplorerPool(pool);
+
+  dataTestHooks.setAddressViewRpcFetchersForTest({
+    code: async () => Uint8Array.from([0x60, 0x00]),
+    balance: async () => 0n,
+    nonce: async () => 0n,
+    events: async () => {
+      throw new Error("should not be called");
+    },
+  });
+
+  try {
+    const view = await getAddressView("0x" + "90".repeat(20));
+    assert.equal(view.contractEvents.length, 0);
+    assert.equal(view.eventsNextCursor, null);
+    assert.equal(view.contractEventsUnavailable, false);
+    assert.equal(view.warnings.includes("contract events RPC is unavailable"), false);
+  } finally {
+    dataTestHooks.resetAddressViewRpcFetchersForTest();
+    await closeExplorerPool();
+  }
+}
+
 async function runKasaneWrapTests(): Promise<void> {
   const wrapFactoryHex = "0x44ec859b574d343188a1a36918192a1f39e41510";
   const amountBytes = Buffer.alloc(32);
@@ -1558,6 +1969,22 @@ async function runKasaneWrapTests(): Promise<void> {
   assert.equal(known?.emitterLabel, "Wrap Precompile");
   assert.equal(known?.fields[0]?.label, "Asset ID");
   assert.equal(known?.fields[2]?.value, "7");
+  assert.equal(
+    resolveEventLabel({
+      addressHex: wrapFactoryHex,
+      topic0Hex: "0xc24c0b635304dd6d5692e0452892191032dd98f7af780e92e277fcd453a50aa0",
+      dataHex: "0x",
+    }),
+    "Minted"
+  );
+  assert.equal(
+    resolveEventLabel({
+      addressHex: wrapFactoryHex,
+      topic0Hex: "0x" + "ff".repeat(32),
+      dataHex: "0x",
+    }),
+    "unknown"
+  );
 
   const wrapReceipt: ReceiptView = {
     tx_id: Uint8Array.from(Buffer.alloc(32, 0x22)),
@@ -1675,6 +2102,11 @@ runHexTests()
   .then(runTxDirectionTests)
   .then(runAddressTokenTransferMappingTests)
   .then(runAddressViewErc20Tests)
+  .then(runAddressViewContractEventsTests)
+  .then(runAddressViewInternalAndContractTests)
+  .then(runAddressViewInternalTraceMetadataOnlyTests)
+  .then(runAddressViewInternalTraceOverflowMetadataOnlyTests)
+  .then(runAddressViewSkipsContractEventsWhenTabIsNotEventsTests)
   .then(runKasaneWrapTests)
   .then(runBlockFeeBreakdownLookupTests)
   .then(() => {

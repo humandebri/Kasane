@@ -7,6 +7,10 @@ import { extractUnwrapRequestFromReceipt, type UnwrapRequestView } from "./kasan
 import { getExtendedTokenMeta, getTokenMeta } from "./token_meta";
 import {
   getBlockDetails,
+  getContractCreationInfoByAddress,
+  getInternalTraceMetaByAddress,
+  getInternalTxsByAddress,
+  getInternalTraceMetaByTxHash,
   getLatestBlocks,
   getLatestBlocksPage,
   getLatestTxs,
@@ -15,6 +19,7 @@ import {
   getMaxBlockNumber,
   getMetaSnapshot,
   getOpsMetricsSamplesSince,
+  getReceiptStatusByTxHashes,
   getVerifyMetricsSamplesSince,
   getOverviewStats,
   getRecentOpsMetricsSamples,
@@ -24,20 +29,31 @@ import {
   getTxByHashOrEthHash,
   getTxsByAddress,
   getTxsByCallerPrincipal,
+  getVerifiedContractByAddress,
+  getVerifyBlobById,
   type BlockSummary,
   type OverviewStats,
+  type InternalTraceMeta,
+  type VerifiedContract,
   type TokenTransferSummary,
   type TxSummary,
 } from "./db";
 import {
   ADDRESS_HISTORY_LIMIT,
   buildAddressCursor,
+  buildContractEventCursor,
+  buildInternalTxCursor,
   buildTokenTransferCursor,
+  mapAddressContractEvents,
+  mapAddressInternalTransactions,
   mapAddressTokenTransfers,
   mapAddressHistory,
+  parseContractEventCursor,
+  parseInternalTxCursor,
   parseTokenTransferCursor,
   parseAddressCursor,
   type AddressView,
+  type AddressContractEventItem,
 } from "./data_address";
 import { formatTokenAmount } from "./format";
 import {
@@ -58,15 +74,21 @@ import {
   getRpcCode,
   getRpcExpectedNonce,
   getRpcHeadNumber,
+  getRpcLogsPaged,
   getRpcReceiptWithStatusByTxId,
   getRpcPruneStatus,
   getRpcTxByTxId,
+  type EthLogItemView,
+  type EthLogsCursorView,
   type LookupError,
   type PruneStatusView,
   type RpcReceiptLookupView,
   type ReceiptView,
 } from "./rpc";
+import { resolveEventLabel } from "./tx_log_decode";
+import { parseVerifiedAbi } from "./verify/verified_contract_api";
 import { summarizeVerifyWindow, type VerifyWindowSummaryBigInt } from "./verify/metrics";
+import { decodeSourceBundleFromGzip } from "./verify/source_bundle";
 
 type HomeView = {
   dbHead: bigint | null;
@@ -196,6 +218,7 @@ export type TxDetailView = {
   receiptLookupError: LookupError | null;
   erc20Transfers: Array<Erc20TransferView & { tokenSymbol: string | null; tokenDecimals: number | null }>;
   unwrapRequest: UnwrapRequestView | null;
+  internalTraceMeta: InternalTraceMeta;
 };
 
 type BlockDetailsWithPrincipal = {
@@ -225,6 +248,9 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 let addressViewBalanceFetcher: typeof getRpcBalance = getRpcBalance;
 let addressViewNonceFetcher: typeof getRpcExpectedNonce = getRpcExpectedNonce;
 let addressViewCodeFetcher: typeof getRpcCode = getRpcCode;
+let addressViewContractEventsFetcher: typeof getAddressContractEvents = getAddressContractEvents;
+let addressViewVerifiedContractFetcher: typeof getVerifiedContractByAddress = getVerifiedContractByAddress;
+let addressViewVerifyBlobFetcher: typeof getVerifyBlobById = getVerifyBlobById;
 
 function parsePositiveInt(rawValue: string | string[] | undefined, fallback: number): number {
   const raw = Array.isArray(rawValue) ? rawValue[0] : rawValue;
@@ -318,6 +344,75 @@ function parseOptionalBlockNumber(rawValue: string | string[] | undefined): bigi
   } catch {
     return null;
   }
+}
+
+function dedupeInternalTraceOverflow(
+  rows: Array<{
+    txHashHex: string;
+    internalTraceFailed: boolean;
+    internalTraceTruncated: boolean;
+    internalTraceCapturedCount: number | null;
+    internalTraceTotalCount: number | null;
+  }>
+): AddressView["internalTraceOverflowTxs"] {
+  const seen = new Set<string>();
+  const out: AddressView["internalTraceOverflowTxs"] = [];
+  for (const row of rows) {
+    if (row.internalTraceFailed || !row.internalTraceTruncated || seen.has(row.txHashHex)) {
+      continue;
+    }
+    seen.add(row.txHashHex);
+    out.push({
+      txHashHex: row.txHashHex,
+      capturedCount: row.internalTraceCapturedCount,
+      totalCount: row.internalTraceTotalCount,
+    });
+  }
+  return out;
+}
+
+function mergeInternalTraceOverflow(
+  rows: Array<{
+    txHashHex: string;
+    internalTraceFailed: boolean;
+    internalTraceTruncated: boolean;
+    internalTraceCapturedCount: number | null;
+    internalTraceTotalCount: number | null;
+  }>
+): AddressView["internalTraceOverflowTxs"] {
+  return dedupeInternalTraceOverflow(rows);
+}
+
+function dedupeInternalTraceFailed(
+  rows: Array<{
+    txHashHex: string;
+    internalTraceFailed: boolean;
+    internalTraceTotalCount: number | null;
+  }>
+): AddressView["internalTraceFailedTxs"] {
+  const seen = new Set<string>();
+  const out: AddressView["internalTraceFailedTxs"] = [];
+  for (const row of rows) {
+    if (!row.internalTraceFailed || seen.has(row.txHashHex)) {
+      continue;
+    }
+    seen.add(row.txHashHex);
+    out.push({
+      txHashHex: row.txHashHex,
+      totalCount: row.internalTraceTotalCount,
+    });
+  }
+  return out;
+}
+
+function mergeInternalTraceFailed(
+  rows: Array<{
+    txHashHex: string;
+    internalTraceFailed: boolean;
+    internalTraceTotalCount: number | null;
+  }>
+): AddressView["internalTraceFailedTxs"] {
+  return dedupeInternalTraceFailed(rows);
 }
 
 export async function getLatestBlocksPageView(
@@ -433,10 +528,11 @@ export async function getTxDetailView(txHashHex: string): Promise<TxDetailView |
     return null;
   }
   const txId = parseHex(txLookup.txHashHex);
-  const [txRaw, receiptOut, rpcTx] = await Promise.all([
+  const [txRaw, receiptOut, rpcTx, internalTraceMeta] = await Promise.all([
     getTx(txId),
     getReceiptByTxId(txId),
     getRpcTxByTxId(txId),
+    getInternalTraceMetaByTxHash(txId),
   ]);
   if (!txRaw) {
     return null;
@@ -479,6 +575,12 @@ export async function getTxDetailView(txHashHex: string): Promise<TxDetailView |
     receiptLookupError: "Ok" in receiptOut ? null : receiptOut.Err,
     erc20Transfers,
     unwrapRequest,
+      internalTraceMeta: internalTraceMeta ?? {
+      internalTraceFailed: false,
+      internalTraceTruncated: false,
+      internalTraceCapturedCount: null,
+      internalTraceTotalCount: null,
+    },
   };
 }
 
@@ -486,7 +588,12 @@ export async function getAddressView(
   addressHex: string,
   cursorToken?: string,
   tokenCursorToken?: string,
-  providedPrincipal?: string | null
+  eventsCursorToken?: string,
+  providedPrincipal?: string | null,
+  internalCursorToken?: string,
+  options?: {
+    includeContractEvents?: boolean;
+  }
 ): Promise<AddressView> {
   if (!isAddressHex(addressHex)) {
     throw new Error("address must be a 20-byte hex string");
@@ -495,13 +602,31 @@ export async function getAddressView(
   const bytes = parseAddressHex(normalized);
   const cursor = parseAddressCursor(cursorToken);
   const tokenCursor = parseTokenTransferCursor(tokenCursorToken);
+  const eventsCursor = parseContractEventCursor(eventsCursorToken);
+  const internalCursor = parseInternalTxCursor(internalCursorToken);
   const warnings: string[] = [];
-  const [balance, nonce, code, historyRows, tokenTransferRows] = await Promise.all([
+  const cfg = loadConfig(process.env);
+  const includeContractEvents = options?.includeContractEvents === true;
+  const [balance, nonce, code, historyRows, tokenTransferRows, internalRows, internalMetaRows, contractEventsResult, verified, creationInfo] = await Promise.all([
     tryRpc(() => addressViewBalanceFetcher(bytes), "balance RPC is unavailable", warnings),
     tryRpc(() => addressViewNonceFetcher(bytes), "nonce RPC is unavailable", warnings),
     tryRpc(() => addressViewCodeFetcher(bytes), "code RPC is unavailable", warnings),
     getTxsByAddress(bytes, ADDRESS_HISTORY_LIMIT, cursor),
     getTokenTransfersByAddress(bytes, ADDRESS_HISTORY_LIMIT, tokenCursor),
+    getInternalTxsByAddress(bytes, ADDRESS_HISTORY_LIMIT, internalCursor),
+    getInternalTraceMetaByAddress(bytes),
+    includeContractEvents
+      ? tryRpc(
+          () => addressViewContractEventsFetcher(bytes, eventsCursor, ADDRESS_HISTORY_LIMIT),
+          "contract events RPC is unavailable",
+          warnings
+        )
+      : Promise.resolve({
+          items: [],
+          nextCursor: null,
+        }),
+    addressViewVerifiedContractFetcher(normalized, cfg.verifyDefaultChainId),
+    getContractCreationInfoByAddress(normalized),
   ]);
 
   const codeBytes = code ? code.length : null;
@@ -522,7 +647,17 @@ export async function getAddressView(
     tokenMetaByTokenHex,
     erc20Meta?.symbol ?? null
   );
+  const contractEvents = mapAddressContractEvents(contractEventsResult?.items ?? []);
+  const eventsNextCursor = contractEventsResult?.nextCursor ?? null;
+  const internalHasMore = internalRows.length > ADDRESS_HISTORY_LIMIT;
+  const internalPageRows = internalHasMore ? internalRows.slice(0, ADDRESS_HISTORY_LIMIT) : internalRows;
+  const internalNextCursorRow = internalHasMore ? internalPageRows[internalPageRows.length - 1] : undefined;
+  const internalTransactions = mapAddressInternalTransactions(internalPageRows);
+  const internalNextCursor = internalNextCursorRow ? buildInternalTxCursor(internalNextCursorRow) : null;
+  const internalTraceOverflowTxs = mergeInternalTraceOverflow([...internalPageRows, ...internalMetaRows]);
+  const internalTraceFailedTxs = mergeInternalTraceFailed([...internalPageRows, ...internalMetaRows]);
   const submitterPrincipals = collectSubmitterPrincipals(pageRows, bytes);
+  const contractInfo = await buildAddressContractInfo(normalized, verified, creationInfo);
 
   return {
     addressHex: toHexLower(bytes),
@@ -537,6 +672,15 @@ export async function getAddressView(
     nextCursor,
     tokenTransfers,
     tokenNextCursor,
+    internalTransactions,
+    internalNextCursor,
+    internalTraceOverflowTxs,
+    internalTraceFailedTxs,
+    contractEvents,
+    eventsNextCursor,
+    contractInfo,
+    contractEventsUnavailable: includeContractEvents && contractEventsResult === null,
+    internalTransactionsUnavailable: false,
     warnings,
     erc20Meta,
   };
@@ -775,15 +919,24 @@ export const dataTestHooks = {
     balance?: typeof getRpcBalance;
     nonce?: typeof getRpcExpectedNonce;
     code?: typeof getRpcCode;
+    events?: typeof getAddressContractEvents;
+    verified?: typeof getVerifiedContractByAddress;
+    verifyBlob?: typeof getVerifyBlobById;
   }): void => {
     addressViewBalanceFetcher = hooks.balance ?? getRpcBalance;
     addressViewNonceFetcher = hooks.nonce ?? getRpcExpectedNonce;
     addressViewCodeFetcher = hooks.code ?? getRpcCode;
+    addressViewContractEventsFetcher = hooks.events ?? getAddressContractEvents;
+    addressViewVerifiedContractFetcher = hooks.verified ?? getVerifiedContractByAddress;
+    addressViewVerifyBlobFetcher = hooks.verifyBlob ?? getVerifyBlobById;
   },
   resetAddressViewRpcFetchersForTest: (): void => {
     addressViewBalanceFetcher = getRpcBalance;
     addressViewNonceFetcher = getRpcExpectedNonce;
     addressViewCodeFetcher = getRpcCode;
+    addressViewContractEventsFetcher = getAddressContractEvents;
+    addressViewVerifiedContractFetcher = getVerifiedContractByAddress;
+    addressViewVerifyBlobFetcher = getVerifyBlobById;
   },
 };
 
@@ -890,6 +1043,75 @@ async function tryRpc<T>(call: () => Promise<T>, warningMessage: string, warning
     warnings.push(warningMessage);
     return null;
   }
+}
+
+async function getAddressContractEvents(
+  address: Uint8Array,
+  cursor: EthLogsCursorView | null,
+  limit: number
+): Promise<{
+  items: AddressContractEventItem[];
+  nextCursor: string | null;
+}> {
+  const out = await getRpcLogsPaged({ address }, cursor, limit);
+  if ("Err" in out) {
+    throw new Error(Object.keys(out.Err)[0] ?? "rpc_eth_get_logs_paged failed");
+  }
+  const items = out.Ok.items.map(mapAddressContractEventRpcItem);
+  const receiptStatusByTxHash = await getReceiptStatusByTxHashes(items.map((item) => item.txHashHex));
+  return {
+    items: items.map((item) => ({
+      ...item,
+      receiptStatus: receiptStatusByTxHash.get(item.txHashHex) ?? null,
+    })),
+    nextCursor: out.Ok.next_cursor[0] ? buildContractEventCursor(out.Ok.next_cursor[0]) : null,
+  };
+}
+
+function mapAddressContractEventRpcItem(item: EthLogItemView): AddressContractEventItem {
+  const addressHex = toHexLower(item.address);
+  const topic0Hex = item.topics[0] ? toHexLower(item.topics[0]) : null;
+  const dataHex = toHexLower(item.data);
+  return {
+    txHashHex: toHexLower(item.tx_hash),
+    blockNumber: item.block_number,
+    txIndex: item.tx_index,
+    logIndex: item.log_index,
+    receiptStatus: null,
+    addressHex,
+    topic0Hex,
+    eventLabel: resolveEventLabel({ addressHex, topic0Hex, dataHex }),
+  };
+}
+
+async function buildAddressContractInfo(
+  addressHex: string,
+  verified: VerifiedContract | null,
+  creationInfo: Awaited<ReturnType<typeof getContractCreationInfoByAddress>>
+): Promise<AddressView["contractInfo"]> {
+  if (!verified && !creationInfo) {
+    return null;
+  }
+  let sourceBundle: Record<string, string> | null = null;
+  if (verified) {
+    const sourceBlob = await addressViewVerifyBlobFetcher(verified.sourceBlobId);
+    sourceBundle = sourceBlob ? decodeSourceBundleFromGzip(sourceBlob.blob) : null;
+  }
+  const parsedAbi = verified ? parseVerifiedAbi(verified.abiJson) : { abi: null, abiParseError: false };
+  return {
+    creatorAddressHex: creationInfo ? toHexLower(creationInfo.creatorAddress) : null,
+    creationTxHashHex: creationInfo?.creationTxHashHex ?? null,
+    verified: verified !== null,
+    contractName: verified?.contractName ?? null,
+    compilerVersion: verified?.compilerVersion ?? null,
+    optimizerEnabled: verified?.optimizerEnabled ?? null,
+    optimizerRuns: verified?.optimizerRuns ?? null,
+    creationMatch: verified?.creationMatch ?? null,
+    runtimeMatch: verified?.runtimeMatch ?? null,
+    abiJson: verified?.abiJson ?? null,
+    abiParseError: parsedAbi.abiParseError,
+    sourceBundle,
+  };
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

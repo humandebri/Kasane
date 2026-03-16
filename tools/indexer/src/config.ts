@@ -36,7 +36,7 @@ const DEFAULT_CHAIN_ID = "4801360";
 const DEFAULT_ZSTD_LEVEL = 3;
 const DEFAULT_PRUNE_STATUS_POLL_MS = 30_000;
 const DEFAULT_OPS_METRICS_POLL_MS = 30_000;
-const DEFAULT_MAX_SEGMENT = 2;
+const DEFAULT_MAX_SEGMENT = 3;
 
 export function loadConfig(env: NodeJS.ProcessEnv): Config {
   const canisterId = env.EVM_CANISTER_ID;

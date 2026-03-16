@@ -33,7 +33,7 @@ npm run dev
 - `INDEXER_ARCHIVE_DIR` (任意, 既定: ./archive)
 - `INDEXER_CHAIN_ID` (任意, 既定: 4801360)
 - `INDEXER_ZSTD_LEVEL` (任意, 既定: 3)
-- `INDEXER_MAX_SEGMENT` (任意, 既定: 2, `next_cursor.segment` の許容上限)
+- `INDEXER_MAX_SEGMENT` (任意, 既定: 3, `next_cursor.segment` の許容上限)
 
 注: ローカル（dfx）向けに接続する場合は `INDEXER_IC_HOST` を `http://127.0.0.1:4943` にし、`INDEXER_FETCH_ROOT_KEY=true` を推奨。
 
@@ -49,7 +49,7 @@ npm run dev
 ```
 
 - block_number は **10進ASCII、先頭0なし**（"0"は許可）
-- segment は **0..INDEXER_MAX_SEGMENT**（既定は 0/1/2）
+- segment は **0..INDEXER_MAX_SEGMENT**（既定は 0/1/2/3）
 - byte_offset は **0..=u32**
 
 運用メモ:
@@ -75,6 +75,14 @@ npm run dev
 
 - `txs.receipt_status` に `segment=1` のreceipt payloadから抽出した `0|1` を保存します。
 - payload不正時は fatal で停止します（整合性優先）。
+
+## internal_transactions
+
+- `segment=3` の internal trace payloadから `internal_transactions` を保存します。
+- 保存項目: `tx_hash / block_number / tx_index / trace_id / trace_sort_key / depth / action_type / from_address / to_address / created_contract_address / value_numeric / success / error_code`
+- address画面では `from_address / to_address / created_contract_address` のいずれか一致で参照します。
+- `trace_sort_key` は `trace_id` の数値順を安定化するための内部列です。
+- `delegatecall` / `staticcall` も保存対象ですが、explorer UI v1 では非表示です。
 
 ## token_transfers (ERC-20)
 
@@ -103,6 +111,25 @@ segment `2` の各エントリは以下の固定順序:
 - `eth_hash_len` は `0` または `32` のみ許可（必須）
 - 旧形式（selector_len未付与）は reject
 - `caller_principal_len=0` の場合は principal なしとして扱う
+
+## internal trace payload 仕様（v2）
+
+segment `3` の各エントリは以下の固定順序:
+
+`[tx_hash:32][entry_len:4][version:1][truncated:1][captured_count:4][total_count:4][trace_count:4][trace...]`
+
+各 `trace` は以下:
+
+`[block_number:8][tx_index:4][trace_id_len:2][trace_id:trace_id_len][depth:2][action_type:1][from:20][to_len:1][to:to_len][value:32][created_len:1][created:created_len][success:1][error_len:2][error:error_len]`
+
+- すべて Big Endian
+- `version=2` のみ受理
+- `captured_count` は `trace_count` と一致する必要がある
+- `total_count > captured_count` のとき、その tx の internal trace は canister 側で上限打ち切り済み
+- `to_len` と `created_len` は `0` または `20` のみ許可
+- `trace_id` は flatten 済みの親子パス（例: `0`, `0_1`, `0_1_0`）
+- `action_type` は `call / callcode / delegatecall / staticcall / create / create2 / custom / selfdestruct` を表す固定 enum
+- `value` は unsigned 256-bit integer として decode し、`numeric(78,0)` に保存する
 
 ## 既存 `eth_tx_hash` 欠損の手動補完
 
@@ -134,4 +161,6 @@ tools/indexer/migrations/
   007_add_ops_metrics_cycles.sql
   008_add_blocks_gas_used.sql
   009_add_txs_selector.sql
+  021_add_internal_transactions.sql
+  022_add_internal_transaction_sort_key.sql
 ```

@@ -31,6 +31,10 @@ function selectorToMethodName(selectorHex: string): string | null {
 }
 
 const METHOD_BY_SELECTOR: Record<string, string> = {
+  // Kasane wrap factory
+  "086302c2": "wrap",
+  d14444c6: "unwrap",
+
   // ERC-20
   a9059cbb: "transfer",
   "095ea7b3": "approve",

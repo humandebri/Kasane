@@ -4,9 +4,11 @@ use candid::Deserialize;
 use candid::{CandidType, Decode, Encode, Principal};
 use evm_core::hash;
 use pocket_ic::PocketIc;
+use serde_json::Value;
 use std::panic::{self, AssertUnwindSafe};
 use std::path::PathBuf;
 use std::time::Duration;
+use tiny_keccak::{Hasher, Keccak};
 
 #[derive(Clone, Debug, CandidType, Deserialize, Eq, PartialEq)]
 enum EthTxListView {
@@ -89,6 +91,7 @@ struct InitArgs {
 }
 
 const TEST_WRAP_FACTORY_ADDRESS: [u8; 20] = [0x90u8; 20];
+const TEST_FACTORY_TRACE_GENESIS_BALANCE_WEI: u128 = 10_000_000_000_000_000_000_000_000u128;
 
 #[derive(Clone, Debug, CandidType, Deserialize, Eq, PartialEq)]
 enum SubmitTxError {
@@ -121,6 +124,66 @@ enum PendingStatusView {
     Included { block_number: u64, tx_index: u32 },
     Dropped { code: u16 },
     Unknown,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize, Eq, PartialEq)]
+struct ExportCursorView {
+    block_number: u64,
+    segment: u8,
+    byte_offset: u32,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize, Eq, PartialEq)]
+struct ExportChunkView {
+    segment: u8,
+    start: u32,
+    bytes: Vec<u8>,
+    payload_len: u32,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize, Eq, PartialEq)]
+struct ExportResponseView {
+    chunks: Vec<ExportChunkView>,
+    next_cursor: Option<ExportCursorView>,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize, Eq, PartialEq)]
+enum ExportErrorView {
+    InvalidCursor { message: String },
+    Pruned { pruned_before_block: u64 },
+    MissingData { message: String },
+    Limit,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize, Eq, PartialEq)]
+struct ReceiptView {
+    tx_id: Vec<u8>,
+    block_number: u64,
+    tx_index: u32,
+    status: u8,
+    gas_used: u64,
+    effective_gas_price: u64,
+    l1_data_fee: u128,
+    operator_fee: u128,
+    total_fee: u128,
+    return_data_hash: Vec<u8>,
+    return_data: Option<Vec<u8>>,
+    contract_address: Option<Vec<u8>>,
+    logs: Vec<LogView>,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize, Eq, PartialEq)]
+enum LookupError {
+    NotFound,
+    Pruned { pruned_before_block: u64 },
+    Pending,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize, Eq, PartialEq)]
+struct LogView {
+    address: Vec<u8>,
+    topics: Vec<Vec<u8>>,
+    data: Vec<u8>,
 }
 
 #[derive(Clone, Debug, CandidType, Deserialize, Eq, PartialEq)]
@@ -235,6 +298,158 @@ fn call_update_as(
 ) -> Vec<u8> {
     pic.update_call(canister_id, caller, method, arg)
         .unwrap_or_else(|err| panic!("update error: {err}"))
+}
+
+fn install_canister_for_factory_trace(pic: &PocketIc) -> Principal {
+    let caller = test_caller();
+    let caller_evm = hash::derive_evm_address_from_principal(caller.as_slice())
+        .expect("must derive caller evm address");
+    let wrap_canister_id = pic.create_canister();
+    let init = Some(InitArgs {
+        genesis_balances: vec![GenesisBalanceView {
+            address: caller_evm.to_vec(),
+            amount: TEST_FACTORY_TRACE_GENESIS_BALANCE_WEI,
+        }],
+        wrap_canister_id,
+        wrap_factory_address: predict_create_address(caller_evm, 0).to_vec(),
+    });
+    let init_arg = Encode!(&init).expect("encode init args");
+    pic.add_cycles(wrap_canister_id, 5_000_000_000_000u128);
+    let canister_id = install_canister_with_arg(pic, init_arg);
+    pic.set_controllers(canister_id, Some(Principal::anonymous()), vec![caller])
+        .unwrap_or_else(|err| panic!("set_controllers error: {err}"));
+    settle_migrations(pic, canister_id, caller);
+    canister_id
+}
+
+fn abi_word_from_u128(value: u128) -> [u8; 32] {
+    let mut out = [0u8; 32];
+    out[16..].copy_from_slice(&value.to_be_bytes());
+    out
+}
+
+fn abi_word_from_u64(value: u64) -> [u8; 32] {
+    let mut out = [0u8; 32];
+    out[24..].copy_from_slice(&value.to_be_bytes());
+    out
+}
+
+fn abi_word_from_u8(value: u8) -> [u8; 32] {
+    let mut out = [0u8; 32];
+    out[31] = value;
+    out
+}
+
+fn abi_word_from_address(address: [u8; 20]) -> [u8; 32] {
+    let mut out = [0u8; 32];
+    out[12..].copy_from_slice(&address);
+    out
+}
+
+fn function_selector(signature: &str) -> [u8; 4] {
+    let mut hasher = Keccak::v256();
+    hasher.update(signature.as_bytes());
+    let mut out = [0u8; 32];
+    hasher.finalize(&mut out);
+    let mut selector = [0u8; 4];
+    selector.copy_from_slice(&out[..4]);
+    selector
+}
+
+fn predict_create_address(sender: [u8; 20], nonce: u64) -> [u8; 20] {
+    assert_eq!(nonce, 0, "test helper only supports nonce 0");
+    let mut payload = Vec::with_capacity(23);
+    payload.push(0xd6);
+    payload.push(0x94);
+    payload.extend_from_slice(&sender);
+    payload.push(0x80);
+    let mut hasher = Keccak::v256();
+    hasher.update(&payload);
+    let mut out = [0u8; 32];
+    hasher.finalize(&mut out);
+    let mut address = [0u8; 20];
+    address.copy_from_slice(&out[12..]);
+    address
+}
+
+fn wrap_factory_artifact_bytecode() -> Vec<u8> {
+    let artifact = include_str!(
+        "../../../tools/wrapper/contracts/out/WrapTokenFactory.sol/WrapTokenFactory.json"
+    );
+    let value: Value = serde_json::from_str(artifact).expect("parse factory artifact json");
+    let object = value["bytecode"]["object"]
+        .as_str()
+        .expect("factory bytecode object");
+    hex::decode(object.trim_start_matches("0x")).expect("decode factory bytecode")
+}
+
+fn encode_constructor_address(address: [u8; 20]) -> Vec<u8> {
+    abi_word_from_address(address).to_vec()
+}
+
+fn encode_mint_for_asset(
+    canister_id: Principal,
+    decimals: u8,
+    to: [u8; 20],
+    amount: u128,
+) -> Vec<u8> {
+    let canister_bytes = canister_id.as_slice();
+    let tail_len = 32 + ((canister_bytes.len() + 31) / 32) * 32;
+    let mut out = Vec::with_capacity(4 + 128 + tail_len);
+    out.extend_from_slice(&function_selector(
+        "mintForAsset(bytes,uint8,address,uint256)",
+    ));
+    out.extend_from_slice(&abi_word_from_u64(128));
+    out.extend_from_slice(&abi_word_from_u8(decimals));
+    out.extend_from_slice(&abi_word_from_address(to));
+    out.extend_from_slice(&abi_word_from_u128(amount));
+    out.extend_from_slice(&abi_word_from_u64(canister_bytes.len() as u64));
+    let mut padded = vec![0u8; tail_len - 32];
+    padded[..canister_bytes.len()].copy_from_slice(canister_bytes);
+    out.extend_from_slice(&padded);
+    out
+}
+
+fn call_get_receipt(
+    pic: &PocketIc,
+    canister_id: Principal,
+    tx_id: &[u8],
+) -> Result<ReceiptView, LookupError> {
+    let out = call_query(
+        pic,
+        canister_id,
+        "get_receipt",
+        Encode!(&tx_id.to_vec()).expect("encode receipt query"),
+    );
+    Decode!(&out, Result<ReceiptView, LookupError>).expect("decode receipt query")
+}
+
+fn wait_for_receipt(pic: &PocketIc, canister_id: Principal, tx_id: &[u8]) -> ReceiptView {
+    for _ in 0..12 {
+        pic.advance_time(Duration::from_secs(60));
+        pic.tick();
+        match call_get_receipt(pic, canister_id, tx_id) {
+            Ok(receipt) => return receipt,
+            Err(LookupError::Pending | LookupError::NotFound) => {}
+            Err(err) => panic!("unexpected receipt lookup error: {err:?}"),
+        }
+    }
+    panic!("receipt did not materialize");
+}
+
+fn call_export_blocks(
+    pic: &PocketIc,
+    canister_id: Principal,
+    cursor: Option<ExportCursorView>,
+    max_bytes: u32,
+) -> Result<ExportResponseView, ExportErrorView> {
+    let out = call_query(
+        pic,
+        canister_id,
+        "export_blocks",
+        Encode!(&cursor, &max_bytes).expect("encode export_blocks args"),
+    );
+    Decode!(&out, Result<ExportResponseView, ExportErrorView>).expect("decode export_blocks")
 }
 
 #[test]
@@ -497,18 +712,131 @@ fn install_rejects_invalid_init_args() {
     );
 }
 
+#[test]
+fn export_blocks_exposes_internal_trace_segment_for_factory_mint() {
+    let pic = PocketIc::new();
+    let canister_id = install_canister_for_factory_trace(&pic);
+    let caller_evm = hash::derive_evm_address_from_principal(test_caller().as_slice())
+        .expect("derive caller evm address");
+    let factory = predict_create_address(caller_evm, 0);
+
+    let mut deploy_data = wrap_factory_artifact_bytecode();
+    deploy_data.extend_from_slice(&encode_constructor_address(caller_evm));
+    let deploy_out = call_update(
+        &pic,
+        canister_id,
+        "submit_ic_tx",
+        Encode!(&build_submit_ic_contract_tx_args(
+            None,
+            0,
+            deploy_data,
+            8_000_000,
+        ))
+        .expect("encode deploy"),
+    );
+    let deploy_result: SubmitTxResult =
+        Decode!(&deploy_out, SubmitTxResult).expect("decode deploy");
+    let deploy_tx_id = deploy_result.expect("deploy tx ok");
+    let deploy_receipt = wait_for_receipt(&pic, canister_id, &deploy_tx_id);
+    assert_eq!(deploy_receipt.status, 1, "factory deploy failed");
+    assert_eq!(deploy_receipt.contract_address, Some(factory.to_vec()));
+
+    let mint_data = encode_mint_for_asset(
+        Principal::self_authenticating(b"trace-export-asset"),
+        8,
+        caller_evm,
+        1_000_000_000_000u128,
+    );
+    let mint_out = call_update(
+        &pic,
+        canister_id,
+        "submit_ic_tx",
+        Encode!(&build_submit_ic_contract_tx_args(
+            Some(factory),
+            1,
+            mint_data,
+            3_000_000,
+        ))
+        .expect("encode mint"),
+    );
+    let mint_result: SubmitTxResult = Decode!(&mint_out, SubmitTxResult).expect("decode mint");
+    let mint_tx_id = mint_result.expect("mint tx ok");
+    let mint_receipt = wait_for_receipt(&pic, canister_id, &mint_tx_id);
+    assert_eq!(mint_receipt.status, 1, "mint tx failed");
+
+    let export = call_export_blocks(
+        &pic,
+        canister_id,
+        Some(ExportCursorView {
+            block_number: mint_receipt.block_number,
+            segment: 3,
+            byte_offset: 0,
+        }),
+        1_500_000,
+    )
+    .expect("export_blocks should succeed");
+    let internal_trace_bytes = export
+        .chunks
+        .iter()
+        .take_while(|chunk| chunk.segment == 3)
+        .flat_map(|chunk| chunk.bytes.iter().copied())
+        .collect::<Vec<_>>();
+
+    assert!(
+        !internal_trace_bytes.is_empty(),
+        "segment 3 should include internal trace payload"
+    );
+    assert_eq!(&internal_trace_bytes[..32], mint_tx_id.as_slice());
+
+    let payload_len = u32::from_be_bytes(
+        internal_trace_bytes[32..36]
+            .try_into()
+            .expect("payload_len bytes"),
+    ) as usize;
+    let payload = &internal_trace_bytes[36..36 + payload_len];
+    assert_eq!(payload[0], 3, "internal trace payload version changed");
+    assert_eq!(payload[1], 0, "mint trace should not be encode_failed");
+    let truncated = payload[2];
+    let captured_count =
+        u32::from_be_bytes(payload[3..7].try_into().expect("captured_count bytes"));
+    let total_count = u32::from_be_bytes(payload[7..11].try_into().expect("total_count bytes"));
+    let row_count = u32::from_be_bytes(payload[11..15].try_into().expect("row_count bytes"));
+    assert_eq!(truncated, 0, "mint trace should fit export limit in E2E");
+    assert!(
+        captured_count > 0,
+        "mint should emit at least one internal trace"
+    );
+    assert_eq!(
+        captured_count, row_count,
+        "non-truncated export should be lossless"
+    );
+    assert!(
+        total_count >= captured_count,
+        "trace metadata must be monotonic"
+    );
+}
+
 fn build_submit_ic_tx_args(to: [u8; 20], nonce: u64) -> SubmitIcTxArgsDto {
+    build_submit_ic_contract_tx_args(Some(to), nonce, Vec::new(), 50_000)
+}
+
+fn build_submit_ic_contract_tx_args(
+    to: Option<[u8; 20]>,
+    nonce: u64,
+    data: Vec<u8>,
+    gas_limit: u64,
+) -> SubmitIcTxArgsDto {
     // NOTE: keep test txs valid under current fee floor policy.
     // max_priority(300 gwei) >= min_priority(250 gwei),
     // max_fee(600 gwei) >= base_fee + min_priority (500 gwei).
     SubmitIcTxArgsDto {
-        to: Some(to.to_vec()),
+        to: to.map(|value| value.to_vec()),
         from: None,
         value: candid::Nat::from(0u8),
         max_priority_fee_per_gas: candid::Nat::from(300_000_000_000u64),
-        data: Vec::new(),
+        data,
         max_fee_per_gas: candid::Nat::from(600_000_000_000u64),
         nonce,
-        gas_limit: 50_000,
+        gas_limit,
     }
 }

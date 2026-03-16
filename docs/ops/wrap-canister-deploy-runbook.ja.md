@@ -48,6 +48,8 @@ PY
 - 既存 factory / token が未稼働なら、監査対応後は新 factory を deploy してこの値へ切り替えてください。
 - backward compatibility は持たない前提です。旧 factory は参照しません。
 - 新しい `WrapTokenFactory` は `constructor(address minter_)` です。deploy 時は `wrap_canister` 由来の EVM address を constructor に必ず入れてください。
+- 現行運用では `KASANE_CANISTER_ID` は `EVM_CANISTER_ID` と同じ principal を入れます。`wrap_canister` は unwrap dispatch caller を `kasane_canister` と照合します。
+- `fee_ledger_canister` / `cycle_fee_e8s` / `gas_price_buffer_bps` は既存 mainnet 設定を維持する場合、upgrade 前に `get_fee_policy` で現値を取得してそのまま渡してください。
 
 前提確認:
 
@@ -132,6 +134,12 @@ icp canister install wrap_canister \
 icp canister status wrap_canister -e "${ICP_ENV}" --identity "${ICP_IDENTITY_NAME}"
 ```
 
+必要に応じて fee policy の現値確認:
+
+```bash
+icp canister call -e "${ICP_ENV}" --identity "${ICP_IDENTITY_NAME}" --query wrap_canister get_fee_policy '()'
+```
+
 必要に応じて did インターフェース確認:
 
 ```bash
@@ -145,7 +153,6 @@ dfx canister call --query wrap_canister export_did '()' --network "${ICP_ENV}"
 - `submit_wrap_request` は wallet caller 本人で実行され、`from_owner` は canister 側で `msg_caller` 固定です（引数で渡しません）。
 - Wrap手数料（`cycles + gas`）は `fee_ledger_canister` から `icrc2_transfer_from` で前払い徴収されます。
 - wrap mint 時の decimals は対象 ledger の `icrc1_metadata` を一次情報として取得します。metadata が壊れている ledger は wrap できません。
-- `set_fee_policy` は controller のみ実行可能です。例:
 - `set_fee_policy` は controller のみ実行可能です。例:
 
 ```bash

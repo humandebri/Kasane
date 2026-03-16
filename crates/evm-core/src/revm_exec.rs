@@ -11,15 +11,22 @@ use evm_db::chain_data::constants::{
     CHAIN_ID, MAX_LOGS_PER_TX, MAX_LOG_DATA, MAX_LOG_TOPICS, MAX_RETURN_DATA,
 };
 use evm_db::chain_data::receipt::{log_entry_from_parts, LogEntry};
-use evm_db::chain_data::{ReceiptLike, TxId, TxIndexEntry, TxKind};
+use evm_db::chain_data::{
+    InternalTrace, InternalTraceActionKind, InternalTraceSet, ReceiptLike, TxId, TxIndexEntry,
+    TxKind, MAX_INTERNAL_TRACES_PER_TX_U32,
+};
 use evm_db::stable_state::with_state_mut;
 use evm_db::Storable;
 use revm::context::{Context, TxEnv};
 use revm::context_interface::result::{EVMError, ExecutionResult, HaltReason, InvalidTransaction};
+use revm::context_interface::CreateScheme;
 use revm::database_interface::{Database, DatabaseCommit};
 use revm::handler::{ExecuteCommitEvm, MainBuilder, MainContext};
 use revm::inspector::InspectEvm;
-use revm::interpreter::{InstructionResult, Interpreter, InterpreterTypes};
+use revm::interpreter::{
+    CallInputs, CallOutcome, CallScheme, CreateInputs, CreateOutcome, InstructionResult,
+    Interpreter, InterpreterTypes,
+};
 use revm::primitives::{Address, U256};
 use revm::state::Account;
 
@@ -70,6 +77,7 @@ pub struct ExecOutcome {
     pub return_data: Vec<u8>,
     pub final_status: String,
     pub halt_reason: Option<OpHaltReason>,
+    pub internal_traces: InternalTraceSet,
 }
 
 #[derive(Clone, Debug)]
@@ -144,7 +152,7 @@ where
     .ok_or(ExecError::InvalidGasFee)?;
 
     let inspector_limit = instruction_soft_limit.unwrap_or(0);
-    let inspector = InstructionBudgetInspector::new(inspector_limit);
+    let inspector = InspectorMux::new(inspector_limit, exec_ctx.block_number, tx_index);
     let mut evm = Context::mainnet()
         .with_db(db)
         .modify_cfg_chained(|cfg| {
@@ -161,7 +169,7 @@ where
         .with_precompiles(WrapPrecompileProvider::new(allow_external_precompile));
 
     let result = evm.inspect_tx(tx_env).map_err(map_tx_error_stage)?;
-    if evm.inspector.tripped {
+    if evm.inspector.budget.tripped {
         return Err(ExecError::InstructionBudgetExceeded);
     }
     let (status, gas_used, output, contract_address, logs, final_status, halt_reason) =
@@ -251,8 +259,23 @@ where
         return_data: output,
         final_status,
         halt_reason,
+        internal_traces: evm.inspector.traces.finish(),
     };
     Ok((outcome, state_diff))
+}
+
+struct InspectorMux {
+    budget: InstructionBudgetInspector,
+    traces: InternalTraceInspector,
+}
+
+impl InspectorMux {
+    fn new(limit: u64, block_number: u64, tx_index: u32) -> Self {
+        Self {
+            budget: InstructionBudgetInspector::new(limit),
+            traces: InternalTraceInspector::new(block_number, tx_index),
+        }
+    }
 }
 
 struct InstructionBudgetInspector {
@@ -281,6 +304,246 @@ impl<CTX, INTR: InterpreterTypes> revm::Inspector<CTX, INTR> for InstructionBudg
             self.tripped = true;
             interp.halt(InstructionResult::OutOfGas);
         }
+    }
+}
+
+#[derive(Clone, Debug)]
+struct InternalTraceDraft {
+    trace_id: Vec<u32>,
+    trace: InternalTrace,
+}
+
+struct InternalTraceInspector {
+    block_number: u64,
+    tx_index: u32,
+    frame_children: Vec<u32>,
+    active_paths: Vec<Option<Vec<u32>>>,
+    traces: Vec<InternalTraceDraft>,
+    total_count: u32,
+}
+
+impl InternalTraceInspector {
+    fn new(block_number: u64, tx_index: u32) -> Self {
+        Self {
+            block_number,
+            tx_index,
+            frame_children: vec![0],
+            active_paths: Vec::new(),
+            traces: Vec::new(),
+            total_count: 0,
+        }
+    }
+
+    fn finish(self) -> InternalTraceSet {
+        InternalTraceSet::new_with_counts(
+            self.traces.into_iter().map(|value| value.trace).collect(),
+            self.total_count,
+        )
+    }
+
+    fn start_call(&mut self, inputs: &CallInputs) {
+        let action_kind = match inputs.scheme {
+            CallScheme::Call => InternalTraceActionKind::Call,
+            CallScheme::CallCode => InternalTraceActionKind::CallCode,
+            CallScheme::DelegateCall => InternalTraceActionKind::DelegateCall,
+            CallScheme::StaticCall => InternalTraceActionKind::StaticCall,
+        };
+        self.start_action(
+            action_kind,
+            inputs.caller.into_array(),
+            Some(inputs.target_address.into_array()),
+            None,
+            inputs.call_value().to_be_bytes(),
+        );
+    }
+
+    fn end_call(&mut self, outcome: &CallOutcome) {
+        let status = trace_outcome_status(outcome.instruction_result());
+        self.finish_action(status.0, status.1, None);
+    }
+
+    fn start_create(&mut self, inputs: &CreateInputs) {
+        let action_kind = match inputs.scheme() {
+            CreateScheme::Create => InternalTraceActionKind::Create,
+            CreateScheme::Create2 { .. } => InternalTraceActionKind::Create2,
+            // revm の Custom は CREATE2 ではなく、生成アドレスを外部指定する create。
+            CreateScheme::Custom { .. } => InternalTraceActionKind::Custom,
+        };
+        self.start_action(
+            action_kind,
+            inputs.caller().into_array(),
+            None,
+            None,
+            inputs.value().to_be_bytes(),
+        );
+    }
+
+    fn end_create(&mut self, outcome: &CreateOutcome) {
+        let status = trace_outcome_status(outcome.instruction_result());
+        let created = outcome.address.map(Address::into_array);
+        self.finish_action(status.0, status.1, created);
+    }
+
+    fn record_selfdestruct(&mut self, contract: Address, target: Address, value: U256) {
+        if self.active_paths.is_empty() {
+            return;
+        }
+        let trace_id = self.allocate_trace_id();
+        self.total_count = self.total_count.saturating_add(1);
+        if self.traces.len() < MAX_INTERNAL_TRACES_PER_TX_U32 as usize {
+            self.traces.push(InternalTraceDraft {
+                trace_id: trace_id.clone(),
+                trace: InternalTrace {
+                    block_number: self.block_number,
+                    tx_index: self.tx_index,
+                    trace_id: render_trace_id(&trace_id),
+                    depth: trace_id.len() as u16,
+                    action_kind: InternalTraceActionKind::Selfdestruct,
+                    from_address: contract.into_array(),
+                    to_address: Some(target.into_array()),
+                    value: value.to_be_bytes(),
+                    created_contract_address: None,
+                    success: true,
+                    error_code: None,
+                },
+            });
+        }
+    }
+
+    fn start_action(
+        &mut self,
+        action_kind: InternalTraceActionKind,
+        from_address: [u8; 20],
+        to_address: Option<[u8; 20]>,
+        created_contract_address: Option<[u8; 20]>,
+        value: [u8; 32],
+    ) {
+        let trace_id = self.allocate_trace_id();
+        let is_internal = !self.active_paths.is_empty();
+        if is_internal {
+            self.total_count = self.total_count.saturating_add(1);
+            if self.traces.len() < MAX_INTERNAL_TRACES_PER_TX_U32 as usize {
+                self.traces.push(InternalTraceDraft {
+                    trace_id: trace_id.clone(),
+                    trace: InternalTrace {
+                        block_number: self.block_number,
+                        tx_index: self.tx_index,
+                        trace_id: render_trace_id(&trace_id),
+                        depth: trace_id.len() as u16,
+                        action_kind,
+                        from_address,
+                        to_address,
+                        value,
+                        created_contract_address,
+                        success: false,
+                        error_code: Some("pending".to_string()),
+                    },
+                });
+            }
+            self.active_paths.push(Some(trace_id));
+            return;
+        }
+        self.active_paths.push(None);
+    }
+
+    fn finish_action(
+        &mut self,
+        success: bool,
+        error_code: Option<String>,
+        created_contract_address: Option<[u8; 20]>,
+    ) {
+        let active = self.active_paths.pop();
+        let _ = self.frame_children.pop();
+        let Some(Some(trace_id)) = active else {
+            return;
+        };
+        if let Some(item) = self
+            .traces
+            .iter_mut()
+            .rev()
+            .find(|item| item.trace_id == trace_id)
+        {
+            item.trace.success = success;
+            item.trace.error_code = error_code;
+            if created_contract_address.is_some() {
+                item.trace.created_contract_address = created_contract_address;
+            }
+        }
+    }
+
+    fn allocate_trace_id(&mut self) -> Vec<u32> {
+        let next_child = self.frame_children.last_mut().expect("trace root frame");
+        let child_index = *next_child;
+        *next_child = next_child.saturating_add(1);
+        let mut trace_id = self
+            .active_paths
+            .last()
+            .cloned()
+            .flatten()
+            .unwrap_or_default();
+        trace_id.push(child_index);
+        self.frame_children.push(0);
+        trace_id
+    }
+}
+
+impl<CTX, INTR: InterpreterTypes> revm::Inspector<CTX, INTR> for InspectorMux {
+    fn step(&mut self, interp: &mut Interpreter<INTR>, context: &mut CTX) {
+        self.budget.step(interp, context);
+    }
+
+    fn call(&mut self, context: &mut CTX, inputs: &mut CallInputs) -> Option<CallOutcome> {
+        let _ = context;
+        self.traces.start_call(inputs);
+        None
+    }
+
+    fn call_end(&mut self, context: &mut CTX, inputs: &CallInputs, outcome: &mut CallOutcome) {
+        let _ = context;
+        let _ = inputs;
+        self.traces.end_call(outcome);
+    }
+
+    fn create(&mut self, context: &mut CTX, inputs: &mut CreateInputs) -> Option<CreateOutcome> {
+        let _ = context;
+        self.traces.start_create(inputs);
+        None
+    }
+
+    fn create_end(
+        &mut self,
+        context: &mut CTX,
+        inputs: &CreateInputs,
+        outcome: &mut CreateOutcome,
+    ) {
+        let _ = context;
+        let _ = inputs;
+        self.traces.end_create(outcome);
+    }
+
+    fn selfdestruct(&mut self, contract: Address, target: Address, value: U256) {
+        self.traces.record_selfdestruct(contract, target, value);
+    }
+}
+
+fn render_trace_id(segments: &[u32]) -> String {
+    let mut out = String::new();
+    for (index, segment) in segments.iter().enumerate() {
+        if index > 0 {
+            out.push('_');
+        }
+        out.push_str(&segment.to_string());
+    }
+    out
+}
+
+fn trace_outcome_status(result: &InstructionResult) -> (bool, Option<String>) {
+    match result {
+        InstructionResult::Stop | InstructionResult::Return | InstructionResult::SelfDestruct => {
+            (true, None)
+        }
+        InstructionResult::Revert => (false, Some("Revert".to_string())),
+        other => (false, Some(format!("{other:?}"))),
     }
 }
 
@@ -443,14 +706,20 @@ fn revm_log_to_receipt_log(log: revm::primitives::Log) -> LogEntry {
 mod tests {
     use super::{
         add_base_fee_portion_to_recipient, compute_effective_gas_price, map_halt_reason,
-        validate_execution_result_sizes, ExecError, LogEntry, OpHaltReason, StateDiff,
-        FEE_RECIPIENT, MAX_RETURN_DATA,
+        validate_execution_result_sizes, ExecError, InternalTraceActionKind,
+        InternalTraceInspector, LogEntry, OpHaltReason, StateDiff, FEE_RECIPIENT, MAX_RETURN_DATA,
     };
+    use alloy_primitives::Bytes;
     use evm_db::stable_state::{init_stable_state, with_state_mut};
     use evm_db::types::keys::make_account_key;
     use evm_db::types::values::AccountVal;
     use revm::context_interface::result::{HaltReason, OutOfGasError};
-    use revm::primitives::{B256, U256};
+    use revm::context_interface::CreateScheme;
+    use revm::interpreter::{
+        CallInput, CallInputs, CallScheme, CallValue, CreateInputs, CreateOutcome, Gas,
+        InstructionResult, InterpreterResult,
+    };
+    use revm::primitives::{Address, Bytes as RevmBytes, B256, U256};
     use revm::state::AccountInfo;
 
     #[test]
@@ -552,5 +821,52 @@ mod tests {
 
         let updated = state.get(&FEE_RECIPIENT).expect("recipient must exist");
         assert!(updated.is_selfdestructed());
+    }
+
+    #[test]
+    fn internal_trace_inspector_marks_custom_create_explicitly() {
+        let caller = Address::with_last_byte(0x11);
+        let created = Address::with_last_byte(0x22);
+        let target = Address::with_last_byte(0x33);
+        let mut inspector = InternalTraceInspector::new(7, 3);
+        let outer = CallInputs {
+            input: CallInput::Bytes(RevmBytes::default()),
+            return_memory_offset: 0..0,
+            gas_limit: 100_000,
+            bytecode_address: target,
+            known_bytecode: None,
+            target_address: target,
+            caller,
+            value: CallValue::Transfer(U256::ZERO),
+            scheme: CallScheme::Call,
+            is_static: false,
+        };
+        inspector.start_call(&outer);
+        let inputs = CreateInputs::new(
+            caller,
+            CreateScheme::Custom { address: created },
+            U256::ZERO,
+            Bytes::default(),
+            100_000,
+        );
+        inspector.start_create(&inputs);
+        let outcome = CreateOutcome::new(
+            InterpreterResult::new(
+                InstructionResult::Return,
+                Bytes::default(),
+                Gas::new(100_000),
+            ),
+            Some(created),
+        );
+        inspector.end_create(&outcome);
+
+        let traces = inspector.finish();
+        assert_eq!(traces.items.len(), 1);
+        assert_eq!(traces.total_count, 1);
+        assert_eq!(traces.items[0].action_kind, InternalTraceActionKind::Custom);
+        assert_eq!(
+            traces.items[0].created_contract_address,
+            Some(created.into_array())
+        );
     }
 }

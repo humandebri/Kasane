@@ -51,6 +51,7 @@ log "ref=${REF}"
 log "remote_repo_dir=${REMOTE_REPO_DIR}"
 log "remote_runtime_dir=${REMOTE_RUNTIME_DIR}"
 log "service=${SERVICE_NAME}"
+log "note=remote git access assumes deployer user has a read-only SSH deploy key when REPO_URL is ssh"
 
 ssh "${SSH_HOST}" \
   "REPO_URL='${REPO_URL}' REF='${REF}' REMOTE_REPO_DIR='${REMOTE_REPO_DIR}' REMOTE_RUNTIME_DIR='${REMOTE_RUNTIME_DIR}' SERVICE_NAME='${SERVICE_NAME}' INSTALL_STEP='${INSTALL_STEP}' bash -s" <<'REMOTE'
@@ -61,11 +62,13 @@ echo "[contabo-deploy-gateway] remote host=$(hostname)"
 if [[ ! -d "${REMOTE_REPO_DIR}/.git" ]]; then
   echo "[contabo-deploy-gateway] clone ${REPO_URL} -> ${REMOTE_REPO_DIR}"
   sudo mkdir -p "$(dirname "${REMOTE_REPO_DIR}")"
-  sudo git clone "${REPO_URL}" "${REMOTE_REPO_DIR}"
+  sudo chown deployer:deployer "$(dirname "${REMOTE_REPO_DIR}")"
+  git clone "${REPO_URL}" "${REMOTE_REPO_DIR}"
   sudo chown -R deployer:deployer "${REMOTE_REPO_DIR}"
 fi
 
 cd "${REMOTE_REPO_DIR}"
+git remote set-url origin "${REPO_URL}"
 git fetch --tags origin
 git checkout --detach "${REF}"
 git reset --hard "${REF}"

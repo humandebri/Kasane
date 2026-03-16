@@ -726,8 +726,7 @@ async fn recover_failed_wrap(args: RecoverFailedWrapArgs) -> Result<RequestOverv
     init_state();
     let request_id = request_id_or_invalid_argument(args.request_id.as_slice())?;
     let caller = ic_cdk::api::msg_caller();
-    let (asset_id, amount) =
-        map_string_result(reserve_failed_wrap_withdraw(request_id, caller))?;
+    let (asset_id, amount) = map_string_result(reserve_failed_wrap_withdraw(request_id, caller))?;
 
     let transfer = attempt_icrc1_transfer(asset_id, amount, caller.as_slice().to_vec()).await;
     match transfer {
@@ -2625,13 +2624,12 @@ fn export_did() -> String {
 mod tests {
     use super::{
         apply_insert_request_outcome, apply_runtime_config, approval_required_for_readiness,
-        decode_asset_decimals,
-        decode_stored_request, decode_u256_be, dequeue_request, derive_wrap_request_id,
-        encode_factory_mint_for_asset_call_data, encode_stored_request, enqueue_request,
-        init_state, insert_request, insert_wrap_request, is_withdrawable, map_transfer_reply,
-        mark_request_running, mark_wrap_request_running, nat_from_32_be, nat_to_be_bytes,
-        normalize_submit_wrap_args, on_worker_queue_drain, on_wrap_worker_queue_drain,
-        principal_from_bytes, recover_request_state_after_upgrade,
+        decode_asset_decimals, decode_stored_request, decode_u256_be, dequeue_request,
+        derive_wrap_request_id, encode_factory_mint_for_asset_call_data, encode_stored_request,
+        enqueue_request, init_state, insert_request, insert_wrap_request, is_withdrawable,
+        map_transfer_reply, mark_request_running, mark_wrap_request_running, nat_from_32_be,
+        nat_to_be_bytes, normalize_submit_wrap_args, on_worker_queue_drain,
+        on_wrap_worker_queue_drain, principal_from_bytes, recover_request_state_after_upgrade,
         recover_wrap_request_state_after_upgrade, schedule_worker, schedule_wrap_worker,
         submit_error_to_code, to_request_id, to_withdraw_error_code, transfer_error_to_code,
         transfer_from_error_to_code, u256_from_u64, validate_non_anonymous_principal,

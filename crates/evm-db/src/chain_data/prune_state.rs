@@ -12,7 +12,7 @@ use zerocopy::{FromBytes, Immutable, IntoBytes, KnownLayout, Unaligned};
 
 const PRUNE_STATE_SIZE_U32: u32 = 32;
 const JOURNAL_NONE: u64 = u64::MAX;
-const MAX_PTRS_U32: u32 = 1 + (2 * MAX_TXS_PER_BLOCK_U32);
+const MAX_PTRS_U32: u32 = 1 + (3 * MAX_TXS_PER_BLOCK_U32);
 const JOURNAL_MAX_SIZE_U32: u32 = 4 + (MAX_PTRS_U32 * 20);
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
