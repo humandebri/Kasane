@@ -549,8 +549,14 @@ WRAP_INIT_ARGS="(record {
   kasane_canister = principal \"${EVM_CANISTER_ID}\";
   evm_gateway_canister = principal \"${EVM_CANISTER_ID}\";
   fee_ledger_canister = principal \"${LEDGER_CANISTER_ID}\";
+  wrap_factory_address = vec { $(python - <<PY
+hexv = "${FACTORY_ADDRESS_HEX}".strip()
+print("; ".join(str(b) for b in bytes.fromhex(hexv)))
+PY
+) };
   cycle_fee_e8s = ${CYCLE_FEE_E8S} : nat64;
   gas_price_buffer_bps = ${GAS_PRICE_BUFFER_BPS} : nat32;
+  allowed_assets = vec { principal \"${LEDGER_CANISTER_ID}\" };
 })"
 WRAP_INIT_ARGS_HEX="$(
   didc encode \

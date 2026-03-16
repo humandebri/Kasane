@@ -35,6 +35,7 @@ scripts/local_wrap_unwrap_ledger_smoke.sh
    - `ic-icrc1-ledger.wasm.gz`
 3. local ledger canister を detached で作成し、ICRC-2 有効で install
 4. `evm_canister` と `wrap_canister` を local install
+   - `wrap_canister` の `allowed_assets` には local ledger canister を入れる
 5. ledger に test caller と `wrap_canister` の初期残高を入れる
 6. `submit_ic_tx` で `WrapTokenFactory` を deploy
    - この初回 tx により gas price も初期化される

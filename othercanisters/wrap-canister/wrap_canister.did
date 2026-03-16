@@ -28,6 +28,7 @@ type InitArgs = record {
   wrap_factory_address : blob;
   cycle_fee_e8s : nat64;
   gas_price_buffer_bps : nat32;
+  allowed_assets : vec principal;
 };
 type QuoteWrapRequestArgs = record {
   asset_id : principal;
@@ -99,5 +100,7 @@ service : (InitArgs) -> {
   retry_request : (RetryRequestArgs) -> (variant { Ok : RequestOverview; Err : ApiError });
   recover_failed_wrap : (RecoverFailedWrapArgs) -> (variant { Ok : RequestOverview; Err : ApiError });
   get_fee_policy : () -> (variant { Ok : FeePolicyView; Err : text }) query;
+  get_allowed_assets : () -> (variant { Ok : vec principal; Err : text }) query;
   set_fee_policy : (SetFeePolicyArgs) -> (variant { Ok; Err : text });
+  set_allowed_assets : (vec principal) -> (variant { Ok; Err : text });
 }

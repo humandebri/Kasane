@@ -22,6 +22,8 @@ struct GatewayInitArgs {
     genesis_balances: Vec<GenesisBalanceView>,
     wrap_canister_id: Principal,
     wrap_factory_address: Vec<u8>,
+    query_instruction_soft_limit: Option<u64>,
+    update_instruction_soft_limit: Option<u64>,
 }
 
 #[derive(Clone, Debug, CandidType, Deserialize, Eq, PartialEq)]
@@ -32,6 +34,7 @@ struct WrapInitArgs {
     wrap_factory_address: Vec<u8>,
     cycle_fee_e8s: u64,
     gas_price_buffer_bps: u32,
+    allowed_assets: Vec<Principal>,
 }
 
 const WRAP_AMOUNT_E8S: u128 = 1_000_000_000_000u128;
@@ -389,6 +392,20 @@ fn install_pair(pic: &PocketIc) -> (Principal, Principal, Principal) {
     install_pair_with_options(pic, gateway_id, gateway_id, TEST_GENESIS_BALANCE_WEI)
 }
 
+fn set_allowed_assets(pic: &PocketIc, wrap_id: Principal, assets: Vec<Principal>) {
+    let out = pic
+        .update_call(
+            wrap_id,
+            test_caller(),
+            "set_allowed_assets",
+            Encode!(&assets).expect("encode allowed assets"),
+        )
+        .unwrap_or_else(|err| panic!("set_allowed_assets call failed: {err}"));
+    let result: Result<(), String> = Decode!(&out, Result<(), String>)
+        .expect("decode set_allowed_assets response");
+    result.unwrap_or_else(|err| panic!("set_allowed_assets rejected: {err}"));
+}
+
 fn install_pair_with_options(
     pic: &PocketIc,
     gateway_id: Principal,
@@ -420,6 +437,8 @@ fn install_pair_with_options(
         ],
         wrap_canister_id: wrap_id,
         wrap_factory_address: predict_create_address(caller_evm, 0).to_vec(),
+        query_instruction_soft_limit: None,
+        update_instruction_soft_limit: None,
     });
     let wrap_init = WrapInitArgs {
         kasane_canister: gateway_id,
@@ -428,6 +447,7 @@ fn install_pair_with_options(
         wrap_factory_address: predict_create_address(caller_evm, 0).to_vec(),
         cycle_fee_e8s: 1_000_000,
         gas_price_buffer_bps: 12_000,
+        allowed_assets: vec![fee_ledger_id],
     };
     let ledger_init = build_ledger_init(gateway_id, wrap_id, caller, TEST_LEDGER_BALANCE);
 
@@ -1731,7 +1751,8 @@ fn unwrap_requirements_report_readiness_transitions() {
 fn unwrap_dispatch_marks_request_failed_when_asset_ledger_is_missing() {
     let pic = PocketIc::new();
     let (gateway_id, wrap_id, _) = install_pair(&pic);
-    let missing_ledger = Principal::self_authenticating(b"missing-ledger");
+    let missing_ledger = pic.create_canister();
+    set_allowed_assets(&pic, wrap_id, vec![missing_ledger]);
     let request_id = vec![0xabu8; 32];
     let out = pic
         .update_call(
@@ -1773,6 +1794,7 @@ fn unwrap_retry_request_succeeds_after_ledger_is_installed() {
     let pic = PocketIc::new();
     let (gateway_id, wrap_id, _) = install_pair(&pic);
     let delayed_ledger_id = pic.create_canister();
+    set_allowed_assets(&pic, wrap_id, vec![delayed_ledger_id]);
     let request_id = vec![0x42u8; 32];
 
     let out = pic
@@ -1841,6 +1863,7 @@ fn unwrap_burn_then_ledger_transfer_failure_is_retryable_without_double_refund()
     let pic = PocketIc::new();
     let (gateway_id, wrap_id, fee_ledger_id) = install_pair(&pic);
     let broken_ledger_id = pic.create_canister();
+    set_allowed_assets(&pic, wrap_id, vec![fee_ledger_id, broken_ledger_id]);
     let caller = test_caller();
     let caller_evm =
         hash::derive_evm_address_from_principal(caller.as_slice()).expect("derive caller evm");
@@ -2231,6 +2254,7 @@ fn unwrap_retry_request_rejects_concurrent_second_call_while_first_is_in_progres
     let pic = PocketIc::new();
     let (gateway_id, wrap_id, _) = install_pair(&pic);
     let delayed_ledger_id = pic.create_canister();
+    set_allowed_assets(&pic, wrap_id, vec![delayed_ledger_id]);
     let caller = test_caller();
     let request_id = vec![0x55u8; 32];
 
