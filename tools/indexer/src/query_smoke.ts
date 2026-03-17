@@ -44,11 +44,12 @@ type OpsStatusView = {
   log_filter_override: string | null;
   last_cycle_balance: bigint;
   mode: OpsModeView;
-  instruction_soft_limit: bigint;
+  query_instruction_soft_limit: bigint;
   last_check_ts: bigint;
   mining_error_count: bigint;
   log_truncated_count: bigint;
   schema_version: bigint;
+  update_instruction_soft_limit: bigint;
   safe_stop_latched: boolean;
   decode_failure_last_label: string | null;
   prune_error_count: bigint;
@@ -127,7 +128,7 @@ async function main(): Promise<void> {
       ? "Critical"
       : "Unknown";
   console.log(
-    `[query-smoke] ops_status needs_migration=${opsStatus.needs_migration} mode=${modeLabel} block_gas_limit=${opsStatus.block_gas_limit} instruction_soft_limit=${opsStatus.instruction_soft_limit} last_cycle_balance=${opsStatus.last_cycle_balance}`
+    `[query-smoke] ops_status needs_migration=${opsStatus.needs_migration} mode=${modeLabel} block_gas_limit=${opsStatus.block_gas_limit} query_instruction_soft_limit=${opsStatus.query_instruction_soft_limit} update_instruction_soft_limit=${opsStatus.update_instruction_soft_limit} last_cycle_balance=${opsStatus.last_cycle_balance}`
   );
 
   // block 0 は export対象外で MissingData になる場合があるため、
