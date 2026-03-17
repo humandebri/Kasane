@@ -57,7 +57,9 @@ scripts/measure_precompile_ratio.sh
 - `scripts/check_precompile_feature_isolation.sh`: verifies the default wasm build of `ic-evm-core` does not pull BLS/KZG backend crates (`ark-bls12-381`, `c-kzg`, `blst`)
 - `scripts/predeploy_smoke.sh`: `cargo check` + wasm build + PocketIC RPC compatibility E2E (optional indexer smoke)
 - `scripts/run_rpc_compat_e2e.sh`: RPC compatibility E2E test (`cargo test --test rpc_compat_e2e`)
+  - The script runs `forge build` first because the Rust E2E tests load Foundry artifacts from `tools/wrapper/contracts/out/` at compile time
   - PocketIC must be able to bind to localhost (`127.0.0.1`); restricted sandbox environments can fail before the test logic runs
+- `scripts/prepare_ci_icrc1_ledger_wasm.sh`: exports the vendored official ledger wasm at `third_party/dfinity/ledger-suite-icrc-2026-03-09/ic-icrc1-ledger.wasm` as `ICP_LEDGER_WASM` via the shared ledger artifact helper; `LEDGER_RELEASE=latest` is rejected and the local ledger smoke script caches `ledger.did` under `${LEDGER_CACHE_DIR}/<release>/ledger.did`
 - `scripts/profile_wasm_deps.sh`: dependency-size profiling for wasm (`twiggy top/dominators`, optional `cargo +nightly bloat -Z build-std`, and `cargo tree -e features -i <crate>` snapshots)
   - output default: `docs/ops/reports/wasm-deps-<package>-<timestamp>/`
   - optional: `--compare <previous_output_dir>` to generate before/after table (bytes + instruction estimate)

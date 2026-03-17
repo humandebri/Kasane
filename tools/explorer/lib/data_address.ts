@@ -65,6 +65,7 @@ export type AddressInternalTxItem = {
   blockNumber: bigint;
   blockTimestamp: bigint | null;
   txIndex: number;
+  receiptStatus: number | null;
   traceId: string;
   depth: number;
   actionType: string;
@@ -308,6 +309,7 @@ export function mapAddressInternalTransactions(rows: InternalTransactionSummary[
     blockNumber: row.blockNumber,
     blockTimestamp: row.blockTimestamp,
     txIndex: row.txIndex,
+    receiptStatus: row.receiptStatus,
     traceId: row.traceId,
     depth: row.depth,
     actionType: row.actionType,

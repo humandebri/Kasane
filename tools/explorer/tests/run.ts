@@ -5,6 +5,8 @@ import { createHmac } from "node:crypto";
 import { promises as fs } from "node:fs";
 import { newDb } from "pg-mem";
 import { NextRequest } from "next/server";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
 import {
   isAddressHex,
   isTxHashHex,
@@ -78,6 +80,7 @@ import { deriveTxDirection } from "../lib/tx_direction";
 import { inferMethodLabel } from "../lib/tx_method";
 import { extractUnwrapRequestFromReceipt, isConfirmedKasaneWrapTx, WRAP_PRECOMPILE_ADDRESS_HEX } from "../lib/kasane_wrap";
 import { txValueFeeCellsTestHooks } from "../components/tx-value-fee-cells";
+import { TxHashLink } from "../components/tx-hash-link";
 import type { ReceiptView } from "../lib/rpc";
 import type { VerifySubmitInput } from "../lib/verify/types";
 
@@ -1743,8 +1746,11 @@ async function runAddressViewInternalAndContractTests(): Promise<void> {
     assert.equal(view.internalTransactions.length, 3);
     assert.equal(view.internalTransactions[0]?.traceId, "0");
     assert.equal(view.internalTransactions[0]?.actionType, "custom");
+    assert.equal(view.internalTransactions[0]?.receiptStatus, 1);
     assert.equal(view.internalTransactions[1]?.traceId, "0_2");
+    assert.equal(view.internalTransactions[1]?.receiptStatus, null);
     assert.equal(view.internalTransactions[2]?.traceId, "0_10");
+    assert.equal(view.internalTransactions[2]?.receiptStatus, null);
     assert.equal(view.internalTraceOverflowTxs.length, 0);
     assert.equal(view.internalTraceFailedTxs.length, 1);
     assert.equal(view.internalTraceFailedTxs[0]?.txHashHex, "0x" + txHash.toString("hex"));
@@ -1762,6 +1768,18 @@ async function runAddressViewInternalAndContractTests(): Promise<void> {
     dataTestHooks.resetAddressViewRpcFetchersForTest();
     await closeExplorerPool();
   }
+}
+
+async function runTxHashLinkUsesParentReceiptStatusTests(): Promise<void> {
+  const succeededParentMarkup = renderToStaticMarkup(
+    createElement(TxHashLink, { txHashHex: "0x" + "12".repeat(32), receiptStatus: 1 }, "tx")
+  );
+  assert.equal(succeededParentMarkup.includes("failed transaction"), false);
+
+  const failedParentMarkup = renderToStaticMarkup(
+    createElement(TxHashLink, { txHashHex: "0x" + "34".repeat(32), receiptStatus: 0 }, "tx")
+  );
+  assert.equal(failedParentMarkup.includes("failed transaction"), true);
 }
 
 async function runAddressViewInternalTraceMetadataOnlyTests(): Promise<void> {
@@ -2104,6 +2122,7 @@ runHexTests()
   .then(runAddressViewErc20Tests)
   .then(runAddressViewContractEventsTests)
   .then(runAddressViewInternalAndContractTests)
+  .then(runTxHashLinkUsesParentReceiptStatusTests)
   .then(runAddressViewInternalTraceMetadataOnlyTests)
   .then(runAddressViewInternalTraceOverflowMetadataOnlyTests)
   .then(runAddressViewSkipsContractEventsWhenTabIsNotEventsTests)

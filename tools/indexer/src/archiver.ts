@@ -1,10 +1,17 @@
-// どこで: ローカルアーカイブ / 何を: 1ブロック分のpayloadをzstd圧縮保存 / なぜ: prune前の保険のため
+// どこで: ローカルアーカイブ / 何を: 1ブロック分の4セグメントbundleをzstd圧縮保存 / なぜ: prune前の保険を現行内容と一致した形で保持するため
 
 import { createHash } from "crypto";
 import { promises as fs } from "node:fs";
 import path from "node:path";
-import { compress } from "@mongodb-js/zstd";
+import { compress, decompress } from "@mongodb-js/zstd";
 import writeFileAtomic = require("write-file-atomic");
+
+export type ExistingArchiveMeta = {
+  path: string;
+  sha256: Buffer;
+  rawSha256: Buffer | null;
+  sizeBytes: number;
+};
 
 export type ArchiveInput = {
   archiveDir: string;
@@ -14,12 +21,14 @@ export type ArchiveInput = {
   receiptsPayload: Uint8Array;
   txIndexPayload: Uint8Array;
   internalTracesPayload?: Uint8Array;
+  existingArchive?: ExistingArchiveMeta | null;
   zstdLevel: number;
 };
 
 export type ArchiveResult = {
   path: string;
   sha256: Buffer;
+  rawSha256: Buffer;
   sizeBytes: number;
   rawBytes: number;
 };
@@ -31,12 +40,14 @@ export async function archiveBlock(input: ArchiveInput): Promise<ArchiveResult> 
     input.txIndexPayload,
     input.internalTracesPayload ?? new Uint8Array()
   );
+  const rawSha256 = createHash("sha256").update(raw).digest();
   const outPath = buildPath(input.archiveDir, input.chainId, input.blockNumber);
-  const existing = await readExistingArchive(outPath);
+  const existing = await readReusableArchive(input.existingArchive ?? null, outPath, rawSha256);
   if (existing) {
     return {
       path: outPath,
       sha256: existing.sha256,
+      rawSha256,
       sizeBytes: existing.sizeBytes,
       rawBytes: raw.length,
     };
@@ -48,11 +59,12 @@ export async function archiveBlock(input: ArchiveInput): Promise<ArchiveResult> 
   try {
     await writeFileAtomic(outPath, compressed, { fsync: true });
   } catch (err) {
-    const existingAfter = await readExistingArchive(outPath);
+    const existingAfter = await readReusableArchiveAfterConflict(outPath, rawSha256);
     if (existingAfter) {
       return {
         path: outPath,
         sha256: existingAfter.sha256,
+        rawSha256,
         sizeBytes: existingAfter.sizeBytes,
         rawBytes: raw.length,
       };
@@ -62,6 +74,7 @@ export async function archiveBlock(input: ArchiveInput): Promise<ArchiveResult> 
   return {
     path: outPath,
     sha256,
+    rawSha256,
     sizeBytes: compressed.length,
     rawBytes: raw.length,
   };
@@ -98,6 +111,26 @@ function buildRaw(
   return out;
 }
 
+function isCurrentArchiveRaw(raw: Uint8Array): boolean {
+  try {
+    let offset = 0;
+    for (let segment = 0; segment < 4; segment += 1) {
+      if (offset + 4 > raw.length) {
+        return false;
+      }
+      const len = Buffer.from(raw).readUInt32BE(offset);
+      offset += 4;
+      if (offset + len > raw.length) {
+        return false;
+      }
+      offset += len;
+    }
+    return offset === raw.length;
+  } catch {
+    return false;
+  }
+}
+
 function writeLen(buf: Buffer, offset: number, len: number): number {
   buf.writeUInt32BE(len, offset);
   return offset + 4;
@@ -115,8 +148,35 @@ function buildPath(baseDir: string, chainId: string, blockNumber: bigint): strin
   return path.join(baseDir, chainId, fileName);
 }
 
-async function readExistingArchive(
-  outPath: string
+async function readReusableArchive(
+  existingArchive: ExistingArchiveMeta | null,
+  outPath: string,
+  currentRawSha256: Buffer
+): Promise<{ sha256: Buffer; sizeBytes: number } | null> {
+  if (!existingArchive || existingArchive.path !== outPath || !existingArchive.rawSha256) {
+    return null;
+  }
+  if (!existingArchive.rawSha256.equals(currentRawSha256)) {
+    return null;
+  }
+  try {
+    const stat = await fs.stat(outPath);
+    if (!stat.isFile()) {
+      return null;
+    }
+    const data = await fs.readFile(outPath);
+    return {
+      sha256: createHash("sha256").update(data).digest(),
+      sizeBytes: stat.size,
+    };
+  } catch {
+    return null;
+  }
+}
+
+async function readReusableArchiveAfterConflict(
+  outPath: string,
+  currentRawSha256: Buffer
 ): Promise<{ sha256: Buffer; sizeBytes: number } | null> {
   try {
     const stat = await fs.stat(outPath);
@@ -124,8 +184,18 @@ async function readExistingArchive(
       return null;
     }
     const data = await fs.readFile(outPath);
-    const sha256 = createHash("sha256").update(data).digest();
-    return { sha256, sizeBytes: stat.size };
+    const raw = await decompress(data);
+    if (!isCurrentArchiveRaw(raw)) {
+      return null;
+    }
+    const rawSha256 = createHash("sha256").update(raw).digest();
+    if (!rawSha256.equals(currentRawSha256)) {
+      return null;
+    }
+    return {
+      sha256: createHash("sha256").update(data).digest(),
+      sizeBytes: stat.size,
+    };
   } catch {
     return null;
   }

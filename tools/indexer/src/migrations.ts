@@ -30,6 +30,7 @@ export const MIGRATIONS = [
   "021_add_internal_transactions.sql",
   "022_add_internal_transaction_sort_key.sql",
   "023_add_txs_internal_trace_metadata.sql",
+  "024_add_archive_parts_raw_sha256.sql",
 ] as const;
 
 export async function applyMigrations(pool: Pool, migrations: readonly string[]): Promise<void> {

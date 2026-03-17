@@ -17,6 +17,11 @@ if ! command -v node >/dev/null 2>&1; then
   exit 1
 fi
 
+if ! command -v forge >/dev/null 2>&1; then
+  echo "[ci-github-equivalent] forge is required" >&2
+  exit 1
+fi
+
 scripts/check_rng_paths.sh
 scripts/check_getrandom_wasm_features.sh
 scripts/check_did_sync.sh
@@ -56,6 +61,10 @@ cargo metadata --locked --format-version 1 > "${snapshot_dir}/cargo-metadata.sbo
 find vendor/revm -type f -print0 | sort -z | xargs -0 sha256sum > "${snapshot_dir}/vendor-revm.sha256"
 find vendor/ark-relations -type f -print0 | sort -z | xargs -0 sha256sum > "${snapshot_dir}/vendor-ark-relations.sha256"
 
+# evm-rpc-e2e uses Foundry artifacts via include_str!, so generate them
+# before compiling the Rust tests in clean CI environments.
+(cd tools/wrapper/contracts && forge build)
+
 cargo test -p evm-db -p ic-evm-core -p ic-evm-gateway --locked --lib --tests
 cargo test --manifest-path crates/evm-rpc-e2e/Cargo.toml --no-run --locked
 cargo build --release --target wasm32-unknown-unknown -p wrap-canister -p mock-wrap-canister -p ic-evm-gateway --locked
@@ -63,11 +72,7 @@ cargo build --release --target wasm32-unknown-unknown -p wrap-canister -p mock-w
 . scripts/prepare_ci_icrc1_ledger_wasm.sh
 cargo test --manifest-path crates/evm-rpc-e2e/Cargo.toml --test wrap_unwrap_flow_e2e --locked -- --test-threads=1
 
-if ! command -v forge >/dev/null 2>&1; then
-  echo "[ci-github-equivalent] forge is required" >&2
-  exit 1
-fi
-(cd tools/wrapper/contracts && forge build && forge test -vv)
+(cd tools/wrapper/contracts && forge test -vv)
 
 if [[ ! -d tools/rpc-gateway/node_modules ]]; then
   (cd tools/rpc-gateway && npm ci)

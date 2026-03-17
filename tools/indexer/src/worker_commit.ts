@@ -153,6 +153,7 @@ export async function commitPending(params: {
   }
   let archive: ArchiveResult | null = null;
   try {
+    const existingArchive = await params.db.getArchivePart(blockInfo.number);
     archive = await archiveBlock({
       archiveDir: params.config.archiveDir,
       chainId: params.config.chainId,
@@ -161,6 +162,7 @@ export async function commitPending(params: {
       receiptsPayload: payloads[1],
       txIndexPayload: payloads[2],
       internalTracesPayload: payloads[3],
+      existingArchive,
       zstdLevel: params.config.zstdLevel,
     });
   } catch (err) {
@@ -333,9 +335,9 @@ export async function commitPending(params: {
         );
       }
       await client.query(
-        "INSERT INTO archive_parts(block_number, path, sha256, size_bytes, raw_bytes, created_at) VALUES($1, $2, $3, $4, $5, $6) " +
-          "ON CONFLICT(block_number) DO UPDATE SET path = excluded.path, sha256 = excluded.sha256, size_bytes = excluded.size_bytes, raw_bytes = excluded.raw_bytes, created_at = excluded.created_at",
-        [blockInfo.number, archive.path, archive.sha256, archive.sizeBytes, archive.rawBytes, Date.now()]
+        "INSERT INTO archive_parts(block_number, path, sha256, raw_sha256, size_bytes, raw_bytes, created_at) VALUES($1, $2, $3, $4, $5, $6, $7) " +
+          "ON CONFLICT(block_number) DO UPDATE SET path = excluded.path, sha256 = excluded.sha256, raw_sha256 = excluded.raw_sha256, size_bytes = excluded.size_bytes, raw_bytes = excluded.raw_bytes, created_at = excluded.created_at",
+        [blockInfo.number, archive.path, archive.sha256, archive.rawSha256, archive.sizeBytes, archive.rawBytes, Date.now()]
       );
       await client.query(
         "INSERT INTO meta(key, value) VALUES($1, $2) ON CONFLICT(key) DO UPDATE SET value = excluded.value",

@@ -2,9 +2,11 @@
 // どこで: indexerテスト / 何を: Postgres化後の主要ロジックを検証 / なぜ: SQLite撤去後の退行を防ぐため
 
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { compress, decompress } from "@mongodb-js/zstd";
 import { newDb } from "pg-mem";
 import { cursorFromJson, cursorToJson } from "../src/cursor";
 import { clientTestHooks } from "../src/client";
@@ -25,6 +27,7 @@ import { runWorkerWithDeps } from "../src/worker";
 import { classifyExportError } from "../src/worker_errors";
 import type { Cursor, ExportError, ExportResponse, Result } from "../src/types";
 import type { Config } from "../src/config";
+import type { ArchiveResult, ExistingArchiveMeta } from "../src/archiver";
 
 type TestFn = () => void | Promise<void>;
 type TestCase = { name: string; fn: TestFn };
@@ -33,6 +36,15 @@ const tests: TestCase[] = [];
 
 function test(name: string, fn: TestFn): void {
   tests.push({ name, fn });
+}
+
+function toExistingArchiveMeta(result: ArchiveResult): ExistingArchiveMeta {
+  return {
+    path: result.path,
+    sha256: result.sha256,
+    rawSha256: result.rawSha256,
+    sizeBytes: result.sizeBytes,
+  };
 }
 
 test("cursor json roundtrip", () => {
@@ -2913,13 +2925,127 @@ test("archiveBlock reuses existing file", async () => {
       blockPayload: buildBlockPayload(1n, 10n, []),
       receiptsPayload: Buffer.alloc(0),
       txIndexPayload: Buffer.alloc(0),
+      internalTracesPayload: Buffer.alloc(0),
       zstdLevel: 1,
     };
     const first = await archiveBlock(input);
-    const second = await archiveBlock(input);
+    const second = await archiveBlock({
+      ...input,
+      existingArchive: toExistingArchiveMeta(first),
+    });
     assert.equal(first.path, second.path);
     assert.equal(first.sizeBytes, second.sizeBytes);
     assert.equal(first.sha256.toString("hex"), second.sha256.toString("hex"));
+    assert.equal(first.rawSha256.toString("hex"), second.rawSha256.toString("hex"));
+    const restored = await decompress(await fs.readFile(first.path));
+    assert.deepEqual(restored, buildArchiveRaw(input.blockPayload, input.receiptsPayload, input.txIndexPayload, input.internalTracesPayload));
+  });
+});
+
+test("archiveBlock recomputes compressed sha256 when reusing existing file", async () => {
+  await withTempDir(async (dir) => {
+    const input = {
+      archiveDir: dir,
+      chainId: "local",
+      blockNumber: 1n,
+      blockPayload: buildBlockPayload(1n, 10n, []),
+      receiptsPayload: Buffer.from([1, 2, 3]),
+      txIndexPayload: Buffer.from([4, 5]),
+      internalTracesPayload: Buffer.from([6, 7, 8]),
+      zstdLevel: 1,
+    };
+    const first = await archiveBlock(input);
+    const recompressed = await compress(
+      buildArchiveRaw(input.blockPayload, input.receiptsPayload, input.txIndexPayload, input.internalTracesPayload),
+      9
+    );
+    await fs.writeFile(first.path, recompressed);
+
+    const second = await archiveBlock({
+      ...input,
+      existingArchive: toExistingArchiveMeta(first),
+    });
+
+    assert.equal(second.rawSha256.toString("hex"), first.rawSha256.toString("hex"));
+    assert.equal(second.sha256.toString("hex"), createHash("sha256").update(recompressed).digest().toString("hex"));
+    assert.notEqual(second.sha256.toString("hex"), first.sha256.toString("hex"));
+  });
+});
+
+test("archiveBlock replaces legacy 3-segment file with current 4-segment bundle", async () => {
+  await withTempDir(async (dir) => {
+    const input = {
+      archiveDir: dir,
+      chainId: "local",
+      blockNumber: 1n,
+      blockPayload: buildBlockPayload(1n, 10n, []),
+      receiptsPayload: Buffer.from([1, 2, 3]),
+      txIndexPayload: Buffer.from([4, 5]),
+      internalTracesPayload: Buffer.from([6, 7, 8]),
+      zstdLevel: 1,
+    };
+    const outPath = path.join(dir, "local", "1.bundle.zst");
+    await fs.mkdir(path.dirname(outPath), { recursive: true });
+    await fs.writeFile(
+      outPath,
+      await compress(buildLegacyArchiveRaw(input.blockPayload, input.receiptsPayload, input.txIndexPayload), input.zstdLevel)
+    );
+
+    const archived = await archiveBlock({
+      ...input,
+      existingArchive: {
+        path: outPath,
+        sha256: Buffer.alloc(32, 0xaa),
+        rawSha256: null,
+        sizeBytes: 0,
+      },
+    });
+    const restored = await decompress(await fs.readFile(outPath));
+    const expected = buildArchiveRaw(input.blockPayload, input.receiptsPayload, input.txIndexPayload, input.internalTracesPayload);
+
+    assert.deepEqual(restored, expected);
+    assert.equal(archived.rawBytes, expected.length);
+  });
+});
+
+test("archiveBlock replaces current-format file when raw content differs", async () => {
+  await withTempDir(async (dir) => {
+    const input = {
+      archiveDir: dir,
+      chainId: "local",
+      blockNumber: 1n,
+      blockPayload: buildBlockPayload(1n, 10n, []),
+      receiptsPayload: Buffer.from([1, 2, 3]),
+      txIndexPayload: Buffer.from([4, 5]),
+      internalTracesPayload: Buffer.from([6, 7, 8]),
+      zstdLevel: 1,
+    };
+    const outPath = path.join(dir, "local", "1.bundle.zst");
+    await fs.mkdir(path.dirname(outPath), { recursive: true });
+    await fs.writeFile(
+      outPath,
+      await compress(
+        buildArchiveRaw(input.blockPayload, Buffer.from([9, 9, 9]), input.txIndexPayload, input.internalTracesPayload),
+        input.zstdLevel
+      )
+    );
+
+    const archived = await archiveBlock({
+      ...input,
+      existingArchive: {
+        path: outPath,
+        sha256: Buffer.alloc(32, 0xbb),
+        rawSha256: createHash("sha256").update(
+          buildArchiveRaw(input.blockPayload, Buffer.from([9, 9, 9]), input.txIndexPayload, input.internalTracesPayload)
+        ).digest(),
+        sizeBytes: 0,
+      },
+    });
+    const restored = await decompress(await fs.readFile(outPath));
+    const expected = buildArchiveRaw(input.blockPayload, input.receiptsPayload, input.txIndexPayload, input.internalTracesPayload);
+
+    assert.deepEqual(restored, expected);
+    assert.equal(archived.rawBytes, expected.length);
   });
 });
 
@@ -2951,10 +3077,13 @@ test("db upsert and metrics aggregation", async () => {
       blockNumber: 10n,
       path: "10.bundle.zst",
       sha256: Buffer.alloc(32, 3),
+      rawSha256: Buffer.alloc(32, 5),
       sizeBytes: 40,
       rawBytes: 50,
       createdAt: Date.now(),
     });
+    const archive = await db.getArchivePart(10n);
+    assert.equal(archive?.rawSha256?.toString("hex"), Buffer.alloc(32, 5).toString("hex"));
     const archiveSum = await db.getArchiveBytesSum();
     assert.equal(archiveSum, 40);
     await db.addOpsMetricsSample({
@@ -3008,6 +3137,7 @@ test("archive_gc keeps orphan by default and can remove with explicit mode", asy
         blockNumber: 3n,
         path: "3.bundle.zst",
         sha256: Buffer.alloc(32, 1),
+        rawSha256: Buffer.alloc(32, 2),
         sizeBytes: 4,
         rawBytes: 4,
         createdAt: Date.now(),
@@ -3071,8 +3201,8 @@ test("retention cleanup dry-run and delete follow 90-day boundary", async () => 
       tx_selector: null,
       receipt_status: 0,
     });
-    await db.addArchive({ blockNumber: 1n, path: "1.bundle.zst", sha256: Buffer.alloc(32, 3), sizeBytes: 10, rawBytes: 10, createdAt: Number(oldSec) * 1000 });
-    await db.addArchive({ blockNumber: 2n, path: "2.bundle.zst", sha256: Buffer.alloc(32, 4), sizeBytes: 10, rawBytes: 10, createdAt: Number(freshSec) * 1000 });
+    await db.addArchive({ blockNumber: 1n, path: "1.bundle.zst", sha256: Buffer.alloc(32, 3), rawSha256: Buffer.alloc(32, 5), sizeBytes: 10, rawBytes: 10, createdAt: Number(oldSec) * 1000 });
+    await db.addArchive({ blockNumber: 2n, path: "2.bundle.zst", sha256: Buffer.alloc(32, 4), rawSha256: Buffer.alloc(32, 6), sizeBytes: 10, rawBytes: 10, createdAt: Number(freshSec) * 1000 });
     await db.addMetrics(oldDay, 1, 1, 1, 0, 10);
     await db.addMetrics(freshDay, 1, 1, 1, 0, 20);
 
@@ -3119,6 +3249,7 @@ async function createTestIndexerDb(): Promise<IndexerDb> {
   const pool = new adapter.Pool();
   const db = await IndexerDb.fromPool(pool, { migrations: MIGRATIONS.slice(0, 1) });
   await db.queryOne("alter table if exists blocks add column if not exists gas_used bigint");
+  await db.queryOne("alter table if exists archive_parts add column if not exists raw_sha256 bytea");
   await db.queryOne("alter table if exists txs add column if not exists tx_selector bytea");
   await db.queryOne("alter table if exists txs add column if not exists tx_input bytea");
   await db.queryOne("alter table if exists txs add column if not exists eth_tx_hash bytea");
@@ -3366,6 +3497,35 @@ function buildInternalTracesPayload(
   }
   const body = Buffer.concat(parts);
   return Buffer.concat([txHash, u32(body.length), body]);
+}
+
+function buildArchiveRaw(
+  block: Uint8Array,
+  receipts: Uint8Array,
+  txIndex: Uint8Array,
+  internalTraces: Uint8Array
+): Buffer {
+  return Buffer.concat([
+    u32(block.length),
+    Buffer.from(block),
+    u32(receipts.length),
+    Buffer.from(receipts),
+    u32(txIndex.length),
+    Buffer.from(txIndex),
+    u32(internalTraces.length),
+    Buffer.from(internalTraces),
+  ]);
+}
+
+function buildLegacyArchiveRaw(block: Uint8Array, receipts: Uint8Array, txIndex: Uint8Array): Buffer {
+  return Buffer.concat([
+    u32(block.length),
+    Buffer.from(block),
+    u32(receipts.length),
+    Buffer.from(receipts),
+    u32(txIndex.length),
+    Buffer.from(txIndex),
+  ]);
 }
 
 function writeU64BE(buf: Buffer, offset: number, value: bigint): number {

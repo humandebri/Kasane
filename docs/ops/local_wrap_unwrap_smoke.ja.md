@@ -60,7 +60,7 @@ cargo build --release --target wasm32-unknown-unknown -p ic-evm-gateway -p wrap-
 ### 3. official ledger wasm を準備
 
 ```bash
-bash scripts/prepare_ci_icrc1_ledger_wasm.sh && export ICP_LEDGER_WASM=/tmp/kasane-ledger-cache/ic-icrc1-ledger.wasm
+bash scripts/prepare_ci_icrc1_ledger_wasm.sh && export ICP_LEDGER_WASM="$PWD/third_party/dfinity/ledger-suite-icrc-2026-03-09/ic-icrc1-ledger.wasm"
 ```
 
 期待:

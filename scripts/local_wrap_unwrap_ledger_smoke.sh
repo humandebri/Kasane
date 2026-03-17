@@ -4,14 +4,12 @@
 # why: dummy ledger では見えない fee pull / withdraw / unwrap transfer を local で再現するため
 set -euo pipefail
 
-ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+source "${ROOT_DIR}/scripts/lib_ledger_artifact.sh"
 NETWORK="${NETWORK:-local}"
 ICP_IDENTITY_NAME="${ICP_IDENTITY_NAME:-}"
 LEDGER_CACHE_DIR="${LEDGER_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/kasane-local-ledger}"
 LEDGER_RELEASE="${LEDGER_RELEASE:-ledger-suite-icrc-2026-03-09}"
-LEDGER_WASM_GZ="${LEDGER_CACHE_DIR}/ic-icrc1-ledger.wasm.gz"
-LEDGER_DID="${LEDGER_CACHE_DIR}/ledger.did"
-LEDGER_WASM="${LEDGER_CACHE_DIR}/ic-icrc1-ledger.wasm"
 WRAP_AMOUNT="${WRAP_AMOUNT:-1000000}"
 WRAP_GAS_LIMIT="${WRAP_GAS_LIMIT:-800000}"
 WRAP_EVM_NONCE="${WRAP_EVM_NONCE:-0}"
@@ -68,11 +66,15 @@ require_cmd curl
 require_cmd dfx
 require_cmd didc
 require_cmd forge
-require_cmd gzip
 require_cmd icp
 require_cmd node
 require_cmd npm
 require_cmd python
+
+LEDGER_RELEASE_RESOLVED="$(ledger_artifact_resolve_release "${LEDGER_RELEASE}")"
+LEDGER_WASM="$(ledger_artifact_wasm_path "${ROOT_DIR}" "${LEDGER_RELEASE_RESOLVED}")"
+LEDGER_DID_DIR="$(ledger_artifact_did_dir "${LEDGER_CACHE_DIR}" "${LEDGER_RELEASE_RESOLVED}")"
+LEDGER_DID="$(ledger_artifact_did_path "${LEDGER_CACHE_DIR}" "${LEDGER_RELEASE_RESOLVED}")"
 
 FACTORY_DEPLOY_MAX_FEE="$((FACTORY_DEPLOY_MAX_FEE_BASE + FACTORY_DEPLOY_FEE_BUMP))"
 FACTORY_DEPLOY_MAX_PRIORITY="$((300000000000 + FACTORY_DEPLOY_FEE_BUMP))"
@@ -179,39 +181,16 @@ tsx_eval() {
   (cd "${WRAPPER_DIR}" && "${TSX_BIN}" "${HELPER_TS}" "$@")
 }
 
-download_ledger_artifacts() {
-  if [[ -f "${LEDGER_WASM_GZ}" && -f "${LEDGER_DID}" ]]; then
+prepare_ledger_artifacts() {
+  if [[ ! -f "${LEDGER_WASM}" ]]; then
+    echo "[local-wrap-unwrap-ledger] missing vendored ledger wasm: ${LEDGER_WASM}" >&2
+    exit 1
+  fi
+  if [[ -f "${LEDGER_DID}" ]]; then
     return
   fi
-  local release_tag="${LEDGER_RELEASE}"
-  if [[ "${release_tag}" == "latest" ]]; then
-    release_tag="$(
-      python - <<'PY'
-import json
-import urllib.request
-
-page = 1
-while page <= 10:
-    url = f"https://api.github.com/repos/dfinity/ic/releases?per_page=100&page={page}"
-    with urllib.request.urlopen(url) as resp:
-        data = json.load(resp)
-    for item in data:
-        tag_name = item.get("tag_name", "")
-        if isinstance(tag_name, str) and tag_name.startswith("ledger-suite-icrc"):
-            print(tag_name)
-            raise SystemExit(0)
-    page += 1
-raise SystemExit("ledger-suite-icrc release not found")
-PY
-    )"
-  fi
-  log "download official ledger artifacts: ${release_tag}"
-  curl -L --fail --output "${LEDGER_DID}" "https://github.com/dfinity/ic/releases/download/${release_tag}/ledger.did"
-  curl -L --fail --output "${LEDGER_WASM_GZ}" "https://github.com/dfinity/ic/releases/download/${release_tag}/ic-icrc1-ledger.wasm.gz"
-}
-
-decompress_ledger_wasm() {
-  gzip -dc "${LEDGER_WASM_GZ}" > "${LEDGER_WASM}"
+  log "download official ledger did: ${LEDGER_RELEASE_RESOLVED}"
+  ledger_artifact_ensure_did "${LEDGER_CACHE_DIR}" "${LEDGER_RELEASE_RESOLVED}"
 }
 
 icp_call() {
@@ -419,8 +398,7 @@ if ! assert_local_port_available; then
 fi
 icp network start "${NETWORK}" -d >/dev/null 2>&1 &
 
-download_ledger_artifacts
-decompress_ledger_wasm
+prepare_ledger_artifacts
 
 log "build gateway and wrap wasm"
 if [[ "${SKIP_BUILD}" == "1" ]]; then

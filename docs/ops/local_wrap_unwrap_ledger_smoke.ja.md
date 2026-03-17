@@ -13,7 +13,6 @@
   - `curl`
   - `didc`
   - `forge`
-  - `gzip`
   - `python`
   - `node`
   - `npm`
@@ -30,9 +29,9 @@ scripts/local_wrap_unwrap_ledger_smoke.sh
 ## script が行うこと
 
 1. `icp network stop local` / `icp network start local -d` 相当で local managed network を clean start
-2. 公式 ledger artifact を取得
-   - `ledger.did`
-   - `ic-icrc1-ledger.wasm.gz`
+2. 公式 ledger artifact を準備
+   - レポ同梱の `third_party/dfinity/ledger-suite-icrc-2026-03-09/ic-icrc1-ledger.wasm`
+   - `${LEDGER_CACHE_DIR}/<release>/ledger.did` に置く release 対応の `ledger.did`
 3. local ledger canister を detached で作成し、ICRC-2 有効で install
 4. `evm_canister` と `wrap_canister` を local install
    - `wrap_canister` の `allowed_assets` には local ledger canister を入れる
@@ -82,12 +81,12 @@ scripts/local_wrap_unwrap_ledger_smoke.sh
   - local で deploy / call に使う identity
 - `LEDGER_RELEASE`
   - 既定値は `ledger-suite-icrc-2026-03-09`
-  - 別 release を試す場合だけ上書きする
-  - `latest` も使えるが、再現性は下がる
+  - レポ同梱 wasm と合わせるので、別 release を使う場合は `third_party/dfinity/<release>/ic-icrc1-ledger.wasm` も追加する
+  - `latest` は受け付けない。固定 release を指定する
 - `GENESIS_BALANCE_WEI`
   - 明示的に小さくしても script が factory deploy / wrap mint / unwrap submit の前払い上限を見て必要最小値まで自動補正する
 - `LEDGER_CACHE_DIR`
-  - ledger artifact の保存先
+  - ledger DID を release ごとのサブディレクトリに保存する
 - `WRAP_AMOUNT`
 - `UNWRAP_AMOUNT`
 - `LEDGER_APPROVE_AMOUNT`

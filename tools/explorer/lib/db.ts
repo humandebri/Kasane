@@ -89,6 +89,7 @@ export type InternalTransactionSummary = {
   blockNumber: bigint;
   blockTimestamp: bigint | null;
   txIndex: number;
+  receiptStatus: number | null;
   traceId: string;
   traceSortKey: string;
   depth: number;
@@ -705,13 +706,14 @@ export async function getInternalTxsByAddress(
       ]
     : [addressBuf, fetchLimit];
   const query = cursor
-    ? "SELECT it.tx_hash, it.block_number, b.timestamp AS block_timestamp, it.tx_index, it.trace_id, it.trace_sort_key, it.depth, it.action_type, it.from_address, it.to_address, it.created_contract_address, it.value_numeric, it.success, it.error_code, t.internal_trace_failed, t.internal_trace_truncated, t.internal_trace_captured_count, t.internal_trace_total_count FROM internal_transactions it LEFT JOIN blocks b ON b.number = it.block_number LEFT JOIN txs t ON t.tx_hash = it.tx_hash WHERE (it.from_address = $1 OR it.to_address = $1 OR it.created_contract_address = $1) AND (it.block_number < $2 OR (it.block_number = $2 AND it.tx_index < $3) OR (it.block_number = $2 AND it.tx_index = $3 AND it.trace_sort_key > (select string_agg(lpad(segment, 10, '0'), '_' order by ordinality) from unnest(string_to_array($4, '_')) with ordinality as parts(segment, ordinality))) OR (it.block_number = $2 AND it.tx_index = $3 AND it.trace_sort_key = (select string_agg(lpad(segment, 10, '0'), '_' order by ordinality) from unnest(string_to_array($4, '_')) with ordinality as parts(segment, ordinality)) AND it.tx_hash < $5)) ORDER BY it.block_number DESC, it.tx_index DESC, it.trace_sort_key ASC, it.tx_hash DESC LIMIT $6"
-    : "SELECT it.tx_hash, it.block_number, b.timestamp AS block_timestamp, it.tx_index, it.trace_id, it.trace_sort_key, it.depth, it.action_type, it.from_address, it.to_address, it.created_contract_address, it.value_numeric, it.success, it.error_code, t.internal_trace_failed, t.internal_trace_truncated, t.internal_trace_captured_count, t.internal_trace_total_count FROM internal_transactions it LEFT JOIN blocks b ON b.number = it.block_number LEFT JOIN txs t ON t.tx_hash = it.tx_hash WHERE it.from_address = $1 OR it.to_address = $1 OR it.created_contract_address = $1 ORDER BY it.block_number DESC, it.tx_index DESC, it.trace_sort_key ASC, it.tx_hash DESC LIMIT $2";
+    ? "SELECT it.tx_hash, it.block_number, b.timestamp AS block_timestamp, it.tx_index, t.receipt_status, it.trace_id, it.trace_sort_key, it.depth, it.action_type, it.from_address, it.to_address, it.created_contract_address, it.value_numeric, it.success, it.error_code, t.internal_trace_failed, t.internal_trace_truncated, t.internal_trace_captured_count, t.internal_trace_total_count FROM internal_transactions it LEFT JOIN blocks b ON b.number = it.block_number LEFT JOIN txs t ON t.tx_hash = it.tx_hash WHERE (it.from_address = $1 OR it.to_address = $1 OR it.created_contract_address = $1) AND (it.block_number < $2 OR (it.block_number = $2 AND it.tx_index < $3) OR (it.block_number = $2 AND it.tx_index = $3 AND it.trace_sort_key > (select string_agg(lpad(segment, 10, '0'), '_' order by ordinality) from unnest(string_to_array($4, '_')) with ordinality as parts(segment, ordinality))) OR (it.block_number = $2 AND it.tx_index = $3 AND it.trace_sort_key = (select string_agg(lpad(segment, 10, '0'), '_' order by ordinality) from unnest(string_to_array($4, '_')) with ordinality as parts(segment, ordinality)) AND it.tx_hash < $5)) ORDER BY it.block_number DESC, it.tx_index DESC, it.trace_sort_key ASC, it.tx_hash DESC LIMIT $6"
+    : "SELECT it.tx_hash, it.block_number, b.timestamp AS block_timestamp, it.tx_index, t.receipt_status, it.trace_id, it.trace_sort_key, it.depth, it.action_type, it.from_address, it.to_address, it.created_contract_address, it.value_numeric, it.success, it.error_code, t.internal_trace_failed, t.internal_trace_truncated, t.internal_trace_captured_count, t.internal_trace_total_count FROM internal_transactions it LEFT JOIN blocks b ON b.number = it.block_number LEFT JOIN txs t ON t.tx_hash = it.tx_hash WHERE it.from_address = $1 OR it.to_address = $1 OR it.created_contract_address = $1 ORDER BY it.block_number DESC, it.tx_index DESC, it.trace_sort_key ASC, it.tx_hash DESC LIMIT $2";
   const rows = await pool.query<{
     tx_hash: Buffer;
     block_number: string | number;
     block_timestamp: string | number | null;
     tx_index: number;
+    receipt_status: number | null;
     trace_id: string;
     trace_sort_key: string;
     depth: number;
@@ -732,6 +734,7 @@ export async function getInternalTxsByAddress(
     blockNumber: BigInt(row.block_number),
     blockTimestamp: row.block_timestamp === null ? null : BigInt(row.block_timestamp),
     txIndex: row.tx_index,
+    receiptStatus: row.receipt_status ?? null,
     traceId: row.trace_id,
     traceSortKey: row.trace_sort_key,
     depth: row.depth,

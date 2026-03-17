@@ -41,6 +41,16 @@ export type RetentionCleanupResult = {
   error_message: string | null;
 };
 
+export type ArchivePartRow = {
+  blockNumber: bigint;
+  path: string;
+  sha256: Buffer;
+  rawSha256: Buffer | null;
+  sizeBytes: number;
+  rawBytes: number;
+  createdAt: number;
+};
+
 export class IndexerDb {
   private readonly pool: Pool;
 
@@ -206,15 +216,44 @@ export class IndexerDb {
     blockNumber: bigint;
     path: string;
     sha256: Buffer;
+    rawSha256: Buffer;
     sizeBytes: number;
     rawBytes: number;
     createdAt: number;
   }): Promise<void> {
     await this.pool.query(
-      "INSERT INTO archive_parts(block_number, path, sha256, size_bytes, raw_bytes, created_at) VALUES($1, $2, $3, $4, $5, $6) " +
-        "ON CONFLICT(block_number) DO UPDATE SET path = excluded.path, sha256 = excluded.sha256, size_bytes = excluded.size_bytes, raw_bytes = excluded.raw_bytes, created_at = excluded.created_at",
-      [params.blockNumber, params.path, params.sha256, params.sizeBytes, params.rawBytes, params.createdAt]
+      "INSERT INTO archive_parts(block_number, path, sha256, raw_sha256, size_bytes, raw_bytes, created_at) VALUES($1, $2, $3, $4, $5, $6, $7) " +
+        "ON CONFLICT(block_number) DO UPDATE SET path = excluded.path, sha256 = excluded.sha256, raw_sha256 = excluded.raw_sha256, size_bytes = excluded.size_bytes, raw_bytes = excluded.raw_bytes, created_at = excluded.created_at",
+      [params.blockNumber, params.path, params.sha256, params.rawSha256, params.sizeBytes, params.rawBytes, params.createdAt]
     );
+  }
+
+  async getArchivePart(blockNumber: bigint): Promise<ArchivePartRow | null> {
+    const row = await this.pool.query<{
+      block_number: string | number;
+      path: string;
+      sha256: Buffer;
+      raw_sha256: Buffer | null;
+      size_bytes: string | number;
+      raw_bytes: string | number;
+      created_at: string | number;
+    }>(
+      "SELECT block_number, path, sha256, raw_sha256, size_bytes, raw_bytes, created_at FROM archive_parts WHERE block_number = $1",
+      [blockNumber]
+    );
+    const hit = row.rows[0];
+    if (!hit) {
+      return null;
+    }
+    return {
+      blockNumber: BigInt(hit.block_number),
+      path: hit.path,
+      sha256: hit.sha256,
+      rawSha256: hit.raw_sha256,
+      sizeBytes: Number(hit.size_bytes),
+      rawBytes: Number(hit.raw_bytes),
+      createdAt: Number(hit.created_at),
+    };
   }
 
   async transaction<T>(fn: (client: PoolClient) => Promise<T>): Promise<T> {

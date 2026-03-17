@@ -306,7 +306,7 @@ export default async function AddressPage({
                     {data.internalTransactions.map((item) => (
                       <TableRow key={`${item.txHashHex}:${item.traceId}`}>
                         <TableCell className="font-mono text-xs">
-                          <TxHashLink txHashHex={item.txHashHex} receiptStatus={item.success ? 1 : 0} title={item.txHashHex}>
+                          <TxHashLink txHashHex={item.txHashHex} receiptStatus={item.receiptStatus} title={item.txHashHex}>
                             {shortPrefixHex(item.txHashHex)}
                           </TxHashLink>
                         </TableCell>
