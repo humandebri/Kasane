@@ -70,7 +70,8 @@ pub struct OpsStatusView {
     pub decode_failure_last_ts: u64,
     pub decode_failure_last_label: Option<String>,
     pub block_gas_limit: u64,
-    pub instruction_soft_limit: u64,
+    pub query_instruction_soft_limit: u64,
+    pub update_instruction_soft_limit: u64,
 }
 
 #[derive(Clone, Debug, CandidType, Deserialize)]
@@ -170,7 +171,8 @@ pub struct HealthView {
     pub is_producing: bool,
     pub mining_scheduled: bool,
     pub block_gas_limit: u64,
-    pub instruction_soft_limit: u64,
+    pub query_instruction_soft_limit: u64,
+    pub update_instruction_soft_limit: u64,
 }
 
 #[derive(Clone, Debug, CandidType, Deserialize, Eq, PartialEq)]

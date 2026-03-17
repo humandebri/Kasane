@@ -32,6 +32,21 @@ require_wrap_runtime_config() {
   fi
 }
 
+optional_nat64_field() {
+  local env_name="$1"
+  local field_name="$2"
+  local value="${!env_name:-}"
+  if [[ -z "${value}" ]]; then
+    printf '  %s = null;\n' "${field_name}"
+    return 0
+  fi
+  if [[ ! "${value}" =~ ^[0-9]+$ ]]; then
+    echo "[lib_init_args] error: ${env_name} must be an unsigned integer" >&2
+    return 1
+  fi
+  printf '  %s = opt %s : nat64;\n' "${field_name}" "${value}"
+}
+
 caller_evm_blob_from_principal() {
   local principal="$1"
   local caller_hex
@@ -69,6 +84,8 @@ PY
   genesis_balances = vec { record { address = blob "${blob}"; amount = ${amount} : nat } };
   wrap_canister_id = principal "${WRAP_CANISTER_ID}";
   wrap_factory_address = blob "${factory_blob}";
+$(optional_nat64_field "QUERY_INSTRUCTION_SOFT_LIMIT" "query_instruction_soft_limit")
+$(optional_nat64_field "UPDATE_INSTRUCTION_SOFT_LIMIT" "update_instruction_soft_limit")
 })
 EOF
 )

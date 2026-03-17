@@ -88,7 +88,8 @@ summary = {
   "pruned_before_block": prune.get("pruned_before_block"),
   "prune_error_count": ops.get("prune_error_count"),
   "mining_error_count": ops.get("mining_error_count"),
-  "instruction_soft_limit": ops.get("instruction_soft_limit"),
+  "query_instruction_soft_limit": ops.get("query_instruction_soft_limit"),
+  "update_instruction_soft_limit": ops.get("update_instruction_soft_limit"),
 }
 print("[apply-prune-policy] verification:", json.dumps(summary, ensure_ascii=False))
 PY

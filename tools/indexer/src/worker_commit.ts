@@ -3,7 +3,12 @@
 
 import { archiveBlock } from "./archiver";
 import { cursorToJson } from "./cursor";
-import { decodeBlockPayload, decodeReceiptsPayload, decodeTxIndexPayload } from "./decode";
+import {
+  decodeBlockPayload,
+  decodeInternalTracesPayload,
+  decodeReceiptsPayload,
+  decodeTxIndexPayload,
+} from "./decode";
 import { IndexerDb } from "./db";
 import { Config } from "./config";
 import { Cursor, ExportResponse } from "./types";
@@ -12,7 +17,13 @@ import { errMessage, logFatal, logInfo, logWarn } from "./worker_log";
 import { isTokenTransferAmountSupported } from "./worker_commit_guard";
 import { toDayKey } from "./worker_utils";
 import type { ArchiveResult } from "./archiver";
-import type { BlockInfo, Erc20TransferInfo, ReceiptStatusInfo, TxIndexInfo } from "./decode";
+import type {
+  BlockInfo,
+  DecodedInternalTracesInfo,
+  Erc20TransferInfo,
+  ReceiptStatusInfo,
+  TxIndexInfo,
+} from "./decode";
 
 export async function commitPending(params: {
   config: Config;
@@ -29,6 +40,7 @@ export async function commitPending(params: {
   let txIndex: TxIndexInfo[] | null = null;
   let receiptStatuses: ReceiptStatusInfo[] | null = null;
   let tokenTransfers: Erc20TransferInfo[] | null = null;
+  let internalTraces: DecodedInternalTracesInfo | null = null;
   let skippedTokenTransfersMalformed = 0;
   const payloads = finalizePayloads(params.pending);
   try {
@@ -38,6 +50,7 @@ export async function commitPending(params: {
     tokenTransfers = decodedReceipts.tokenTransfers;
     skippedTokenTransfersMalformed = decodedReceipts.skippedTokenTransfers;
     txIndex = decodeTxIndexPayload(payloads[2]);
+    internalTraces = decodeInternalTracesPayload(payloads[3]);
   } catch (err) {
     logFatal(
       params.config.chainId,
@@ -51,7 +64,7 @@ export async function commitPending(params: {
     );
     process.exit(1);
   }
-  if (!blockInfo || !txIndex || !receiptStatuses || !tokenTransfers) {
+  if (!blockInfo || !txIndex || !receiptStatuses || !tokenTransfers || !internalTraces) {
     logFatal(
       params.config.chainId,
       "Decode",
@@ -140,6 +153,7 @@ export async function commitPending(params: {
   }
   let archive: ArchiveResult | null = null;
   try {
+    const existingArchive = await params.db.getArchivePart(blockInfo.number);
     archive = await archiveBlock({
       archiveDir: params.config.archiveDir,
       chainId: params.config.chainId,
@@ -147,6 +161,8 @@ export async function commitPending(params: {
       blockPayload: payloads[0],
       receiptsPayload: payloads[1],
       txIndexPayload: payloads[2],
+      internalTracesPayload: payloads[3],
+      existingArchive,
       zstdLevel: params.config.zstdLevel,
     });
   } catch (err) {
@@ -213,13 +229,14 @@ export async function commitPending(params: {
         "INSERT INTO blocks(number, hash, timestamp, tx_count, gas_used) VALUES($1, $2, $3, $4, $5) ON CONFLICT(number) DO UPDATE SET hash = excluded.hash, timestamp = excluded.timestamp, tx_count = excluded.tx_count, gas_used = excluded.gas_used",
         [blockInfo.number, blockInfo.blockHash, blockInfo.timestamp, blockInfo.txIds.length, blockInfo.gasUsed]
       );
+      const blockTxHashes = txIndex.map((entry) => entry.txHash);
       for (const entry of txIndex) {
         const receiptStatus = receiptStatusByTxHash.get(entry.txHash.toString("hex"));
         if (!receiptStatus) {
           throw new Error(`receipt status missing after validation for tx_hash=${entry.txHash.toString("hex")}`);
         }
         await client.query(
-          "INSERT INTO txs(tx_hash, eth_tx_hash, block_number, tx_index, caller_principal, from_address, to_address, tx_input, tx_selector, receipt_status) VALUES($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) ON CONFLICT(tx_hash) DO UPDATE SET eth_tx_hash = COALESCE(excluded.eth_tx_hash, txs.eth_tx_hash), block_number = excluded.block_number, tx_index = excluded.tx_index, caller_principal = excluded.caller_principal, from_address = excluded.from_address, to_address = excluded.to_address, tx_input = COALESCE(excluded.tx_input, txs.tx_input), tx_selector = excluded.tx_selector, receipt_status = excluded.receipt_status",
+          "INSERT INTO txs(tx_hash, eth_tx_hash, block_number, tx_index, caller_principal, from_address, to_address, tx_input, tx_selector, receipt_status, internal_trace_failed, internal_trace_truncated, internal_trace_captured_count, internal_trace_total_count) VALUES($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, false, false, null, null) ON CONFLICT(tx_hash) DO UPDATE SET eth_tx_hash = COALESCE(excluded.eth_tx_hash, txs.eth_tx_hash), block_number = excluded.block_number, tx_index = excluded.tx_index, caller_principal = excluded.caller_principal, from_address = excluded.from_address, to_address = excluded.to_address, tx_input = COALESCE(excluded.tx_input, txs.tx_input), tx_selector = excluded.tx_selector, receipt_status = excluded.receipt_status, internal_trace_failed = excluded.internal_trace_failed, internal_trace_truncated = excluded.internal_trace_truncated, internal_trace_captured_count = excluded.internal_trace_captured_count, internal_trace_total_count = excluded.internal_trace_total_count",
           [
             entry.txHash,
             entry.ethTxHash,
@@ -282,10 +299,45 @@ export async function commitPending(params: {
           await client.query("RELEASE SAVEPOINT token_transfer_row");
         }
       }
+      if (blockTxHashes.length > 0) {
+        await client.query("DELETE FROM internal_transactions WHERE tx_hash = ANY($1::bytea[])", [blockTxHashes]);
+      }
+      for (const internalTraceTx of internalTraces.txs) {
+        await client.query(
+          "UPDATE txs SET internal_trace_failed = $2, internal_trace_truncated = $3, internal_trace_captured_count = $4, internal_trace_total_count = $5 WHERE tx_hash = $1",
+          [
+            internalTraceTx.txHash,
+            internalTraceTx.failed,
+            internalTraceTx.truncated,
+            internalTraceTx.capturedCount,
+            internalTraceTx.totalCount,
+          ]
+        );
+      }
+      for (const internalTx of internalTraces.transactions) {
+        await client.query(
+          "INSERT INTO internal_transactions(tx_hash, block_number, tx_index, trace_id, trace_sort_key, depth, action_type, from_address, to_address, created_contract_address, value_numeric, success, error_code) VALUES($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) ON CONFLICT(tx_hash, trace_id) DO UPDATE SET block_number = excluded.block_number, tx_index = excluded.tx_index, trace_sort_key = excluded.trace_sort_key, depth = excluded.depth, action_type = excluded.action_type, from_address = excluded.from_address, to_address = excluded.to_address, created_contract_address = excluded.created_contract_address, value_numeric = excluded.value_numeric, success = excluded.success, error_code = excluded.error_code",
+          [
+            internalTx.txHash,
+            internalTx.blockNumber,
+            internalTx.txIndex,
+            internalTx.traceId,
+            internalTx.traceSortKey,
+            internalTx.depth,
+            internalTx.actionType,
+            internalTx.fromAddress,
+            internalTx.toAddress,
+            internalTx.createdContractAddress,
+            internalTx.value.toString(),
+            internalTx.success,
+            internalTx.errorCode,
+          ]
+        );
+      }
       await client.query(
-        "INSERT INTO archive_parts(block_number, path, sha256, size_bytes, raw_bytes, created_at) VALUES($1, $2, $3, $4, $5, $6) " +
-          "ON CONFLICT(block_number) DO UPDATE SET path = excluded.path, sha256 = excluded.sha256, size_bytes = excluded.size_bytes, raw_bytes = excluded.raw_bytes, created_at = excluded.created_at",
-        [blockInfo.number, archive.path, archive.sha256, archive.sizeBytes, archive.rawBytes, Date.now()]
+        "INSERT INTO archive_parts(block_number, path, sha256, raw_sha256, size_bytes, raw_bytes, created_at) VALUES($1, $2, $3, $4, $5, $6, $7) " +
+          "ON CONFLICT(block_number) DO UPDATE SET path = excluded.path, sha256 = excluded.sha256, raw_sha256 = excluded.raw_sha256, size_bytes = excluded.size_bytes, raw_bytes = excluded.raw_bytes, created_at = excluded.created_at",
+        [blockInfo.number, archive.path, archive.sha256, archive.rawSha256, archive.sizeBytes, archive.rawBytes, Date.now()]
       );
       await client.query(
         "INSERT INTO meta(key, value) VALUES($1, $2) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
@@ -326,6 +378,8 @@ export async function commitPending(params: {
       token_transfer_skipped_malformed: skippedTokenTransfersMalformed,
       token_transfer_skipped_amount: skippedTokenTransfersAmount,
       token_transfer_skipped_db: skippedTokenTransfersDb,
+      internal_trace_total: internalTraces.transactions.length,
+      internal_trace_truncated_txs: internalTraces.txs.filter((item) => item.truncated).length,
     });
   } catch (err) {
     logFatal(

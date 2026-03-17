@@ -28,6 +28,13 @@ pub fn read_u32(data: &[u8], offset: &mut usize) -> Option<u32> {
     Some(u32::from_be_bytes(buf))
 }
 
+pub fn read_u16(data: &[u8], offset: &mut usize) -> Option<u16> {
+    let slice = read_exact(data, offset, 2)?;
+    let mut buf = [0u8; 2];
+    buf.copy_from_slice(slice);
+    Some(u16::from_be_bytes(buf))
+}
+
 pub fn read_u64(data: &[u8], offset: &mut usize) -> Option<u64> {
     let slice = read_exact(data, offset, 8)?;
     let mut buf = [0u8; 8];

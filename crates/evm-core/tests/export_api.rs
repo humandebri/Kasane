@@ -181,7 +181,7 @@ fn export_rejects_segment_out_of_range() {
 
     let cursor = ExportCursor {
         block_number: 1,
-        segment: 3,
+        segment: 4,
         byte_offset: 0,
     };
     let err = export_blocks(Some(cursor), 10).expect_err("should be invalid cursor");

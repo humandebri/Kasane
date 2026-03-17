@@ -38,7 +38,7 @@ pnpm run dev
 - Search: `/search?q=...`
 - Block: `/blocks/:number`
 - Tx: `/tx/:hash`
-- Address: `/address/:hex`（20-byte hex, `Transactions`/`Token Transfers` タブ）
+- Address: `/address/:hex`（20-byte hex, `Transactions`/`Internal Transactions`/`Token Transfers`/`Contract Events`/`Contract` タブ）
 - Principal: `/principal/:text`
 - Logs: `/logs`
 - Ops: `/ops`
@@ -63,9 +63,15 @@ Search の入力判定:
 
 ## 既知の制約
 
-- Addressページは snapshot 情報（balance / nonce / code）に加えて tx履歴と ERC-20 Transfer 履歴を表示します。
+- Addressページは snapshot 情報（balance / nonce / code）に加えて `Transactions / Internal Transactions / Token Transfers / Contract Events / Contract` を表示します。
+- `Transactions` タブは `from/to = address` の direct tx のみを表示します。event emitter ベースの関与 tx は混ぜません。
+- `Internal Transactions` タブは trace ベースの内部アクションを表示します。direct tx とは別集計です。
 - Addressページの tx履歴は `Transaction Hash / Method(selector推定) / Block / Age / From / Direction / To / Amount / Txn Fee` を表示します。
+- `Contract Events` タブは `receipt.logs.address = address` の logs を表示します。
+- `Contract Events` の RPC取得は `events` タブ選択時のみ行います。
+- `Contract` タブは verify結果、creator / creation tx、source preview、ABI有無を表示します。`Read Contract` / `Write Contract` は未対応です。
 - address履歴は `Older`（50件単位カーソル）で継続取得します。
+- internal tx履歴も `Older`（50件単位カーソル）で継続取得します。
 - token transfer履歴も `Older`（50件単位カーソル）で継続取得します。
 - `/tx` の `Value / Transaction Fee` は wei由来の値を `ICP` 表記で、`Gas Price` は `effective_gas_price` を `Gwei` 表記で表示します。
 - token metadata（symbol/decimals）は in-memory キャッシュを使用します（上限1000、成功TTL 24h、失敗TTL 5m、同時取得上限5）。

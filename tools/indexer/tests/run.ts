@@ -2,13 +2,21 @@
 // どこで: indexerテスト / 何を: Postgres化後の主要ロジックを検証 / なぜ: SQLite撤去後の退行を防ぐため
 
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { compress, decompress } from "@mongodb-js/zstd";
 import { newDb } from "pg-mem";
 import { cursorFromJson, cursorToJson } from "../src/cursor";
 import { clientTestHooks } from "../src/client";
-import { decodeBlockPayload, decodeErc20TransferPayload, decodeReceiptStatusPayload, decodeTxIndexPayload } from "../src/decode";
+import {
+  decodeBlockPayload,
+  decodeErc20TransferPayload,
+  decodeInternalTracesPayload,
+  decodeReceiptStatusPayload,
+  decodeTxIndexPayload,
+} from "../src/decode";
 import { archiveBlock } from "../src/archiver";
 import { runArchiveGc, runArchiveGcWithMode } from "../src/archive_gc";
 import { IndexerDb } from "../src/db";
@@ -17,8 +25,9 @@ import { workerCommitGuardTestHooks } from "../src/worker_commit_guard";
 import { applyChunk, enforceNextCursor, finalizePayloads, newPendingFromChunk } from "../src/worker_pending";
 import { runWorkerWithDeps } from "../src/worker";
 import { classifyExportError } from "../src/worker_errors";
-import type { ExportError } from "../src/types";
+import type { Cursor, ExportError, ExportResponse, Result } from "../src/types";
 import type { Config } from "../src/config";
+import type { ArchiveResult, ExistingArchiveMeta } from "../src/archiver";
 
 type TestFn = () => void | Promise<void>;
 type TestCase = { name: string; fn: TestFn };
@@ -27,6 +36,15 @@ const tests: TestCase[] = [];
 
 function test(name: string, fn: TestFn): void {
   tests.push({ name, fn });
+}
+
+function toExistingArchiveMeta(result: ArchiveResult): ExistingArchiveMeta {
+  return {
+    path: result.path,
+    sha256: result.sha256,
+    rawSha256: result.rawSha256,
+    sizeBytes: result.sizeBytes,
+  };
 }
 
 test("cursor json roundtrip", () => {
@@ -285,6 +303,115 @@ test("receipts payload reads erc20 amount from first 32 bytes", () => {
   assert.equal(out[0]?.amount, 7n);
 });
 
+test("internal traces payload decodes flattened actions", () => {
+  const txHash = Buffer.alloc(32, 0xaa);
+  const payload = buildInternalTracesPayload(txHash, [
+    {
+      blockNumber: 7n,
+      txIndex: 3,
+      traceId: "0",
+      depth: 1,
+      actionType: 1,
+      fromAddress: Buffer.alloc(20, 0x11),
+      toAddress: Buffer.alloc(20, 0x22),
+      value: 25n,
+      createdContractAddress: null,
+      success: true,
+      errorCode: null,
+    },
+    {
+      blockNumber: 7n,
+      txIndex: 3,
+      traceId: "0_1",
+      depth: 2,
+      actionType: 7,
+      fromAddress: Buffer.alloc(20, 0x33),
+      toAddress: null,
+      value: 0n,
+      createdContractAddress: Buffer.alloc(20, 0x44),
+      success: false,
+      errorCode: "Revert",
+    },
+  ]);
+  const out = decodeInternalTracesPayload(payload);
+  assert.equal(out.transactions.length, 2);
+  assert.equal(out.txs.length, 1);
+  assert.equal(out.txs[0]?.truncated, false);
+  assert.equal(out.txs[0]?.failed, false);
+  assert.equal(out.txs[0]?.capturedCount, 2);
+  assert.equal(out.txs[0]?.totalCount, 2);
+  assert.equal(out.transactions[0]?.actionType, "call");
+  assert.equal(out.transactions[0]?.traceSortKey, "0000000000");
+  assert.equal(out.transactions[0]?.value, 25n);
+  assert.equal(out.transactions[1]?.actionType, "custom");
+  assert.equal(out.transactions[1]?.traceSortKey, "0000000000_0000000001");
+  assert.equal(out.transactions[1]?.createdContractAddress?.toString("hex"), "44".repeat(20));
+  assert.equal(out.transactions[1]?.errorCode, "Revert");
+});
+
+test("internal traces payload decodes failed metadata without entries", () => {
+  const txHash = Buffer.alloc(32, 0xad);
+  const payload = buildInternalTracesPayload(txHash, [], { failed: true, totalCount: 4 });
+  const out = decodeInternalTracesPayload(payload);
+  assert.equal(out.transactions.length, 0);
+  assert.equal(out.txs.length, 1);
+  assert.equal(out.txs[0]?.failed, true);
+  assert.equal(out.txs[0]?.capturedCount, 0);
+  assert.equal(out.txs[0]?.totalCount, 4);
+});
+
+test("internal traces payload rejects truncated optional addresses", () => {
+  const txHash = Buffer.alloc(32, 0xbb);
+  const traceId = Buffer.from("0", "utf8");
+  const body = Buffer.concat([
+    Buffer.from([2, 0]),
+    u32(1),
+    u32(1),
+    u32(1),
+    u64(7n),
+    u32(3),
+    u16(traceId.length),
+    traceId,
+    u16(1),
+    Buffer.from([1]),
+    Buffer.alloc(20, 0x11),
+    Buffer.from([1]),
+    Buffer.alloc(19, 0x22),
+    toWord32(1n),
+    Buffer.from([0]),
+    Buffer.from([1]),
+    u16(0),
+  ]);
+  const payload = Buffer.concat([txHash, u32(body.length), body]);
+  assert.throws(() => decodeInternalTracesPayload(payload), /address truncated/);
+});
+
+test("internal traces payload rejects truncated error code within entry boundary", () => {
+  const txHash = Buffer.alloc(32, 0xbc);
+  const traceId = Buffer.from("0", "utf8");
+  const body = Buffer.concat([
+    Buffer.from([2, 0]),
+    u32(1),
+    u32(1),
+    u32(1),
+    u64(8n),
+    u32(4),
+    u16(traceId.length),
+    traceId,
+    u16(1),
+    Buffer.from([1]),
+    Buffer.alloc(20, 0x11),
+    Buffer.from([0]),
+    toWord32(1n),
+    Buffer.from([0]),
+    Buffer.from([1]),
+    u16(4),
+    Buffer.from("abc", "utf8"),
+  ]);
+  const payload = Buffer.concat([txHash, u32(body.length), body]);
+  assert.throws(() => decodeInternalTracesPayload(payload), /error_code truncated/);
+});
+
 test("token transfer amount guard rejects numeric(78,0) overflow", () => {
   const maxUint256 = (1n << 256n) - 1n;
   assert.equal(workerCommitGuardTestHooks.isTokenTransferAmountSupported(maxUint256), true);
@@ -425,9 +552,11 @@ test("applyChunk can process multiple blocks in one chunk stream", () => {
     { segment: 0, start: 0, bytes: block1, payload_len: block1.length },
     { segment: 1, start: 0, bytes: Buffer.alloc(0), payload_len: 0 },
     { segment: 2, start: 0, bytes: Buffer.alloc(0), payload_len: 0 },
+    { segment: 3, start: 0, bytes: Buffer.alloc(0), payload_len: 0 },
     { segment: 0, start: 0, bytes: block2, payload_len: block2.length },
     { segment: 1, start: 0, bytes: Buffer.alloc(0), payload_len: 0 },
     { segment: 2, start: 0, bytes: Buffer.alloc(0), payload_len: 0 },
+    { segment: 3, start: 0, bytes: Buffer.alloc(0), payload_len: 0 },
   ];
   let pending: ReturnType<typeof newPendingFromChunk> | null = newPendingFromChunk(chunks[0]);
   const seen: bigint[] = [];
@@ -1386,6 +1515,452 @@ test("runWorkerWithDeps stores token_transfers block/tx index from tx_index payl
     );
     assert.equal(row?.block_number, "1");
     assert.equal(row?.tx_index, "9");
+  });
+  await originalClose();
+});
+
+test("runWorkerWithDeps stores internal_transactions from segment 3 payload", async () => {
+  const db = await createTestIndexerDb();
+  const originalClose = db.close.bind(db);
+  (db as unknown as { close: () => Promise<void> }).close = async () => { };
+  await withTempDir(async (dir) => {
+    const config: Config = {
+      canisterId: "test-canister",
+      icHost: "http://127.0.0.1:4943",
+      databaseUrl: "postgres://unused",
+      dbPoolMax: 1,
+      retentionDays: 90,
+      retentionEnabled: false,
+      retentionDryRun: false,
+      archiveGcDeleteOrphans: false,
+      maxBytes: 1_200_000,
+      backoffInitialMs: 1,
+      backoffMaxMs: 2,
+      idlePollMs: 1,
+      pruneStatusPollMs: 0,
+      opsMetricsPollMs: 0,
+      fetchRootKey: false,
+      archiveDir: dir,
+      chainId: "test",
+      zstdLevel: 1,
+      maxSegment: 3,
+    };
+    await db.setCursor({ block_number: 1n, segment: 0, byte_offset: 0 });
+    const txHash = Buffer.alloc(32, 0x81);
+    const block = buildBlockPayload(1n, 10n, [txHash]);
+    const receipts = buildReceiptsPayload([{ txHash, receipt: buildReceiptBytes(1, true) }]);
+    const txIndex = buildTxIndexPayload(1n, txHash, 2);
+    const internalTraces = buildInternalTracesPayload(txHash, [
+      {
+        blockNumber: 1n,
+        txIndex: 2,
+        traceId: "0",
+        depth: 1,
+        actionType: 7,
+        fromAddress: Buffer.alloc(20, 0x11),
+        toAddress: Buffer.alloc(20, 0x22),
+        value: 123n,
+        createdContractAddress: null,
+        success: true,
+        errorCode: null,
+      },
+    ]);
+    const chunks = [
+      { segment: 0, start: 0, bytes: block, payload_len: block.length },
+      { segment: 1, start: 0, bytes: receipts, payload_len: receipts.length },
+      { segment: 2, start: 0, bytes: txIndex, payload_len: txIndex.length },
+      { segment: 3, start: 0, bytes: internalTraces, payload_len: internalTraces.length },
+    ];
+    let headCalls = 0;
+    const client = {
+      getTxMetaByTxId: async () => ({ input: null, ethTxHash: null }),
+      getHeadNumber: async (): Promise<bigint> => {
+        headCalls += 1;
+        if (headCalls === 2) {
+          process.emit("SIGINT");
+        }
+        return 1n;
+      },
+      exportBlocks: async (
+        cursor: { block_number: bigint; segment: number; byte_offset: number } | null
+      ): Promise<
+        | {
+          Ok: {
+            chunks: Array<{ segment: number; start: number; bytes: Buffer; payload_len: number }>;
+            next_cursor: { block_number: bigint; segment: number; byte_offset: number };
+          };
+        }
+        | { Err: never }
+      > => {
+        if (headCalls === 1) {
+          return {
+            Ok: {
+              chunks,
+              next_cursor: { block_number: 2n, segment: 0, byte_offset: 0 },
+            },
+          };
+        }
+        return {
+          Ok: {
+            chunks: [],
+            next_cursor: cursor ?? { block_number: 2n, segment: 0, byte_offset: 0 },
+          },
+        };
+      },
+      getPruneStatus: async () => ({
+        pruning_enabled: false,
+        prune_running: false,
+        estimated_kept_bytes: 0n,
+        high_water_bytes: 0n,
+        low_water_bytes: 0n,
+        hard_emergency_bytes: 0n,
+        last_prune_at: 0n,
+        pruned_before_block: null,
+        oldest_kept_block: null,
+        oldest_kept_timestamp: null,
+        need_prune: false,
+      }),
+      getMetrics: async () => ({
+        txs: 0n,
+        ema_txs_per_block_x1000: 0n,
+        pruned_before_block: null,
+        ema_block_rate_per_sec_x1000: 0n,
+        total_submitted: 0n,
+        window: 128n,
+        avg_txs_per_block: 0n,
+        block_rate_per_sec_x1000: null,
+        cycles: 0n,
+        total_dropped: 0n,
+        blocks: 0n,
+        drop_counts: [],
+        queue_len: 0n,
+        total_included: 0n,
+      }),
+    };
+    await runWorkerWithDeps(config, db, client, { skipGc: true });
+    const row = await db.queryOne<{ action_type: string; trace_id: string; trace_sort_key: string; value_numeric: string }>(
+      "select action_type, trace_id, trace_sort_key, value_numeric::text as value_numeric from internal_transactions where tx_hash = $1",
+      [txHash]
+    );
+    const txMeta = await db.queryOne<{
+      internal_trace_failed: boolean;
+      internal_trace_truncated: boolean;
+      internal_trace_captured_count: number | null;
+      internal_trace_total_count: number | null;
+    }>(
+      "select internal_trace_failed, internal_trace_truncated, internal_trace_captured_count, internal_trace_total_count from txs where tx_hash = $1",
+      [txHash]
+    );
+    assert.equal(row?.action_type, "custom");
+    assert.equal(row?.trace_id, "0");
+    assert.equal(row?.trace_sort_key, "0000000000");
+    assert.equal(row?.value_numeric, "123");
+    assert.equal(txMeta?.internal_trace_failed, false);
+    assert.equal(txMeta?.internal_trace_truncated, false);
+    assert.equal(txMeta?.internal_trace_captured_count, 1);
+    assert.equal(txMeta?.internal_trace_total_count, 1);
+  });
+  await originalClose();
+});
+
+test("runWorkerWithDeps stores failed internal trace metadata from segment 3 payload", async () => {
+  const db = await createTestIndexerDb();
+  const originalClose = db.close.bind(db);
+  (db as unknown as { close: () => Promise<void> }).close = async () => { };
+  await withTempDir(async (dir) => {
+    const config: Config = {
+      canisterId: "test-canister",
+      icHost: "http://127.0.0.1:4943",
+      databaseUrl: "postgres://unused",
+      dbPoolMax: 1,
+      retentionDays: 90,
+      retentionEnabled: false,
+      retentionDryRun: false,
+      archiveGcDeleteOrphans: false,
+      maxBytes: 1_200_000,
+      backoffInitialMs: 1,
+      backoffMaxMs: 2,
+      idlePollMs: 1,
+      pruneStatusPollMs: 0,
+      opsMetricsPollMs: 0,
+      fetchRootKey: false,
+      archiveDir: dir,
+      chainId: "test",
+      zstdLevel: 1,
+      maxSegment: 3,
+    };
+    await db.setCursor({ block_number: 1n, segment: 0, byte_offset: 0 });
+    const txHash = Buffer.alloc(32, 0x82);
+    const block = buildBlockPayload(1n, 10n, [txHash]);
+    const receipts = buildReceiptsPayload([{ txHash, receipt: buildReceiptBytes(1, true) }]);
+    const txIndex = buildTxIndexPayload(1n, txHash, 2);
+    const internalTraces = buildInternalTracesPayload(txHash, [], {
+      failed: true,
+      totalCount: 9,
+    });
+    const chunks = [
+      { segment: 0, start: 0, bytes: block, payload_len: block.length },
+      { segment: 1, start: 0, bytes: receipts, payload_len: receipts.length },
+      { segment: 2, start: 0, bytes: txIndex, payload_len: txIndex.length },
+      { segment: 3, start: 0, bytes: internalTraces, payload_len: internalTraces.length },
+    ];
+    let headCalls = 0;
+    const client = {
+      getTxMetaByTxId: async () => ({ input: null, ethTxHash: null }),
+      getHeadNumber: async (): Promise<bigint> => {
+        headCalls += 1;
+        if (headCalls === 2) {
+          process.emit("SIGINT");
+        }
+        return 1n;
+      },
+      exportBlocks: async (
+        cursor: { block_number: bigint; segment: number; byte_offset: number } | null
+      ): Promise<
+        | {
+          Ok: {
+            chunks: Array<{ segment: number; start: number; bytes: Buffer; payload_len: number }>;
+            next_cursor: { block_number: bigint; segment: number; byte_offset: number };
+          };
+        }
+        | { Err: never }
+      > => {
+        if (headCalls === 1) {
+          return {
+            Ok: {
+              chunks,
+              next_cursor: { block_number: 2n, segment: 0, byte_offset: 0 },
+            },
+          };
+        }
+        return {
+          Ok: {
+            chunks: [],
+            next_cursor: cursor ?? { block_number: 2n, segment: 0, byte_offset: 0 },
+          },
+        };
+      },
+      getPruneStatus: async () => ({
+        pruning_enabled: false,
+        prune_running: false,
+        estimated_kept_bytes: 0n,
+        high_water_bytes: 0n,
+        low_water_bytes: 0n,
+        hard_emergency_bytes: 0n,
+        last_prune_at: 0n,
+        pruned_before_block: null,
+        oldest_kept_block: null,
+        oldest_kept_timestamp: null,
+        need_prune: false,
+      }),
+      getMetrics: async () => ({
+        txs: 0n,
+        ema_txs_per_block_x1000: 0n,
+        pruned_before_block: null,
+        ema_block_rate_per_sec_x1000: 0n,
+        total_submitted: 0n,
+        window: 128n,
+        avg_txs_per_block: 0n,
+        block_rate_per_sec_x1000: null,
+        cycles: 0n,
+        total_dropped: 0n,
+        blocks: 0n,
+        drop_counts: [],
+        queue_len: 0n,
+        total_included: 0n,
+      }),
+    };
+    await runWorkerWithDeps(config, db, client, { skipGc: true });
+    const internalCount = await db.queryOne<{ n: string }>(
+      "select count(*)::text as n from internal_transactions where tx_hash = $1",
+      [txHash]
+    );
+    const txMeta = await db.queryOne<{
+      internal_trace_failed: boolean;
+      internal_trace_truncated: boolean;
+      internal_trace_captured_count: number | null;
+      internal_trace_total_count: number | null;
+    }>(
+      "select internal_trace_failed, internal_trace_truncated, internal_trace_captured_count, internal_trace_total_count from txs where tx_hash = $1",
+      [txHash]
+    );
+    assert.equal(internalCount?.n, "0");
+    assert.equal(txMeta?.internal_trace_failed, true);
+    assert.equal(txMeta?.internal_trace_truncated, false);
+    assert.equal(txMeta?.internal_trace_captured_count, 0);
+    assert.equal(txMeta?.internal_trace_total_count, 9);
+  });
+  await originalClose();
+});
+
+test("runWorkerWithDeps replaces stale internal_transactions on block replay", async () => {
+  const db = await createTestIndexerDb();
+  const originalClose = db.close.bind(db);
+  (db as unknown as { close: () => Promise<void> }).close = async () => { };
+  await withTempDir(async (dir) => {
+    const config: Config = {
+      canisterId: "test-canister",
+      icHost: "http://127.0.0.1:4943",
+      databaseUrl: "postgres://unused",
+      dbPoolMax: 1,
+      retentionDays: 90,
+      retentionEnabled: false,
+      retentionDryRun: false,
+      archiveGcDeleteOrphans: false,
+      maxBytes: 1_200_000,
+      backoffInitialMs: 1,
+      backoffMaxMs: 2,
+      idlePollMs: 1,
+      pruneStatusPollMs: 0,
+      opsMetricsPollMs: 0,
+      fetchRootKey: false,
+      archiveDir: dir,
+      chainId: "test",
+      zstdLevel: 1,
+      maxSegment: 3,
+    };
+    const txHash = Buffer.alloc(32, 0x83);
+    const block = buildBlockPayload(1n, 10n, [txHash]);
+    const receipts = buildReceiptsPayload([{ txHash, receipt: buildReceiptBytes(1, true) }]);
+    const txIndex = buildTxIndexPayload(1n, txHash, 2);
+    const firstPayload = buildInternalTracesPayload(txHash, [
+      {
+        blockNumber: 1n,
+        txIndex: 2,
+        traceId: "0",
+        depth: 1,
+        actionType: 1,
+        fromAddress: Buffer.alloc(20, 0x11),
+        toAddress: Buffer.alloc(20, 0x22),
+        value: 1n,
+        createdContractAddress: null,
+        success: true,
+        errorCode: null,
+      },
+      {
+        blockNumber: 1n,
+        txIndex: 2,
+        traceId: "0_1",
+        depth: 2,
+        actionType: 1,
+        fromAddress: Buffer.alloc(20, 0x11),
+        toAddress: Buffer.alloc(20, 0x33),
+        value: 2n,
+        createdContractAddress: null,
+        success: true,
+        errorCode: null,
+      },
+    ]);
+    const secondPayload = buildInternalTracesPayload(txHash, [], { failed: true, totalCount: 7 });
+    const chunksFirst = [
+      { segment: 0, start: 0, bytes: block, payload_len: block.length },
+      { segment: 1, start: 0, bytes: receipts, payload_len: receipts.length },
+      { segment: 2, start: 0, bytes: txIndex, payload_len: txIndex.length },
+      {
+        segment: 3,
+        start: 0,
+        bytes: firstPayload,
+        payload_len: firstPayload.length,
+      },
+    ];
+    const chunksSecond = [
+      { segment: 0, start: 0, bytes: block, payload_len: block.length },
+      { segment: 1, start: 0, bytes: receipts, payload_len: receipts.length },
+      { segment: 2, start: 0, bytes: txIndex, payload_len: txIndex.length },
+      {
+        segment: 3,
+        start: 0,
+        bytes: secondPayload,
+        payload_len: secondPayload.length,
+      },
+    ];
+    function makeClient(chunks: ExportResponse["chunks"]) {
+      let headCalls = 0;
+      let exported = false;
+      return {
+        getTxMetaByTxId: async () => ({ input: null, ethTxHash: null }),
+        getHeadNumber: async (): Promise<bigint> => {
+          headCalls += 1;
+          if (headCalls === 2) {
+            process.emit("SIGINT");
+          }
+          return 1n;
+        },
+        exportBlocks: async (
+          cursor: Cursor | null,
+          _maxBytes: number
+        ): Promise<Result<ExportResponse, ExportError>> => {
+          if (!exported) {
+            exported = true;
+            return {
+              Ok: {
+                chunks,
+                next_cursor: { block_number: 2n, segment: 0, byte_offset: 0 },
+              },
+            };
+          }
+          return {
+            Ok: {
+              chunks: [],
+              next_cursor: cursor ?? { block_number: 2n, segment: 0, byte_offset: 0 },
+            },
+          };
+        },
+        getPruneStatus: async () => ({
+          pruning_enabled: false,
+          prune_running: false,
+          estimated_kept_bytes: 0n,
+          high_water_bytes: 0n,
+          low_water_bytes: 0n,
+          hard_emergency_bytes: 0n,
+          last_prune_at: 0n,
+          pruned_before_block: null,
+          oldest_kept_block: null,
+          oldest_kept_timestamp: null,
+          need_prune: false,
+        }),
+        getMetrics: async () => ({
+          txs: 0n,
+          ema_txs_per_block_x1000: 0n,
+          pruned_before_block: null,
+          ema_block_rate_per_sec_x1000: 0n,
+          total_submitted: 0n,
+          window: 128n,
+          avg_txs_per_block: 0n,
+          block_rate_per_sec_x1000: null,
+          cycles: 0n,
+          total_dropped: 0n,
+          blocks: 0n,
+          drop_counts: [],
+          queue_len: 0n,
+          total_included: 0n,
+        }),
+      };
+    }
+
+    await db.setCursor({ block_number: 1n, segment: 0, byte_offset: 0 });
+    await runWorkerWithDeps(config, db, makeClient(chunksFirst), { skipGc: true });
+    await db.setCursor({ block_number: 1n, segment: 0, byte_offset: 0 });
+    await runWorkerWithDeps(config, db, makeClient(chunksSecond), { skipGc: true });
+
+    const internalCount = await db.queryOne<{ n: string }>(
+      "select count(*)::text as n from internal_transactions where tx_hash = $1",
+      [txHash]
+    );
+    const txMeta = await db.queryOne<{
+      internal_trace_failed: boolean;
+      internal_trace_truncated: boolean;
+      internal_trace_captured_count: number | null;
+      internal_trace_total_count: number | null;
+    }>(
+      "select internal_trace_failed, internal_trace_truncated, internal_trace_captured_count, internal_trace_total_count from txs where tx_hash = $1",
+      [txHash]
+    );
+    assert.equal(internalCount?.n, "0");
+    assert.equal(txMeta?.internal_trace_failed, true);
+    assert.equal(txMeta?.internal_trace_truncated, false);
+    assert.equal(txMeta?.internal_trace_captured_count, 0);
+    assert.equal(txMeta?.internal_trace_total_count, 7);
   });
   await originalClose();
 });
@@ -2350,13 +2925,127 @@ test("archiveBlock reuses existing file", async () => {
       blockPayload: buildBlockPayload(1n, 10n, []),
       receiptsPayload: Buffer.alloc(0),
       txIndexPayload: Buffer.alloc(0),
+      internalTracesPayload: Buffer.alloc(0),
       zstdLevel: 1,
     };
     const first = await archiveBlock(input);
-    const second = await archiveBlock(input);
+    const second = await archiveBlock({
+      ...input,
+      existingArchive: toExistingArchiveMeta(first),
+    });
     assert.equal(first.path, second.path);
     assert.equal(first.sizeBytes, second.sizeBytes);
     assert.equal(first.sha256.toString("hex"), second.sha256.toString("hex"));
+    assert.equal(first.rawSha256.toString("hex"), second.rawSha256.toString("hex"));
+    const restored = await decompress(await fs.readFile(first.path));
+    assert.deepEqual(restored, buildArchiveRaw(input.blockPayload, input.receiptsPayload, input.txIndexPayload, input.internalTracesPayload));
+  });
+});
+
+test("archiveBlock recomputes compressed sha256 when reusing existing file", async () => {
+  await withTempDir(async (dir) => {
+    const input = {
+      archiveDir: dir,
+      chainId: "local",
+      blockNumber: 1n,
+      blockPayload: buildBlockPayload(1n, 10n, []),
+      receiptsPayload: Buffer.from([1, 2, 3]),
+      txIndexPayload: Buffer.from([4, 5]),
+      internalTracesPayload: Buffer.from([6, 7, 8]),
+      zstdLevel: 1,
+    };
+    const first = await archiveBlock(input);
+    const recompressed = await compress(
+      buildArchiveRaw(input.blockPayload, input.receiptsPayload, input.txIndexPayload, input.internalTracesPayload),
+      9
+    );
+    await fs.writeFile(first.path, recompressed);
+
+    const second = await archiveBlock({
+      ...input,
+      existingArchive: toExistingArchiveMeta(first),
+    });
+
+    assert.equal(second.rawSha256.toString("hex"), first.rawSha256.toString("hex"));
+    assert.equal(second.sha256.toString("hex"), createHash("sha256").update(recompressed).digest().toString("hex"));
+    assert.notEqual(second.sha256.toString("hex"), first.sha256.toString("hex"));
+  });
+});
+
+test("archiveBlock replaces legacy 3-segment file with current 4-segment bundle", async () => {
+  await withTempDir(async (dir) => {
+    const input = {
+      archiveDir: dir,
+      chainId: "local",
+      blockNumber: 1n,
+      blockPayload: buildBlockPayload(1n, 10n, []),
+      receiptsPayload: Buffer.from([1, 2, 3]),
+      txIndexPayload: Buffer.from([4, 5]),
+      internalTracesPayload: Buffer.from([6, 7, 8]),
+      zstdLevel: 1,
+    };
+    const outPath = path.join(dir, "local", "1.bundle.zst");
+    await fs.mkdir(path.dirname(outPath), { recursive: true });
+    await fs.writeFile(
+      outPath,
+      await compress(buildLegacyArchiveRaw(input.blockPayload, input.receiptsPayload, input.txIndexPayload), input.zstdLevel)
+    );
+
+    const archived = await archiveBlock({
+      ...input,
+      existingArchive: {
+        path: outPath,
+        sha256: Buffer.alloc(32, 0xaa),
+        rawSha256: null,
+        sizeBytes: 0,
+      },
+    });
+    const restored = await decompress(await fs.readFile(outPath));
+    const expected = buildArchiveRaw(input.blockPayload, input.receiptsPayload, input.txIndexPayload, input.internalTracesPayload);
+
+    assert.deepEqual(restored, expected);
+    assert.equal(archived.rawBytes, expected.length);
+  });
+});
+
+test("archiveBlock replaces current-format file when raw content differs", async () => {
+  await withTempDir(async (dir) => {
+    const input = {
+      archiveDir: dir,
+      chainId: "local",
+      blockNumber: 1n,
+      blockPayload: buildBlockPayload(1n, 10n, []),
+      receiptsPayload: Buffer.from([1, 2, 3]),
+      txIndexPayload: Buffer.from([4, 5]),
+      internalTracesPayload: Buffer.from([6, 7, 8]),
+      zstdLevel: 1,
+    };
+    const outPath = path.join(dir, "local", "1.bundle.zst");
+    await fs.mkdir(path.dirname(outPath), { recursive: true });
+    await fs.writeFile(
+      outPath,
+      await compress(
+        buildArchiveRaw(input.blockPayload, Buffer.from([9, 9, 9]), input.txIndexPayload, input.internalTracesPayload),
+        input.zstdLevel
+      )
+    );
+
+    const archived = await archiveBlock({
+      ...input,
+      existingArchive: {
+        path: outPath,
+        sha256: Buffer.alloc(32, 0xbb),
+        rawSha256: createHash("sha256").update(
+          buildArchiveRaw(input.blockPayload, Buffer.from([9, 9, 9]), input.txIndexPayload, input.internalTracesPayload)
+        ).digest(),
+        sizeBytes: 0,
+      },
+    });
+    const restored = await decompress(await fs.readFile(outPath));
+    const expected = buildArchiveRaw(input.blockPayload, input.receiptsPayload, input.txIndexPayload, input.internalTracesPayload);
+
+    assert.deepEqual(restored, expected);
+    assert.equal(archived.rawBytes, expected.length);
   });
 });
 
@@ -2388,10 +3077,13 @@ test("db upsert and metrics aggregation", async () => {
       blockNumber: 10n,
       path: "10.bundle.zst",
       sha256: Buffer.alloc(32, 3),
+      rawSha256: Buffer.alloc(32, 5),
       sizeBytes: 40,
       rawBytes: 50,
       createdAt: Date.now(),
     });
+    const archive = await db.getArchivePart(10n);
+    assert.equal(archive?.rawSha256?.toString("hex"), Buffer.alloc(32, 5).toString("hex"));
     const archiveSum = await db.getArchiveBytesSum();
     assert.equal(archiveSum, 40);
     await db.addOpsMetricsSample({
@@ -2445,6 +3137,7 @@ test("archive_gc keeps orphan by default and can remove with explicit mode", asy
         blockNumber: 3n,
         path: "3.bundle.zst",
         sha256: Buffer.alloc(32, 1),
+        rawSha256: Buffer.alloc(32, 2),
         sizeBytes: 4,
         rawBytes: 4,
         createdAt: Date.now(),
@@ -2508,8 +3201,8 @@ test("retention cleanup dry-run and delete follow 90-day boundary", async () => 
       tx_selector: null,
       receipt_status: 0,
     });
-    await db.addArchive({ blockNumber: 1n, path: "1.bundle.zst", sha256: Buffer.alloc(32, 3), sizeBytes: 10, rawBytes: 10, createdAt: Number(oldSec) * 1000 });
-    await db.addArchive({ blockNumber: 2n, path: "2.bundle.zst", sha256: Buffer.alloc(32, 4), sizeBytes: 10, rawBytes: 10, createdAt: Number(freshSec) * 1000 });
+    await db.addArchive({ blockNumber: 1n, path: "1.bundle.zst", sha256: Buffer.alloc(32, 3), rawSha256: Buffer.alloc(32, 5), sizeBytes: 10, rawBytes: 10, createdAt: Number(oldSec) * 1000 });
+    await db.addArchive({ blockNumber: 2n, path: "2.bundle.zst", sha256: Buffer.alloc(32, 4), rawSha256: Buffer.alloc(32, 6), sizeBytes: 10, rawBytes: 10, createdAt: Number(freshSec) * 1000 });
     await db.addMetrics(oldDay, 1, 1, 1, 0, 10);
     await db.addMetrics(freshDay, 1, 1, 1, 0, 20);
 
@@ -2556,12 +3249,21 @@ async function createTestIndexerDb(): Promise<IndexerDb> {
   const pool = new adapter.Pool();
   const db = await IndexerDb.fromPool(pool, { migrations: MIGRATIONS.slice(0, 1) });
   await db.queryOne("alter table if exists blocks add column if not exists gas_used bigint");
+  await db.queryOne("alter table if exists archive_parts add column if not exists raw_sha256 bytea");
   await db.queryOne("alter table if exists txs add column if not exists tx_selector bytea");
   await db.queryOne("alter table if exists txs add column if not exists tx_input bytea");
   await db.queryOne("alter table if exists txs add column if not exists eth_tx_hash bytea");
+  await db.queryOne("alter table if exists txs add column if not exists internal_trace_failed boolean not null default false");
+  await db.queryOne("alter table if exists txs add column if not exists internal_trace_truncated boolean not null default false");
+  await db.queryOne("alter table if exists txs add column if not exists internal_trace_captured_count integer");
+  await db.queryOne("alter table if exists txs add column if not exists internal_trace_total_count integer");
   await db.queryOne(
     "create table if not exists tx_receipts_index(" +
     "tx_hash bytea primary key, contract_address bytea, status smallint not null, block_number bigint not null, tx_index integer not null)"
+  );
+  await db.queryOne(
+    "create table if not exists internal_transactions(" +
+    "tx_hash bytea not null, block_number bigint not null, tx_index integer not null, trace_id text not null, trace_sort_key text not null, depth integer not null, action_type text not null, from_address bytea not null, to_address bytea, created_contract_address bytea, value_numeric numeric(78,0) not null, success boolean not null, error_code text, primary key(tx_hash, trace_id))"
   );
   await db.queryOne("alter table if exists ops_metrics_samples add column if not exists cycles bigint not null default 0");
   await db.queryOne("alter table if exists ops_metrics_samples add column if not exists pruned_before_block bigint");
@@ -2742,12 +3444,102 @@ function buildReceiptsPayload(rows: Array<{ txHash: Buffer; receipt: Buffer }>):
   return Buffer.concat(parts);
 }
 
+function buildInternalTracesPayload(
+  txHash: Buffer,
+  rows: Array<{
+    blockNumber: bigint;
+    txIndex: number;
+    traceId: string;
+    depth: number;
+    actionType: number;
+    fromAddress: Buffer;
+    toAddress: Buffer | null;
+    value: bigint;
+    createdContractAddress: Buffer | null;
+    success: boolean;
+    errorCode: string | null;
+  }>,
+  options?: {
+    failed?: boolean;
+    truncated?: boolean;
+    totalCount?: number;
+  }
+): Buffer {
+  const capturedCount = rows.length;
+  const totalCount = options?.totalCount ?? capturedCount;
+  const parts = [
+    Buffer.from([3, options?.failed ? 1 : 0, options?.truncated ? 1 : 0]),
+    u32(capturedCount),
+    u32(totalCount),
+    u32(capturedCount),
+  ];
+  for (const row of rows) {
+    const traceId = Buffer.from(row.traceId, "utf8");
+    const errorCode = row.errorCode ? Buffer.from(row.errorCode, "utf8") : Buffer.alloc(0);
+    parts.push(
+      u64(row.blockNumber),
+      u32(row.txIndex),
+      u16(traceId.length),
+      traceId,
+      u16(row.depth),
+      Buffer.from([row.actionType]),
+      row.fromAddress,
+      Buffer.from([row.toAddress ? 1 : 0])
+    );
+    if (row.toAddress) {
+      parts.push(row.toAddress);
+    }
+    parts.push(toWord32(row.value), Buffer.from([row.createdContractAddress ? 1 : 0]));
+    if (row.createdContractAddress) {
+      parts.push(row.createdContractAddress);
+    }
+    parts.push(Buffer.from([row.success ? 1 : 0]), u16(errorCode.length), errorCode);
+  }
+  const body = Buffer.concat(parts);
+  return Buffer.concat([txHash, u32(body.length), body]);
+}
+
+function buildArchiveRaw(
+  block: Uint8Array,
+  receipts: Uint8Array,
+  txIndex: Uint8Array,
+  internalTraces: Uint8Array
+): Buffer {
+  return Buffer.concat([
+    u32(block.length),
+    Buffer.from(block),
+    u32(receipts.length),
+    Buffer.from(receipts),
+    u32(txIndex.length),
+    Buffer.from(txIndex),
+    u32(internalTraces.length),
+    Buffer.from(internalTraces),
+  ]);
+}
+
+function buildLegacyArchiveRaw(block: Uint8Array, receipts: Uint8Array, txIndex: Uint8Array): Buffer {
+  return Buffer.concat([
+    u32(block.length),
+    Buffer.from(block),
+    u32(receipts.length),
+    Buffer.from(receipts),
+    u32(txIndex.length),
+    Buffer.from(txIndex),
+  ]);
+}
+
 function writeU64BE(buf: Buffer, offset: number, value: bigint): number {
   const high = Number((value >> 32n) & 0xffff_ffffn);
   const low = Number(value & 0xffff_ffffn);
   buf.writeUInt32BE(high, offset);
   buf.writeUInt32BE(low, offset + 4);
   return offset + 8;
+}
+
+function u16(value: number): Buffer {
+  const out = Buffer.alloc(2);
+  out.writeUInt16BE(value, 0);
+  return out;
 }
 
 function writeZeros(buf: Buffer, offset: number, len: number): number {

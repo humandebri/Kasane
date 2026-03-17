@@ -2,7 +2,9 @@
 
 use crate::hash::keccak256;
 use crate::tx_decode::decode_tx_view;
-use evm_db::chain_data::{BlockData, ReceiptLike, StoredTx, TxId, TxIndexEntry, TxKind};
+use evm_db::chain_data::{
+    BlockData, InternalTraceSet, ReceiptLike, StoredTx, TxId, TxIndexEntry, TxKind,
+};
 use evm_db::stable_state::with_state;
 use evm_db::Storable;
 use std::borrow::Cow;
@@ -72,7 +74,7 @@ pub fn export_blocks(
                 });
             }
         }
-        if cursor.segment > 2 {
+        if cursor.segment > 3 {
             return Err(ExportError::InvalidCursor("segment out of range"));
         }
         if cursor.block_number > head {
@@ -101,7 +103,7 @@ pub fn export_blocks(
                 }
             }
 
-            if seg > 2 {
+            if seg > 3 {
                 return Err(ExportError::InvalidCursor("segment out of range"));
             }
             let mut payloads = BlockPayloads::load(state, block_number)?;
@@ -112,7 +114,7 @@ pub fn export_blocks(
 
             let mut is_first = true;
             let mut block_started = false;
-            while remaining > 0 && seg <= 2 {
+            while remaining > 0 && seg <= 3 {
                 let payload_len = payloads.segment_len(state, seg)?;
                 if offset > payload_len {
                     return Err(ExportError::InvalidCursor("offset out of range"));
@@ -128,7 +130,7 @@ pub fn export_blocks(
                         is_first = false;
                         block_started = true;
                     }
-                    if seg == 2 {
+                    if seg == 3 {
                         break;
                     }
                     seg = seg.saturating_add(1);
@@ -160,7 +162,7 @@ pub fn export_blocks(
                 remaining = remaining.saturating_sub(take);
                 offset = offset.saturating_add(take);
                 if offset == payload_len {
-                    if seg == 2 {
+                    if seg == 3 {
                         break;
                     }
                     seg = seg.saturating_add(1);
@@ -172,8 +174,8 @@ pub fn export_blocks(
                 blocks_emitted = blocks_emitted.saturating_add(1);
             }
 
-            let block_done = if seg == 2 {
-                offset == payloads.segment_len(state, 2)?
+            let block_done = if seg == 3 {
+                offset == payloads.segment_len(state, 3)?
             } else {
                 false
             };
@@ -216,6 +218,7 @@ struct BlockPayloads {
     tx_ids: Vec<TxId>,
     receipts_payload: Option<Vec<u8>>,
     tx_index_payload: Option<Vec<u8>>,
+    internal_traces_payload: Option<Vec<u8>>,
 }
 
 impl BlockPayloads {
@@ -238,6 +241,7 @@ impl BlockPayloads {
             tx_ids: block.tx_ids,
             receipts_payload: None,
             tx_index_payload: None,
+            internal_traces_payload: None,
         })
     }
 
@@ -269,6 +273,13 @@ impl BlockPayloads {
                 }
                 Ok(self.tx_index_payload.as_deref().unwrap_or(&[]))
             }
+            3 => {
+                if self.internal_traces_payload.is_none() {
+                    self.internal_traces_payload =
+                        Some(build_internal_traces_payload(state, &self.tx_ids)?);
+                }
+                Ok(self.internal_traces_payload.as_deref().unwrap_or(&[]))
+            }
             _ => Err(ExportError::InvalidCursor("segment out of range")),
         }
     }
@@ -279,6 +290,7 @@ fn checked_segment_len(payload_len: usize, segment: u8) -> Result<u32, ExportErr
         0 => "block too large",
         1 => "receipts too large",
         2 => "tx_index too large",
+        3 => "internal_traces too large",
         _ => return Err(ExportError::InvalidCursor("segment out of range")),
     };
     let len = u32::try_from(payload_len).map_err(|_| ExportError::InvalidCursor(overflow_error))?;
@@ -286,6 +298,85 @@ fn checked_segment_len(payload_len: usize, segment: u8) -> Result<u32, ExportErr
         return Err(ExportError::InvalidCursor("segment too large"));
     }
     Ok(len)
+}
+
+fn build_internal_traces_payload(
+    state: &evm_db::stable_state::StableState,
+    tx_ids: &[TxId],
+) -> Result<Vec<u8>, ExportError> {
+    let mut out = Vec::new();
+    for tx_id in tx_ids.iter() {
+        let Some(ptr) = state.internal_traces.get(tx_id) else {
+            continue;
+        };
+        let bytes = state
+            .blob_store
+            .read(&ptr)
+            .map_err(|_| ExportError::MissingData("internal_traces bytes missing"))?;
+        let traces = InternalTraceSet::from_bytes(Cow::Owned(bytes));
+        let encoded = encode_internal_trace_entries(&traces)?;
+        let len = u32::try_from(encoded.len())
+            .map_err(|_| ExportError::InvalidCursor("internal_traces too large"))?;
+        out.extend_from_slice(&tx_id.0);
+        out.extend_from_slice(&len.to_be_bytes());
+        out.extend_from_slice(&encoded);
+    }
+    Ok(out)
+}
+
+fn encode_internal_trace_entries(traces: &InternalTraceSet) -> Result<Vec<u8>, ExportError> {
+    let count = u32::try_from(traces.items.len())
+        .map_err(|_| ExportError::InvalidCursor("internal_traces too large"))?;
+    if traces.captured_count != count || traces.total_count < traces.captured_count {
+        return Err(ExportError::InvalidCursor(
+            "internal_traces metadata mismatch",
+        ));
+    }
+    let mut out = Vec::new();
+    out.push(3);
+    out.push(u8::from(traces.encode_failed));
+    out.push(u8::from(traces.truncated));
+    out.extend_from_slice(&traces.captured_count.to_be_bytes());
+    out.extend_from_slice(&traces.total_count.to_be_bytes());
+    out.extend_from_slice(&count.to_be_bytes());
+    for item in traces.items.iter() {
+        let trace_id = item.trace_id.as_bytes();
+        let trace_id_len = u16::try_from(trace_id.len())
+            .map_err(|_| ExportError::InvalidCursor("trace_id too large"))?;
+        let error_code = item
+            .error_code
+            .as_ref()
+            .map(|value| value.as_bytes())
+            .unwrap_or(&[]);
+        let error_len = u16::try_from(error_code.len())
+            .map_err(|_| ExportError::InvalidCursor("trace error too large"))?;
+        out.extend_from_slice(&item.block_number.to_be_bytes());
+        out.extend_from_slice(&item.tx_index.to_be_bytes());
+        out.extend_from_slice(&trace_id_len.to_be_bytes());
+        out.extend_from_slice(trace_id);
+        out.extend_from_slice(&item.depth.to_be_bytes());
+        out.push(item.action_kind.to_u8());
+        out.extend_from_slice(&item.from_address);
+        match item.to_address {
+            Some(value) => {
+                out.push(1);
+                out.extend_from_slice(&value);
+            }
+            None => out.push(0),
+        }
+        out.extend_from_slice(&item.value);
+        match item.created_contract_address {
+            Some(value) => {
+                out.push(1);
+                out.extend_from_slice(&value);
+            }
+            None => out.push(0),
+        }
+        out.push(u8::from(item.success));
+        out.extend_from_slice(&error_len.to_be_bytes());
+        out.extend_from_slice(error_code);
+    }
+    Ok(out)
 }
 
 fn build_receipts_payload(

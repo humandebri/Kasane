@@ -24,6 +24,7 @@ export WRAP_SUBNET_ID=4ecnw-byqwz-dtgss-ua2mh-pfvs7-c3lct-gtf4e-hnu75-j7eek-iifq
 export EVM_CANISTER_ID=<existing_evm_canister_id>
 export KASANE_CANISTER_ID=<existing_kasane_canister_id>
 export FEE_LEDGER_CANISTER_ID=<icp_ledger_canister_id>
+export ALLOWED_ASSET_CANISTER_ID="${FEE_LEDGER_CANISTER_ID}"
 
 # wrap fee policy（初期値）
 export CYCLE_FEE_E8S=1000000
@@ -48,6 +49,8 @@ PY
 - 既存 factory / token が未稼働なら、監査対応後は新 factory を deploy してこの値へ切り替えてください。
 - backward compatibility は持たない前提です。旧 factory は参照しません。
 - 新しい `WrapTokenFactory` は `constructor(address minter_)` です。deploy 時は `wrap_canister` 由来の EVM address を constructor に必ず入れてください。
+- 現行運用では `KASANE_CANISTER_ID` は `EVM_CANISTER_ID` と同じ principal を入れます。`wrap_canister` は unwrap dispatch caller を `kasane_canister` と照合します。
+- `fee_ledger_canister` / `cycle_fee_e8s` / `gas_price_buffer_bps` は既存 mainnet 設定を維持する場合、upgrade 前に `get_fee_policy` で現値を取得してそのまま渡してください。
 
 前提確認:
 
@@ -101,6 +104,7 @@ icp canister install wrap_canister \
     wrap_factory_address = vec { <EVM_WRAP_FACTORY_BYTES> };
     cycle_fee_e8s = ${CYCLE_FEE_E8S} : nat64;
     gas_price_buffer_bps = ${GAS_PRICE_BUFFER_BPS} : nat32;
+    allowed_assets = vec { principal \"${ALLOWED_ASSET_CANISTER_ID}\" };
   })"
 ```
 
@@ -121,6 +125,7 @@ icp canister install wrap_canister \
     wrap_factory_address = vec { <EVM_WRAP_FACTORY_BYTES> };
     cycle_fee_e8s = ${CYCLE_FEE_E8S} : nat64;
     gas_price_buffer_bps = ${GAS_PRICE_BUFFER_BPS} : nat32;
+    allowed_assets = vec { principal \"${ALLOWED_ASSET_CANISTER_ID}\" };
   })"
 ```
 
@@ -130,6 +135,12 @@ icp canister install wrap_canister \
 
 ```bash
 icp canister status wrap_canister -e "${ICP_ENV}" --identity "${ICP_IDENTITY_NAME}"
+```
+
+必要に応じて fee policy の現値確認:
+
+```bash
+icp canister call -e "${ICP_ENV}" --identity "${ICP_IDENTITY_NAME}" --query wrap_canister get_fee_policy '()'
 ```
 
 必要に応じて did インターフェース確認:
@@ -145,7 +156,7 @@ dfx canister call --query wrap_canister export_did '()' --network "${ICP_ENV}"
 - `submit_wrap_request` は wallet caller 本人で実行され、`from_owner` は canister 側で `msg_caller` 固定です（引数で渡しません）。
 - Wrap手数料（`cycles + gas`）は `fee_ledger_canister` から `icrc2_transfer_from` で前払い徴収されます。
 - wrap mint 時の decimals は対象 ledger の `icrc1_metadata` を一次情報として取得します。metadata が壊れている ledger は wrap できません。
-- `set_fee_policy` は controller のみ実行可能です。例:
+- wrap 対象 asset は on-chain allowlist に載っている principal だけです。初回 install / upgrade の `allowed_assets` で明示してください。
 - `set_fee_policy` は controller のみ実行可能です。例:
 
 ```bash
@@ -153,6 +164,14 @@ icp canister call -e "${ICP_ENV}" wrap_canister set_fee_policy '(record {
   fee_ledger_canister = principal "'"${FEE_LEDGER_CANISTER_ID}"'";
   cycle_fee_e8s = 1000000 : nat64;
   gas_price_buffer_bps = 12000 : nat32;
+})'
+```
+
+- allowlist を後から全置換する場合も controller のみ実行可能です。例:
+
+```bash
+icp canister call -e "${ICP_ENV}" wrap_canister set_allowed_assets '(vec {
+  principal "'"${ALLOWED_ASSET_CANISTER_ID}"'";
 })'
 ```
 

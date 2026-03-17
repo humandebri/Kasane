@@ -13,8 +13,8 @@ export type Pending = {
 
 export function newPending(cursor: Cursor): Pending {
   return {
-    payloadParts: [[], [], []],
-    payloadLens: [0, 0, 0],
+    payloadParts: [[], [], [], []],
+    payloadLens: [0, 0, 0, 0],
     segment: cursor.segment,
     offset: cursor.byte_offset,
     complete: false,
@@ -23,8 +23,8 @@ export function newPending(cursor: Cursor): Pending {
 
 export function newPendingFromChunk(chunk: Chunk): Pending {
   return {
-    payloadParts: [[], [], []],
-    payloadLens: [0, 0, 0],
+    payloadParts: [[], [], [], []],
+    payloadLens: [0, 0, 0, 0],
     segment: chunk.segment,
     offset: chunk.start,
     complete: false,
@@ -85,7 +85,7 @@ export function applyChunk(pending: Pending, chunk: Chunk): void {
 
   // セグメント完走時のみ次へ進む
   if (pending.offset === payloadLen) {
-    if (pending.segment === 2) {
+    if (pending.segment === 3) {
       pending.complete = true;
       return;
     }
@@ -96,7 +96,7 @@ export function applyChunk(pending: Pending, chunk: Chunk): void {
 
 export function finalizePayloads(pending: Pending): Buffer[] {
   const out: Buffer[] = [];
-  for (let i = 0; i < 3; i += 1) {
+  for (let i = 0; i < 4; i += 1) {
     const len = pending.payloadLens[i] ?? 0;
     const parts = pending.payloadParts[i] ?? [];
     if (len === 0) {

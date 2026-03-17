@@ -57,7 +57,9 @@ scripts/measure_precompile_ratio.sh
 - `scripts/check_precompile_feature_isolation.sh`: `ic-evm-core` の既定 wasm build に BLS/KZG backend crate（`ark-bls12-381`, `c-kzg`, `blst`）が流入していないか検証
 - `scripts/predeploy_smoke.sh`: `cargo check` + wasm build + PocketIC RPC互換E2E（任意で indexer smoke）
 - `scripts/run_rpc_compat_e2e.sh`: RPC互換E2Eテスト（`cargo test --test rpc_compat_e2e`）
+  - Rust の E2E テストは `tools/wrapper/contracts/out/` の Foundry artifact をコンパイル時に読むため、この script は先に `forge build` を実行する
   - PocketIC が localhost (`127.0.0.1`) に bind できる必要がある。制限付き sandbox ではテスト本体の前に失敗することがある
+- `scripts/prepare_ci_icrc1_ledger_wasm.sh`: 共通 ledger artifact helper 経由で、レポ同梱の official ledger wasm `third_party/dfinity/ledger-suite-icrc-2026-03-09/ic-icrc1-ledger.wasm` を `ICP_LEDGER_WASM` として export する。`LEDGER_RELEASE=latest` は拒否し、local ledger smoke は `ledger.did` を `${LEDGER_CACHE_DIR}/<release>/ledger.did` に cache する
 - `scripts/profile_wasm_deps.sh`: wasm の依存サイズ可視化（`twiggy top/dominators`、nightly があれば `cargo +nightly bloat -Z build-std`、`cargo tree -e features -i <crate>` を保存）
   - 出力先既定: `docs/ops/reports/wasm-deps-<package>-<timestamp>/`
   - `--compare <前回の出力ディレクトリ>` で before/after 比較表（bytes + instruction estimate）を生成
@@ -130,9 +132,14 @@ scripts/measure_precompile_ratio.sh
 
 ### mainnet運用
 - `scripts/mainnet/ic_mainnet_preflight.sh`: 本番前の最小チェック
+  - `CANISTER_NAME` は既定で `evm_canister`。`wrap_canister` はこの script の対象外
+  - 既定の cycles 下限は `MIN_CYCLES=2000000000000`
 - `scripts/mainnet/ic_mainnet_deploy.sh`: 本番デプロイ本体
   - 既定 build では `precompile-profile-admin` feature を有効化しない
   - precompile ratio の計測は deploy 前に `scripts/run_precompile_profile_e2e.sh` / `scripts/measure_precompile_ratio.sh` で実施し、既定の fixed ratio `1/100` を見直す場合は再デプロイする
+  - `MODE=upgrade` でも `WRAP_CANISTER_ID` と `EVM_WRAP_FACTORY` が必須
+  - instruction soft limit を install / upgrade で上書きしたい場合だけ `QUERY_INSTRUCTION_SOFT_LIMIT` / `UPDATE_INSTRUCTION_SOFT_LIMIT` を事前 export する
+  - 対象は `evm_canister`。`wrap_canister` の upgrade は [docs/ops/wrap-canister-deploy-runbook.ja.md](/Users/0xhude/Desktop/ICP/Kasane/docs/ops/wrap-canister-deploy-runbook.ja.md) の手順で別途実行する
 - `scripts/mainnet/ic_mainnet_post_upgrade_smoke.sh`: デプロイ後の最小RPC確認
 - `scripts/verify_submit_after_deploy.sh`: verify submit の手動/CIフック
 - `scripts/mainnet/mainnet_method_test.sh`: 本番メソッド検証（重い）
@@ -150,11 +157,19 @@ scripts/measure_precompile_ratio.sh
 - `scripts/ops/test_prune_ops_scripts.sh`: 上記2スクリプトのモック検証
 - `scripts/ops/contabo_deploy_tools.sh`: Contabo上のgit作業ツリーから `tools/indexer` / `tools/explorer` を同期して build+restart（git ref指定運用）
 - `scripts/ops/contabo_deploy_gateway.sh`: Contabo上のgit作業ツリーから `tools/rpc-gateway` を同期して build+restart（git ref指定運用）
+  - Contabo で GitHub の HTTPS 認証を使わない場合は、`REPO_URL=git@github.com:<owner>/<repo>.git` を明示し、リモートの `deployer` ユーザーに read-only の SSH deploy key を持たせる
+  - remote の clone/fetch は `deployer` 実行を前提にし、deploy key を `root` だけに置かない
 
 ## 主要環境変数（よく使うもの）
 - `CANISTER_NAME` / `CANISTER_ID`
 - `WRAP_CANISTER_ID`
   - 実際の `wrap_canister` principal が必要な wrap/unwrap smoke・ledger 系スクリプトで使用
+- `EVM_WRAP_FACTORY`
+  - `scripts/mainnet/ic_mainnet_deploy.sh` の必須値。20-byte EVM factory address を `0x...` 形式で渡す
+- `QUERY_INSTRUCTION_SOFT_LIMIT`
+  - 任意。設定すると `build_init_args_for_current_identity(...)` が `InitArgs.query_instruction_soft_limit` を出力する
+- `UPDATE_INSTRUCTION_SOFT_LIMIT`
+  - 任意。設定すると `build_init_args_for_current_identity(...)` が `InitArgs.update_instruction_soft_limit` を出力する
 - `ICP_IDENTITY_NAME`
 - `POCKET_IC_BIN`（`predeploy_smoke.sh` / `run_rpc_compat_e2e.sh` で使用するPocketICバイナリ）
   - 推奨: まず既存のローカルバイナリを指して、都度ダウンロードを避ける

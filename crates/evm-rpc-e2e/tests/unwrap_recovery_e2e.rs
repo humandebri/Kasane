@@ -22,6 +22,8 @@ struct GatewayInitArgs {
     genesis_balances: Vec<GenesisBalanceView>,
     wrap_canister_id: Principal,
     wrap_factory_address: Vec<u8>,
+    query_instruction_soft_limit: Option<u64>,
+    update_instruction_soft_limit: Option<u64>,
 }
 
 const WRAP_AMOUNT_E8S: u128 = 1_000_000_000_000u128;
@@ -194,6 +196,8 @@ fn install_pair(pic: &PocketIc) -> (Principal, Principal) {
         }],
         wrap_canister_id: wrap_id,
         wrap_factory_address: predict_create_address(caller_evm, 0).to_vec(),
+        query_instruction_soft_limit: None,
+        update_instruction_soft_limit: None,
     });
     pic.install_canister(
         wrap_id,
@@ -621,6 +625,8 @@ fn upgrade_retries_dispatching_unwrap_via_idempotent_submit() {
                 0,
             )
             .to_vec(),
+            query_instruction_soft_limit: None,
+            update_instruction_soft_limit: None,
         }))
         .expect("encode upgrade arg"),
         Some(test_caller()),

@@ -6,13 +6,15 @@ use evm_db::chain_data::constants::{
 };
 use evm_db::chain_data::receipt::LogEntry;
 use evm_db::chain_data::{
-    BlockData, CallerKey, ChainStateV1, Head, OpsMetricsV1, PruneJournal, QueueMeta, ReceiptLike,
-    RuntimeConfigV1, StoredTx, StoredTxBytes, TxId, TxIndexEntry, TxKind, TxLoc,
-    UnwrapDispatchRequest, UnwrapRequestStatus, UNWRAP_DECODE_FAILURE_CODE,
+    BlockData, CallerKey, ChainStateV1, Head, InternalTrace, InternalTraceActionKind,
+    InternalTraceSet, OpsMetricsV1, PruneJournal, QueueMeta, ReceiptLike, RuntimeConfigV1,
+    StoredTx, StoredTxBytes, TxId, TxIndexEntry, TxKind, TxLoc, UnwrapDispatchRequest,
+    UnwrapRequestStatus, MAX_INTERNAL_TRACES_PER_TX_U32, UNWRAP_DECODE_FAILURE_CODE,
 };
 use evm_db::chain_data::{LogConfigV1, LOG_CONFIG_FILTER_MAX};
 use evm_db::chain_data::{
     DEFAULT_BLOCK_GAS_LIMIT, DEFAULT_INSTRUCTION_SOFT_LIMIT, DEFAULT_MIN_FEE_FLOOR,
+    DEFAULT_QUERY_INSTRUCTION_SOFT_LIMIT,
 };
 use evm_db::meta::{clear_needs_migration, needs_migration};
 use evm_db::stable_state::init_stable_state;
@@ -267,6 +269,101 @@ fn unwrap_request_decode_failure_returns_quarantinable_record_without_global_fre
 }
 
 #[test]
+fn internal_trace_set_roundtrip() {
+    let set = InternalTraceSet::new(vec![
+        InternalTrace {
+            block_number: 10,
+            tx_index: 2,
+            trace_id: "0".to_string(),
+            depth: 1,
+            action_kind: InternalTraceActionKind::Call,
+            from_address: [0x11; 20],
+            to_address: Some([0x22; 20]),
+            value: [0x33; 32],
+            created_contract_address: None,
+            success: true,
+            error_code: None,
+        },
+        InternalTrace {
+            block_number: 10,
+            tx_index: 2,
+            trace_id: "0_1".to_string(),
+            depth: 2,
+            action_kind: InternalTraceActionKind::Custom,
+            from_address: [0x44; 20],
+            to_address: None,
+            value: [0x55; 32],
+            created_contract_address: Some([0x66; 20]),
+            success: false,
+            error_code: Some("Revert".to_string()),
+        },
+    ]);
+    let bytes = set.to_bytes();
+    let decoded = InternalTraceSet::from_bytes(bytes);
+    assert_eq!(decoded, set);
+    assert!(!decoded.truncated);
+    assert_eq!(decoded.captured_count, 2);
+    assert_eq!(decoded.total_count, 2);
+}
+
+#[test]
+fn internal_trace_set_encode_overflow_is_reported() {
+    let set = InternalTraceSet::new_with_counts(
+        vec![
+            InternalTrace {
+                block_number: 10,
+                tx_index: 2,
+                trace_id: "0".to_string(),
+                depth: 1,
+                action_kind: InternalTraceActionKind::Call,
+                from_address: [0x11; 20],
+                to_address: Some([0x22; 20]),
+                value: [0x33; 32],
+                created_contract_address: None,
+                success: true,
+                error_code: None,
+            };
+            MAX_INTERNAL_TRACES_PER_TX_U32 as usize
+        ],
+        MAX_INTERNAL_TRACES_PER_TX_U32.saturating_add(1),
+    );
+    let decoded = InternalTraceSet::from_bytes(set.to_bytes());
+    assert!(decoded.truncated);
+    assert_eq!(decoded.captured_count, MAX_INTERNAL_TRACES_PER_TX_U32);
+    assert_eq!(
+        decoded.total_count,
+        MAX_INTERNAL_TRACES_PER_TX_U32.saturating_add(1)
+    );
+}
+
+#[test]
+fn internal_trace_set_failed_marker_roundtrip_keeps_failed_flag() {
+    let set = InternalTraceSet::failed(17);
+    let decoded = InternalTraceSet::from_bytes(set.to_bytes());
+    assert!(decoded.encode_failed);
+    assert!(!decoded.truncated);
+    assert_eq!(decoded.captured_count, 0);
+    assert_eq!(decoded.total_count, 17);
+    assert!(decoded.items.is_empty());
+}
+
+#[test]
+fn internal_trace_set_rejects_invalid_failed_and_truncated_combination() {
+    let mut bytes = Vec::new();
+    bytes.extend_from_slice(b"itrace01");
+    bytes.push(1); // encode_failed
+    bytes.push(1); // truncated (invalid with failed)
+    bytes.extend_from_slice(&0u32.to_be_bytes()); // captured_count
+    bytes.extend_from_slice(&1u32.to_be_bytes()); // total_count
+    bytes.extend_from_slice(&0u32.to_be_bytes()); // count
+    let decoded = InternalTraceSet::from_bytes(bytes.into());
+    assert!(!decoded.encode_failed);
+    assert!(!decoded.truncated);
+    assert_eq!(decoded.total_count, 0);
+    assert!(decoded.items.is_empty());
+}
+
+#[test]
 fn receipt_log_binary_stability_roundtrip() {
     let receipt = ReceiptLike {
         tx_id: TxId([0x88u8; 32]),
@@ -434,7 +531,8 @@ fn chain_state_roundtrip() {
     state.min_gas_price = 2;
     state.min_priority_fee = 3;
     state.block_gas_limit = 4_500_000;
-    state.instruction_soft_limit = 123_456;
+    state.query_instruction_soft_limit = 123_456;
+    state.update_instruction_soft_limit = 654_321;
     let bytes = state.to_bytes();
     let decoded = ChainStateV1::from_bytes(bytes);
     assert_eq!(state, decoded);
@@ -447,7 +545,14 @@ fn chain_state_default_fees_follow_runtime_defaults() {
     assert_eq!(state.min_gas_price, DEFAULT_MIN_FEE_FLOOR);
     assert_eq!(state.min_priority_fee, DEFAULT_MIN_FEE_FLOOR);
     assert_eq!(state.block_gas_limit, DEFAULT_BLOCK_GAS_LIMIT);
-    assert_eq!(state.instruction_soft_limit, DEFAULT_INSTRUCTION_SOFT_LIMIT);
+    assert_eq!(
+        state.query_instruction_soft_limit,
+        DEFAULT_QUERY_INSTRUCTION_SOFT_LIMIT
+    );
+    assert_eq!(
+        state.update_instruction_soft_limit,
+        DEFAULT_INSTRUCTION_SOFT_LIMIT
+    );
 }
 
 #[test]
@@ -465,9 +570,25 @@ fn chain_state_invalid_len_returns_safe_default_and_sets_needs_migration() {
     assert_eq!(decoded.min_priority_fee, DEFAULT_MIN_FEE_FLOOR);
     assert_eq!(decoded.block_gas_limit, DEFAULT_BLOCK_GAS_LIMIT);
     assert_eq!(
-        decoded.instruction_soft_limit,
+        decoded.query_instruction_soft_limit,
+        DEFAULT_QUERY_INSTRUCTION_SOFT_LIMIT
+    );
+    assert_eq!(
+        decoded.update_instruction_soft_limit,
         DEFAULT_INSTRUCTION_SOFT_LIMIT
     );
+}
+
+#[test]
+fn chain_state_legacy_v3_maps_single_limit_to_update_limit() {
+    let mut legacy = vec![0u8; 88];
+    legacy[80..88].copy_from_slice(&123_456u64.to_be_bytes());
+    let decoded = ChainStateV1::from_bytes(Cow::Owned(legacy));
+    assert_eq!(
+        decoded.query_instruction_soft_limit,
+        DEFAULT_QUERY_INSTRUCTION_SOFT_LIMIT
+    );
+    assert_eq!(decoded.update_instruction_soft_limit, 123_456);
 }
 
 #[test]

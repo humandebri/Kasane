@@ -6,6 +6,7 @@ pub mod chain_state;
 pub(crate) mod codec;
 pub mod constants;
 pub mod dropped_ring;
+pub mod internal_trace;
 pub mod log_config;
 pub mod metrics;
 pub mod ops;
@@ -32,6 +33,9 @@ pub use constants::{
     MAX_TX_SIZE, RECEIPT_CONTRACT_ADDR_LEN, TX_ID_LEN,
 };
 pub use dropped_ring::{DroppedRingStateV1, DROPPED_RING_STATE_SIZE_U32};
+pub use internal_trace::{
+    InternalTrace, InternalTraceActionKind, InternalTraceSet, MAX_INTERNAL_TRACES_PER_TX_U32,
+};
 pub use log_config::{LogConfigV1, LOG_CONFIG_FILTER_MAX};
 pub use metrics::{MetricsStateV1, MetricsWindowSummary, METRICS_BUCKETS};
 pub use ops::{OpsConfigV1, OpsMode, OpsStateV1};
@@ -47,7 +51,8 @@ pub use runtime_defaults::{
     DEFAULT_DECODE_SUPPRESS_WINDOW_SECS, DEFAULT_INSTRUCTION_SOFT_LIMIT,
     DEFAULT_MAX_DECODE_DROPS_PER_BLOCK, DEFAULT_MAX_DECODE_SUPPRESS_PRINCIPALS,
     DEFAULT_MINING_INTERVAL_MS, DEFAULT_MIN_FEE_FLOOR, DEFAULT_PRUNE_MAX_OPS_PER_TICK,
-    DEFAULT_PRUNE_TIMER_INTERVAL_MS, MIN_PRUNE_MAX_OPS_PER_TICK, MIN_PRUNE_TIMER_INTERVAL_MS,
+    DEFAULT_PRUNE_TIMER_INTERVAL_MS, DEFAULT_QUERY_INSTRUCTION_SOFT_LIMIT,
+    MIN_PRUNE_MAX_OPS_PER_TICK, MIN_PRUNE_TIMER_INTERVAL_MS,
 };
 pub use state_root_meta::{StateRootMetaV1, STATE_ROOT_META_SIZE_U32};
 pub use state_root_ops::{

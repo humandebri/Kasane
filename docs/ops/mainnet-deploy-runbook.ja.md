@@ -67,11 +67,14 @@ scripts/mainnet/ic_mainnet_deploy.sh
 - `genesis_balances`: install / reinstall 時にのみ使う初期残高配布。各要素は `address` が 20 byte の EVM address、`amount` が `nat`。重複 address と `amount = 0` は拒否される。
 - `wrap_canister_id`: unwrap dispatch の送信先となる IC principal。anonymous は不可。gateway は実行時にこの stable 設定のみを参照する。
 - `wrap_factory_address`: unwrap burn 対象とみなす EVM factory address。20 byte 必須。precompile はこの factory 配下 token だけを正として burn / allowance 判定する。
+- `query_instruction_soft_limit`: optional。指定した場合だけ install / upgrade 時に query 側 soft limit を上書きする。未指定なら既定値または既存 state を維持する。
+- `update_instruction_soft_limit`: optional。指定した場合だけ install / upgrade 時に update 側 soft limit を上書きする。未指定なら既定値または既存 state を維持する。
 
 upgrade 時の扱い:
 - `MODE=upgrade` でも `scripts/mainnet/ic_mainnet_deploy.sh` は `build_init_args_for_current_identity(...)` を呼び、`--args` 付きで canister upgrade を実行する。
 - この `--args` が Rust 側の `post_upgrade(args: Option<InitArgs>)` に渡る。
 - `wrap_canister_id` / `wrap_factory_address` を切り替えたい場合は、環境変数を更新して upgrade を実行する。
+- instruction soft limit を変えたい場合は、deploy 前に `QUERY_INSTRUCTION_SOFT_LIMIT` / `UPDATE_INSTRUCTION_SOFT_LIMIT` を export してから upgrade する。
 - `genesis_balances` は upgrade 時にも wire 互換のため渡すが、実質的な意味を持つのは install / reinstall 時のみ。
 
 事前 export 例:
@@ -79,6 +82,8 @@ upgrade 時の扱い:
 ```bash
 export WRAP_CANISTER_ID="<wrap_canister_principal>"
 export EVM_WRAP_FACTORY="0x<40_hex_chars>"
+export QUERY_INSTRUCTION_SOFT_LIMIT="10000000"      # 任意
+export UPDATE_INSTRUCTION_SOFT_LIMIT="4000000000"   # 任意
 ```
 
 ## 3. デプロイ後確認
@@ -96,8 +101,8 @@ scripts/query_smoke.sh
 ```
 6. `scripts/query_smoke.sh` の出力をチェックする。必ずこのようなログが出ることを確認:
    - `[query-smoke] chain_id=...` → 本番 chain_id（0 以外）で IC につながっていること。
-   - `[query-smoke] ops_status needs_migration=false mode=<Low|Normal|Critical> block_gas_limit=... instruction_soft_limit=... last_cycle_balance=...`
-     → `needs_migration=false` を確認し、`mode` が `Low`/`Normal` であること、gas 上限や soft limit も妥当な値を取ること。
+   - `[query-smoke] ops_status needs_migration=false mode=<Low|Normal|Critical> block_gas_limit=... query_instruction_soft_limit=... update_instruction_soft_limit=... last_cycle_balance=...`
+     → `needs_migration=false` を確認し、`mode` が `Low`/`Normal` であること、gas 上限と query/update の soft limit が妥当な値を取ること。
    - `[query-smoke] export_blocks ...` → `MissingData` や `ok ...` などいずれかが出ていること（`MissingData` は許容）。
    `ログが出ない/エラーなら query 経路で何か壊れているので、deploy を中断しログを添えてチームに報告する。
 7. fee/取り込み健全性の監視指標を確認する。

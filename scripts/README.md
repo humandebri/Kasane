@@ -57,7 +57,9 @@ scripts/measure_precompile_ratio.sh
 - `scripts/check_precompile_feature_isolation.sh`: verifies the default wasm build of `ic-evm-core` does not pull BLS/KZG backend crates (`ark-bls12-381`, `c-kzg`, `blst`)
 - `scripts/predeploy_smoke.sh`: `cargo check` + wasm build + PocketIC RPC compatibility E2E (optional indexer smoke)
 - `scripts/run_rpc_compat_e2e.sh`: RPC compatibility E2E test (`cargo test --test rpc_compat_e2e`)
+  - The script runs `forge build` first because the Rust E2E tests load Foundry artifacts from `tools/wrapper/contracts/out/` at compile time
   - PocketIC must be able to bind to localhost (`127.0.0.1`); restricted sandbox environments can fail before the test logic runs
+- `scripts/prepare_ci_icrc1_ledger_wasm.sh`: exports the vendored official ledger wasm at `third_party/dfinity/ledger-suite-icrc-2026-03-09/ic-icrc1-ledger.wasm` as `ICP_LEDGER_WASM` via the shared ledger artifact helper; `LEDGER_RELEASE=latest` is rejected and the local ledger smoke script caches `ledger.did` under `${LEDGER_CACHE_DIR}/<release>/ledger.did`
 - `scripts/profile_wasm_deps.sh`: dependency-size profiling for wasm (`twiggy top/dominators`, optional `cargo +nightly bloat -Z build-std`, and `cargo tree -e features -i <crate>` snapshots)
   - output default: `docs/ops/reports/wasm-deps-<package>-<timestamp>/`
   - optional: `--compare <previous_output_dir>` to generate before/after table (bytes + instruction estimate)
@@ -130,9 +132,14 @@ scripts/measure_precompile_ratio.sh
 
 ### Mainnet Operations
 - `scripts/mainnet/ic_mainnet_preflight.sh`: minimum pre-mainnet checks
+  - `CANISTER_NAME` defaults to `evm_canister`; this script does not cover `wrap_canister`
+  - default cycles floor is `MIN_CYCLES=2000000000000`
 - `scripts/mainnet/ic_mainnet_deploy.sh`: main deployment script
   - the default build does not enable the `precompile-profile-admin` feature
   - measure precompile ratio before deploy with `scripts/run_precompile_profile_e2e.sh` / `scripts/measure_precompile_ratio.sh`; if you need to change the default fixed ratio `1/100`, rebuild and redeploy
+  - even with `MODE=upgrade`, `WRAP_CANISTER_ID` and `EVM_WRAP_FACTORY` are required
+  - set `QUERY_INSTRUCTION_SOFT_LIMIT` / `UPDATE_INSTRUCTION_SOFT_LIMIT` only when you intentionally want install / upgrade to overwrite the current soft limits
+  - this script targets `evm_canister`; upgrade `wrap_canister` separately via [docs/ops/wrap-canister-deploy-runbook.ja.md](/Users/0xhude/Desktop/ICP/Kasane/docs/ops/wrap-canister-deploy-runbook.ja.md)
 - `scripts/mainnet/ic_mainnet_post_upgrade_smoke.sh`: minimum RPC checks after deploy
 - `scripts/verify_submit_after_deploy.sh`: manual/CI hook for verify submit
 - `scripts/mainnet/mainnet_method_test.sh`: heavy mainnet method test
@@ -145,11 +152,19 @@ scripts/measure_precompile_ratio.sh
 - `scripts/ops/test_prune_ops_scripts.sh`: mock tests for the two scripts above
 - `scripts/ops/contabo_deploy_tools.sh`: sync `tools/indexer` / `tools/explorer` from git worktree on Contabo, then build+restart (git ref based)
 - `scripts/ops/contabo_deploy_gateway.sh`: sync `tools/rpc-gateway` from git worktree on Contabo, then build+restart (git ref based)
+  - when Contabo cannot use GitHub HTTPS auth, pass `REPO_URL=git@github.com:<owner>/<repo>.git` and give the remote `deployer` user a read-only SSH deploy key
+  - remote clone/fetch is expected to run as `deployer`; avoid provisioning the deploy key only for `root`
 
 ## Key Environment Variables
 - `CANISTER_NAME` / `CANISTER_ID`
 - `WRAP_CANISTER_ID`
   - used by wrap/unwrap smoke and ledger scripts that need the actual wrap canister principal
+- `EVM_WRAP_FACTORY`
+  - required by `scripts/mainnet/ic_mainnet_deploy.sh`; pass the 20-byte EVM factory address as `0x...`
+- `QUERY_INSTRUCTION_SOFT_LIMIT`
+  - optional; when set, `build_init_args_for_current_identity(...)` emits `InitArgs.query_instruction_soft_limit`
+- `UPDATE_INSTRUCTION_SOFT_LIMIT`
+  - optional; when set, `build_init_args_for_current_identity(...)` emits `InitArgs.update_instruction_soft_limit`
 - `ICP_IDENTITY_NAME`
 - `POCKET_IC_BIN` (PocketIC binary used by `predeploy_smoke.sh` / `run_rpc_compat_e2e.sh`)
   - Recommended: point this to an existing local binary first to reduce flaky downloads
