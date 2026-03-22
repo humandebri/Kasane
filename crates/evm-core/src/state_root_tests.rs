@@ -30,7 +30,10 @@ fn apply_node_db_records(state: &mut StableState, records: Vec<(HashKey, NodeRec
             .get(&key)
             .map(|value| i64::from(value.refcnt))
             .unwrap_or(0);
-        let after = next.get(&key).map(|value| i64::from(value.refcnt)).unwrap_or(0);
+        let after = next
+            .get(&key)
+            .map(|value| i64::from(value.refcnt))
+            .unwrap_or(0);
         let diff = after - before;
         if diff != 0 {
             counts.insert(key, diff);

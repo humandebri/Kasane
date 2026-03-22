@@ -1456,11 +1456,7 @@ fn schema_migration_tick(max_steps: u32) -> bool {
                         return false;
                     }
                 }
-                mark_migration_applied(
-                    state.from_version,
-                    state.to_version,
-                    current_time_nanos(),
-                );
+                mark_migration_applied(state.from_version, state.to_version, current_time_nanos());
                 set_needs_migration(false);
                 state.phase = SchemaMigrationPhase::Done;
                 state.cursor = 0;
@@ -2057,8 +2053,8 @@ fn quarantine_decode_failed_unwrap_requests(now: u64) -> (u64, u64) {
                 dispatch_seq_to_drop.push(*entry.key());
             }
         }
-        for seq in dispatch_seq_to_drop.iter().copied() {
-            state.unwrap_dispatch_queue.remove(&seq);
+        for seq in &dispatch_seq_to_drop {
+            state.unwrap_dispatch_queue.remove(seq);
         }
         (
             request_ids.len() as u64,
