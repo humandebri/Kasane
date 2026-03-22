@@ -2,7 +2,7 @@
 
 Vite + React Router + Juno Function で構築した wrapper 用 Dashboard です。
 
-このリポでは `tools/wrapper-vite` を正本として扱います。Juno 運用手順、recent requests の契約、local smoke / preflight の入口はここを基準にします。`tools/wrapper` は deprecated 扱いで、現行の検証導線には含めません。
+このリポでは `tools/wrapper-vite` を正本として扱います。Juno 運用手順、recent requests の契約、local smoke / preflight の入口はここを基準にします。旧 `tools/wrapper` ワークスペースは削除済みです。
 
 ## ソース管理方針
 
