@@ -56,3 +56,6 @@ contracts/out/
 
 # local internet identity artifacts
 .local/internet-identity/
+
+# local Codex workspace metadata
+/.codex/
