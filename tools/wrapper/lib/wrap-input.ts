@@ -20,6 +20,30 @@ export function parsePositiveBigInt(text: string, code: string): bigint {
   return value;
 }
 
+export function parseTokenAmount(text: string, decimals: number, code: string): bigint {
+  if (!Number.isInteger(decimals) || decimals < 0) {
+    throw new Error(code);
+  }
+  const normalized = text.trim();
+  if (!/^\d+(\.\d+)?$/.test(normalized)) {
+    throw new Error(code);
+  }
+  const [integerPart = "0", fractionPart = ""] = normalized.split(".");
+  if (fractionPart.length > decimals) {
+    throw new Error(code);
+  }
+  const scale = 10n ** BigInt(decimals);
+  const integerValue = BigInt(integerPart) * scale;
+  const fractionValue = fractionPart === ""
+    ? 0n
+    : BigInt(fractionPart.padEnd(decimals, "0"));
+  const value = integerValue + fractionValue;
+  if (value <= 0n) {
+    throw new Error(code);
+  }
+  return value;
+}
+
 export function parseU64(text: string, code: string): bigint {
   const value = BigInt(text.trim());
   if (value < 0n || value > 0xffff_ffff_ffff_ffffn) {

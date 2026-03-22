@@ -20,6 +20,44 @@ export function formatE8sToIcpText(e8s: bigint): string {
   return `${integer.toString()}.${fraction}`;
 }
 
+export function formatE8sToIcpText4(e8s: bigint): string {
+  const integer = e8s / 100_000_000n;
+  const fraction = ((e8s % 100_000_000n) / 10_000n).toString().padStart(4, "0");
+  return `${integer.toString()}.${fraction}`;
+}
+
+export function formatTokenBalance2(amount: bigint, decimals: number): string {
+  if (!Number.isInteger(decimals) || decimals < 0) {
+    throw new Error("wrap.asset_decimals_invalid");
+  }
+  if (decimals === 0) {
+    return amount.toString();
+  }
+  const base = 10n ** BigInt(decimals);
+  const integer = amount / base;
+  const fractionFull = (amount % base).toString().padStart(decimals, "0");
+  const fraction2 = fractionFull.slice(0, 2).padEnd(2, "0");
+  return `${integer.toString()}.${fraction2}`;
+}
+
+export function formatTokenAmount(amount: bigint, decimals: number): string {
+  if (!Number.isInteger(decimals) || decimals < 0) {
+    throw new Error("wrap.asset_decimals_invalid");
+  }
+  if (decimals === 0) {
+    return amount.toString();
+  }
+  const base = 10n ** BigInt(decimals);
+  const integer = amount / base;
+  const fractionFull = (amount % base).toString().padStart(decimals, "0");
+  const fraction = fractionFull.replace(/0+$/, "");
+  return fraction === "" ? integer.toString() : `${integer.toString()}.${fraction}`;
+}
+
+export function formatWeiToGwei2(wei: bigint): string {
+  return (wei / 1_000_000_000n).toString();
+}
+
 export function computeWrapFeeQuote(args: {
   gasPriceWei: bigint;
   gasLimit: bigint;
@@ -44,15 +82,16 @@ export function computeRequiredAllowances(args: {
   amount: bigint;
   totalFeeE8s: bigint;
 }): { requiredAssetAllowance: bigint; requiredFeeAllowance: bigint } {
+  const feeAllowanceWithHeadroom = ceilMulRatio(args.totalFeeE8s, 10_500n, 10_000n) + 1_000_000n;
   if (args.assetLedgerCanister === args.feeLedgerCanister) {
     return {
-      requiredAssetAllowance: args.amount + args.totalFeeE8s,
+      requiredAssetAllowance: args.amount + feeAllowanceWithHeadroom,
       requiredFeeAllowance: 0n,
     };
   }
   return {
     requiredAssetAllowance: args.amount,
-    requiredFeeAllowance: args.totalFeeE8s,
+    requiredFeeAllowance: feeAllowanceWithHeadroom,
   };
 }
 

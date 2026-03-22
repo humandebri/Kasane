@@ -3,7 +3,7 @@
 // なぜ: frontend の自動 gas 見積もりと送信が同じ仕様を共有するため
 
 import { keccak_256 } from "@noble/hashes/sha3";
-import { decimalToBytes32, WRAP_PRECOMPILE_ADDRESS } from "./request-id";
+import { tokenAmountToBytes32, WRAP_PRECOMPILE_ADDRESS } from "./request-id";
 import { callerEvmAddressFromPrincipalText, principalTextToBytes } from "./principal";
 import { hexToBytes } from "./utils";
 
@@ -97,7 +97,7 @@ export function buildWrapEstimateCallObject(args: BuildWrapEstimateCallArgs): Wr
   const factory = hexToBytes(args.evmWrapFactory.trim());
   assertLen(factory, 20, "config.evm_wrap_factory_invalid");
   const assetId = principalTextToBytes(args.assetId.trim());
-  const amount = decimalToBytes32(args.amount.trim());
+  const amount = tokenAmountToBytes32(args.amount.trim(), args.tokenDecimals);
   const evmRecipient = hexToBytes(args.evmRecipient.trim());
   const from = callerEvmAddressFromPrincipalText(args.wrapCanisterId.trim());
   const value = new Uint8Array(32);

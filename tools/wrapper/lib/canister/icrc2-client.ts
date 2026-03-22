@@ -1,4 +1,4 @@
-// どこで: ICRC ledger client / 何を: allowance/approve と metadata(decimals) を取得 / なぜ: wrap submit と gas estimate を同じ ledger 仕様に揃えるため
+// どこで: ICRC ledger client / 何を: balance/allowance/approve と metadata(decimals) を取得 / なぜ: wrap submit と残高表示を同じ ledger 仕様に揃えるため
 
 import { Actor, type ActorSubclass, type Identity } from "@dfinity/agent";
 import { IDL } from "@dfinity/candid";
@@ -21,6 +21,10 @@ type AllowanceResult = {
   allowance: bigint;
   expires_at: [] | [bigint];
 };
+type Account = {
+  owner: Principal;
+  subaccount: [] | [Uint8Array];
+};
 type MetadataValue =
   | { Int: bigint }
   | { Nat: bigint }
@@ -30,7 +34,7 @@ type MetadataValue =
 type Icrc2Actor = ActorSubclass<{
   icrc2_approve: (args: {
     from_subaccount: [] | [Uint8Array];
-    spender: { owner: Principal; subaccount: [] | [Uint8Array] };
+    spender: Account;
     amount: bigint;
     expected_allowance: [] | [bigint];
     expires_at: [] | [bigint];
@@ -38,9 +42,10 @@ type Icrc2Actor = ActorSubclass<{
     memo: [] | [Uint8Array];
     created_at_time: [] | [bigint];
   }) => Promise<ApproveResult>;
+  icrc1_balance_of: (account: Account) => Promise<bigint>;
   icrc2_allowance: (args: {
-    account: { owner: Principal; subaccount: [] | [Uint8Array] };
-    spender: { owner: Principal; subaccount: [] | [Uint8Array] };
+    account: Account;
+    spender: Account;
   }) => Promise<AllowanceResult>;
   icrc1_metadata: () => Promise<Array<[string, MetadataValue]>>;
 }>;
@@ -73,6 +78,7 @@ const icrc2IdlFactory: IDL.InterfaceFactory = ({ IDL: I }) => {
   });
   return I.Service({
     icrc2_approve: I.Func([ApproveArgs], [I.Variant({ Ok: I.Nat, Err: ApproveError })], []),
+    icrc1_balance_of: I.Func([Account], [I.Nat], ["query"]),
     icrc2_allowance: I.Func([I.Record({ account: Account, spender: Account })], [I.Record({
       allowance: I.Nat,
       expires_at: I.Opt(I.Nat64),
@@ -174,6 +180,20 @@ export async function getLedgerAllowance(args: {
     spender: { owner: Principal.fromText(args.spenderCanisterId), subaccount: [] },
   });
   return out.allowance;
+}
+
+export async function getLedgerBalance(args: {
+  ledgerCanisterId: string;
+  ownerPrincipalText: string;
+}): Promise<bigint> {
+  const actor = Actor.createActor<Icrc2Actor>(icrc2IdlFactory, {
+    canisterId: args.ledgerCanisterId,
+    agent: await getQueryAgent(),
+  });
+  return actor.icrc1_balance_of({
+    owner: Principal.fromText(args.ownerPrincipalText),
+    subaccount: [],
+  });
 }
 
 export async function getLedgerDecimals(ledgerCanisterId: string): Promise<number> {

@@ -14,8 +14,10 @@ export type CustomAssetDraft = {
 };
 
 export const CUSTOM_ASSET_STORAGE_KEY = "wrapper.customAssets.v1";
+export const DEFAULT_ASSET_ID = "xafvr-biaaa-aaaai-aql5q-cai";
 
 const PRESET_ASSETS: AssetOption[] = [
+  { assetId: DEFAULT_ASSET_ID, label: "TESTLEDGER", source: "preset" },
   { assetId: "ryjl3-tyaaa-aaaaa-aaaba-cai", label: "ICP", source: "preset" },
   { assetId: "mxzaz-hqaaa-aaaar-qaada-cai", label: "ckBTC", source: "preset" },
   { assetId: "ss2fx-dyaaa-aaaar-qacoq-cai", label: "ckETH", source: "preset" },

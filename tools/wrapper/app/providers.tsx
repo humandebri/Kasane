@@ -6,7 +6,22 @@ import type { ReactNode } from "react";
 import { WalletProvider } from "@/lib/wallet/provider";
 
 export function Providers(
-  { children, iiIdentityProvider }: { children: ReactNode; iiIdentityProvider: string | null },
+  {
+    children,
+    iiIdentityProvider,
+    iiDerivationOrigin,
+  }: {
+    children: ReactNode;
+    iiIdentityProvider: string | null;
+    iiDerivationOrigin: string | null;
+  },
 ) {
-  return <WalletProvider iiIdentityProvider={iiIdentityProvider}>{children}</WalletProvider>;
+  return (
+    <WalletProvider
+      iiIdentityProvider={iiIdentityProvider}
+      iiDerivationOrigin={iiDerivationOrigin}
+    >
+      {children}
+    </WalletProvider>
+  );
 }

@@ -1,4 +1,4 @@
-// どこで: dashboard header / 何を: 接続状態とネットワーク情報を表示 / なぜ: 送信主体と接続先を常に明示するため
+// どこで: dashboard header / 何を: 接続状態とウォレット操作を表示 / なぜ: 主要操作をヘッダーに集約するため
 
 import { Wallet } from "lucide-react";
 import type { ReactElement } from "react";
@@ -8,8 +8,6 @@ import type { DashboardWalletState } from "./types";
 
 export function HeaderBar(props: {
   wallet: DashboardWalletState;
-  host: string;
-  kasaneEvmCanisterId: string;
   onConnectInternetIdentity: () => void;
   onConnectOisy: () => void;
   onDisconnect: () => void;
@@ -28,9 +26,6 @@ export function HeaderBar(props: {
           <h1 className="mt-1 text-2xl font-semibold tracking-tight text-zinc-900">
             Wrap / Unwrap Console
           </h1>
-          <p className="mt-2 text-xs text-zinc-600">
-            host: {props.host} / Kasane EVM: {props.kasaneEvmCanisterId}
-          </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <Badge variant="neutral">

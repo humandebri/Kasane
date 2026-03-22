@@ -2,6 +2,7 @@
 
 import { Principal } from "@dfinity/principal";
 import { keccak_256 } from "@noble/hashes/sha3";
+import { parseTokenAmount } from "./wrap-input";
 
 export const WRAP_PRECOMPILE_ADDRESS = Uint8Array.from([
   0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
@@ -121,6 +122,10 @@ export function decimalToBytes32(amountText: string): Uint8Array {
     throw new Error("arg.amount_invalid");
   }
   return bigintToWord(value);
+}
+
+export function tokenAmountToBytes32(amountText: string, decimals: number): Uint8Array {
+  return bigintToWord(parseTokenAmount(amountText, decimals, "arg.amount_invalid"));
 }
 
 export function deriveWrapRequestId(args: WrapRequestIdInput): Uint8Array {

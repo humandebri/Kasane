@@ -7,6 +7,7 @@ import {
   decimalToBytes32,
   deriveWrapRequestId,
   encodeUnwrapPayload,
+  tokenAmountToBytes32,
   WRAP_PRECOMPILE_ADDRESS,
 } from "../lib/request-id";
 import { principalTextToBytes } from "../lib/principal";
@@ -41,9 +42,13 @@ import {
   computeRequiredAllowances,
   computeWrapFeeQuote,
   deriveStatusPhase,
+  formatTokenAmount,
+  formatTokenBalance2,
+  formatE8sToIcpText4,
+  formatWeiToGwei2,
   isTerminalStatus,
 } from "../lib/wrap-flow";
-import { parsePositiveU64 } from "../lib/wrap-input";
+import { parsePositiveU64, parseTokenAmount } from "../lib/wrap-input";
 import {
   applyWrapGasHeadroom,
   applyUnwrapGasHeadroom,
@@ -53,6 +58,7 @@ import {
   validateEstimatedGasLimit,
 } from "../lib/wrap-estimate";
 import {
+  DEFAULT_ASSET_ID,
   dedupeAssetOptions,
   mergeAssetOptions,
   normalizeCustomAssetDraft,
@@ -62,6 +68,12 @@ import {
 import { configTestHooks, loadConfig } from "../lib/config";
 import { iiTestHooks } from "../lib/wallet/ii";
 import {
+  createRecentRequestKey,
+  mergeRecentRequestHistory,
+  toHistoryEntry,
+  toRecentRequestDoc,
+} from "../lib/recent-requests";
+import {
   decodeAddressReturnData,
   decodeUint256ReturnData,
   encodeAllowanceCall,
@@ -70,6 +82,10 @@ import {
 } from "../lib/erc20";
 import { icrcClientTestHooks } from "../lib/canister/icrc2-client";
 import { refreshWrapNonceState } from "../lib/hooks/use-wrapper-forms";
+import {
+  createRecentRequestsScopeKey,
+  shouldApplyRecentRequestsResult,
+} from "../lib/hooks/use-recent-requests";
 
 async function runUtilsTests(): Promise<void> {
   const value = Uint8Array.from([0x01, 0xab, 0x10]);
@@ -195,6 +211,13 @@ async function runFeeQuoteMathTests(): Promise<void> {
   });
   assert.equal(quote.chargedGasPriceWei, 300_000_000_000n);
   assert.equal(quote.totalFeeE8s, 10_000_000n);
+  assert.equal(formatE8sToIcpText4(14_216_140n), "0.1421");
+  assert.equal(formatTokenBalance2(12_345_678n, 8), "0.12");
+  assert.equal(formatTokenBalance2(123_456_789n, 6), "123.45");
+  assert.equal(formatTokenBalance2(42n, 0), "42");
+  assert.equal(formatTokenAmount(12_340_000n, 8), "0.1234");
+  assert.equal(formatTokenAmount(123_000_000n, 6), "123");
+  assert.equal(formatWeiToGwei2(1_727_419_315_967n), "1727");
 }
 
 async function runAllowanceTests(): Promise<void> {
@@ -205,7 +228,7 @@ async function runAllowanceTests(): Promise<void> {
     totalFeeE8s: 50n,
   });
   assert.equal(separate.requiredAssetAllowance, 200n);
-  assert.equal(separate.requiredFeeAllowance, 50n);
+  assert.equal(separate.requiredFeeAllowance, 1_000_053n);
 
   const merged = computeRequiredAllowances({
     assetLedgerCanister: "a",
@@ -213,15 +236,21 @@ async function runAllowanceTests(): Promise<void> {
     amount: 200n,
     totalFeeE8s: 50n,
   });
-  assert.equal(merged.requiredAssetAllowance, 250n);
+  assert.equal(merged.requiredAssetAllowance, 1_000_253n);
   assert.equal(merged.requiredFeeAllowance, 0n);
 }
 
 async function runWrapInputValidationTests(): Promise<void> {
   assert.equal(parsePositiveU64("1", "validation.gas_limit.invalid"), 1n);
+  assert.equal(parseTokenAmount("1.23", 8, "validation.amount.invalid"), 123_000_000n);
+  assert.equal(parseTokenAmount("10", 6, "validation.amount.invalid"), 10_000_000n);
   assert.throws(
     () => parsePositiveU64("0", "validation.gas_limit.invalid"),
     /validation\.gas_limit\.invalid/,
+  );
+  assert.throws(
+    () => parseTokenAmount("1.234", 2, "validation.amount.invalid"),
+    /validation\.amount\.invalid/,
   );
 }
 
@@ -230,7 +259,7 @@ async function runWrapEstimateEncodingTests(): Promise<void> {
     assetId: principalTextToBytes("2vxsx-fae"),
     tokenDecimals: 8,
     evmRecipient: hexToBytes("0x1111111111111111111111111111111111111111"),
-    amount: decimalToBytes32("1000000000000000000"),
+    amount: tokenAmountToBytes32("10000000000", 8),
   });
   assert.equal(data.length % 32, 4);
 
@@ -671,13 +700,102 @@ async function runAssetCatalogTests(): Promise<void> {
     custom,
     { assetId: "2vxsx-fae", label: "Duplicate", source: "custom" },
   ]);
-  assert.ok(merged.length >= 5);
+  assert.ok(merged.length >= 6);
   assert.equal(merged.filter((asset) => asset.assetId === "2vxsx-fae").length, 1);
+  assert.ok(
+    merged.some(
+      (asset) =>
+        asset.assetId === DEFAULT_ASSET_ID && asset.label === "TESTLEDGER",
+    ),
+  );
+  assert.equal(DEFAULT_ASSET_ID, "xafvr-biaaa-aaaai-aql5q-cai");
 
   const serialized = serializeCustomAssets([custom]);
   const parsed = parseStoredCustomAssets(serialized);
   assert.deepEqual(parsed, [custom]);
   assert.deepEqual(dedupeAssetOptions([custom, custom]), [custom]);
+}
+
+async function runRecentRequestsTests(): Promise<void> {
+  const entry = {
+    requestId: `0x${"12".repeat(32)}`,
+    kind: "wrap" as const,
+    submittedAt: "2026-03-18T00:00:00.000Z",
+  };
+  const doc = toRecentRequestDoc("aaaaa-aa", entry);
+  assert.equal(doc.principalText, "aaaaa-aa");
+  assert.equal(createRecentRequestKey(doc.principalText, doc.requestId), `aaaaa-aa:${entry.requestId}`);
+  assert.deepEqual(toHistoryEntry(doc), entry);
+
+  const merged = mergeRecentRequestHistory([
+    entry,
+    {
+      requestId: `0x${"34".repeat(32)}`,
+      kind: "unwrap",
+      submittedAt: "2026-03-17T00:00:00.000Z",
+    },
+  ], {
+    requestId: entry.requestId,
+    kind: "wrap",
+    submittedAt: "2026-03-19T00:00:00.000Z",
+  });
+  assert.equal(merged.length, 2);
+  assert.equal(merged[0]?.submittedAt, "2026-03-19T00:00:00.000Z");
+  assert.equal(merged[1]?.requestId, `0x${"34".repeat(32)}`);
+
+  const scopeA = createRecentRequestsScopeKey({
+    principalText: "aaaaa-aa",
+    satelliteId: "uxrrr-q7777-77774-qaaaq-cai",
+  });
+  const scopeB = createRecentRequestsScopeKey({
+    principalText: "bbbbb-bb",
+    satelliteId: "uxrrr-q7777-77774-qaaaq-cai",
+  });
+  const signedOutScope = createRecentRequestsScopeKey({
+    principalText: null,
+    satelliteId: "uxrrr-q7777-77774-qaaaq-cai",
+  });
+  assert.equal(
+    shouldApplyRecentRequestsResult({
+      startedScopeKey: scopeA,
+      currentScopeKey: scopeA,
+      startedRefreshSeq: 2,
+      currentRefreshSeq: 2,
+    }),
+    true,
+  );
+  assert.equal(
+    shouldApplyRecentRequestsResult({
+      startedScopeKey: scopeA,
+      currentScopeKey: scopeB,
+      startedRefreshSeq: 2,
+      currentRefreshSeq: 2,
+    }),
+    false,
+  );
+  assert.equal(
+    shouldApplyRecentRequestsResult({
+      startedScopeKey: scopeA,
+      currentScopeKey: signedOutScope,
+      startedRefreshSeq: 2,
+      currentRefreshSeq: 3,
+    }),
+    false,
+  );
+  assert.equal(
+    shouldApplyRecentRequestsResult({
+      startedScopeKey: scopeA,
+      currentScopeKey: scopeA,
+    }),
+    true,
+  );
+  assert.equal(
+    shouldApplyRecentRequestsResult({
+      startedScopeKey: scopeA,
+      currentScopeKey: scopeB,
+    }),
+    false,
+  );
 }
 
 async function runInternetIdentityConfigTests(): Promise<void> {
@@ -748,6 +866,40 @@ async function runInternetIdentityConfigTests(): Promise<void> {
       NEXT_PUBLIC_INTERNET_IDENTITY_URL: "http://rdmx6-jaaaa-aaaaa-aaadq-cai.localhost:8000",
     }),
     "http://rdmx6-jaaaa-aaaaa-aaadq-cai.localhost:8000",
+  );
+  assert.equal(iiTestHooks.resolveDerivationOrigin(null), undefined);
+  assert.equal(iiTestHooks.resolveDerivationOrigin(""), undefined);
+  assert.equal(
+    iiTestHooks.resolveDerivationOrigin("https://wrap.example.com"),
+    "https://wrap.example.com",
+  );
+  assert.equal(
+    configTestHooks.resolveConfiguredDerivationOrigin({
+      ...process.env,
+      NEXT_PUBLIC_II_DERIVATION_ORIGIN: "",
+    }),
+    null,
+  );
+  assert.equal(
+    configTestHooks.resolveConfiguredDerivationOrigin({
+      ...process.env,
+      NEXT_PUBLIC_II_DERIVATION_ORIGIN: "https://wrap.example.com",
+    }),
+    "https://wrap.example.com",
+  );
+  assert.equal(
+    configTestHooks.resolveJunoSatelliteId({
+      ...process.env,
+      NEXT_PUBLIC_JUNO_SATELLITE_ID: "",
+    }),
+    null,
+  );
+  assert.equal(
+    configTestHooks.resolveJunoSatelliteId({
+      ...process.env,
+      NEXT_PUBLIC_JUNO_SATELLITE_ID: "uxrrr-q7777-77774-qaaaq-cai",
+    }),
+    "uxrrr-q7777-77774-qaaaq-cai",
   );
   assert.equal(configTestHooks.shouldFetchRootKey("http://127.0.0.1:8000"), true);
   assert.equal(configTestHooks.shouldFetchRootKey("http://localhost:8000"), true);
@@ -1032,6 +1184,7 @@ async function main(): Promise<void> {
   await runWrapNonceRefreshTests();
   await runWrapNonceClientTests();
   await runAssetCatalogTests();
+  await runRecentRequestsTests();
   await runInternetIdentityConfigTests();
   await runStatusPhaseTests();
   await runStatusPollingRegressionTests();

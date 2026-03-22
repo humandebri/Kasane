@@ -2,20 +2,22 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type {
+  WrapActionStep,
   WrapGasEstimateStatus,
   WrapNonceStatus,
   UnwrapFormState,
   WrapFormState,
 } from "@/components/dashboard-ui/types";
 import { estimateWrapGasLimit, getWrapEvmNonce } from "@/lib/canister/wrapper-client";
+import { DEFAULT_ASSET_ID } from "@/lib/asset-catalog";
 import { getLedgerDecimals } from "@/lib/canister/icrc2-client";
 import { callerEvmAddressFromPrincipalText, principalTextToBytes } from "@/lib/principal";
 import {
-  decimalToBytes32,
   deriveWrapRequestId,
+  tokenAmountToBytes32,
 } from "@/lib/request-id";
 import { bytesToHex, hexToBytes } from "@/lib/utils";
-import { parsePositiveU64, parseU64 } from "@/lib/wrap-input";
+import { parsePositiveU64, parseTokenAmount, parseU64 } from "@/lib/wrap-input";
 import { buildWrapEstimateCallObject } from "@/lib/wrap-estimate";
 
 type WrapNonceRefreshArgs = {
@@ -59,14 +61,15 @@ export function useWrapperForms(params: {
   walletPrincipalText: string | null;
   wrapCanisterId: string;
   evmWrapFactory: string;
+  wrapActionStep: WrapActionStep;
 }) {
   const [unwrapForm, setUnwrapForm] = useState<UnwrapFormState>({
-    assetId: "",
+    assetId: DEFAULT_ASSET_ID,
     amount: "",
     recipient: "",
   });
   const [wrapForm, setWrapForm] = useState<WrapFormState>({
-    assetId: "",
+    assetId: DEFAULT_ASSET_ID,
     amount: "",
     evmRecipient: "",
     evmNonce: "",
@@ -76,6 +79,8 @@ export function useWrapperForms(params: {
   const [wrapGasEstimateError, setWrapGasEstimateError] = useState<string | null>(null);
   const [wrapNonceStatus, setWrapNonceStatus] = useState<WrapNonceStatus>("idle");
   const [wrapNonceError, setWrapNonceError] = useState<string | null>(null);
+  const [unwrapAssetDecimals, setUnwrapAssetDecimals] = useState<number | null>(null);
+  const [unwrapAssetDecimalsError, setUnwrapAssetDecimalsError] = useState<string | null>(null);
   const [wrapAssetDecimals, setWrapAssetDecimals] = useState<number | null>(null);
   const [wrapAssetDecimalsError, setWrapAssetDecimalsError] = useState<string | null>(null);
   const wrapNonceRequestSeq = useRef(0);
@@ -144,6 +149,66 @@ export function useWrapperForms(params: {
   }, [refreshWrapNonce]);
 
   useEffect(() => {
+    if (
+      params.wrapActionStep !== "done"
+      || params.walletPrincipalText === null
+      || params.wrapCanisterId.trim() === ""
+    ) {
+      return;
+    }
+    let attempts = 0;
+    const timer = window.setInterval(() => {
+      attempts += 1;
+      void refreshWrapNonce();
+      if (attempts >= 6) {
+        window.clearInterval(timer);
+      }
+    }, 10_000);
+    return () => {
+      window.clearInterval(timer);
+    };
+  }, [
+    params.walletPrincipalText,
+    params.wrapActionStep,
+    params.wrapCanisterId,
+    refreshWrapNonce,
+  ]);
+
+  useEffect(() => {
+    const assetId = unwrapForm.assetId.trim();
+    if (assetId === "") {
+      setUnwrapAssetDecimals(null);
+      setUnwrapAssetDecimalsError(null);
+      return;
+    }
+
+    let cancelled = false;
+    setUnwrapAssetDecimals(null);
+    setUnwrapAssetDecimalsError(null);
+    void getLedgerDecimals(assetId)
+      .then((decimals) => {
+        if (cancelled) {
+          return;
+        }
+        setUnwrapAssetDecimals(decimals);
+        setUnwrapAssetDecimalsError(null);
+      })
+      .catch((error: unknown) => {
+        if (cancelled) {
+          return;
+        }
+        setUnwrapAssetDecimals(null);
+        setUnwrapAssetDecimalsError(
+          error instanceof Error ? error.message : "wrap.asset_metadata_failed:query_failed",
+        );
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [unwrapForm.assetId]);
+
+  useEffect(() => {
     const assetId = wrapForm.assetId.trim();
     if (assetId === "") {
       setWrapAssetDecimals(null);
@@ -199,6 +264,7 @@ export function useWrapperForms(params: {
 
     try {
       parseU64(evmNonce, "validation.evm_nonce.invalid");
+      parseTokenAmount(amount, wrapAssetDecimals, "validation.amount.invalid");
       buildWrapEstimateCallObject({
         wrapCanisterId: params.wrapCanisterId,
         evmWrapFactory: params.evmWrapFactory,
@@ -265,7 +331,7 @@ export function useWrapperForms(params: {
     if (!params.walletPrincipalText) {
       return null;
     }
-    if (wrapGasEstimateStatus !== "ready") {
+    if (wrapGasEstimateStatus !== "ready" || wrapAssetDecimals === null) {
       return null;
     }
     try {
@@ -273,7 +339,7 @@ export function useWrapperForms(params: {
         deriveWrapRequestId({
           fromOwner: principalTextToBytes(params.walletPrincipalText),
           assetId: principalTextToBytes(wrapForm.assetId.trim()),
-          amount: decimalToBytes32(wrapForm.amount.trim()),
+          amount: tokenAmountToBytes32(wrapForm.amount.trim(), wrapAssetDecimals),
           evmRecipient: hexToBytes(wrapForm.evmRecipient.trim()),
           evmNonce: parseU64(wrapForm.evmNonce, "validation.evm_nonce.invalid"),
           gasLimit: parsePositiveU64(wrapForm.gasLimit, "validation.gas_limit.invalid"),
@@ -282,7 +348,7 @@ export function useWrapperForms(params: {
     } catch {
       return null;
     }
-  }, [params.walletPrincipalText, wrapForm, wrapGasEstimateStatus]);
+  }, [params.walletPrincipalText, wrapAssetDecimals, wrapForm, wrapGasEstimateStatus]);
 
   function resetUnwrapNonceDeadline(): void {
     setUnwrapForm((current) => current);
@@ -294,6 +360,10 @@ export function useWrapperForms(params: {
     wrapForm,
     setWrapForm,
     wrapPreviewRequestId,
+    unwrapAssetDecimals,
+    unwrapAssetDecimalsError,
+    wrapAssetDecimals,
+    wrapAssetDecimalsError,
     wrapGasEstimateStatus,
     wrapGasEstimateError,
     wrapNonceStatus,

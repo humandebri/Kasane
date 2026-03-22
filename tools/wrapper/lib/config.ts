@@ -9,7 +9,13 @@ type WrapperConfig = {
 
 type EnvMap = Record<string, string | undefined>;
 
-function optionalEnv(name: "NEXT_PUBLIC_INTERNET_IDENTITY_URL", env: EnvMap): string | null {
+function optionalEnv(
+  name:
+    | "NEXT_PUBLIC_INTERNET_IDENTITY_URL"
+    | "NEXT_PUBLIC_II_DERIVATION_ORIGIN"
+    | "NEXT_PUBLIC_JUNO_SATELLITE_ID",
+  env: EnvMap,
+): string | null {
   const value = env[name];
   if (value === undefined) {
     return null;
@@ -55,8 +61,18 @@ export function resolveConfiguredIdentityProvider(env: EnvMap = process.env): st
   return optionalEnv("NEXT_PUBLIC_INTERNET_IDENTITY_URL", env);
 }
 
+export function resolveConfiguredDerivationOrigin(env: EnvMap = process.env): string | null {
+  return optionalEnv("NEXT_PUBLIC_II_DERIVATION_ORIGIN", env);
+}
+
+export function resolveJunoSatelliteId(env: EnvMap = process.env): string | null {
+  return optionalEnv("NEXT_PUBLIC_JUNO_SATELLITE_ID", env);
+}
+
 export const configTestHooks = {
   optionalEnv,
   resolveConfiguredIdentityProvider,
+  resolveConfiguredDerivationOrigin,
+  resolveJunoSatelliteId,
   shouldFetchRootKey,
 };

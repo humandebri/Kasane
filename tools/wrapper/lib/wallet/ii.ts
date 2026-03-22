@@ -20,7 +20,18 @@ function resolveIdentityProvider(configured: string | null): string {
     : DEFAULT_MAINNET_IDENTITY_PROVIDER;
 }
 
-export async function connectInternetIdentity(identityProvider: string | null): Promise<WalletSession> {
+function resolveDerivationOrigin(configured: string | null): string | undefined {
+  if (!configured) {
+    return undefined;
+  }
+  const trimmed = configured.trim();
+  return trimmed === "" ? undefined : trimmed;
+}
+
+export async function connectInternetIdentity(
+  identityProvider: string | null,
+  derivationOrigin: string | null,
+): Promise<WalletSession> {
   const authClient = await getAuthClient();
   const authenticated = await authClient.isAuthenticated();
 
@@ -28,7 +39,8 @@ export async function connectInternetIdentity(identityProvider: string | null): 
     await new Promise<void>((resolve, reject) => {
       authClient.login({
         identityProvider: resolveIdentityProvider(identityProvider),
-        maxTimeToLive: 7n * 24n * 60n * 60n * 1_000_000_000n,
+        derivationOrigin: resolveDerivationOrigin(derivationOrigin),
+        maxTimeToLive: 10n * 60n * 60n * 1_000_000_000n,
         onSuccess: () => resolve(),
         onError: (message?: string) => reject(new Error(`wallet.ii_login_failed:${message ?? "unknown"}`)),
       });
@@ -51,4 +63,5 @@ export async function disconnectInternetIdentity(): Promise<void> {
 
 export const iiTestHooks = {
   resolveIdentityProvider,
+  resolveDerivationOrigin,
 };

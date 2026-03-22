@@ -6,6 +6,13 @@ import { configTestHooks, loadConfig } from "../config";
 let cachedQueryAgent: HttpAgent | null = null;
 const cachedIdentityAgents = new Map<string, HttpAgent>();
 
+function resolveBoundFetch(): typeof globalThis.fetch | undefined {
+  if (typeof globalThis.fetch !== "function") {
+    return undefined;
+  }
+  return globalThis.fetch.bind(globalThis);
+}
+
 async function maybeFetchRootKey(agent: HttpAgent, enabled: boolean): Promise<void> {
   if (enabled) {
     await agent.fetchRootKey();
@@ -17,7 +24,7 @@ export async function getQueryAgent(): Promise<HttpAgent> {
     return cachedQueryAgent;
   }
   const cfg = loadConfig();
-  const agent = new HttpAgent({ host: cfg.icHost, fetch: globalThis.fetch });
+  const agent = new HttpAgent({ host: cfg.icHost, fetch: resolveBoundFetch() });
   await maybeFetchRootKey(agent, configTestHooks.shouldFetchRootKey(cfg.icHost));
   cachedQueryAgent = agent;
   return agent;
@@ -30,7 +37,11 @@ export async function getIdentityAgent(identity: Identity): Promise<HttpAgent> {
     return cached;
   }
   const cfg = loadConfig();
-  const agent = new HttpAgent({ host: cfg.icHost, fetch: globalThis.fetch, identity });
+  const agent = new HttpAgent({
+    host: cfg.icHost,
+    fetch: resolveBoundFetch(),
+    identity,
+  });
   await maybeFetchRootKey(agent, configTestHooks.shouldFetchRootKey(cfg.icHost));
   cachedIdentityAgents.set(key, agent);
   return agent;

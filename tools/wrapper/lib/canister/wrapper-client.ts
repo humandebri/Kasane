@@ -123,7 +123,7 @@ const wrapperIdlFactory: IDL.InterfaceFactory = ({ IDL: I }) => {
     DispatchFailed: I.Null,
   });
   return I.Service({
-    expected_nonce_by_address: I.Func([I.Vec(I.Nat8)], [I.Variant({ Ok: I.Nat, Err: I.Text })], ["query"]),
+    expected_nonce_by_address: I.Func([I.Vec(I.Nat8)], [I.Variant({ Ok: I.Nat64, Err: I.Text })], ["query"]),
     rpc_eth_gas_price: I.Func([], [I.Variant({ Ok: I.Nat, Err: RpcError })], ["query"]),
     rpc_eth_max_priority_fee_per_gas: I.Func([], [I.Variant({ Ok: I.Nat, Err: RpcError })], ["query"]),
     rpc_eth_estimate_gas_object: I.Func([I.Record({
@@ -279,7 +279,7 @@ export async function getGasPriceWei(): Promise<bigint> {
   return out.Ok;
 }
 
-async function getMaxPriorityFeePerGasWei(): Promise<bigint> {
+export async function getMaxPriorityFeePerGasWei(): Promise<bigint> {
   const out = await (await getQueryActor()).rpc_eth_max_priority_fee_per_gas();
   if ("Err" in out) {
     throw new Error(decodeRpcNatError("evm_gateway.priority_fee_failed", out.Err));

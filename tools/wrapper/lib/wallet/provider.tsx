@@ -20,7 +20,15 @@ type WalletContextValue = {
 export const WalletContext = createContext<WalletContextValue | null>(null);
 
 export function WalletProvider(
-  { children, iiIdentityProvider }: { children: ReactNode; iiIdentityProvider: string | null },
+  {
+    children,
+    iiIdentityProvider,
+    iiDerivationOrigin,
+  }: {
+    children: ReactNode;
+    iiIdentityProvider: string | null;
+    iiDerivationOrigin: string | null;
+  },
 ) {
   const [session, setSession] = useState<WalletSession | null>(null);
   const [connecting, setConnecting] = useState(false);
@@ -32,7 +40,7 @@ export function WalletProvider(
     setError(null);
     try {
       const nextSession = source === "ii"
-        ? await connectInternetIdentity(iiIdentityProvider)
+        ? await connectInternetIdentity(iiIdentityProvider, iiDerivationOrigin)
         : await connectOisy();
       setSession(nextSession);
     } catch (e) {
@@ -41,7 +49,7 @@ export function WalletProvider(
     } finally {
       setConnecting(false);
     }
-  }, [iiIdentityProvider]);
+  }, [iiDerivationOrigin, iiIdentityProvider]);
 
   const disconnect = useCallback(async () => {
     const current = session;
