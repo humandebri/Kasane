@@ -18,7 +18,7 @@
   - `npm`
 - Rust target:
   - `wasm32-unknown-unknown`
-- `tools/wrapper` の依存が未導入なら script が `npm ci` を実行する
+- `tools/wrapper-vite` の依存が未導入なら script が `npm ci` を実行する
 
 ## 実行
 
@@ -56,7 +56,7 @@ scripts/local_wrap_unwrap_ledger_smoke.sh
     - wrap 側 `Succeeded`
     - `ledger_tx_id != null`
     を確認
-   - unwrap calldata は `tools/wrapper` の helper が生成する compact payload を使う
+   - unwrap calldata は `tools/wrapper-vite` の helper が生成する compact payload を使う
 
 ## 期待結果
 

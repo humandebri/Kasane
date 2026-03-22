@@ -2,6 +2,8 @@
 
 Next.js + Tailwind + shadcn で構築した wrapper 用 Dashboard です。
 
+`tools/wrapper-vite` が正本です。`tools/wrapper` は deprecated 扱いで、local smoke / preflight / 現行運用の検証対象ではありません。Juno 運用手順、local smoke、recent requests の契約変更は、まず `tools/wrapper-vite` 側を更新してください。この README は Next 固有の差分と過去実装の参照だけを補足します。
+
 ## スコープ
 
 - II / Oisy ウォレット接続（ブラウザ署名）
@@ -19,7 +21,7 @@ Next.js + Tailwind + shadcn で構築した wrapper 用 Dashboard です。
 - status自動ポーリング（2秒、終端状態で停止）
 - status自動ポーリング失敗時は3回で自動停止
 - mint失敗 request の `recover_failed_wrap` 実行
-- 直近履歴20件（セッション内メモリ）
+- 直近履歴20件（Juno satellite 設定時は永続化）
 
 ## セットアップ
 
@@ -34,12 +36,17 @@ npm run dev
 
 - `NEXT_PUBLIC_IC_HOST`: 例 `http://127.0.0.1:8000`
 - `NEXT_PUBLIC_INTERNET_IDENTITY_URL`: PocketIC で II を使うときだけ指定
+- `NEXT_PUBLIC_II_DERIVATION_ORIGIN`: Contabo / custom domain から II を使う場合に指定
+- `NEXT_PUBLIC_JUNO_SATELLITE_ID`: recent requests を保存する Juno satellite id
 - `KASANE_EVM_CANISTER_ID`: Kasane EVM canister id
 - `WRAP_CANISTER_ID`: wrap canister id
 - `EVM_WRAP_FACTORY`: 20-byte EVM factory address (`0x...`)
 
 `fetchRootKey` は `NEXT_PUBLIC_IC_HOST` が `localhost` / `127.0.0.1` のとき自動で有効になります。
 `EVM_WRAP_FACTORY` は監査対応後の新 factory address を設定してください。旧未稼働 factory との互換は持ちません。
+custom domain で II を使う場合は、`NEXT_PUBLIC_II_DERIVATION_ORIGIN` に delegation の基準 origin を設定してください。
+履歴をリロード後も残したい場合は、`NEXT_PUBLIC_JUNO_SATELLITE_ID` を設定してください。未設定でも request_id 手入力での追跡は利用できます。
+このリポのローカル Juno satellite を使う場合は、`tools/wrapper-vite/.env.local` の `VITE_JUNO_SATELLITE_ID` と同じ id を設定してください。
 
 ## API Route
 
@@ -64,7 +71,6 @@ npm run dev
 - wrap 側の mint metadata は ledger の `icrc1_metadata` を一次情報として扱います。decimals 取得に失敗した asset は submit 前に止まります。
 - `asset_id` は Advanced の selector で明示選択します。
 - プリセット候補は `ICP / ckBTC / ckETH / ckUSDC` を同梱しています。
-- custom asset は UI から追加し、ブラウザの `localStorage` に保存します。
 
 ## テスト
 
@@ -72,4 +78,29 @@ npm run dev
 npm test
 npm run lint
 npm run build
+```
+
+## 正本参照
+
+- Juno / local smoke / recent requests の運用手順:
+  [`tools/wrapper-vite/README.md`](/Users/0xhude/Desktop/ICP/Kasane/tools/wrapper-vite/README.md)
+- wrapper を含む Juno ローカル検証の入口:
+  `cd tools/wrapper-vite && npm run test:local:wrapper`
+- preflight:
+  `cd tools/wrapper-vite && npm run test:local:wrapper:preflight`
+
+## Juno ローカル検証
+
+`tools/wrapper` の recent requests は `tools/wrapper-vite` 側の Juno emulator / functions を使います。詳細手順は `tools/wrapper-vite` README を参照してください。
+
+```bash
+cd tools/wrapper-vite
+npm run test:local:wrapper
+```
+
+preflight まで一気に回す場合:
+
+```bash
+cd tools/wrapper-vite
+npm run test:local:wrapper:preflight
 ```

@@ -30,6 +30,9 @@ scripts/check_gateway_matrix_sync.sh
 scripts/check_alloy_isolation.sh
 scripts/check_precompile_feature_isolation.sh
 
+cargo fmt --all -- --check
+cargo clippy --workspace --all-targets --all-features -- -D warnings
+
 echo "[ci-github-equivalent] deny OP stack references"
 DENY_PATTERN='op-revm|op_revm|op-node|op-geth|optimism|superchain|OpDeposit|L1BlockInfo'
 if grep -RInE "$DENY_PATTERN" \
@@ -63,7 +66,7 @@ find vendor/ark-relations -type f -print0 | sort -z | xargs -0 sha256sum > "${sn
 
 # evm-rpc-e2e uses Foundry artifacts via include_str!, so generate them
 # before compiling the Rust tests in clean CI environments.
-(cd tools/wrapper/contracts && forge build)
+(cd tools/wrapper-vite/contracts && forge build)
 
 cargo test -p evm-db -p ic-evm-core -p ic-evm-gateway --locked --lib --tests
 cargo test --manifest-path crates/evm-rpc-e2e/Cargo.toml --no-run --locked
@@ -72,7 +75,7 @@ cargo build --release --target wasm32-unknown-unknown -p wrap-canister -p mock-w
 . scripts/prepare_ci_icrc1_ledger_wasm.sh
 cargo test --manifest-path crates/evm-rpc-e2e/Cargo.toml --test wrap_unwrap_flow_e2e --locked -- --test-threads=1
 
-(cd tools/wrapper/contracts && forge test -vv)
+(cd tools/wrapper-vite/contracts && forge test -vv)
 
 if [[ ! -d tools/rpc-gateway/node_modules ]]; then
   (cd tools/rpc-gateway && npm ci)

@@ -1,0 +1,36 @@
+/* どこで: wrapper 共通スタイル / 何を: Tailwind v4 テーマと背景表現を定義 / なぜ: Vite 移行後も既存 UI の見た目を保つため */
+
+@import "tailwindcss";
+@import "tw-animate-css";
+
+@theme {
+  --color-background: #f4f8ff;
+  --color-foreground: #101828;
+  --color-card: #ffffff;
+  --color-card-foreground: #101828;
+  --color-muted: #eaf0fb;
+  --color-muted-foreground: #475467;
+  --color-border: #d7e3f5;
+  --color-ring: #2f6bff;
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground antialiased;
+    font-family: "Space Grotesk", "Noto Sans JP", sans-serif;
+    background-image:
+      radial-gradient(circle at 12% -5%, #ffffff 0%, transparent 38%),
+      radial-gradient(circle at 92% 10%, #dcebff 0%, transparent 35%),
+      linear-gradient(180deg, #f9fbff, #eef4ff 72%, #e8f1ff 100%);
+    min-height: 100vh;
+  }
+
+  code,
+  pre {
+    font-family: "IBM Plex Mono", "Noto Sans Mono", monospace;
+  }
+}

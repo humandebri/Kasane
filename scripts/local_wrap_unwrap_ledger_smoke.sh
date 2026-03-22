@@ -14,7 +14,7 @@ WRAP_AMOUNT="${WRAP_AMOUNT:-1000000}"
 WRAP_GAS_LIMIT="${WRAP_GAS_LIMIT:-800000}"
 WRAP_EVM_NONCE="${WRAP_EVM_NONCE:-0}"
 LEDGER_DECIMALS="${LEDGER_DECIMALS:-8}"
-CONTRACTS_DIR="${ROOT_DIR}/tools/wrapper/contracts"
+CONTRACTS_DIR="${ROOT_DIR}/tools/wrapper-vite/contracts"
 FACTORY_ARTIFACT_PATH="${CONTRACTS_DIR}/out/WrapTokenFactory.sol/WrapTokenFactory.json"
 FACTORY_DEPLOY_GAS_LIMIT="${FACTORY_DEPLOY_GAS_LIMIT:-3000000}"
 FACTORY_DEPLOY_FEE_BUMP="${FACTORY_DEPLOY_FEE_BUMP:-$(python - <<'PY'
@@ -38,7 +38,7 @@ UNWRAP_MAX_FEE_PER_GAS="${UNWRAP_MAX_FEE_PER_GAS:-600000000000}"
 WAIT_RETRIES="${WAIT_RETRIES:-40}"
 WAIT_SECONDS="${WAIT_SECONDS:-2}"
 SKIP_BUILD="${SKIP_BUILD:-0}"
-WRAPPER_DIR="${ROOT_DIR}/tools/wrapper"
+WRAPPER_DIR="${ROOT_DIR}/tools/wrapper-vite"
 TSX_BIN="${WRAPPER_DIR}/node_modules/.bin/tsx"
 HELPER_TS="$(mktemp "${WRAPPER_DIR}/.kasane-local-ledger-helper.XXXXXX").mts"
 GATEWAY_WASM="${ROOT_DIR}/target/wasm32-unknown-unknown/release/ic_evm_gateway.wasm"
@@ -142,7 +142,7 @@ fi
 
 cat > "${HELPER_TS}" <<'TS'
 import { Principal } from "@dfinity/principal";
-// HELPER_TS is created under tools/wrapper, so ./lib/* stays portable across hosts.
+// HELPER_TS is created under tools/wrapper-vite, so ./lib/* stays portable across hosts.
 import {
   WRAP_PRECOMPILE_ADDRESS,
   toSubmitIcTxData,

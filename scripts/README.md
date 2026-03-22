@@ -52,12 +52,13 @@ scripts/measure_precompile_ratio.sh
 ### Pre-checks and Quality Gates
 - `scripts/ci-local.sh`: runs in `github|smoke|all` modes via `CI_LOCAL_MODE=<mode>`
 - `scripts/ci_github_equivalent.sh`: single source of truth for the GitHub-equivalent checks used by both `.github/workflows/ci.yml` and `scripts/ci-local.sh`
+  - includes Rust baseline quality gates: `cargo fmt --all -- --check` and `cargo clippy --workspace --all-targets --all-features -- -D warnings`
 - `scripts/check_gateway_api_compat_baseline.sh`: detects breaking changes in gateway API compatibility baseline (`--update` updates baseline)
 - `scripts/check_gateway_matrix_sync.sh`: verifies compatibility matrix row in `tools/rpc-gateway/README.md` matches `tools/rpc-gateway/package.json` version line
 - `scripts/check_precompile_feature_isolation.sh`: verifies the default wasm build of `ic-evm-core` does not pull BLS/KZG backend crates (`ark-bls12-381`, `c-kzg`, `blst`)
 - `scripts/predeploy_smoke.sh`: `cargo check` + wasm build + PocketIC RPC compatibility E2E (optional indexer smoke)
 - `scripts/run_rpc_compat_e2e.sh`: RPC compatibility E2E test (`cargo test --test rpc_compat_e2e`)
-  - The script runs `forge build` first because the Rust E2E tests load Foundry artifacts from `tools/wrapper/contracts/out/` at compile time
+  - The script runs `forge build` first because the Rust E2E tests load Foundry artifacts from `tools/wrapper-vite/contracts/out/` at compile time
   - PocketIC must be able to bind to localhost (`127.0.0.1`); restricted sandbox environments can fail before the test logic runs
 - `scripts/prepare_ci_icrc1_ledger_wasm.sh`: exports the vendored official ledger wasm at `third_party/dfinity/ledger-suite-icrc-2026-03-09/ic-icrc1-ledger.wasm` as `ICP_LEDGER_WASM` via the shared ledger artifact helper; `LEDGER_RELEASE=latest` is rejected and the local ledger smoke script caches `ledger.did` under `${LEDGER_CACHE_DIR}/<release>/ledger.did`
 - `scripts/profile_wasm_deps.sh`: dependency-size profiling for wasm (`twiggy top/dominators`, optional `cargo +nightly bloat -Z build-std`, and `cargo tree -e features -i <crate>` snapshots)
