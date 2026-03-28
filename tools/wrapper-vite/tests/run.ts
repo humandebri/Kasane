@@ -291,6 +291,23 @@ async function runGoogleReturnToTests(): Promise<void> {
   walletProviderTestHooks.saveGoogleReturnToPath("/auth/callback");
   assert.equal(storage.size, 0);
 
+  const originalLocation = globalThis.location;
+  Object.defineProperty(globalThis, "location", {
+    configurable: true,
+    value: new URL("https://wrapper.example/requests?tab=wrap#dialog"),
+  });
+  const withClientId = walletProviderTestHooks.buildGoogleSignInOptions("google-client-id");
+  assert.equal(withClientId.google.options.redirect.clientId, "google-client-id");
+  assert.equal(withClientId.google.options.redirect.redirectUrl, "https://wrapper.example/auth/callback");
+
+  const withoutClientId = walletProviderTestHooks.buildGoogleSignInOptions(null);
+  assert.equal(withoutClientId.google.options.redirect.clientId, undefined);
+  assert.equal(withoutClientId.google.options.redirect.redirectUrl, "https://wrapper.example/auth/callback");
+  Object.defineProperty(globalThis, "location", {
+    configurable: true,
+    value: originalLocation,
+  });
+
   storage.set(googleCallbackRouteTestHooks.GOOGLE_RETURN_TO_STORAGE_KEY, "https://example.com");
   assert.equal(googleCallbackRouteTestHooks.consumeGoogleReturnToPath(), null);
 

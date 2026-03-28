@@ -54,6 +54,28 @@ function saveGoogleReturnToPath(path: string): void {
   globalThis.sessionStorage.setItem(GOOGLE_RETURN_TO_STORAGE_KEY, path);
 }
 
+function buildGoogleSignInOptions(googleClientId: string | null): {
+  google: {
+    options: {
+      redirect: {
+        clientId: string | undefined;
+        redirectUrl: string;
+      };
+    };
+  };
+} {
+  return {
+    google: {
+      options: {
+        redirect: {
+          clientId: googleClientId ?? undefined,
+          redirectUrl: new URL("/auth/callback", globalThis.location.origin).toString(),
+        },
+      },
+    },
+  };
+}
+
 export function WalletProvider(
   {
     children,
@@ -113,16 +135,7 @@ export function WalletProvider(
       saveGoogleReturnToPath(
         `${globalThis.location.pathname}${globalThis.location.search}${globalThis.location.hash}`,
       );
-      await signIn({
-        google: {
-          options: {
-            redirect: {
-              clientId: googleClientId ?? undefined,
-              redirectUrl: new URL("/auth/callback", globalThis.location.origin).toString(),
-            },
-          },
-        },
-      });
+      await signIn(buildGoogleSignInOptions(googleClientId));
     } catch (nextError) {
       setError(nextError instanceof Error ? nextError.message : "wallet.connect_failed");
       setConnecting(false);
@@ -189,4 +202,5 @@ export function WalletProvider(
 export const walletProviderTestHooks = {
   GOOGLE_RETURN_TO_STORAGE_KEY,
   saveGoogleReturnToPath,
+  buildGoogleSignInOptions,
 };
