@@ -166,8 +166,10 @@ npm run juno:emulator:stop
 - header の主導線は `Continue with Google`
 - 代替導線は `Internet Identity`
 - Google callback は `/auth/callback`
-- Google sign-in は Juno の `google.redirect.redirectUrl` で `/auth/callback` を指定します
+- Google sign-in は `signIn({ google: { options: { redirect: ... } } })` で `/auth/callback` を指定します
 - delegation は `authentication.google.delegation` として Google provider に設定します
+- custom asset の ledger を approve する場合は、その principal を `JUNO_AUTH_ALLOWED_TARGETS` に追加して delegation の `allowedTargets` へ含めます
+- 例: `JUNO_AUTH_ALLOWED_TARGETS=mxzaz-hqaaa-aaaar-qaada-cai,aaaaa-aa`
 - wrap / unwrap 実行時の署名には Juno auth の `getIdentityOnce()` をそのまま使います
 
 health は UI から直接は参照しておらず、運用用 query として残しています。local では emulator 起動後に `npm run juno:functions:build` を実行し、function build が通ることをまず確認してください。

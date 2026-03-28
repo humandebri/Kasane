@@ -100,10 +100,12 @@ export const save_recent_request = defineUpdate({
 export const list_recent_requests = defineQuery({
   result: RecentRequestsResultSchema,
   handler: async () => {
+    const owner = caller().toUint8Array();
     const docs = listDocsStore({
-      caller: caller(),
+      caller: owner,
       collection: RECENT_REQUESTS_COLLECTION,
       params: {
+        owner,
         order: {
           desc: true,
           field: "updated_at",

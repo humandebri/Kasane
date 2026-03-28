@@ -34,6 +34,7 @@ type RequestOverviewWire = {
   ledger_tx_id: [] | [Uint8Array];
   dispatch_status: [] | [RequestDispatchStatusVariant];
   dispatch_error: [] | [string];
+  withdraw_error_code: [] | [string];
   charged_fee_e8s: [] | [bigint];
   charged_gas_price_wei: [] | [bigint];
 };
@@ -293,16 +294,16 @@ export async function getExecutionResult(
   if (!value) {
     return null;
   }
-  return {
-    status: decodeExecutionStatus(value.status),
-    ledgerTxId: value.ledger_tx_id[0] ?? value.pull_ledger_tx_id[0] ?? null,
-    errorCode: value.error[0]?.code ?? null,
-    mintFailedRecoverable: inferMintRecoverable(value),
-    withdrawn: value.withdraw_ledger_tx_id.length > 0,
-    withdrawLedgerTxId: value.withdraw_ledger_tx_id[0] ?? null,
-    withdrawErrorCode: null,
-  };
-}
+    return {
+      status: decodeExecutionStatus(value.status),
+      ledgerTxId: value.ledger_tx_id[0] ?? value.pull_ledger_tx_id[0] ?? null,
+      errorCode: value.error[0]?.code ?? null,
+      mintFailedRecoverable: inferMintRecoverable(value),
+      withdrawn: value.withdraw_ledger_tx_id.length > 0,
+      withdrawLedgerTxId: value.withdraw_ledger_tx_id[0] ?? null,
+      withdrawErrorCode: value.withdraw_error_code[0] ?? null,
+    };
+  }
 
 export async function withdrawFailedWrap(
   requestId: Uint8Array,

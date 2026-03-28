@@ -91,6 +91,7 @@ import { refreshWrapNonceState } from "../lib/hooks/use-wrapper-forms";
 import { wrapperActionsTestHooks } from "../lib/hooks/use-wrapper-actions";
 import { walletProviderTestHooks } from "../lib/wallet/provider";
 import { googleCallbackRouteTestHooks } from "../src/app/routes/google-callback-route";
+import { junoConfigTestHooks } from "../juno.config";
 
 async function runUtilsTests(): Promise<void> {
   const value = Uint8Array.from([0x01, 0xab, 0x10]);
@@ -179,6 +180,7 @@ async function runExecutionBranchTests(): Promise<void> {
       ledger_tx_id: [Uint8Array.from([0xaa, 0xbb])],
       dispatch_status: [],
       dispatch_error: [],
+      withdraw_error_code: [],
       charged_fee_e8s: [],
       charged_gas_price_wei: [],
     }],
@@ -199,12 +201,14 @@ async function runExecutionBranchTests(): Promise<void> {
       ledger_tx_id: [],
       dispatch_status: [],
       dispatch_error: [],
+      withdraw_error_code: ["withdraw_failed"],
       charged_fee_e8s: [],
       charged_gas_price_wei: [],
     }],
   });
   assert.equal(wrapPreferred?.errorCode, "wrap_failed");
   assert.equal(wrapPreferred?.mintFailedRecoverable, true);
+  assert.equal(wrapPreferred?.withdrawErrorCode, "withdraw_failed");
 }
 
 async function runFeeQuoteMathTests(): Promise<void> {
@@ -307,6 +311,15 @@ async function runGoogleReturnToTests(): Promise<void> {
     configurable: true,
     value: originalLocation,
   });
+
+  assert.equal(
+    googleCallbackRouteTestHooks.formatGoogleCallbackError(new Error("wallet.google_callback_failed")),
+    "wallet.google_callback_failed",
+  );
+  assert.equal(
+    googleCallbackRouteTestHooks.formatGoogleCallbackError("boom"),
+    "wallet.google_callback_failed",
+  );
 
   storage.set(googleCallbackRouteTestHooks.GOOGLE_RETURN_TO_STORAGE_KEY, "https://example.com");
   assert.equal(googleCallbackRouteTestHooks.consumeGoogleReturnToPath(), null);
@@ -1003,6 +1016,58 @@ async function runInternetIdentityConfigTests(): Promise<void> {
   assert.equal(typeof loadConfig, "function");
 }
 
+async function runJunoConfigTests(): Promise<void> {
+  assert.deepEqual(
+    junoConfigTestHooks.parseConfiguredAllowedTargets(undefined),
+    [],
+  );
+  assert.deepEqual(
+    junoConfigTestHooks.parseConfiguredAllowedTargets(" ,  mxzaz-hqaaa-aaaar-qaada-cai ,, xevnm-gaaaa-aaaar-qafnq-cai  "),
+    ["mxzaz-hqaaa-aaaar-qaada-cai", "xevnm-gaaaa-aaaar-qafnq-cai"],
+  );
+  assert.deepEqual(
+    junoConfigTestHooks.parseConfiguredAllowedTargets("mxzaz-hqaaa-aaaar-qaada-cai, mxzaz-hqaaa-aaaar-qaada-cai"),
+    ["mxzaz-hqaaa-aaaar-qaada-cai"],
+  );
+  assert.throws(
+    () => junoConfigTestHooks.parseConfiguredAllowedTargets("not-a-principal"),
+  );
+
+  assert.deepEqual(
+    junoConfigTestHooks.resolveAllowedTargets({
+      VITE_WRAP_CANISTER_ID: "t63gs-up777-77776-aaaba-cai",
+      VITE_KASANE_EVM_CANISTER_ID: "4c52m-aiaaa-aaaam-agwwa-cai",
+    }),
+    [
+      "t63gs-up777-77776-aaaba-cai",
+      "4c52m-aiaaa-aaaam-agwwa-cai",
+      "xafvr-biaaa-aaaai-aql5q-cai",
+      "ryjl3-tyaaa-aaaaa-aaaba-cai",
+      "mxzaz-hqaaa-aaaar-qaada-cai",
+      "ss2fx-dyaaa-aaaar-qacoq-cai",
+      "xevnm-gaaaa-aaaar-qafnq-cai",
+    ],
+  );
+  assert.deepEqual(
+    junoConfigTestHooks.resolveAllowedTargets({
+      VITE_WRAP_CANISTER_ID: "t63gs-up777-77776-aaaba-cai",
+      VITE_KASANE_EVM_CANISTER_ID: "4c52m-aiaaa-aaaam-agwwa-cai",
+      JUNO_AUTH_ALLOWED_TARGETS:
+        " xevnm-gaaaa-aaaar-qafnq-cai, 2vxsx-fae , t63gs-up777-77776-aaaba-cai ",
+    }),
+    [
+      "t63gs-up777-77776-aaaba-cai",
+      "4c52m-aiaaa-aaaam-agwwa-cai",
+      "xafvr-biaaa-aaaai-aql5q-cai",
+      "ryjl3-tyaaa-aaaaa-aaaba-cai",
+      "mxzaz-hqaaa-aaaar-qaada-cai",
+      "ss2fx-dyaaa-aaaar-qacoq-cai",
+      "xevnm-gaaaa-aaaar-qafnq-cai",
+      "2vxsx-fae",
+    ],
+  );
+}
+
 async function runAgentConfigInjectionTests(): Promise<void> {
   resetAgentCache();
   const queryAgent = await getQueryAgent({
@@ -1466,6 +1531,7 @@ async function main(): Promise<void> {
   await runWrapNonceClientTests();
   await runAssetCatalogTests();
   await runInternetIdentityConfigTests();
+  await runJunoConfigTests();
   await runAgentConfigInjectionTests();
   await runRecentRequestsTests();
   await runClientDepsResetTests();
