@@ -6,11 +6,11 @@ Vite + React Router + Juno Function で構築した wrapper 用 Dashboard です
 
 ## ソース管理方針
 
-- 追跡対象: `src/`, `components/`, `lib/`, `tests/`, `contracts/*.sol`, `README.md`, `package.json`, `package-lock.json`, `vite.config.ts`, `juno.config.ts`
-- 生成物: `dist/`, `node_modules/`, `test-results/`, `tsconfig.tsbuildinfo`, `target/`, `contracts/cache/`, `contracts/out/`, `src/declarations/`
+- 追跡対象: `src/`, `src/declarations/`, `components/`, `lib/`, `tests/`, `scripts/`, `contracts/*.sol`, `README.md`, `package.json`, `package-lock.json`, `vite.config.ts`, `juno.config.ts`
+- 生成物: `dist/`, `node_modules/`, `test-results/`, `tsconfig.tsbuildinfo`, `target/`, `contracts/cache/`, `contracts/out/`
 - ローカル専用: `.env.local`
 
-`src/satellite/index.ts` を Juno Function の正本として扱い、`src/declarations/` の生成クライアントはソース管理しません。Rust E2E と scripts は `contracts/out/` の Foundry artifact を前提にするため、必要時は先に `forge build` を実行してください。
+`src/satellite/index.ts` を Juno Function の正本として扱います。`src/declarations/` は canister DID / satellite definition から生成した tracked bindings を置く場所として扱い、更新は `npm run bindgen` と既存の Juno 生成フローで管理します。Rust E2E と scripts は `contracts/out/` の Foundry artifact を前提にするため、必要時は先に `forge build` を実行してください。
 
 ## スコープ
 
@@ -28,9 +28,22 @@ Vite + React Router + Juno Function で構築した wrapper 用 Dashboard です
 ```bash
 cd tools/wrapper-vite
 npm install
+npm run bindgen
 cp .env.example .env.local
 npm run test:local:preflight
 ```
+
+## Generated bindings
+
+- `npm run bindgen`
+  - `othercanisters/wrap-canister/wrap_canister.did` と `crates/ic-evm-gateway/evm_canister.did` から `src/declarations/` を再生成します
+- `npm run bindgen:check`
+  - `wrap_canister` / `evm_canister` の tracked bindings が current DID と一致するか検証します
+  - あわせて `juno:functions:build` を使い、`satellite` の tracked bindings が current Juno definition と一致するか検証します
+- `test:local:preflight` と `test:local:wrapper:preflight` は先に `bindgen:check` を実行します
+- 生成源
+  - `satellite` は Juno CLI が生成します
+  - `wrap_canister` / `evm_canister` は `npm run bindgen` が生成します
 
 ## 環境変数 (`.env.local`)
 
