@@ -30,6 +30,7 @@ npm run dev
 - `INDEXER_PRUNE_STATUS_POLL_MS` (任意, 既定: 30000)
 - `INDEXER_OPS_METRICS_POLL_MS` (任意, 既定: 30000)
 - `INDEXER_FETCH_ROOT_KEY` (任意, 1/true で有効。local向け)
+- `INDEXER_CLIENT_REBUILD_RETRY_COUNT` (任意, 既定: 6, `head_fetch_failed` / `export_blocks_failed` が連続したら client を再生成)
 - `INDEXER_ARCHIVE_DIR` (任意, 既定: ./archive)
 - `INDEXER_CHAIN_ID` (任意, 既定: 4801360)
 - `INDEXER_ZSTD_LEVEL` (任意, 既定: 3)

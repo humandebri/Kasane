@@ -116,6 +116,7 @@ DB接続で落ちる場合:
 - `INDEXER_IDLE_POLL_MS`（追いつき時の固定ポーリング間隔。既定 1000ms）
 - `INDEXER_BACKOFF_MAX_MS`（失敗時の最大バックオフ。既定 5000ms）
 - `INDEXER_FETCH_ROOT_KEY`（local向け）
+- `INDEXER_CLIENT_REBUILD_RETRY_COUNT`（`head_fetch_failed` / `export_blocks_failed` の連続回数で client を再生成。既定 6）
 
 運用配置（Contabo）:
 - systemd の `EnvironmentFile` は `/etc/kasane/indexer.env` を使う。

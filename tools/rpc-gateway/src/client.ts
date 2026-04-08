@@ -1,10 +1,10 @@
 // where: gateway canister client / what: provides query/update call wrappers / why: keep handler responsibility focused on JSON-RPC translation
 
-import { Actor, HttpAgent } from "@dfinity/agent";
+import { Actor, HttpAgent } from "@icp-sdk/core/agent";
 import { readFileSync } from "node:fs";
-import { CONFIG } from "./config";
-import { idlFactory } from "./candid";
-import { identityFromPem } from "./identity";
+import { CONFIG } from "./config.js";
+import { idlFactory } from "./candid.js";
+import { identityFromPem } from "./identity.js";
 
 export type DecodedTxView = {
   to: [] | [Uint8Array];

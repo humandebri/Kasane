@@ -22,6 +22,15 @@ import type {
   Result,
 } from "./types";
 
+type WorkerClient = {
+  getHeadNumber: () => Promise<bigint>;
+  exportBlocks: (cursor: Cursor | null, maxBytes: number) => Promise<Result<ExportResponse, ExportError>>;
+  getTxMetaByTxId: (txId: Uint8Array) => Promise<{ input: Uint8Array | null; ethTxHash: Uint8Array | null }>;
+  getPruneStatus: () => Promise<PruneStatusView>;
+  getMetrics: (window: bigint) => Promise<MetricsView>;
+  getMemoryBreakdown?: () => Promise<MemoryBreakdownView>;
+};
+
 export async function runWorker(config: Config): Promise<void> {
   const db = await IndexerDb.connect({ databaseUrl: config.databaseUrl, poolMax: config.dbPoolMax });
   if (config.retentionEnabled) {
@@ -31,21 +40,17 @@ export async function runWorker(config: Config): Promise<void> {
     }
   }
   const client = await createClient(config);
-  await runWorkerWithDepsImpl(config, db, client, { skipGc: false });
+  await runWorkerWithDepsImpl(config, db, client, {
+    skipGc: false,
+    recreateClient: async () => createClient(config),
+  });
 }
 
 export async function runWorkerWithDeps(
   config: Config,
   db: IndexerDb,
-  client: {
-    getHeadNumber: () => Promise<bigint>;
-    exportBlocks: (cursor: Cursor | null, maxBytes: number) => Promise<Result<ExportResponse, ExportError>>;
-    getTxMetaByTxId: (txId: Uint8Array) => Promise<{ input: Uint8Array | null; ethTxHash: Uint8Array | null }>;
-    getPruneStatus: () => Promise<PruneStatusView>;
-    getMetrics: (window: bigint) => Promise<MetricsView>;
-    getMemoryBreakdown?: () => Promise<MemoryBreakdownView>;
-  },
-  options: { skipGc: boolean }
+  client: WorkerClient,
+  options: { skipGc: boolean; recreateClient?: () => Promise<WorkerClient> }
 ): Promise<void> {
   await runWorkerWithDepsImpl(config, db, client, options);
 }
