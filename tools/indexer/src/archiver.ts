@@ -4,7 +4,7 @@ import { createHash } from "crypto";
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import { compress, decompress } from "@mongodb-js/zstd";
-import writeFileAtomic = require("write-file-atomic");
+import writeFileAtomic from "write-file-atomic";
 
 export type ExistingArchiveMeta = {
   path: string;

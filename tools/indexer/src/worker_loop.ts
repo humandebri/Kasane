@@ -1,10 +1,10 @@
 /// <reference path="./globals.d.ts" />
 // どこで: indexerメインループ / 何を: pull→検証→DBコミット / なぜ: 仕様のコミット境界を守るため
 
-import { Config, sleep } from "./config";
-import { IndexerDb } from "./db";
-import { runArchiveGcWithMode } from "./archive_gc";
-import { Cursor, ExportError, ExportResponse, MemoryBreakdownView, MetricsView, PruneStatusView, Result } from "./types";
+import { Config, sleep } from "./config.js";
+import { IndexerDb } from "./db.js";
+import { runArchiveGcWithMode } from "./archive_gc.js";
+import { Cursor, ExportError, ExportResponse, MemoryBreakdownView, MetricsView, PruneStatusView, Result } from "./types.js";
 import {
   applyChunk,
   enforceNextCursor,
@@ -13,18 +13,18 @@ import {
   newPendingFromChunk,
   Pending,
   totalChunkBytes,
-} from "./worker_pending";
-import { errMessage, logFatal, logIdle, logInfo, logRetry, logWarn } from "./worker_log";
+} from "./worker_pending.js";
+import { errMessage, logFatal, logIdle, logInfo, logRetry, logWarn } from "./worker_log.js";
 import {
   jsonStringifyBigInt,
   nextBackoff,
   setupFatalHandlers,
   setupSignalHandlers,
   toDayKey,
-} from "./worker_utils";
-import { classifyExportError } from "./worker_errors";
-import { commitPending } from "./worker_commit";
-import { decodeBlockPayload } from "./decode";
+} from "./worker_utils.js";
+import { classifyExportError } from "./worker_errors.js";
+import { commitPending } from "./worker_commit.js";
+import { decodeBlockPayload } from "./decode.js";
 
 export async function runWorkerWithDeps(
   config: Config,
@@ -98,7 +98,7 @@ export async function runWorkerWithDeps(
   const teardownSignals = setupSignalHandlers(config.chainId, () => {
     stopRequested = true;
   });
-  const teardownFatalHandlers = setupFatalHandlers((err) => {
+  const teardownFatalHandlers = setupFatalHandlers((err: unknown) => {
     logFatal(config.chainId, "Unknown", cursor, lastHead, null, null, "uncaught", err);
     process.exit(1);
   });

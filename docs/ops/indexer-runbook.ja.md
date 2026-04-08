@@ -123,7 +123,7 @@ DB接続で落ちる場合:
 - `/opt/kasane/tools/indexer/.env.local` は参照しない（デプロイ同期で消える事故を避けるため）。
 
 ### 2.3 起動
-- `node dist/run.js`（実際の起動コマンドはプロジェクトの package.json に合わせる）
+- `node dist/main.js`
 
 起動直後にやること:
 - archive GC が走る（失敗しても warning のみ）

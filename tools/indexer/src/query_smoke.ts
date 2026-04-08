@@ -2,8 +2,8 @@
 // 何を: canister query経路を agent.query(Actor query) で検証
 // なぜ: icp canister call が update 固定のため query検証を分離するため
 
-import { Actor, HttpAgent } from "@dfinity/agent";
-import { idlFactory } from "./candid";
+import { Actor, HttpAgent } from "@icp-sdk/core/agent";
+import { idlFactory } from "./candid.js";
 
 type Cursor = {
   block_number: bigint;

@@ -1,8 +1,8 @@
 // どこで: canisterクライアント / 何を: export API呼び出し / なぜ: 取得処理を分離するため
 
-import { Actor, HttpAgent } from "@dfinity/agent";
-import { idlFactory } from "./candid";
-import { Config } from "./config";
+import { Actor, HttpAgent } from "@icp-sdk/core/agent";
+import { idlFactory } from "./candid.js";
+import { Config } from "./config.js";
 import {
   CandidMemoryBreakdownView,
   CandidMetricsView,
@@ -18,7 +18,7 @@ import {
   MetricsView,
   PruneStatusView,
   Result,
-} from "./types";
+} from "./types.js";
 
 export type ExportClient = {
   exportBlocks: (cursor: Cursor | null, maxBytes: number) => Promise<Result<ExportResponse, ExportError>>;

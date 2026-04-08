@@ -190,7 +190,7 @@ query_head_block() {
     INDEXER_IC_HOST="${host}" \
     INDEXER_FETCH_ROOT_KEY="true" \
     ./node_modules/.bin/tsx <<'TS'
-import { Actor, HttpAgent } from "@dfinity/agent";
+import { Actor, HttpAgent } from "@icp-sdk/core/agent";
 
 const canisterId = process.env.EVM_CANISTER_ID;
 const host = process.env.INDEXER_IC_HOST ?? "http://127.0.0.1:8000";

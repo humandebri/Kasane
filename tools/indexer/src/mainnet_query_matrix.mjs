@@ -2,7 +2,7 @@
 // what: execute query methods through @dfinity/agent and emit machine-readable results
 // why: avoid icp canister call for query paths and keep repeatable evidence for reports
 
-import { Actor, HttpAgent } from "@dfinity/agent";
+import { Actor, HttpAgent } from "@icp-sdk/core/agent";
 import { pathToFileURL } from "node:url";
 import fs from "node:fs";
 

@@ -2,9 +2,10 @@
 
 import { readFileSync } from "node:fs";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import type { Pool } from "pg";
 
-const MIGRATIONS_DIR = path.join(__dirname, "..", "migrations");
+const MIGRATIONS_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "migrations");
 
 export const MIGRATIONS = [
   "001_init.sql",

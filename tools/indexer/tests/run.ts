@@ -8,26 +8,26 @@ import os from "node:os";
 import path from "node:path";
 import { compress, decompress } from "@mongodb-js/zstd";
 import { newDb } from "pg-mem";
-import { cursorFromJson, cursorToJson } from "../src/cursor";
-import { clientTestHooks } from "../src/client";
+import { cursorFromJson, cursorToJson } from "../src/cursor.js";
+import { clientTestHooks } from "../src/client.js";
 import {
   decodeBlockPayload,
   decodeErc20TransferPayload,
   decodeInternalTracesPayload,
   decodeReceiptStatusPayload,
   decodeTxIndexPayload,
-} from "../src/decode";
-import { archiveBlock } from "../src/archiver";
-import { runArchiveGc, runArchiveGcWithMode } from "../src/archive_gc";
-import { IndexerDb } from "../src/db";
-import { MIGRATIONS } from "../src/migrations";
-import { workerCommitGuardTestHooks } from "../src/worker_commit_guard";
-import { applyChunk, enforceNextCursor, finalizePayloads, newPendingFromChunk } from "../src/worker_pending";
-import { runWorkerWithDeps } from "../src/worker";
-import { classifyExportError } from "../src/worker_errors";
-import type { Cursor, ExportError, ExportResponse, Result } from "../src/types";
-import type { Config } from "../src/config";
-import type { ArchiveResult, ExistingArchiveMeta } from "../src/archiver";
+} from "../src/decode.js";
+import { archiveBlock } from "../src/archiver.js";
+import { runArchiveGc, runArchiveGcWithMode } from "../src/archive_gc.js";
+import { IndexerDb } from "../src/db.js";
+import { MIGRATIONS } from "../src/migrations.js";
+import { workerCommitGuardTestHooks } from "../src/worker_commit_guard.js";
+import { applyChunk, enforceNextCursor, finalizePayloads, newPendingFromChunk } from "../src/worker_pending.js";
+import { runWorkerWithDeps } from "../src/worker.js";
+import { classifyExportError } from "../src/worker_errors.js";
+import type { Cursor, ExportError, ExportResponse, Result } from "../src/types.js";
+import type { Config } from "../src/config.js";
+import type { ArchiveResult, ExistingArchiveMeta } from "../src/archiver.js";
 
 type TestFn = () => void | Promise<void>;
 type TestCase = { name: string; fn: TestFn };

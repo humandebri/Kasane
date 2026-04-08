@@ -1,6 +1,6 @@
 // どこで: cursorの永続化 / 何を: JSONエンコード/デコード / なぜ: 互換性と可読性を固定するため
 
-import { Cursor } from "./types";
+import { Cursor } from "./types.js";
 
 export function cursorToJson(cursor: Cursor): string {
   const payload = {
