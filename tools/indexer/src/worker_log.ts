@@ -1,7 +1,7 @@
 /// <reference path="./globals.d.ts" />
 // どこで: indexerログ / 何を: JSONログとエラー整形 / なぜ: 監視・解析を安定させるため
 
-import { Chunk, Cursor, ExportResponse } from "./types";
+import { Chunk, Cursor, ExportResponse } from "./types.js";
 
 export function logInfo(chainId: string, event: string, payload: Record<string, unknown>): void {
   logJson("info", chainId, event, payload);

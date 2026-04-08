@@ -1,7 +1,7 @@
 /// <reference path="./globals.d.ts" />
 // どこで: indexerのpending集計 / 何を: chunk検証とpayload再構築 / なぜ: セグメント境界の安全性を担保するため
 
-import { Chunk, Cursor, ExportResponse } from "./types";
+import { Chunk, Cursor, ExportResponse } from "./types.js";
 
 export type Pending = {
   payloadParts: Buffer[][];

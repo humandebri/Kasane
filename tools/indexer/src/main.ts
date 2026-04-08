@@ -7,8 +7,8 @@ declare const process: {
 
 // どこで: CLIエントリ / 何を: 設定ロードと起動 / なぜ: 実行を単純化するため
 
-import { loadConfig } from "./config";
-import { runWorker } from "./worker";
+import { loadConfig } from "./config.js";
+import { runWorker } from "./worker.js";
 
 async function main(): Promise<void> {
   const config = loadConfig(process.env);

@@ -3,8 +3,8 @@
 
 import { Pool } from "pg";
 import type { QueryResult } from "pg";
-import { createClient } from "./client";
-import { loadConfig, sleep } from "./config";
+import { createClient } from "./client.js";
+import { loadConfig, sleep } from "./config.js";
 
 type Row = { tx_hash: Buffer; block_number: bigint; tx_index: number };
 

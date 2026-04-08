@@ -3,8 +3,8 @@
 // どこで: HomeのLatest Transactions行 / 何を: Amount/Txn Fee をクライアントから canister query で後読み / なぜ: SSRのN+1 RPC負荷とCORS制約を避けるため
 
 import { useEffect, useState } from "react";
-import { Actor, HttpAgent } from "@dfinity/agent";
-import type { IDL } from "@dfinity/candid";
+import { Actor, HttpAgent } from "@icp-sdk/core/agent";
+import type { IDL } from "@icp-sdk/core/candid";
 import { TableCell } from "./ui/table";
 import { formatIcpAmountFromWei } from "../lib/format";
 import { bytesToBigInt, parseHex } from "../lib/hex";

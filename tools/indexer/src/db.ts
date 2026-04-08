@@ -2,9 +2,9 @@
 
 import { Pool, type PoolClient } from "pg";
 import type { QueryResultRow } from "pg";
-import { applyMigrations, MIGRATIONS } from "./migrations";
-import { cursorFromJson, cursorToJson } from "./cursor";
-import type { Cursor } from "./types";
+import { applyMigrations, MIGRATIONS } from "./migrations.js";
+import { cursorFromJson, cursorToJson } from "./cursor.js";
+import type { Cursor } from "./types.js";
 
 export type BlockRow = {
   number: bigint;

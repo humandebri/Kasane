@@ -1,7 +1,7 @@
 // どこで: Explorer RPC層 / 何を: canister query を型付きで実行 / なぜ: DB外のライブ情報を取得するため
 
-import { Actor, HttpAgent } from "@dfinity/agent";
-import type { IDL } from "@dfinity/candid";
+import { Actor, HttpAgent } from "@icp-sdk/core/agent";
+import type { IDL } from "@icp-sdk/core/candid";
 import { loadConfig } from "./config";
 import { bytesToBigInt, normalizeHex, parseHex } from "./hex";
 

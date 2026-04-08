@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # where: local query smoke helper
-# what: run query checks via @dfinity/agent (Actor query), not icp canister call
+# what: run query checks via @icp-sdk/core/agent (Actor query), not icp canister call
 # why: icp canister call is update-only and clashes with inspect_message policy
 set -euo pipefail
 

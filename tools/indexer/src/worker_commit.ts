@@ -1,29 +1,29 @@
 /// <reference path="./globals.d.ts" />
 // どこで: indexerコミット / 何を: payload decode→archive→DB保存 / なぜ: 失敗時の記録を一箇所に集約するため
 
-import { archiveBlock } from "./archiver";
-import { cursorToJson } from "./cursor";
+import { archiveBlock } from "./archiver.js";
+import { cursorToJson } from "./cursor.js";
 import {
   decodeBlockPayload,
   decodeInternalTracesPayload,
   decodeReceiptsPayload,
   decodeTxIndexPayload,
-} from "./decode";
-import { IndexerDb } from "./db";
-import { Config } from "./config";
-import { Cursor, ExportResponse } from "./types";
-import { finalizePayloads, Pending } from "./worker_pending";
-import { errMessage, logFatal, logInfo, logWarn } from "./worker_log";
-import { isTokenTransferAmountSupported } from "./worker_commit_guard";
-import { toDayKey } from "./worker_utils";
-import type { ArchiveResult } from "./archiver";
+} from "./decode.js";
+import { IndexerDb } from "./db.js";
+import { Config } from "./config.js";
+import { Cursor, ExportResponse } from "./types.js";
+import { finalizePayloads, Pending } from "./worker_pending.js";
+import { errMessage, logFatal, logInfo, logWarn } from "./worker_log.js";
+import { isTokenTransferAmountSupported } from "./worker_commit_guard.js";
+import { toDayKey } from "./worker_utils.js";
+import type { ArchiveResult } from "./archiver.js";
 import type {
   BlockInfo,
   DecodedInternalTracesInfo,
   Erc20TransferInfo,
   ReceiptStatusInfo,
   TxIndexInfo,
-} from "./decode";
+} from "./decode.js";
 
 export async function commitPending(params: {
   config: Config;

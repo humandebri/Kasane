@@ -2,7 +2,7 @@
 
 import { promises as fs } from "node:fs";
 import path from "node:path";
-import type { IndexerDb } from "./db";
+import type { IndexerDb } from "./db.js";
 
 const ARCHIVE_BUNDLE_SUFFIX = ".bundle.zst";
 

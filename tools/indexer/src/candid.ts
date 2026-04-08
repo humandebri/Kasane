@@ -1,6 +1,6 @@
 // どこで: Candidインターフェース定義 / 何を: export APIのIDL / なぜ: 型の一致を保証するため
 
-import type { IDL } from "@dfinity/candid";
+import type { IDL } from "@icp-sdk/core/candid";
 
 export const idlFactory: IDL.InterfaceFactory = ({ IDL }) => {
   const Cursor = IDL.Record({

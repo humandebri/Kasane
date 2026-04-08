@@ -167,7 +167,7 @@ query_head_block() {
     INDEXER_IC_HOST="${host}" \
     INDEXER_FETCH_ROOT_KEY="true" \
     ./node_modules/.bin/tsx <<'TS'
-import { Actor, HttpAgent } from "@dfinity/agent";
+import { Actor, HttpAgent } from "@icp-sdk/core/agent";
 process.stdout.on("error", (err: any) => {
   if (err?.code === "EPIPE") process.exit(0);
   throw err;
@@ -209,7 +209,7 @@ query_expected_nonce() {
     INDEXER_FETCH_ROOT_KEY="true" \
     ADDRESS_HEX="${address_hex}" \
     ./node_modules/.bin/tsx <<'TS'
-import { Actor, HttpAgent } from "@dfinity/agent";
+import { Actor, HttpAgent } from "@icp-sdk/core/agent";
 
 const canisterId = process.env.EVM_CANISTER_ID;
 const host = process.env.INDEXER_IC_HOST ?? "http://127.0.0.1:8000";
@@ -340,7 +340,7 @@ get_prune_status() {
     INDEXER_IC_HOST="${host}" \
     INDEXER_FETCH_ROOT_KEY="true" \
     ./node_modules/.bin/tsx <<'TS'
-import { Actor, HttpAgent } from "@dfinity/agent";
+import { Actor, HttpAgent } from "@icp-sdk/core/agent";
 
 const canisterId = process.env.EVM_CANISTER_ID;
 const host = process.env.INDEXER_IC_HOST ?? "http://127.0.0.1:8000";
@@ -406,7 +406,7 @@ export_blocks() {
     INDEXER_FETCH_ROOT_KEY="true" \
     BLOCK_NUMBER="${block_number}" \
     ./node_modules/.bin/tsx <<'TS'
-import { Actor, HttpAgent } from "@dfinity/agent";
+import { Actor, HttpAgent } from "@icp-sdk/core/agent";
 process.stdout.on("error", (err: any) => {
   if (err?.code === "EPIPE") process.exit(0);
   throw err;

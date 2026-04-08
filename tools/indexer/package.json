@@ -2,7 +2,7 @@
   "name": "ic-evm-indexer",
   "private": true,
   "version": "0.1.0",
-  "type": "commonjs",
+  "type": "module",
   "main": "dist/main.js",
   "scripts": {
     "dev": "tsx src/main.ts",
@@ -13,8 +13,7 @@
     "test": "tsx tests/run.ts"
   },
   "dependencies": {
-    "@dfinity/agent": "^3.4.3",
-    "@dfinity/candid": "^3.4.3",
+    "@icp-sdk/core": "^5.0.0",
     "@mongodb-js/zstd": "^7.0.0",
     "pg": "^8.18.0",
     "write-file-atomic": "^7.0.0"

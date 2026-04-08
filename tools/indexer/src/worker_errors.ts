@@ -1,9 +1,9 @@
 /// <reference path="./globals.d.ts" />
 // どこで: indexerエラー分類 / 何を: exportエラーの分類とメトリクス更新 / なぜ: 失敗時の記録を一箇所に集約するため
 
-import { IndexerDb } from "./db";
-import { ExportError } from "./types";
-import { toDayKey } from "./worker_utils";
+import { IndexerDb } from "./db.js";
+import { ExportError } from "./types.js";
+import { toDayKey } from "./worker_utils.js";
 
 export async function classifyExportError(
   error: ExportError,

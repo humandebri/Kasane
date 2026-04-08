@@ -5,7 +5,7 @@ import {
   type DecodedReceiptsInfo,
   type Erc20TransferInfo,
   type ReceiptStatusInfo,
-} from "./decode_receipt";
+} from "./decode_receipt.js";
 
 export type BlockInfo = {
   number: bigint;
