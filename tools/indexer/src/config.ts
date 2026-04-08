@@ -18,6 +18,7 @@ export type Config = {
   pruneStatusPollMs: number;
   opsMetricsPollMs: number;
   fetchRootKey: boolean;
+  clientRebuildRetryCount?: number;
   archiveDir: string;
   chainId: string;
   zstdLevel: number;
@@ -37,6 +38,7 @@ const DEFAULT_ZSTD_LEVEL = 3;
 const DEFAULT_PRUNE_STATUS_POLL_MS = 30_000;
 const DEFAULT_OPS_METRICS_POLL_MS = 30_000;
 const DEFAULT_MAX_SEGMENT = 3;
+const DEFAULT_CLIENT_REBUILD_RETRY_COUNT = 6;
 
 export function loadConfig(env: NodeJS.ProcessEnv): Config {
   const canisterId = env.EVM_CANISTER_ID;
@@ -66,6 +68,11 @@ export function loadConfig(env: NodeJS.ProcessEnv): Config {
   );
   const idlePollMs = readNumber(env.INDEXER_IDLE_POLL_MS, DEFAULT_IDLE_POLL_MS, "INDEXER_IDLE_POLL_MS");
   const fetchRootKey = env.INDEXER_FETCH_ROOT_KEY === "1" || env.INDEXER_FETCH_ROOT_KEY === "true";
+  const clientRebuildRetryCount = readNumber(
+    env.INDEXER_CLIENT_REBUILD_RETRY_COUNT,
+    DEFAULT_CLIENT_REBUILD_RETRY_COUNT,
+    "INDEXER_CLIENT_REBUILD_RETRY_COUNT"
+  );
   const archiveDirRaw = env.INDEXER_ARCHIVE_DIR ?? DEFAULT_ARCHIVE_DIR;
   const archiveDir = path.resolve(archiveDirRaw);
   const chainId = env.INDEXER_CHAIN_ID ?? DEFAULT_CHAIN_ID;
@@ -97,6 +104,7 @@ export function loadConfig(env: NodeJS.ProcessEnv): Config {
     pruneStatusPollMs,
     opsMetricsPollMs,
     fetchRootKey,
+    clientRebuildRetryCount,
     archiveDir,
     chainId,
     zstdLevel,

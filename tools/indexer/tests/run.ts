@@ -688,6 +688,104 @@ test("runWorkerWithDeps commits two blocks from one response and stores final cu
   await originalClose();
 });
 
+test("runWorkerWithDeps rebuilds client after repeated head fetch failures", async () => {
+  const db = await createTestIndexerDb();
+  const originalClose = db.close.bind(db);
+  (db as unknown as { close: () => Promise<void> }).close = async () => { };
+  await withTempDir(async (dir) => {
+    const config: Config = {
+      canisterId: "test-canister",
+      icHost: "http://127.0.0.1:4943",
+      databaseUrl: "postgres://unused",
+      dbPoolMax: 1,
+      retentionDays: 90,
+      retentionEnabled: false,
+      retentionDryRun: false,
+      archiveGcDeleteOrphans: false,
+      maxBytes: 1_200_000,
+      backoffInitialMs: 1,
+      backoffMaxMs: 2,
+      idlePollMs: 1,
+      pruneStatusPollMs: 0,
+      opsMetricsPollMs: 0,
+      fetchRootKey: false,
+      clientRebuildRetryCount: 2,
+      archiveDir: dir,
+      chainId: "test",
+      zstdLevel: 1,
+      maxSegment: 2,
+    };
+    let createdClients = 1;
+    let initialHeadCalls = 0;
+    let recoveredHeadCalls = 0;
+    const recoveredClient = {
+      getTxMetaByTxId: async () => ({ input: null, ethTxHash: null }),
+      getHeadNumber: async (): Promise<bigint> => {
+        recoveredHeadCalls += 1;
+        if (recoveredHeadCalls === 2) {
+          process.emit("SIGINT");
+        }
+        return 0n;
+      },
+      exportBlocks: async (): Promise<{ Ok: { chunks: []; next_cursor: { block_number: bigint; segment: number; byte_offset: number } } }> => ({
+        Ok: { chunks: [], next_cursor: { block_number: 0n, segment: 0, byte_offset: 0 } },
+      }),
+      getPruneStatus: async () => ({
+        pruning_enabled: false,
+        prune_running: false,
+        estimated_kept_bytes: 0n,
+        high_water_bytes: 0n,
+        low_water_bytes: 0n,
+        hard_emergency_bytes: 0n,
+        last_prune_at: 0n,
+        pruned_before_block: null,
+        oldest_kept_block: null,
+        oldest_kept_timestamp: null,
+        need_prune: false,
+      }),
+      getMetrics: async () => ({
+        txs: 0n,
+        ema_txs_per_block_x1000: 0n,
+        pruned_before_block: null,
+        ema_block_rate_per_sec_x1000: 0n,
+        total_submitted: 0n,
+        window: 128n,
+        avg_txs_per_block: 0n,
+        block_rate_per_sec_x1000: null,
+        cycles: 0n,
+        total_dropped: 0n,
+        blocks: 0n,
+        drop_counts: [],
+        queue_len: 0n,
+        total_included: 0n,
+      }),
+    };
+    const initialClient = {
+      getTxMetaByTxId: async () => ({ input: null, ethTxHash: null }),
+      getHeadNumber: async (): Promise<bigint> => {
+        initialHeadCalls += 1;
+        throw new Error(`transient ${initialHeadCalls}`);
+      },
+      exportBlocks: async (): Promise<{ Ok: { chunks: []; next_cursor: { block_number: bigint; segment: number; byte_offset: number } } }> => ({
+        Ok: { chunks: [], next_cursor: { block_number: 0n, segment: 0, byte_offset: 0 } },
+      }),
+      getPruneStatus: recoveredClient.getPruneStatus,
+      getMetrics: recoveredClient.getMetrics,
+    };
+    await runWorkerWithDeps(config, db, initialClient, {
+      skipGc: true,
+      recreateClient: async () => {
+        createdClients += 1;
+        return recoveredClient;
+      },
+    });
+    assert.equal(initialHeadCalls, 2);
+    assert.equal(createdClients, 2);
+    assert.equal(recoveredHeadCalls, 2);
+  });
+  await originalClose();
+});
+
 test("runWorkerWithDeps recovers from Pruned by rebasing cursor and dropping pending", async () => {
   const db = await createTestIndexerDb();
   const originalClose = db.close.bind(db);

@@ -37,7 +37,17 @@ export async function runWorkerWithDeps(
     getMetrics: (window: bigint) => Promise<MetricsView>;
     getMemoryBreakdown?: () => Promise<MemoryBreakdownView>;
   },
-  options: { skipGc: boolean }
+  options: {
+    skipGc: boolean;
+    recreateClient?: () => Promise<{
+      getHeadNumber: () => Promise<bigint>;
+      exportBlocks: (cursor: Cursor | null, maxBytes: number) => Promise<Result<ExportResponse, ExportError>>;
+      getTxMetaByTxId: (txId: Uint8Array) => Promise<{ input: Uint8Array | null; ethTxHash: Uint8Array | null }>;
+      getPruneStatus: () => Promise<PruneStatusView>;
+      getMetrics: (window: bigint) => Promise<MetricsView>;
+      getMemoryBreakdown?: () => Promise<MemoryBreakdownView>;
+    }>;
+  }
 ): Promise<void> {
   if (!options.skipGc) {
     try {
@@ -83,6 +93,7 @@ export async function runWorkerWithDeps(
   let lastPruneStatus: PruneStatusView | null = null;
   let lastOpsMetricsAt = 0;
   let lastSizeDay: number | null = null;
+  let activeClient = client;
 
   const teardownSignals = setupSignalHandlers(config.chainId, () => {
     stopRequested = true;
@@ -100,9 +111,19 @@ export async function runWorkerWithDeps(
       }
       let headNumber: bigint;
       try {
-        headNumber = await client.getHeadNumber();
+        headNumber = await activeClient.getHeadNumber();
       } catch (err) {
         retryCount += 1;
+        const recovered = await tryRecreateClient(config, options.recreateClient, retryCount, "head_fetch_failed", err, (
+          nextClient
+        ) => {
+          activeClient = nextClient;
+        });
+        if (recovered) {
+          retryCount = 0;
+          backoffMs = config.backoffInitialMs;
+          continue;
+        }
         logRetry(config.chainId, backoffMs, retryCount, "head_fetch_failed", err);
         await sleep(backoffMs);
         backoffMs = nextBackoff(backoffMs, config.backoffMaxMs);
@@ -114,7 +135,7 @@ export async function runWorkerWithDeps(
       if (config.pruneStatusPollMs > 0 && nowMs - lastPruneStatusAt >= config.pruneStatusPollMs) {
         lastPruneStatusAt = nowMs;
         try {
-          const status = await client.getPruneStatus();
+          const status = await activeClient.getPruneStatus();
           lastPruneStatus = status;
           const payload = { v: 1, fetched_at_ms: nowMs, status };
           await db.transaction(async (client) => {
@@ -142,7 +163,7 @@ export async function runWorkerWithDeps(
       if (config.opsMetricsPollMs > 0 && nowMs - lastOpsMetricsAt >= config.opsMetricsPollMs) {
         lastOpsMetricsAt = nowMs;
         try {
-          const metrics = await client.getMetrics(128n);
+          const metrics = await activeClient.getMetrics(128n);
           const retentionCutoffMs = BigInt(nowMs) - 14n * 24n * 60n * 60n * 1000n;
           await db.addOpsMetricsSample({
             sampledAtMs: BigInt(nowMs),
@@ -159,8 +180,8 @@ export async function runWorkerWithDeps(
             dropCountsJson: jsonStringifyBigInt(metrics.drop_counts),
             retentionCutoffMs,
           });
-          if (client.getMemoryBreakdown) {
-            const breakdown = await client.getMemoryBreakdown();
+          if (activeClient.getMemoryBreakdown) {
+            const breakdown = await activeClient.getMemoryBreakdown();
             const payload = { v: 1, fetched_at_ms: nowMs, breakdown };
             await db.setMeta("memory_breakdown", jsonStringifyBigInt(payload));
           }
@@ -173,9 +194,24 @@ export async function runWorkerWithDeps(
       }
       let result: Result<ExportResponse, ExportError>;
       try {
-        result = await client.exportBlocks(cursor, config.maxBytes);
+        result = await activeClient.exportBlocks(cursor, config.maxBytes);
       } catch (err) {
         retryCount += 1;
+        const recovered = await tryRecreateClient(
+          config,
+          options.recreateClient,
+          retryCount,
+          "export_blocks_failed",
+          err,
+          (nextClient) => {
+            activeClient = nextClient;
+          }
+        );
+        if (recovered) {
+          retryCount = 0;
+          backoffMs = config.backoffInitialMs;
+          continue;
+        }
         logRetry(config.chainId, backoffMs, retryCount, "export_blocks_failed", err);
         await sleep(backoffMs);
         backoffMs = nextBackoff(backoffMs, config.backoffMaxMs);
@@ -228,7 +264,7 @@ export async function runWorkerWithDeps(
             backoffMs = config.backoffInitialMs;
             continue;
           }
-          cursor = await bootstrapCursorFromMissingData(client, headNumber, config.chainId);
+          cursor = await bootstrapCursorFromMissingData(activeClient, headNumber, config.chainId);
           logWarn(config.chainId, "bootstrap_cursor_from_missing_data", {
             head: headNumber.toString(),
             next_cursor: `${cursor.block_number.toString()}:0:0`,
@@ -339,7 +375,7 @@ export async function runWorkerWithDeps(
             headNumber,
             pending: activePending,
             lastSizeDay,
-            getTxMetaByTxId: client.getTxMetaByTxId,
+            getTxMetaByTxId: activeClient.getTxMetaByTxId,
           });
           if (resultCommit) {
             lastSizeDay = resultCommit.lastSizeDay;
@@ -527,6 +563,57 @@ async function bootstrapCursorFromMissingData(
     blockNumber = headNumber;
   }
   return { block_number: blockNumber, segment: 0, byte_offset: 0 };
+}
+
+async function tryRecreateClient(
+  config: Config,
+  recreateClient: (() => Promise<{
+    getHeadNumber: () => Promise<bigint>;
+    exportBlocks: (cursor: Cursor | null, maxBytes: number) => Promise<Result<ExportResponse, ExportError>>;
+    getTxMetaByTxId: (txId: Uint8Array) => Promise<{ input: Uint8Array | null; ethTxHash: Uint8Array | null }>;
+    getPruneStatus: () => Promise<PruneStatusView>;
+    getMetrics: (window: bigint) => Promise<MetricsView>;
+    getMemoryBreakdown?: () => Promise<MemoryBreakdownView>;
+  }>) | undefined,
+  retryCount: number,
+  reason: "head_fetch_failed" | "export_blocks_failed",
+  err: unknown,
+  applyClient: (
+    client: {
+      getHeadNumber: () => Promise<bigint>;
+      exportBlocks: (cursor: Cursor | null, maxBytes: number) => Promise<Result<ExportResponse, ExportError>>;
+      getTxMetaByTxId: (txId: Uint8Array) => Promise<{ input: Uint8Array | null; ethTxHash: Uint8Array | null }>;
+      getPruneStatus: () => Promise<PruneStatusView>;
+      getMetrics: (window: bigint) => Promise<MetricsView>;
+      getMemoryBreakdown?: () => Promise<MemoryBreakdownView>;
+    }
+  ) => void
+): Promise<boolean> {
+  const rebuildAfter = config.clientRebuildRetryCount ?? 6;
+  if (!recreateClient || retryCount < rebuildAfter) {
+    return false;
+  }
+  logWarn(config.chainId, "client_rebuild_start", {
+    reason,
+    retry_count: retryCount,
+    err: errMessage(err),
+  });
+  try {
+    const nextClient = await recreateClient();
+    applyClient(nextClient);
+    logInfo(config.chainId, "client_rebuild_ok", {
+      reason,
+      retry_count: retryCount,
+    });
+    return true;
+  } catch (rebuildErr) {
+    logWarn(config.chainId, "client_rebuild_failed", {
+      reason,
+      retry_count: retryCount,
+      err: errMessage(rebuildErr),
+    });
+    return false;
+  }
 }
 
 function cursorFromPruned(prunedBeforeBlock: bigint, headNumber: bigint): Cursor {
