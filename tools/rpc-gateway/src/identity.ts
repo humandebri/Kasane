@@ -1,9 +1,9 @@
 // where: gateway identity resolution layer / what: restores signing identity from PEM / why: avoid anonymous update calls
 
-import type { SignIdentity } from "@dfinity/agent";
+import type { SignIdentity } from "@icp-sdk/core/agent";
 import { createPrivateKey } from "node:crypto";
-import { Ed25519KeyIdentity } from "@dfinity/identity";
-import { Secp256k1KeyIdentity } from "@dfinity/identity-secp256k1";
+import { Ed25519KeyIdentity } from "@icp-sdk/core/identity";
+import { Secp256k1KeyIdentity } from "@icp-sdk/core/identity/secp256k1";
 
 export function identityFromPem(pem: string): SignIdentity {
   try {

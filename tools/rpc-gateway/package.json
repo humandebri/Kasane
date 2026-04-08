@@ -2,12 +2,12 @@
   "name": "ic-evm-rpc-gateway",
   "private": true,
   "version": "0.1.0",
-  "type": "commonjs",
-  "main": "dist/main.js",
+  "type": "module",
+  "main": "dist/src/main.js",
   "scripts": {
     "dev": "tsx src/main.ts",
     "build": "tsc -p tsconfig.json",
-    "start": "node dist/main.js",
+    "start": "node dist/src/main.js",
     "lint": "tsc -p tsconfig.json --noEmit",
     "test": "EVM_CANISTER_ID=aaaaa-aa tsx tests/run.ts",
     "smoke:viem": "tsx smoke/viem_smoke.ts",
@@ -17,10 +17,7 @@
     "smoke:all": "bash smoke/run_all.sh"
   },
   "dependencies": {
-    "@dfinity/agent": "^3.4.3",
-    "@dfinity/candid": "^3.4.3",
-    "@dfinity/identity": "^3.4.3",
-    "@dfinity/identity-secp256k1": "^3.4.3"
+    "@icp-sdk/core": "^5.0.0"
   },
   "devDependencies": {
     "@types/node": "^22.10.2",

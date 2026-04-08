@@ -2,9 +2,9 @@
 
 import assert from "node:assert/strict";
 import { generateKeyPairSync } from "node:crypto";
-import { bytesToQuantity, parseDataHex, parseQuantityHex, toDataHex, toQuantityHex } from "../src/hex";
-import { handleRpc } from "../src/handlers";
-import { computeDepth, validateRequest } from "../src/jsonrpc";
+import { bytesToQuantity, parseDataHex, parseQuantityHex, toDataHex, toQuantityHex } from "../src/hex.js";
+import { handleRpc } from "../src/handlers.js";
+import { computeDepth, validateRequest } from "../src/jsonrpc.js";
 import {
   __test_classify_call_object_err_code,
   __test_map_receipt,
@@ -30,11 +30,11 @@ import {
   __test_tx_hash_readiness_error,
   __test_to_candid_call_object,
   __test_map_tx,
-} from "../src/handlers";
-import { loadConfig } from "../src/config";
-import { __test_assert_canister_compatibility, __test_create_retryable_promise_cache } from "../src/client";
-import { identityFromPem } from "../src/identity";
-import { __test_resolve_cors_allow_origin } from "../src/server";
+} from "../src/handlers.js";
+import { loadConfig } from "../src/config.js";
+import { __test_assert_canister_compatibility, __test_create_retryable_promise_cache } from "../src/client.js";
+import { identityFromPem } from "../src/identity.js";
+import { __test_resolve_cors_allow_origin } from "../src/server.js";
 
 function testHex(): void {
   assert.equal(toDataHex(Uint8Array.from([0, 1, 255])), "0x0001ff");

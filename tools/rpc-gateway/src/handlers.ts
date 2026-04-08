@@ -1,5 +1,5 @@
 // where: JSON-RPC handlers / what: implement per-method translation and canister calls / why: provide Ethereum-style interface through gateway
-import { CONFIG } from "./config";
+import { CONFIG } from "./config.js";
 import {
   type EthLogFilterView,
   type EthLogsCursorView,
@@ -11,9 +11,9 @@ import {
   type EthReceiptView,
   type EthTxView,
   type OpsStatusView,
-} from "./client";
-import { bytesToQuantity, ensureLen, parseDataHex, parseQuantityHex, toDataHex, toQuantityHex } from "./hex";
-import { ERR_INTERNAL, ERR_INVALID_PARAMS, ERR_METHOD_NOT_FOUND, JsonRpcRequest, JsonRpcResponse, makeError, makeSuccess } from "./jsonrpc";
+} from "./client.js";
+import { bytesToQuantity, ensureLen, parseDataHex, parseQuantityHex, toDataHex, toQuantityHex } from "./hex.js";
+import { ERR_INTERNAL, ERR_INVALID_PARAMS, ERR_METHOD_NOT_FOUND, JsonRpcRequest, JsonRpcResponse, makeError, makeSuccess } from "./jsonrpc.js";
 const ZERO_ADDR = "0x0000000000000000000000000000000000000000";
 const ZERO_32 = `0x${"0".repeat(64)}`;
 const ZERO_8 = `0x${"0".repeat(16)}`;
@@ -205,9 +205,9 @@ async function onFeeHistory(id: string | number | null, params: unknown): Promis
     baseFeePerGas: Array.from(fee.base_fee_per_gas, (value) => toQuantityHex(value)),
     gasUsedRatio: Array.from(fee.gas_used_ratio),
   };
-  const rewardRows = fee.reward[0];
+  const rewardRows: bigint[][] | undefined = fee.reward[0];
   if (rewardRows !== undefined) {
-    result.reward = Array.from(rewardRows, (row) => Array.from(row, (value) => toQuantityHex(value)));
+    result.reward = Array.from(rewardRows, (row: bigint[]) => Array.from(row, (value: bigint) => toQuantityHex(value)));
   }
   return makeSuccess(id, result);
 }
@@ -421,7 +421,10 @@ async function onGetLogs(id: string | number | null, params: unknown): Promise<J
     }
   }
   const sorted = sortLogItems(out);
-  return makeSuccess(id, sorted.map((item) => mapLogItem(item, parsed.value.blockHash)));
+  return makeSuccess(
+    id,
+    sorted.map((item: EthLogsPageView["items"][number]) => mapLogItem(item, parsed.value.blockHash))
+  );
 }
 
 async function onEthCall(id: string | number | null, params: unknown): Promise<JsonRpcResponse> {
@@ -1104,7 +1107,11 @@ async function collectLogs(
   let pages = 0;
   const items: EthLogsPageView["items"] = [];
   while (pages < LOGS_MAX_PAGES) {
-    const page = await actor.rpc_eth_get_logs_paged(filter, cursor, LOGS_PAGE_LIMIT);
+    const page: Awaited<ReturnType<typeof actor.rpc_eth_get_logs_paged>> = await actor.rpc_eth_get_logs_paged(
+      filter,
+      cursor,
+      LOGS_PAGE_LIMIT
+    );
     if ("Err" in page) {
       return { error: mapGetLogsError(page.Err) };
     }
@@ -1156,7 +1163,7 @@ function mapLogItem(item: EthLogsPageView["items"][number], blockHash: [] | [Uin
   const txHash = item.eth_tx_hash.length === 0 ? item.tx_hash : item.eth_tx_hash[0];
   return {
     address: toDataHex(item.address),
-    topics: item.topics.map((topic) => toDataHex(topic)),
+    topics: item.topics.map((topic: Uint8Array) => toDataHex(topic)),
     data: toDataHex(item.data),
     blockNumber: toQuantityHex(item.block_number),
     blockHash: blockHash.length === 0 ? null : toDataHex(blockHash[0]),
@@ -1594,9 +1601,9 @@ function mapReceipt(receipt: EthReceiptView, fallbackTxHash: Uint8Array): Record
     cumulativeGasUsed: toQuantityHex(receipt.gas_used),
     gasUsed: toQuantityHex(receipt.gas_used),
     contractAddress: receipt.contract_address.length === 0 ? null : toDataHex(receipt.contract_address[0]),
-    logs: receipt.logs.map((log) => ({
+    logs: receipt.logs.map((log: EthReceiptView["logs"][number]) => ({
       address: toDataHex(log.address),
-      topics: log.topics.map((topic) => toDataHex(topic)),
+      topics: log.topics.map((topic: Uint8Array) => toDataHex(topic)),
       data: toDataHex(log.data),
       blockNumber: toQuantityHex(receipt.block_number),
       blockHash,

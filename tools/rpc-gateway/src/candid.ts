@@ -1,6 +1,6 @@
 // where: gateway Candid definitions / what: defines required RPC methods in IDL / why: prevent type mismatches at the actor boundary
 
-import type { IDL } from "@dfinity/candid";
+import type { IDL } from "@icp-sdk/core/candid";
 
 export const idlFactory: IDL.InterfaceFactory = ({ IDL }) => {
   const RpcAccessListItemView = IDL.Record({
