@@ -1,7 +1,7 @@
 // where: gateway HTTP layer / what: accepts POST and processes JSON-RPC / why: enforce gateway-side limits instead of exposing canister HTTP directly
 
 import http from "node:http";
-import { CONFIG } from "./config";
+import { CONFIG } from "./config.js";
 import {
   ERR_INVALID_REQUEST,
   ERR_PARSE,
@@ -10,8 +10,8 @@ import {
   makeError,
   parseJsonWithDepthLimit,
   validateRequest,
-} from "./jsonrpc";
-import { handleRpc } from "./handlers";
+} from "./jsonrpc.js";
+import { handleRpc } from "./handlers.js";
 
 export function startServer(): http.Server {
   const server = http.createServer((req, res) => {

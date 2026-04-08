@@ -60,6 +60,7 @@ type RequestOverview = record {
   pull_ledger_tx_id : opt blob;
   mint_tx_id : opt blob;
   withdraw_ledger_tx_id : opt blob;
+  withdraw_error_code : opt text;
   ledger_tx_id : opt blob;
   dispatch_status : opt RequestDispatchStatusView;
   dispatch_error : opt text;

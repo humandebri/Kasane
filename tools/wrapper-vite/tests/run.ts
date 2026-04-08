@@ -209,6 +209,36 @@ async function runExecutionBranchTests(): Promise<void> {
   assert.equal(wrapPreferred?.errorCode, "wrap_failed");
   assert.equal(wrapPreferred?.mintFailedRecoverable, true);
   assert.equal(wrapPreferred?.withdrawErrorCode, "withdraw_failed");
+
+  const missingWithdrawErrorCode = await getExecutionResult(requestId, {
+    readRequest: async () => {
+      const noError: [{ code: string; message: string }] = [{ code: "wrap_failed", message: "wrap_failed" }];
+      const noBytes: [] = [];
+      const noDispatchStatus: [] = [];
+      const noText: [] = [];
+      const noNat: [] = [];
+      const pullLedgerTxId: [Uint8Array] = [Uint8Array.from([0x02])];
+      const value = {
+        kind: { Wrap: null },
+        request_id: requestId,
+        status: { Failed: null },
+        error: noError,
+        fee_ledger_tx_id: noBytes,
+        pull_ledger_tx_id: pullLedgerTxId,
+        mint_tx_id: noBytes,
+        withdraw_ledger_tx_id: noBytes,
+        withdraw_error_code: noBytes,
+        ledger_tx_id: noBytes,
+        dispatch_status: noDispatchStatus,
+        dispatch_error: noText,
+        charged_fee_e8s: noNat,
+        charged_gas_price_wei: noNat,
+      };
+      Reflect.deleteProperty(value, "withdraw_error_code");
+      return [value];
+    },
+  });
+  assert.equal(missingWithdrawErrorCode?.withdrawErrorCode, null);
 }
 
 async function runFeeQuoteMathTests(): Promise<void> {

@@ -1,7 +1,14 @@
 // どこで: gateway canister クライアント / 何を: estimate / dispatch 参照 / submit_ic_tx を提供する / なぜ: 新 gateway API を UI と script から再利用するため
 
 import type { ActorSubclass, Identity } from "@icp-sdk/core/agent";
-import { IDL } from "@icp-sdk/core/candid";
+import { idlFactory as wrapperIdlFactory } from "@/src/declarations/evm_canister/evm_canister.did.js";
+import type {
+  _SERVICE as WrapperService,
+  ApiError as ApiErrorWire,
+  RpcErrorView,
+  SubmitTxError,
+  UnwrapDispatchOverviewView,
+} from "@/src/declarations/evm_canister/evm_canister.did";
 import { loadConfig, type WrapperConfig } from "../config";
 import type { DispatchResultView, DispatchStatus } from "../types";
 import { callerEvmAddressFromPrincipalText } from "../principal";
@@ -17,72 +24,27 @@ import {
   validateEstimatedGasLimit,
 } from "../wrap-estimate";
 
-type ApiErrorWire =
-  | { InvalidArgument: { code: string; message: string } }
-  | { Rejected: { code: string; message: string } }
-  | { Internal: { code: string; message: string } };
-type SubmitTxError = { Internal: string } | { Rejected: string } | { InvalidArgument: string };
-type SubmitIcTxResult = { Ok: Uint8Array } | { Err: SubmitTxError };
-type NatResult = { Ok: bigint } | { Err: string };
-type RpcErrorView = { code: number; message: string; error_prefix: [] | [string] };
-type GasPriceResult = { Ok: bigint } | { Err: RpcErrorView };
-type GasEstimateResult = { Ok: bigint } | { Err: RpcErrorView };
-type CallResult = { Ok: { status: number; gas_used: bigint; return_data: Uint8Array; revert_data: [] | [Uint8Array] } } | { Err: RpcErrorView };
-type EstimateIcTxResult = {
-  Ok: {
-    gas_limit: bigint;
-    suggested_max_fee_per_gas: bigint;
-    suggested_max_priority_fee_per_gas: bigint;
-  }
-} | { Err: ApiErrorWire };
-type UnwrapDispatchOverviewWire = {
-  request_id: Uint8Array;
-  status: { Queued: null } | { Dispatching: null } | { Dispatched: null } | { DispatchFailed: null };
-  error: [] | [string];
+type WrapperActor = ActorSubclass<WrapperService>;
+type PlainActorMethod<T> = T extends (...args: infer TArgs) => infer TResult ? (...args: TArgs) => TResult : never;
+type NatResult = Awaited<ReturnType<WrapperActor["expected_nonce_by_address"]>>;
+type GasPriceResult = Awaited<ReturnType<WrapperActor["rpc_eth_gas_price"]>>;
+type GasEstimateResult = Awaited<ReturnType<WrapperActor["rpc_eth_estimate_gas_object"]>>;
+type CallResult = Awaited<ReturnType<WrapperActor["rpc_eth_call_object"]>>;
+type EstimateIcTxResult = Awaited<ReturnType<WrapperActor["estimate_ic_tx"]>>;
+
+type QueryActorLike = {
+  expected_nonce_by_address: PlainActorMethod<WrapperService["expected_nonce_by_address"]>;
+  rpc_eth_gas_price: PlainActorMethod<WrapperService["rpc_eth_gas_price"]>;
+  rpc_eth_max_priority_fee_per_gas: PlainActorMethod<WrapperService["rpc_eth_max_priority_fee_per_gas"]>;
+  rpc_eth_estimate_gas_object: PlainActorMethod<WrapperService["rpc_eth_estimate_gas_object"]>;
+  rpc_eth_call_object: PlainActorMethod<WrapperService["rpc_eth_call_object"]>;
+  estimate_ic_tx: PlainActorMethod<WrapperService["estimate_ic_tx"]>;
+  get_unwrap_request_ids_by_tx_id: PlainActorMethod<WrapperService["get_unwrap_request_ids_by_tx_id"]>;
+  get_unwrap_dispatch_overview: PlainActorMethod<WrapperService["get_unwrap_dispatch_overview"]>;
 };
-
-type WrapperActor = ActorSubclass<{
-  expected_nonce_by_address: (address: Uint8Array) => Promise<NatResult>;
-  rpc_eth_gas_price: () => Promise<GasPriceResult>;
-  rpc_eth_max_priority_fee_per_gas: () => Promise<GasPriceResult>;
-  rpc_eth_estimate_gas_object: (call: WrapEstimateCallObject) => Promise<GasEstimateResult>;
-  rpc_eth_call_object: (call: WrapEstimateCallObject) => Promise<CallResult>;
-  submit_ic_tx: (args: {
-    to: [] | [Uint8Array];
-    from: [] | [Uint8Array];
-    value: bigint;
-    max_priority_fee_per_gas: bigint;
-    data: Uint8Array;
-    max_fee_per_gas: bigint;
-    nonce: bigint;
-    gas_limit: bigint;
-  }) => Promise<SubmitIcTxResult>;
-  estimate_ic_tx: (args: {
-    to: [] | [Uint8Array];
-    from: [] | [Uint8Array];
-    value: bigint;
-    max_priority_fee_per_gas: bigint;
-    data: Uint8Array;
-    max_fee_per_gas: bigint;
-    nonce: bigint;
-    gas_limit: bigint;
-  }) => Promise<EstimateIcTxResult>;
-  get_unwrap_request_ids_by_tx_id: (txId: Uint8Array) => Promise<Array<Uint8Array>>;
-  get_unwrap_dispatch_overview: (requestId: Uint8Array) => Promise<[] | [UnwrapDispatchOverviewWire]>;
-}>;
-
-type QueryActorLike = Pick<
-  WrapperActor,
-  | "expected_nonce_by_address"
-  | "rpc_eth_gas_price"
-  | "rpc_eth_max_priority_fee_per_gas"
-  | "rpc_eth_estimate_gas_object"
-  | "rpc_eth_call_object"
-  | "estimate_ic_tx"
-  | "get_unwrap_request_ids_by_tx_id"
-  | "get_unwrap_dispatch_overview"
->;
-type SubmitActorLike = Pick<WrapperActor, "submit_ic_tx">;
+type SubmitActorLike = {
+  submit_ic_tx: PlainActorMethod<WrapperService["submit_ic_tx"]>;
+};
 
 const actorCache = createActorCache<QueryActorLike, SubmitActorLike, WrapperActor>();
 type WrapperClientDeps = {
@@ -94,101 +56,6 @@ const defaultWrapperClientDeps: WrapperClientDeps = {
 };
 
 let wrapperClientDeps: WrapperClientDeps = defaultWrapperClientDeps;
-
-const wrapperIdlFactory: IDL.InterfaceFactory = ({ IDL: I }) => {
-  const ApiErrorDetail = I.Record({ code: I.Text, message: I.Text });
-  const ApiError = I.Variant({
-    InvalidArgument: ApiErrorDetail,
-    Rejected: ApiErrorDetail,
-    Internal: ApiErrorDetail,
-  });
-  const SubmitTxError = I.Variant({
-    Internal: I.Text,
-    Rejected: I.Text,
-    InvalidArgument: I.Text,
-  });
-  const SubmitIcTxArgsDto = I.Record({
-    to: I.Opt(I.Vec(I.Nat8)),
-    from: I.Opt(I.Vec(I.Nat8)),
-    value: I.Nat,
-    max_priority_fee_per_gas: I.Nat,
-    data: I.Vec(I.Nat8),
-    max_fee_per_gas: I.Nat,
-    nonce: I.Nat64,
-    gas_limit: I.Nat64,
-  });
-  const RpcError = I.Record({
-    code: I.Nat32,
-    message: I.Text,
-    error_prefix: I.Opt(I.Text),
-  });
-  const RequestDispatchStatus = I.Variant({
-    Queued: I.Null,
-    Dispatching: I.Null,
-    Dispatched: I.Null,
-    DispatchFailed: I.Null,
-  });
-  return I.Service({
-    expected_nonce_by_address: I.Func([I.Vec(I.Nat8)], [I.Variant({ Ok: I.Nat64, Err: I.Text })], ["query"]),
-    rpc_eth_gas_price: I.Func([], [I.Variant({ Ok: I.Nat, Err: RpcError })], ["query"]),
-    rpc_eth_max_priority_fee_per_gas: I.Func([], [I.Variant({ Ok: I.Nat, Err: RpcError })], ["query"]),
-    rpc_eth_estimate_gas_object: I.Func([I.Record({
-      to: I.Opt(I.Vec(I.Nat8)),
-      from: I.Opt(I.Vec(I.Nat8)),
-      gas: I.Opt(I.Nat64),
-      gas_price: I.Opt(I.Nat),
-      nonce: I.Opt(I.Nat64),
-      max_fee_per_gas: I.Opt(I.Nat),
-      max_priority_fee_per_gas: I.Opt(I.Nat),
-      chain_id: I.Opt(I.Nat64),
-      tx_type: I.Opt(I.Nat64),
-      access_list: I.Opt(I.Vec(I.Record({ address: I.Vec(I.Nat8), storage_keys: I.Vec(I.Vec(I.Nat8)) }))),
-      value: I.Opt(I.Vec(I.Nat8)),
-      data: I.Opt(I.Vec(I.Nat8)),
-    })], [I.Variant({ Ok: I.Nat64, Err: RpcError })], ["query"]),
-    rpc_eth_call_object: I.Func([I.Record({
-      to: I.Opt(I.Vec(I.Nat8)),
-      from: I.Opt(I.Vec(I.Nat8)),
-      gas: I.Opt(I.Nat64),
-      gas_price: I.Opt(I.Nat),
-      nonce: I.Opt(I.Nat64),
-      max_fee_per_gas: I.Opt(I.Nat),
-      max_priority_fee_per_gas: I.Opt(I.Nat),
-      chain_id: I.Opt(I.Nat64),
-      tx_type: I.Opt(I.Nat64),
-      access_list: I.Opt(I.Vec(I.Record({ address: I.Vec(I.Nat8), storage_keys: I.Vec(I.Vec(I.Nat8)) }))),
-      value: I.Opt(I.Vec(I.Nat8)),
-      data: I.Opt(I.Vec(I.Nat8)),
-    })], [I.Variant({
-      Ok: I.Record({
-        status: I.Nat8,
-        gas_used: I.Nat64,
-        return_data: I.Vec(I.Nat8),
-        revert_data: I.Opt(I.Vec(I.Nat8)),
-      }),
-      Err: RpcError,
-    })], ["query"]),
-    submit_ic_tx: I.Func([SubmitIcTxArgsDto], [I.Variant({ Ok: I.Vec(I.Nat8), Err: SubmitTxError })], []),
-    estimate_ic_tx: I.Func([SubmitIcTxArgsDto], [I.Variant({
-      Ok: I.Record({
-        gas_limit: I.Nat64,
-        suggested_max_fee_per_gas: I.Nat,
-        suggested_max_priority_fee_per_gas: I.Nat,
-      }),
-      Err: ApiError,
-    })], ["query"]),
-    get_unwrap_request_ids_by_tx_id: I.Func([I.Vec(I.Nat8)], [I.Vec(I.Vec(I.Nat8))], ["query"]),
-    get_unwrap_dispatch_overview: I.Func(
-      [I.Vec(I.Nat8)],
-      [I.Opt(I.Record({
-        request_id: I.Vec(I.Nat8),
-        status: RequestDispatchStatus,
-        error: I.Opt(I.Text),
-      }))],
-      ["query"]
-    ),
-  });
-};
 
 async function getQueryActor(): Promise<QueryActorLike> {
   return actorCache.getQueryActor(async () => {
@@ -211,7 +78,7 @@ async function getSubmitActor(identity: Identity): Promise<SubmitActorLike> {
   });
 }
 
-function decodeDispatchStatus(status: UnwrapDispatchOverviewWire["status"]): DispatchStatus {
+function decodeDispatchStatus(status: UnwrapDispatchOverviewView["status"]): DispatchStatus {
   if ("Queued" in status) {
     return "Queued";
   }

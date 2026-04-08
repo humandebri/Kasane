@@ -11,6 +11,7 @@ node ./scripts/local-wrapper-smoke.mjs
 
 echo ""
 echo "running preflight checks..."
+npm run bindgen:check
 npm test
 npm run lint
 npm run build

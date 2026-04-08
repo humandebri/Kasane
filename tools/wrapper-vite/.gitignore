@@ -9,7 +9,6 @@ test-results
 dist/
 target/
 .DS_Store
-src/declarations/
 
 # Foundry build artifacts for wrapper contracts.
 contracts/cache/
