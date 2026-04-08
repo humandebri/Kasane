@@ -300,7 +300,7 @@ fn predict_create_address(sender: [u8; 20], nonce: u64) -> [u8; 20] {
 
 fn wrap_factory_artifact_bytecode() -> Vec<u8> {
     let artifact = include_str!(
-        "../../../tools/wrapper/contracts/out/WrapTokenFactory.sol/WrapTokenFactory.json"
+        "../../../tools/wrapper-vite/contracts/out/WrapTokenFactory.sol/WrapTokenFactory.json"
     );
     let value: Value = serde_json::from_str(artifact).expect("parse factory artifact json");
     let object = value["bytecode"]["object"]

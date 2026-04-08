@@ -32,14 +32,14 @@ export GAS_PRICE_BUFFER_BPS=12000
 
 # WrapTokenFactory EVM address（20 bytes hex, 0xなし）
 export EVM_WRAP_FACTORY_HEX=<40_hex_chars>
-export EVM_WRAP_FACTORY_BYTES="$(
+export EVM_WRAP_FACTORY_BLOB="$(
   python - <<'PY'
 import os
 hexv = os.environ["EVM_WRAP_FACTORY_HEX"].strip()
 if len(hexv) != 40:
     raise SystemExit("EVM_WRAP_FACTORY_HEX must be 40 hex chars")
 raw = bytes.fromhex(hexv)
-print("; ".join(str(b) for b in raw))
+print(''.join(f'\\{byte:02x}' for byte in raw))
 PY
 )"
 ```
@@ -51,6 +51,7 @@ PY
 - 新しい `WrapTokenFactory` は `constructor(address minter_)` です。deploy 時は `wrap_canister` 由来の EVM address を constructor に必ず入れてください。
 - 現行運用では `KASANE_CANISTER_ID` は `EVM_CANISTER_ID` と同じ principal を入れます。`wrap_canister` は unwrap dispatch caller を `kasane_canister` と照合します。
 - `fee_ledger_canister` / `cycle_fee_e8s` / `gas_price_buffer_bps` は既存 mainnet 設定を維持する場合、upgrade 前に `get_fee_policy` で現値を取得してそのまま渡してください。
+- `wrap_factory_address` は Candid 上 `blob` です。`vec { ... }` ではなく、必ず `blob "\xx..."` 形式で渡してください。
 
 前提確認:
 
@@ -89,6 +90,11 @@ wasm:
 
 ## 4. install（初回）/upgrade（更新）
 
+重要:
+
+- コード上、`post_upgrade(args: Option<InitArgs>)` は `null` / `opt none` / 引数省略を受け付けず、必ず `opt record {...}` が必要です。
+- `wrap_factory_address` は `blob "\xx..."` 形式で渡します。`vec { ... }` は使いません。
+
 ### 4-1. 初回 install
 
 ```bash
@@ -101,7 +107,7 @@ icp canister install wrap_canister \
     kasane_canister = principal \"${KASANE_CANISTER_ID}\";
     evm_gateway_canister = principal \"${EVM_CANISTER_ID}\";
     fee_ledger_canister = principal \"${FEE_LEDGER_CANISTER_ID}\";
-    wrap_factory_address = vec { <EVM_WRAP_FACTORY_BYTES> };
+    wrap_factory_address = blob \"${EVM_WRAP_FACTORY_BLOB}\";
     cycle_fee_e8s = ${CYCLE_FEE_E8S} : nat64;
     gas_price_buffer_bps = ${GAS_PRICE_BUFFER_BPS} : nat32;
     allowed_assets = vec { principal \"${ALLOWED_ASSET_CANISTER_ID}\" };
@@ -118,11 +124,11 @@ icp canister install wrap_canister \
   --identity "${ICP_IDENTITY_NAME}" \
   --mode upgrade \
   --wasm target/wasm32-unknown-unknown/release/wrap_canister.wasm \
-  --args "(record {
+  --args "(opt record {
     kasane_canister = principal \"${KASANE_CANISTER_ID}\";
     evm_gateway_canister = principal \"${EVM_CANISTER_ID}\";
     fee_ledger_canister = principal \"${FEE_LEDGER_CANISTER_ID}\";
-    wrap_factory_address = vec { <EVM_WRAP_FACTORY_BYTES> };
+    wrap_factory_address = blob \"${EVM_WRAP_FACTORY_BLOB}\";
     cycle_fee_e8s = ${CYCLE_FEE_E8S} : nat64;
     gas_price_buffer_bps = ${GAS_PRICE_BUFFER_BPS} : nat32;
     allowed_assets = vec { principal \"${ALLOWED_ASSET_CANISTER_ID}\" };

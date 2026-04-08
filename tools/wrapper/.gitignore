@@ -1,7 +1,0 @@
-node_modules
-.next
-tsconfig.tsbuildinfo
-
-# Foundry build artifacts for wrapper contracts.
-contracts/cache/
-contracts/out/

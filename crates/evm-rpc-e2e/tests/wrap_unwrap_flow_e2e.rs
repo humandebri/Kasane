@@ -965,7 +965,7 @@ fn approve_fee_ledger_for_wrap(
 
 fn wrap_factory_artifact_bytecode() -> Vec<u8> {
     let artifact = include_str!(
-        "../../../tools/wrapper/contracts/out/WrapTokenFactory.sol/WrapTokenFactory.json"
+        "../../../tools/wrapper-vite/contracts/out/WrapTokenFactory.sol/WrapTokenFactory.json"
     );
     let value: Value = serde_json::from_str(artifact).expect("parse factory artifact json");
     let object = value["bytecode"]["object"]
@@ -1038,7 +1038,7 @@ fn encode_approve(factory: [u8; 20], amount: u128) -> Vec<u8> {
 
 fn wrapped_token_artifact_bytecode() -> Vec<u8> {
     let artifact = include_str!(
-        "../../../tools/wrapper/contracts/out/WrappedAssetToken.sol/WrappedAssetToken.json"
+        "../../../tools/wrapper-vite/contracts/out/WrappedAssetToken.sol/WrappedAssetToken.json"
     );
     let value: Value = serde_json::from_str(artifact).expect("parse token artifact json");
     let object = value["bytecode"]["object"]

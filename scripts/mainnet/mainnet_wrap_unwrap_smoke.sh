@@ -24,7 +24,8 @@ UNWRAP_RECIPIENT_PRINCIPAL="${UNWRAP_RECIPIENT_PRINCIPAL:-}"
 REPORT_DIR="${REPORT_DIR:-docs/ops/reports}"
 WAIT_RETRIES="${WAIT_RETRIES:-30}"
 WAIT_SECONDS="${WAIT_SECONDS:-2}"
-HELPER_TS="$(mktemp "${REPO_ROOT}/tools/wrapper/.mainnet-wrap-unwrap-helper.XXXXXX.mts")"
+WRAPPER_DIR="${REPO_ROOT}/tools/wrapper-vite"
+HELPER_TS="$(mktemp "${WRAPPER_DIR}/.mainnet-wrap-unwrap-helper.XXXXXX.mts")"
 TIMESTAMP="$(date +%Y%m%d-%H%M%S)"
 REPORT_FILE="${REPORT_DIR}/mainnet-wrap-unwrap-smoke-${TIMESTAMP}.md"
 
@@ -46,6 +47,7 @@ require_cmd() {
 
 require_cmd icp
 require_cmd node
+require_cmd npm
 require_cmd python
 require_cmd didc
 
@@ -56,6 +58,11 @@ fi
 
 mkdir -p "${REPORT_DIR}"
 
+if [[ ! -d "${WRAPPER_DIR}/node_modules" ]]; then
+  log "npm ci (${WRAPPER_DIR})"
+  (cd "${WRAPPER_DIR}" && npm ci)
+fi
+
 CALLER_PRINCIPAL="$(icp identity principal --identity "${ICP_IDENTITY_NAME}")"
 if [[ -z "${UNWRAP_RECIPIENT_PRINCIPAL}" ]]; then
   UNWRAP_RECIPIENT_PRINCIPAL="${CALLER_PRINCIPAL}"
@@ -63,7 +70,7 @@ fi
 
 cat > "${HELPER_TS}" <<'TS'
 import { Principal } from "@dfinity/principal";
-// HELPER_TS is created under tools/wrapper, so ./lib/* stays portable across hosts.
+// HELPER_TS is created under tools/wrapper-vite, so ./lib/* stays portable across hosts.
 import { callerEvmAddressFromPrincipalText } from "./lib/principal.ts";
 import {
   decimalToBytes32,
@@ -177,14 +184,14 @@ TS
 
 helper_json() {
   (
-    cd "${REPO_ROOT}/tools/wrapper"
+    cd "${WRAPPER_DIR}"
     node --import tsx/esm "${HELPER_TS}" "$@"
   )
 }
 
 helper_text() {
   (
-    cd "${REPO_ROOT}/tools/wrapper"
+    cd "${WRAPPER_DIR}"
     node --import tsx/esm "${HELPER_TS}" "$@"
   )
 }

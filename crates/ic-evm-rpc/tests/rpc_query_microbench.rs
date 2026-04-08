@@ -296,8 +296,6 @@ fn build_eth_signed_1559(
         access_list: AccessList::default(),
         input: Bytes::new(),
     };
-    let signature = signer
-        .sign_hash_sync(&tx.signature_hash())
-        .expect("sign");
+    let signature = signer.sign_hash_sync(&tx.signature_hash()).expect("sign");
     tx.into_signed(signature).encoded_2718()
 }

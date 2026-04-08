@@ -1,0 +1,16 @@
+# Local-only environment file. Never commit real values.
+.env.local
+
+# Generated or machine-local caches.
+node_modules
+tsconfig.tsbuildinfo
+playwright-report
+test-results
+dist/
+target/
+.DS_Store
+src/declarations/
+
+# Foundry build artifacts for wrapper contracts.
+contracts/cache/
+contracts/out/

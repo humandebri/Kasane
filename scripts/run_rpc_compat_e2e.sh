@@ -11,7 +11,7 @@ POCKET_IC_BIN="${POCKET_IC_BIN:-${REPO_ROOT}/crates/evm-rpc-e2e/pocket-ic}"
 E2E_TIMEOUT_SECONDS="${E2E_TIMEOUT_SECONDS:-120}"
 
 # rpc_compat_e2e loads Foundry build artifacts at compile time via include_str!.
-(cd "${REPO_ROOT}/tools/wrapper/contracts" && forge build)
+(cd "${REPO_ROOT}/tools/wrapper-vite/contracts" && forge build)
 cargo build -p ic-evm-gateway --target wasm32-unknown-unknown --release
 (
   cd "${REPO_ROOT}/crates/evm-rpc-e2e"

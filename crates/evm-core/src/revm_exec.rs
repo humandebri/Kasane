@@ -416,7 +416,12 @@ impl InternalTraceInspector {
         let next_child = self.frame_children.last_mut()?;
         let child_index = *next_child;
         *next_child = next_child.saturating_add(1);
-        let mut trace_id = self.active_paths.last().cloned().flatten().unwrap_or_default();
+        let mut trace_id = self
+            .active_paths
+            .last()
+            .cloned()
+            .flatten()
+            .unwrap_or_default();
         trace_id.push(child_index);
         Some(trace_id)
     }

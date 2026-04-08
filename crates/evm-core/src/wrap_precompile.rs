@@ -244,7 +244,7 @@ pub(crate) fn estimate_wrap_precompile_gas(
 
 // 前提:
 // - unwrap は新 factory 配下 token のみを正とする
-// - storage layout は tools/wrapper/contracts 配下の現行 audited 実装に合わせる
+// - storage layout は tools/wrapper-vite/contracts 配下の現行 audited 実装に合わせる
 // - burn は precompile 内で完結させ、成功時のみ unwrap intent log を積む
 fn unwrap_owner(inputs: &CallInputs) -> Address {
     // unwrap の owner は tx origin ではなく、この precompile を呼んだ call frame の sender。

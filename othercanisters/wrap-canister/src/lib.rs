@@ -51,6 +51,8 @@ const DEFAULT_GAS_PRICE_BUFFER_BPS: u32 = 12_000;
 const GAS_PRICE_DENOMINATOR_BPS: u128 = 10_000;
 const WEI_PER_E8S: u128 = 10_000_000_000;
 type Memory = VirtualMemory<DefaultMemoryImpl>;
+type RetryTransferReservation = (Vec<u8>, Vec<u8>, Vec<u8>);
+type NormalizedSubmitWrapArgsParts = (Vec<u8>, Vec<u8>, Vec<u8>, u64, u64);
 
 #[derive(Clone, Debug, CandidType, Deserialize)]
 pub struct InitArgs {
@@ -916,7 +918,7 @@ fn insert_request(args: NormalizedDispatchUnwrapRequest) -> Result<InsertRequest
 fn reserve_failed_unwrap_retry(
     request_id: RequestId,
     caller: Principal,
-) -> Result<(Vec<u8>, Vec<u8>, Vec<u8>), String> {
+) -> Result<RetryTransferReservation, String> {
     with_state_mut(|state| {
         let Some(mut req) = state.requests.get(&request_id) else {
             return Err("unwrap.retry_invalid_state".to_string());
@@ -1078,7 +1080,7 @@ fn normalize_quote_wrap_args(
 
 fn normalize_submit_wrap_args(
     args: SubmitWrapRequestArgs,
-) -> Result<(Vec<u8>, Vec<u8>, Vec<u8>, u64, u64), String> {
+) -> Result<NormalizedSubmitWrapArgsParts, String> {
     validate_principal_bytes(args.asset_id.as_slice())?;
     let amount = nat_to_fixed_be::<32>(&args.amount_e8s)
         .ok_or_else(|| "arg.amount_out_of_range".to_string())?
@@ -1284,7 +1286,7 @@ fn encode_allowance_call_data(owner: &[u8], spender: &[u8]) -> Vec<u8> {
 }
 
 fn encode_factory_get_token_address_call_data(asset_id: &[u8]) -> Vec<u8> {
-    let padded_len = ((asset_id.len() + 31) / 32) * 32;
+    let padded_len = asset_id.len().div_ceil(32) * 32;
     let mut out = Vec::with_capacity(4 + 32 * 3 + padded_len);
     out.extend_from_slice(&selector(b"getTokenAddress(bytes)"));
     out.extend_from_slice(&u256_from_u128(32));
@@ -1924,7 +1926,15 @@ async fn wrap_worker_tick() {
                 )
             })
         });
-        let Some((caller, asset_id, amount, evm_recipient, gas_limit, pull_created_at_time, charged_gas_price_wei)) = req
+        let Some((
+            caller,
+            asset_id,
+            amount,
+            evm_recipient,
+            gas_limit,
+            pull_created_at_time,
+            charged_gas_price_wei,
+        )) = req
         else {
             continue;
         };
