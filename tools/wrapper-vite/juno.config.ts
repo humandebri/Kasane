@@ -26,16 +26,33 @@ function trimOptionalValue(value: string | undefined): string | null {
   return trimmed === "" ? null : trimmed;
 }
 
+function usesLocalIcHost(env: ConfigEnv = process.env): boolean {
+  const icHost = trimOptionalValue(env.VITE_IC_HOST);
+  if (icHost === null) {
+    return false;
+  }
+  return icHost.startsWith("http://127.0.0.1:")
+    || icHost.startsWith("http://localhost:")
+    || icHost.startsWith("https://127.0.0.1:")
+    || icHost.startsWith("https://localhost:");
+}
+
 function resolveBaseAllowedTargets(env: ConfigEnv = process.env): string[] {
-  return [
+  const baseTargets = [
     trimOptionalValue(env.VITE_WRAP_CANISTER_ID) ?? "lpuz5-uyaaa-aaaam-ah4da-cai",
     trimOptionalValue(env.VITE_KASANE_EVM_CANISTER_ID) ?? "4c52m-aiaaa-aaaam-agwwa-cai",
-    "xafvr-biaaa-aaaai-aql5q-cai",
     "ryjl3-tyaaa-aaaaa-aaaba-cai",
     "mxzaz-hqaaa-aaaar-qaada-cai",
     "ss2fx-dyaaa-aaaar-qacoq-cai",
     "xevnm-gaaaa-aaaar-qafnq-cai",
   ];
+  if (usesLocalIcHost(env)) {
+    return [
+      ...baseTargets,
+      "xafvr-biaaa-aaaai-aql5q-cai",
+    ];
+  }
+  return baseTargets;
 }
 
 function parseConfiguredAllowedTargets(value: string | undefined): string[] {
@@ -89,16 +106,6 @@ export default defineConfig({
       internetIdentity: {
         derivationOrigin: optionalEnv("VITE_II_DERIVATION_ORIGIN"),
       },
-      google: {
-        clientId:
-          optionalEnv("GOOGLE_CLIENT_ID")
-          ?? optionalEnv("VITE_GOOGLE_CLIENT_ID")
-          ?? "REPLACE_WITH_GOOGLE_CLIENT_ID",
-        delegation: {
-          allowedTargets: resolveAllowedTargets(),
-          sessionDuration: 24n * 60n * 60n * 1_000_000_000n,
-        },
-      },
     },
   },
 });
@@ -106,4 +113,5 @@ export default defineConfig({
 export const junoConfigTestHooks = {
   parseConfiguredAllowedTargets,
   resolveAllowedTargets,
+  usesLocalIcHost,
 };

@@ -5,7 +5,7 @@ import { principalTextToBytes } from "@/lib/principal";
 export type AssetOption = {
   assetId: string;
   label: string;
-  source: "preset" | "custom";
+  source: "preset" | "custom" | "token_list";
 };
 
 export type CustomAssetDraft = {
@@ -14,14 +14,19 @@ export type CustomAssetDraft = {
 };
 
 export const CUSTOM_ASSET_STORAGE_KEY = "wrapper.customAssets.v1";
-export const DEFAULT_ASSET_ID = "xafvr-biaaa-aaaai-aql5q-cai";
+export const DEFAULT_ASSET_ID = "ryjl3-tyaaa-aaaaa-aaaba-cai";
+export const LOCAL_TEST_ASSET_ID = "xafvr-biaaa-aaaai-aql5q-cai";
+export const MAINNET_IC_HOST = "https://icp-api.io";
 
-const PRESET_ASSETS: AssetOption[] = [
-  { assetId: DEFAULT_ASSET_ID, label: "TESTLEDGER", source: "preset" },
-  { assetId: "ryjl3-tyaaa-aaaaa-aaaba-cai", label: "ICP", source: "preset" },
+const MAINNET_PRESET_ASSETS: AssetOption[] = [
+  { assetId: DEFAULT_ASSET_ID, label: "ICP", source: "preset" },
   { assetId: "mxzaz-hqaaa-aaaar-qaada-cai", label: "ckBTC", source: "preset" },
   { assetId: "ss2fx-dyaaa-aaaar-qacoq-cai", label: "ckETH", source: "preset" },
   { assetId: "xevnm-gaaaa-aaaar-qafnq-cai", label: "ckUSDC", source: "preset" },
+];
+
+const LOCAL_PRESET_ASSETS: AssetOption[] = [
+  { assetId: LOCAL_TEST_ASSET_ID, label: "TESTICP", source: "preset" },
 ];
 
 type UnknownRecord = { [key: string]: unknown };
@@ -30,8 +35,40 @@ function isUnknownRecord(value: unknown): value is UnknownRecord {
   return typeof value === "object" && value !== null;
 }
 
-export function presetAssetOptions(): AssetOption[] {
-  return PRESET_ASSETS.map((asset) => ({ ...asset }));
+function configuredIcHost(): string | null {
+  const host = import.meta.env?.VITE_IC_HOST;
+  if (typeof host !== "string") {
+    return null;
+  }
+  const trimmed = host.trim();
+  return trimmed === "" ? null : trimmed;
+}
+
+function usesLocalIcHost(icHost: string | null): boolean {
+  if (icHost === null) {
+    return false;
+  }
+  return icHost.startsWith("http://127.0.0.1:")
+    || icHost.startsWith("http://localhost:")
+    || icHost.startsWith("https://127.0.0.1:")
+    || icHost.startsWith("https://localhost:");
+}
+
+export function presetAssetOptions(icHost: string | null = configuredIcHost()): AssetOption[] {
+  const presets = usesLocalIcHost(icHost)
+    ? [...LOCAL_PRESET_ASSETS, ...MAINNET_PRESET_ASSETS]
+    : MAINNET_PRESET_ASSETS;
+  return presets.map((asset) => ({ ...asset }));
+}
+
+export function resolveLedgerQueryHost(
+  assetId: string,
+  icHost: string | null = configuredIcHost(),
+): string | null {
+  if (!usesLocalIcHost(icHost)) {
+    return icHost;
+  }
+  return assetId === LOCAL_TEST_ASSET_ID ? icHost : MAINNET_IC_HOST;
 }
 
 export function normalizeCustomAssetDraft(draft: CustomAssetDraft): AssetOption {
@@ -86,6 +123,14 @@ export function dedupeAssetOptions(assets: AssetOption[]): AssetOption[] {
   return out;
 }
 
-export function mergeAssetOptions(customAssets: AssetOption[]): AssetOption[] {
-  return dedupeAssetOptions([...presetAssetOptions(), ...customAssets]);
+export function mergeAssetOptions(
+  customAssets: AssetOption[],
+  icHost: string | null = configuredIcHost(),
+): AssetOption[] {
+  return dedupeAssetOptions([...presetAssetOptions(icHost), ...customAssets]);
 }
+
+export const assetCatalogTestHooks = {
+  usesLocalIcHost,
+  resolveLedgerQueryHost,
+};
