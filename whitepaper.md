@@ -1,7 +1,7 @@
 # IC-EVM Whitepaper (Draft)
 
 ## 1. Abstract
-本書は、ICP上で動作するEVM互換チェーンの現行実装と、運用可能性を優先した設計方針を定義する。主眼は、(a) ブロック生成・状態遷移の再現性、(b) 外部Index/Archive障害時でもチェーン本体が継続する非依存性、(c) pruningとexportを両立するデータ運用である。現時点での実装は `IcSynthetic` 経路と `EthSigned` 経路を持ち、cursor/chunkベースのExport APIとPostgres indexerを備える。一方、PrecompileによるICPトークン相互運用は未実装であり、計画段階として明示する。
+本書は、ICP上で動作するEVM互換チェーンの現行実装と、運用可能性を優先した設計方針を定義する。主眼は、(a) ブロック生成・状態遷移の再現性、(b) 外部Index/Archive障害時でもチェーン本体が継続する非依存性、(c) pruningとexportを両立するデータ運用である。現時点での実装は `IcSynthetic` 経路と `EthSigned` 経路を持ち、cursor/chunkベースのExport APIとPostgres indexerを備える。
 
 ### 1.1 Canonical Specs (Source of Truth)
 - 現行の運用仕様（RPC公開面、運用上の決定事項、互換方針）は `README.md` を正本とする。
