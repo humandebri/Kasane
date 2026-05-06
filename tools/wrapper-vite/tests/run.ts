@@ -33,6 +33,7 @@ import {
   getExecutionResult,
   quoteNativeWithdrawal,
   getUnwrapRequirements,
+  submitNativeDeposit,
   submitWrapRequest,
   withdrawFailedWrap,
   wrapClientTestHooks,
@@ -771,6 +772,48 @@ async function runWrapClientSubmitTests(): Promise<void> {
   }, new AnonymousIdentity());
   assert.deepEqual(submitResult.requestId, Uint8Array.from([0x01]));
   assert.equal(submitResult.chargedFeeE8s, 9n);
+  wrapClientTestHooks.reset();
+
+  const depositId = Uint8Array.from(Array.from({ length: 32 }, (_, i) => i));
+  wrapClientTestHooks.setMockSubmitActor({
+    submit_wrap_request: async () => {
+      throw new Error("unused submit_wrap_request");
+    },
+    retry_request: async () => {
+      throw new Error("unused retry_request");
+    },
+    retry_native_deposit: async () => {
+      throw new Error("unused retry_native_deposit");
+    },
+    retry_native_withdrawal: async () => {
+      throw new Error("unused retry_native_withdrawal");
+    },
+    recover_failed_wrap: async () => {
+      throw new Error("unused recover_failed_wrap");
+    },
+    submit_native_deposit: async (args) => {
+      assert.deepEqual(args.deposit_id, depositId);
+      assert.equal(args.amount_e8s, 5n);
+      assert.equal(args.max_fee_e8s, 9n);
+      assert.equal(args.fee_ledger_canister.toText(), "2vxsx-fae");
+      return {
+        Ok: {
+          request_id: Uint8Array.from([0x03]),
+          charged_fee_e8s: 9n,
+          fee_ledger_tx_id: Uint8Array.from([0x04]),
+        },
+      };
+    },
+  });
+  const nativeSubmitResult = await submitNativeDeposit({
+    depositId,
+    amountE8s: 5n,
+    evmRecipient: hexToBytes("0x1111111111111111111111111111111111111111"),
+    maxFeeE8s: 9n,
+    feeLedgerCanister: "2vxsx-fae",
+  }, new AnonymousIdentity());
+  assert.deepEqual(nativeSubmitResult.requestId, Uint8Array.from([0x03]));
+  assert.equal(nativeSubmitResult.chargedFeeE8s, 9n);
   wrapClientTestHooks.reset();
 }
 

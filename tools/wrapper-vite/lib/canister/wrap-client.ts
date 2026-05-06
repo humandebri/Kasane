@@ -219,6 +219,7 @@ export async function submitWrapRequest(args: {
 }
 
 export async function submitNativeDeposit(args: {
+  depositId: Uint8Array;
   amountE8s: bigint;
   evmRecipient: Uint8Array;
   maxFeeE8s: bigint;
@@ -229,6 +230,7 @@ export async function submitNativeDeposit(args: {
   feeLedgerTxId: Uint8Array;
 }> {
   const out = await (await getSubmitActor(caller)).submit_native_deposit({
+    deposit_id: args.depositId,
     amount_e8s: args.amountE8s,
     evm_recipient: args.evmRecipient,
     max_fee_e8s: args.maxFeeE8s,

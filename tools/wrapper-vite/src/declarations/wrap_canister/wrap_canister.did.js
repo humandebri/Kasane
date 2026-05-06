@@ -175,6 +175,7 @@ export const idlFactory = ({ IDL }) => {
     'cycle_fee_e8s' : IDL.Nat64,
   });
   const SubmitNativeDepositArgs = IDL.Record({
+    'deposit_id' : IDL.Vec(IDL.Nat8),
     'max_fee_e8s' : IDL.Nat,
     'evm_recipient' : IDL.Vec(IDL.Nat8),
     'amount_e8s' : IDL.Nat,

@@ -122,6 +122,7 @@ export interface SetFeePolicyArgs {
 }
 export interface StandardRecord { 'url' : string, 'name' : string }
 export interface SubmitNativeDepositArgs {
+  'deposit_id' : Uint8Array,
   'max_fee_e8s' : bigint,
   'evm_recipient' : Uint8Array,
   'amount_e8s' : bigint,

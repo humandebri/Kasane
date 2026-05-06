@@ -14,8 +14,10 @@ import {
 } from "@/lib/canister/wrapper-client";
 import {
   getUnwrapRequirements,
+  quoteNativeDeposit,
   quoteWrapRequest,
   retryFailedUnwrap,
+  submitNativeDeposit,
   submitWrapRequest,
   withdrawFailedWrap,
 } from "@/lib/canister/wrap-client";
@@ -98,6 +100,16 @@ async function sleep(ms: number): Promise<void> {
   await new Promise((resolve) => {
     globalThis.setTimeout(resolve, ms);
   });
+}
+
+function createNativeDepositId(): Uint8Array {
+  const crypto = globalThis.crypto;
+  if (!crypto) {
+    throw new Error("native_deposit.crypto_unavailable");
+  }
+  const bytes = new Uint8Array(32);
+  crypto.getRandomValues(bytes);
+  return bytes;
 }
 
 async function waitForTransactionFinal(args: {
@@ -404,39 +416,58 @@ export function useWrapperActions(params: {
         params.forms.wrapAssetDecimals,
         "validation.amount.invalid",
       );
-      if (params.forms.wrapGasEstimateStatus !== "ready") {
-        throw new Error(params.forms.wrapGasEstimateError ?? "wrap.gas_estimate_failed");
-      }
-      const gasLimit = parsePositiveU64(
-        params.forms.wrapForm.gasLimit,
-        "validation.gas_limit.invalid",
-      );
-      const evmNonce = parseU64(
-        params.forms.wrapForm.evmNonce,
-        "validation.evm_nonce.invalid",
-      );
-      const quote = await quoteWrapRequest({
-        assetId: params.forms.wrapForm.assetId.trim(),
+      const assetId = params.forms.wrapForm.assetId.trim();
+      const evmRecipient = hexToBytes(params.forms.wrapForm.evmRecipient.trim());
+      const nativeQuote = await quoteNativeDeposit({
         amountE8s: amount,
-        evmRecipient: hexToBytes(params.forms.wrapForm.evmRecipient.trim()),
-        gasLimit,
+        evmRecipient,
       });
+      const isNativeDeposit = assetId === nativeQuote.nativeLedgerCanister;
+      let quote: { chargedFeeE8s: bigint; feeLedgerCanister: string } = nativeQuote;
+      let gasLimit: bigint | null = null;
+      let evmNonce: bigint | null = null;
+      let chargedGasPriceWei: bigint | null = null;
+      if (!isNativeDeposit) {
+        if (params.forms.wrapGasEstimateStatus !== "ready") {
+          throw new Error(params.forms.wrapGasEstimateError ?? "wrap.gas_estimate_failed");
+        }
+        gasLimit = parsePositiveU64(
+          params.forms.wrapForm.gasLimit,
+          "validation.gas_limit.invalid",
+        );
+        evmNonce = parseU64(
+          params.forms.wrapForm.evmNonce,
+          "validation.evm_nonce.invalid",
+        );
+        const wrapQuote = await quoteWrapRequest({
+          assetId,
+          amountE8s: amount,
+          evmRecipient,
+          gasLimit,
+        });
+        quote = wrapQuote;
+        chargedGasPriceWei = wrapQuote.chargedGasPriceWei;
+      }
       setWrapFeeEstimate({
         chargedFeeE8s: quote.chargedFeeE8s,
         feeLedgerCanister: quote.feeLedgerCanister,
       });
-      const priorityFeeWei = await getMaxPriorityFeePerGasWei().catch(() => null);
-      setWrapGasDetails(priorityFeeWei === null ? null : {
-        chargedGasPriceWei: quote.chargedGasPriceWei,
-        maxPriorityFeePerGasWei: priorityFeeWei,
-      });
+      if (chargedGasPriceWei === null) {
+        setWrapGasDetails(null);
+      } else {
+        const priorityFeeWei = await getMaxPriorityFeePerGasWei().catch(() => null);
+        setWrapGasDetails(priorityFeeWei === null ? null : {
+          chargedGasPriceWei,
+          maxPriorityFeePerGasWei: priorityFeeWei,
+        });
+      }
       setWrapFeeEstimateText(
         `estimated fee: ${formatE8sToIcpText4(quote.chargedFeeE8s)} ICP`,
       );
 
       updateWrapActionStep("checking_allowance");
       const required = computeRequiredAllowances({
-        assetLedgerCanister: params.forms.wrapForm.assetId.trim(),
+        assetLedgerCanister: assetId,
         feeLedgerCanister: quote.feeLedgerCanister,
         amount,
         totalFeeE8s: quote.chargedFeeE8s,
@@ -445,14 +476,14 @@ export function useWrapperActions(params: {
       const spenderCanisterId = ready.cfg.wrapCanisterId.trim();
       const caller = await requireCaller();
       const assetAllowance = await getLedgerAllowance({
-        ledgerCanisterId: params.forms.wrapForm.assetId.trim(),
+        ledgerCanisterId: assetId,
         ownerPrincipalText,
         spenderCanisterId,
       });
       if (assetAllowance < required.requiredAssetAllowance) {
         updateWrapActionStep("approving_asset");
           await approveLedgerSpend({
-            ledgerCanisterId: params.forms.wrapForm.assetId.trim(),
+            ledgerCanisterId: assetId,
             spenderCanisterId,
             amount: required.requiredAssetAllowance,
             caller,
@@ -476,16 +507,24 @@ export function useWrapperActions(params: {
       }
 
       updateWrapActionStep("submitting");
-      const submitResult = await submitWrapRequest({
-        assetId: params.forms.wrapForm.assetId.trim(),
-        amountE8s: amount,
-        evmRecipient: hexToBytes(params.forms.wrapForm.evmRecipient.trim()),
-        evmNonce,
-        gasLimit,
-        maxFeeE8s: quote.chargedFeeE8s,
-        quotedGasPriceWei: quote.chargedGasPriceWei,
-        feeLedgerCanister: quote.feeLedgerCanister,
-      }, caller);
+      const submitResult = isNativeDeposit
+        ? await submitNativeDeposit({
+          depositId: createNativeDepositId(),
+          amountE8s: amount,
+          evmRecipient,
+          maxFeeE8s: quote.chargedFeeE8s,
+          feeLedgerCanister: quote.feeLedgerCanister,
+        }, caller)
+        : await submitWrapRequest({
+          assetId,
+          amountE8s: amount,
+          evmRecipient,
+          evmNonce: evmNonce ?? 0n,
+          gasLimit: gasLimit ?? 0n,
+          maxFeeE8s: quote.chargedFeeE8s,
+          quotedGasPriceWei: chargedGasPriceWei ?? 0n,
+          feeLedgerCanister: quote.feeLedgerCanister,
+        }, caller);
       const requestIdHex = bytesToHex(submitResult.requestId);
       setLastSubmittedWrapRequestId(requestIdHex);
       params.onRequestIdInput(requestIdHex);
@@ -495,7 +534,9 @@ export function useWrapperActions(params: {
         kind: "wrap",
         submittedAt: new Date().toISOString(),
       });
-      await params.forms.refreshWrapNonce().catch(() => undefined);
+      if (!isNativeDeposit) {
+        await params.forms.refreshWrapNonce().catch(() => undefined);
+      }
       updateWrapActionStep("done");
       params.tracker.setMessage(`wrap.submit.success fee=${submitResult.chargedFeeE8s.toString()}e8s`);
     } catch (error) {
@@ -527,12 +568,6 @@ export function useWrapperActions(params: {
   }
 
   useEffect(() => {
-    if (params.forms.wrapGasEstimateStatus !== "ready") {
-      setWrapFeeEstimate(null);
-      setWrapGasDetails(null);
-      setWrapFeeEstimateText(null);
-      return;
-    }
     let cancelled = false;
     const assetId = params.forms.wrapForm.assetId.trim();
     const amountText = params.forms.wrapForm.amount.trim();
@@ -546,7 +581,6 @@ export function useWrapperActions(params: {
       }
     }
     let amountE8s: bigint;
-    let gasLimit: bigint;
     let evmRecipientBytes: Uint8Array;
     try {
       if (params.forms.wrapAssetDecimals === null) {
@@ -558,10 +592,6 @@ export function useWrapperActions(params: {
       amountE8s = amountText === ""
         ? 1n
         : parseTokenAmount(amountText, params.forms.wrapAssetDecimals, "validation.amount.invalid");
-      gasLimit = parsePositiveU64(
-        params.forms.wrapForm.gasLimit,
-        "validation.gas_limit.invalid",
-      );
       evmRecipientBytes = hexToBytes(evmRecipient);
     } catch {
       setWrapFeeEstimate(null);
@@ -569,16 +599,44 @@ export function useWrapperActions(params: {
       setWrapFeeEstimateText(null);
       return;
     }
-    void Promise.all([
-      quoteWrapRequest({
-        assetId,
-        amountE8s,
-        evmRecipient: evmRecipientBytes,
-        gasLimit,
-      }),
-      getMaxPriorityFeePerGasWei(),
-    ])
-      .then(([quote, priorityFeeWei]) => {
+    void quoteNativeDeposit({
+      amountE8s,
+      evmRecipient: evmRecipientBytes,
+    })
+      .then(async (nativeQuote) => {
+        if (cancelled) {
+          return;
+        }
+        if (assetId === nativeQuote.nativeLedgerCanister) {
+          setWrapFeeEstimate({
+            chargedFeeE8s: nativeQuote.chargedFeeE8s,
+            feeLedgerCanister: nativeQuote.feeLedgerCanister,
+          });
+          setWrapGasDetails(null);
+          setWrapFeeEstimateText(
+            `estimated fee: ${formatE8sToIcpText4(nativeQuote.chargedFeeE8s)} ICP`,
+          );
+          return;
+        }
+        if (params.forms.wrapGasEstimateStatus !== "ready") {
+          setWrapFeeEstimate(null);
+          setWrapGasDetails(null);
+          setWrapFeeEstimateText(null);
+          return;
+        }
+        const gasLimit = parsePositiveU64(
+          params.forms.wrapForm.gasLimit,
+          "validation.gas_limit.invalid",
+        );
+        const [quote, priorityFeeWei] = await Promise.all([
+          quoteWrapRequest({
+            assetId,
+            amountE8s,
+            evmRecipient: evmRecipientBytes,
+            gasLimit,
+          }),
+          getMaxPriorityFeePerGasWei(),
+        ]);
         if (cancelled) {
           return;
         }
