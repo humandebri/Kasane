@@ -116,6 +116,7 @@ type SubmitWrapRequestArgs = record {
   fee_ledger_canister : principal;
 };
 type SubmitNativeDepositArgs = record {
+  deposit_id : blob;
   amount_e8s : nat;
   evm_recipient : blob;
   max_fee_e8s : nat;

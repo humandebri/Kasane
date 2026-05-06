@@ -1,20 +1,22 @@
 use super::{
     apply_insert_request_outcome, apply_runtime_config, approval_required_for_readiness,
     decode_asset_decimals, decode_stored_request, decode_u256_be, dequeue_request,
-    derive_wrap_request_id, encode_factory_mint_for_asset_call_data, encode_stored_request,
-    enqueue_request, init_state, insert_request, insert_wrap_request, is_withdrawable,
-    map_transfer_reply, mark_request_running, mark_wrap_request_running, nat_from_32_be,
-    nat_to_be_bytes, native_withdraw_receive_amount, normalize_submit_wrap_args,
+    derive_native_deposit_request_id, derive_wrap_request_id,
+    encode_factory_mint_for_asset_call_data, encode_stored_request, enqueue_request,
+    existing_native_deposit_response, init_state, insert_request, insert_wrap_request,
+    is_withdrawable, map_transfer_reply, mark_request_running, mark_wrap_request_running,
+    nat_from_32_be, nat_to_be_bytes, native_withdraw_receive_amount, normalize_submit_wrap_args,
     on_worker_queue_drain, on_wrap_worker_queue_drain, principal_from_bytes,
     recover_request_state_after_upgrade, recover_wrap_request_state_after_upgrade, schedule_worker,
     schedule_wrap_worker, submit_error_to_code, to_request_id, to_withdraw_error_code,
-    transfer_error_to_code, transfer_from_error_to_code, u256_from_u64,
+    transfer_error_to_code, transfer_from_error_to_code, u256_from_u64, validate_native_deposit_id,
     validate_non_anonymous_principal, validate_quote_within_approval, validate_runtime_config,
     validate_withdraw_request, with_state, with_state_mut, FeeCharge, GetUnwrapRequirementsArgs,
     Icrc1MetadataValue, Icrc1TransferError, Icrc2TransferFromError, InitArgs, InsertRequestOutcome,
-    NormalizedDispatchUnwrapRequest, NormalizedSubmitWrapRequest, QueueMeta, RequestResult,
-    RequestStatus, StoredRequest, SubmitTxError, SubmitWrapRequestArgs, UnwrapReadiness, WrapQuote,
-    WrapRequestResult, WrapStoredRequest, WORKER_SCHEDULED, WRAP_WORKER_SCHEDULED,
+    NormalizedDispatchUnwrapRequest, NormalizedSubmitNativeDeposit, NormalizedSubmitWrapRequest,
+    QueueMeta, RequestResult, RequestStatus, StoredRequest, SubmitTxError, SubmitWrapRequestArgs,
+    UnwrapReadiness, WrapQuote, WrapRequestResult, WrapStoredRequest, WORKER_SCHEDULED,
+    WRAP_WORKER_SCHEDULED,
 };
 use candid::{decode_one, encode_one, Nat, Principal};
 use ic_evm_rpc_types::ApiError;
@@ -1034,6 +1036,87 @@ fn wrap_request_id_changes_when_evm_nonce_changes() {
     );
 
     assert_ne!(first, second);
+}
+
+#[test]
+fn native_deposit_request_id_changes_when_deposit_id_changes() {
+    let caller = Principal::self_authenticating(b"native-deposit-caller");
+    let first = derive_native_deposit_request_id(caller.as_slice(), &[1u8; 32]);
+    let second = derive_native_deposit_request_id(caller.as_slice(), &[2u8; 32]);
+
+    assert_ne!(first, second);
+    assert_eq!(
+        first,
+        derive_native_deposit_request_id(caller.as_slice(), &[1u8; 32])
+    );
+}
+
+#[test]
+fn native_deposit_id_requires_32_bytes() {
+    assert!(validate_native_deposit_id(&[1u8; 32]).is_ok());
+    assert_eq!(
+        validate_native_deposit_id(&[1u8; 31]).expect_err("short id must fail"),
+        "arg.deposit_id_invalid"
+    );
+    assert_eq!(
+        validate_native_deposit_id(&[1u8; 33]).expect_err("long id must fail"),
+        "arg.deposit_id_invalid"
+    );
+}
+
+#[test]
+fn native_deposit_same_deposit_id_rejects_payload_mismatch() {
+    reset_state();
+    let caller = Principal::self_authenticating(b"native-deposit-idempotent");
+    let request_id_raw = derive_native_deposit_request_id(caller.as_slice(), &[8u8; 32]);
+    let request_id = to_request_id(&request_id_raw).expect("id");
+    with_state_mut(|state| {
+        state.wrap_requests.insert(
+            request_id,
+            WrapStoredRequest {
+                caller: caller.as_slice().to_vec(),
+                asset_id: Vec::new(),
+                amount: vec![1u8; 32],
+                evm_recipient: vec![2u8; 20],
+                gas_limit: 0,
+                fee_created_at_time: 1,
+                pull_created_at_time: 0,
+                withdraw_created_at_time: 0,
+                result: WrapRequestResult {
+                    status: RequestStatus::Succeeded,
+                    pull_ledger_tx_id: None,
+                    mint_tx_id: None,
+                    error_code: None,
+                    withdrawn: false,
+                    withdraw_ledger_tx_id: None,
+                    withdraw_error_code: None,
+                    withdraw_in_progress: false,
+                    mint_failed_recoverable: false,
+                    fee_ledger_tx_id: Some(vec![0xAA]),
+                    charged_fee_e8s: Some(1_000),
+                    charged_gas_price_wei: None,
+                },
+            },
+        );
+    });
+
+    let args = NormalizedSubmitNativeDeposit {
+        request_id,
+        amount: vec![3u8; 32],
+        evm_recipient: vec![2u8; 20],
+        max_fee_e8s: 1_000,
+        fee_ledger_canister: test_fee_ledger(),
+    };
+    let err = existing_native_deposit_response(request_id, &args, caller)
+        .expect("existing request")
+        .expect_err("payload mismatch must reject");
+
+    match err {
+        ApiError::Rejected(detail) => {
+            assert_eq!(detail.code, "request.idempotency_mismatch");
+        }
+        other => panic!("unexpected error: {other:?}"),
+    }
 }
 
 #[test]

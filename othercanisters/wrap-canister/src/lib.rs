@@ -85,6 +85,7 @@ pub struct QuoteNativeDepositOk {
 
 #[derive(Clone, Debug, CandidType, Deserialize)]
 pub struct SubmitNativeDepositArgs {
+    pub deposit_id: Vec<u8>,
     pub amount_e8s: Nat,
     pub evm_recipient: Vec<u8>,
     pub max_fee_e8s: Nat,
@@ -1011,6 +1012,7 @@ async fn build_submit_native_deposit(
     args: SubmitNativeDepositArgs,
     caller: Principal,
 ) -> Result<NormalizedSubmitNativeDeposit, ApiError> {
+    validate_native_deposit_id(args.deposit_id.as_slice()).map_err(api_invalid_argument)?;
     validate_evm_address(args.evm_recipient.as_slice(), "arg.evm_recipient_invalid")
         .map_err(api_invalid_argument)?;
     let amount = nat_to_fixed_be::<32>(&args.amount_e8s)
@@ -1022,8 +1024,7 @@ async fn build_submit_native_deposit(
         .ok_or_else(|| api_invalid_argument("arg.max_fee_out_of_range".to_string()))?;
     let request_id = RequestId(derive_native_deposit_request_id(
         caller.as_slice(),
-        &amount,
-        args.evm_recipient.as_slice(),
+        args.deposit_id.as_slice(),
     ));
     Ok(NormalizedSubmitNativeDeposit {
         request_id,
@@ -1939,19 +1940,21 @@ fn derive_wrap_request_id(
     out
 }
 
-fn derive_native_deposit_request_id(
-    from_owner: &[u8],
-    amount: &[u8],
-    evm_recipient: &[u8],
-) -> [u8; 32] {
+fn derive_native_deposit_request_id(from_owner: &[u8], deposit_id: &[u8]) -> [u8; 32] {
     let mut keccak = Keccak::v256();
-    keccak.update(b"kasane.native.deposit.v1");
+    keccak.update(b"kasane.native.deposit.v2");
     hash_len_prefixed(&mut keccak, from_owner);
-    hash_len_prefixed(&mut keccak, amount);
-    hash_len_prefixed(&mut keccak, evm_recipient);
+    hash_len_prefixed(&mut keccak, deposit_id);
     let mut out = [0u8; 32];
     keccak.finalize(&mut out);
     out
+}
+
+fn validate_native_deposit_id(deposit_id: &[u8]) -> Result<(), String> {
+    if deposit_id.len() != 32 {
+        return Err("arg.deposit_id_invalid".to_string());
+    }
+    Ok(())
 }
 
 fn request_memo(request_id: RequestId, kind: TransferMemoKind) -> Vec<u8> {
