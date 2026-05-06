@@ -11,12 +11,23 @@ import { IDL } from '@icp-sdk/core/candid';
 export const idlFactory = ({ IDL }) => {
   const InitArgs = IDL.Record({
     'kasane_canister' : IDL.Principal,
+    'native_ledger_canister' : IDL.Principal,
     'allowed_assets' : IDL.Vec(IDL.Principal),
     'fee_ledger_canister' : IDL.Principal,
     'evm_gateway_canister' : IDL.Principal,
     'gas_price_buffer_bps' : IDL.Nat32,
     'cycle_fee_e8s' : IDL.Nat64,
     'wrap_factory_address' : IDL.Vec(IDL.Nat8),
+  });
+  const DispatchNativeWithdrawalRequestArgs = IDL.Record({
+    'request_id' : IDL.Vec(IDL.Nat8),
+    'recipient' : IDL.Principal,
+    'amount_e8s' : IDL.Nat,
+  });
+  const ApiError = IDL.Variant({
+    'Internal' : IDL.Record({ 'code' : IDL.Text, 'message' : IDL.Text }),
+    'Rejected' : IDL.Record({ 'code' : IDL.Text, 'message' : IDL.Text }),
+    'InvalidArgument' : IDL.Record({ 'code' : IDL.Text, 'message' : IDL.Text }),
   });
   const FeePolicyView = IDL.Record({
     'fee_ledger_canister' : IDL.Principal,
@@ -75,10 +86,72 @@ export const idlFactory = ({ IDL }) => {
     'factory_address' : IDL.Vec(IDL.Nat8),
     'readiness' : UnwrapReadiness,
   });
-  const ApiError = IDL.Variant({
-    'Internal' : IDL.Record({ 'code' : IDL.Text, 'message' : IDL.Text }),
-    'Rejected' : IDL.Record({ 'code' : IDL.Text, 'message' : IDL.Text }),
-    'InvalidArgument' : IDL.Record({ 'code' : IDL.Text, 'message' : IDL.Text }),
+  const StandardRecord = IDL.Record({ 'url' : IDL.Text, 'name' : IDL.Text });
+  const icrc21_consent_message_metadata = IDL.Record({
+    'utc_offset_minutes' : IDL.Opt(IDL.Int16),
+    'language' : IDL.Text,
+  });
+  const Icrc21LineDisplaySpec = IDL.Record({
+    'characters_per_line' : IDL.Nat16,
+    'lines_per_page' : IDL.Nat16,
+  });
+  const icrc21_consent_message_spec = IDL.Record({
+    'metadata' : icrc21_consent_message_metadata,
+    'device_spec' : IDL.Opt(
+      IDL.Variant({
+        'GenericDisplay' : IDL.Null,
+        'LineDisplay' : Icrc21LineDisplaySpec,
+      })
+    ),
+  });
+  const icrc21_consent_message_request = IDL.Record({
+    'arg' : IDL.Vec(IDL.Nat8),
+    'method' : IDL.Text,
+    'user_preferences' : icrc21_consent_message_spec,
+  });
+  const Icrc21LineDisplayPage = IDL.Record({ 'lines' : IDL.Vec(IDL.Text) });
+  const Icrc21LineDisplayMessage = IDL.Record({
+    'pages' : IDL.Vec(Icrc21LineDisplayPage),
+  });
+  const icrc21_consent_message = IDL.Variant({
+    'LineDisplayMessage' : Icrc21LineDisplayMessage,
+    'GenericDisplayMessage' : IDL.Text,
+  });
+  const icrc21_consent_info = IDL.Record({
+    'metadata' : icrc21_consent_message_metadata,
+    'consent_message' : icrc21_consent_message,
+  });
+  const icrc21_error_info = IDL.Record({ 'description' : IDL.Text });
+  const icrc21_error = IDL.Variant({
+    'GenericError' : IDL.Record({
+      'description' : IDL.Text,
+      'error_code' : IDL.Nat,
+    }),
+    'InsufficientPayment' : icrc21_error_info,
+    'UnsupportedCanisterCall' : icrc21_error_info,
+    'ConsentMessageUnavailable' : icrc21_error_info,
+  });
+  const icrc21_consent_message_response = IDL.Variant({
+    'Ok' : icrc21_consent_info,
+    'Err' : icrc21_error,
+  });
+  const QuoteNativeDepositArgs = IDL.Record({
+    'evm_recipient' : IDL.Vec(IDL.Nat8),
+    'amount_e8s' : IDL.Nat,
+  });
+  const QuoteNativeDepositOk = IDL.Record({
+    'charged_fee_e8s' : IDL.Nat,
+    'native_ledger_canister' : IDL.Principal,
+    'fee_ledger_canister' : IDL.Principal,
+  });
+  const QuoteNativeWithdrawalArgs = IDL.Record({
+    'recipient' : IDL.Principal,
+    'amount_e8s' : IDL.Nat,
+  });
+  const QuoteNativeWithdrawalOk = IDL.Record({
+    'native_ledger_canister' : IDL.Principal,
+    'ledger_fee_e8s' : IDL.Nat,
+    'receive_amount_e8s' : IDL.Nat,
   });
   const QuoteWrapRequestArgs = IDL.Record({
     'evm_recipient' : IDL.Vec(IDL.Nat8),
@@ -101,11 +174,25 @@ export const idlFactory = ({ IDL }) => {
     'gas_price_buffer_bps' : IDL.Nat32,
     'cycle_fee_e8s' : IDL.Nat64,
   });
-  const SubmitWrapRequestArgs = IDL.Record({
+  const SubmitNativeDepositArgs = IDL.Record({
+    'max_fee_e8s' : IDL.Nat,
     'evm_recipient' : IDL.Vec(IDL.Nat8),
     'amount_e8s' : IDL.Nat,
+    'fee_ledger_canister' : IDL.Principal,
+  });
+  const SubmitNativeDepositOk = IDL.Record({
+    'request_id' : IDL.Vec(IDL.Nat8),
+    'charged_fee_e8s' : IDL.Nat,
+    'fee_ledger_tx_id' : IDL.Vec(IDL.Nat8),
+  });
+  const SubmitWrapRequestArgs = IDL.Record({
+    'max_fee_e8s' : IDL.Nat,
+    'evm_recipient' : IDL.Vec(IDL.Nat8),
+    'amount_e8s' : IDL.Nat,
+    'fee_ledger_canister' : IDL.Principal,
     'gas_limit' : IDL.Nat64,
     'asset_id' : IDL.Principal,
+    'quoted_gas_price_wei' : IDL.Nat,
     'evm_nonce' : IDL.Nat64,
   });
   const SubmitWrapRequestOk = IDL.Record({
@@ -116,6 +203,16 @@ export const idlFactory = ({ IDL }) => {
   });
   
   return IDL.Service({
+    'dispatch_native_withdrawal_request' : IDL.Func(
+        [DispatchNativeWithdrawalRequestArgs],
+        [
+          IDL.Variant({
+            'Ok' : IDL.Record({ 'request_id' : IDL.Vec(IDL.Nat8) }),
+            'Err' : ApiError,
+          }),
+        ],
+        [],
+      ),
     'get_allowed_assets' : IDL.Func(
         [],
         [IDL.Variant({ 'Ok' : IDL.Vec(IDL.Principal), 'Err' : IDL.Text })],
@@ -124,6 +221,11 @@ export const idlFactory = ({ IDL }) => {
     'get_fee_policy' : IDL.Func(
         [],
         [IDL.Variant({ 'Ok' : FeePolicyView, 'Err' : IDL.Text })],
+        ['query'],
+      ),
+    'get_native_deposit_result' : IDL.Func(
+        [IDL.Vec(IDL.Nat8)],
+        [IDL.Opt(RequestOverview)],
         ['query'],
       ),
     'get_request' : IDL.Func(
@@ -136,6 +238,26 @@ export const idlFactory = ({ IDL }) => {
         [IDL.Variant({ 'Ok' : GetUnwrapRequirementsOk, 'Err' : ApiError })],
         ['query'],
       ),
+    'icrc10_supported_standards' : IDL.Func(
+        [],
+        [IDL.Vec(StandardRecord)],
+        ['query'],
+      ),
+    'icrc21_canister_call_consent_message' : IDL.Func(
+        [icrc21_consent_message_request],
+        [icrc21_consent_message_response],
+        [],
+      ),
+    'quote_native_deposit' : IDL.Func(
+        [QuoteNativeDepositArgs],
+        [IDL.Variant({ 'Ok' : QuoteNativeDepositOk, 'Err' : ApiError })],
+        ['query'],
+      ),
+    'quote_native_withdrawal' : IDL.Func(
+        [QuoteNativeWithdrawalArgs],
+        [IDL.Variant({ 'Ok' : QuoteNativeWithdrawalOk, 'Err' : ApiError })],
+        ['query'],
+      ),
     'quote_wrap_request' : IDL.Func(
         [QuoteWrapRequestArgs],
         [IDL.Variant({ 'Ok' : QuoteWrapRequestOk, 'Err' : ApiError })],
@@ -143,6 +265,16 @@ export const idlFactory = ({ IDL }) => {
       ),
     'recover_failed_wrap' : IDL.Func(
         [RecoverFailedWrapArgs],
+        [IDL.Variant({ 'Ok' : RequestOverview, 'Err' : ApiError })],
+        [],
+      ),
+    'retry_native_deposit' : IDL.Func(
+        [RetryRequestArgs],
+        [IDL.Variant({ 'Ok' : RequestOverview, 'Err' : ApiError })],
+        [],
+      ),
+    'retry_native_withdrawal' : IDL.Func(
+        [RetryRequestArgs],
         [IDL.Variant({ 'Ok' : RequestOverview, 'Err' : ApiError })],
         [],
       ),
@@ -161,6 +293,11 @@ export const idlFactory = ({ IDL }) => {
         [IDL.Variant({ 'Ok' : IDL.Null, 'Err' : IDL.Text })],
         [],
       ),
+    'submit_native_deposit' : IDL.Func(
+        [SubmitNativeDepositArgs],
+        [IDL.Variant({ 'Ok' : SubmitNativeDepositOk, 'Err' : ApiError })],
+        [],
+      ),
     'submit_wrap_request' : IDL.Func(
         [SubmitWrapRequestArgs],
         [IDL.Variant({ 'Ok' : SubmitWrapRequestOk, 'Err' : ApiError })],
@@ -172,6 +309,7 @@ export const idlFactory = ({ IDL }) => {
 export const init = ({ IDL }) => {
   const InitArgs = IDL.Record({
     'kasane_canister' : IDL.Principal,
+    'native_ledger_canister' : IDL.Principal,
     'allowed_assets' : IDL.Vec(IDL.Principal),
     'fee_ledger_canister' : IDL.Principal,
     'evm_gateway_canister' : IDL.Principal,

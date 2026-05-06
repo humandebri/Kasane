@@ -156,6 +156,44 @@ export interface HealthView {
   'last_block_time' : bigint,
   'queue_len' : bigint,
 }
+export interface Icrc21ConsentInfo {
+  'metadata' : Icrc21ConsentMessageMetadata,
+  'consent_message' : Icrc21ConsentMessage,
+}
+export type Icrc21ConsentMessage = {
+    'LineDisplayMessage' : Icrc21LineDisplayMessage
+  } |
+  { 'GenericDisplayMessage' : string };
+export interface Icrc21ConsentMessageMetadata {
+  'utc_offset_minutes' : [] | [number],
+  'language' : string,
+}
+export interface Icrc21ConsentMessageRequest {
+  'arg' : Uint8Array,
+  'method' : string,
+  'user_preferences' : Icrc21ConsentMessageSpec,
+}
+export interface Icrc21ConsentMessageSpec {
+  'metadata' : Icrc21ConsentMessageMetadata,
+  'device_spec' : [] | [Icrc21DeviceSpec],
+}
+export type Icrc21DeviceSpec = { 'GenericDisplay' : null } |
+  { 'LineDisplay' : Icrc21LineDisplaySpec };
+export type Icrc21Error = {
+    'GenericError' : { 'description' : string, 'error_code' : bigint }
+  } |
+  { 'InsufficientPayment' : Icrc21ErrorInfo } |
+  { 'UnsupportedCanisterCall' : Icrc21ErrorInfo } |
+  { 'ConsentMessageUnavailable' : Icrc21ErrorInfo };
+export interface Icrc21ErrorInfo { 'description' : string }
+export interface Icrc21LineDisplayMessage {
+  'pages' : Array<Icrc21LineDisplayPage>,
+}
+export interface Icrc21LineDisplayPage { 'lines' : Array<string> }
+export interface Icrc21LineDisplaySpec {
+  'characters_per_line' : number,
+  'lines_per_page' : number,
+}
 export interface InitArgs {
   'genesis_balances' : Array<GenesisBalanceView>,
   'query_instruction_soft_limit' : [] | [bigint],
@@ -292,39 +330,43 @@ export type RequestDispatchStatusView = { 'Queued' : null } |
   { 'Dispatching' : null } |
   { 'Dispatched' : null } |
   { 'DispatchFailed' : null };
-export type Result = { 'Ok' : EstimateIcTxOk } |
+export type Result = { 'Ok' : null } |
   { 'Err' : ApiError };
-export type Result_1 = { 'Ok' : bigint } |
+export type Result_1 = { 'Ok' : EstimateIcTxOk } |
+  { 'Err' : ApiError };
+export type Result_10 = { 'Ok' : Uint8Array } |
   { 'Err' : string };
-export type Result_10 = { 'Ok' : RpcFeeHistoryView } |
-  { 'Err' : RpcErrorView };
 export type Result_11 = { 'Ok' : bigint } |
   { 'Err' : RpcErrorView };
-export type Result_12 = { 'Ok' : Uint8Array } |
+export type Result_12 = { 'Ok' : RpcFeeHistoryView } |
   { 'Err' : RpcErrorView };
-export type Result_13 = { 'Ok' : [] | [bigint] } |
+export type Result_13 = { 'Ok' : bigint } |
+  { 'Err' : RpcErrorView };
+export type Result_14 = { 'Ok' : Uint8Array } |
+  { 'Err' : RpcErrorView };
+export type Result_15 = { 'Ok' : [] | [bigint] } |
   { 'Err' : string };
-export type Result_14 = { 'Ok' : EthLogsPageView } |
+export type Result_16 = { 'Ok' : EthLogsPageView } |
   { 'Err' : GetLogsErrorView };
-export type Result_15 = { 'Ok' : Uint8Array } |
+export type Result_17 = { 'Ok' : Uint8Array } |
   { 'Err' : SubmitTxError };
-export type Result_16 = { 'Ok' : null } |
+export type Result_18 = { 'Ok' : null } |
   { 'Err' : string };
-export type Result_2 = { 'Ok' : ExportResponseView } |
+export type Result_2 = { 'Ok' : bigint } |
+  { 'Err' : string };
+export type Result_3 = { 'Ok' : ExportResponseView } |
   { 'Err' : ExportErrorView };
-export type Result_3 = { 'Ok' : BlockView } |
+export type Result_4 = { 'Ok' : BlockView } |
   { 'Err' : LookupError };
-export type Result_4 = { 'Ok' : ReceiptView } |
+export type Result_5 = { 'Ok' : ReceiptView } |
   { 'Err' : LookupError };
-export type Result_5 = { 'Ok' : string } |
+export type Result_6 = { 'Ok' : Icrc21ConsentInfo } |
+  { 'Err' : Icrc21Error };
+export type Result_7 = { 'Ok' : string } |
   { 'Err' : string };
-export type Result_6 = { 'Ok' : PruneResultView } |
+export type Result_8 = { 'Ok' : PruneResultView } |
   { 'Err' : ProduceBlockError };
-export type Result_7 = { 'Ok' : RpcCallResultView } |
-  { 'Err' : RpcErrorView };
-export type Result_8 = { 'Ok' : Uint8Array } |
-  { 'Err' : string };
-export type Result_9 = { 'Ok' : bigint } |
+export type Result_9 = { 'Ok' : RpcCallResultView } |
   { 'Err' : RpcErrorView };
 export interface RpcAccessListItemView {
   'storage_keys' : Array<Uint8Array>,
@@ -378,6 +420,7 @@ export type RpcReceiptLookupView = { 'NotFound' : null } |
   { 'Found' : EthReceiptView } |
   { 'PossiblyPruned' : { 'pruned_before_block' : bigint } } |
   { 'Pruned' : { 'pruned_before_block' : bigint } };
+export interface StandardRecord { 'url' : string, 'name' : string }
 export interface SubmitIcTxArgsDto {
   'to' : [] | [Uint8Array],
   'value' : bigint,
@@ -399,10 +442,14 @@ export interface UnwrapDispatchOverviewView {
   'error' : [] | [string],
 }
 export interface _SERVICE {
-  'estimate_ic_tx' : ActorMethod<[SubmitIcTxArgsDto], Result>,
-  'expected_nonce_by_address' : ActorMethod<[Uint8Array], Result_1>,
-  'export_blocks' : ActorMethod<[[] | [ExportCursorView], number], Result_2>,
-  'get_block' : ActorMethod<[bigint], Result_3>,
+  'credit_native_deposit' : ActorMethod<
+    [Uint8Array, Uint8Array, bigint],
+    Result
+  >,
+  'estimate_ic_tx' : ActorMethod<[SubmitIcTxArgsDto], Result_1>,
+  'expected_nonce_by_address' : ActorMethod<[Uint8Array], Result_2>,
+  'export_blocks' : ActorMethod<[[] | [ExportCursorView], number], Result_3>,
+  'get_block' : ActorMethod<[bigint], Result_4>,
   'get_cycle_balance' : ActorMethod<[], bigint>,
   'get_ops_status' : ActorMethod<[], OpsStatusView>,
   'get_pending' : ActorMethod<[Uint8Array], PendingStatusView>,
@@ -411,39 +458,48 @@ export interface _SERVICE {
     [number, [] | [bigint]],
     QueueSnapshotView
   >,
-  'get_receipt' : ActorMethod<[Uint8Array], Result_4>,
+  'get_receipt' : ActorMethod<[Uint8Array], Result_5>,
   'get_unwrap_dispatch_overview' : ActorMethod<
     [Uint8Array],
     [] | [UnwrapDispatchOverviewView]
+  >,
+  'get_unwrap_request_ids_by_eth_tx_hash' : ActorMethod<
+    [Uint8Array],
+    Array<Uint8Array>
   >,
   'get_unwrap_request_ids_by_tx_id' : ActorMethod<
     [Uint8Array],
     Array<Uint8Array>
   >,
   'health' : ActorMethod<[], HealthView>,
+  'icrc10_supported_standards' : ActorMethod<[], Array<StandardRecord>>,
+  'icrc21_canister_call_consent_message' : ActorMethod<
+    [Icrc21ConsentMessageRequest],
+    Result_6
+  >,
   'memory_breakdown' : ActorMethod<[], MemoryBreakdownView>,
   'metrics' : ActorMethod<[bigint], MetricsView>,
-  'metrics_prometheus' : ActorMethod<[], Result_5>,
-  'prune_blocks' : ActorMethod<[bigint, number], Result_6>,
+  'metrics_prometheus' : ActorMethod<[], Result_7>,
+  'prune_blocks' : ActorMethod<[bigint, number], Result_8>,
   'rpc_eth_block_number' : ActorMethod<[], bigint>,
-  'rpc_eth_call_object' : ActorMethod<[RpcCallObjectView], Result_7>,
+  'rpc_eth_call_object' : ActorMethod<[RpcCallObjectView], Result_9>,
   'rpc_eth_call_object_at' : ActorMethod<
-    [RpcCallObjectView, RpcBlockTagView],
-    Result_7
-  >,
-  'rpc_eth_call_rawtx' : ActorMethod<[Uint8Array], Result_8>,
-  'rpc_eth_chain_id' : ActorMethod<[], bigint>,
-  'rpc_eth_estimate_gas_object' : ActorMethod<[RpcCallObjectView], Result_9>,
-  'rpc_eth_estimate_gas_object_at' : ActorMethod<
     [RpcCallObjectView, RpcBlockTagView],
     Result_9
   >,
+  'rpc_eth_call_rawtx' : ActorMethod<[Uint8Array], Result_10>,
+  'rpc_eth_chain_id' : ActorMethod<[], bigint>,
+  'rpc_eth_estimate_gas_object' : ActorMethod<[RpcCallObjectView], Result_11>,
+  'rpc_eth_estimate_gas_object_at' : ActorMethod<
+    [RpcCallObjectView, RpcBlockTagView],
+    Result_11
+  >,
   'rpc_eth_fee_history' : ActorMethod<
     [bigint, RpcBlockTagView, [] | [Array<number>]],
-    Result_10
+    Result_12
   >,
-  'rpc_eth_gas_price' : ActorMethod<[], Result_11>,
-  'rpc_eth_get_balance' : ActorMethod<[Uint8Array, RpcBlockTagView], Result_12>,
+  'rpc_eth_gas_price' : ActorMethod<[], Result_13>,
+  'rpc_eth_get_balance' : ActorMethod<[Uint8Array, RpcBlockTagView], Result_14>,
   'rpc_eth_get_block_by_number' : ActorMethod<
     [bigint, boolean],
     [] | [EthBlockView]
@@ -454,16 +510,16 @@ export interface _SERVICE {
   >,
   'rpc_eth_get_block_number_by_hash' : ActorMethod<
     [Uint8Array, number],
-    Result_13
+    Result_15
   >,
-  'rpc_eth_get_code' : ActorMethod<[Uint8Array, RpcBlockTagView], Result_12>,
+  'rpc_eth_get_code' : ActorMethod<[Uint8Array, RpcBlockTagView], Result_14>,
   'rpc_eth_get_logs_paged' : ActorMethod<
     [EthLogFilterView, [] | [EthLogsCursorView], number],
-    Result_14
+    Result_16
   >,
   'rpc_eth_get_storage_at' : ActorMethod<
     [Uint8Array, Uint8Array, RpcBlockTagView],
-    Result_12
+    Result_14
   >,
   'rpc_eth_get_transaction_by_eth_hash' : ActorMethod<
     [Uint8Array],
@@ -475,7 +531,7 @@ export interface _SERVICE {
   >,
   'rpc_eth_get_transaction_count_at' : ActorMethod<
     [Uint8Array, RpcBlockTagView],
-    Result_9
+    Result_11
   >,
   'rpc_eth_get_transaction_receipt_by_eth_hash' : ActorMethod<
     [Uint8Array],
@@ -490,12 +546,12 @@ export interface _SERVICE {
     RpcReceiptLookupView
   >,
   'rpc_eth_history_window' : ActorMethod<[], RpcHistoryWindowView>,
-  'rpc_eth_max_priority_fee_per_gas' : ActorMethod<[], Result_11>,
-  'rpc_eth_send_raw_transaction' : ActorMethod<[Uint8Array], Result_15>,
-  'set_log_filter' : ActorMethod<[[] | [string]], Result_16>,
-  'set_prune_policy' : ActorMethod<[PrunePolicyView], Result_16>,
-  'set_pruning_enabled' : ActorMethod<[boolean], Result_16>,
-  'submit_ic_tx' : ActorMethod<[SubmitIcTxArgsDto], Result_15>,
+  'rpc_eth_max_priority_fee_per_gas' : ActorMethod<[], Result_13>,
+  'rpc_eth_send_raw_transaction' : ActorMethod<[Uint8Array], Result_17>,
+  'set_log_filter' : ActorMethod<[[] | [string]], Result_18>,
+  'set_prune_policy' : ActorMethod<[PrunePolicyView], Result_18>,
+  'set_pruning_enabled' : ActorMethod<[boolean], Result_18>,
+  'submit_ic_tx' : ActorMethod<[SubmitIcTxArgsDto], Result_17>,
 }
 export declare const idlFactory: IDL.InterfaceFactory;
 export declare const init: (args: { IDL: typeof IDL }) => IDL.Type[];

@@ -8,7 +8,12 @@ export const WRAP_PRECOMPILE_ADDRESS = Uint8Array.from([
   0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
   0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xff, 0xff, 0x00, 0x01,
 ]);
+export const NATIVE_WITHDRAW_PRECOMPILE_ADDRESS = Uint8Array.from([
+  0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+  0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xff, 0xff, 0x00, 0x02,
+]);
 const UNWRAP_PAYLOAD_VERSION = 1;
+const NATIVE_WITHDRAW_PAYLOAD_VERSION = 1;
 const MAX_PRINCIPAL_LEN = 29;
 
 type UnwrapEncodeInput = {
@@ -111,6 +116,13 @@ export function encodeUnwrapPayload(args: Omit<UnwrapEncodeInput, "callerEvmAddr
 
 export function toSubmitIcTxData(args: UnwrapEncodeInput): Uint8Array {
   return encodeUnwrapPayload(args);
+}
+
+export function encodeNativeWithdrawPayload(args: { recipient: string }): Uint8Array {
+  return concatBytes([
+    Uint8Array.from([NATIVE_WITHDRAW_PAYLOAD_VERSION]),
+    encodePrincipalField(args.recipient, "arg.recipient_principal_invalid"),
+  ]);
 }
 
 export function decimalToBytes32(amountText: string): Uint8Array {

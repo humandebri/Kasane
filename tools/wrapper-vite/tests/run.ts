@@ -1,6 +1,7 @@
 // どこで: wrapperテスト / 何を: 主要ロジックのユニットテストを実行 / なぜ: request_id導出・状態統合・execution参照の退行を防ぐため
 
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { AnonymousIdentity, type Identity } from "@icp-sdk/core/agent";
 import { Principal } from "@icp-sdk/core/principal";
 import { createActorCache } from "../lib/canister/actor-utils";
@@ -9,16 +10,20 @@ import { mergeStatus } from "../lib/merge";
 import {
   decimalToBytes32,
   deriveWrapRequestId,
+  encodeNativeWithdrawPayload,
   encodeUnwrapPayload,
+  NATIVE_WITHDRAW_PRECOMPILE_ADDRESS,
   tokenAmountToBytes32,
   WRAP_PRECOMPILE_ADDRESS,
 } from "../lib/request-id";
+import { prepareNativeWithdrawTransaction } from "../lib/native-withdraw";
 import { principalTextToBytes } from "../lib/principal";
 import { bytesToHex, hexToBytes, parseRequestIdHex } from "../lib/utils";
 import {
   estimateUnwrapGasLimit,
   estimateWrapGasLimit,
   getDispatchResult,
+  getUnwrapRequestIdsByEthTxHash,
   getUnwrapRequestIdsByTxId,
   getWrapEvmNonce,
   submitIcTx,
@@ -26,6 +31,7 @@ import {
 } from "../lib/canister/wrapper-client";
 import {
   getExecutionResult,
+  quoteNativeWithdrawal,
   getUnwrapRequirements,
   submitWrapRequest,
   withdrawFailedWrap,
@@ -51,6 +57,7 @@ import {
   formatWeiToGwei2,
   isTerminalStatus,
 } from "../lib/wrap-flow";
+import type { StatusResponse } from "../lib/types";
 import { parsePositiveU64, parseTokenAmount } from "../lib/wrap-input";
 import {
   applyWrapGasHeadroom,
@@ -61,14 +68,19 @@ import {
   validateEstimatedGasLimit,
 } from "../lib/wrap-estimate";
 import {
+  assetCatalogTestHooks,
   DEFAULT_ASSET_ID,
   dedupeAssetOptions,
+  LOCAL_TEST_ASSET_ID,
+  MAINNET_IC_HOST,
   mergeAssetOptions,
   normalizeCustomAssetDraft,
   parseStoredCustomAssets,
+  presetAssetOptions,
   serializeCustomAssets,
 } from "../lib/asset-catalog";
 import { configTestHooks, loadConfig } from "../lib/config";
+import { applySelectedAsset, normalizeIcpTokenList, toManageTokenOptions } from "../lib/icp-token-list";
 import { recentRequestsClientTestHooks } from "../lib/canister/recent-requests-client";
 import {
   createRecentRequestKey,
@@ -90,8 +102,22 @@ import {
 import { refreshWrapNonceState } from "../lib/hooks/use-wrapper-forms";
 import { wrapperActionsTestHooks } from "../lib/hooks/use-wrapper-actions";
 import { walletProviderTestHooks } from "../lib/wallet/provider";
-import { googleCallbackRouteTestHooks } from "../src/app/routes/google-callback-route";
+import { metaMaskTestHooks } from "../lib/wallet/metamask";
+import type { HistoryEntry } from "../components/dashboard-ui/types";
 import { junoConfigTestHooks } from "../juno.config";
+
+const TEST_CONFIG = {
+  icHost: "https://icp-api.io",
+  icpTokenListUrl: "/icp-token-list.sample.json",
+  kasaneEvmCanisterId: "4c52m-aiaaa-aaaam-agwwa-cai",
+  wrapCanisterId: "t63gs-up777-77776-aaaba-cai",
+  evmWrapFactory: "0x88200f183e26d05bc6747ba7378cc73a68b6a12a",
+  kasaneRpcUrl: "https://rpc-testnet.kasane.network",
+  kasaneChainId: 4_801_360n,
+  kasaneChainName: "Kasane",
+  kasaneNativeCurrencySymbol: "ICP",
+  kasaneBlockExplorerUrl: "https://explorer-testnet.kasane.network",
+};
 
 async function runUtilsTests(): Promise<void> {
   const value = Uint8Array.from([0x01, 0xab, 0x10]);
@@ -119,6 +145,13 @@ async function runRequestIdTests(): Promise<void> {
   });
   assert.equal(payload.length, 93);
   assert.equal(payload[0], 1);
+  assert.equal(
+    Buffer.from(NATIVE_WITHDRAW_PRECOMPILE_ADDRESS).toString("hex"),
+    "00000000000000000000000000000000ffff0002",
+  );
+  const nativePayload = encodeNativeWithdrawPayload({ recipient: "2vxsx-fae" });
+  assert.equal(nativePayload.length, 31);
+  assert.equal(nativePayload[0], 1);
 
   const wrapRequestId = deriveWrapRequestId({
     // 匿名principalではなく、実運用で使う非匿名principal bytesを使う。
@@ -293,71 +326,62 @@ async function runWrapInputValidationTests(): Promise<void> {
   );
 }
 
-async function runGoogleReturnToTests(): Promise<void> {
-  const storage = new Map<string, string>();
-  const originalSessionStorage = globalThis.sessionStorage;
-  Object.defineProperty(globalThis, "sessionStorage", {
-    configurable: true,
-    value: {
-      getItem(key: string): string | null {
-        return storage.get(key) ?? null;
-      },
-      setItem(key: string, value: string): void {
-        storage.set(key, value);
-      },
-      removeItem(key: string): void {
-        storage.delete(key);
-      },
-    },
-  });
-
-  walletProviderTestHooks.saveGoogleReturnToPath("/requests/abc?from=google#modal");
+async function runMetaMaskHelperTests(): Promise<void> {
+  assert.equal(metaMaskTestHooks.normalizeChainIdHex(4_801_360n), "0x494350");
   assert.equal(
-    storage.get(walletProviderTestHooks.GOOGLE_RETURN_TO_STORAGE_KEY),
-    "/requests/abc?from=google#modal",
+    metaMaskTestHooks.buildWalletAddEthereumChainParams({
+      chainId: 4_801_360n,
+      chainName: "Kasane",
+      rpcUrl: "https://rpc-testnet.kasane.network",
+      nativeCurrencySymbol: "ICP",
+      blockExplorerUrl: "https://explorer-testnet.kasane.network",
+    }).chainId,
+    "0x494350",
   );
   assert.equal(
-    googleCallbackRouteTestHooks.consumeGoogleReturnToPath(),
-    "/requests/abc?from=google#modal",
+    metaMaskTestHooks.normalizeMetaMaskAddress("0xAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"),
+    "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
   );
-  assert.equal(storage.size, 0);
-
-  walletProviderTestHooks.saveGoogleReturnToPath("/auth/callback");
-  assert.equal(storage.size, 0);
-
-  const originalLocation = globalThis.location;
-  Object.defineProperty(globalThis, "location", {
-    configurable: true,
-    value: new URL("https://wrapper.example/requests?tab=wrap#dialog"),
-  });
-  const withClientId = walletProviderTestHooks.buildGoogleSignInOptions("google-client-id");
-  assert.equal(withClientId.google.options.redirect.clientId, "google-client-id");
-  assert.equal(withClientId.google.options.redirect.redirectUrl, "https://wrapper.example/auth/callback");
-
-  const withoutClientId = walletProviderTestHooks.buildGoogleSignInOptions(null);
-  assert.equal(withoutClientId.google.options.redirect.clientId, undefined);
-  assert.equal(withoutClientId.google.options.redirect.redirectUrl, "https://wrapper.example/auth/callback");
-  Object.defineProperty(globalThis, "location", {
-    configurable: true,
-    value: originalLocation,
-  });
-
-  assert.equal(
-    googleCallbackRouteTestHooks.formatGoogleCallbackError(new Error("wallet.google_callback_failed")),
-    "wallet.google_callback_failed",
+  assert.deepEqual(
+    metaMaskTestHooks.parseMetaMaskAccountsChanged(["0xabc"]),
+    ["0xabc"],
   );
   assert.equal(
-    googleCallbackRouteTestHooks.formatGoogleCallbackError("boom"),
-    "wallet.google_callback_failed",
+    metaMaskTestHooks.parseMetaMaskChainChanged("0x494350"),
+    "0x494350",
   );
-
-  storage.set(googleCallbackRouteTestHooks.GOOGLE_RETURN_TO_STORAGE_KEY, "https://example.com");
-  assert.equal(googleCallbackRouteTestHooks.consumeGoogleReturnToPath(), null);
-
-  Object.defineProperty(globalThis, "sessionStorage", {
-    configurable: true,
-    value: originalSessionStorage,
-  });
+  assert.equal(
+    metaMaskTestHooks.errorCodeOf({ code: 4902 }),
+    4902,
+  );
+  assert.equal(
+    metaMaskTestHooks.isUnknownChainError({ code: 4902 }),
+    true,
+  );
+  assert.equal(
+    metaMaskTestHooks.isUnknownChainError({ message: "wallet_switchEthereumChain failed with 4902" }),
+    true,
+  );
+  assert.equal(
+    metaMaskTestHooks.isUnknownChainError({ code: 4001, message: "user rejected" }),
+    false,
+  );
+  assert.equal(
+    walletProviderTestHooks.mapPrincipalToSession(null),
+    null,
+  );
+  assert.equal(
+    walletProviderTestHooks.resolveOisyPrincipalText([]),
+    null,
+  );
+  assert.equal(
+    walletProviderTestHooks.resolveOisyPrincipalText([{ owner: Principal.anonymous() }]),
+    null,
+  );
+  assert.equal(
+    walletProviderTestHooks.resolveOisyPrincipalText([{ owner: Principal.fromText("ryjl3-tyaaa-aaaaa-aaaba-cai") }]),
+    "ryjl3-tyaaa-aaaaa-aaaba-cai",
+  );
 }
 
 async function runPersistSubmittedRequestTests(): Promise<void> {
@@ -381,6 +405,40 @@ async function runPersistSubmittedRequestTests(): Promise<void> {
     submittedAt: "2026-03-21T00:00:00.000Z",
   });
   await Promise.resolve();
+}
+
+async function runFinishSubmittedUnwrapRequestTests(): Promise<void> {
+  const requestIds: string[] = [];
+  const saved: HistoryEntry[] = [];
+  const messages: Array<string | null> = [];
+  let resetCount = 0;
+  let polledRequestId: string | null = null;
+
+  await wrapperActionsTestHooks.finishSubmittedUnwrapRequest({
+    requestIdHex: `0x${"34".repeat(32)}`,
+    onRequestIdInput: (requestId) => {
+      requestIds.push(requestId);
+    },
+    onRequestSubmitted: (entry) => {
+      saved.push(entry);
+    },
+    startPollingSubmittedRequest: async (requestIdHex) => {
+      polledRequestId = requestIdHex;
+    },
+    setMessage: (value) => {
+      messages.push(value);
+    },
+    resetUnwrapNonceDeadline: () => {
+      resetCount += 1;
+    },
+  });
+
+  assert.deepEqual(requestIds, [`0x${"34".repeat(32)}`]);
+  assert.equal(polledRequestId, `0x${"34".repeat(32)}`);
+  assert.equal(saved.length, 1);
+  assert.equal(saved[0]?.kind, "unwrap");
+  assert.deepEqual(messages, ["submit.success"]);
+  assert.equal(resetCount, 1);
 }
 
 function buildStubIdentity(principal: Principal): Identity {
@@ -440,6 +498,41 @@ async function runActorCacheTests(): Promise<void> {
     return actor;
   });
   assert.notEqual(submitActor, secondSubmitActor);
+
+  const firstSignerActor = await cache.getSubmitActor({
+    principalText: firstIdentity.getPrincipal().toText(),
+    cacheKey: "oisy-session-1",
+    identity: firstIdentity,
+  }, async () => {
+    const actor = {
+      query: () => "query-3",
+      submit: () => "submit-3",
+    };
+    createdActors.push(actor);
+    return actor;
+  });
+  const cachedFirstSignerActor = await cache.getSubmitActor({
+    principalText: firstIdentity.getPrincipal().toText(),
+    cacheKey: "oisy-session-1",
+    identity: firstIdentity,
+  }, async () => {
+    throw new Error("submit actor recreated for same signer session");
+  });
+  assert.equal(firstSignerActor, cachedFirstSignerActor);
+
+  const secondSignerActor = await cache.getSubmitActor({
+    principalText: firstIdentity.getPrincipal().toText(),
+    cacheKey: "oisy-session-2",
+    identity: firstIdentity,
+  }, async () => {
+    const actor = {
+      query: () => "query-4",
+      submit: () => "submit-4",
+    };
+    createdActors.push(actor);
+    return actor;
+  });
+  assert.notEqual(firstSignerActor, secondSignerActor);
 
   cache.setMockQueryActor({ query: () => "mock-query" });
   cache.setMockSubmitActor({ submit: () => "mock-submit" });
@@ -546,6 +639,19 @@ async function runLedgerMetadataTests(): Promise<void> {
     () => icrcClientTestHooks.decodeLedgerDecimals([["icrc1:name", { Text: "Token" }]]),
     /wrap\.asset_metadata_failed:decimals_missing/,
   );
+  assert.equal(
+    icrcClientTestHooks.decodeLedgerText([
+      ["icrc1:name", { Text: "Internet Computer" }],
+      ["icrc1:symbol", { Text: "ICP" }],
+    ], "icrc1:symbol"),
+    "ICP",
+  );
+  assert.equal(
+    icrcClientTestHooks.decodeLedgerText([
+      ["icrc1:symbol", { Blob: new Uint8Array([1, 2, 3]) }],
+    ], "icrc1:symbol"),
+    null,
+  );
 }
 
 async function runEstimateWrapGasClientTests(): Promise<void> {
@@ -625,6 +731,9 @@ async function runWrapClientSubmitTests(): Promise<void> {
   wrapClientTestHooks.setMockSubmitActor({
     submit_wrap_request: async (args) => {
       assert.equal(args.evm_nonce, 7n);
+      assert.equal(args.max_fee_e8s, 9n);
+      assert.equal(args.quoted_gas_price_wei, 11n);
+      assert.equal(args.fee_ledger_canister.toText(), "2vxsx-fae");
       return {
         Ok: {
           request_id: Uint8Array.from([0x01]),
@@ -637,8 +746,17 @@ async function runWrapClientSubmitTests(): Promise<void> {
     retry_request: async () => {
       throw new Error("unused retry_request");
     },
+    retry_native_deposit: async () => {
+      throw new Error("unused retry_native_deposit");
+    },
+    retry_native_withdrawal: async () => {
+      throw new Error("unused retry_native_withdrawal");
+    },
     recover_failed_wrap: async () => {
       throw new Error("unused recover_failed_wrap");
+    },
+    submit_native_deposit: async () => {
+      throw new Error("unused submit_native_deposit");
     },
   });
   const submitResult = await submitWrapRequest({
@@ -647,6 +765,9 @@ async function runWrapClientSubmitTests(): Promise<void> {
     evmRecipient: hexToBytes("0x1111111111111111111111111111111111111111"),
     evmNonce: 7n,
     gasLimit: 300_000n,
+    maxFeeE8s: 9n,
+    quotedGasPriceWei: 11n,
+    feeLedgerCanister: "2vxsx-fae",
   }, new AnonymousIdentity());
   assert.deepEqual(submitResult.requestId, Uint8Array.from([0x01]));
   assert.equal(submitResult.chargedFeeE8s, 9n);
@@ -662,6 +783,12 @@ async function runWrapClientWithdrawErrorTests(): Promise<void> {
     retry_request: async () => {
       throw new Error("unused retry_request");
     },
+    retry_native_deposit: async () => {
+      throw new Error("unused retry_native_deposit");
+    },
+    retry_native_withdrawal: async () => {
+      throw new Error("unused retry_native_withdrawal");
+    },
     recover_failed_wrap: async () => ({
       Err: {
         InvalidArgument: {
@@ -670,6 +797,9 @@ async function runWrapClientWithdrawErrorTests(): Promise<void> {
         },
       },
     }),
+    submit_native_deposit: async () => {
+      throw new Error("unused submit_native_deposit");
+    },
   });
 
   await assert.rejects(
@@ -687,6 +817,15 @@ async function runUnwrapRequirementsTests(): Promise<void> {
     },
     quote_wrap_request: async () => {
       throw new Error("unused quote_wrap_request");
+    },
+    get_native_deposit_result: async () => {
+      throw new Error("unused get_native_deposit_result");
+    },
+    quote_native_deposit: async () => {
+      throw new Error("unused quote_native_deposit");
+    },
+    quote_native_withdrawal: async () => {
+      throw new Error("unused quote_native_withdrawal");
     },
     get_fee_policy: async () => {
       throw new Error("unused get_fee_policy");
@@ -717,6 +856,15 @@ async function runUnwrapRequirementsTests(): Promise<void> {
     quote_wrap_request: async () => {
       throw new Error("unused quote_wrap_request");
     },
+    get_native_deposit_result: async () => {
+      throw new Error("unused get_native_deposit_result");
+    },
+    quote_native_deposit: async () => {
+      throw new Error("unused quote_native_deposit");
+    },
+    quote_native_withdrawal: async () => {
+      throw new Error("unused quote_native_withdrawal");
+    },
     get_fee_policy: async () => {
       throw new Error("unused get_fee_policy");
     },
@@ -739,6 +887,84 @@ async function runUnwrapRequirementsTests(): Promise<void> {
   assert.equal(insufficientAllowance.readiness, "InsufficientAllowance");
   assert.equal(insufficientAllowance.approveRequired, true);
   wrapClientTestHooks.reset();
+}
+
+async function runNativeWithdrawClientTests(): Promise<void> {
+  wrapClientTestHooks.reset();
+  wrapClientTestHooks.setMockQueryActor({
+    get_request: async () => {
+      throw new Error("unused get_request");
+    },
+    get_native_deposit_result: async () => {
+      throw new Error("unused get_native_deposit_result");
+    },
+    quote_wrap_request: async () => {
+      throw new Error("unused quote_wrap_request");
+    },
+    quote_native_deposit: async () => {
+      throw new Error("unused quote_native_deposit");
+    },
+    quote_native_withdrawal: async (args) => {
+      assert.equal(args.amount_e8s, 20_000n);
+      assert.equal(args.recipient.toText(), "2vxsx-fae");
+      return {
+        Ok: {
+          native_ledger_canister: Principal.fromText("2vxsx-fae"),
+          ledger_fee_e8s: 10_000n,
+          receive_amount_e8s: 10_000n,
+        },
+      };
+    },
+    get_fee_policy: async () => {
+      throw new Error("unused get_fee_policy");
+    },
+    get_unwrap_requirements: async () => {
+      throw new Error("unused get_unwrap_requirements");
+    },
+  });
+  const quote = await quoteNativeWithdrawal({
+    amountE8s: 20_000n,
+    recipient: "2vxsx-fae",
+  });
+  assert.equal(quote.ledgerFeeE8s, 10_000n);
+  assert.equal(quote.receiveAmountE8s, 10_000n);
+  wrapClientTestHooks.reset();
+
+  let txReadQuoteCalled = 0;
+  const tx = await prepareNativeWithdrawTransaction({
+    amountE8s: 20_001n,
+    recipient: "2vxsx-fae",
+    readQuote: async () => {
+      txReadQuoteCalled += 1;
+      return {
+        nativeLedgerCanister: "2vxsx-fae",
+        ledgerFeeE8s: 10_000n,
+        receiveAmountE8s: 10_001n,
+      };
+    },
+  });
+  assert.equal(txReadQuoteCalled, 1);
+  assert.equal(tx.to, "0x00000000000000000000000000000000ffff0002");
+  assert.equal(tx.valueWei, 200_010_000_000_000n);
+  assert.equal(tx.receiveAmountE8s, 10_001n);
+
+  let sendCalled = false;
+  await assert.rejects(
+    async () => {
+      await prepareNativeWithdrawTransaction({
+        amountE8s: 10_000n,
+        recipient: "2vxsx-fae",
+        readQuote: async () => ({
+          nativeLedgerCanister: "2vxsx-fae",
+          ledgerFeeE8s: 10_000n,
+          receiveAmountE8s: 0n,
+        }),
+      });
+      sendCalled = true;
+    },
+    /native_withdraw\.amount_not_above_fee/,
+  );
+  assert.equal(sendCalled, false);
 }
 
 async function runApproveWrappedTokenTests(): Promise<void> {
@@ -767,7 +993,7 @@ async function runApproveWrappedTokenTests(): Promise<void> {
       assetId: "2vxsx-fae",
       amount: 5n,
       principalText: "4c52m-aiaaa-aaaam-agwwa-cai",
-      identity: new AnonymousIdentity(),
+      caller: new AnonymousIdentity(),
     }),
     /erc20\.insufficient_balance/,
   );
@@ -793,7 +1019,7 @@ async function runApproveWrappedTokenTests(): Promise<void> {
     assetId: "2vxsx-fae",
     amount: 5n,
     principalText: "4c52m-aiaaa-aaaam-agwwa-cai",
-    identity: new AnonymousIdentity(),
+    caller: new AnonymousIdentity(),
   });
   assert.equal(approved, true);
   erc20ClientTestHooks.reset();
@@ -903,21 +1129,121 @@ async function runAssetCatalogTests(): Promise<void> {
   const merged = mergeAssetOptions([
     custom,
     { assetId: "2vxsx-fae", label: "Duplicate", source: "custom" },
-  ]);
-  assert.ok(merged.length >= 6);
+  ], "https://icp-api.io");
+  assert.ok(merged.length >= 5);
   assert.equal(merged.filter((asset) => asset.assetId === "2vxsx-fae").length, 1);
   assert.ok(
     merged.some(
       (asset) =>
-        asset.assetId === DEFAULT_ASSET_ID && asset.label === "TESTLEDGER",
+        asset.assetId === DEFAULT_ASSET_ID && asset.label === "ICP",
     ),
   );
-  assert.equal(DEFAULT_ASSET_ID, "xafvr-biaaa-aaaai-aql5q-cai");
+  assert.equal(DEFAULT_ASSET_ID, "ryjl3-tyaaa-aaaaa-aaaba-cai");
+
+  assert.deepEqual(
+    presetAssetOptions("https://icp-api.io").map((asset) => asset.assetId),
+    [
+      "ryjl3-tyaaa-aaaaa-aaaba-cai",
+      "mxzaz-hqaaa-aaaar-qaada-cai",
+      "ss2fx-dyaaa-aaaar-qacoq-cai",
+      "xevnm-gaaaa-aaaar-qafnq-cai",
+    ],
+  );
+  assert.deepEqual(
+    presetAssetOptions("http://127.0.0.1:8000").map((asset) => asset.assetId),
+    [
+      LOCAL_TEST_ASSET_ID,
+      "ryjl3-tyaaa-aaaaa-aaaba-cai",
+      "mxzaz-hqaaa-aaaar-qaada-cai",
+      "ss2fx-dyaaa-aaaar-qacoq-cai",
+      "xevnm-gaaaa-aaaar-qafnq-cai",
+    ],
+  );
+  assert.equal(
+    presetAssetOptions("http://127.0.0.1:8000")[0]?.label,
+    "TESTICP",
+  );
+  assert.equal(assetCatalogTestHooks.usesLocalIcHost("https://icp-api.io"), false);
+  assert.equal(assetCatalogTestHooks.usesLocalIcHost("http://localhost:8000"), true);
+  assert.equal(assetCatalogTestHooks.resolveLedgerQueryHost(LOCAL_TEST_ASSET_ID, "http://127.0.0.1:8000"), "http://127.0.0.1:8000");
+  assert.equal(assetCatalogTestHooks.resolveLedgerQueryHost(DEFAULT_ASSET_ID, "http://127.0.0.1:8000"), MAINNET_IC_HOST);
+  assert.equal(assetCatalogTestHooks.resolveLedgerQueryHost(DEFAULT_ASSET_ID, "https://icp-api.io"), "https://icp-api.io");
 
   const serialized = serializeCustomAssets([custom]);
   const parsed = parseStoredCustomAssets(serialized);
   assert.deepEqual(parsed, [custom]);
   assert.deepEqual(dedupeAssetOptions([custom, custom]), [custom]);
+}
+
+async function runManageTokenListTests(): Promise<void> {
+  const rows = normalizeIcpTokenList({
+    content: [
+      {
+        ledgerId: "ryjl3-tyaaa-aaaaa-aaaba-cai",
+        symbol: "ICP",
+        name: "Internet Computer",
+        logo: "https://example.com/icp.png",
+      },
+      {
+        ledgerId: "mxzaz-hqaaa-aaaar-qaada-cai",
+        symbol: "ckBTC",
+        name: "Chain-key Bitcoin",
+      },
+      {
+        ledgerId: "mxzaz-hqaaa-aaaar-qaada-cai",
+        symbol: "duplicate",
+      },
+    ],
+  });
+  assert.equal(rows.length, 2);
+  assert.equal(rows[0]?.assetId, "ryjl3-tyaaa-aaaaa-aaaba-cai");
+  assert.match(rows[0]?.searchText ?? "", /internet computer/);
+  assert.equal(rows[0]?.balanceText, null);
+  assert.equal(toManageTokenOptions(rows)[0]?.source, "token_list");
+  assert.throws(() => normalizeIcpTokenList({ content: [{ symbol: "ICP" }] }), /token_list\.asset_id_missing/);
+
+  const updatedWrap = applySelectedAsset({
+    tab: "wrap",
+    assetId: "mxzaz-hqaaa-aaaar-qaada-cai",
+    wrapForm: {
+      assetId: DEFAULT_ASSET_ID,
+      amount: "1",
+      evmRecipient: "0x11",
+      evmNonce: "1",
+      gasLimit: "300000",
+    },
+    unwrapForm: {
+      assetId: DEFAULT_ASSET_ID,
+      amount: "2",
+      recipient: "aaaaa-aa",
+    },
+  });
+  assert.equal(updatedWrap.wrapForm.assetId, "mxzaz-hqaaa-aaaar-qaada-cai");
+  assert.equal(updatedWrap.unwrapForm.assetId, DEFAULT_ASSET_ID);
+
+  const updatedUnwrap = applySelectedAsset({
+    tab: "unwrap",
+    assetId: "ss2fx-dyaaa-aaaar-qacoq-cai",
+    wrapForm: updatedWrap.wrapForm,
+    unwrapForm: updatedWrap.unwrapForm,
+  });
+  assert.equal(updatedUnwrap.wrapForm.assetId, "mxzaz-hqaaa-aaaar-qaada-cai");
+  assert.equal(updatedUnwrap.unwrapForm.assetId, "ss2fx-dyaaa-aaaar-qacoq-cai");
+}
+
+async function runDevelopmentTokenListFixtureTests(): Promise<void> {
+  const payload = JSON.parse(
+    readFileSync(new URL("../public/icp-token-list.development.json", import.meta.url), "utf8"),
+  ) as Array<{
+    ledgerId?: string;
+    symbol?: string;
+    logo?: string | null;
+  }>;
+  assert.ok(
+    payload.some(
+      (row) => row.ledgerId === LOCAL_TEST_ASSET_ID && row.symbol === "TESTICP" && typeof row.logo === "string",
+    ),
+  );
 }
 
 async function runInternetIdentityConfigTests(): Promise<void> {
@@ -933,12 +1259,21 @@ async function runInternetIdentityConfigTests(): Promise<void> {
       ...testEnvBase,
       VITE_IC_HOST: "http://127.0.0.1:8000",
     }),
+    /config\.missing:VITE_ICP_TOKEN_LIST_URL/,
+  );
+  assert.throws(
+    () => configTestHooks.loadConfigFromEnv({
+      ...testEnvBase,
+      VITE_IC_HOST: "http://127.0.0.1:8000",
+      VITE_ICP_TOKEN_LIST_URL: "/icp-token-list.sample.json",
+    }),
     /config\.missing:VITE_KASANE_EVM_CANISTER_ID/,
   );
   assert.throws(
     () => configTestHooks.loadConfigFromEnv({
       ...testEnvBase,
       VITE_IC_HOST: "http://127.0.0.1:8000",
+      VITE_ICP_TOKEN_LIST_URL: "/icp-token-list.sample.json",
       VITE_KASANE_EVM_CANISTER_ID: "4c52m-aiaaa-aaaam-agwwa-cai",
     }),
     /config\.missing:VITE_WRAP_CANISTER_ID/,
@@ -947,6 +1282,7 @@ async function runInternetIdentityConfigTests(): Promise<void> {
     () => configTestHooks.loadConfigFromEnv({
       ...testEnvBase,
       VITE_IC_HOST: "http://127.0.0.1:8000",
+      VITE_ICP_TOKEN_LIST_URL: "/icp-token-list.sample.json",
       VITE_KASANE_EVM_CANISTER_ID: "4c52m-aiaaa-aaaam-agwwa-cai",
       VITE_WRAP_CANISTER_ID: "t63gs-up777-77776-aaaba-cai",
     }),
@@ -956,23 +1292,28 @@ async function runInternetIdentityConfigTests(): Promise<void> {
     configTestHooks.loadConfigFromEnv({
       ...testEnvBase,
       VITE_IC_HOST: "http://127.0.0.1:8000",
+      VITE_ICP_TOKEN_LIST_URL: "/icp-token-list.sample.json",
       VITE_KASANE_EVM_CANISTER_ID: "4c52m-aiaaa-aaaam-agwwa-cai",
       VITE_WRAP_CANISTER_ID: "t63gs-up777-77776-aaaba-cai",
       VITE_EVM_WRAP_FACTORY: "0x88200f183e26d05bc6747ba7378cc73a68b6a12a",
+      VITE_KASANE_RPC_URL: "https://rpc-testnet.kasane.network",
+      VITE_KASANE_CHAIN_ID: "4801360",
+      VITE_KASANE_CHAIN_NAME: "Kasane",
+      VITE_KASANE_NATIVE_CURRENCY_SYMBOL: "ICP",
+      VITE_KASANE_BLOCK_EXPLORER_URL: "https://explorer-testnet.kasane.network",
     }),
     {
       icHost: "http://127.0.0.1:8000",
+      icpTokenListUrl: "/icp-token-list.sample.json",
       kasaneEvmCanisterId: "4c52m-aiaaa-aaaam-agwwa-cai",
       wrapCanisterId: "t63gs-up777-77776-aaaba-cai",
       evmWrapFactory: "0x88200f183e26d05bc6747ba7378cc73a68b6a12a",
+      kasaneRpcUrl: "https://rpc-testnet.kasane.network",
+      kasaneChainId: 4_801_360n,
+      kasaneChainName: "Kasane",
+      kasaneNativeCurrencySymbol: "ICP",
+      kasaneBlockExplorerUrl: "https://explorer-testnet.kasane.network",
     },
-  );
-  assert.equal(configTestHooks.resolveConfiguredGoogleClientIdFromEnv({ VITE_GOOGLE_CLIENT_ID: "" }), null);
-  assert.equal(
-    configTestHooks.resolveConfiguredGoogleClientIdFromEnv({
-      VITE_GOOGLE_CLIENT_ID: "google-client-id",
-    }),
-    "google-client-id",
   );
   assert.equal(
     configTestHooks.resolveConfiguredIdentityProviderFromEnv({
@@ -1029,6 +1370,7 @@ async function runInternetIdentityConfigTests(): Promise<void> {
   assert.equal(configTestHooks.shouldFetchRootKey("http://127.0.0.1:8000"), true);
   assert.equal(configTestHooks.shouldFetchRootKey("http://localhost:8000"), true);
   assert.equal(configTestHooks.shouldFetchRootKey("https://icp-api.io"), false);
+  assert.equal(configTestHooks.parseChainId("4801360"), 4_801_360n);
   assert.equal(
     configTestHooks.resolveJunoSatelliteIdFromEnv({
       ...process.env,
@@ -1062,16 +1404,18 @@ async function runJunoConfigTests(): Promise<void> {
   assert.throws(
     () => junoConfigTestHooks.parseConfiguredAllowedTargets("not-a-principal"),
   );
+  assert.equal(junoConfigTestHooks.usesLocalIcHost({ VITE_IC_HOST: "https://icp-api.io" }), false);
+  assert.equal(junoConfigTestHooks.usesLocalIcHost({ VITE_IC_HOST: "http://127.0.0.1:8000" }), true);
 
   assert.deepEqual(
     junoConfigTestHooks.resolveAllowedTargets({
+      VITE_IC_HOST: "https://icp-api.io",
       VITE_WRAP_CANISTER_ID: "t63gs-up777-77776-aaaba-cai",
       VITE_KASANE_EVM_CANISTER_ID: "4c52m-aiaaa-aaaam-agwwa-cai",
     }),
     [
       "t63gs-up777-77776-aaaba-cai",
       "4c52m-aiaaa-aaaam-agwwa-cai",
-      "xafvr-biaaa-aaaai-aql5q-cai",
       "ryjl3-tyaaa-aaaaa-aaaba-cai",
       "mxzaz-hqaaa-aaaar-qaada-cai",
       "ss2fx-dyaaa-aaaar-qacoq-cai",
@@ -1080,6 +1424,23 @@ async function runJunoConfigTests(): Promise<void> {
   );
   assert.deepEqual(
     junoConfigTestHooks.resolveAllowedTargets({
+      VITE_IC_HOST: "http://127.0.0.1:8000",
+      VITE_WRAP_CANISTER_ID: "t63gs-up777-77776-aaaba-cai",
+      VITE_KASANE_EVM_CANISTER_ID: "4c52m-aiaaa-aaaam-agwwa-cai",
+    }),
+    [
+      "t63gs-up777-77776-aaaba-cai",
+      "4c52m-aiaaa-aaaam-agwwa-cai",
+      "ryjl3-tyaaa-aaaaa-aaaba-cai",
+      "mxzaz-hqaaa-aaaar-qaada-cai",
+      "ss2fx-dyaaa-aaaar-qacoq-cai",
+      "xevnm-gaaaa-aaaar-qafnq-cai",
+      "xafvr-biaaa-aaaai-aql5q-cai",
+    ],
+  );
+  assert.deepEqual(
+    junoConfigTestHooks.resolveAllowedTargets({
+      VITE_IC_HOST: "https://icp-api.io",
       VITE_WRAP_CANISTER_ID: "t63gs-up777-77776-aaaba-cai",
       VITE_KASANE_EVM_CANISTER_ID: "4c52m-aiaaa-aaaam-agwwa-cai",
       JUNO_AUTH_ALLOWED_TARGETS:
@@ -1088,7 +1449,6 @@ async function runJunoConfigTests(): Promise<void> {
     [
       "t63gs-up777-77776-aaaba-cai",
       "4c52m-aiaaa-aaaam-agwwa-cai",
-      "xafvr-biaaa-aaaai-aql5q-cai",
       "ryjl3-tyaaa-aaaaa-aaaba-cai",
       "mxzaz-hqaaa-aaaar-qaada-cai",
       "ss2fx-dyaaa-aaaar-qacoq-cai",
@@ -1101,23 +1461,13 @@ async function runJunoConfigTests(): Promise<void> {
 async function runAgentConfigInjectionTests(): Promise<void> {
   resetAgentCache();
   const queryAgent = await getQueryAgent({
-    loadConfig: () => ({
-      icHost: "https://icp-api.io",
-      kasaneEvmCanisterId: "4c52m-aiaaa-aaaam-agwwa-cai",
-      wrapCanisterId: "t63gs-up777-77776-aaaba-cai",
-      evmWrapFactory: "0x88200f183e26d05bc6747ba7378cc73a68b6a12a",
-    }),
+    loadConfig: () => TEST_CONFIG,
   });
   assert.equal(queryAgent.config.host, "https://icp-api.io");
 
   resetAgentCache();
   const identityAgent = await getIdentityAgent(new AnonymousIdentity(), {
-    loadConfig: () => ({
-      icHost: "https://icp-api.io",
-      kasaneEvmCanisterId: "4c52m-aiaaa-aaaam-agwwa-cai",
-      wrapCanisterId: "t63gs-up777-77776-aaaba-cai",
-      evmWrapFactory: "0x88200f183e26d05bc6747ba7378cc73a68b6a12a",
-    }),
+    loadConfig: () => TEST_CONFIG,
   });
   assert.equal(identityAgent.config.host, "https://icp-api.io");
   resetAgentCache();
@@ -1125,14 +1475,14 @@ async function runAgentConfigInjectionTests(): Promise<void> {
 
 async function runRecentRequestsTests(): Promise<void> {
   const principalText = "aaaaa-aa";
-  const first = {
+  const first: HistoryEntry = {
     requestId: `0x${"11".repeat(32)}`,
-    kind: "wrap" as const,
+    kind: "wrap",
     submittedAt: "2026-03-18T12:00:00.000Z",
   };
-  const second = {
+  const second: HistoryEntry = {
     requestId: `0x${"22".repeat(32)}`,
-    kind: "unwrap" as const,
+    kind: "unwrap",
     submittedAt: "2026-03-18T12:01:00.000Z",
   };
 
@@ -1197,7 +1547,10 @@ async function runRecentRequestsTests(): Promise<void> {
 
   const satelliteId = "mxzaz-hqaaa-aaaal-qsdoa-cai";
   const actorKey = recentRequestsClientTestHooks.createRecentRequestsActorCacheKey(
-    new AnonymousIdentity(),
+    {
+      principalText: "2vxsx-fae",
+      identity: new AnonymousIdentity(),
+    },
     satelliteId,
   );
   assert.equal(actorKey, `2vxsx-fae:${satelliteId}`);
@@ -1261,6 +1614,7 @@ async function runRecentRequestsTests(): Promise<void> {
 async function runClientDepsResetTests(): Promise<void> {
   wrapperClientTestHooks.setDeps({
     loadConfig: () => ({
+      ...TEST_CONFIG,
       icHost: "https://example.com",
       kasaneEvmCanisterId: "aaaaa-aa",
       wrapCanisterId: "aaaaa-aa",
@@ -1269,6 +1623,7 @@ async function runClientDepsResetTests(): Promise<void> {
   });
   wrapClientTestHooks.setDeps({
     loadConfig: () => ({
+      ...TEST_CONFIG,
       icHost: "https://example.com",
       kasaneEvmCanisterId: "aaaaa-aa",
       wrapCanisterId: "aaaaa-aa",
@@ -1283,6 +1638,7 @@ async function runStatusPhaseTests(): Promise<void> {
   assert.equal(deriveStatusPhase(null), "idle");
   assert.equal(
     deriveStatusPhase({
+      kind: "request",
       requestId: "0x11",
       dispatchStatus: "Queued",
       executionStatus: null,
@@ -1297,6 +1653,7 @@ async function runStatusPhaseTests(): Promise<void> {
   );
   assert.equal(
     deriveStatusPhase({
+      kind: "request",
       requestId: "0x11",
       dispatchStatus: "Dispatched",
       executionStatus: "Running",
@@ -1311,6 +1668,7 @@ async function runStatusPhaseTests(): Promise<void> {
   );
   assert.equal(
     isTerminalStatus({
+      kind: "request",
       requestId: "0x11",
       dispatchStatus: "Dispatched",
       executionStatus: "Succeeded",
@@ -1325,6 +1683,7 @@ async function runStatusPhaseTests(): Promise<void> {
   );
   assert.equal(
     isTerminalStatus({
+      kind: "request",
       requestId: "0x11",
       dispatchStatus: "Dispatching",
       executionStatus: "Running",
@@ -1340,10 +1699,11 @@ async function runStatusPhaseTests(): Promise<void> {
 }
 
 async function runStatusPollingRegressionTests(): Promise<void> {
-  const nonTerminalStatus = {
+  const nonTerminalStatus: StatusResponse = {
+    kind: "request",
     requestId: "0x11",
-    dispatchStatus: "Dispatching" as const,
-    executionStatus: "Running" as const,
+    dispatchStatus: "Dispatching",
+    executionStatus: "Running",
     ledgerTxId: null,
     errorCode: null,
     mintFailedRecoverable: false,
@@ -1433,6 +1793,7 @@ function buildMockQueryActor(args: {
         suggested_max_priority_fee_per_gas: 1n,
       },
     }),
+    get_unwrap_request_ids_by_eth_tx_hash: async () => [],
     get_unwrap_request_ids_by_tx_id: async () => [],
     get_unwrap_dispatch_overview: async (): Promise<[]> => [],
   };
@@ -1449,6 +1810,10 @@ async function runGetGatewayRequestLookupTests(): Promise<void> {
       Uint8Array.from(txId),
       Uint8Array.from(new Array(32).fill(0x22)),
     ],
+    get_unwrap_request_ids_by_eth_tx_hash: async (ethTxHash) => [
+      Uint8Array.from(ethTxHash),
+      Uint8Array.from(new Array(32).fill(0x33)),
+    ],
     get_unwrap_dispatch_overview: async (requestId) => [{
       request_id: requestId,
       status: { Dispatched: null },
@@ -1459,6 +1824,10 @@ async function runGetGatewayRequestLookupTests(): Promise<void> {
   const ids = await getUnwrapRequestIdsByTxId(Uint8Array.from(new Array(32).fill(0x11)));
   assert.equal(ids.length, 2);
   assert.deepEqual(ids[1], Uint8Array.from(new Array(32).fill(0x22)));
+
+  const ethHashIds = await getUnwrapRequestIdsByEthTxHash(Uint8Array.from(new Array(32).fill(0x44)));
+  assert.equal(ethHashIds.length, 2);
+  assert.deepEqual(ethHashIds[1], Uint8Array.from(new Array(32).fill(0x33)));
 
   const out = await getDispatchResult(Uint8Array.from(new Array(32).fill(0x11)));
   assert.equal(out?.status, "Dispatched");
@@ -1494,7 +1863,7 @@ async function runWrapperClientFeeTests(): Promise<void> {
     data: Uint8Array.from([0x01, 0x02]),
     nonce: 7n,
     gasLimit: 333_000n,
-    identity: new AnonymousIdentity(),
+    caller: new AnonymousIdentity(),
   });
   assert.deepEqual(txId, Uint8Array.from([0xaa]));
   const submittedArgs = submittedArgsList[0];
@@ -1515,7 +1884,7 @@ async function runWrapperClientFeeTests(): Promise<void> {
       data: Uint8Array.from([0x01]),
       nonce: 8n,
       gasLimit: 300_000n,
-      identity: new AnonymousIdentity(),
+      caller: new AnonymousIdentity(),
     }),
     /evm_gateway\.gas_price_failed:32000:state unavailable/,
   );
@@ -1530,7 +1899,7 @@ async function runWrapperClientFeeTests(): Promise<void> {
       data: Uint8Array.from([0x01]),
       nonce: 9n,
       gasLimit: 300_000n,
-      identity: new AnonymousIdentity(),
+      caller: new AnonymousIdentity(),
     }),
     /evm_gateway\.priority_fee_failed:32000:state unavailable/,
   );
@@ -1545,8 +1914,9 @@ async function main(): Promise<void> {
   await runFeeQuoteMathTests();
   await runAllowanceTests();
   await runWrapInputValidationTests();
-  await runGoogleReturnToTests();
+  await runMetaMaskHelperTests();
   await runPersistSubmittedRequestTests();
+  await runFinishSubmittedUnwrapRequestTests();
   await runActorCacheTests();
   await runWrapEstimateEncodingTests();
   await runErc20EncodingTests();
@@ -1556,10 +1926,13 @@ async function main(): Promise<void> {
   await runWrapClientSubmitTests();
   await runWrapClientWithdrawErrorTests();
   await runUnwrapRequirementsTests();
+  await runNativeWithdrawClientTests();
   await runApproveWrappedTokenTests();
   await runWrapNonceRefreshTests();
   await runWrapNonceClientTests();
   await runAssetCatalogTests();
+  await runManageTokenListTests();
+  await runDevelopmentTokenListFixtureTests();
   await runInternetIdentityConfigTests();
   await runJunoConfigTests();
   await runAgentConfigInjectionTests();

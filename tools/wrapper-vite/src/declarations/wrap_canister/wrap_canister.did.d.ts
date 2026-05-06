@@ -15,6 +15,11 @@ export type ApiError = {
   } |
   { 'Rejected' : { 'code' : string, 'message' : string } } |
   { 'InvalidArgument' : { 'code' : string, 'message' : string } };
+export interface DispatchNativeWithdrawalRequestArgs {
+  'request_id' : Uint8Array,
+  'recipient' : Principal,
+  'amount_e8s' : bigint,
+}
 export interface FeePolicyView {
   'fee_ledger_canister' : Principal,
   'gas_price_buffer_bps' : number,
@@ -33,14 +38,41 @@ export interface GetUnwrapRequirementsOk {
   'factory_address' : Uint8Array,
   'readiness' : UnwrapReadiness,
 }
+export interface Icrc21LineDisplayMessage {
+  'pages' : Array<Icrc21LineDisplayPage>,
+}
+export interface Icrc21LineDisplayPage { 'lines' : Array<string> }
+export interface Icrc21LineDisplaySpec {
+  'characters_per_line' : number,
+  'lines_per_page' : number,
+}
 export interface InitArgs {
   'kasane_canister' : Principal,
+  'native_ledger_canister' : Principal,
   'allowed_assets' : Array<Principal>,
   'fee_ledger_canister' : Principal,
   'evm_gateway_canister' : Principal,
   'gas_price_buffer_bps' : number,
   'cycle_fee_e8s' : bigint,
   'wrap_factory_address' : Uint8Array,
+}
+export interface QuoteNativeDepositArgs {
+  'evm_recipient' : Uint8Array,
+  'amount_e8s' : bigint,
+}
+export interface QuoteNativeDepositOk {
+  'charged_fee_e8s' : bigint,
+  'native_ledger_canister' : Principal,
+  'fee_ledger_canister' : Principal,
+}
+export interface QuoteNativeWithdrawalArgs {
+  'recipient' : Principal,
+  'amount_e8s' : bigint,
+}
+export interface QuoteNativeWithdrawalOk {
+  'native_ledger_canister' : Principal,
+  'ledger_fee_e8s' : bigint,
+  'receive_amount_e8s' : bigint,
 }
 export interface QuoteWrapRequestArgs {
   'evm_recipient' : Uint8Array,
@@ -88,11 +120,26 @@ export interface SetFeePolicyArgs {
   'gas_price_buffer_bps' : number,
   'cycle_fee_e8s' : bigint,
 }
-export interface SubmitWrapRequestArgs {
+export interface StandardRecord { 'url' : string, 'name' : string }
+export interface SubmitNativeDepositArgs {
+  'max_fee_e8s' : bigint,
   'evm_recipient' : Uint8Array,
   'amount_e8s' : bigint,
+  'fee_ledger_canister' : Principal,
+}
+export interface SubmitNativeDepositOk {
+  'request_id' : Uint8Array,
+  'charged_fee_e8s' : bigint,
+  'fee_ledger_tx_id' : Uint8Array,
+}
+export interface SubmitWrapRequestArgs {
+  'max_fee_e8s' : bigint,
+  'evm_recipient' : Uint8Array,
+  'amount_e8s' : bigint,
+  'fee_ledger_canister' : Principal,
   'gas_limit' : bigint,
   'asset_id' : Principal,
+  'quoted_gas_price_wei' : bigint,
   'evm_nonce' : bigint,
 }
 export interface SubmitWrapRequestOk {
@@ -105,7 +152,45 @@ export type UnwrapReadiness = { 'TokenNotDeployed' : null } |
   { 'InsufficientAllowance' : null } |
   { 'InsufficientBalance' : null } |
   { 'Ready' : null };
+export interface icrc21_consent_info {
+  'metadata' : icrc21_consent_message_metadata,
+  'consent_message' : icrc21_consent_message,
+}
+export type icrc21_consent_message = {
+    'LineDisplayMessage' : Icrc21LineDisplayMessage
+  } |
+  { 'GenericDisplayMessage' : string };
+export interface icrc21_consent_message_metadata {
+  'utc_offset_minutes' : [] | [number],
+  'language' : string,
+}
+export interface icrc21_consent_message_request {
+  'arg' : Uint8Array,
+  'method' : string,
+  'user_preferences' : icrc21_consent_message_spec,
+}
+export type icrc21_consent_message_response = { 'Ok' : icrc21_consent_info } |
+  { 'Err' : icrc21_error };
+export interface icrc21_consent_message_spec {
+  'metadata' : icrc21_consent_message_metadata,
+  'device_spec' : [] | [
+    { 'GenericDisplay' : null } |
+      { 'LineDisplay' : Icrc21LineDisplaySpec }
+  ],
+}
+export type icrc21_error = {
+    'GenericError' : { 'description' : string, 'error_code' : bigint }
+  } |
+  { 'InsufficientPayment' : icrc21_error_info } |
+  { 'UnsupportedCanisterCall' : icrc21_error_info } |
+  { 'ConsentMessageUnavailable' : icrc21_error_info };
+export interface icrc21_error_info { 'description' : string }
 export interface _SERVICE {
+  'dispatch_native_withdrawal_request' : ActorMethod<
+    [DispatchNativeWithdrawalRequestArgs],
+    { 'Ok' : { 'request_id' : Uint8Array } } |
+      { 'Err' : ApiError }
+  >,
   'get_allowed_assets' : ActorMethod<
     [],
     { 'Ok' : Array<Principal> } |
@@ -116,10 +201,29 @@ export interface _SERVICE {
     { 'Ok' : FeePolicyView } |
       { 'Err' : string }
   >,
+  'get_native_deposit_result' : ActorMethod<
+    [Uint8Array],
+    [] | [RequestOverview]
+  >,
   'get_request' : ActorMethod<[Uint8Array], [] | [RequestOverview]>,
   'get_unwrap_requirements' : ActorMethod<
     [GetUnwrapRequirementsArgs],
     { 'Ok' : GetUnwrapRequirementsOk } |
+      { 'Err' : ApiError }
+  >,
+  'icrc10_supported_standards' : ActorMethod<[], Array<StandardRecord>>,
+  'icrc21_canister_call_consent_message' : ActorMethod<
+    [icrc21_consent_message_request],
+    icrc21_consent_message_response
+  >,
+  'quote_native_deposit' : ActorMethod<
+    [QuoteNativeDepositArgs],
+    { 'Ok' : QuoteNativeDepositOk } |
+      { 'Err' : ApiError }
+  >,
+  'quote_native_withdrawal' : ActorMethod<
+    [QuoteNativeWithdrawalArgs],
+    { 'Ok' : QuoteNativeWithdrawalOk } |
       { 'Err' : ApiError }
   >,
   'quote_wrap_request' : ActorMethod<
@@ -129,6 +233,16 @@ export interface _SERVICE {
   >,
   'recover_failed_wrap' : ActorMethod<
     [RecoverFailedWrapArgs],
+    { 'Ok' : RequestOverview } |
+      { 'Err' : ApiError }
+  >,
+  'retry_native_deposit' : ActorMethod<
+    [RetryRequestArgs],
+    { 'Ok' : RequestOverview } |
+      { 'Err' : ApiError }
+  >,
+  'retry_native_withdrawal' : ActorMethod<
+    [RetryRequestArgs],
     { 'Ok' : RequestOverview } |
       { 'Err' : ApiError }
   >,
@@ -146,6 +260,11 @@ export interface _SERVICE {
     [SetFeePolicyArgs],
     { 'Ok' : null } |
       { 'Err' : string }
+  >,
+  'submit_native_deposit' : ActorMethod<
+    [SubmitNativeDepositArgs],
+    { 'Ok' : SubmitNativeDepositOk } |
+      { 'Err' : ApiError }
   >,
   'submit_wrap_request' : ActorMethod<
     [SubmitWrapRequestArgs],
