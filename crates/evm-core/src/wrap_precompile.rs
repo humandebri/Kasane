@@ -18,22 +18,30 @@ use std::cell::RefCell;
 use std::collections::BTreeMap;
 
 // 予約レンジ方針:
-// - 0x00000000000000000000000000000000ffff0001: unwrap
-// - 0x00000000000000000000000000000000ffff0002+: 将来拡張用の予約スロット
+// - 0x00000000000000000000000000000000ffff0001: ICRC wrapped token unwrap
+// - 0x00000000000000000000000000000000ffff0002: Kasane native ICP withdrawal
+// - 0x00000000000000000000000000000000ffff0003+: 将来拡張用の予約スロット
 pub const WRAP_PRECOMPILE_ADDRESS: Address = Address::new([
     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xff, 0xff, 0x00, 0x01,
+]);
+pub const NATIVE_WITHDRAW_PRECOMPILE_ADDRESS: Address = Address::new([
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xff, 0xff, 0x00, 0x02,
 ]);
 const MAX_FIELD_LEN: usize = 120;
 const MAX_PRINCIPAL_LEN: usize = 29;
 const COMPACT_UNWRAP_FORMAT_VERSION: u8 = 1;
+const COMPACT_NATIVE_WITHDRAW_FORMAT_VERSION: u8 = 1;
 const COMPACT_PRINCIPAL_FIELD_LEN: usize = 1 + MAX_PRINCIPAL_LEN;
 const COMPACT_UNWRAP_INPUT_LEN: usize = 1 + COMPACT_PRINCIPAL_FIELD_LEN * 2 + 32;
+const COMPACT_NATIVE_WITHDRAW_INPUT_LEN: usize = 1 + COMPACT_PRINCIPAL_FIELD_LEN;
 const ABI_DYNAMIC_FIELDS: usize = 2;
+const NATIVE_WITHDRAW_FIELDS: usize = 2;
 const WRAP_FACTORY_STORAGE_TOKEN_BY_ASSET_KEY_SLOT: u64 = 0;
 const WRAPPED_TOKEN_TOTAL_SUPPLY_SLOT: u64 = 2;
 const WRAPPED_TOKEN_BALANCE_OF_SLOT: u64 = 3;
 const WRAPPED_TOKEN_ALLOWANCE_SLOT: u64 = 4;
 const UNWRAP_BURN_GAS_SURCHARGE: u64 = 45_000;
+pub const WEI_PER_E8S: u128 = 10_000_000_000;
 const FIXED_PRECOMPILE_GAS_RATIO_NUMERATOR: u32 = 1;
 const FIXED_PRECOMPILE_GAS_RATIO_DENOMINATOR: u32 = 100;
 
@@ -66,6 +74,12 @@ thread_local! {
 pub struct UnwrapIntent {
     pub asset_id: Vec<u8>,
     pub amount: [u8; 32],
+    pub recipient: Vec<u8>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct NativeWithdrawIntent {
+    pub amount_e8s: [u8; 32],
     pub recipient: Vec<u8>,
 }
 
@@ -103,10 +117,16 @@ where
         let started_instruction = current_instruction_counter();
         let address = inputs.bytecode_address.into_array();
 
-        let output = if inputs.bytecode_address != WRAP_PRECOMPILE_ADDRESS {
-            self.inner.run(context, inputs)?
-        } else {
-            Some(run_wrap_precompile(context, inputs, self.allow_external))
+        let output = match inputs.bytecode_address {
+            WRAP_PRECOMPILE_ADDRESS => {
+                Some(run_wrap_precompile(context, inputs, self.allow_external))
+            }
+            NATIVE_WITHDRAW_PRECOMPILE_ADDRESS => Some(run_native_withdraw_precompile(
+                context,
+                inputs,
+                self.allow_external,
+            )),
+            _ => self.inner.run(context, inputs)?,
         };
 
         let Some(mut out) = output else {
@@ -127,13 +147,15 @@ where
     }
 
     fn warm_addresses(&self) -> Box<impl Iterator<Item = Address>> {
-        let mut addresses = vec![WRAP_PRECOMPILE_ADDRESS];
+        let mut addresses = vec![WRAP_PRECOMPILE_ADDRESS, NATIVE_WITHDRAW_PRECOMPILE_ADDRESS];
         addresses.extend(self.inner.warm_addresses());
         Box::new(addresses.into_iter())
     }
 
     fn contains(&self, address: &Address) -> bool {
-        *address == WRAP_PRECOMPILE_ADDRESS || self.inner.contains(address)
+        *address == WRAP_PRECOMPILE_ADDRESS
+            || *address == NATIVE_WITHDRAW_PRECOMPILE_ADDRESS
+            || self.inner.contains(address)
     }
 }
 
@@ -184,6 +206,70 @@ fn run_wrap_precompile<CTX: ContextTr>(
     out
 }
 
+fn run_native_withdraw_precompile<CTX: ContextTr>(
+    context: &mut CTX,
+    inputs: &CallInputs,
+    allow_external: bool,
+) -> InterpreterResult {
+    let gas_limit = inputs.gas_limit;
+
+    if !allow_external {
+        return precompile_fail(
+            context,
+            gas_limit,
+            "native_withdraw.precompile.query_disallowed",
+        );
+    }
+    if inputs.is_static {
+        return precompile_fail(
+            context,
+            gas_limit,
+            "native_withdraw.precompile.static_disallowed",
+        );
+    }
+
+    let input = inputs.input.bytes(context);
+    let recipient = match parse_native_withdraw_input(&input) {
+        Ok(v) => v,
+        Err(code) => return precompile_fail(context, gas_limit, code),
+    };
+    let value = inputs.call_value();
+    let Some(amount_e8s) = native_value_to_e8s(value) else {
+        return precompile_fail(context, gas_limit, "native_withdraw.amount_not_e8s_aligned");
+    };
+    if amount_e8s.is_zero() {
+        return precompile_fail(context, gas_limit, "native_withdraw.amount_zero");
+    }
+    let parsed = NativeWithdrawIntent {
+        amount_e8s: amount_e8s.to_be_bytes(),
+        recipient,
+    };
+    let log_data = encode_native_withdraw_log_data(&parsed);
+    let log_data_len = log_data.len();
+    let log = Log::new_unchecked(
+        NATIVE_WITHDRAW_PRECOMPILE_ADDRESS,
+        vec![B256::from(native_withdraw_event_topic0())],
+        log_data.into(),
+    );
+    context.journal_mut().log(log);
+
+    let mut out = InterpreterResult {
+        result: InstructionResult::Return,
+        gas: Gas::new(gas_limit),
+        output: Bytes::new(),
+    };
+    let estimated_gas =
+        estimate_wrap_precompile_gas(input.len(), log_data_len, NATIVE_WITHDRAW_FIELDS);
+    if !out.gas.record_cost(estimated_gas) {
+        return InterpreterResult {
+            result: InstructionResult::PrecompileOOG,
+            gas: Gas::new(gas_limit),
+            output: Bytes::new(),
+        };
+    }
+    out
+}
+
 fn precompile_fail<CTX: ContextTr>(
     context: &mut CTX,
     gas_limit: u64,
@@ -222,6 +308,33 @@ fn parse_compact_input(input: &[u8]) -> Result<UnwrapIntent, &'static str> {
         amount,
         recipient,
     })
+}
+
+fn parse_native_withdraw_input(input: &[u8]) -> Result<Vec<u8>, &'static str> {
+    if input.len() != COMPACT_NATIVE_WITHDRAW_INPUT_LEN {
+        return Err("native_withdraw.arg.abi_invalid");
+    }
+    if input[0] != COMPACT_NATIVE_WITHDRAW_FORMAT_VERSION {
+        return Err("native_withdraw.arg.abi_invalid");
+    }
+    let mut offset = 1usize;
+    let recipient = read_compact_principal(input, &mut offset)?;
+    if recipient == [4u8] {
+        return Err("native_withdraw.recipient_anonymous");
+    }
+    if offset != input.len() {
+        return Err("native_withdraw.arg.abi_invalid");
+    }
+    Ok(recipient)
+}
+
+fn native_value_to_e8s(value: U256) -> Option<U256> {
+    let unit = U256::from(WEI_PER_E8S);
+    let rem = value % unit;
+    if !rem.is_zero() {
+        return None;
+    }
+    Some(value / unit)
 }
 
 pub(crate) fn estimate_wrap_precompile_gas(
@@ -437,6 +550,14 @@ fn encode_log_data(intent: &UnwrapIntent) -> Vec<u8> {
     out
 }
 
+fn encode_native_withdraw_log_data(intent: &NativeWithdrawIntent) -> Vec<u8> {
+    let mut out = Vec::with_capacity(32 + 1 + intent.recipient.len());
+    out.extend_from_slice(&intent.amount_e8s);
+    out.push(intent.recipient.len() as u8);
+    out.extend_from_slice(&intent.recipient);
+    out
+}
+
 pub fn unwrap_intent_from_log(log: &LogEntry) -> Option<UnwrapIntent> {
     if log.address.into_array() != WRAP_PRECOMPILE_ADDRESS.into_array() {
         return None;
@@ -460,8 +581,33 @@ pub fn unwrap_intent_from_log(log: &LogEntry) -> Option<UnwrapIntent> {
     })
 }
 
+pub fn native_withdraw_intent_from_log(log: &LogEntry) -> Option<NativeWithdrawIntent> {
+    if log.address.into_array() != NATIVE_WITHDRAW_PRECOMPILE_ADDRESS.into_array() {
+        return None;
+    }
+    let topics = log.topics();
+    if topics.len() != 1 || topics[0].0 != native_withdraw_event_topic0() {
+        return None;
+    }
+    let data = log.data.data.as_ref();
+    let mut offset = 0usize;
+    let amount_e8s = read_array_32(data, &mut offset)?;
+    let recipient = read_len_prefixed(data, &mut offset)?;
+    if offset != data.len() {
+        return None;
+    }
+    Some(NativeWithdrawIntent {
+        amount_e8s,
+        recipient,
+    })
+}
+
 fn wrap_event_topic0() -> [u8; 32] {
     hash::keccak256(b"KasaneUnwrapRequest(bytes)")
+}
+
+fn native_withdraw_event_topic0() -> [u8; 32] {
+    hash::keccak256(b"KasaneNativeWithdrawalRequest(bytes)")
 }
 
 fn approval_event_topic0() -> [u8; 32] {

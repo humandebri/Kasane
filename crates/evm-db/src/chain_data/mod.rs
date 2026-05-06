@@ -9,6 +9,7 @@ pub mod dropped_ring;
 pub mod internal_trace;
 pub mod log_config;
 pub mod metrics;
+pub mod native_credit;
 pub mod ops;
 pub mod ops_metrics;
 pub mod ordering;
@@ -38,6 +39,7 @@ pub use internal_trace::{
 };
 pub use log_config::{LogConfigV1, LOG_CONFIG_FILTER_MAX};
 pub use metrics::{MetricsStateV1, MetricsWindowSummary, METRICS_BUCKETS};
+pub use native_credit::{NativeCreditRecord, NATIVE_CREDIT_RECORD_SIZE_U32};
 pub use ops::{OpsConfigV1, OpsMode, OpsStateV1};
 pub use ops_metrics::{OpsMetricsV1, OPS_METRICS_SIZE_U32};
 pub use ordering::{PendingFeeKey, ReadyKey, ReadySeqKey, SenderKey, SenderNonceKey};

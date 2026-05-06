@@ -1,8 +1,10 @@
 use super::{
     allowance_slot, approval_event_topic0, compute_asset_key, compute_extra_gas,
     estimate_wrap_precompile_gas, extra_gas_by_instruction_ratio, extra_gas_for_precompile,
+    native_value_to_e8s, native_withdraw_event_topic0, native_withdraw_intent_from_log,
     parse_input, topic_from_address, transfer_event_topic0, unwrap_intent_from_log, unwrap_owner,
-    wrap_event_topic0, COMPACT_UNWRAP_FORMAT_VERSION, MAX_PRINCIPAL_LEN, WRAP_PRECOMPILE_ADDRESS,
+    wrap_event_topic0, COMPACT_UNWRAP_FORMAT_VERSION, MAX_PRINCIPAL_LEN,
+    NATIVE_WITHDRAW_PRECOMPILE_ADDRESS, WEI_PER_E8S, WRAP_PRECOMPILE_ADDRESS,
 };
 use crate::hash;
 use evm_db::chain_data::receipt::log_entry_from_parts;
@@ -45,6 +47,33 @@ fn unwrap_intent_log_roundtrip_decodes() {
     assert_eq!(parsed.asset_id, asset);
     assert_eq!(parsed.amount, amount);
     assert_eq!(parsed.recipient, recipient);
+}
+
+#[test]
+fn native_withdraw_intent_log_roundtrip_decodes() {
+    let amount = U256::from(123u64).to_be_bytes();
+    let recipient = vec![9, 10, 11];
+    let mut data = Vec::new();
+    data.extend_from_slice(&amount);
+    data.push(recipient.len() as u8);
+    data.extend_from_slice(&recipient);
+    let log = log_entry_from_parts(
+        NATIVE_WITHDRAW_PRECOMPILE_ADDRESS.into_array(),
+        vec![native_withdraw_event_topic0()],
+        data,
+    );
+    let parsed = native_withdraw_intent_from_log(&log).expect("must decode");
+    assert_eq!(parsed.amount_e8s, amount);
+    assert_eq!(parsed.recipient, recipient);
+}
+
+#[test]
+fn native_value_to_e8s_requires_exact_ledger_unit() {
+    assert_eq!(
+        native_value_to_e8s(U256::from(WEI_PER_E8S * 3)),
+        Some(U256::from(3u8))
+    );
+    assert_eq!(native_value_to_e8s(U256::from(WEI_PER_E8S - 1)), None);
 }
 
 #[test]

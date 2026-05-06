@@ -19,9 +19,9 @@ use evm_db::chain_data::constants::{
     READY_CANDIDATE_LIMIT,
 };
 use evm_db::chain_data::{
-    BlockData, CallerKey, Head, InternalTraceSet, PendingFeeKey, PruneJournal, PrunePolicy,
-    ReadyKey, ReadySeqKey, ReceiptLike, SenderKey, SenderNonceKey, StoredTx, StoredTxBytes,
-    StoredTxError, TxId, TxIndexEntry, TxKind, TxLoc, TxLocKind,
+    BlockData, CallerKey, Head, InternalTraceSet, NativeCreditRecord, PendingFeeKey, PruneJournal,
+    PrunePolicy, ReadyKey, ReadySeqKey, ReceiptLike, SenderKey, SenderNonceKey, StoredTx,
+    StoredTxBytes, StoredTxError, TxId, TxIndexEntry, TxKind, TxLoc, TxLocKind,
 };
 use evm_db::memory::{chain_data_memory_ids_for_estimate, memory_size_pages, WASM_PAGE_SIZE_BYTES};
 use evm_db::meta::tx_locs_v3_active;
@@ -921,6 +921,46 @@ pub fn credit_balance(address: [u8; 20], amount: u128) -> Result<(), ChainError>
         state.accounts.insert(key, updated);
         Ok(())
     })
+}
+
+pub fn credit_native_deposit(
+    request_id: [u8; 32],
+    recipient: [u8; 20],
+    amount_wei: [u8; 32],
+) -> Result<(), ChainError> {
+    let key = TxId(request_id);
+    let record = NativeCreditRecord::new(recipient, amount_wei);
+    let amount = u128_from_u256_bytes(amount_wei).ok_or(ChainError::MintOverflow)?;
+    with_state_mut(|state| {
+        if let Some(existing) = state.native_credit_records.get(&key) {
+            if existing == record {
+                return Ok(());
+            }
+            return Err(ChainError::TxAlreadySeen);
+        }
+        let account_key = make_account_key(recipient);
+        let existing = state.accounts.get(&account_key);
+        let (nonce, balance, code_hash) = match existing {
+            Some(value) => (value.nonce(), value.balance(), value.code_hash()),
+            None => (0u64, [0u8; 32], [0u8; 32]),
+        };
+        let current = U256::from_be_bytes(balance);
+        let add = U256::from(amount);
+        let next = current.checked_add(add).ok_or(ChainError::MintOverflow)?;
+        let updated = AccountVal::from_parts(nonce, next.to_be_bytes(), code_hash);
+        state.accounts.insert(account_key, updated);
+        state.native_credit_records.insert(key, record);
+        Ok(())
+    })
+}
+
+fn u128_from_u256_bytes(bytes: [u8; 32]) -> Option<u128> {
+    if bytes[..16].iter().any(|&byte| byte != 0) {
+        return None;
+    }
+    let mut out = [0u8; 16];
+    out.copy_from_slice(&bytes[16..]);
+    Some(u128::from_be_bytes(out))
 }
 
 pub fn expected_nonce_for_sender_view(sender: [u8; 20]) -> u64 {
