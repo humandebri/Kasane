@@ -18,8 +18,8 @@ use evm_core::wrap_precompile::WRAP_PRECOMPILE_ADDRESS;
 use evm_db::chain_data::constants::MAX_RETURN_DATA;
 use evm_db::chain_data::receipt::log_entry_from_parts;
 use evm_db::chain_data::{
-    BlockData, MigrationPhase, OpsMode, ReceiptLike, TxId, TxLoc, UnwrapDispatchRequest,
-    UnwrapRequestStatus,
+    BlockData, MigrationPhase, OpsMode, ReceiptLike, StoredTxBytes, TxId, TxKind, TxLoc,
+    UnwrapDispatchRequest, UnwrapRequestStatus,
 };
 use evm_db::memory::{get_memory, AppMemoryId, WASM_PAGE_SIZE_BYTES};
 use evm_db::meta::{
@@ -32,8 +32,11 @@ use evm_db::types::values::{AccountVal, U256Val};
 use evm_db::{Memory, Storable};
 use std::borrow::Cow;
 use std::collections::BTreeSet;
+use std::future::Future;
 use std::panic::{catch_unwind, AssertUnwindSafe};
+use std::pin::pin;
 use std::str::FromStr;
+use std::task::{Context, Poll, Waker};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum TxApiErrorKind {
@@ -58,6 +61,19 @@ const CODE_INTERNAL_UNEXPECTED: &str = "internal.unexpected";
 const POST_UPGRADE_MIGRATION_MAX_ITERS: usize = 32;
 const POST_UPGRADE_SCHEMA_MIGRATION_STEPS: u32 = 1024;
 const POST_UPGRADE_STATE_ROOT_MIGRATION_STEPS: u32 = 1024;
+
+fn run_ready_future<F>(future: F) -> F::Output
+where
+    F: Future,
+{
+    let waker = Waker::noop();
+    let mut context = Context::from_waker(waker);
+    let mut future = pin!(future);
+    match future.as_mut().poll(&mut context) {
+        Poll::Ready(output) => output,
+        Poll::Pending => panic!("test future must complete without suspension"),
+    }
+}
 
 fn run_post_upgrade_migrations_until_settled() {
     for _ in 0..POST_UPGRADE_MIGRATION_MAX_ITERS {
@@ -124,6 +140,186 @@ fn submit_reject_code(err: &ChainError) -> Option<&'static str> {
         ChainError::DecodeRateLimited => Some(CODE_SUBMIT_DECODE_RATE_LIMITED),
         _ => None,
     }
+}
+
+fn encode_unwrap_payload(asset: Principal, amount: [u8; 32], recipient: Principal) -> Vec<u8> {
+    let mut out = Vec::with_capacity(1 + 30 + 32 + 30);
+    out.push(1);
+    out.push(asset.as_slice().len() as u8);
+    out.extend_from_slice(asset.as_slice());
+    out.resize(1 + 1 + 29, 0);
+    out.extend_from_slice(&amount);
+    out.push(recipient.as_slice().len() as u8);
+    out.extend_from_slice(recipient.as_slice());
+    out.resize(1 + 1 + 29 + 32 + 1 + 29, 0);
+    out
+}
+
+#[test]
+fn icrc10_supported_standards_advertise_icrc21() {
+    let standards = super::icrc21::supported_standards();
+    assert!(standards.iter().any(|item| item.name == "ICRC-21"));
+}
+
+#[test]
+fn icrc21_submit_ic_tx_consent_decodes_precompile_unwrap() {
+    let asset = Principal::self_authenticating(b"wrap-asset");
+    let recipient = Principal::self_authenticating(b"wrap-recipient");
+    let mut amount = [0u8; 32];
+    amount[31] = 42;
+    let response = run_ready_future(super::icrc21::consent_message(
+        super::icrc21::Icrc21ConsentMessageRequest {
+            method: "submit_ic_tx".to_string(),
+            arg: encode_one(SubmitIcTxArgsDto {
+                to: Some(WRAP_PRECOMPILE_ADDRESS.to_vec()),
+                value: Nat::from(0u8),
+                max_priority_fee_per_gas: Nat::from(2u8),
+                data: encode_unwrap_payload(asset, amount, recipient),
+                from: None,
+                max_fee_per_gas: Nat::from(3u8),
+                nonce: 9,
+                gas_limit: 210_000,
+            })
+            .expect("encode submit_ic_tx"),
+            user_preferences: super::icrc21::Icrc21ConsentMessageSpec {
+                metadata: super::icrc21::Icrc21ConsentMessageMetadata {
+                    utc_offset_minutes: Some(540),
+                    language: "en".to_string(),
+                },
+                device_spec: None,
+            },
+        },
+    ))
+    .expect("consent ok");
+    let super::icrc21::Icrc21ConsentMessage::GenericDisplayMessage(markdown) =
+        response.consent_message
+    else {
+        panic!("expected generic display");
+    };
+    assert!(markdown.contains("Approve Kasane unwrap"));
+    assert!(markdown.contains(&asset.to_text()));
+    assert!(markdown.contains(&recipient.to_text()));
+    assert!(markdown.contains("amount_e8s: `42`"));
+}
+
+#[test]
+fn icrc21_submit_ic_tx_consent_decodes_erc20_approve() {
+    let mut data = vec![0x09, 0x5e, 0xa7, 0xb3];
+    data.extend_from_slice(&[0u8; 12]);
+    data.extend_from_slice(&[0x44; 20]);
+    data.extend_from_slice(&[0u8; 31]);
+    data.push(0x2a);
+    let response = run_ready_future(super::icrc21::consent_message(
+        super::icrc21::Icrc21ConsentMessageRequest {
+            method: "submit_ic_tx".to_string(),
+            arg: encode_one(SubmitIcTxArgsDto {
+                to: Some(vec![0x22; 20]),
+                value: Nat::from(0u8),
+                max_priority_fee_per_gas: Nat::from(2u8),
+                data,
+                from: None,
+                max_fee_per_gas: Nat::from(3u8),
+                nonce: 11,
+                gas_limit: 90_000,
+            })
+            .expect("encode submit_ic_tx"),
+            user_preferences: super::icrc21::Icrc21ConsentMessageSpec {
+                metadata: super::icrc21::Icrc21ConsentMessageMetadata {
+                    utc_offset_minutes: Some(540),
+                    language: "en".to_string(),
+                },
+                device_spec: None,
+            },
+        },
+    ))
+    .expect("consent ok");
+    let super::icrc21::Icrc21ConsentMessage::GenericDisplayMessage(markdown) =
+        response.consent_message
+    else {
+        panic!("expected generic display");
+    };
+    assert!(markdown.contains("Approve ERC-20 allowance transaction"));
+    assert!(markdown.contains("0x4444444444444444444444444444444444444444"));
+    assert!(markdown.contains("amount: `42`"));
+}
+
+#[test]
+fn icrc21_submit_ic_tx_consent_falls_back_to_generic_message() {
+    let response = run_ready_future(super::icrc21::consent_message(
+        super::icrc21::Icrc21ConsentMessageRequest {
+            method: "submit_ic_tx".to_string(),
+            arg: encode_one(SubmitIcTxArgsDto {
+                to: Some(vec![0x33; 20]),
+                value: Nat::from(7u8),
+                max_priority_fee_per_gas: Nat::from(2u8),
+                data: vec![0xaa, 0xbb, 0xcc],
+                from: None,
+                max_fee_per_gas: Nat::from(3u8),
+                nonce: 13,
+                gas_limit: 120_000,
+            })
+            .expect("encode submit_ic_tx"),
+            user_preferences: super::icrc21::Icrc21ConsentMessageSpec {
+                metadata: super::icrc21::Icrc21ConsentMessageMetadata {
+                    utc_offset_minutes: Some(540),
+                    language: "en".to_string(),
+                },
+                device_spec: None,
+            },
+        },
+    ))
+    .expect("consent ok");
+    let super::icrc21::Icrc21ConsentMessage::GenericDisplayMessage(markdown) =
+        response.consent_message
+    else {
+        panic!("expected generic display");
+    };
+    assert!(markdown.contains("Approve Kasane transaction"));
+    assert!(markdown.contains("data size: `3` bytes"));
+}
+
+#[test]
+fn icrc21_submit_ic_tx_consent_accepts_line_display_request() {
+    let response = run_ready_future(super::icrc21::consent_message(
+        super::icrc21::Icrc21ConsentMessageRequest {
+            method: "submit_ic_tx".to_string(),
+            arg: encode_one(SubmitIcTxArgsDto {
+                to: Some(vec![0x33; 20]),
+                value: Nat::from(7u8),
+                max_priority_fee_per_gas: Nat::from(2u8),
+                data: vec![0xaa, 0xbb, 0xcc],
+                from: None,
+                max_fee_per_gas: Nat::from(3u8),
+                nonce: 13,
+                gas_limit: 120_000,
+            })
+            .expect("encode submit_ic_tx"),
+            user_preferences: super::icrc21::Icrc21ConsentMessageSpec {
+                metadata: super::icrc21::Icrc21ConsentMessageMetadata {
+                    utc_offset_minutes: Some(540),
+                    language: "en".to_string(),
+                },
+                device_spec: Some(super::icrc21::Icrc21DeviceSpec::LineDisplay(
+                    super::icrc21::Icrc21LineDisplaySpec {
+                        characters_per_line: 24,
+                        lines_per_page: 4,
+                    },
+                )),
+            },
+        },
+    ))
+    .expect("consent ok");
+    assert!(matches!(
+        response.consent_message,
+        super::icrc21::Icrc21ConsentMessage::GenericDisplayMessage(_)
+    ));
+}
+
+#[test]
+fn evm_did_does_not_export_fields_display_icrc21_shape() {
+    let did = include_str!("../evm_canister.did");
+    assert!(!did.contains("FieldsDisplay"));
+    assert!(did.contains("LineDisplay"));
 }
 
 fn chain_submit_error_to_code(err: &ChainError) -> Option<(TxApiErrorKind, &'static str)> {
@@ -2060,6 +2256,73 @@ fn get_unwrap_request_ids_by_tx_id_returns_ids_for_matching_logs() {
 }
 
 #[test]
+fn get_unwrap_request_ids_by_eth_tx_hash_resolves_indexed_internal_tx() {
+    init_stable_state();
+    let raw = vec![0x02, 0x01, 0x02, 0x03];
+    let tx_id = {
+        let mut input = Vec::new();
+        input.extend_from_slice(b"ic-evm:storedtx:v2");
+        input.push(TxKind::EthSigned.to_u8());
+        input.extend_from_slice(&raw);
+        TxId(hash::keccak256(&input))
+    };
+    let eth_tx_hash = hash::keccak256(&raw);
+    let amount = [0x66u8; 32];
+    let unwrap_topic = hash::keccak256(b"KasaneUnwrapRequest(bytes)");
+    with_state_mut(|state| {
+        let stored = StoredTxBytes::new_with_fees(
+            tx_id,
+            TxKind::EthSigned,
+            raw,
+            None,
+            Vec::new(),
+            Vec::new(),
+            1,
+            1,
+            true,
+        );
+        state.tx_store.insert(tx_id, stored);
+        state.eth_tx_hash_index.insert(TxId(eth_tx_hash), tx_id);
+        let receipt = ReceiptLike {
+            tx_id,
+            block_number: 9,
+            tx_index: 0,
+            status: 1,
+            gas_used: 1,
+            effective_gas_price: 1,
+            l1_data_fee: 0,
+            operator_fee: 0,
+            total_fee: 0,
+            return_data_hash: [0u8; 32],
+            return_data: Vec::new(),
+            contract_address: None,
+            logs: vec![log_entry_from_parts(
+                WRAP_PRECOMPILE_ADDRESS.into_array(),
+                vec![unwrap_topic],
+                unwrap_log_data(&[0xaa, 0xbb], amount, &[0xcc]),
+            )],
+        };
+        let ptr = state
+            .blob_store
+            .store_bytes(receipt.to_bytes().as_ref())
+            .expect("store receipt");
+        state.receipts.insert(tx_id, ptr);
+    });
+
+    let ids = super::get_unwrap_request_ids_by_eth_tx_hash(eth_tx_hash.to_vec());
+    assert_eq!(ids.len(), 1);
+    assert_eq!(
+        ids[0],
+        super::derive_unwrap_request_id(&tx_id, 0)
+            .expect("request id")
+            .0
+            .to_vec()
+    );
+    assert!(super::get_unwrap_request_ids_by_eth_tx_hash(vec![0u8; 31]).is_empty());
+    assert!(super::get_unwrap_request_ids_by_eth_tx_hash(vec![0u8; 32]).is_empty());
+}
+
+#[test]
 fn raw_stable_corruption_does_not_trap_query_or_dispatch_for_unwrap_request() {
     init_stable_state();
     let request_id = TxId([0x14u8; 32]);
@@ -2396,12 +2659,16 @@ fn did_contains_dispatch_result_contract_shape() {
     let did = include_str!("../evm_canister.did");
     assert!(did.contains("type UnwrapDispatchOverviewView = record {"));
     assert!(did.contains("type ApiError = variant {"));
+    assert!(did.contains("type StandardRecord = record {"));
     assert!(did.contains("estimate_ic_tx"));
+    assert!(did.contains("icrc10_supported_standards"));
+    assert!(did.contains("icrc21_canister_call_consent_message"));
     assert!(did.contains("type RequestDispatchStatusView = variant {"));
     assert!(did.contains("wrap_canister_id : principal"));
     assert!(did.contains("wrap_factory_address : blob"));
     assert!(!did.contains("get_request_dispatch_result"));
     assert!(did.contains("get_unwrap_request_ids_by_tx_id"));
+    assert!(did.contains("get_unwrap_request_ids_by_eth_tx_hash"));
     assert!(did.contains("get_unwrap_dispatch_overview"));
     assert!(!did.contains("set_wrap_canister_id : (principal) -> (Result_15);"));
 }

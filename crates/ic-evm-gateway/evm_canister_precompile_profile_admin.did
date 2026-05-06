@@ -146,6 +146,44 @@ type HealthView = record {
   last_block_time : nat64;
   queue_len : nat64;
 };
+type Icrc21ConsentInfo = record {
+  metadata : Icrc21ConsentMessageMetadata;
+  consent_message : Icrc21ConsentMessage;
+};
+type Icrc21ConsentMessage = variant {
+  LineDisplayMessage : Icrc21LineDisplayMessage;
+  GenericDisplayMessage : text;
+};
+type Icrc21ConsentMessageMetadata = record {
+  utc_offset_minutes : opt int16;
+  language : text;
+};
+type Icrc21ConsentMessageRequest = record {
+  arg : blob;
+  method : text;
+  user_preferences : Icrc21ConsentMessageSpec;
+};
+type Icrc21ConsentMessageSpec = record {
+  metadata : Icrc21ConsentMessageMetadata;
+  device_spec : opt Icrc21DeviceSpec;
+};
+type Icrc21DeviceSpec = variant {
+  GenericDisplay;
+  LineDisplay : Icrc21LineDisplaySpec;
+};
+type Icrc21Error = variant {
+  GenericError : record { description : text; error_code : nat };
+  InsufficientPayment : Icrc21ErrorInfo;
+  UnsupportedCanisterCall : Icrc21ErrorInfo;
+  ConsentMessageUnavailable : Icrc21ErrorInfo;
+};
+type Icrc21ErrorInfo = record { description : text };
+type Icrc21LineDisplayMessage = record { pages : vec Icrc21LineDisplayPage };
+type Icrc21LineDisplayPage = record { lines : vec text };
+type Icrc21LineDisplaySpec = record {
+  characters_per_line : nat16;
+  lines_per_page : nat16;
+};
 type InitArgs = record {
   genesis_balances : vec GenesisBalanceView;
   query_instruction_soft_limit : opt nat64;
@@ -288,22 +326,24 @@ type RequestDispatchStatusView = variant {
   DispatchFailed;
 };
 type Result = variant { Ok; Err : text };
-type Result_1 = variant { Ok : EstimateIcTxOk; Err : ApiError };
-type Result_10 = variant { Ok : nat64; Err : RpcErrorView };
-type Result_11 = variant { Ok : RpcFeeHistoryView; Err : RpcErrorView };
-type Result_12 = variant { Ok : nat; Err : RpcErrorView };
-type Result_13 = variant { Ok : blob; Err : RpcErrorView };
-type Result_14 = variant { Ok : opt nat64; Err : text };
-type Result_15 = variant { Ok : EthLogsPageView; Err : GetLogsErrorView };
-type Result_16 = variant { Ok : blob; Err : SubmitTxError };
-type Result_2 = variant { Ok : nat64; Err : text };
-type Result_3 = variant { Ok : ExportResponseView; Err : ExportErrorView };
-type Result_4 = variant { Ok : BlockView; Err : LookupError };
-type Result_5 = variant { Ok : ReceiptView; Err : LookupError };
-type Result_6 = variant { Ok : text; Err : text };
-type Result_7 = variant { Ok : RpcCallResultView; Err : RpcErrorView };
-type Result_8 = variant { Ok : PruneResultView; Err : ProduceBlockError };
-type Result_9 = variant { Ok : blob; Err : text };
+type Result_1 = variant { Ok; Err : ApiError };
+type Result_10 = variant { Ok : PruneResultView; Err : ProduceBlockError };
+type Result_11 = variant { Ok : blob; Err : text };
+type Result_12 = variant { Ok : nat64; Err : RpcErrorView };
+type Result_13 = variant { Ok : RpcFeeHistoryView; Err : RpcErrorView };
+type Result_14 = variant { Ok : nat; Err : RpcErrorView };
+type Result_15 = variant { Ok : blob; Err : RpcErrorView };
+type Result_16 = variant { Ok : opt nat64; Err : text };
+type Result_17 = variant { Ok : EthLogsPageView; Err : GetLogsErrorView };
+type Result_18 = variant { Ok : blob; Err : SubmitTxError };
+type Result_2 = variant { Ok : EstimateIcTxOk; Err : ApiError };
+type Result_3 = variant { Ok : nat64; Err : text };
+type Result_4 = variant { Ok : ExportResponseView; Err : ExportErrorView };
+type Result_5 = variant { Ok : BlockView; Err : LookupError };
+type Result_6 = variant { Ok : ReceiptView; Err : LookupError };
+type Result_7 = variant { Ok : Icrc21ConsentInfo; Err : Icrc21Error };
+type Result_8 = variant { Ok : text; Err : text };
+type Result_9 = variant { Ok : RpcCallResultView; Err : RpcErrorView };
 type RpcAccessListItemView = record { storage_keys : vec blob; address : blob };
 type RpcBlockLookupView = variant {
   NotFound;
@@ -356,6 +396,7 @@ type RpcReceiptLookupView = variant {
   PossiblyPruned : record { pruned_before_block : nat64 };
   Pruned : record { pruned_before_block : nat64 };
 };
+type StandardRecord = record { url : text; name : text };
 type SubmitIcTxArgsDto = record {
   to : opt blob;
   value : nat;
@@ -379,57 +420,63 @@ type UnwrapDispatchOverviewView = record {
 };
 service : (opt InitArgs) -> {
   clear_precompile_profile : () -> (Result);
-  estimate_ic_tx : (SubmitIcTxArgsDto) -> (Result_1) query;
-  expected_nonce_by_address : (blob) -> (Result_2) query;
-  export_blocks : (opt ExportCursorView, nat32) -> (Result_3) query;
-  get_block : (nat64) -> (Result_4) query;
+  credit_native_deposit : (blob, blob, nat) -> (Result_1);
+  estimate_ic_tx : (SubmitIcTxArgsDto) -> (Result_2) query;
+  expected_nonce_by_address : (blob) -> (Result_3) query;
+  export_blocks : (opt ExportCursorView, nat32) -> (Result_4) query;
+  get_block : (nat64) -> (Result_5) query;
   get_cycle_balance : () -> (nat) query;
   get_ops_status : () -> (OpsStatusView) query;
   get_pending : (blob) -> (PendingStatusView) query;
   get_precompile_profile : () -> (vec PrecompileProfileView) query;
   get_prune_status : () -> (PruneStatusView) query;
   get_queue_snapshot : (nat32, opt nat64) -> (QueueSnapshotView) query;
-  get_receipt : (blob) -> (Result_5) query;
+  get_receipt : (blob) -> (Result_6) query;
   get_unwrap_dispatch_overview : (blob) -> (
       opt UnwrapDispatchOverviewView,
     ) query;
+  get_unwrap_request_ids_by_eth_tx_hash : (blob) -> (vec blob) query;
   get_unwrap_request_ids_by_tx_id : (blob) -> (vec blob) query;
   health : () -> (HealthView) query;
+  icrc10_supported_standards : () -> (vec StandardRecord) query;
+  icrc21_canister_call_consent_message : (Icrc21ConsentMessageRequest) -> (
+      Result_7,
+    );
   memory_breakdown : () -> (MemoryBreakdownView) query;
   metrics : (nat64) -> (MetricsView) query;
-  metrics_prometheus : () -> (Result_6) query;
-  profile_precompile_call : (RpcCallObjectView) -> (Result_7);
-  prune_blocks : (nat64, nat32) -> (Result_8);
+  metrics_prometheus : () -> (Result_8) query;
+  profile_precompile_call : (RpcCallObjectView) -> (Result_9);
+  prune_blocks : (nat64, nat32) -> (Result_10);
   rpc_eth_block_number : () -> (nat64) query;
-  rpc_eth_call_object : (RpcCallObjectView) -> (Result_7) query;
+  rpc_eth_call_object : (RpcCallObjectView) -> (Result_9) query;
   rpc_eth_call_object_at : (RpcCallObjectView, RpcBlockTagView) -> (
-      Result_7,
+      Result_9,
     ) query;
-  rpc_eth_call_rawtx : (blob) -> (Result_9) query;
+  rpc_eth_call_rawtx : (blob) -> (Result_11) query;
   rpc_eth_chain_id : () -> (nat64) query;
-  rpc_eth_estimate_gas_object : (RpcCallObjectView) -> (Result_10) query;
+  rpc_eth_estimate_gas_object : (RpcCallObjectView) -> (Result_12) query;
   rpc_eth_estimate_gas_object_at : (RpcCallObjectView, RpcBlockTagView) -> (
-      Result_10,
+      Result_12,
     ) query;
   rpc_eth_fee_history : (nat64, RpcBlockTagView, opt vec float64) -> (
-      Result_11,
+      Result_13,
     ) query;
-  rpc_eth_gas_price : () -> (Result_12) query;
-  rpc_eth_get_balance : (blob, RpcBlockTagView) -> (Result_13) query;
+  rpc_eth_gas_price : () -> (Result_14) query;
+  rpc_eth_get_balance : (blob, RpcBlockTagView) -> (Result_15) query;
   rpc_eth_get_block_by_number : (nat64, bool) -> (opt EthBlockView) query;
   rpc_eth_get_block_by_number_with_status : (nat64, bool) -> (
       RpcBlockLookupView,
     ) query;
-  rpc_eth_get_block_number_by_hash : (blob, nat32) -> (Result_14) query;
-  rpc_eth_get_code : (blob, RpcBlockTagView) -> (Result_13) query;
+  rpc_eth_get_block_number_by_hash : (blob, nat32) -> (Result_16) query;
+  rpc_eth_get_code : (blob, RpcBlockTagView) -> (Result_15) query;
   rpc_eth_get_logs_paged : (EthLogFilterView, opt EthLogsCursorView, nat32) -> (
-      Result_15,
+      Result_17,
     ) query;
-  rpc_eth_get_storage_at : (blob, blob, RpcBlockTagView) -> (Result_13) query;
+  rpc_eth_get_storage_at : (blob, blob, RpcBlockTagView) -> (Result_15) query;
   rpc_eth_get_transaction_by_eth_hash : (blob) -> (opt EthTxView) query;
   rpc_eth_get_transaction_by_tx_id : (blob) -> (opt EthTxView) query;
   rpc_eth_get_transaction_count_at : (blob, RpcBlockTagView) -> (
-      Result_10,
+      Result_12,
     ) query;
   rpc_eth_get_transaction_receipt_by_eth_hash : (blob) -> (
       opt EthReceiptView,
@@ -441,10 +488,10 @@ service : (opt InitArgs) -> {
       RpcReceiptLookupView,
     ) query;
   rpc_eth_history_window : () -> (RpcHistoryWindowView) query;
-  rpc_eth_max_priority_fee_per_gas : () -> (Result_12) query;
-  rpc_eth_send_raw_transaction : (blob) -> (Result_16);
+  rpc_eth_max_priority_fee_per_gas : () -> (Result_14) query;
+  rpc_eth_send_raw_transaction : (blob) -> (Result_18);
   set_log_filter : (opt text) -> (Result);
   set_prune_policy : (PrunePolicyView) -> (Result);
   set_pruning_enabled : (bool) -> (Result);
-  submit_ic_tx : (SubmitIcTxArgsDto) -> (Result_16);
+  submit_ic_tx : (SubmitIcTxArgsDto) -> (Result_18);
 }

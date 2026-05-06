@@ -3,7 +3,7 @@
 use candid::{CandidType, Nat, Principal};
 use evm_core::chain;
 use evm_core::hash;
-use evm_core::wrap_precompile::unwrap_intent_from_log;
+use evm_core::wrap_precompile::{native_withdraw_intent_from_log, unwrap_intent_from_log};
 use evm_db::chain_data::constants::CHAIN_ID;
 use evm_db::chain_data::constants::{MAX_QUEUE_SNAPSHOT_LIMIT, MAX_RETURN_DATA, MAX_TX_SIZE};
 use evm_db::chain_data::runtime_defaults::{DEFAULT_BLOCK_GAS_LIMIT, DEFAULT_MIN_FEE_FLOOR};
@@ -33,6 +33,8 @@ use std::collections::BTreeSet;
 use std::sync::atomic::{AtomicU64, Ordering};
 use tracing::{error, info, warn};
 
+mod icrc21;
+
 #[cfg(not(target_arch = "wasm32"))]
 use std::io::{self, Write};
 #[cfg(not(target_arch = "wasm32"))]
@@ -60,6 +62,7 @@ const CYCLE_OBSERVER_FAST_INTERVAL_SECS: u64 = 60;
 const CYCLE_OBSERVER_SLOW_INTERVAL_SECS: u64 = 3_600;
 const WRAP_DISPATCH_DELAY_MS: u64 = 75;
 const UNWRAP_QUARANTINE_ERROR: &str = "quarantine.decode.unwrap_request";
+const NATIVE_WITHDRAW_ASSET_MARKER: &[u8] = b"kasane.native.icp";
 
 static UNWRAP_DISPATCH_SCHEDULED: std::sync::atomic::AtomicBool =
     std::sync::atomic::AtomicBool::new(false);
@@ -110,7 +113,8 @@ impl InitArgs {
     fn runtime_config(&self) -> RuntimeConfigV1 {
         let mut wrap_factory_address = [0u8; 20];
         wrap_factory_address.copy_from_slice(&self.wrap_factory_address);
-        RuntimeConfigV1::new(self.wrap_canister_id, wrap_factory_address)
+        RuntimeConfigV1::try_new_from_bytes(self.wrap_canister_id.as_slice(), wrap_factory_address)
+            .unwrap_or_else(|err| ic_cdk::trap(format!("InvalidRuntimeConfig: {err}")))
     }
 }
 
@@ -167,9 +171,10 @@ fn init_inner(args: Option<InitArgs>, require_args: bool) {
 }
 
 fn current_wrap_canister_id() -> Principal {
-    current_runtime_config()
-        .wrap_canister_id()
-        .unwrap_or_else(|err| ic_cdk::trap(format!("InvalidRuntimeConfig: {err}")))
+    let bytes = current_runtime_config()
+        .wrap_canister_id_bytes()
+        .unwrap_or_else(|err| ic_cdk::trap(format!("InvalidRuntimeConfig: {err}")));
+    Principal::from_slice(&bytes)
 }
 
 #[ic_cdk::post_upgrade]
@@ -315,6 +320,10 @@ struct InspectMethodPolicy {
 
 const INSPECT_METHOD_POLICIES: &[InspectMethodPolicy] = &[
     InspectMethodPolicy {
+        method: "icrc21_canister_call_consent_message",
+        payload_limit: INSPECT_MANAGE_PAYLOAD_LIMIT,
+    },
+    InspectMethodPolicy {
         method: "submit_ic_tx",
         payload_limit: INSPECT_TX_PAYLOAD_LIMIT,
     },
@@ -409,6 +418,54 @@ fn submit_ic_tx(args: SubmitIcTxArgsDto) -> Result<Vec<u8>, SubmitTxError> {
     out
 }
 
+#[ic_cdk::update]
+fn credit_native_deposit(
+    request_id: Vec<u8>,
+    recipient: Vec<u8>,
+    amount_wei: Nat,
+) -> Result<(), ApiError> {
+    if let Some(reason) = reject_anonymous_update() {
+        return Err(api_rejected(&reason, &reason));
+    }
+    let caller = msg_caller();
+    if caller != current_wrap_canister_id() {
+        return Err(api_rejected(
+            "auth.wrap_canister_required",
+            "auth.wrap_canister_required",
+        ));
+    }
+    if request_id.len() != 32 {
+        return Err(api_invalid_argument(
+            "arg.request_id_invalid",
+            "arg.request_id_invalid",
+        ));
+    }
+    if recipient.len() != 20 {
+        return Err(api_invalid_argument(
+            "arg.recipient_invalid",
+            "arg.recipient_invalid",
+        ));
+    }
+    let amount = nat_to_fixed_be::<32>(&amount_wei).ok_or_else(|| {
+        api_invalid_argument("arg.amount_out_of_range", "arg.amount_out_of_range")
+    })?;
+    let mut request = [0u8; 32];
+    request.copy_from_slice(&request_id);
+    let mut to = [0u8; 20];
+    to.copy_from_slice(&recipient);
+    chain::credit_native_deposit(request, to, amount).map_err(|err| match err {
+        chain::ChainError::TxAlreadySeen => api_rejected(
+            "native_deposit.idempotency_mismatch",
+            "native_deposit.idempotency_mismatch",
+        ),
+        chain::ChainError::MintOverflow => api_rejected(
+            "native_deposit.mint_overflow",
+            "native_deposit.mint_overflow",
+        ),
+        other => api_internal("native_deposit.credit_failed", &format!("{other:?}")),
+    })
+}
+
 #[ic_cdk::query]
 fn estimate_ic_tx(args: SubmitIcTxArgsDto) -> Result<EstimateIcTxOk, ApiError> {
     let from = args
@@ -489,6 +546,13 @@ fn api_invalid_argument(code: &str, message: &str) -> ApiError {
 
 fn api_internal(code: &str, message: &str) -> ApiError {
     ApiError::Internal(ApiErrorDetail {
+        code: code.to_string(),
+        message: message.to_string(),
+    })
+}
+
+fn api_rejected(code: &str, message: &str) -> ApiError {
+    ApiError::Rejected(ApiErrorDetail {
         code: code.to_string(),
         message: message.to_string(),
     })
@@ -1191,6 +1255,14 @@ fn get_unwrap_request_ids_by_tx_id(tx_id: Vec<u8>) -> Vec<Vec<u8>> {
         .into_iter()
         .map(|request_id| request_id.0.to_vec())
         .collect()
+}
+
+#[ic_cdk::query]
+fn get_unwrap_request_ids_by_eth_tx_hash(eth_tx_hash: Vec<u8>) -> Vec<Vec<u8>> {
+    let Some(tx) = ic_evm_rpc::rpc_eth_get_transaction_by_eth_hash(eth_tx_hash) else {
+        return Vec::new();
+    };
+    get_unwrap_request_ids_by_tx_id(tx.hash)
 }
 
 fn normalize_unwrap_error_code_for_view(error_code: Option<&str>) -> Option<String> {
@@ -1904,6 +1976,13 @@ struct WrapSubmitUnwrapRequestOk {
     request_id: Vec<u8>,
 }
 
+#[derive(Clone, Debug, CandidType, Deserialize)]
+struct WrapSubmitNativeWithdrawalRequestArgs {
+    request_id: Vec<u8>,
+    amount_e8s: Nat,
+    recipient: Principal,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 enum WrapSubmitDispatchOutcome {
     Accepted,
@@ -1925,6 +2004,34 @@ fn record_unwrap_requests_from_block(tx_ids: &[TxId]) {
             continue;
         };
         for (log_index, log) in receipt.logs.iter().enumerate() {
+            if let Some(intent) = native_withdraw_intent_from_log(log) {
+                let Some(request_id) = derive_unwrap_request_id(tx_id, log_index) else {
+                    continue;
+                };
+                with_state_mut(|state| {
+                    if state.unwrap_requests.get(&request_id).is_some() {
+                        return;
+                    }
+                    let now = current_time_nanos();
+                    state.unwrap_requests.insert(
+                        request_id,
+                        UnwrapDispatchRequest {
+                            asset_id: NATIVE_WITHDRAW_ASSET_MARKER.to_vec(),
+                            amount: intent.amount_e8s,
+                            recipient: intent.recipient,
+                            status: UnwrapRequestStatus::Queued,
+                            ledger_tx_id: None,
+                            error_code: None,
+                            updated_at: now,
+                        },
+                    );
+                    let mut meta = *state.unwrap_dispatch_meta.get();
+                    let seq = meta.push();
+                    state.unwrap_dispatch_meta.set(meta);
+                    state.unwrap_dispatch_queue.insert(seq, request_id);
+                });
+                continue;
+            }
             let Some(intent) = unwrap_intent_from_log(log) else {
                 continue;
             };
@@ -2085,29 +2192,57 @@ async fn unwrap_dispatch_tick() {
             break;
         };
 
-        let args = match build_wrap_submit_unwrap_request_args(&request_id, &req) {
-            Ok(args) => args,
-            Err(code) => {
-                finalize_unwrap_dispatch_attempt(
-                    request_id,
-                    current_time_nanos(),
-                    AppliedUnwrapDispatchOutcome {
-                        status: UnwrapRequestStatus::DispatchFailed,
-                        error_code: Some(code),
-                    },
-                );
-                if with_state(|state| !state.unwrap_dispatch_queue.is_empty()) {
-                    schedule_unwrap_dispatch();
+        let submit = if is_native_withdraw_dispatch_request(&req) {
+            match build_wrap_submit_native_withdrawal_request_args(&request_id, &req) {
+                Ok(args) => {
+                    ic_cdk::call::Call::unbounded_wait(
+                        current_wrap_canister_id(),
+                        "dispatch_native_withdrawal_request",
+                    )
+                    .with_arg(args)
+                    .await
                 }
-                break;
+                Err(code) => {
+                    finalize_unwrap_dispatch_attempt(
+                        request_id,
+                        current_time_nanos(),
+                        AppliedUnwrapDispatchOutcome {
+                            status: UnwrapRequestStatus::DispatchFailed,
+                            error_code: Some(code),
+                        },
+                    );
+                    if with_state(|state| !state.unwrap_dispatch_queue.is_empty()) {
+                        schedule_unwrap_dispatch();
+                    }
+                    break;
+                }
+            }
+        } else {
+            match build_wrap_submit_unwrap_request_args(&request_id, &req) {
+                Ok(args) => {
+                    ic_cdk::call::Call::unbounded_wait(
+                        current_wrap_canister_id(),
+                        "dispatch_unwrap_request",
+                    )
+                    .with_arg(args)
+                    .await
+                }
+                Err(code) => {
+                    finalize_unwrap_dispatch_attempt(
+                        request_id,
+                        current_time_nanos(),
+                        AppliedUnwrapDispatchOutcome {
+                            status: UnwrapRequestStatus::DispatchFailed,
+                            error_code: Some(code),
+                        },
+                    );
+                    if with_state(|state| !state.unwrap_dispatch_queue.is_empty()) {
+                        schedule_unwrap_dispatch();
+                    }
+                    break;
+                }
             }
         };
-        let submit = ic_cdk::call::Call::unbounded_wait(
-            current_wrap_canister_id(),
-            "dispatch_unwrap_request",
-        )
-        .with_arg(args)
-        .await;
 
         finalize_unwrap_dispatch_attempt(
             request_id,
@@ -2122,6 +2257,10 @@ async fn unwrap_dispatch_tick() {
     }
 }
 
+fn is_native_withdraw_dispatch_request(req: &UnwrapDispatchRequest) -> bool {
+    req.asset_id.as_slice() == NATIVE_WITHDRAW_ASSET_MARKER
+}
+
 fn build_wrap_submit_unwrap_request_args(
     request_id: &TxId,
     req: &UnwrapDispatchRequest,
@@ -2129,6 +2268,17 @@ fn build_wrap_submit_unwrap_request_args(
     Ok(WrapSubmitUnwrapRequestArgs {
         request_id: request_id.0.to_vec(),
         asset_id: Principal::from_slice(req.asset_id.as_slice()),
+        amount_e8s: Nat(BigUint::from_bytes_be(req.amount.as_slice())),
+        recipient: Principal::from_slice(req.recipient.as_slice()),
+    })
+}
+
+fn build_wrap_submit_native_withdrawal_request_args(
+    request_id: &TxId,
+    req: &UnwrapDispatchRequest,
+) -> Result<WrapSubmitNativeWithdrawalRequestArgs, String> {
+    Ok(WrapSubmitNativeWithdrawalRequestArgs {
+        request_id: request_id.0.to_vec(),
         amount_e8s: Nat(BigUint::from_bytes_be(req.amount.as_slice())),
         recipient: Principal::from_slice(req.recipient.as_slice()),
     })
@@ -2263,6 +2413,19 @@ fn get_queue_snapshot(limit: u32, cursor: Option<u64>) -> QueueSnapshotView {
         next_cursor: snapshot.next_cursor,
     }
 }
+
+#[ic_cdk::query]
+fn icrc10_supported_standards() -> Vec<icrc21::StandardRecord> {
+    icrc21::supported_standards()
+}
+
+#[ic_cdk::update]
+async fn icrc21_canister_call_consent_message(
+    request: icrc21::Icrc21ConsentMessageRequest,
+) -> icrc21::Icrc21ConsentMessageResponse {
+    icrc21::consent_message(request).await
+}
+
 ic_cdk::export_candid!();
 
 // NOTE: build-time only; keep out of production surface area.
