@@ -26,9 +26,11 @@ export function AssetSelector(props: {
     () => props.options.find((asset) => asset.assetId === props.value) ?? null,
     [props.options, props.value],
   );
+  const selectedLabel = selected?.label ?? props.value;
+  const selectedMeta = selected ? `${selected.assetId} [${selected.source}]` : props.value || "Select asset";
 
   return (
-    <div className="rounded-2xl border border-zinc-200 bg-white p-3 shadow-sm">
+    <div className="rounded-2xl border border-zinc-200 bg-white p-2.5 shadow-sm">
       <Popover open={open} onOpenChange={setOpen}>
         <PopoverTrigger asChild>
           <Button
@@ -40,10 +42,10 @@ export function AssetSelector(props: {
           >
             <span className="flex min-w-0 flex-col items-start">
               <span className="truncate text-sm font-medium text-zinc-900">
-                {selected ? selected.label : props.selectPlaceholder}
+                {selectedLabel || props.selectPlaceholder}
               </span>
               <span className="truncate text-xs text-zinc-500">
-                {selected ? `${selected.assetId} [${selected.source}]` : "asset を選択"}
+                {selectedMeta}
               </span>
             </span>
             <ChevronsUpDown className="ml-2 size-4 shrink-0 text-zinc-500" />
@@ -53,7 +55,7 @@ export function AssetSelector(props: {
           <Command>
             <CommandInput placeholder="Search asset or principal..." />
             <CommandList>
-              <CommandEmpty>候補がありません</CommandEmpty>
+              <CommandEmpty>No assets found.</CommandEmpty>
               <CommandGroup heading="Assets">
                 {props.options.map((asset) => (
                   <CommandItem

@@ -24,9 +24,9 @@ export function TableRow({ className, ...props }: React.ComponentProps<"tr">) {
 }
 
 export function TableHead({ className, ...props }: React.ComponentProps<"th">) {
-  return <th className={cn("px-2 py-2 text-left text-xs font-semibold text-zinc-600", className)} {...props} />;
+  return <th className={cn("px-2 py-1.5 text-left text-xs font-semibold text-zinc-600", className)} {...props} />;
 }
 
 export function TableCell({ className, ...props }: React.ComponentProps<"td">) {
-  return <td className={cn("px-2 py-2 align-middle", className)} {...props} />;
+  return <td className={cn("px-2 py-1.5 align-middle", className)} {...props} />;
 }

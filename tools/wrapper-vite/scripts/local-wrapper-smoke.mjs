@@ -67,7 +67,7 @@ try {
   console.log(`3. cd ${wrapperViteDir} && npm run juno:functions:build`);
   console.log(`4. cd ${wrapperViteDir} && npm run dev`);
   console.log("5. Open the wrapper-vite UI and confirm manual request_id open works.");
-  console.log("6. Connect II/Oisy and submit one request successfully.");
+  console.log("6. Connect Oisy and confirm principal display in the wallet modal.");
   console.log("7. Confirm Recent Requests shows the new request.");
   console.log("8. Reload and confirm the same principal sees the same request.");
   console.log("9. Submit one wrap and confirm Balance/MAX update after success.");

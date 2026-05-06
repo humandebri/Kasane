@@ -16,6 +16,7 @@ export type SubmitResponse = {
 };
 
 export type StatusResponse = {
+  kind: "request";
   requestId: string;
   dispatchStatus: DispatchStatus | null;
   executionStatus: ExecutionStatus | null;

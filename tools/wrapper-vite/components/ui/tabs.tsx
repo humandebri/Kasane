@@ -27,5 +27,5 @@ export function TabsTrigger({ className, ...props }: React.ComponentProps<typeof
 }
 
 export function TabsContent({ className, ...props }: React.ComponentProps<typeof TabsPrimitive.Content>) {
-  return <TabsPrimitive.Content className={cn("mt-4", className)} {...props} />;
+  return <TabsPrimitive.Content className={cn("mt-3", className)} {...props} />;
 }
