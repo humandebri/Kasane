@@ -24,6 +24,7 @@ pub mod state_root_ops;
 pub mod tx;
 pub mod tx_loc;
 pub mod unwrap_request;
+pub mod wrap_request;
 
 pub use block::{BlockData, Head};
 pub use caller::CallerKey;
@@ -67,3 +68,7 @@ pub use tx::{
 };
 pub use tx_loc::{TxLoc, TxLocKind};
 pub use unwrap_request::{UnwrapDispatchRequest, UnwrapRequestStatus, UNWRAP_DECODE_FAILURE_CODE};
+pub use wrap_request::{
+    FeePolicyStored, RequestStatus, WrapEvmConfigStored, WrapPendingSubmission, WrapRequestResult,
+    WrapStoredRequest,
+};

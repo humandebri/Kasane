@@ -15,4 +15,13 @@ fn chain_data_memory_ids_are_fixed() {
     assert_eq!(AppMemoryId::ChainState.as_u8(), 14);
     assert_eq!(AppMemoryId::CallerNonces.as_u8(), 15);
     assert_eq!(AppMemoryId::TxLocs.as_u8(), 16);
+    assert_eq!(AppMemoryId::NativeCreditRecords.as_u8(), 59);
+    assert_eq!(AppMemoryId::WrapRequests.as_u8(), 60);
+    assert_eq!(AppMemoryId::WrapQueue.as_u8(), 61);
+    assert_eq!(AppMemoryId::WrapQueueMeta.as_u8(), 62);
+    assert_eq!(AppMemoryId::WrapAllowedAssets.as_u8(), 63);
+    assert_eq!(AppMemoryId::WrapFeePolicy.as_u8(), 64);
+    assert_eq!(AppMemoryId::WrapEvmConfig.as_u8(), 65);
+    assert_eq!(AppMemoryId::WrapNativeLedgerCanister.as_u8(), 66);
+    assert_eq!(AppMemoryId::WrapPendingSubmissions.as_u8(), 67);
 }

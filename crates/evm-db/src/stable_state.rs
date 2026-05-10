@@ -4,11 +4,12 @@ use crate::blob_ptr::BlobPtr;
 use crate::blob_store::BlobStore;
 use crate::chain_data::constants::CHAIN_ID;
 use crate::chain_data::{
-    CallerKey, ChainStateV1, DroppedRingStateV1, GcStateV1, HashKey, Head, LogConfigV1,
-    MetricsStateV1, MigrationStateV1, MismatchRecordV1, NativeCreditRecord, NodeRecord,
-    OpsConfigV1, OpsMetricsV1, OpsStateV1, PendingFeeKey, PruneConfigV1, PruneJournal,
+    CallerKey, ChainStateV1, DroppedRingStateV1, FeePolicyStored, GcStateV1, HashKey, Head,
+    LogConfigV1, MetricsStateV1, MigrationStateV1, MismatchRecordV1, NativeCreditRecord,
+    NodeRecord, OpsConfigV1, OpsMetricsV1, OpsStateV1, PendingFeeKey, PruneConfigV1, PruneJournal,
     PruneStateV1, QueueMeta, ReadyKey, ReadySeqKey, RuntimeConfigV1, SenderKey, SenderNonceKey,
     StateRootMetaV1, StateRootMetricsV1, StoredTxBytes, TxId, UnwrapDispatchRequest,
+    WrapEvmConfigStored, WrapPendingSubmission, WrapStoredRequest,
 };
 use crate::memory::{get_memory, AppMemoryId, VMem};
 use crate::types::keys::{AccountKey, CodeKey, StorageKey};
@@ -42,6 +43,10 @@ pub type ReadyBySeq = StableBTreeMap<ReadySeqKey, TxId, VMem>;
 pub type EthTxHashIndex = StableBTreeMap<TxId, TxId, VMem>;
 pub type UnwrapRequests = StableBTreeMap<TxId, UnwrapDispatchRequest, VMem>;
 pub type UnwrapDispatchQueue = StableBTreeMap<u64, TxId, VMem>;
+pub type WrapRequests = StableBTreeMap<TxId, WrapStoredRequest, VMem>;
+pub type WrapQueue = StableBTreeMap<u64, TxId, VMem>;
+pub type WrapAllowedAssets = StableBTreeMap<Vec<u8>, u8, VMem>;
+pub type WrapPendingSubmissions = StableBTreeMap<TxId, WrapPendingSubmission, VMem>;
 pub type PruneJournalMap = StableBTreeMap<u64, PruneJournal, VMem>;
 pub type DroppedRing = StableBTreeMap<u64, TxId, VMem>;
 pub type StateStorageRoots = StableBTreeMap<AccountKey, U256Val, VMem>;
@@ -92,6 +97,14 @@ pub struct StableState {
     pub unwrap_requests: UnwrapRequests,
     pub unwrap_dispatch_queue: UnwrapDispatchQueue,
     pub unwrap_dispatch_meta: StableCell<QueueMeta, VMem>,
+    pub wrap_requests: WrapRequests,
+    pub wrap_queue: WrapQueue,
+    pub wrap_queue_meta: StableCell<QueueMeta, VMem>,
+    pub wrap_allowed_assets: WrapAllowedAssets,
+    pub wrap_fee_policy: StableCell<FeePolicyStored, VMem>,
+    pub wrap_evm_config: StableCell<WrapEvmConfigStored, VMem>,
+    pub wrap_native_ledger_canister: StableCell<Vec<u8>, VMem>,
+    pub wrap_pending_submissions: WrapPendingSubmissions,
     pub runtime_config: StableCell<RuntimeConfigV1, VMem>,
     pub dropped_ring_state: StableCell<DroppedRingStateV1, VMem>,
     pub dropped_ring: DroppedRing,
@@ -184,6 +197,31 @@ pub fn init_stable_state() {
         get_memory(AppMemoryId::UnwrapDispatchMeta),
         QueueMeta::new(),
     );
+    let wrap_requests = StableBTreeMap::init(get_memory(AppMemoryId::WrapRequests));
+    let wrap_queue = StableBTreeMap::init(get_memory(AppMemoryId::WrapQueue));
+    let wrap_queue_meta =
+        StableCell::init(get_memory(AppMemoryId::WrapQueueMeta), QueueMeta::new());
+    let wrap_allowed_assets = StableBTreeMap::init(get_memory(AppMemoryId::WrapAllowedAssets));
+    let wrap_fee_policy = StableCell::init(
+        get_memory(AppMemoryId::WrapFeePolicy),
+        FeePolicyStored {
+            fee_ledger_canister: Vec::new(),
+            cycle_fee_e8s: 0,
+            gas_price_buffer_bps: 0,
+        },
+    );
+    let wrap_evm_config = StableCell::init(
+        get_memory(AppMemoryId::WrapEvmConfig),
+        WrapEvmConfigStored {
+            wrap_factory_address: Vec::new(),
+        },
+    );
+    let wrap_native_ledger_canister = StableCell::init(
+        get_memory(AppMemoryId::WrapNativeLedgerCanister),
+        Vec::new(),
+    );
+    let wrap_pending_submissions =
+        StableBTreeMap::init(get_memory(AppMemoryId::WrapPendingSubmissions));
     let runtime_config = StableCell::init(
         get_memory(AppMemoryId::RuntimeConfig),
         RuntimeConfigV1::new_unconfigured(),
@@ -256,6 +294,14 @@ pub fn init_stable_state() {
             unwrap_requests,
             unwrap_dispatch_queue,
             unwrap_dispatch_meta,
+            wrap_requests,
+            wrap_queue,
+            wrap_queue_meta,
+            wrap_allowed_assets,
+            wrap_fee_policy,
+            wrap_evm_config,
+            wrap_native_ledger_canister,
+            wrap_pending_submissions,
             runtime_config,
             dropped_ring_state,
             dropped_ring,

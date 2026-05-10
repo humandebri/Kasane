@@ -14,12 +14,12 @@
 
 ## 運用メモ
 
-- `WrapTokenFactory` の `minter` には、`wrap-canister` principal から導出した EVM アドレスを設定してください。
+- `WrapTokenFactory` の `minter` には、`evm_canister` principal から導出した EVM アドレスを設定してください。
 - deploy 時の creation data は `bytecode || abi.encode(constructor(address minter_))` です。constructor 引数を省くと `minter` が壊れるので、そのまま deploy しないでください。
-- `wrap-canister` 側は ledger metadata の `icrc1:decimals` を取得して factory へ `mintForAsset` を呼びます。
+- `evm_canister` 側は ledger metadata の `icrc1:decimals` を取得して factory へ `mintForAsset` を呼びます。
 - 同一 `chain_id` + 同一 `canister_id` + 同一 `decimals` では同じ token address が再現されます。
 - `WrappedAssetToken.burn` / `burnFrom` は無効化されており、unwrap burn は必ず `WrapTokenFactory.burnFromAsset` を通ります。
-- `minter` は wrapped supply を直接増やせる信頼境界です。運用では `wrap-canister` と同じ厳しさで扱ってください。
+- `minter` は wrapped supply を直接増やせる信頼境界です。運用では `evm_canister` と同じ厳しさで扱ってください。
 
 ## 開発メモ
 

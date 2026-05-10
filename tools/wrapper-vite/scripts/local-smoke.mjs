@@ -8,7 +8,6 @@ const envPath = resolve(cwd, ".env.local");
 const requiredKeys = [
   "VITE_IC_HOST",
   "VITE_KASANE_EVM_CANISTER_ID",
-  "VITE_WRAP_CANISTER_ID",
   "VITE_EVM_WRAP_FACTORY",
   "VITE_JUNO_SATELLITE_ID",
   "JUNO_DEV_SATELLITE_ID",

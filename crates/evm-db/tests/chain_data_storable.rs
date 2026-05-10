@@ -6,10 +6,12 @@ use evm_db::chain_data::constants::{
 };
 use evm_db::chain_data::receipt::LogEntry;
 use evm_db::chain_data::{
-    BlockData, CallerKey, ChainStateV1, Head, InternalTrace, InternalTraceActionKind,
-    InternalTraceSet, OpsMetricsV1, PruneJournal, QueueMeta, ReceiptLike, RuntimeConfigV1,
-    StoredTx, StoredTxBytes, TxId, TxIndexEntry, TxKind, TxLoc, UnwrapDispatchRequest,
-    UnwrapRequestStatus, MAX_INTERNAL_TRACES_PER_TX_U32, UNWRAP_DECODE_FAILURE_CODE,
+    BlockData, CallerKey, ChainStateV1, FeePolicyStored, Head, InternalTrace,
+    InternalTraceActionKind, InternalTraceSet, OpsMetricsV1, PruneJournal, QueueMeta, ReceiptLike,
+    RequestStatus, RuntimeConfigV1, StoredTx, StoredTxBytes, TxId, TxIndexEntry, TxKind, TxLoc,
+    UnwrapDispatchRequest, UnwrapRequestStatus, WrapEvmConfigStored, WrapPendingSubmission,
+    WrapRequestResult, WrapStoredRequest, MAX_INTERNAL_TRACES_PER_TX_U32,
+    UNWRAP_DECODE_FAILURE_CODE,
 };
 use evm_db::chain_data::{LogConfigV1, LOG_CONFIG_FILTER_MAX};
 use evm_db::chain_data::{
@@ -718,6 +720,83 @@ fn storage_key_wire_decode_rejects_bad_prefix_or_len() {
     bad_prefix[0] = 0xff;
     assert!(parse_storage_key_bytes(&bad_prefix).is_none());
     assert!(parse_storage_key_bytes(&bad_prefix[..52]).is_none());
+}
+
+#[test]
+fn wrap_stored_request_roundtrip() {
+    let request = WrapStoredRequest {
+        caller: vec![1, 2, 3],
+        asset_id: vec![4, 5, 6],
+        amount: vec![0; 32],
+        evm_recipient: vec![7; 20],
+        gas_limit: 3_000_000,
+        fee_ledger_canister: vec![14, 15, 16],
+        max_fee_e8s: 17,
+        quoted_gas_price_wei: 18,
+        fee_created_at_time: 11,
+        pull_created_at_time: 12,
+        withdraw_created_at_time: 13,
+        result: WrapRequestResult {
+            status: RequestStatus::Failed,
+            pull_ledger_tx_id: Some(vec![8]),
+            mint_tx_id: Some(vec![9]),
+            error_code: Some("mint.failed".to_string()),
+            withdrawn: true,
+            withdraw_ledger_tx_id: Some(vec![10]),
+            withdraw_error_code: None,
+            withdraw_in_progress: false,
+            mint_failed_recoverable: true,
+            fee_ledger_tx_id: Some(vec![11]),
+            charged_fee_e8s: Some(12),
+            charged_gas_price_wei: Some(13),
+        },
+    };
+
+    let decoded = WrapStoredRequest::from_bytes(request.to_bytes());
+    assert_eq!(decoded.caller, request.caller);
+    assert_eq!(decoded.asset_id, request.asset_id);
+    assert_eq!(decoded.fee_ledger_canister, request.fee_ledger_canister);
+    assert_eq!(decoded.max_fee_e8s, 17);
+    assert_eq!(decoded.quoted_gas_price_wei, 18);
+    assert_eq!(decoded.result.status, RequestStatus::Failed);
+    assert!(decoded.result.withdrawn);
+    assert!(decoded.result.mint_failed_recoverable);
+}
+
+#[test]
+fn wrap_config_stored_roundtrip() {
+    let fee_policy = FeePolicyStored {
+        fee_ledger_canister: vec![1, 2, 3],
+        cycle_fee_e8s: 1_000_000,
+        gas_price_buffer_bps: 12_000,
+    };
+    let decoded_fee_policy = FeePolicyStored::from_bytes(fee_policy.to_bytes());
+    assert_eq!(
+        decoded_fee_policy.fee_ledger_canister,
+        fee_policy.fee_ledger_canister
+    );
+    assert_eq!(decoded_fee_policy.cycle_fee_e8s, fee_policy.cycle_fee_e8s);
+    assert_eq!(
+        decoded_fee_policy.gas_price_buffer_bps,
+        fee_policy.gas_price_buffer_bps
+    );
+
+    let evm_config = WrapEvmConfigStored {
+        wrap_factory_address: vec![0xaa; 20],
+    };
+    let decoded_evm_config = WrapEvmConfigStored::from_bytes(evm_config.to_bytes());
+    assert_eq!(
+        decoded_evm_config.wrap_factory_address,
+        evm_config.wrap_factory_address
+    );
+
+    let pending = WrapPendingSubmission {
+        caller: vec![1],
+        request_id: vec![2; 32],
+    };
+    let decoded_pending = WrapPendingSubmission::from_bytes(pending.to_bytes());
+    assert_eq!(decoded_pending.caller, pending.caller);
+    assert_eq!(decoded_pending.request_id, pending.request_id);
 }
 
 fn test_log(address: [u8; 20], topics: Vec<[u8; 32]>, data: Vec<u8>) -> LogEntry {

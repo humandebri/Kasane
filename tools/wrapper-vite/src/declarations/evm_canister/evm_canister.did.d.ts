@@ -35,6 +35,18 @@ export interface DecodedTxView {
   'input' : Uint8Array,
   'gas_price' : [] | [bigint],
 }
+export interface DispatchNativeWithdrawalRequestArgs {
+  'request_id' : Uint8Array,
+  'recipient' : Principal,
+  'amount_e8s' : bigint,
+}
+export interface DispatchUnwrapRequestArgs {
+  'request_id' : Uint8Array,
+  'recipient' : Principal,
+  'amount_e8s' : bigint,
+  'asset_id' : Principal,
+}
+export interface DispatchUnwrapRequestOk { 'request_id' : Uint8Array }
 export interface DropCountView { 'code' : number, 'count' : bigint }
 export interface EstimateIcTxOk {
   'suggested_max_fee_per_gas' : bigint,
@@ -136,6 +148,11 @@ export interface ExportResponseView {
   'next_cursor' : [] | [ExportCursorView],
   'chunks' : Array<ExportChunkView>,
 }
+export interface FeePolicyView {
+  'fee_ledger_canister' : Principal,
+  'gas_price_buffer_bps' : number,
+  'cycle_fee_e8s' : bigint,
+}
 export interface GenesisBalanceView {
   'address' : Uint8Array,
   'amount' : bigint,
@@ -144,6 +161,19 @@ export type GetLogsErrorView = { 'TooManyResults' : null } |
   { 'RangeTooLarge' : null } |
   { 'InvalidArgument' : string } |
   { 'UnsupportedFilter' : string };
+export interface GetUnwrapRequirementsArgs {
+  'caller_evm_address' : Uint8Array,
+  'amount_e8s' : bigint,
+  'asset_id' : Principal,
+}
+export interface GetUnwrapRequirementsOk {
+  'balance' : bigint,
+  'wrapped_token_address' : [] | [Uint8Array],
+  'approve_required' : boolean,
+  'allowance' : bigint,
+  'factory_address' : Uint8Array,
+  'readiness' : UnwrapReadiness,
+}
 export interface HealthView {
   'query_instruction_soft_limit' : bigint,
   'update_instruction_soft_limit' : bigint,
@@ -198,6 +228,7 @@ export interface InitArgs {
   'genesis_balances' : Array<GenesisBalanceView>,
   'query_instruction_soft_limit' : [] | [bigint],
   'update_instruction_soft_limit' : [] | [bigint],
+  'wrap_config' : [] | [WrapConfigArgs],
   'wrap_canister_id' : Principal,
   'wrap_factory_address' : Uint8Array,
 }
@@ -311,6 +342,36 @@ export interface QueueSnapshotView {
   'next_cursor' : [] | [bigint],
   'items' : Array<QueueItemView>,
 }
+export interface QuoteNativeDepositArgs {
+  'evm_recipient' : Uint8Array,
+  'amount_e8s' : bigint,
+}
+export interface QuoteNativeDepositOk {
+  'charged_fee_e8s' : bigint,
+  'native_ledger_canister' : Principal,
+  'fee_ledger_canister' : Principal,
+}
+export interface QuoteNativeWithdrawalArgs {
+  'recipient' : Principal,
+  'amount_e8s' : bigint,
+}
+export interface QuoteNativeWithdrawalOk {
+  'native_ledger_canister' : Principal,
+  'ledger_fee_e8s' : bigint,
+  'receive_amount_e8s' : bigint,
+}
+export interface QuoteWrapRequestArgs {
+  'evm_recipient' : Uint8Array,
+  'amount_e8s' : bigint,
+  'gas_limit' : bigint,
+  'asset_id' : Principal,
+}
+export interface QuoteWrapRequestOk {
+  'charged_fee_e8s' : bigint,
+  'fee_ledger_canister' : Principal,
+  'charged_gas_price_wei' : bigint,
+  'cycle_fee_e8s' : bigint,
+}
 export interface ReceiptView {
   'effective_gas_price' : bigint,
   'status' : number,
@@ -326,48 +387,91 @@ export interface ReceiptView {
   'gas_used' : bigint,
   'contract_address' : [] | [Uint8Array],
 }
+export interface RecoverFailedWrapArgs { 'request_id' : Uint8Array }
 export type RequestDispatchStatusView = { 'Queued' : null } |
   { 'Dispatching' : null } |
   { 'Dispatched' : null } |
   { 'DispatchFailed' : null };
+export type RequestKind = { 'Wrap' : null } |
+  { 'Unwrap' : null };
+export interface RequestOverview {
+  'request_id' : Uint8Array,
+  'status' : RequestStatus,
+  'charged_fee_e8s' : [] | [bigint],
+  'withdraw_ledger_tx_id' : [] | [Uint8Array],
+  'kind' : RequestKind,
+  'dispatch_status' : [] | [RequestDispatchStatusView],
+  'error' : [] | [ApiErrorDetail],
+  'dispatch_error' : [] | [string],
+  'fee_ledger_tx_id' : [] | [Uint8Array],
+  'charged_gas_price_wei' : [] | [bigint],
+  'ledger_tx_id' : [] | [Uint8Array],
+  'mint_tx_id' : [] | [Uint8Array],
+  'pull_ledger_tx_id' : [] | [Uint8Array],
+}
+export type RequestStatus = { 'Queued' : null } |
+  { 'Failed' : null } |
+  { 'Succeeded' : null } |
+  { 'Running' : null };
 export type Result = { 'Ok' : null } |
   { 'Err' : ApiError };
-export type Result_1 = { 'Ok' : EstimateIcTxOk } |
+export type Result_1 = { 'Ok' : DispatchUnwrapRequestOk } |
   { 'Err' : ApiError };
-export type Result_10 = { 'Ok' : Uint8Array } |
-  { 'Err' : string };
-export type Result_11 = { 'Ok' : bigint } |
-  { 'Err' : RpcErrorView };
-export type Result_12 = { 'Ok' : RpcFeeHistoryView } |
-  { 'Err' : RpcErrorView };
-export type Result_13 = { 'Ok' : bigint } |
-  { 'Err' : RpcErrorView };
-export type Result_14 = { 'Ok' : Uint8Array } |
-  { 'Err' : RpcErrorView };
-export type Result_15 = { 'Ok' : [] | [bigint] } |
-  { 'Err' : string };
-export type Result_16 = { 'Ok' : EthLogsPageView } |
-  { 'Err' : GetLogsErrorView };
-export type Result_17 = { 'Ok' : Uint8Array } |
-  { 'Err' : SubmitTxError };
-export type Result_18 = { 'Ok' : null } |
-  { 'Err' : string };
-export type Result_2 = { 'Ok' : bigint } |
-  { 'Err' : string };
-export type Result_3 = { 'Ok' : ExportResponseView } |
-  { 'Err' : ExportErrorView };
-export type Result_4 = { 'Ok' : BlockView } |
-  { 'Err' : LookupError };
-export type Result_5 = { 'Ok' : ReceiptView } |
-  { 'Err' : LookupError };
-export type Result_6 = { 'Ok' : Icrc21ConsentInfo } |
+export type Result_10 = { 'Ok' : Icrc21ConsentInfo } |
   { 'Err' : Icrc21Error };
-export type Result_7 = { 'Ok' : string } |
+export type Result_11 = { 'Ok' : string } |
   { 'Err' : string };
-export type Result_8 = { 'Ok' : PruneResultView } |
+export type Result_12 = { 'Ok' : PruneResultView } |
   { 'Err' : ProduceBlockError };
-export type Result_9 = { 'Ok' : RpcCallResultView } |
+export type Result_13 = { 'Ok' : QuoteNativeDepositOk } |
+  { 'Err' : ApiError };
+export type Result_14 = { 'Ok' : QuoteNativeWithdrawalOk } |
+  { 'Err' : ApiError };
+export type Result_15 = { 'Ok' : QuoteWrapRequestOk } |
+  { 'Err' : ApiError };
+export type Result_16 = { 'Ok' : RequestOverview } |
+  { 'Err' : ApiError };
+export type Result_17 = { 'Ok' : RpcCallResultView } |
   { 'Err' : RpcErrorView };
+export type Result_18 = { 'Ok' : Uint8Array } |
+  { 'Err' : string };
+export type Result_19 = { 'Ok' : bigint } |
+  { 'Err' : RpcErrorView };
+export type Result_2 = { 'Ok' : EstimateIcTxOk } |
+  { 'Err' : ApiError };
+export type Result_20 = { 'Ok' : RpcFeeHistoryView } |
+  { 'Err' : RpcErrorView };
+export type Result_21 = { 'Ok' : bigint } |
+  { 'Err' : RpcErrorView };
+export type Result_22 = { 'Ok' : Uint8Array } |
+  { 'Err' : RpcErrorView };
+export type Result_23 = { 'Ok' : [] | [bigint] } |
+  { 'Err' : string };
+export type Result_24 = { 'Ok' : EthLogsPageView } |
+  { 'Err' : GetLogsErrorView };
+export type Result_25 = { 'Ok' : Uint8Array } |
+  { 'Err' : SubmitTxError };
+export type Result_26 = { 'Ok' : null } |
+  { 'Err' : string };
+export type Result_27 = { 'Ok' : SubmitNativeDepositOk } |
+  { 'Err' : ApiError };
+export type Result_28 = { 'Ok' : SubmitWrapRequestOk } |
+  { 'Err' : ApiError };
+export type Result_3 = { 'Ok' : bigint } |
+  { 'Err' : string };
+export type Result_4 = { 'Ok' : ExportResponseView } |
+  { 'Err' : ExportErrorView };
+export type Result_5 = { 'Ok' : Array<Principal> } |
+  { 'Err' : string };
+export type Result_6 = { 'Ok' : BlockView } |
+  { 'Err' : LookupError };
+export type Result_7 = { 'Ok' : FeePolicyView } |
+  { 'Err' : string };
+export type Result_8 = { 'Ok' : ReceiptView } |
+  { 'Err' : LookupError };
+export type Result_9 = { 'Ok' : GetUnwrapRequirementsOk } |
+  { 'Err' : ApiError };
+export interface RetryRequestArgs { 'request_id' : Uint8Array }
 export interface RpcAccessListItemView {
   'storage_keys' : Array<Uint8Array>,
   'address' : Uint8Array,
@@ -431,9 +535,37 @@ export interface SubmitIcTxArgsDto {
   'nonce' : bigint,
   'gas_limit' : bigint,
 }
+export interface SubmitNativeDepositArgs {
+  'deposit_id' : Uint8Array,
+  'max_fee_e8s' : bigint,
+  'evm_recipient' : Uint8Array,
+  'amount_e8s' : bigint,
+  'fee_ledger_canister' : Principal,
+}
+export interface SubmitNativeDepositOk {
+  'request_id' : Uint8Array,
+  'charged_fee_e8s' : bigint,
+  'fee_ledger_tx_id' : Uint8Array,
+}
 export type SubmitTxError = { 'Internal' : string } |
   { 'Rejected' : string } |
   { 'InvalidArgument' : string };
+export interface SubmitWrapRequestArgs {
+  'max_fee_e8s' : bigint,
+  'evm_recipient' : Uint8Array,
+  'amount_e8s' : bigint,
+  'fee_ledger_canister' : Principal,
+  'gas_limit' : bigint,
+  'asset_id' : Principal,
+  'quoted_gas_price_wei' : bigint,
+  'evm_nonce' : bigint,
+}
+export interface SubmitWrapRequestOk {
+  'request_id' : Uint8Array,
+  'charged_fee_e8s' : bigint,
+  'fee_ledger_tx_id' : Uint8Array,
+  'charged_gas_price_wei' : bigint,
+}
 export type TxKindView = { 'EthSigned' : null } |
   { 'IcSynthetic' : null };
 export interface UnwrapDispatchOverviewView {
@@ -441,16 +573,41 @@ export interface UnwrapDispatchOverviewView {
   'status' : RequestDispatchStatusView,
   'error' : [] | [string],
 }
+export type UnwrapReadiness = { 'TokenNotDeployed' : null } |
+  { 'InsufficientAllowance' : null } |
+  { 'InsufficientBalance' : null } |
+  { 'Ready' : null };
+export interface WrapConfigArgs {
+  'native_ledger_canister' : Principal,
+  'allowed_assets' : Array<Principal>,
+  'fee_ledger_canister' : Principal,
+  'gas_price_buffer_bps' : number,
+  'cycle_fee_e8s' : bigint,
+}
 export interface _SERVICE {
   'credit_native_deposit' : ActorMethod<
     [Uint8Array, Uint8Array, bigint],
     Result
   >,
-  'estimate_ic_tx' : ActorMethod<[SubmitIcTxArgsDto], Result_1>,
-  'expected_nonce_by_address' : ActorMethod<[Uint8Array], Result_2>,
-  'export_blocks' : ActorMethod<[[] | [ExportCursorView], number], Result_3>,
-  'get_block' : ActorMethod<[bigint], Result_4>,
+  'dispatch_native_withdrawal_request' : ActorMethod<
+    [DispatchNativeWithdrawalRequestArgs],
+    Result_1
+  >,
+  'dispatch_unwrap_request' : ActorMethod<
+    [DispatchUnwrapRequestArgs],
+    Result_1
+  >,
+  'estimate_ic_tx' : ActorMethod<[SubmitIcTxArgsDto], Result_2>,
+  'expected_nonce_by_address' : ActorMethod<[Uint8Array], Result_3>,
+  'export_blocks' : ActorMethod<[[] | [ExportCursorView], number], Result_4>,
+  'get_allowed_assets' : ActorMethod<[], Result_5>,
+  'get_block' : ActorMethod<[bigint], Result_6>,
   'get_cycle_balance' : ActorMethod<[], bigint>,
+  'get_fee_policy' : ActorMethod<[], Result_7>,
+  'get_native_deposit_result' : ActorMethod<
+    [Uint8Array],
+    [] | [RequestOverview]
+  >,
   'get_ops_status' : ActorMethod<[], OpsStatusView>,
   'get_pending' : ActorMethod<[Uint8Array], PendingStatusView>,
   'get_prune_status' : ActorMethod<[], PruneStatusView>,
@@ -458,7 +615,8 @@ export interface _SERVICE {
     [number, [] | [bigint]],
     QueueSnapshotView
   >,
-  'get_receipt' : ActorMethod<[Uint8Array], Result_5>,
+  'get_receipt' : ActorMethod<[Uint8Array], Result_8>,
+  'get_request' : ActorMethod<[Uint8Array], [] | [RequestOverview]>,
   'get_unwrap_dispatch_overview' : ActorMethod<
     [Uint8Array],
     [] | [UnwrapDispatchOverviewView]
@@ -471,35 +629,49 @@ export interface _SERVICE {
     [Uint8Array],
     Array<Uint8Array>
   >,
+  'get_unwrap_requirements' : ActorMethod<
+    [GetUnwrapRequirementsArgs],
+    Result_9
+  >,
   'health' : ActorMethod<[], HealthView>,
   'icrc10_supported_standards' : ActorMethod<[], Array<StandardRecord>>,
   'icrc21_canister_call_consent_message' : ActorMethod<
     [Icrc21ConsentMessageRequest],
-    Result_6
+    Result_10
   >,
   'memory_breakdown' : ActorMethod<[], MemoryBreakdownView>,
   'metrics' : ActorMethod<[bigint], MetricsView>,
-  'metrics_prometheus' : ActorMethod<[], Result_7>,
-  'prune_blocks' : ActorMethod<[bigint, number], Result_8>,
+  'metrics_prometheus' : ActorMethod<[], Result_11>,
+  'prune_blocks' : ActorMethod<[bigint, number], Result_12>,
+  'quote_native_deposit' : ActorMethod<[QuoteNativeDepositArgs], Result_13>,
+  'quote_native_withdrawal' : ActorMethod<
+    [QuoteNativeWithdrawalArgs],
+    Result_14
+  >,
+  'quote_wrap_request' : ActorMethod<[QuoteWrapRequestArgs], Result_15>,
+  'recover_failed_wrap' : ActorMethod<[RecoverFailedWrapArgs], Result_16>,
+  'retry_native_deposit' : ActorMethod<[RetryRequestArgs], Result_16>,
+  'retry_native_withdrawal' : ActorMethod<[RetryRequestArgs], Result_16>,
+  'retry_request' : ActorMethod<[RetryRequestArgs], Result_16>,
   'rpc_eth_block_number' : ActorMethod<[], bigint>,
-  'rpc_eth_call_object' : ActorMethod<[RpcCallObjectView], Result_9>,
+  'rpc_eth_call_object' : ActorMethod<[RpcCallObjectView], Result_17>,
   'rpc_eth_call_object_at' : ActorMethod<
     [RpcCallObjectView, RpcBlockTagView],
-    Result_9
+    Result_17
   >,
-  'rpc_eth_call_rawtx' : ActorMethod<[Uint8Array], Result_10>,
+  'rpc_eth_call_rawtx' : ActorMethod<[Uint8Array], Result_18>,
   'rpc_eth_chain_id' : ActorMethod<[], bigint>,
-  'rpc_eth_estimate_gas_object' : ActorMethod<[RpcCallObjectView], Result_11>,
+  'rpc_eth_estimate_gas_object' : ActorMethod<[RpcCallObjectView], Result_19>,
   'rpc_eth_estimate_gas_object_at' : ActorMethod<
     [RpcCallObjectView, RpcBlockTagView],
-    Result_11
+    Result_19
   >,
   'rpc_eth_fee_history' : ActorMethod<
     [bigint, RpcBlockTagView, [] | [Array<number>]],
-    Result_12
+    Result_20
   >,
-  'rpc_eth_gas_price' : ActorMethod<[], Result_13>,
-  'rpc_eth_get_balance' : ActorMethod<[Uint8Array, RpcBlockTagView], Result_14>,
+  'rpc_eth_gas_price' : ActorMethod<[], Result_21>,
+  'rpc_eth_get_balance' : ActorMethod<[Uint8Array, RpcBlockTagView], Result_22>,
   'rpc_eth_get_block_by_number' : ActorMethod<
     [bigint, boolean],
     [] | [EthBlockView]
@@ -510,16 +682,16 @@ export interface _SERVICE {
   >,
   'rpc_eth_get_block_number_by_hash' : ActorMethod<
     [Uint8Array, number],
-    Result_15
+    Result_23
   >,
-  'rpc_eth_get_code' : ActorMethod<[Uint8Array, RpcBlockTagView], Result_14>,
+  'rpc_eth_get_code' : ActorMethod<[Uint8Array, RpcBlockTagView], Result_22>,
   'rpc_eth_get_logs_paged' : ActorMethod<
     [EthLogFilterView, [] | [EthLogsCursorView], number],
-    Result_16
+    Result_24
   >,
   'rpc_eth_get_storage_at' : ActorMethod<
     [Uint8Array, Uint8Array, RpcBlockTagView],
-    Result_14
+    Result_22
   >,
   'rpc_eth_get_transaction_by_eth_hash' : ActorMethod<
     [Uint8Array],
@@ -531,7 +703,7 @@ export interface _SERVICE {
   >,
   'rpc_eth_get_transaction_count_at' : ActorMethod<
     [Uint8Array, RpcBlockTagView],
-    Result_11
+    Result_19
   >,
   'rpc_eth_get_transaction_receipt_by_eth_hash' : ActorMethod<
     [Uint8Array],
@@ -546,12 +718,16 @@ export interface _SERVICE {
     RpcReceiptLookupView
   >,
   'rpc_eth_history_window' : ActorMethod<[], RpcHistoryWindowView>,
-  'rpc_eth_max_priority_fee_per_gas' : ActorMethod<[], Result_13>,
-  'rpc_eth_send_raw_transaction' : ActorMethod<[Uint8Array], Result_17>,
-  'set_log_filter' : ActorMethod<[[] | [string]], Result_18>,
-  'set_prune_policy' : ActorMethod<[PrunePolicyView], Result_18>,
-  'set_pruning_enabled' : ActorMethod<[boolean], Result_18>,
-  'submit_ic_tx' : ActorMethod<[SubmitIcTxArgsDto], Result_17>,
+  'rpc_eth_max_priority_fee_per_gas' : ActorMethod<[], Result_21>,
+  'rpc_eth_send_raw_transaction' : ActorMethod<[Uint8Array], Result_25>,
+  'set_allowed_assets' : ActorMethod<[Array<Principal>], Result_26>,
+  'set_fee_policy' : ActorMethod<[FeePolicyView], Result_26>,
+  'set_log_filter' : ActorMethod<[[] | [string]], Result_26>,
+  'set_prune_policy' : ActorMethod<[PrunePolicyView], Result_26>,
+  'set_pruning_enabled' : ActorMethod<[boolean], Result_26>,
+  'submit_ic_tx' : ActorMethod<[SubmitIcTxArgsDto], Result_25>,
+  'submit_native_deposit' : ActorMethod<[SubmitNativeDepositArgs], Result_27>,
+  'submit_wrap_request' : ActorMethod<[SubmitWrapRequestArgs], Result_28>,
 }
 export declare const idlFactory: IDL.InterfaceFactory;
 export declare const init: (args: { IDL: typeof IDL }) => IDL.Type[];

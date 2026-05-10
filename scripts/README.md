@@ -133,15 +133,14 @@ scripts/measure_precompile_ratio.sh
 
 ### Mainnet Operations
 - `scripts/mainnet/ic_mainnet_preflight.sh`: minimum pre-mainnet checks
-  - `CANISTER_NAME` defaults to `evm_canister`; this script does not cover `wrap_canister`
+  - `CANISTER_NAME` defaults to `evm_canister`
   - default cycles floor is `MIN_CYCLES=2000000000000`
 - `scripts/mainnet/ic_mainnet_deploy.sh`: main deployment script
   - the default build does not enable the `precompile-profile-admin` feature
   - measure precompile ratio before deploy with `scripts/run_precompile_profile_e2e.sh` / `scripts/measure_precompile_ratio.sh`; if you need to change the default fixed ratio `1/100`, rebuild and redeploy
   - even with `MODE=upgrade`, `WRAP_CANISTER_ID` and `EVM_WRAP_FACTORY` are required
   - set `QUERY_INSTRUCTION_SOFT_LIMIT` / `UPDATE_INSTRUCTION_SOFT_LIMIT` only when you intentionally want install / upgrade to overwrite the current soft limits
-  - when deploying wrapper-vite at the same time, deploy `evm_canister` -> `wrap_canister` -> frontend; the frontend depends on `get_unwrap_request_ids_by_eth_tx_hash`
-  - this script targets `evm_canister`; upgrade `wrap_canister` separately via [docs/ops/wrap-canister-deploy-runbook.ja.md](/Users/0xhude/Desktop/ICP/Kasane/docs/ops/wrap-canister-deploy-runbook.ja.md)
+  - when deploying wrapper-vite at the same time, deploy `evm_canister` -> frontend; the frontend depends on `get_unwrap_request_ids_by_eth_tx_hash`
 - `scripts/mainnet/ic_mainnet_post_upgrade_smoke.sh`: minimum RPC checks after deploy
 - `scripts/verify_submit_after_deploy.sh`: manual/CI hook for verify submit
 - `scripts/mainnet/mainnet_method_test.sh`: heavy mainnet method test
@@ -161,7 +160,7 @@ scripts/measure_precompile_ratio.sh
 ## Key Environment Variables
 - `CANISTER_NAME` / `CANISTER_ID`
 - `WRAP_CANISTER_ID`
-  - used by wrap/unwrap smoke and ledger scripts that need the actual wrap canister principal
+  - integrated wrap uses the `evm_canister` principal
 - `EVM_WRAP_FACTORY`
   - required by `scripts/mainnet/ic_mainnet_deploy.sh`; pass the 20-byte EVM factory address as `0x...`
 - `QUERY_INSTRUCTION_SOFT_LIMIT`

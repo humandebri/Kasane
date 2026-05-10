@@ -242,7 +242,7 @@ async function runExecutionBranchTests(): Promise<void> {
   });
   assert.equal(wrapPreferred?.errorCode, "wrap_failed");
   assert.equal(wrapPreferred?.mintFailedRecoverable, true);
-  assert.equal(wrapPreferred?.withdrawErrorCode, "withdraw_failed");
+  assert.equal(wrapPreferred?.withdrawErrorCode, null);
 
   const missingWithdrawErrorCode = await getExecutionResult(requestId, {
     readRequest: async () => {
@@ -1319,16 +1319,6 @@ async function runInternetIdentityConfigTests(): Promise<void> {
       VITE_ICP_TOKEN_LIST_URL: "/icp-token-list.sample.json",
       VITE_KASANE_EVM_CANISTER_ID: "4c52m-aiaaa-aaaam-agwwa-cai",
     }),
-    /config\.missing:VITE_WRAP_CANISTER_ID/,
-  );
-  assert.throws(
-    () => configTestHooks.loadConfigFromEnv({
-      ...testEnvBase,
-      VITE_IC_HOST: "http://127.0.0.1:8000",
-      VITE_ICP_TOKEN_LIST_URL: "/icp-token-list.sample.json",
-      VITE_KASANE_EVM_CANISTER_ID: "4c52m-aiaaa-aaaam-agwwa-cai",
-      VITE_WRAP_CANISTER_ID: "t63gs-up777-77776-aaaba-cai",
-    }),
     /config\.missing:VITE_EVM_WRAP_FACTORY/,
   );
   assert.deepEqual(
@@ -1337,7 +1327,6 @@ async function runInternetIdentityConfigTests(): Promise<void> {
       VITE_IC_HOST: "http://127.0.0.1:8000",
       VITE_ICP_TOKEN_LIST_URL: "/icp-token-list.sample.json",
       VITE_KASANE_EVM_CANISTER_ID: "4c52m-aiaaa-aaaam-agwwa-cai",
-      VITE_WRAP_CANISTER_ID: "t63gs-up777-77776-aaaba-cai",
       VITE_EVM_WRAP_FACTORY: "0x88200f183e26d05bc6747ba7378cc73a68b6a12a",
       VITE_KASANE_RPC_URL: "https://rpc-testnet.kasane.network",
       VITE_KASANE_CHAIN_ID: "4801360",
@@ -1349,7 +1338,7 @@ async function runInternetIdentityConfigTests(): Promise<void> {
       icHost: "http://127.0.0.1:8000",
       icpTokenListUrl: "/icp-token-list.sample.json",
       kasaneEvmCanisterId: "4c52m-aiaaa-aaaam-agwwa-cai",
-      wrapCanisterId: "t63gs-up777-77776-aaaba-cai",
+      wrapCanisterId: "4c52m-aiaaa-aaaam-agwwa-cai",
       evmWrapFactory: "0x88200f183e26d05bc6747ba7378cc73a68b6a12a",
       kasaneRpcUrl: "https://rpc-testnet.kasane.network",
       kasaneChainId: 4_801_360n,

@@ -36,7 +36,6 @@ const REQUIRED_KEYS = [
   "VITE_IC_HOST",
   "VITE_ICP_TOKEN_LIST_URL",
   "VITE_KASANE_EVM_CANISTER_ID",
-  "VITE_WRAP_CANISTER_ID",
   "VITE_EVM_WRAP_FACTORY",
   "VITE_KASANE_RPC_URL",
   "VITE_KASANE_CHAIN_ID",
@@ -88,11 +87,13 @@ function parseChainId(value: string): bigint {
 
 export function loadConfigFromEnv(env: EnvMap): WrapperConfig {
   const icHost = requiredEnv("VITE_IC_HOST", env);
+  const icpTokenListUrl = requiredEnv("VITE_ICP_TOKEN_LIST_URL", env);
+  const kasaneEvmCanisterId = requiredEnv("VITE_KASANE_EVM_CANISTER_ID", env);
   return {
     icHost,
-    icpTokenListUrl: requiredEnv("VITE_ICP_TOKEN_LIST_URL", env),
-    kasaneEvmCanisterId: requiredEnv("VITE_KASANE_EVM_CANISTER_ID", env),
-    wrapCanisterId: requiredEnv("VITE_WRAP_CANISTER_ID", env),
+    icpTokenListUrl,
+    kasaneEvmCanisterId,
+    wrapCanisterId: kasaneEvmCanisterId,
     evmWrapFactory: requiredEnv("VITE_EVM_WRAP_FACTORY", env),
     kasaneRpcUrl: requiredEnv("VITE_KASANE_RPC_URL", env),
     kasaneChainId: parseChainId(requiredEnv("VITE_KASANE_CHAIN_ID", env)),

@@ -10,11 +10,6 @@
         }
       ],
       "type": "rust"
-    },
-    "wrap_canister": {
-      "candid": "othercanisters/wrap-canister/wrap_canister.did",
-      "package": "wrap-canister",
-      "type": "rust"
     }
   },
   "defaults": {

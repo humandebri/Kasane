@@ -30,14 +30,14 @@ benches:
   rpc_eth_call_object_path:
     total:
       calls: 1
-      instructions: 680983
-      heap_increase: 5
+      instructions: 683906
+      heap_increase: 6
       stable_memory_increase: 0
     scopes: {}
   rpc_eth_call_rawtx_path:
     total:
       calls: 1
-      instructions: 10572
+      instructions: 10575
       heap_increase: 0
       stable_memory_increase: 0
     scopes: {}
@@ -51,14 +51,14 @@ benches:
   submit_ic_tx_path:
     total:
       calls: 1
-      instructions: 72503
+      instructions: 72729
       heap_increase: 0
       stable_memory_increase: 0
     scopes: {}
   submit_ic_tx_path_cold:
     total:
       calls: 1
-      instructions: 12440494
+      instructions: 12441090
       heap_increase: 0
       stable_memory_increase: 0
     scopes: {}

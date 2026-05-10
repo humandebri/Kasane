@@ -38,14 +38,14 @@ npm run test:local:preflight
 ## Generated bindings
 
 - `npm run bindgen`
-  - `othercanisters/wrap-canister/wrap_canister.did` と `crates/ic-evm-gateway/evm_canister.did` から `src/declarations/` を再生成します
+  - `crates/ic-evm-gateway/evm_canister.did` から `src/declarations/` を再生成します
 - `npm run bindgen:check`
-  - `wrap_canister` / `evm_canister` の tracked bindings が current DID と一致するか検証します
+  - `evm_canister` の tracked bindings が current DID と一致するか検証します
   - あわせて `juno:functions:build` を使い、`satellite` の tracked bindings が current Juno definition と一致するか検証します
 - `test:local:preflight` と `test:local:wrapper:preflight` は先に `bindgen:check` を実行します
 - 生成源
   - `satellite` は Juno CLI が生成します
-  - `wrap_canister` / `evm_canister` は `npm run bindgen` が生成します
+  - `evm_canister` は `npm run bindgen` が生成します
 
 ## 環境変数 (`.env.local`)
 
@@ -221,7 +221,7 @@ npm run juno:emulator:stop
 
 - wallet UI は `Oisy` と `MetaMask` の 2 系統です
 - `Recent Requests` は Oisy principal 単位で保存・参照します
-- `wrap` / `retry` / `withdraw` は、Kasane `wrap_canister` に `ICRC-21` 実装が見当たらないため現状は無効化しています
+- `wrap` / `retry` / `withdraw` は、Kasane `evm_canister` に `ICRC-21` 実装が見当たらないため現状は無効化しています
 - `unwrap` の実行経路は現状 `MetaMask` を前提にします
 - MetaMask unwrap は Kasane testnet (`chain_id=4801360`) を前提に `eth_sendTransaction` で送信します
 - MetaMask unwrap の status modal は request_id ではなく tx hash を追跡します

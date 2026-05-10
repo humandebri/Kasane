@@ -42,7 +42,6 @@ WRAPPER_DIR="${ROOT_DIR}/tools/wrapper-vite"
 TSX_BIN="${WRAPPER_DIR}/node_modules/.bin/tsx"
 HELPER_TS="$(mktemp "${WRAPPER_DIR}/.kasane-local-ledger-helper.XXXXXX").mts"
 GATEWAY_WASM="${ROOT_DIR}/target/wasm32-unknown-unknown/release/ic_evm_gateway.wasm"
-WRAP_WASM="${ROOT_DIR}/target/wasm32-unknown-unknown/release/wrap_canister.wasm"
 
 cleanup() {
   rm -f "${HELPER_TS}"
@@ -400,13 +399,12 @@ icp network start "${NETWORK}" -d >/dev/null 2>&1 &
 
 prepare_ledger_artifacts
 
-log "build gateway and wrap wasm"
+log "build gateway wasm"
 if [[ "${SKIP_BUILD}" == "1" ]]; then
   [[ -f "${GATEWAY_WASM}" ]] || { echo "[local-wrap-unwrap-ledger] missing wasm: ${GATEWAY_WASM}" >&2; exit 1; }
-  [[ -f "${WRAP_WASM}" ]] || { echo "[local-wrap-unwrap-ledger] missing wasm: ${WRAP_WASM}" >&2; exit 1; }
   log "skip build and reuse existing release wasm"
 else
-  cargo build --release --target wasm32-unknown-unknown -p ic-evm-gateway -p wrap-canister
+  cargo build --release --target wasm32-unknown-unknown -p ic-evm-gateway
 fi
 log "build solidity factory contracts"
 (cd "${CONTRACTS_DIR}" && forge build >/dev/null)
@@ -414,9 +412,8 @@ log "build solidity factory contracts"
 log "create canisters"
 LEDGER_CANISTER_ID="$(retry_command_output "create detached ledger canister" icp canister create -e "${NETWORK}" --identity "${ICP_IDENTITY_NAME}" --detached -q)"
 retry_command_output "create evm_canister" icp canister create -e "${NETWORK}" --identity "${ICP_IDENTITY_NAME}" evm_canister >/dev/null
-retry_command_output "create wrap_canister" icp canister create -e "${NETWORK}" --identity "${ICP_IDENTITY_NAME}" wrap_canister >/dev/null
 EVM_CANISTER_ID="$(retry_command_output "resolve evm canister id" icp canister status -e "${NETWORK}" --identity "${ICP_IDENTITY_NAME}" --id-only evm_canister)"
-WRAP_CANISTER_ID="$(retry_command_output "resolve wrap canister id" icp canister status -e "${NETWORK}" --identity "${ICP_IDENTITY_NAME}" --id-only wrap_canister)"
+WRAP_CANISTER_ID="${EVM_CANISTER_ID}"
 CALLER_PRINCIPAL="$(icp identity principal --identity "${ICP_IDENTITY_NAME}")"
 LEDGER_MINTER_PRINCIPAL="${LEDGER_MINTER_PRINCIPAL:-${EVM_CANISTER_ID}}"
 CALLER_EVM_HEX="$(cargo run -q -p ic-evm-core --bin derive_evm_address -- "${CALLER_PRINCIPAL}")"
@@ -474,6 +471,13 @@ hexv = "${FACTORY_ADDRESS_HEX}".removeprefix("0x").strip()
 print("; ".join(str(b) for b in bytes.fromhex(hexv)))
 PY
 ) };
+  wrap_config = opt record {
+    fee_ledger_canister = principal \"${LEDGER_CANISTER_ID}\";
+    native_ledger_canister = principal \"${LEDGER_CANISTER_ID}\";
+    cycle_fee_e8s = ${CYCLE_FEE_E8S} : nat64;
+    gas_price_buffer_bps = ${GAS_PRICE_BUFFER_BPS} : nat32;
+    allowed_assets = vec { principal \"${LEDGER_CANISTER_ID}\" };
+  };
 })"
 GATEWAY_INIT_ARGS_HEX="$(
   didc encode \
@@ -523,36 +527,12 @@ FACTORY_DEPLOYED_ADDRESS_HEX="$(printf '%s' "${FACTORY_RECEIPT_OUT}" | extract_n
 }
 FACTORY_ADDRESS_HEX="${FACTORY_DEPLOYED_ADDRESS_HEX}"
 
-WRAP_INIT_ARGS="(record {
-  kasane_canister = principal \"${EVM_CANISTER_ID}\";
-  evm_gateway_canister = principal \"${EVM_CANISTER_ID}\";
-  fee_ledger_canister = principal \"${LEDGER_CANISTER_ID}\";
-  native_ledger_canister = principal \"${EVM_CANISTER_ID}\";
-  wrap_factory_address = vec { $(python - <<PY
-hexv = "${FACTORY_ADDRESS_HEX}".strip()
-print("; ".join(str(b) for b in bytes.fromhex(hexv)))
-PY
-) };
-  cycle_fee_e8s = ${CYCLE_FEE_E8S} : nat64;
-  gas_price_buffer_bps = ${GAS_PRICE_BUFFER_BPS} : nat32;
-  allowed_assets = vec { principal \"${LEDGER_CANISTER_ID}\" };
-})"
-WRAP_INIT_ARGS_HEX="$(
-  didc encode \
-    -d "${ROOT_DIR}/othercanisters/wrap-canister/wrap_canister.did" \
-    -t '(InitArgs)' \
-    "${WRAP_INIT_ARGS}"
-)"
-
-log "install wrap canister"
-icp canister install wrap_canister -e "${NETWORK}" --identity "${ICP_IDENTITY_NAME}" --mode reinstall --wasm "${WRAP_WASM}" --args-format hex --args "${WRAP_INIT_ARGS_HEX}" >/dev/null
-
 wait_for_pattern \
   "gas price" \
   "query_pp '${ROOT_DIR}/crates/ic-evm-gateway/evm_canister.did' evm_canister rpc_eth_gas_price '()'" \
   "Ok ="
 
-WRAP_QUOTE_OUT="$(query_pp "${ROOT_DIR}/othercanisters/wrap-canister/wrap_canister.did" wrap_canister quote_wrap_request "(record {
+WRAP_QUOTE_OUT="$(query_pp "${ROOT_DIR}/crates/ic-evm-gateway/evm_canister.did" evm_canister quote_wrap_request "(record {
   asset_id = principal \"${LEDGER_CANISTER_ID}\";
   amount_e8s = ${WRAP_AMOUNT} : nat;
   evm_recipient = vec { $(python - <<'PY'
@@ -579,7 +559,7 @@ PY
 }
 
 log "wrap should fail before approve with insufficient allowance"
-WRAP_NO_APPROVE_OUT="$(update_call "${ROOT_DIR}/othercanisters/wrap-canister/wrap_canister.did" wrap_canister submit_wrap_request "(record {
+WRAP_NO_APPROVE_OUT="$(update_call "${ROOT_DIR}/crates/ic-evm-gateway/evm_canister.did" evm_canister submit_wrap_request "(record {
   asset_id = principal \"${LEDGER_CANISTER_ID}\";
   amount_e8s = ${WRAP_AMOUNT} : nat;
   evm_recipient = vec { $(python - <<'PY'
@@ -610,7 +590,7 @@ update_call "${LEDGER_DID}" "${LEDGER_CANISTER_ID}" icrc2_approve "(record {
 })" >/dev/null
 
 log "submit wrap request and wait for successful mint"
-WRAP_SUBMIT_OUT="$(update_call "${ROOT_DIR}/othercanisters/wrap-canister/wrap_canister.did" wrap_canister submit_wrap_request "(record {
+WRAP_SUBMIT_OUT="$(update_call "${ROOT_DIR}/crates/ic-evm-gateway/evm_canister.did" evm_canister submit_wrap_request "(record {
   asset_id = principal \"${LEDGER_CANISTER_ID}\";
   amount_e8s = ${WRAP_AMOUNT} : nat;
   evm_recipient = vec { $(python - <<'PY'
@@ -630,7 +610,7 @@ PY
 
 WRAP_REQUEST_ID_HEX="$(printf '%s' "${WRAP_SUBMIT_OUT}" | extract_result_ok_blob_hex)"
 WRAP_REQUEST_ID_VEC="$(hex_to_candid_vec "${WRAP_REQUEST_ID_HEX}")"
-WRAP_RESULT_CMD="query_pp '${ROOT_DIR}/othercanisters/wrap-canister/wrap_canister.did' wrap_canister get_request '( ${WRAP_REQUEST_ID_VEC} )'"
+WRAP_RESULT_CMD="query_pp '${ROOT_DIR}/crates/ic-evm-gateway/evm_canister.did' evm_canister get_request '( ${WRAP_REQUEST_ID_VEC} )'"
 WRAP_SUCCESS_OUT="$(wait_for_pattern "wrap success result" "${WRAP_RESULT_CMD}" "status = variant { Succeeded }")"
 [[ "${WRAP_SUCCESS_OUT}" == *"fee_ledger_tx_id = opt blob"* ]] || { echo "${WRAP_SUCCESS_OUT}" >&2; exit 1; }
 [[ "${WRAP_SUCCESS_OUT}" == *"pull_ledger_tx_id = opt blob"* ]] || { echo "${WRAP_SUCCESS_OUT}" >&2; exit 1; }
@@ -735,9 +715,9 @@ PY
 DISPATCH_CMD="query_pp '${ROOT_DIR}/crates/ic-evm-gateway/evm_canister.did' evm_canister get_unwrap_dispatch_overview '( ${UNWRAP_REQUEST_ID_VEC} )'"
 DISPATCH_OUT="$(wait_for_pattern "unwrap dispatch" "${DISPATCH_CMD}" "status = variant { Dispatched }")"
 
-WRAP_UNWRAP_CMD="query_pp '${ROOT_DIR}/othercanisters/wrap-canister/wrap_canister.did' wrap_canister get_request '( ${UNWRAP_REQUEST_ID_VEC} )'"
+WRAP_UNWRAP_CMD="query_pp '${ROOT_DIR}/crates/ic-evm-gateway/evm_canister.did' evm_canister get_request '( ${UNWRAP_REQUEST_ID_VEC} )'"
 UNWRAP_RESULT_OUT="$(wait_for_pattern "unwrap execution" "${WRAP_UNWRAP_CMD}" "status = variant { Succeeded }")"
 [[ "${UNWRAP_RESULT_OUT}" == *"ledger_tx_id = opt blob"* ]] || { echo "${UNWRAP_RESULT_OUT}" >&2; exit 1; }
 
 log "smoke completed"
-log "ledger=${LEDGER_CANISTER_ID} evm=${EVM_CANISTER_ID} wrap=${WRAP_CANISTER_ID}"
+log "ledger=${LEDGER_CANISTER_ID} evm=${EVM_CANISTER_ID}"

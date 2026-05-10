@@ -3,10 +3,10 @@ use super::{
     inspect_policy_for_method, migration_pending, parse_submit_ic_tx_args,
     pop_next_dispatch_request, reject_anonymous_principal, reject_write_reason,
     should_run_cycle_observer_migration_tick, should_schedule_mining_after_cycle_observer,
-    tx_id_from_bytes, validate_prune_policy_input, EthLogFilterView, ExecuteTxError,
-    GenesisBalanceView, GetLogsErrorView, InitArgs, PrunePolicyView, SubmitIcTxArgsDto,
-    DEFAULT_BLOCK_GAS_LIMIT, DEFAULT_MIN_FEE_FLOOR, INSPECT_METHOD_POLICIES, MINING_ERROR_COUNT,
-    PRUNE_ERROR_COUNT,
+    tx_id_from_bytes, validate_prune_policy_input, ApiError, EthLogFilterView, ExecuteTxError,
+    GenesisBalanceView, GetLogsErrorView, InitArgs, PrunePolicyView, QuoteNativeDepositArgs,
+    QuoteWrapRequestArgs, SubmitIcTxArgsDto, WrapConfigArgs, DEFAULT_BLOCK_GAS_LIMIT,
+    DEFAULT_MIN_FEE_FLOOR, INSPECT_METHOD_POLICIES, MINING_ERROR_COUNT, PRUNE_ERROR_COUNT,
 };
 use candid::{encode_one, Nat, Principal};
 use evm_core::chain;
@@ -18,8 +18,9 @@ use evm_core::wrap_precompile::WRAP_PRECOMPILE_ADDRESS;
 use evm_db::chain_data::constants::MAX_RETURN_DATA;
 use evm_db::chain_data::receipt::log_entry_from_parts;
 use evm_db::chain_data::{
-    BlockData, MigrationPhase, OpsMode, ReceiptLike, StoredTxBytes, TxId, TxKind, TxLoc,
-    UnwrapDispatchRequest, UnwrapRequestStatus,
+    BlockData, MigrationPhase, OpsMode, ReceiptLike, RequestStatus, RuntimeConfigV1, StoredTxBytes,
+    TxId, TxKind, TxLoc, UnwrapDispatchRequest, UnwrapRequestStatus, WrapRequestResult,
+    WrapStoredRequest,
 };
 use evm_db::memory::{get_memory, AppMemoryId, WASM_PAGE_SIZE_BYTES};
 use evm_db::meta::{
@@ -88,6 +89,13 @@ fn run_post_upgrade_migrations_until_settled() {
     panic!(
         "post-upgrade schema/state-root migrations did not settle within {} iterations",
         POST_UPGRADE_MIGRATION_MAX_ITERS
+    );
+}
+
+fn install_runtime_wrap_canister_id(wrap_canister_id: Principal) {
+    evm_db::stable_state::set_runtime_config(
+        RuntimeConfigV1::try_new_from_bytes(wrap_canister_id.as_slice(), [0x44u8; 20])
+            .expect("runtime config"),
     );
 }
 
@@ -970,85 +978,6 @@ fn recover_unwrap_dispatch_after_upgrade_ignores_terminal_requests() {
 }
 
 #[test]
-fn rejection_stays_failed() {
-    let out = super::apply_unwrap_dispatch_outcome(super::WrapSubmitDispatchOutcome::Rejected(
-        "request.invalid".to_string(),
-    ));
-    assert_eq!(
-        out,
-        super::AppliedUnwrapDispatchOutcome {
-            status: UnwrapRequestStatus::DispatchFailed,
-            error_code: Some("wrap.submit_failed:request.invalid".to_string()),
-        }
-    );
-}
-
-#[test]
-fn request_id_mismatch_stays_failed() {
-    let out =
-        super::apply_unwrap_dispatch_outcome(super::WrapSubmitDispatchOutcome::RequestIdMismatch);
-    assert_eq!(
-        out,
-        super::AppliedUnwrapDispatchOutcome {
-            status: UnwrapRequestStatus::DispatchFailed,
-            error_code: Some("wrap.request_id_mismatch".to_string()),
-        }
-    );
-}
-
-#[test]
-fn call_failed_stays_failed() {
-    let out = super::apply_unwrap_dispatch_outcome(super::WrapSubmitDispatchOutcome::CallFailed(
-        "transport".to_string(),
-    ));
-    assert_eq!(
-        out,
-        super::AppliedUnwrapDispatchOutcome {
-            status: UnwrapRequestStatus::DispatchFailed,
-            error_code: Some("wrap.call_failed:transport".to_string()),
-        }
-    );
-}
-
-#[test]
-fn decode_failed_stays_failed() {
-    let out = super::apply_unwrap_dispatch_outcome(super::WrapSubmitDispatchOutcome::DecodeFailed(
-        "decode".to_string(),
-    ));
-    assert_eq!(
-        out,
-        super::AppliedUnwrapDispatchOutcome {
-            status: UnwrapRequestStatus::DispatchFailed,
-            error_code: Some("wrap.decode_failed:decode".to_string()),
-        }
-    );
-}
-
-#[test]
-fn resolve_wrap_submit_ok_accepts_matching_request_id() {
-    let expected = [0x11u8; 32];
-    let out = super::resolve_wrap_submit_ok(
-        &expected,
-        &super::WrapSubmitUnwrapRequestOk {
-            request_id: expected.to_vec(),
-        },
-    );
-    assert_eq!(out, super::WrapSubmitDispatchOutcome::Accepted);
-}
-
-#[test]
-fn resolve_wrap_submit_ok_rejects_mismatched_request_id() {
-    let expected = [0x11u8; 32];
-    let out = super::resolve_wrap_submit_ok(
-        &expected,
-        &super::WrapSubmitUnwrapRequestOk {
-            request_id: vec![0x22u8; 32],
-        },
-    );
-    assert_eq!(out, super::WrapSubmitDispatchOutcome::RequestIdMismatch);
-}
-
-#[test]
 fn finalize_unwrap_dispatch_attempt_keeps_call_failed_out_of_queue() {
     init_stable_state();
     let request_id = TxId([0x65u8; 32]);
@@ -1064,6 +993,7 @@ fn finalize_unwrap_dispatch_attempt_keeps_call_failed_out_of_queue() {
         444,
         super::AppliedUnwrapDispatchOutcome {
             status: UnwrapRequestStatus::DispatchFailed,
+            ledger_tx_id: None,
             error_code: Some("wrap.call_failed:transport".to_string()),
         },
     );
@@ -1096,6 +1026,7 @@ fn finalize_unwrap_dispatch_attempt_keeps_terminal_failure_out_of_queue() {
         555,
         super::AppliedUnwrapDispatchOutcome {
             status: UnwrapRequestStatus::DispatchFailed,
+            ledger_tx_id: None,
             error_code: Some("wrap.submit_failed:request.invalid".to_string()),
         },
     );
@@ -1404,6 +1335,7 @@ fn init_args_apply_instruction_soft_limits_only_when_present() {
         }],
         wrap_canister_id: Principal::self_authenticating(b"wrap"),
         wrap_factory_address: vec![0x22u8; 20],
+        wrap_config: None,
         query_instruction_soft_limit: Some(123),
         update_instruction_soft_limit: None,
     };
@@ -1430,6 +1362,7 @@ fn init_args_can_override_both_instruction_soft_limits() {
         }],
         wrap_canister_id: Principal::self_authenticating(b"wrap-2"),
         wrap_factory_address: vec![0x44u8; 20],
+        wrap_config: None,
         query_instruction_soft_limit: Some(321),
         update_instruction_soft_limit: Some(654),
     };
@@ -1453,6 +1386,7 @@ fn init_args_reject_zero_instruction_soft_limits() {
         }],
         wrap_canister_id: Principal::self_authenticating(b"wrap-zero"),
         wrap_factory_address: vec![0x44u8; 20],
+        wrap_config: None,
         query_instruction_soft_limit: None,
         update_instruction_soft_limit: None,
     };
@@ -1469,6 +1403,598 @@ fn init_args_reject_zero_instruction_soft_limits() {
         update_zero.validate().expect_err("update zero"),
         "update_instruction_soft_limit must be > 0"
     );
+}
+
+#[test]
+fn init_args_apply_wrap_config_to_integrated_state() {
+    init_stable_state();
+    let fee_ledger = Principal::self_authenticating(b"fee-ledger");
+    let native_ledger = Principal::self_authenticating(b"native-ledger");
+    let allowed_asset = Principal::self_authenticating(b"asset-ledger");
+    let args = InitArgs {
+        genesis_balances: vec![GenesisBalanceView {
+            address: vec![0x33u8; 20],
+            amount: 1,
+        }],
+        wrap_canister_id: Principal::self_authenticating(b"wrap-integrated"),
+        wrap_factory_address: vec![0x44u8; 20],
+        wrap_config: Some(WrapConfigArgs {
+            fee_ledger_canister: fee_ledger,
+            native_ledger_canister: native_ledger,
+            cycle_fee_e8s: 1_000_000,
+            gas_price_buffer_bps: 12_000,
+            allowed_assets: vec![allowed_asset],
+        }),
+        query_instruction_soft_limit: None,
+        update_instruction_soft_limit: None,
+    };
+
+    super::apply_wrap_config_from_init_args(&args);
+
+    evm_db::stable_state::with_state(|state| {
+        let fee_policy = state.wrap_fee_policy.get();
+        assert_eq!(fee_policy.fee_ledger_canister, fee_ledger.as_slice());
+        assert_eq!(fee_policy.cycle_fee_e8s, 1_000_000);
+        assert_eq!(fee_policy.gas_price_buffer_bps, 12_000);
+        assert_eq!(
+            state.wrap_evm_config.get().wrap_factory_address,
+            vec![0x44u8; 20]
+        );
+        assert_eq!(
+            state.wrap_native_ledger_canister.get(),
+            native_ledger.as_slice()
+        );
+        assert_eq!(
+            state
+                .wrap_allowed_assets
+                .get(&allowed_asset.as_slice().to_vec()),
+            Some(1)
+        );
+    });
+}
+
+#[test]
+fn init_args_reject_invalid_wrap_config() {
+    let base = InitArgs {
+        genesis_balances: vec![GenesisBalanceView {
+            address: vec![0x33u8; 20],
+            amount: 1,
+        }],
+        wrap_canister_id: Principal::self_authenticating(b"wrap-integrated"),
+        wrap_factory_address: vec![0x44u8; 20],
+        wrap_config: Some(WrapConfigArgs {
+            fee_ledger_canister: Principal::anonymous(),
+            native_ledger_canister: Principal::self_authenticating(b"native-ledger"),
+            cycle_fee_e8s: 1_000_000,
+            gas_price_buffer_bps: 12_000,
+            allowed_assets: vec![Principal::self_authenticating(b"asset-ledger")],
+        }),
+        query_instruction_soft_limit: None,
+        update_instruction_soft_limit: None,
+    };
+    assert_eq!(
+        base.validate().expect_err("anonymous fee ledger"),
+        "wrap.fee_ledger_anonymous"
+    );
+
+    let mut bad_gas = base.clone();
+    let config = bad_gas.wrap_config.as_mut().expect("config");
+    config.fee_ledger_canister = Principal::self_authenticating(b"fee-ledger");
+    config.gas_price_buffer_bps = 9_999;
+    assert_eq!(
+        bad_gas.validate().expect_err("bad gas buffer"),
+        "wrap.gas_price_buffer_bps_out_of_range"
+    );
+
+    let mut native_asset = bad_gas;
+    let config = native_asset.wrap_config.as_mut().expect("config");
+    config.gas_price_buffer_bps = 12_000;
+    config.allowed_assets = vec![config.native_ledger_canister];
+    assert_eq!(
+        native_asset.validate().expect_err("native asset"),
+        "wrap.native_ledger_not_wrappable"
+    );
+}
+
+#[test]
+fn quote_wrap_request_rejects_disallowed_asset_before_gas_quote() {
+    init_stable_state();
+    let fee_ledger = Principal::self_authenticating(b"fee-ledger");
+    let native_ledger = Principal::self_authenticating(b"native-ledger");
+    let allowed_asset = Principal::self_authenticating(b"asset-ledger");
+    let args = InitArgs {
+        genesis_balances: vec![GenesisBalanceView {
+            address: vec![0x33u8; 20],
+            amount: 1,
+        }],
+        wrap_canister_id: Principal::self_authenticating(b"wrap-integrated"),
+        wrap_factory_address: vec![0x44u8; 20],
+        wrap_config: Some(WrapConfigArgs {
+            fee_ledger_canister: fee_ledger,
+            native_ledger_canister: native_ledger,
+            cycle_fee_e8s: 1_000_000,
+            gas_price_buffer_bps: 12_000,
+            allowed_assets: vec![allowed_asset],
+        }),
+        query_instruction_soft_limit: None,
+        update_instruction_soft_limit: None,
+    };
+    super::apply_wrap_config_from_init_args(&args);
+
+    let out = super::quote_wrap_request(QuoteWrapRequestArgs {
+        asset_id: Principal::self_authenticating(b"other-ledger"),
+        amount_e8s: Nat::from(1u128),
+        evm_recipient: vec![0x55; 20],
+        gas_limit: 21_000,
+    });
+
+    match out {
+        Err(ApiError::Rejected(detail)) => assert_eq!(detail.code, "asset.not_allowed"),
+        other => panic!("unexpected quote result: {other:?}"),
+    }
+}
+
+#[test]
+fn quote_native_deposit_uses_integrated_fee_policy() {
+    init_stable_state();
+    let fee_ledger = Principal::self_authenticating(b"fee-ledger");
+    let native_ledger = Principal::self_authenticating(b"native-ledger");
+    let allowed_asset = Principal::self_authenticating(b"asset-ledger");
+    let args = InitArgs {
+        genesis_balances: vec![GenesisBalanceView {
+            address: vec![0x33u8; 20],
+            amount: 1,
+        }],
+        wrap_canister_id: Principal::self_authenticating(b"wrap-integrated"),
+        wrap_factory_address: vec![0x44u8; 20],
+        wrap_config: Some(WrapConfigArgs {
+            fee_ledger_canister: fee_ledger,
+            native_ledger_canister: native_ledger,
+            cycle_fee_e8s: 1_000_000,
+            gas_price_buffer_bps: 12_000,
+            allowed_assets: vec![allowed_asset],
+        }),
+        query_instruction_soft_limit: None,
+        update_instruction_soft_limit: None,
+    };
+    super::apply_wrap_config_from_init_args(&args);
+
+    let out = super::quote_native_deposit(QuoteNativeDepositArgs {
+        amount_e8s: Nat::from(1u128),
+        evm_recipient: vec![0x55; 20],
+    })
+    .expect("quote");
+
+    assert_eq!(out.charged_fee_e8s, Nat::from(1_000_000u64));
+    assert_eq!(out.fee_ledger_canister, fee_ledger);
+    assert_eq!(out.native_ledger_canister, native_ledger);
+}
+
+#[test]
+fn wrap_request_ids_match_legacy_domain_separators() {
+    let wrap_id =
+        super::derive_wrap_request_id(&[1, 2, 3], &[4, 5], &[0; 32], &[0x55; 20], 7, 21_000);
+    assert_eq!(
+        wrap_id,
+        [
+            0x98, 0xa8, 0x8f, 0x98, 0xe3, 0xc0, 0xe5, 0x65, 0xf2, 0x71, 0x1b, 0x8f, 0x5c, 0x26,
+            0xca, 0x4a, 0xf5, 0xab, 0x7d, 0xbf, 0x61, 0x3e, 0xa2, 0xbe, 0x6a, 0x08, 0x53, 0x0e,
+            0x86, 0xb2, 0xd9, 0x57,
+        ]
+    );
+
+    let native_id = super::derive_native_deposit_request_id(&[1, 2, 3], &[9; 32]);
+    assert_eq!(
+        native_id,
+        [
+            0xa5, 0x99, 0x10, 0x1a, 0xd7, 0x10, 0xd2, 0x7b, 0x51, 0xfd, 0xf1, 0xd6, 0x01, 0xae,
+            0x34, 0xa5, 0xa3, 0x16, 0xb3, 0x54, 0x34, 0x37, 0xef, 0x60, 0x01, 0x42, 0xcd, 0x64,
+            0x1d, 0x7d, 0xff, 0x23,
+        ]
+    );
+}
+
+#[test]
+fn factory_mint_for_asset_call_data_matches_abi_layout() {
+    let asset = Principal::self_authenticating(b"asset-ledger");
+    let recipient = vec![0x55; 20];
+    let amount = vec![0xabu8; 32];
+
+    let data = super::encode_factory_mint_for_asset_call_data(
+        asset.as_slice(),
+        8,
+        recipient.as_slice(),
+        amount.as_slice(),
+    )
+    .expect("call data");
+
+    let asset_len = asset.as_slice().len();
+    let padded_asset_len = asset_len.div_ceil(32) * 32;
+    assert_eq!(data.len(), 4 + 32 * 5 + padded_asset_len);
+    assert_eq!(&data[0..4], &super::factory_mint_for_asset_selector());
+    assert_eq!(&data[4..36], &super::u256_from_u64(128));
+    assert_eq!(&data[36..68], &super::u256_from_u64(8));
+    assert_eq!(&data[68..80], &[0u8; 12]);
+    assert_eq!(&data[80..100], recipient.as_slice());
+    assert_eq!(&data[100..132], amount.as_slice());
+    assert_eq!(&data[132..164], &super::u256_from_u64(asset_len as u64));
+    assert_eq!(&data[164..164 + asset_len], asset.as_slice());
+    assert!(data[164 + asset_len..].iter().all(|byte| *byte == 0));
+}
+
+#[test]
+fn get_request_returns_wrap_overview_from_integrated_state() {
+    init_stable_state();
+    let request_id = TxId([0xabu8; 32]);
+    with_state_mut(|state| {
+        state.wrap_requests.insert(
+            request_id,
+            WrapStoredRequest {
+                caller: vec![1],
+                asset_id: vec![2],
+                amount: vec![0; 32],
+                evm_recipient: vec![3; 20],
+                gas_limit: 21_000,
+                fee_ledger_canister: vec![7],
+                max_fee_e8s: 9,
+                quoted_gas_price_wei: 10,
+                fee_created_at_time: 1,
+                pull_created_at_time: 2,
+                withdraw_created_at_time: 0,
+                result: WrapRequestResult {
+                    status: RequestStatus::Succeeded,
+                    pull_ledger_tx_id: Some(vec![4]),
+                    mint_tx_id: Some(vec![5]),
+                    error_code: None,
+                    withdrawn: false,
+                    withdraw_ledger_tx_id: None,
+                    withdraw_error_code: None,
+                    withdraw_in_progress: false,
+                    mint_failed_recoverable: false,
+                    fee_ledger_tx_id: Some(vec![6]),
+                    charged_fee_e8s: Some(7),
+                    charged_gas_price_wei: Some(8),
+                },
+            },
+        );
+    });
+
+    let overview = super::get_request(request_id.0.to_vec()).expect("overview");
+    assert_eq!(overview.kind, super::RequestKind::Wrap);
+    assert_eq!(overview.status, RequestStatus::Succeeded);
+    assert_eq!(overview.pull_ledger_tx_id, Some(vec![4]));
+    assert_eq!(overview.mint_tx_id, Some(vec![5]));
+    assert_eq!(overview.fee_ledger_tx_id, Some(vec![6]));
+    assert_eq!(overview.charged_fee_e8s, Some(Nat::from(7u64)));
+    assert_eq!(overview.charged_gas_price_wei, Some(Nat::from(8u64)));
+}
+
+#[test]
+fn existing_native_deposit_response_is_idempotent_for_same_request() {
+    init_stable_state();
+    let caller = Principal::self_authenticating(b"native-deposit-caller");
+    let request_id = TxId([0xbcu8; 32]);
+    with_state_mut(|state| {
+        state.wrap_requests.insert(
+            request_id,
+            WrapStoredRequest {
+                caller: caller.as_slice().to_vec(),
+                asset_id: vec![2],
+                amount: vec![0x11; 32],
+                evm_recipient: vec![0x55; 20],
+                gas_limit: 0,
+                fee_ledger_canister: vec![7],
+                max_fee_e8s: 9,
+                quoted_gas_price_wei: 0,
+                fee_created_at_time: 1,
+                pull_created_at_time: 2,
+                withdraw_created_at_time: 0,
+                result: WrapRequestResult {
+                    status: RequestStatus::Succeeded,
+                    pull_ledger_tx_id: Some(vec![4]),
+                    mint_tx_id: Some(request_id.0.to_vec()),
+                    error_code: None,
+                    withdrawn: false,
+                    withdraw_ledger_tx_id: None,
+                    withdraw_error_code: None,
+                    withdraw_in_progress: false,
+                    mint_failed_recoverable: false,
+                    fee_ledger_tx_id: Some(vec![6]),
+                    charged_fee_e8s: Some(7),
+                    charged_gas_price_wei: Some(0),
+                },
+            },
+        );
+    });
+
+    let out = super::existing_native_deposit_response(request_id, [0x11; 32], &[0x55; 20], caller)
+        .expect("existing")
+        .expect("ok");
+    assert_eq!(out.request_id, request_id.0.to_vec());
+    assert_eq!(out.charged_fee_e8s, Nat::from(7u64));
+    assert_eq!(out.fee_ledger_tx_id, vec![6]);
+}
+
+#[test]
+fn existing_native_deposit_response_rejects_idempotency_mismatch() {
+    init_stable_state();
+    let caller = Principal::self_authenticating(b"native-deposit-caller");
+    let request_id = TxId([0xbdu8; 32]);
+    with_state_mut(|state| {
+        state.wrap_requests.insert(
+            request_id,
+            WrapStoredRequest {
+                caller: caller.as_slice().to_vec(),
+                asset_id: vec![2],
+                amount: vec![0x11; 32],
+                evm_recipient: vec![0x55; 20],
+                gas_limit: 0,
+                fee_ledger_canister: vec![7],
+                max_fee_e8s: 9,
+                quoted_gas_price_wei: 0,
+                fee_created_at_time: 1,
+                pull_created_at_time: 2,
+                withdraw_created_at_time: 0,
+                result: WrapRequestResult {
+                    status: RequestStatus::Succeeded,
+                    pull_ledger_tx_id: Some(vec![4]),
+                    mint_tx_id: Some(request_id.0.to_vec()),
+                    error_code: None,
+                    withdrawn: false,
+                    withdraw_ledger_tx_id: None,
+                    withdraw_error_code: None,
+                    withdraw_in_progress: false,
+                    mint_failed_recoverable: false,
+                    fee_ledger_tx_id: Some(vec![6]),
+                    charged_fee_e8s: Some(7),
+                    charged_gas_price_wei: Some(0),
+                },
+            },
+        );
+    });
+
+    let out = super::existing_native_deposit_response(request_id, [0x22; 32], &[0x55; 20], caller)
+        .expect("existing");
+    match out {
+        Err(ApiError::Rejected(detail)) => {
+            assert_eq!(detail.code, "request.idempotency_mismatch")
+        }
+        other => panic!("unexpected existing response: {other:?}"),
+    }
+}
+
+#[test]
+fn insert_wrap_request_saves_fee_quote_and_enqueues() {
+    init_stable_state();
+    let caller = Principal::self_authenticating(b"wrap-caller");
+    let request_id = TxId([0xacu8; 32]);
+    let args = super::NormalizedSubmitWrapRequest {
+        request_id,
+        asset_id: vec![1],
+        amount: vec![0x11; 32],
+        evm_recipient: vec![0x55; 20],
+        gas_limit: 21_000,
+        max_fee_e8s: 100,
+        quoted_gas_price_wei: 200,
+        fee_ledger_canister: Principal::self_authenticating(b"fee-ledger"),
+    };
+
+    super::insert_wrap_request(args, caller, vec![9], 7, 8, 123).expect("insert");
+    super::enqueue_wrap_request(request_id);
+
+    with_state(|state| {
+        let req = state.wrap_requests.get(&request_id).expect("request");
+        assert_eq!(req.caller, caller.as_slice());
+        assert_eq!(req.result.status, RequestStatus::Queued);
+        assert_eq!(req.result.fee_ledger_tx_id, Some(vec![9]));
+        assert_eq!(req.result.charged_fee_e8s, Some(7));
+        assert_eq!(req.result.charged_gas_price_wei, Some(8));
+        assert_eq!(state.wrap_queue.get(&0), Some(request_id));
+    });
+}
+
+#[test]
+fn existing_wrap_request_response_is_idempotent_for_same_request() {
+    init_stable_state();
+    let caller = Principal::self_authenticating(b"wrap-caller");
+    let fee_ledger = Principal::self_authenticating(b"fee-ledger");
+    let request_id = TxId([0xadu8; 32]);
+    let args = super::NormalizedSubmitWrapRequest {
+        request_id,
+        asset_id: vec![1],
+        amount: vec![0x11; 32],
+        evm_recipient: vec![0x55; 20],
+        gas_limit: 21_000,
+        max_fee_e8s: 100,
+        quoted_gas_price_wei: 200,
+        fee_ledger_canister: fee_ledger,
+    };
+    super::insert_wrap_request(args, caller, vec![9], 7, 8, 123).expect("insert");
+    let retry_args = super::NormalizedSubmitWrapRequest {
+        request_id,
+        asset_id: vec![1],
+        amount: vec![0x11; 32],
+        evm_recipient: vec![0x55; 20],
+        gas_limit: 21_000,
+        max_fee_e8s: 100,
+        quoted_gas_price_wei: 200,
+        fee_ledger_canister: fee_ledger,
+    };
+
+    let out = super::existing_wrap_request_response(&retry_args, caller)
+        .expect("existing")
+        .expect("ok");
+
+    assert_eq!(out.request_id, request_id.0.to_vec());
+    assert_eq!(out.charged_fee_e8s, Nat::from(7u64));
+    assert_eq!(out.charged_gas_price_wei, Nat::from(8u64));
+    assert_eq!(out.fee_ledger_tx_id, vec![9]);
+}
+
+#[test]
+fn existing_wrap_request_response_rejects_idempotency_mismatch() {
+    init_stable_state();
+    let caller = Principal::self_authenticating(b"wrap-caller");
+    let fee_ledger = Principal::self_authenticating(b"fee-ledger");
+    let request_id = TxId([0xaeu8; 32]);
+    let args = super::NormalizedSubmitWrapRequest {
+        request_id,
+        asset_id: vec![1],
+        amount: vec![0x11; 32],
+        evm_recipient: vec![0x55; 20],
+        gas_limit: 21_000,
+        max_fee_e8s: 100,
+        quoted_gas_price_wei: 200,
+        fee_ledger_canister: fee_ledger,
+    };
+    super::insert_wrap_request(args, caller, vec![9], 7, 8, 123).expect("insert");
+    let retry_args = super::NormalizedSubmitWrapRequest {
+        request_id,
+        asset_id: vec![1],
+        amount: vec![0x22; 32],
+        evm_recipient: vec![0x55; 20],
+        gas_limit: 21_000,
+        max_fee_e8s: 100,
+        quoted_gas_price_wei: 200,
+        fee_ledger_canister: fee_ledger,
+    };
+
+    let out = super::existing_wrap_request_response(&retry_args, caller).expect("existing");
+
+    match out {
+        Err(ApiError::Rejected(detail)) => {
+            assert_eq!(detail.code, "request.idempotency_mismatch")
+        }
+        other => panic!("unexpected existing response: {other:?}"),
+    }
+}
+
+#[test]
+fn require_wrap_canister_caller_rejects_non_wrap_caller() {
+    init_stable_state();
+    let wrap = Principal::self_authenticating(b"wrap-integrated");
+    install_runtime_wrap_canister_id(wrap);
+
+    let err = super::require_wrap_canister_caller(Principal::self_authenticating(b"attacker"))
+        .expect_err("non-wrap caller");
+
+    assert_eq!(err, "auth.wrap_canister_required");
+    assert!(super::require_wrap_canister_caller(wrap).is_ok());
+}
+
+#[test]
+fn get_request_returns_unwrap_dispatch_overview_from_integrated_state() {
+    init_stable_state();
+    let request_id = TxId([0xcdu8; 32]);
+    with_state_mut(|state| {
+        state.unwrap_requests.insert(
+            request_id,
+            UnwrapDispatchRequest {
+                asset_id: vec![1],
+                amount: [0; 32],
+                recipient: vec![2],
+                status: UnwrapRequestStatus::DispatchFailed,
+                ledger_tx_id: None,
+                error_code: Some("dispatch.failed".to_string()),
+                updated_at: 1,
+            },
+        );
+    });
+
+    let overview = super::get_request(request_id.0.to_vec()).expect("overview");
+    assert_eq!(overview.kind, super::RequestKind::Unwrap);
+    assert_eq!(overview.status, RequestStatus::Failed);
+    assert_eq!(
+        overview.dispatch_status,
+        Some(super::RequestDispatchStatusView::DispatchFailed)
+    );
+    assert_eq!(overview.dispatch_error, Some("dispatch.failed".to_string()));
+}
+
+#[test]
+fn insert_unwrap_dispatch_request_enqueues_integrated_request() {
+    init_stable_state();
+    let request_id = TxId([0xee; 32]);
+
+    super::insert_unwrap_dispatch_request(request_id, vec![1, 2], [0x11; 32], vec![3, 4])
+        .expect("insert");
+
+    with_state(|state| {
+        let req = state.unwrap_requests.get(&request_id).expect("request");
+        assert_eq!(req.asset_id, vec![1, 2]);
+        assert_eq!(req.amount, [0x11; 32]);
+        assert_eq!(req.recipient, vec![3, 4]);
+        assert_eq!(req.status, UnwrapRequestStatus::Queued);
+        assert_eq!(state.unwrap_dispatch_queue.get(&0), Some(request_id));
+    });
+}
+
+#[test]
+fn insert_unwrap_dispatch_request_rejects_idempotency_mismatch() {
+    init_stable_state();
+    let request_id = TxId([0xef; 32]);
+    super::insert_unwrap_dispatch_request(request_id, vec![1], [0x11; 32], vec![3])
+        .expect("insert");
+
+    let err = super::insert_unwrap_dispatch_request(request_id, vec![2], [0x11; 32], vec![3])
+        .expect_err("mismatch");
+    assert_eq!(err, "request.idempotency_mismatch");
+}
+
+#[test]
+fn retry_unwrap_dispatch_requeues_failed_request() {
+    init_stable_state();
+    let request_id = TxId([0xf1; 32]);
+    with_state_mut(|state| {
+        state.unwrap_requests.insert(
+            request_id,
+            UnwrapDispatchRequest {
+                asset_id: vec![1],
+                amount: [0x11; 32],
+                recipient: vec![2],
+                status: UnwrapRequestStatus::DispatchFailed,
+                ledger_tx_id: None,
+                error_code: Some("dispatch.failed".to_string()),
+                updated_at: 1,
+            },
+        );
+    });
+
+    let overview = super::retry_unwrap_dispatch(request_id.0.to_vec()).expect("retry");
+    assert_eq!(overview.status, RequestStatus::Queued);
+    assert_eq!(
+        overview.dispatch_status,
+        Some(super::RequestDispatchStatusView::Queued)
+    );
+    with_state(|state| {
+        let req = state.unwrap_requests.get(&request_id).expect("request");
+        assert_eq!(req.status, UnwrapRequestStatus::Queued);
+        assert_eq!(req.error_code, None);
+        assert_eq!(state.unwrap_dispatch_queue.get(&0), Some(request_id));
+    });
+}
+
+#[test]
+fn internal_unwrap_dispatch_fails_invalid_integrated_ledger_without_call() {
+    init_stable_state();
+    let request_id = TxId([0xf2; 32]);
+    let req = UnwrapDispatchRequest {
+        asset_id: Vec::new(),
+        amount: [0x11; 32],
+        recipient: Principal::self_authenticating(b"recipient")
+            .as_slice()
+            .to_vec(),
+        status: UnwrapRequestStatus::Dispatching,
+        ledger_tx_id: None,
+        error_code: None,
+        updated_at: 1,
+    };
+
+    let out = run_ready_future(super::dispatch_unwrap_request_internal(request_id, req));
+
+    assert_eq!(out.status, UnwrapRequestStatus::DispatchFailed);
+    assert_eq!(out.ledger_tx_id, None);
+    assert_eq!(out.error_code, Some("wrap_config.unconfigured".to_string()));
 }
 
 #[test]
@@ -2666,6 +3192,25 @@ fn did_contains_dispatch_result_contract_shape() {
     assert!(did.contains("type RequestDispatchStatusView = variant {"));
     assert!(did.contains("wrap_canister_id : principal"));
     assert!(did.contains("wrap_factory_address : blob"));
+    assert!(did.contains("wrap_config : opt WrapConfigArgs"));
+    assert!(did.contains("type WrapConfigArgs = record {"));
+    assert!(did.contains("get_fee_policy : () -> (Result_"));
+    assert!(did.contains("get_allowed_assets : () -> (Result_"));
+    assert!(did.contains("quote_wrap_request : (QuoteWrapRequestArgs) -> (Result_"));
+    assert!(did.contains("quote_native_deposit : (QuoteNativeDepositArgs) -> (Result_"));
+    assert!(did.contains("submit_wrap_request : (SubmitWrapRequestArgs) -> (Result_"));
+    assert!(did.contains("submit_native_deposit : (SubmitNativeDepositArgs) -> (Result_"));
+    assert!(did.contains("dispatch_unwrap_request : (DispatchUnwrapRequestArgs) -> (Result_"));
+    assert!(did.contains("dispatch_native_withdrawal_request : ("));
+    assert!(did.contains("DispatchNativeWithdrawalRequestArgs"));
+    assert!(did.contains("get_request : (blob) -> (opt RequestOverview) query"));
+    assert!(did.contains("get_native_deposit_result : (blob) -> (opt RequestOverview) query"));
+    assert!(did.contains("retry_request : (RetryRequestArgs) -> (Result_"));
+    assert!(did.contains("retry_native_deposit : (RetryRequestArgs) -> (Result_"));
+    assert!(did.contains("retry_native_withdrawal : (RetryRequestArgs) -> (Result_"));
+    assert!(did.contains("recover_failed_wrap : (RecoverFailedWrapArgs) -> (Result_"));
+    assert!(did.contains("set_fee_policy : (FeePolicyView) -> (Result_"));
+    assert!(did.contains("set_allowed_assets : (vec principal) -> (Result_"));
     assert!(!did.contains("get_request_dispatch_result"));
     assert!(did.contains("get_unwrap_request_ids_by_tx_id"));
     assert!(did.contains("get_unwrap_request_ids_by_eth_tx_hash"));

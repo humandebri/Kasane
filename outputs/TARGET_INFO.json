@@ -1,0 +1,10 @@
+{
+  "target_repo": "https://github.com/humandebri/Kasane.git",
+  "target_ref_type": "commit",
+  "target_ref_label": "862f828988776485685ac5b8e1aed51f9f76785d",
+  "target_commit": "862f828988776485685ac5b8e1aed51f9f76785d",
+  "target_commit_short": "",
+  "project_name": "Kasane-evm-canister",
+  "target_language": "Rust",
+  "target_layer": "execution"
+}

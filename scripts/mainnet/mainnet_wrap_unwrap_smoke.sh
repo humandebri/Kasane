@@ -12,8 +12,8 @@ source "${REPO_ROOT}/scripts/lib_candid_result.sh"
 ICP_ENV="${ICP_ENV:-ic}"
 ICP_IDENTITY_NAME="${ICP_IDENTITY_NAME:-ci-local}"
 EVM_CANISTER_ID="${EVM_CANISTER_ID:-4c52m-aiaaa-aaaam-agwwa-cai}"
-WRAP_CANISTER_ID="${WRAP_CANISTER_ID:-lpuz5-uyaaa-aaaam-ah4da-cai}"
-WRAP_CANISTER_DID="${REPO_ROOT}/othercanisters/wrap-canister/wrap_canister.did"
+WRAP_CANISTER_ID="${WRAP_CANISTER_ID:-${EVM_CANISTER_ID}}"
+WRAP_CANISTER_DID="${REPO_ROOT}/crates/ic-evm-gateway/evm_canister.did"
 FEE_LEDGER_CANISTER_ID="${FEE_LEDGER_CANISTER_ID:-xafvr-biaaa-aaaai-aql5q-cai}"
 FEE_LEDGER_DECIMALS="${FEE_LEDGER_DECIMALS:-8}"
 EVM_WRAP_FACTORY="${EVM_WRAP_FACTORY:-}"
@@ -682,7 +682,7 @@ cat > "${REPORT_FILE}" <<EOF
 - identity: ${ICP_IDENTITY_NAME}
 - caller_principal: ${CALLER_PRINCIPAL}
 - evm_canister: ${EVM_CANISTER_ID}
-- wrap_canister: ${WRAP_CANISTER_ID}
+- integrated_wrap_canister: ${WRAP_CANISTER_ID}
 - fee_ledger_canister: ${FEE_LEDGER_CANISTER_ID}
 - amount_e8s: ${WRAP_AMOUNT_E8S}
 - unwrap_recipient: ${UNWRAP_RECIPIENT_PRINCIPAL}

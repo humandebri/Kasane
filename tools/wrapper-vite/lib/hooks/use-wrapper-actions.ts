@@ -212,7 +212,7 @@ export function useWrapperActions(params: {
 
   function requireWrapCanisterSupport(): boolean {
     if (!params.oisyCapabilities.wrapCanisterSupported) {
-      params.tracker.setMessage("wallet.oisy_wrap_canister_unsupported");
+      params.tracker.setMessage("wallet.oisy_integrated_wrap_unsupported");
       return false;
     }
     return true;

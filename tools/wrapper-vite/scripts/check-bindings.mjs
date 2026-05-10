@@ -13,11 +13,6 @@ const bindgenBin = resolve(wrapperViteDir, "node_modules/.bin/icp-bindgen");
 
 const targets = [
   {
-    canisterName: "wrap_canister",
-    didFile: resolve(wrapperViteDir, "../../othercanisters/wrap-canister/wrap_canister.did"),
-    outDir: resolve(wrapperViteDir, "src/declarations/wrap_canister"),
-  },
-  {
     canisterName: "evm_canister",
     didFile: resolve(wrapperViteDir, "../../crates/ic-evm-gateway/evm_canister.did"),
     outDir: resolve(wrapperViteDir, "src/declarations/evm_canister"),

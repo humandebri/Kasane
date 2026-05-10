@@ -1,15 +1,15 @@
-// どこで: wrap-canister クライアント / 何を: 新 wrap/unwrap API を UI 向けに公開する / なぜ: request_id 手組みや旧 status API を排除するため
+// どこで: 統合版wrapクライアント / 何を: evm_canister の wrap/unwrap API を UI 向けに公開する / なぜ: request_id 手組みや旧 status API を排除するため
 
 import type { ActorSubclass, Identity } from "@icp-sdk/core/agent";
 import { Principal } from "@icp-sdk/core/principal";
-import { idlFactory as wrapIdlFactory } from "@/src/declarations/wrap_canister/wrap_canister.did.js";
+import { idlFactory as wrapIdlFactory } from "@/src/declarations/evm_canister/evm_canister.did.js";
 import type {
-  _SERVICE as WrapService,
   ApiError as ApiErrorWire,
+  _SERVICE as WrapService,
   RequestKind as RequestKindVariant,
   RequestOverview as RequestOverviewWire,
   RequestStatus as RequestStatusVariant,
-} from "@/src/declarations/wrap_canister/wrap_canister.did";
+} from "@/src/declarations/evm_canister/evm_canister.did";
 import { loadConfig, type WrapperConfig } from "../config";
 import type { ExecutionStatus, WrapExecutionResult } from "../types";
 import { createActorCache, createAuthenticatedActor, createQueryActor } from "./actor-utils";
@@ -127,7 +127,7 @@ export async function getExecutionResult(
       mintFailedRecoverable: inferMintRecoverable(value),
       withdrawn: value.withdraw_ledger_tx_id.length > 0,
       withdrawLedgerTxId: value.withdraw_ledger_tx_id[0] ?? null,
-      withdrawErrorCode: value.withdraw_error_code?.[0] ?? null,
+      withdrawErrorCode: null,
     };
   }
 
@@ -330,7 +330,7 @@ export async function getNativeDepositResult(requestId: Uint8Array): Promise<Wra
     mintFailedRecoverable: inferMintRecoverable(value),
     withdrawn: value.withdraw_ledger_tx_id.length > 0,
     withdrawLedgerTxId: value.withdraw_ledger_tx_id[0] ?? null,
-    withdrawErrorCode: value.withdraw_error_code?.[0] ?? null,
+    withdrawErrorCode: null,
   };
 }
 
