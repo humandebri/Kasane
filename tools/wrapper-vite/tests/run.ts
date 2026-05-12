@@ -442,6 +442,40 @@ async function runFinishSubmittedUnwrapRequestTests(): Promise<void> {
   assert.equal(resetCount, 1);
 }
 
+async function runNativeDepositDraftTests(): Promise<void> {
+  const store = new Map<string, string>();
+  const localStorage = {
+    getItem(key: string): string | null {
+      return store.get(key) ?? null;
+    },
+    setItem(key: string, value: string): void {
+      store.set(key, value);
+    },
+  };
+  Reflect.defineProperty(globalThis, "window", {
+    configurable: true,
+    value: { localStorage },
+  });
+  try {
+    const args = {
+      assetId: "2vxsx-fae",
+      amountE8s: 10n,
+      evmRecipient: hexToBytes("0x1111111111111111111111111111111111111111"),
+      principalText: "4c52m-aiaaa-aaaam-agwwa-cai",
+    };
+    const first = wrapperActionsTestHooks.reserveNativeDepositDraft(args);
+    const second = wrapperActionsTestHooks.reserveNativeDepositDraft(args);
+    assert.equal(bytesToHex(second.depositId), bytesToHex(first.depositId));
+
+    wrapperActionsTestHooks.clearNativeDepositDraft(first.key);
+    const third = wrapperActionsTestHooks.reserveNativeDepositDraft(args);
+    assert.notEqual(bytesToHex(third.depositId), bytesToHex(first.depositId));
+    wrapperActionsTestHooks.clearNativeDepositDraft(third.key);
+  } finally {
+    Reflect.deleteProperty(globalThis, "window");
+  }
+}
+
 function buildStubIdentity(principal: Principal): Identity {
   return {
     getPrincipal(): Principal {
@@ -1949,6 +1983,7 @@ async function main(): Promise<void> {
   await runMetaMaskHelperTests();
   await runPersistSubmittedRequestTests();
   await runFinishSubmittedUnwrapRequestTests();
+  await runNativeDepositDraftTests();
   await runActorCacheTests();
   await runWrapEstimateEncodingTests();
   await runErc20EncodingTests();

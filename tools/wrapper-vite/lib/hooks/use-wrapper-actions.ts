@@ -15,6 +15,7 @@ import {
 import {
   getUnwrapRequirements,
   quoteNativeDeposit,
+  quoteNativeWithdrawal,
   quoteWrapRequest,
   retryFailedUnwrap,
   submitNativeDeposit,
@@ -24,6 +25,7 @@ import {
 import type { loadConfig } from "@/lib/config";
 import type { AuthenticatedCaller } from "@/lib/canister/authenticated-caller";
 import { encodeApproveCall } from "@/lib/erc20";
+import { prepareNativeWithdrawTransaction } from "@/lib/native-withdraw";
 import {
   estimateMetaMaskUnwrapTransaction,
   getKasaneTransactionStatus,
@@ -53,6 +55,7 @@ type OisyCapabilityState = {
 };
 
 type AppConfig = ReturnType<typeof loadConfig>;
+const NATIVE_DEPOSIT_DRAFT_STORAGE_KEY = "kasane.native_deposit_drafts.v1";
 
 type StatusTrackerState = {
   status: { requestId: string } | null;
@@ -110,6 +113,79 @@ function createNativeDepositId(): Uint8Array {
   const bytes = new Uint8Array(32);
   crypto.getRandomValues(bytes);
   return bytes;
+}
+
+function nativeDepositDraftKey(args: {
+  assetId: string;
+  amountE8s: bigint;
+  evmRecipient: Uint8Array;
+  principalText: string;
+}): string {
+  return [
+    args.assetId,
+    args.amountE8s.toString(),
+    bytesToHex(args.evmRecipient),
+    args.principalText,
+  ].join("|");
+}
+
+function loadNativeDepositDrafts(): Record<string, string> {
+  if (typeof window === "undefined") {
+    return {};
+  }
+  const raw = window.localStorage.getItem(NATIVE_DEPOSIT_DRAFT_STORAGE_KEY);
+  if (raw === null) {
+    return {};
+  }
+  try {
+    const parsed = JSON.parse(raw);
+    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+      return {};
+    }
+    const out: Record<string, string> = {};
+    for (const [key, value] of Object.entries(parsed)) {
+      if (typeof value === "string" && /^0x[0-9a-f]{64}$/u.test(value)) {
+        out[key] = value;
+      }
+    }
+    return out;
+  } catch {
+    return {};
+  }
+}
+
+function saveNativeDepositDrafts(drafts: Record<string, string>): void {
+  if (typeof window === "undefined") {
+    return;
+  }
+  window.localStorage.setItem(NATIVE_DEPOSIT_DRAFT_STORAGE_KEY, JSON.stringify(drafts));
+}
+
+function reserveNativeDepositDraft(args: {
+  assetId: string;
+  amountE8s: bigint;
+  evmRecipient: Uint8Array;
+  principalText: string;
+}): { key: string; depositId: Uint8Array } {
+  const key = nativeDepositDraftKey(args);
+  const drafts = loadNativeDepositDrafts();
+  const existing = drafts[key];
+  if (existing !== undefined) {
+    return { key, depositId: hexToBytes(existing) };
+  }
+  const depositId = createNativeDepositId();
+  drafts[key] = bytesToHex(depositId);
+  saveNativeDepositDrafts(drafts);
+  return { key, depositId };
+}
+
+function clearNativeDepositDraft(key: string): void {
+  const drafts = loadNativeDepositDrafts();
+  if (drafts[key] === undefined) {
+    return;
+  }
+  delete drafts[key];
+  saveNativeDepositDrafts(drafts);
 }
 
 async function waitForTransactionFinal(args: {
@@ -287,18 +363,8 @@ export function useWrapperActions(params: {
       params.forms.unwrapAssetDecimals,
       "validation.amount.invalid",
     );
-    const callerEvmAddress = hexToBytes(fromAddress);
-    const requirements = await getUnwrapRequirements({
-      assetId: params.forms.unwrapForm.assetId.trim(),
-      amountE8s: amount,
-      callerEvmAddress,
-    });
-    if (requirements.wrappedTokenAddress === null || requirements.readiness === "TokenNotDeployed") {
-      throw new Error("unwrap.token_not_deployed");
-    }
-    if (requirements.readiness === "InsufficientBalance") {
-      throw new Error("erc20.insufficient_balance");
-    }
+    const assetId = params.forms.unwrapForm.assetId.trim();
+    const recipient = params.forms.unwrapForm.recipient.trim();
     const chainConfig = {
       chainId: params.cfg.kasaneChainId,
       chainName: params.cfg.kasaneChainName,
@@ -307,49 +373,83 @@ export function useWrapperActions(params: {
       blockExplorerUrl: params.cfg.kasaneBlockExplorerUrl,
     };
     await ensureMetaMaskChain(provider, chainConfig);
-    if (requirements.approveRequired || requirements.readiness === "InsufficientAllowance") {
-      const approveData = bytesToHex(encodeApproveCall(requirements.factoryAddress, amount));
-      const approveTarget = bytesToHex(requirements.wrappedTokenAddress);
-      const approveEstimate = await estimateMetaMaskUnwrapTransaction({
-        rpcUrl: params.cfg.kasaneRpcUrl,
-        from: fromAddress,
-        to: approveTarget,
-        data: approveData,
+    const nativeQuote = await quoteNativeWithdrawal({
+      amountE8s: amount,
+      recipient,
+    });
+    const isNativeWithdrawal = assetId === nativeQuote.nativeLedgerCanister;
+    let unwrapTarget: string;
+    let unwrapData: string;
+    let valueWei = 0n;
+    if (isNativeWithdrawal) {
+      const tx = await prepareNativeWithdrawTransaction({
+        amountE8s: amount,
+        recipient,
+        readQuote: async () => nativeQuote,
       });
-      const approveHash = await sendMetaMaskTransaction({
-        provider,
-        chainConfig,
-        from: fromAddress,
-        to: approveTarget,
-        data: approveData,
-        nonce: approveEstimate.nonce,
-        gas: approveEstimate.gas,
-        maxFeePerGas: approveEstimate.maxFeePerGas,
-        maxPriorityFeePerGas: approveEstimate.maxPriorityFeePerGas,
+      unwrapTarget = tx.to;
+      unwrapData = tx.data;
+      valueWei = tx.valueWei;
+    } else {
+      const callerEvmAddress = hexToBytes(fromAddress);
+      const requirements = await getUnwrapRequirements({
+        assetId,
+        amountE8s: amount,
+        callerEvmAddress,
       });
-      await waitForTransactionFinal({
-        rpcUrl: params.cfg.kasaneRpcUrl,
-        explorerBaseUrl: params.cfg.kasaneBlockExplorerUrl,
-        transactionHash: approveHash,
-      });
+      if (requirements.wrappedTokenAddress === null || requirements.readiness === "TokenNotDeployed") {
+        throw new Error("unwrap.token_not_deployed");
+      }
+      if (requirements.readiness === "InsufficientBalance") {
+        throw new Error("erc20.insufficient_balance");
+      }
+      if (requirements.approveRequired || requirements.readiness === "InsufficientAllowance") {
+        const approveData = bytesToHex(encodeApproveCall(requirements.factoryAddress, amount));
+        const approveTarget = bytesToHex(requirements.wrappedTokenAddress);
+        const approveEstimate = await estimateMetaMaskUnwrapTransaction({
+          rpcUrl: params.cfg.kasaneRpcUrl,
+          from: fromAddress,
+          to: approveTarget,
+          data: approveData,
+        });
+        const approveHash = await sendMetaMaskTransaction({
+          provider,
+          chainConfig,
+          from: fromAddress,
+          to: approveTarget,
+          data: approveData,
+          nonce: approveEstimate.nonce,
+          gas: approveEstimate.gas,
+          maxFeePerGas: approveEstimate.maxFeePerGas,
+          maxPriorityFeePerGas: approveEstimate.maxPriorityFeePerGas,
+        });
+        await waitForTransactionFinal({
+          rpcUrl: params.cfg.kasaneRpcUrl,
+          explorerBaseUrl: params.cfg.kasaneBlockExplorerUrl,
+          transactionHash: approveHash,
+        });
+      }
+      unwrapTarget = bytesToHex(WRAP_PRECOMPILE_ADDRESS);
+      unwrapData = bytesToHex(toSubmitIcTxData({
+        assetId,
+        amount,
+        recipient,
+      }));
     }
-    const unwrapData = bytesToHex(toSubmitIcTxData({
-      assetId: params.forms.unwrapForm.assetId.trim(),
-      amount,
-      recipient: params.forms.unwrapForm.recipient.trim(),
-    }));
     const unwrapEstimate = await estimateMetaMaskUnwrapTransaction({
       rpcUrl: params.cfg.kasaneRpcUrl,
       from: fromAddress,
-      to: bytesToHex(WRAP_PRECOMPILE_ADDRESS),
+      to: unwrapTarget,
       data: unwrapData,
+      valueWei,
     });
     const transactionHash = await sendMetaMaskTransaction({
       provider,
       chainConfig,
       from: fromAddress,
-      to: bytesToHex(WRAP_PRECOMPILE_ADDRESS),
+      to: unwrapTarget,
       data: unwrapData,
+      valueWei,
       nonce: unwrapEstimate.nonce,
       gas: unwrapEstimate.gas,
       maxFeePerGas: unwrapEstimate.maxFeePerGas,
@@ -482,12 +582,12 @@ export function useWrapperActions(params: {
       });
       if (assetAllowance < required.requiredAssetAllowance) {
         updateWrapActionStep("approving_asset");
-          await approveLedgerSpend({
-            ledgerCanisterId: assetId,
-            spenderCanisterId,
-            amount: required.requiredAssetAllowance,
-            caller,
-          });
+        await approveLedgerSpend({
+          ledgerCanisterId: assetId,
+          spenderCanisterId,
+          amount: required.requiredAssetAllowance,
+          caller,
+        });
       }
       if (required.requiredFeeAllowance > 0n) {
         const feeAllowance = await getLedgerAllowance({
@@ -507,9 +607,17 @@ export function useWrapperActions(params: {
       }
 
       updateWrapActionStep("submitting");
+      const nativeDepositDraft = isNativeDeposit
+        ? reserveNativeDepositDraft({
+            assetId,
+            amountE8s: amount,
+            evmRecipient,
+            principalText: ownerPrincipalText,
+          })
+        : null;
       const submitResult = isNativeDeposit
         ? await submitNativeDeposit({
-          depositId: createNativeDepositId(),
+          depositId: nativeDepositDraft?.depositId ?? createNativeDepositId(),
           amountE8s: amount,
           evmRecipient,
           maxFeeE8s: quote.chargedFeeE8s,
@@ -526,6 +634,9 @@ export function useWrapperActions(params: {
           feeLedgerCanister: quote.feeLedgerCanister,
         }, caller);
       const requestIdHex = bytesToHex(submitResult.requestId);
+      if (nativeDepositDraft !== null) {
+        clearNativeDepositDraft(nativeDepositDraft.key);
+      }
       setLastSubmittedWrapRequestId(requestIdHex);
       params.onRequestIdInput(requestIdHex);
       await startPollingSubmittedRequest(requestIdHex);
@@ -743,6 +854,8 @@ export function useWrapperActions(params: {
 }
 
 export const wrapperActionsTestHooks = {
+  clearNativeDepositDraft,
   finishSubmittedUnwrapRequest,
+  reserveNativeDepositDraft,
   persistSubmittedRequest,
 };
