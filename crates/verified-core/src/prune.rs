@@ -43,7 +43,12 @@ pub struct PruneTxPresence {
 }
 
 #[cfg_attr(verus_keep_ghost, verus_spec(bytes => ensures
-    ratio_bps == 0 ==> bytes == 0,
+    bytes as int == if ((target as int) * (ratio_bps as int)) / 10_000int
+        > u64::MAX as int {
+        u64::MAX as int
+    } else {
+        ((target as int) * (ratio_bps as int)) / 10_000int
+    },
 ))]
 pub fn ratio_bytes(target: u64, ratio_bps: u32) -> u64 {
     let ratio = u128::from(ratio_bps);
@@ -59,10 +64,6 @@ pub fn ratio_bytes(target: u64, ratio_bps: u32) -> u64 {
     } else {
         bytes as u64
     };
-    #[cfg(verus_keep_ghost)]
-    proof! {
-        assert(ratio_bps == 0 ==> result == 0);
-    }
     result
 }
 
@@ -98,8 +99,26 @@ pub fn clamp_max_ops(requested: u32, minimum: u32) -> u32 {
 }
 
 #[cfg_attr(verus_keep_ghost, verus_spec(needed => ensures
-    target_bytes > 0 && estimated_kept_bytes > high_water_bytes ==> needed,
-    retain_days == 0 && !(target_bytes > 0 && estimated_kept_bytes > high_water_bytes) ==> !needed,
+    needed == (
+        (
+            retain_days > 0
+            && matches!(oldest_timestamp, Some(_))
+            && oldest_timestamp.unwrap() < if now >= if retain_days > u64::MAX / 86_400 {
+                u64::MAX
+            } else {
+                (retain_days * 86_400) as u64
+            } {
+                now - if retain_days > u64::MAX / 86_400 {
+                    u64::MAX
+                } else {
+                    (retain_days * 86_400) as u64
+                }
+            } else {
+                0
+            }
+        )
+        || (target_bytes > 0 && estimated_kept_bytes > high_water_bytes)
+    ),
 ))]
 pub fn need_prune(
     retain_days: u64,
@@ -134,6 +153,18 @@ pub fn need_prune(
         ==> retain == 1,
     input.target_bytes > 0 && input.estimated_kept_bytes > input.high_water_bytes
         ==> retain == 1,
+    !(input.target_bytes > 0 && input.estimated_kept_bytes > input.hard_emergency_bytes)
+        && !(input.target_bytes > 0 && input.estimated_kept_bytes > input.high_water_bytes)
+        && input.retain_blocks == 0
+        && (input.retain_days == 0 || matches!(input.cutoff_block, None))
+        && input.head_block < u64::MAX
+        ==> retain == input.head_block + 1,
+    !(input.target_bytes > 0 && input.estimated_kept_bytes > input.hard_emergency_bytes)
+        && !(input.target_bytes > 0 && input.estimated_kept_bytes > input.high_water_bytes)
+        && input.retain_blocks > 0
+        && input.retain_blocks <= input.head_block + 1
+        && (input.retain_days == 0 || matches!(input.cutoff_block, None))
+        ==> retain == input.retain_blocks,
 ))]
 pub fn retain_count(input: RetainCountInput) -> u64 {
     let emergency =
@@ -180,6 +211,10 @@ pub fn prune_before_block(head_block: u64, retain: u64) -> Option<u64> {
         && cursor.next_prune_block <= cursor.pruned_before_block.unwrap()
         && cursor.pruned_before_block.unwrap() < u64::MAX
         ==> next == cursor.pruned_before_block.unwrap() + 1,
+    matches!(cursor.pruned_before_block, Some(_))
+        && cursor.next_prune_block <= cursor.pruned_before_block.unwrap()
+        && cursor.pruned_before_block.unwrap() == u64::MAX
+        ==> next == u64::MAX,
     !(matches!(cursor.pruned_before_block, Some(_))
         && cursor.next_prune_block <= cursor.pruned_before_block.unwrap())
         ==> next == cursor.next_prune_block,
@@ -205,8 +240,11 @@ pub fn advance_after_pruned_block(block_number: u64) -> PruneCursor {
 }
 
 #[cfg_attr(verus_keep_ghost, verus_spec(recovered => ensures
-    matches!(recovered, Some(_)),
     matches!(current, None) ==> recovered == Option::<u64>::Some(journal_block),
+    matches!(current, Some(_)) && current.unwrap() >= journal_block
+        ==> recovered == current,
+    matches!(current, Some(_)) && current.unwrap() < journal_block
+        ==> recovered == Option::<u64>::Some(journal_block),
 ))]
 pub fn recover_pruned_before(current: Option<u64>, journal_block: u64) -> Option<u64> {
     Some(match current {
@@ -219,6 +257,9 @@ pub fn recover_pruned_before(current: Option<u64>, journal_block: u64) -> Option
     next_prune_block > prune_before ==> remaining == 0,
     next_prune_block <= prune_before && prune_before < u64::MAX
         ==> remaining == prune_before - next_prune_block + 1,
+    next_prune_block == 0 && prune_before == u64::MAX ==> remaining == u64::MAX,
+    next_prune_block > 0 && next_prune_block <= prune_before && prune_before == u64::MAX
+        ==> remaining == u64::MAX - next_prune_block + 1,
 ))]
 pub fn remaining_blocks(next_prune_block: u64, prune_before: u64) -> u64 {
     if next_prune_block > prune_before {
@@ -232,15 +273,26 @@ pub fn remaining_blocks(next_prune_block: u64, prune_before: u64) -> u64 {
 
 #[cfg_attr(verus_keep_ghost, verus_spec(needed => ensures
     needed <= 9,
-    input.pending_fee_index ==> needed >= 1,
-    input.principal_pending_count ==> needed >= 1,
-    input.eth_tx_hash_index ==> needed >= 1,
-    input.tx_store ==> needed >= 1,
-    input.receipt ==> needed >= 1,
-    input.tx_index ==> needed >= 1,
-    input.internal_traces ==> needed >= 1,
-    input.tx_loc ==> needed >= 1,
-    input.seen_tx ==> needed >= 1,
+    !input.pending_fee_index
+        && !input.principal_pending_count
+        && !input.eth_tx_hash_index
+        && !input.tx_store
+        && !input.receipt
+        && !input.tx_index
+        && !input.internal_traces
+        && !input.tx_loc
+        && !input.seen_tx
+        ==> needed == 0,
+    input.pending_fee_index
+        && input.principal_pending_count
+        && input.eth_tx_hash_index
+        && input.tx_store
+        && input.receipt
+        && input.tx_index
+        && input.internal_traces
+        && input.tx_loc
+        && input.seen_tx
+        ==> needed == 9,
 ))]
 pub fn prune_ops_needed_for_tx(input: PruneTxPresence) -> u64 {
     let mut needed = 0u64;

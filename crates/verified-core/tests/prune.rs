@@ -18,6 +18,7 @@ fn watermarks_preserve_order_under_headroom() {
 #[test]
 fn ratio_rounds_down_and_clamp_raises_minimum() {
     assert_eq!(ratio_bytes(1000, 3333), 333);
+    assert_eq!(ratio_bytes(u64::MAX, u32::MAX), u64::MAX);
     assert_eq!(clamp_max_ops(0, 1), 1);
     assert_eq!(clamp_max_ops(10, 1), 10);
 }
@@ -74,15 +75,37 @@ fn prune_cursor_transitions_are_monotonic() {
         }),
         6
     );
+    assert_eq!(
+        normalize_next_prune_block(PruneCursor {
+            next_prune_block: u64::MAX - 1,
+            pruned_before_block: Some(u64::MAX),
+        }),
+        u64::MAX
+    );
     assert_eq!(advance_after_pruned_block(9).next_prune_block, 10);
     assert_eq!(recover_pruned_before(Some(8), 7), Some(8));
     assert_eq!(recover_pruned_before(Some(8), 9), Some(9));
     assert_eq!(remaining_blocks(5, 7), 3);
     assert_eq!(remaining_blocks(8, 7), 0);
+    assert_eq!(remaining_blocks(0, u64::MAX), u64::MAX);
 }
 
 #[test]
 fn prune_tx_ops_count_present_indexes() {
+    assert_eq!(
+        prune_ops_needed_for_tx(PruneTxPresence {
+            pending_fee_index: false,
+            principal_pending_count: false,
+            eth_tx_hash_index: false,
+            tx_store: false,
+            receipt: false,
+            tx_index: false,
+            internal_traces: false,
+            tx_loc: false,
+            seen_tx: false,
+        }),
+        0
+    );
     assert_eq!(
         prune_ops_needed_for_tx(PruneTxPresence {
             pending_fee_index: true,
@@ -96,5 +119,19 @@ fn prune_tx_ops_count_present_indexes() {
             seen_tx: true,
         }),
         7
+    );
+    assert_eq!(
+        prune_ops_needed_for_tx(PruneTxPresence {
+            pending_fee_index: true,
+            principal_pending_count: true,
+            eth_tx_hash_index: true,
+            tx_store: true,
+            receipt: true,
+            tx_index: true,
+            internal_traces: true,
+            tx_loc: true,
+            seen_tx: true,
+        }),
+        9
     );
 }
