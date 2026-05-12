@@ -24,4 +24,5 @@ fn chain_data_memory_ids_are_fixed() {
     assert_eq!(AppMemoryId::WrapEvmConfig.as_u8(), 65);
     assert_eq!(AppMemoryId::WrapNativeLedgerCanister.as_u8(), 66);
     assert_eq!(AppMemoryId::WrapPendingSubmissions.as_u8(), 67);
+    assert_eq!(AppMemoryId::QueryPrecompileAllowlist.as_u8(), 68);
 }

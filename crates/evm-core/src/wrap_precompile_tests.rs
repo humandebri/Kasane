@@ -2,9 +2,10 @@ use super::{
     allowance_slot, approval_event_topic0, compute_asset_key, compute_extra_gas,
     estimate_wrap_precompile_gas, extra_gas_by_instruction_ratio, extra_gas_for_precompile,
     native_value_to_e8s, native_withdraw_event_topic0, native_withdraw_intent_from_log,
-    parse_input, topic_from_address, transfer_event_topic0, unwrap_intent_from_log, unwrap_owner,
-    wrap_event_topic0, COMPACT_UNWRAP_FORMAT_VERSION, MAX_PRINCIPAL_LEN,
-    NATIVE_WITHDRAW_PRECOMPILE_ADDRESS, WEI_PER_E8S, WRAP_PRECOMPILE_ADDRESS,
+    parse_icp_query_input, parse_input, topic_from_address, transfer_event_topic0,
+    unwrap_intent_from_log, unwrap_owner, wrap_event_topic0, COMPACT_ICP_QUERY_FORMAT_VERSION,
+    COMPACT_UNWRAP_FORMAT_VERSION, ICP_QUERY_KIND_QUERY, ICP_QUERY_KIND_UPDATE_RESERVED,
+    MAX_PRINCIPAL_LEN, NATIVE_WITHDRAW_PRECOMPILE_ADDRESS, WEI_PER_E8S, WRAP_PRECOMPILE_ADDRESS,
 };
 use crate::hash;
 use evm_db::chain_data::receipt::log_entry_from_parts;
@@ -25,6 +26,50 @@ fn configure_runtime(factory: [u8; 20]) {
     bytes[2..2 + raw.len()].copy_from_slice(raw);
     bytes[32..52].copy_from_slice(&factory);
     set_runtime_config(RuntimeConfigV1::from_bytes(Cow::Owned(bytes.to_vec())));
+}
+
+fn encode_query_precompile_input(kind: u8, method: &str, arg: &[u8]) -> Vec<u8> {
+    let target = candid::Principal::self_authenticating(b"query-target");
+    let target_bytes = target.as_slice();
+    let mut out = Vec::new();
+    out.push(COMPACT_ICP_QUERY_FORMAT_VERSION);
+    out.push(kind);
+    out.push(target_bytes.len() as u8);
+    out.extend_from_slice(target_bytes);
+    out.push(method.len() as u8);
+    out.extend_from_slice(method.as_bytes());
+    out.extend_from_slice(&(arg.len() as u32).to_be_bytes());
+    out.extend_from_slice(arg);
+    out
+}
+
+#[test]
+fn icp_query_precompile_compact_input_decodes() {
+    let arg = vec![0x44, 0x49, 0x44, 0x4c, 0x00, 0x00];
+    let input = encode_query_precompile_input(ICP_QUERY_KIND_QUERY, "read_state", &arg);
+    let parsed = parse_icp_query_input(&input).expect("must decode");
+    assert_eq!(parsed.method, "read_state");
+    assert_eq!(parsed.arg, arg);
+    assert!(!parsed.target.is_empty());
+}
+
+#[test]
+fn icp_query_precompile_rejects_update_kind() {
+    let input = encode_query_precompile_input(ICP_QUERY_KIND_UPDATE_RESERVED, "write_state", &[]);
+    assert_eq!(
+        parse_icp_query_input(&input).unwrap_err(),
+        "ic_query.update_unimplemented"
+    );
+}
+
+#[test]
+fn icp_query_precompile_rejects_long_method() {
+    let method = "x".repeat(65);
+    let input = encode_query_precompile_input(ICP_QUERY_KIND_QUERY, &method, &[]);
+    assert_eq!(
+        parse_icp_query_input(&input).unwrap_err(),
+        "ic_query.method_invalid"
+    );
 }
 
 #[test]

@@ -27,6 +27,7 @@ use evm_db::upgrade;
 use ic_cdk::api::{
     accept_message, canister_cycle_balance, is_controller, msg_caller, msg_method_name,
 };
+use ic_cdk::call::Call;
 use num_bigint::BigUint;
 use serde::Deserialize;
 use std::collections::BTreeSet;
@@ -107,6 +108,18 @@ pub struct SetFeePolicyArgs {
     pub fee_ledger_canister: Principal,
     pub cycle_fee_e8s: u64,
     pub gas_price_buffer_bps: u32,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize, Eq, PartialEq)]
+pub struct QueryPrecompileAllowArgs {
+    pub target: Principal,
+    pub method: String,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize, Eq, PartialEq)]
+pub struct QueryPrecompileAllowedView {
+    pub target: Principal,
+    pub method: String,
 }
 
 #[derive(Clone, Debug, CandidType, Deserialize)]
@@ -433,6 +446,45 @@ fn validate_allowed_assets(assets: &[Principal]) -> Result<(), String> {
         }
     }
     Ok(())
+}
+
+fn validate_query_precompile_allow_args(args: &QueryPrecompileAllowArgs) -> Result<(), String> {
+    validate_non_anonymous_principal(&args.target, "arg.target_anonymous")?;
+    if args.method.is_empty() || args.method.len() > 64 {
+        return Err("arg.method_invalid".to_string());
+    }
+    if !args.method.is_ascii() {
+        return Err("arg.method_invalid".to_string());
+    }
+    Ok(())
+}
+
+fn query_precompile_allow_key(target: Principal, method: &str) -> Vec<u8> {
+    let target_bytes = target.as_slice();
+    let mut out = Vec::with_capacity(1 + target_bytes.len() + method.len());
+    out.push(target_bytes.len() as u8);
+    out.extend_from_slice(target_bytes);
+    out.extend_from_slice(method.as_bytes());
+    out
+}
+
+fn decode_query_precompile_allow_key(key: &[u8]) -> Option<QueryPrecompileAllowedView> {
+    let len = usize::from(*key.first()?);
+    if len == 0 || len > 29 || key.len() <= 1 + len {
+        return None;
+    }
+    let target = Principal::from_slice(&key[1..1 + len]);
+    let method = std::str::from_utf8(&key[1 + len..]).ok()?.to_string();
+    Some(QueryPrecompileAllowedView { target, method })
+}
+
+fn is_query_precompile_allowed(target: &[u8], method: &str) -> bool {
+    if target.is_empty() || target.len() > 29 || method.is_empty() || method.len() > 64 {
+        return false;
+    }
+    let target = Principal::from_slice(target);
+    let key = query_precompile_allow_key(target, method);
+    with_state(|state| state.query_precompile_allowlist.get(&key).is_some())
 }
 
 fn validate_evm_address(bytes: &[u8], code: &str) -> Result<(), String> {
@@ -1735,6 +1787,17 @@ fn get_allowed_assets() -> Result<Vec<Principal>, String> {
 }
 
 #[ic_cdk::query]
+fn get_query_precompile_allowlist() -> Vec<QueryPrecompileAllowedView> {
+    with_state(|state| {
+        state
+            .query_precompile_allowlist
+            .iter()
+            .filter_map(|entry| decode_query_precompile_allow_key(entry.key()))
+            .collect()
+    })
+}
+
+#[ic_cdk::query]
 fn get_request(request_id: Vec<u8>) -> Option<RequestOverview> {
     let request_id = tx_id_from_bytes(request_id)?;
     with_state(|state| {
@@ -1997,6 +2060,34 @@ fn set_allowed_assets(assets: Vec<Principal>) -> Result<(), String> {
                 .wrap_allowed_assets
                 .insert(asset.as_slice().to_vec(), 1);
         }
+    });
+    Ok(())
+}
+
+#[ic_cdk::update]
+fn add_query_precompile_allowed_method(args: QueryPrecompileAllowArgs) -> Result<(), String> {
+    if let Some(reason) = reject_anonymous_update() {
+        return Err(reason);
+    }
+    require_control_plane_write()?;
+    validate_query_precompile_allow_args(&args)?;
+    let key = query_precompile_allow_key(args.target, &args.method);
+    with_state_mut(|state| {
+        state.query_precompile_allowlist.insert(key, 1);
+    });
+    Ok(())
+}
+
+#[ic_cdk::update]
+fn remove_query_precompile_allowed_method(args: QueryPrecompileAllowArgs) -> Result<(), String> {
+    if let Some(reason) = reject_anonymous_update() {
+        return Err(reason);
+    }
+    require_control_plane_write()?;
+    validate_query_precompile_allow_args(&args)?;
+    let key = query_precompile_allow_key(args.target, &args.method);
+    with_state_mut(|state| {
+        state.query_precompile_allowlist.remove(&key);
     });
     Ok(())
 }
@@ -2703,6 +2794,13 @@ fn rpc_eth_call_object(call: RpcCallObjectView) -> Result<RpcCallResultView, Rpc
     ic_evm_rpc::rpc_eth_call_object(call)
 }
 
+#[ic_cdk::update]
+async fn rpc_eth_call_object_with_query_precompile(
+    call: RpcCallObjectView,
+) -> Result<RpcCallResultView, RpcErrorView> {
+    ic_evm_rpc::rpc_eth_call_object_async(call, resolve_icp_query_precompile).await
+}
+
 #[cfg(feature = "precompile-profile-admin")]
 #[ic_cdk::update]
 fn profile_precompile_call(call: RpcCallObjectView) -> Result<RpcCallResultView, RpcErrorView> {
@@ -2779,6 +2877,25 @@ fn rpc_eth_history_window() -> RpcHistoryWindowView {
 #[ic_cdk::query]
 fn rpc_eth_call_rawtx(raw_tx: Vec<u8>) -> Result<Vec<u8>, String> {
     ic_evm_rpc::rpc_eth_call_rawtx(raw_tx)
+}
+
+async fn resolve_icp_query_precompile(
+    request: evm_core::wrap_precompile::IcpQueryRequest,
+) -> Result<Vec<u8>, String> {
+    if !is_query_precompile_allowed(&request.target, &request.method) {
+        return Err("ic_query.allowlist_miss".to_string());
+    }
+    let target = Principal::from_slice(&request.target);
+    let response = Call::bounded_wait(target, &request.method)
+        .take_raw_args(request.arg)
+        .change_timeout(1)
+        .await
+        .map_err(|err| format!("ic_query.call_failed:{err}"))?;
+    let bytes = response.into_bytes();
+    if bytes.len() > MAX_RETURN_DATA {
+        return Err("ic_query.response_too_large".to_string());
+    }
+    Ok(bytes)
 }
 
 #[ic_cdk::query]

@@ -6,7 +6,10 @@ use crate::constants::FEE_RECIPIENT;
 use crate::hash::keccak256;
 use crate::revm_db::RevmStableDb;
 use crate::tx_decode::DecodeError;
-use crate::wrap_precompile::WrapPrecompileProvider;
+use crate::wrap_precompile::{
+    with_icp_query_detection, with_icp_query_reply, IcpQueryReply, IcpQueryRequest,
+    WrapPrecompileProvider,
+};
 use evm_db::chain_data::constants::{
     CHAIN_ID, MAX_LOGS_PER_TX, MAX_LOG_DATA, MAX_LOG_TOPICS, MAX_RETURN_DATA,
 };
@@ -42,6 +45,7 @@ pub enum ExecError {
     InvalidGasFee,
     ResultTooLarge,
     InstructionBudgetExceeded,
+    ExternalQuery(IcpQueryRequest),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -127,6 +131,59 @@ pub fn execute_tx(
 }
 
 #[allow(clippy::too_many_arguments)]
+pub async fn execute_tx_on_async<DB, R, Fut>(
+    db: &mut DB,
+    tx_id: TxId,
+    tx_index: u32,
+    tx_env: TxEnv,
+    exec_ctx: &BlockExecContext,
+    exec_path: ExecPath,
+    persist_receipt_index: bool,
+    instruction_soft_limit: Option<u64>,
+    allow_external_precompile: bool,
+    mut resolver: R,
+) -> Result<(ExecOutcome, StateDiff), ExecError>
+where
+    for<'a> &'a mut DB:
+        revm::database_interface::Database<Error = core::convert::Infallible> + DatabaseCommit,
+    R: FnMut(IcpQueryRequest) -> Fut,
+    Fut: core::future::Future<Output = Result<Vec<u8>, String>>,
+{
+    let first = execute_tx_on(
+        &mut *db,
+        tx_id,
+        tx_index,
+        tx_env.clone(),
+        exec_ctx,
+        exec_path,
+        persist_receipt_index,
+        instruction_soft_limit,
+        allow_external_precompile,
+    );
+    let request = match first {
+        Err(ExecError::ExternalQuery(request)) => request,
+        other => return other,
+    };
+    let reply = match resolver(request).await {
+        Ok(bytes) => IcpQueryReply::Ok(bytes),
+        Err(code) => IcpQueryReply::Err(code),
+    };
+    with_icp_query_reply(reply, || {
+        execute_tx_on(
+            &mut *db,
+            tx_id,
+            tx_index,
+            tx_env,
+            exec_ctx,
+            exec_path,
+            persist_receipt_index,
+            instruction_soft_limit,
+            allow_external_precompile,
+        )
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn execute_tx_on<DB>(
     db: DB,
     tx_id: TxId,
@@ -168,7 +225,12 @@ where
         .build_mainnet_with_inspector(inspector)
         .with_precompiles(WrapPrecompileProvider::new(allow_external_precompile));
 
-    let result = evm.inspect_tx(tx_env).map_err(map_tx_error_stage)?;
+    let (result, pending_query) =
+        with_icp_query_detection(|| evm.inspect_tx(tx_env).map_err(map_tx_error_stage));
+    if let Some(request) = pending_query {
+        return Err(ExecError::ExternalQuery(request));
+    }
+    let result = result?;
     if evm.inspector.budget.tripped {
         return Err(ExecError::InstructionBudgetExceeded);
     }

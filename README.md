@@ -49,6 +49,12 @@ Explorer の実装詳細（ルート一覧・lib層責務）は `tools/explorer/
 
 ### Precompile 互換ポリシー
 
+- `0x00000000000000000000000000000000ffff0003` は ICP query precompile として予約する。
+  - ABI は compact binary: `version(1)`, `kind(0=query/1=update予約)`, `target_principal_len`, `target_principal`, `method_len`, `method`, `candid_arg_len_be`, `candid_arg`。
+  - v1 は読取限定。target/method は controller-only API `add_query_precompile_allowed_method` / `remove_query_precompile_allowed_method` で allowlist 管理する。
+  - `rpc_eth_call_object_with_query_precompile` は allowlist 済み query method を `Call::bounded_wait(...).change_timeout(1)` で呼び、raw Candid reply bytes を返す。
+  - canister間 call の timeout は ic-cdk API 上秒単位のため、v1 は 1秒を採用する。250ms timeout は使わない。
+  - update_call は v1 未実装。EVM tx revert と外部副作用の原子性が一致しないため、kind=1 は明示的に precompile error とする。
 - 既定ビルドでは `0x0A KZG_POINT_EVALUATION` は無効化している。
 - `EIP-4844` raw tx は decode 段階で reject し、`0x0A` を直接 call しても既定ビルドでは precompile 不在として失敗する。
 - 既定ビルドでは Prague / Osaka の `BLS12-381` precompile 群は無効化している。

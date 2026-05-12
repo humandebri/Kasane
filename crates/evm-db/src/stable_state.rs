@@ -47,6 +47,7 @@ pub type WrapRequests = StableBTreeMap<TxId, WrapStoredRequest, VMem>;
 pub type WrapQueue = StableBTreeMap<u64, TxId, VMem>;
 pub type WrapAllowedAssets = StableBTreeMap<Vec<u8>, u8, VMem>;
 pub type WrapPendingSubmissions = StableBTreeMap<TxId, WrapPendingSubmission, VMem>;
+pub type QueryPrecompileAllowlist = StableBTreeMap<Vec<u8>, u8, VMem>;
 pub type PruneJournalMap = StableBTreeMap<u64, PruneJournal, VMem>;
 pub type DroppedRing = StableBTreeMap<u64, TxId, VMem>;
 pub type StateStorageRoots = StableBTreeMap<AccountKey, U256Val, VMem>;
@@ -101,6 +102,7 @@ pub struct StableState {
     pub wrap_queue: WrapQueue,
     pub wrap_queue_meta: StableCell<QueueMeta, VMem>,
     pub wrap_allowed_assets: WrapAllowedAssets,
+    pub query_precompile_allowlist: QueryPrecompileAllowlist,
     pub wrap_fee_policy: StableCell<FeePolicyStored, VMem>,
     pub wrap_evm_config: StableCell<WrapEvmConfigStored, VMem>,
     pub wrap_native_ledger_canister: StableCell<Vec<u8>, VMem>,
@@ -202,6 +204,8 @@ pub fn init_stable_state() {
     let wrap_queue_meta =
         StableCell::init(get_memory(AppMemoryId::WrapQueueMeta), QueueMeta::new());
     let wrap_allowed_assets = StableBTreeMap::init(get_memory(AppMemoryId::WrapAllowedAssets));
+    let query_precompile_allowlist =
+        StableBTreeMap::init(get_memory(AppMemoryId::QueryPrecompileAllowlist));
     let wrap_fee_policy = StableCell::init(
         get_memory(AppMemoryId::WrapFeePolicy),
         FeePolicyStored {
@@ -298,6 +302,7 @@ pub fn init_stable_state() {
             wrap_queue,
             wrap_queue_meta,
             wrap_allowed_assets,
+            query_precompile_allowlist,
             wrap_fee_policy,
             wrap_evm_config,
             wrap_native_ledger_canister,
