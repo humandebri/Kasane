@@ -16,6 +16,10 @@ export type DecodedTxView = {
   gas_price: [] | [bigint];
   max_fee_per_gas: [] | [bigint];
   max_priority_fee_per_gas: [] | [bigint];
+  tx_type: [] | [number];
+  signature_v: [] | [bigint];
+  signature_r: [] | [Uint8Array];
+  signature_s: [] | [Uint8Array];
 };
 
 export type EthTxView = {
@@ -44,7 +48,9 @@ export type EthReceiptView = {
   operator_fee: bigint;
   eth_tx_hash: [] | [Uint8Array];
   gas_used: bigint;
+  cumulative_gas_used: [] | [bigint];
   contract_address: [] | [Uint8Array];
+  tx_type: [] | [number];
   tx_hash: Uint8Array;
 };
 
@@ -70,6 +76,7 @@ export type EthLogItemView = {
   log_index: number;
   data: Uint8Array;
   block_number: bigint;
+  block_hash: [] | [Uint8Array];
   topics: Uint8Array[];
   address: Uint8Array;
   eth_tx_hash: [] | [Uint8Array];

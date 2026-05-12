@@ -61,6 +61,10 @@ export const idlFactory: IDL.InterfaceFactory = ({ IDL }) => {
     gas_price: IDL.Opt(IDL.Nat),
     max_fee_per_gas: IDL.Opt(IDL.Nat),
     max_priority_fee_per_gas: IDL.Opt(IDL.Nat),
+    tx_type: IDL.Opt(IDL.Nat8),
+    signature_v: IDL.Opt(IDL.Nat64),
+    signature_r: IDL.Opt(IDL.Vec(IDL.Nat8)),
+    signature_s: IDL.Opt(IDL.Vec(IDL.Nat8)),
   });
   const EthTxView = IDL.Record({
     raw: IDL.Vec(IDL.Nat8),
@@ -94,7 +98,9 @@ export const idlFactory: IDL.InterfaceFactory = ({ IDL }) => {
     operator_fee: IDL.Nat,
     eth_tx_hash: IDL.Opt(IDL.Vec(IDL.Nat8)),
     gas_used: IDL.Nat64,
+    cumulative_gas_used: IDL.Opt(IDL.Nat64),
     contract_address: IDL.Opt(IDL.Vec(IDL.Nat8)),
+    tx_type: IDL.Opt(IDL.Nat8),
     tx_hash: IDL.Vec(IDL.Nat8),
   });
   const EthBlockView = IDL.Record({
@@ -124,6 +130,7 @@ export const idlFactory: IDL.InterfaceFactory = ({ IDL }) => {
     log_index: IDL.Nat32,
     data: IDL.Vec(IDL.Nat8),
     block_number: IDL.Nat64,
+    block_hash: IDL.Opt(IDL.Vec(IDL.Nat8)),
     topics: IDL.Vec(IDL.Vec(IDL.Nat8)),
     address: IDL.Vec(IDL.Nat8),
     eth_tx_hash: IDL.Opt(IDL.Vec(IDL.Nat8)),

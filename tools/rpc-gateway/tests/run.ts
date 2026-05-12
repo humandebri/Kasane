@@ -283,6 +283,10 @@ function testPriorityFeeComputation(): void {
       gas_price: [],
       max_fee_per_gas: [100n],
       max_priority_fee_per_gas: [5n],
+      tx_type: [2],
+      signature_v: [],
+      signature_r: [],
+      signature_s: [],
     },
     97n
   );
@@ -300,6 +304,10 @@ function testPriorityFeeComputation(): void {
       gas_price: [120n],
       max_fee_per_gas: [],
       max_priority_fee_per_gas: [],
+      tx_type: [0],
+      signature_v: [],
+      signature_r: [],
+      signature_s: [],
     },
     100n
   );
@@ -472,7 +480,9 @@ function testReceiptLogMapping(): void {
       operator_fee: 0n,
       eth_tx_hash: [Uint8Array.from(Buffer.from("33".repeat(32), "hex"))],
       gas_used: 21_000n,
+      cumulative_gas_used: [42_000n],
       contract_address: [],
+      tx_type: [2],
       tx_hash: Uint8Array.from(Buffer.from("44".repeat(32), "hex")),
     },
     Uint8Array.from(Buffer.from("55".repeat(32), "hex"))
@@ -480,6 +490,8 @@ function testReceiptLogMapping(): void {
   assert.equal(mapped.blockHash, `0x${"88".repeat(32)}`);
   assert.equal(mapped.from, `0x${"66".repeat(20)}`);
   assert.equal(mapped.to, `0x${"77".repeat(20)}`);
+  assert.equal(mapped.cumulativeGasUsed, "0xa410");
+  assert.equal(mapped.type, "0x2");
   const logs = mapped.logs as Array<Record<string, unknown>>;
   assert.equal(logs.length, 1);
   const log0 = logs[0];
@@ -489,6 +501,31 @@ function testReceiptLogMapping(): void {
   assert.equal(log0.blockHash, `0x${"88".repeat(32)}`);
   assert.equal(log0.transactionIndex, "0x2");
   assert.equal(log0.logIndex, "0x7");
+
+  const legacyCompatible = __test_map_receipt(
+    {
+      to: [],
+      effective_gas_price: 1n,
+      status: 1,
+      l1_data_fee: 0n,
+      tx_index: 0,
+      block_hash: [],
+      from: [],
+      logs: [],
+      total_fee: 0n,
+      block_number: 5n,
+      operator_fee: 0n,
+      eth_tx_hash: [],
+      gas_used: 21_000n,
+      cumulative_gas_used: [],
+      contract_address: [],
+      tx_type: [],
+      tx_hash: Uint8Array.from(Buffer.from("44".repeat(32), "hex")),
+    },
+    Uint8Array.from(Buffer.from("55".repeat(32), "hex"))
+  );
+  assert.equal(legacyCompatible.cumulativeGasUsed, "0x5208");
+  assert.equal(legacyCompatible.type, "0x0");
 }
 
 function testReceiptHashStrictMatch(): void {
@@ -508,7 +545,9 @@ function testReceiptHashStrictMatch(): void {
       operator_fee: 0n,
       eth_tx_hash: [requested],
       gas_used: 21_000n,
+      cumulative_gas_used: [21_000n],
       contract_address: [],
+      tx_type: [0],
       tx_hash: Uint8Array.from(Buffer.from("44".repeat(32), "hex")),
     },
     Uint8Array.from(Buffer.from("55".repeat(32), "hex"))
@@ -530,7 +569,9 @@ function testReceiptHashStrictMatch(): void {
       operator_fee: 0n,
       eth_tx_hash: [Uint8Array.from(Buffer.from("bb".repeat(32), "hex"))],
       gas_used: 21_000n,
+      cumulative_gas_used: [21_000n],
       contract_address: [],
+      tx_type: [0],
       tx_hash: Uint8Array.from(Buffer.from("44".repeat(32), "hex")),
     },
     Uint8Array.from(Buffer.from("55".repeat(32), "hex"))
@@ -606,12 +647,51 @@ function testEip1559GasPriceFallback(): void {
         max_fee_per_gas: [16n],
         max_priority_fee_per_gas: [1n],
         chain_id: [1n],
+        tx_type: [2],
+        signature_v: [1n],
+        signature_r: [Uint8Array.from(Buffer.from("01".padStart(64, "0"), "hex"))],
+        signature_s: [Uint8Array.from(Buffer.from("02".padStart(64, "0"), "hex"))],
       },
     ],
   });
   assert.equal(mapped.gasPrice, "0x10");
   assert.equal(mapped.maxFeePerGas, "0x10");
   assert.equal(mapped.maxPriorityFeePerGas, "0x1");
+  assert.equal(mapped.type, "0x2");
+  assert.equal(mapped.v, "0x1");
+  assert.equal(mapped.r, "0x1");
+  assert.equal(mapped.s, "0x2");
+
+  const legacyCompatible = __test_map_tx({
+    raw: Uint8Array.from([]),
+    tx_index: [],
+    block_hash: [],
+    decode_ok: true,
+    hash: Uint8Array.from(Buffer.from("11".repeat(32), "hex")),
+    kind: { EthSigned: null },
+    block_number: [],
+    eth_tx_hash: [],
+    decoded: [
+      {
+        from: Uint8Array.from(Buffer.from("33".repeat(20), "hex")),
+        to: [],
+        nonce: 1n,
+        value: Uint8Array.from(new Array(32).fill(0)),
+        input: Uint8Array.from([]),
+        gas_limit: 21_000n,
+        gas_price: [1n],
+        max_fee_per_gas: [],
+        max_priority_fee_per_gas: [],
+        chain_id: [1n],
+        tx_type: [],
+        signature_v: [],
+        signature_r: [],
+        signature_s: [],
+      },
+    ],
+  });
+  assert.equal(legacyCompatible.type, "0x0");
+  assert.equal(legacyCompatible.v, "0x0");
 }
 
 function testSubmitEthHashResolutionPolicy(): void {
@@ -787,6 +867,64 @@ async function testGetLogsFilterParsing(): Promise<void> {
     assert.equal(withOrTopic.value.candidFilters.length, 2);
     assert.equal(withOrTopic.value.candidFilters[0]?.topic0.length, 1);
     assert.equal(withOrTopic.value.candidFilters[1]?.topic0.length, 1);
+    assert.deepEqual(withOrTopic.value.candidFilters[0]?.from_block, [1n]);
+    assert.deepEqual(withOrTopic.value.candidFilters[0]?.to_block, [1n]);
+  }
+
+  const withAddressArray = await __test_parse_logs_filter(
+    {
+      address: [
+        "0x0000000000000000000000000000000000000001",
+        "0x0000000000000000000000000000000000000002",
+      ],
+    },
+    7n
+  );
+  assert.ok(!("error" in withAddressArray));
+  if (!("error" in withAddressArray)) {
+    assert.equal(withAddressArray.value.candidFilters.length, 2);
+    assert.deepEqual(withAddressArray.value.candidFilters[0]?.from_block, [7n]);
+    assert.deepEqual(withAddressArray.value.candidFilters[0]?.to_block, [7n]);
+  }
+
+  const withinFilterLimit = await __test_parse_logs_filter(
+    {
+      address: Array.from(
+        { length: 4 },
+        (_, index) => `0x${(index + 1).toString(16).padStart(40, "0")}`
+      ),
+      topics: [
+        Array.from(
+          { length: 4 },
+          (_, index) => `0x${(index + 1).toString(16).padStart(64, "0")}`
+        ),
+      ],
+    },
+    7n
+  );
+  assert.ok(!("error" in withinFilterLimit));
+  if (!("error" in withinFilterLimit)) {
+    assert.equal(withinFilterLimit.value.candidFilters.length, 16);
+  }
+
+  const overFilterLimit = await __test_parse_logs_filter(
+    {
+      address: Array.from(
+        { length: 5 },
+        (_, index) => `0x${(index + 1).toString(16).padStart(40, "0")}`
+      ),
+      topics: [
+        Array.from(
+          { length: 4 },
+          (_, index) => `0x${(index + 1).toString(16).padStart(64, "0")}`
+        ),
+      ],
+    },
+    7n
+  );
+  assert.ok("error" in overFilterLimit);
+  if ("error" in overFilterLimit) {
+    assert.equal(overFilterLimit.error, "address/topics OR combinations are limited to 16");
   }
 }
 
@@ -806,6 +944,7 @@ function testLogSortOrder(): void {
       log_index: 1,
       data: Uint8Array.from([0x02]),
       block_number: 10n,
+      block_hash: [],
       topics: [],
       address: Uint8Array.from(new Array(20).fill(0x11)),
       eth_tx_hash: [],
@@ -816,6 +955,7 @@ function testLogSortOrder(): void {
       log_index: 0,
       data: Uint8Array.from([0x00]),
       block_number: 9n,
+      block_hash: [],
       topics: [],
       address: Uint8Array.from(new Array(20).fill(0x11)),
       eth_tx_hash: [],
@@ -826,6 +966,7 @@ function testLogSortOrder(): void {
       log_index: 0,
       data: Uint8Array.from([0x01]),
       block_number: 10n,
+      block_hash: [],
       topics: [],
       address: Uint8Array.from(new Array(20).fill(0x11)),
       eth_tx_hash: [],

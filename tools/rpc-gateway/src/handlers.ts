@@ -23,7 +23,9 @@ const LOGS_MAX_PAGES = 20;
 const MAX_FEE_HISTORY_BLOCKS = 256;
 const EIP1559_BASE_FEE_MAX_CHANGE_DENOM = 8n;
 const EIP1559_ELASTICITY_MULTIPLIER = 2n;
+const LOGS_MAX_ADDRESS_OR_TERMS = 16;
 const LOGS_MAX_TOPIC0_OR_TERMS = 16;
+const LOGS_MAX_FILTER_TERMS = 16;
 const SUPPORTED_CALL_KEYS = new Set([
   "to",
   "from",
@@ -424,10 +426,7 @@ async function onGetLogs(id: string | number | null, params: unknown): Promise<J
     }
   }
   const sorted = sortLogItems(out);
-  return makeSuccess(
-    id,
-    sorted.map((item: EthLogsPageView["items"][number]) => mapLogItem(item, parsed.value.blockHash))
-  );
+  return makeSuccess(id, sorted.map((item: EthLogsPageView["items"][number]) => mapLogItem(item)));
 }
 
 async function onEthCall(id: string | number | null, params: unknown): Promise<JsonRpcResponse> {
@@ -951,11 +950,6 @@ async function parseLogsFilter(
       return { error: toErrorMessage(error) };
     }
   }
-  if ("address" in filterRaw && filterRaw.address !== undefined) {
-    if (typeof filterRaw.address !== "string") {
-      return { error: "address must be hex string" };
-    }
-  }
   const fromBlock = await resolveLogsBlockTag(filterRaw.fromBlock, getHead);
   if ("error" in fromBlock) {
     return fromBlock;
@@ -971,22 +965,40 @@ async function parseLogsFilter(
   if ("error" in topicsOut) {
     return topicsOut;
   }
-  let address: [] | [Uint8Array] = [];
-  if (typeof filterRaw.address === "string") {
-    try {
-      address = [ensureLen(parseDataHex(filterRaw.address), 20, "address")];
-    } catch (error) {
-      return { error: toErrorMessage(error) };
+  const addressesOut = parseAddressCandidates(filterRaw.address);
+  if ("error" in addressesOut) {
+    return addressesOut;
+  }
+  const filterTerms = addressesOut.value.addressCandidates.length * topicsOut.value.topic0Candidates.length;
+  if (filterTerms > LOGS_MAX_FILTER_TERMS) {
+    return { error: `address/topics OR combinations are limited to ${LOGS_MAX_FILTER_TERMS}` };
+  }
+  const head =
+    blockHash.length === 0 && (fromBlock.value === undefined || toBlock.value === undefined)
+      ? await getHead()
+      : undefined;
+  const resolvedFromBlock = blockHash.length === 0 ? fromBlock.value ?? head : fromBlock.value;
+  const resolvedToBlock = blockHash.length === 0 ? toBlock.value ?? head : toBlock.value;
+  if (
+    resolvedFromBlock !== undefined &&
+    resolvedToBlock !== undefined &&
+    resolvedFromBlock > resolvedToBlock
+  ) {
+    return { error: "fromBlock must be <= toBlock" };
+  }
+  const candidFilters: EthLogFilterView[] = [];
+  for (const address of addressesOut.value.addressCandidates) {
+    for (const topic0 of topicsOut.value.topic0Candidates) {
+      candidFilters.push({
+        limit: [],
+        topic0,
+        topic1: [],
+        address,
+        from_block: resolvedFromBlock === undefined ? [] : [resolvedFromBlock],
+        to_block: resolvedToBlock === undefined ? [] : [resolvedToBlock],
+      });
     }
   }
-  const candidFilters: EthLogFilterView[] = topicsOut.value.topic0Candidates.map((topic0) => ({
-    limit: [],
-    topic0,
-    topic1: [],
-    address,
-    from_block: fromBlock.value === undefined ? [] : [fromBlock.value],
-    to_block: toBlock.value === undefined ? [] : [toBlock.value],
-  }));
   return { value: { candidFilters, blockHash } };
 }
 
@@ -1042,6 +1054,46 @@ function parseTopicsFilter(
     return { error: "only topics[0] is supported" };
   }
   return { value: { topic0Candidates: topic0.value } };
+}
+
+function parseAddressCandidates(
+  value: unknown
+): { value: { addressCandidates: Array<[] | [Uint8Array]> } } | { error: string } {
+  if (value === undefined || value === null) {
+    return { value: { addressCandidates: [[]] } };
+  }
+  if (typeof value === "string") {
+    try {
+      return { value: { addressCandidates: [[ensureLen(parseDataHex(value), 20, "address")]] } };
+    } catch (error) {
+      return { error: toErrorMessage(error) };
+    }
+  }
+  if (!Array.isArray(value)) {
+    return { error: "address must be hex string or array" };
+  }
+  if (value.length > LOGS_MAX_ADDRESS_OR_TERMS) {
+    return { error: `address array is limited to ${LOGS_MAX_ADDRESS_OR_TERMS} entries` };
+  }
+  const candidates: Array<[] | [Uint8Array]> = [];
+  const dedupe = new Set<string>();
+  for (const item of value) {
+    if (typeof item !== "string") {
+      return { error: "address array entries must be hex strings" };
+    }
+    try {
+      const address = ensureLen(parseDataHex(item), 20, "address");
+      const key = toDataHex(address);
+      if (dedupe.has(key)) {
+        continue;
+      }
+      dedupe.add(key);
+      candidates.push([address]);
+    } catch (error) {
+      return { error: toErrorMessage(error) };
+    }
+  }
+  return { value: { addressCandidates: candidates } };
 }
 
 function parseTopicAt(value: unknown, index: number): { value: [] | [Uint8Array] } | { error: string } {
@@ -1166,14 +1218,15 @@ async function resolveBlockNumberByHash(
   return out.Ok.length === 0 ? null : out.Ok[0];
 }
 
-function mapLogItem(item: EthLogsPageView["items"][number], blockHash: [] | [Uint8Array]): Record<string, unknown> {
+function mapLogItem(item: EthLogsPageView["items"][number]): Record<string, unknown> {
   const txHash = item.eth_tx_hash.length === 0 ? item.tx_hash : item.eth_tx_hash[0];
+  const blockHash = item.block_hash.length === 0 ? null : toDataHex(item.block_hash[0]);
   return {
     address: toDataHex(item.address),
     topics: item.topics.map((topic: Uint8Array) => toDataHex(topic)),
     data: toDataHex(item.data),
     blockNumber: toQuantityHex(item.block_number),
-    blockHash: blockHash.length === 0 ? null : toDataHex(blockHash[0]),
+    blockHash,
     transactionHash: toDataHex(txHash),
     transactionIndex: toQuantityHex(BigInt(item.tx_index)),
     logIndex: toQuantityHex(BigInt(item.log_index)),
@@ -1202,6 +1255,9 @@ async function resolveBlockTag(blockTag: unknown, getHead: () => Promise<bigint>
   }
   if (isLatestTag(normalized)) {
     return await getHead();
+  }
+  if (normalized === "earliest") {
+    return 0n;
   }
   return parseQuantityHex(normalized);
 }
@@ -1568,6 +1624,9 @@ function mapTx(tx: EthTxView, fallbackBlockHash: Uint8Array | null = null): Reco
   const gasPrice = decoded?.gas_price[0] ?? decoded?.max_fee_per_gas[0];
   const maxFeePerGas = decoded?.max_fee_per_gas[0];
   const maxPriorityFeePerGas = decoded?.max_priority_fee_per_gas[0];
+  const signatureV = decoded?.signature_v[0];
+  const signatureR = decoded?.signature_r[0];
+  const signatureS = decoded?.signature_s[0];
   const blockHashOpt = tx.block_hash ?? [];
   const blockHash = blockHashOpt.length === 0 ? fallbackBlockHash : blockHashOpt[0];
   return {
@@ -1584,10 +1643,10 @@ function mapTx(tx: EthTxView, fallbackBlockHash: Uint8Array | null = null): Reco
     maxFeePerGas: maxFeePerGas === undefined ? null : toQuantityHex(maxFeePerGas),
     maxPriorityFeePerGas: maxPriorityFeePerGas === undefined ? null : toQuantityHex(maxPriorityFeePerGas),
     input: decoded ? toDataHex(decoded.input) : "0x",
-    type: "0x0",
-    v: "0x0",
-    r: "0x0",
-    s: "0x0",
+    type: decoded?.tx_type[0] === undefined ? "0x0" : toQuantityHex(BigInt(decoded.tx_type[0])),
+    v: signatureV === undefined ? "0x0" : toQuantityHex(signatureV),
+    r: signatureR === undefined ? "0x0" : toQuantityHex(bytesToQuantity(signatureR)),
+    s: signatureS === undefined ? "0x0" : toQuantityHex(bytesToQuantity(signatureS)),
   };
 }
 function mapReceipt(receipt: EthReceiptView, fallbackTxHash: Uint8Array): Record<string, unknown> {
@@ -1605,7 +1664,7 @@ function mapReceipt(receipt: EthReceiptView, fallbackTxHash: Uint8Array): Record
     blockNumber: toQuantityHex(receipt.block_number),
     from,
     to,
-    cumulativeGasUsed: toQuantityHex(receipt.gas_used),
+    cumulativeGasUsed: toQuantityHex(receipt.cumulative_gas_used[0] ?? receipt.gas_used),
     gasUsed: toQuantityHex(receipt.gas_used),
     contractAddress: receipt.contract_address.length === 0 ? null : toDataHex(receipt.contract_address[0]),
     logs: receipt.logs.map((log: EthReceiptView["logs"][number]) => ({
@@ -1621,7 +1680,7 @@ function mapReceipt(receipt: EthReceiptView, fallbackTxHash: Uint8Array): Record
     })),
     logsBloom: ZERO_256,
     status: toQuantityHex(BigInt(receipt.status)),
-    type: "0x0",
+    type: receipt.tx_type.length === 0 ? "0x0" : toQuantityHex(BigInt(receipt.tx_type[0])),
     effectiveGasPrice: toQuantityHex(receipt.effective_gas_price),
   };
 }

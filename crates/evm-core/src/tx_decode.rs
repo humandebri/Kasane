@@ -5,8 +5,9 @@ use evm_db::chain_data::constants::{CHAIN_ID, MAX_TX_SIZE};
 use evm_db::chain_data::TxKind;
 use evm_tx::{recover_eth_tx, RecoveredTx, RecoveryError};
 use revm::context::TxEnv;
+use revm::context_interface::transaction::{AccessList, AccessListItem};
 use revm::primitives::{
-    Address as RevmAddress, Bytes as RevmBytes, TxKind as RevmTxKind, U256 as RevmU256,
+    Address as RevmAddress, Bytes as RevmBytes, TxKind as RevmTxKind, B256, U256 as RevmU256,
 };
 use std::borrow::Cow;
 
@@ -186,6 +187,10 @@ pub struct DecodedTxView<'a> {
     pub max_fee_per_gas: Option<u128>,
     pub max_priority_fee_per_gas: Option<u128>,
     pub chain_id: Option<u64>,
+    pub tx_type: u8,
+    pub signature_v: Option<u64>,
+    pub signature_r: Option<[u8; 32]>,
+    pub signature_s: Option<[u8; 32]>,
 }
 
 pub fn decode_tx_view<'a>(
@@ -207,44 +212,15 @@ pub fn decode_tx_view<'a>(
                 max_fee_per_gas: Some(header.max_fee),
                 max_priority_fee_per_gas: Some(header.max_priority),
                 chain_id: Some(CHAIN_ID),
+                tx_type: 2,
+                signature_v: None,
+                signature_r: None,
+                signature_s: None,
             })
         }
         TxKind::EthSigned => {
-            let tx_env = decode_tx(kind, RevmAddress::from(caller), bytes)?;
-            let to = match tx_env.kind {
-                RevmTxKind::Call(addr) => {
-                    let mut out = [0u8; 20];
-                    out.copy_from_slice(addr.as_ref());
-                    Some(out)
-                }
-                RevmTxKind::Create => None,
-            };
-            let mut from = [0u8; 20];
-            from.copy_from_slice(tx_env.caller.as_ref());
-            Ok(DecodedTxView {
-                from,
-                to,
-                nonce: tx_env.nonce,
-                value: tx_env.value.to_be_bytes(),
-                input: Cow::Owned(tx_env.data.to_vec()),
-                gas_limit: tx_env.gas_limit,
-                gas_price: if tx_env.tx_type == 2 {
-                    None
-                } else {
-                    Some(tx_env.gas_price)
-                },
-                max_fee_per_gas: if tx_env.tx_type == 2 {
-                    Some(tx_env.gas_price)
-                } else {
-                    None
-                },
-                max_priority_fee_per_gas: if tx_env.tx_type == 2 {
-                    tx_env.gas_priority_fee
-                } else {
-                    None
-                },
-                chain_id: tx_env.chain_id,
-            })
+            let recovered = decode_eth_raw_tx_to_recovered(bytes)?;
+            Ok(recovered_to_decoded_view(&recovered))
         }
     }
 }
@@ -288,12 +264,47 @@ fn decoded_to_tx_env(decoded: &RecoveredTx) -> TxEnv {
         data: RevmBytes::from(decoded.input.clone()),
         nonce: decoded.nonce,
         chain_id: decoded.chain_id,
-        access_list: Default::default(),
+        access_list: AccessList(
+            decoded
+                .access_list
+                .iter()
+                .map(|item| AccessListItem {
+                    address: RevmAddress::from(item.address),
+                    storage_keys: item.storage_keys.iter().copied().map(B256::from).collect(),
+                })
+                .collect(),
+        ),
         gas_priority_fee,
         blob_hashes: Vec::new(),
         max_fee_per_blob_gas: 0,
         authorization_list: Vec::new(),
         tx_type: decoded.tx_type,
+    }
+}
+
+fn recovered_to_decoded_view(decoded: &RecoveredTx) -> DecodedTxView<'static> {
+    let mut from = [0u8; 20];
+    from.copy_from_slice(decoded.from.as_ref());
+    let to = decoded.to.map(|addr| {
+        let mut out = [0u8; 20];
+        out.copy_from_slice(addr.as_ref());
+        out
+    });
+    DecodedTxView {
+        from,
+        to,
+        nonce: decoded.nonce,
+        value: decoded.value.to_be_bytes(),
+        input: Cow::Owned(decoded.input.clone()),
+        gas_limit: decoded.gas_limit,
+        gas_price: decoded.gas_price,
+        max_fee_per_gas: decoded.max_fee_per_gas,
+        max_priority_fee_per_gas: decoded.max_priority_fee_per_gas,
+        chain_id: decoded.chain_id,
+        tx_type: decoded.tx_type,
+        signature_v: Some(decoded.signature_v),
+        signature_r: Some(decoded.signature_r),
+        signature_s: Some(decoded.signature_s),
     }
 }
 

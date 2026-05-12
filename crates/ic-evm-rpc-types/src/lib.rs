@@ -273,6 +273,10 @@ pub struct DecodedTxView {
     pub max_fee_per_gas: Option<u128>,
     pub max_priority_fee_per_gas: Option<u128>,
     pub chain_id: Option<u64>,
+    pub tx_type: Option<u8>,
+    pub signature_v: Option<u64>,
+    pub signature_r: Option<Vec<u8>>,
+    pub signature_s: Option<Vec<u8>>,
 }
 
 #[derive(Clone, Debug, CandidType, Deserialize)]
@@ -286,11 +290,13 @@ pub struct EthReceiptView {
     pub to: Option<Vec<u8>>,
     pub status: u8,
     pub gas_used: u64,
+    pub cumulative_gas_used: Option<u64>,
     pub effective_gas_price: u64,
     pub l1_data_fee: u128,
     pub operator_fee: u128,
     pub total_fee: u128,
     pub contract_address: Option<Vec<u8>>,
+    pub tx_type: Option<u8>,
     pub logs: Vec<EthReceiptLogView>,
 }
 
@@ -315,6 +321,7 @@ pub struct EthLogFilterView {
 #[derive(Clone, Debug, CandidType, Deserialize)]
 pub struct EthLogItemView {
     pub block_number: u64,
+    pub block_hash: Option<Vec<u8>>,
     pub tx_index: u32,
     pub log_index: u32,
     pub tx_hash: Vec<u8>,

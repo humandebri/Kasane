@@ -396,7 +396,7 @@ fn map_execute_chain_result(
 }
 
 fn receipt_to_eth_view(receipt: ReceiptLike) -> super::EthReceiptView {
-    let (eth_tx_hash, from, to) = chain::get_tx_envelope(&receipt.tx_id)
+    let (eth_tx_hash, from, to, tx_type) = chain::get_tx_envelope(&receipt.tx_id)
         .and_then(|envelope| evm_db::chain_data::StoredTx::try_from(envelope).ok())
         .map(|stored| {
             let kind = stored.kind;
@@ -414,9 +414,10 @@ fn receipt_to_eth_view(receipt: ReceiptLike) -> super::EthReceiptView {
             let to = decoded
                 .as_ref()
                 .and_then(|v| v.to.map(|addr| addr.to_vec()));
-            (eth_hash, from, to)
+            let tx_type = decoded.as_ref().map(|v| v.tx_type);
+            (eth_hash, from, to, tx_type)
         })
-        .unwrap_or((None, None, None));
+        .unwrap_or((None, None, None, None));
     let block_hash = chain::get_block(receipt.block_number).map(|block| block.block_hash.to_vec());
     super::EthReceiptView {
         tx_hash: receipt.tx_id.0.to_vec(),
@@ -428,11 +429,13 @@ fn receipt_to_eth_view(receipt: ReceiptLike) -> super::EthReceiptView {
         to,
         status: receipt.status,
         gas_used: receipt.gas_used,
+        cumulative_gas_used: Some(receipt.gas_used),
         effective_gas_price: receipt.effective_gas_price,
         l1_data_fee: receipt.l1_data_fee,
         operator_fee: receipt.operator_fee,
         total_fee: receipt.total_fee,
         contract_address: receipt.contract_address.map(|v| v.to_vec()),
+        tx_type,
         logs: receipt
             .logs
             .into_iter()
