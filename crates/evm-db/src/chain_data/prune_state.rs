@@ -111,7 +111,7 @@ impl Storable for PruneStateV1 {
 
     fn from_bytes(bytes: Cow<'_, [u8]>) -> Self {
         let data = bytes.as_ref();
-        if data.len() != 32 {
+        if !verified_core::stable_codec::fixed_len_matches(data.len(), 32) {
             mark_decode_failure(b"prune_state", false);
             return PruneStateV1::new();
         }
@@ -183,10 +183,7 @@ impl Storable for PruneJournal {
             mark_decode_failure(b"prune_journal", false);
             return PruneJournal { ptrs: Vec::new() };
         }
-        let expected = 4usize
-            .checked_add((len as usize).saturating_mul(20))
-            .unwrap_or(0);
-        if data.len() != expected {
+        if !verified_core::stable_codec::prune_journal_len_matches(data.len(), len, MAX_PTRS_U32) {
             mark_decode_failure(b"prune_journal", false);
             return PruneJournal { ptrs: Vec::new() };
         }

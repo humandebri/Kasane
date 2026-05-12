@@ -20,6 +20,7 @@ serde = { version = "1", features = ["derive"] }
 tracing = { version = "0.1.41", features = ["max_level_info", "release_max_level_warn"] }
 zerocopy = { version = "0.8", features = ["derive"] }
 ic-evm-address = { path = "../ic-evm-address" }
+verified-core = { path = "../verified-core" }
 
 [dev-dependencies]
 proptest = "1.6"

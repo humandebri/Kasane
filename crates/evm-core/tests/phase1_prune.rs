@@ -49,12 +49,64 @@ fn prune_blocks_removes_old_data() {
         assert!(state.receipts.get(&tx1).is_none());
         assert!(state.receipts.get(&tx2).is_none());
         assert!(state.receipts.get(&tx3).is_some());
+        assert!(state.tx_index.get(&tx1).is_none());
+        assert!(state.tx_index.get(&tx2).is_none());
+        assert!(state.tx_index.get(&tx3).is_some());
         assert!(state.tx_locs.get(&tx1).is_none());
         assert!(state.tx_locs.get(&tx2).is_none());
         assert!(state.tx_locs.get(&tx3).is_some());
         assert!(state.seen_tx.get(&tx1).is_none());
         assert!(state.seen_tx.get(&tx2).is_none());
         assert!(state.seen_tx.get(&tx3).is_some());
+    });
+}
+
+#[test]
+fn prune_blocks_keeps_head_and_retain_range() {
+    init_stable_state();
+
+    let txs = [
+        TxId([0x11; 32]),
+        TxId([0x22; 32]),
+        TxId([0x33; 32]),
+        TxId([0x44; 32]),
+        TxId([0x55; 32]),
+    ];
+
+    with_state_mut(|state| {
+        for (idx, tx) in txs.iter().copied().enumerate() {
+            let block_number = u64::try_from(idx + 1).expect("block number");
+            let block = make_block(block_number, tx);
+            insert_block(state, block_number, &block);
+            insert_tx_index(state, tx, block_number);
+            insert_receipt(state, tx, block_number);
+            state.seen_tx.insert(tx, 1);
+            state.tx_locs.insert(tx, TxLoc::included(block_number, 0));
+        }
+        let mut head = *state.head.get();
+        head.number = 5;
+        state.head.set(head);
+    });
+
+    let result = chain::prune_blocks(2, 100).expect("prune should succeed");
+    assert!(result.did_work);
+    assert_eq!(result.pruned_before_block, Some(3));
+
+    with_state(|state| {
+        for tx in txs.iter().take(3) {
+            assert!(state.receipts.get(tx).is_none());
+            assert!(state.tx_index.get(tx).is_none());
+            assert!(state.tx_locs.get(tx).is_none());
+            assert!(state.seen_tx.get(tx).is_none());
+        }
+        for (block_number, tx) in [(4, txs[3]), (5, txs[4])] {
+            assert!(state.blocks.get(&block_number).is_some());
+            assert!(state.receipts.get(&tx).is_some());
+            assert!(state.tx_index.get(&tx).is_some());
+            assert!(state.tx_locs.get(&tx).is_some());
+            assert!(state.seen_tx.get(&tx).is_some());
+        }
+        assert_eq!(state.head.get().number, 5);
     });
 }
 

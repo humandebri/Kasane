@@ -584,7 +584,7 @@ impl Storable for TxIndexEntry {
 
     fn from_bytes(bytes: Cow<'_, [u8]>) -> Self {
         let data = bytes.as_ref();
-        if data.len() != 12 {
+        if !verified_core::stable_codec::fixed_len_matches(data.len(), 12) {
             mark_decode_failure(b"tx_index", true);
             return TxIndexEntry {
                 block_number: 0,

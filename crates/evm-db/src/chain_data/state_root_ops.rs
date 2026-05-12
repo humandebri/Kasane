@@ -28,7 +28,7 @@ impl Storable for HashKey {
 
     fn from_bytes(bytes: Cow<'_, [u8]>) -> Self {
         let data = bytes.as_ref();
-        if data.len() != 32 {
+        if !verified_core::stable_codec::fixed_len_matches(data.len(), 32) {
             mark_decode_failure(b"state_root_hash_key", false);
             return HashKey([0u8; 32]);
         }
@@ -87,7 +87,13 @@ impl Storable for NodeRecord {
         let mut len = [0u8; 4];
         len.copy_from_slice(&data[4..8]);
         let rlp_len = usize::try_from(u32::from_be_bytes(len)).unwrap_or(0);
-        if data.len() != 8 + rlp_len {
+        if !verified_core::stable_codec::variable_items_len_matches(
+            data.len(),
+            8,
+            rlp_len,
+            1,
+            usize::MAX,
+        ) {
             mark_decode_failure(b"state_root_node_record", false);
             return NodeRecord::new(0, Vec::new());
         }
@@ -145,7 +151,7 @@ impl Storable for GcStateV1 {
 
     fn from_bytes(bytes: Cow<'_, [u8]>) -> Self {
         let data = bytes.as_ref();
-        if data.len() != 32 {
+        if !verified_core::stable_codec::fixed_len_matches(data.len(), 32) {
             mark_decode_failure(b"state_root_gc_state", false);
             return Self::new();
         }
@@ -236,7 +242,7 @@ impl Storable for MigrationStateV1 {
 
     fn from_bytes(bytes: Cow<'_, [u8]>) -> Self {
         let data = bytes.as_ref();
-        if data.len() != 32 {
+        if !verified_core::stable_codec::fixed_len_matches(data.len(), 32) {
             mark_decode_failure(b"state_root_migration", false);
             return MigrationStateV1::new_done(1);
         }
@@ -326,7 +332,7 @@ impl Storable for StateRootMetricsV1 {
 
     fn from_bytes(bytes: Cow<'_, [u8]>) -> Self {
         let data = bytes.as_ref();
-        if data.len() != 72 {
+        if !verified_core::stable_codec::fixed_len_matches(data.len(), 72) {
             mark_decode_failure(b"state_root_metrics", false);
             return StateRootMetricsV1::new();
         }
@@ -404,7 +410,7 @@ impl Storable for MismatchRecordV1 {
 
     fn from_bytes(bytes: Cow<'_, [u8]>) -> Self {
         let data = bytes.as_ref();
-        if data.len() != 152 {
+        if !verified_core::stable_codec::fixed_len_matches(data.len(), 152) {
             mark_decode_failure(b"state_root_mismatch_record", false);
             return Self {
                 block_number: 0,

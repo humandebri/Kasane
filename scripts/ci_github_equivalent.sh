@@ -29,7 +29,10 @@ scripts/check_gateway_api_compat_baseline.sh
 scripts/check_gateway_matrix_sync.sh
 scripts/check_alloy_isolation.sh
 scripts/check_precompile_feature_isolation.sh
+scripts/check_verification_policy.sh
 
+cargo check --workspace
+scripts/verify-verus.sh
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets --all-features -- -D warnings
 

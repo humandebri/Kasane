@@ -4,6 +4,7 @@ use crate::revm_exec::compute_effective_gas_price;
 use evm_db::chain_data::{SenderKey, StoredTx, TxId};
 use evm_db::stable_state::StableState;
 use evm_db::types::keys::make_account_key;
+use verified_core::nonce::{classify_nonce, NonceDecision};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum NonceRuleError {
@@ -28,7 +29,7 @@ pub fn finalize_pending_for_sender_without_nonce_bump(
     tx_id: TxId,
 ) {
     if let Some(current) = state.pending_current_by_sender.get(&sender) {
-        if current == tx_id {
+        if verified_core::pending::should_clear_current(current == tx_id) {
             state.pending_current_by_sender.remove(&sender);
         }
     }
@@ -46,20 +47,18 @@ pub fn apply_nonce_and_replacement(
     base_fee: u64,
 ) -> Result<Option<TxId>, NonceRuleError> {
     let expected_nonce = expected_nonce_for_sender(state, sender);
-    if nonce < expected_nonce {
-        return Err(NonceRuleError::TooLow);
+    let current = state.pending_current_by_sender.get(&sender);
+    let old_effective = match current {
+        Some(old_tx_id) => Some(effective_gas_price_for_tx(state, old_tx_id, base_fee)?),
+        None => None,
+    };
+    match classify_nonce(expected_nonce, nonce, old_effective, effective_gas_price) {
+        NonceDecision::Accept => Ok(None),
+        NonceDecision::TooLow => Err(NonceRuleError::TooLow),
+        NonceDecision::Gap => Err(NonceRuleError::Gap),
+        NonceDecision::Conflict => Err(NonceRuleError::Conflict),
+        NonceDecision::Replace => current.ok_or(NonceRuleError::Conflict).map(Some),
     }
-    if nonce > expected_nonce {
-        return Err(NonceRuleError::Gap);
-    }
-    if let Some(old_tx_id) = state.pending_current_by_sender.get(&sender) {
-        let old_effective = effective_gas_price_for_tx(state, old_tx_id, base_fee)?;
-        if effective_gas_price <= old_effective {
-            return Err(NonceRuleError::Conflict);
-        }
-        return Ok(Some(old_tx_id));
-    }
-    Ok(None)
 }
 
 fn account_nonce_from_state(state: &StableState, sender: SenderKey) -> u64 {
@@ -79,7 +78,7 @@ fn bump_expected_nonce(state: &mut StableState, sender: SenderKey) {
         .unwrap_or_else(|| account_nonce_from_state(state, sender));
     state
         .sender_expected_nonce
-        .insert(sender, current.saturating_add(1));
+        .insert(sender, verified_core::nonce::bump_expected_nonce(current));
 }
 
 fn effective_gas_price_for_tx(
