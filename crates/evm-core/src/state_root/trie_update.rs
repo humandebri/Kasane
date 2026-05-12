@@ -154,7 +154,7 @@ pub fn build_state_update_journal(
                         value: encoded,
                     });
                 }
-                ops.sort_by(|a, b| a.key.cmp(&b.key));
+                ops.sort_by_key(|a| a.key);
                 let next_ptr = apply_ops(&mut builder, new_root_ptr.as_ref(), &ops);
                 new_root = ptr_to_root(next_ptr.as_ref());
                 new_root_ptr = next_ptr;
@@ -222,7 +222,7 @@ pub fn build_state_update_journal(
             value,
         });
     }
-    account_ops.sort_by(|a, b| a.key.cmp(&b.key));
+    account_ops.sort_by_key(|a| a.key);
 
     let old_state_root = B256::from(state.state_root_meta.get().state_root);
     let state_root_ptr = root_to_ptr(old_state_root);
@@ -289,7 +289,7 @@ fn collect_storage_ops_from_state(state: &StableState, addr: [u8; 20]) -> Vec<Kv
             value: Some(out),
         });
     }
-    ops.sort_by(|a, b| a.key.cmp(&b.key));
+    ops.sort_by_key(|a| a.key);
     ops
 }
 
@@ -754,7 +754,7 @@ pub fn build_state_update_journal_full(
         account_key_nibbles.push((addr, key));
         account_ops.push(KvOp { key, value });
     }
-    account_ops.sort_by(|a, b| a.key.cmp(&b.key));
+    account_ops.sort_by_key(|a| a.key);
 
     let state_root_ptr = apply_ops(&mut builder, None, &account_ops);
     let state_root = ptr_to_root(state_root_ptr.as_ref());
