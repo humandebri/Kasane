@@ -1270,13 +1270,8 @@ async fn submit_native_deposit(
     let max_fee_e8s = nat_to_u128(&args.max_fee_e8s).ok_or_else(|| {
         api_invalid_argument("arg.max_fee_out_of_range", "arg.max_fee_out_of_range")
     })?;
-    let fee_policy = current_fee_policy().map_err(|err| api_internal(&err, &err))?;
-    if fee_policy.fee_ledger_canister != args.fee_ledger_canister {
-        return Err(api_rejected("fee.ledger_changed", "fee.ledger_changed"));
-    }
-    if u128::from(fee_policy.cycle_fee_e8s) > max_fee_e8s {
-        return Err(api_rejected("fee.quote_exceeded", "fee.quote_exceeded"));
-    }
+    let (fee_policy, native_ledger) =
+        prepare_native_deposit_funding(args.fee_ledger_canister, max_fee_e8s)?;
 
     let request_id = TxId(derive_native_deposit_request_id(
         caller.as_slice(),
@@ -1304,7 +1299,6 @@ async fn submit_native_deposit(
         api_rejected(&code, &code)
     })?;
 
-    let native_ledger = current_native_ledger_canister().map_err(|err| api_internal(&err, &err))?;
     let pull_created_at_time = current_time_nanos();
     let pull = attempt_icrc2_transfer_from(
         caller,
@@ -1407,6 +1401,21 @@ fn existing_native_deposit_response(
             fee_ledger_tx_id,
         }))
     })
+}
+
+fn prepare_native_deposit_funding(
+    fee_ledger_canister: Principal,
+    max_fee_e8s: u128,
+) -> Result<(FeePolicyView, Principal), ApiError> {
+    let fee_policy = current_fee_policy().map_err(|err| api_internal(&err, &err))?;
+    let native_ledger = current_native_ledger_canister().map_err(|err| api_internal(&err, &err))?;
+    if fee_policy.fee_ledger_canister != fee_ledger_canister {
+        return Err(api_rejected("fee.ledger_changed", "fee.ledger_changed"));
+    }
+    if u128::from(fee_policy.cycle_fee_e8s) > max_fee_e8s {
+        return Err(api_rejected("fee.quote_exceeded", "fee.quote_exceeded"));
+    }
+    Ok((fee_policy, native_ledger))
 }
 
 fn insert_native_deposit_request(

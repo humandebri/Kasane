@@ -135,6 +135,8 @@ scripts/measure_precompile_ratio.sh
 - `scripts/mainnet/ic_mainnet_preflight.sh`: minimum pre-mainnet checks
   - `CANISTER_NAME` defaults to `evm_canister`
   - default cycles floor is `MIN_CYCLES=2000000000000`
+  - when a legacy standalone wrap canister exists, set `LEGACY_WRAP_CANISTER_ID` and `LEGACY_WRAP_REQUEST_IDS_FILE` to prove all requests are drained
+  - when there are no legacy request ids, `ALLOW_EMPTY_LEGACY_WRAP_REQUESTS=1` must be explicit
 - `scripts/mainnet/ic_mainnet_deploy.sh`: main deployment script
   - the default build does not enable the `precompile-profile-admin` feature
   - measure precompile ratio before deploy with `scripts/run_precompile_profile_e2e.sh` / `scripts/measure_precompile_ratio.sh`; if you need to change the default fixed ratio `1/100`, rebuild and redeploy
@@ -161,6 +163,10 @@ scripts/measure_precompile_ratio.sh
 - `CANISTER_NAME` / `CANISTER_ID`
 - `WRAP_CANISTER_ID`
   - integrated wrap uses the `evm_canister` principal
+- `LEGACY_WRAP_CANISTER_ID`
+  - legacy standalone wrap canister for preflight drain checks; the gate runs only when it differs from `EVM_CANISTER_ID`
+- `LEGACY_WRAP_REQUEST_IDS_FILE`
+  - legacy wrap request id manifest. Empty files require `ALLOW_EMPTY_LEGACY_WRAP_REQUESTS=1`
 - `EVM_WRAP_FACTORY`
   - required by `scripts/mainnet/ic_mainnet_deploy.sh`; pass the 20-byte EVM factory address as `0x...`
 - `QUERY_INSTRUCTION_SOFT_LIMIT`

@@ -22,9 +22,16 @@ English version: [./mainnet-deploy-runbook.md](./mainnet-deploy-runbook.md)
 ```bash
 ICP_ENV=ic \
 CANISTER_ID=<canister_id> \
+EVM_CANISTER_ID=<canister_id> \
 ICP_IDENTITY_NAME=ci-local \
 scripts/mainnet/ic_mainnet_preflight.sh
 ```
+
+upgrade 前 gate:
+- 実行順は `release guard -> legacy wrap drain gate -> controller/cycles check -> deploy`。
+- 旧 standalone `wrap_canister` が存在し、`LEGACY_WRAP_CANISTER_ID != EVM_CANISTER_ID` の場合は `LEGACY_WRAP_REQUEST_IDS_FILE` が必須。
+- manifest 内の request は旧 canister の `get_request` / `get_native_deposit_result` で `Succeeded` または最終 `Failed` のみ許可する。`Queued` / `Running` / `Dispatching` / `DispatchFailed` / missing は upgrade 禁止。
+- request id が存在しない運用では、空 manifest と `ALLOW_EMPTY_LEGACY_WRAP_REQUESTS=1` を指定し、残件ゼロ確認の証跡を deploy log に残す。
 
 ## 2. デプロイ実行
 

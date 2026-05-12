@@ -136,6 +136,8 @@ scripts/measure_precompile_ratio.sh
 - `scripts/mainnet/ic_mainnet_preflight.sh`: 本番前の最小チェック
   - `CANISTER_NAME` は既定で `evm_canister`
   - 既定の cycles 下限は `MIN_CYCLES=2000000000000`
+  - 旧 standalone wrap canister がある場合は `LEGACY_WRAP_CANISTER_ID` と `LEGACY_WRAP_REQUEST_IDS_FILE` で残件drainを確認する
+  - request id が存在しない場合も `ALLOW_EMPTY_LEGACY_WRAP_REQUESTS=1` の明示が必要
 - `scripts/mainnet/ic_mainnet_deploy.sh`: 本番デプロイ本体
   - 既定 build では `precompile-profile-admin` feature を有効化しない
   - precompile ratio の計測は deploy 前に `scripts/run_precompile_profile_e2e.sh` / `scripts/measure_precompile_ratio.sh` で実施し、既定の fixed ratio `1/100` を見直す場合は再デプロイする
@@ -167,6 +169,10 @@ scripts/measure_precompile_ratio.sh
 - `CANISTER_NAME` / `CANISTER_ID`
 - `WRAP_CANISTER_ID`
   - 統合版wrapでは `evm_canister` principal を使用
+- `LEGACY_WRAP_CANISTER_ID`
+  - 旧 standalone wrap canister の残件drain確認用。`EVM_CANISTER_ID` と異なる場合だけ preflight gate が有効
+- `LEGACY_WRAP_REQUEST_IDS_FILE`
+  - 旧 wrap request id manifest。空の場合は `ALLOW_EMPTY_LEGACY_WRAP_REQUESTS=1` が必須
 - `EVM_WRAP_FACTORY`
   - `scripts/mainnet/ic_mainnet_deploy.sh` の必須値。20-byte EVM factory address を `0x...` 形式で渡す
 - `QUERY_INSTRUCTION_SOFT_LIMIT`

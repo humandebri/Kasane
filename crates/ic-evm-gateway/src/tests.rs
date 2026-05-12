@@ -1681,6 +1681,31 @@ fn quote_native_deposit_uses_integrated_fee_policy() {
 }
 
 #[test]
+fn native_deposit_funding_validation_stops_before_pending_when_native_unconfigured() {
+    init_stable_state();
+    let fee_ledger = Principal::self_authenticating(b"fee-ledger");
+    with_state_mut(|state| {
+        state
+            .wrap_fee_policy
+            .set(evm_db::chain_data::FeePolicyStored {
+                fee_ledger_canister: fee_ledger.as_slice().to_vec(),
+                cycle_fee_e8s: 1,
+                gas_price_buffer_bps: 12_000,
+            });
+    });
+
+    let out = super::prepare_native_deposit_funding(fee_ledger, 1);
+
+    match out {
+        Err(ApiError::Internal(detail)) => assert_eq!(detail.code, "wrap_config.unconfigured"),
+        other => panic!("unexpected native deposit funding result: {other:?}"),
+    }
+    with_state(|state| {
+        assert_eq!(state.wrap_pending_submissions.len(), 0);
+    });
+}
+
+#[test]
 fn wrap_request_ids_match_legacy_domain_separators() {
     let wrap_id =
         super::derive_wrap_request_id(&[1, 2, 3], &[4, 5], &[0; 32], &[0x55; 20], 7, 21_000);
