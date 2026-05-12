@@ -94,6 +94,7 @@ export async function estimateMetaMaskUnwrapTransaction(args: {
   from: string;
   to: string;
   data: string;
+  valueWei?: bigint;
 }): Promise<{
   nonce: string;
   gas: string;
@@ -106,7 +107,7 @@ export async function estimateMetaMaskUnwrapTransaction(args: {
       from: args.from,
       to: args.to,
       data: args.data,
-      value: "0x0",
+      value: toRpcHex(args.valueWei ?? 0n),
     }]),
     callKasaneRpc(args.rpcUrl, "eth_gasPrice", []),
     callKasaneRpc(args.rpcUrl, "eth_maxPriorityFeePerGas", []).catch(() => "0x0"),
@@ -131,6 +132,7 @@ export async function sendMetaMaskTransaction(args: {
   from: string;
   to: string;
   data: string;
+  valueWei?: bigint;
   nonce: string;
   gas: string;
   maxFeePerGas: string;
@@ -142,7 +144,7 @@ export async function sendMetaMaskTransaction(args: {
       from: args.from,
       to: args.to,
       data: args.data,
-      value: "0x0",
+      value: toRpcHex(args.valueWei ?? 0n),
       nonce: args.nonce,
       gas: args.gas,
       maxFeePerGas: args.maxFeePerGas,

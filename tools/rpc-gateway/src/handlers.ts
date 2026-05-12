@@ -124,6 +124,9 @@ export async function handleRpc(req: JsonRpcRequest): Promise<JsonRpcResponse | 
     }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
+    if (isParamShapeError(message)) {
+      return makeError(id, ERR_INVALID_PARAMS, message);
+    }
     return makeError(id, ERR_INTERNAL, "internal error", { detail: message });
   }
 }
@@ -602,6 +605,10 @@ function asParams(params: unknown, minLen: number): unknown[] {
     throw new Error(`params must include at least ${minLen} entries`);
   }
   return params;
+}
+
+function isParamShapeError(message: string): boolean {
+  return message.startsWith("params must include at least ");
 }
 
 function asCallParams(params: unknown): [unknown, unknown] {

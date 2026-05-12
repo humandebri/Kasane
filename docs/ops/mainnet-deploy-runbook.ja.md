@@ -150,7 +150,9 @@ scripts/query_smoke.sh
    - 現行仕様: controller 以外は `auth.controller_required`
    - 監視アラートは `auth.controller_required` を前提に運用する
 
-## 3.1 Contabo 運用ファイル配置（testnet共通）
+## 3.1 Contabo 運用ファイル配置（旧運用/rollback用）
+
+gateway 本番経路は Cloudflare Workers (`tools/rpc-gateway/wrangler.jsonc`) を正とする。以下の Contabo/systemd 手順は旧運用または rollback 用に限定する。
 
 `rsync --delete` 運用で `.env.local` が消える事故を防ぐため、環境変数は `/etc/kasane/*.env` に集約する。
 

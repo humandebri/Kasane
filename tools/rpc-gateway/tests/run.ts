@@ -2,6 +2,8 @@
 
 import assert from "node:assert/strict";
 import { generateKeyPairSync } from "node:crypto";
+import { IDL } from "@icp-sdk/core/candid";
+import { idlFactory } from "../src/candid.js";
 import { bytesToQuantity, parseDataHex, parseQuantityHex, toDataHex, toQuantityHex } from "../src/hex.js";
 import { handleRpc } from "../src/handlers.js";
 import { computeDepth, validateRequest } from "../src/jsonrpc.js";
@@ -31,10 +33,15 @@ import {
   __test_to_candid_call_object,
   __test_map_tx,
 } from "../src/handlers.js";
-import { loadConfig } from "../src/config.js";
-import { __test_assert_canister_compatibility, __test_create_retryable_promise_cache } from "../src/client.js";
+import { configureGateway, loadConfig } from "../src/config.js";
+import {
+  __test_assert_canister_compatibility,
+  __test_create_retryable_promise_cache,
+  __test_identity_from_current_config,
+} from "../src/client.js";
 import { identityFromPem } from "../src/identity.js";
 import { __test_resolve_cors_allow_origin } from "../src/server.js";
+import worker from "../src/worker.js";
 
 function testHex(): void {
   assert.equal(toDataHex(Uint8Array.from([0, 1, 255])), "0x0001ff");
@@ -55,18 +62,93 @@ function testJsonRpc(): void {
   assert.equal(depth, 5);
 }
 
-function testConfigIdentityPemPath(): void {
+async function testParamShapeErrorsReturnInvalidParams(): Promise<void> {
+  const out = await handleRpc({ jsonrpc: "2.0", id: 1, method: "eth_getBalance", params: [] });
+  assert.equal(jsonRpcErrorCode(out), -32602);
+}
+
+function testOpsStatusCandidProjection(): void {
+  const service = idlFactory({ IDL }).display();
+  assert.match(
+    service,
+    /get_ops_status:\(\) -> \(record \{needs_migration:bool; critical_corrupt:bool; schema_version:nat32\}\) query/
+  );
+
+  const fullOpsStatus = IDL.Record({
+    needs_migration: IDL.Bool,
+    critical_corrupt: IDL.Bool,
+    decode_failure_last_ts: IDL.Nat64,
+    log_filter_override: IDL.Opt(IDL.Text),
+    last_cycle_balance: IDL.Nat,
+    mode: IDL.Variant({ Normal: IDL.Null }),
+    last_check_ts: IDL.Nat64,
+    mining_error_count: IDL.Nat64,
+    log_truncated_count: IDL.Nat64,
+    query_instruction_soft_limit: IDL.Nat64,
+    schema_version: IDL.Nat32,
+    update_instruction_soft_limit: IDL.Nat64,
+    safe_stop_latched: IDL.Bool,
+    decode_failure_last_label: IDL.Opt(IDL.Text),
+    prune_error_count: IDL.Nat64,
+    block_gas_limit: IDL.Nat64,
+    config: IDL.Record({
+      low_watermark: IDL.Nat,
+      critical: IDL.Nat,
+      freeze_on_critical: IDL.Bool,
+    }),
+    decode_failure_count: IDL.Nat64,
+  });
+  const gatewayProjection = IDL.Record({
+    needs_migration: IDL.Bool,
+    critical_corrupt: IDL.Bool,
+    schema_version: IDL.Nat32,
+  });
+  const encoded = IDL.encode([fullOpsStatus], [
+    {
+      needs_migration: false,
+      critical_corrupt: false,
+      decode_failure_last_ts: 1n,
+      log_filter_override: [],
+      last_cycle_balance: 2n,
+      mode: { Normal: null },
+      last_check_ts: 3n,
+      mining_error_count: 0n,
+      log_truncated_count: 0n,
+      query_instruction_soft_limit: 10_000_000n,
+      schema_version: 6,
+      update_instruction_soft_limit: 4_000_000_000n,
+      safe_stop_latched: false,
+      decode_failure_last_label: ["unwrap_request"],
+      prune_error_count: 0n,
+      block_gas_limit: 12_000_000n,
+      config: {
+        low_watermark: 2_000_000_000_000n,
+        critical: 1_000_000_000_000n,
+        freeze_on_critical: true,
+      },
+      decode_failure_count: 1n,
+    },
+  ]);
+  const [decoded] = IDL.decode([gatewayProjection], encoded);
+  assert.deepEqual(decoded, {
+    needs_migration: false,
+    critical_corrupt: false,
+    schema_version: 6,
+  });
+}
+
+function testConfigIdentityPem(): void {
   const withPem = loadConfig({
     EVM_CANISTER_ID: "aaaaa-aa",
-    RPC_GATEWAY_IDENTITY_PEM_PATH: " /tmp/rpc-gateway.pem ",
+    RPC_GATEWAY_IDENTITY_PEM: " pem-body ",
   });
-  assert.equal(withPem.identityPemPath, "/tmp/rpc-gateway.pem");
+  assert.equal(withPem.identityPem, "pem-body");
 
   const withoutPem = loadConfig({
     EVM_CANISTER_ID: "aaaaa-aa",
-    RPC_GATEWAY_IDENTITY_PEM_PATH: "   ",
+    RPC_GATEWAY_IDENTITY_PEM: "   ",
   });
-  assert.equal(withoutPem.identityPemPath, null);
+  assert.equal(withoutPem.identityPem, null);
 }
 
 function testConfigCorsOrigins(): void {
@@ -128,6 +210,17 @@ function testIdentityFromEd25519Pem(): void {
   const pem = pair.privateKey.export({ format: "pem", type: "pkcs8" }).toString();
   const identity = identityFromPem(pem);
   assert.notEqual(identity.getPrincipal().toText(), "2vxsx-fae");
+}
+
+function testIdentityFromSecretPem(): void {
+  const pair = generateKeyPairSync("ed25519");
+  const pem = pair.privateKey.export({ format: "pem", type: "pkcs8" }).toString();
+  configureGateway({
+    EVM_CANISTER_ID: "aaaaa-aa",
+    RPC_GATEWAY_IDENTITY_PEM: pem,
+  });
+  const withSecret = __test_identity_from_current_config();
+  assert.notEqual(withSecret?.getPrincipal().toText(), "2vxsx-fae");
 }
 
 function testCallParamsDefaultBlockTag(): void {
@@ -817,6 +910,71 @@ async function testRetryablePromiseCache(): Promise<void> {
   assert.equal(attempts, 2);
 }
 
+async function testWorkerPostSingleAndBatch(): Promise<void> {
+  const env = { EVM_CANISTER_ID: "aaaaa-aa" };
+  const single = await worker.fetch(
+    new Request("https://rpc-staging.kasane.network", {
+      method: "POST",
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "unknown_method" }),
+    }),
+    env
+  );
+  assert.equal(single.status, 200);
+  const singleBody: unknown = await single.json();
+  assert.equal(jsonRpcErrorCode(singleBody), -32601);
+
+  const batch = await worker.fetch(
+    new Request("https://rpc-staging.kasane.network", {
+      method: "POST",
+      body: JSON.stringify([
+        { jsonrpc: "2.0", id: 1, method: "unknown_method" },
+        { jsonrpc: "2.0", id: 2, method: "unknown_method" },
+      ]),
+    }),
+    env
+  );
+  assert.equal(batch.status, 200);
+  const batchBody: unknown = await batch.json();
+  assert.equal(Array.isArray(batchBody) ? batchBody.length : 0, 2);
+}
+
+async function testWorkerOptionsGetAndNotification(): Promise<void> {
+  const env = { EVM_CANISTER_ID: "aaaaa-aa", RPC_GATEWAY_CORS_ORIGIN: "https://kasane.network" };
+  const options = await worker.fetch(
+    new Request("https://rpc-staging.kasane.network", {
+      method: "OPTIONS",
+      headers: { origin: "https://kasane.network" },
+    }),
+    env
+  );
+  assert.equal(options.status, 204);
+  assert.equal(options.headers.get("access-control-allow-origin"), "https://kasane.network");
+
+  const get = await worker.fetch(new Request("https://rpc-staging.kasane.network"), env);
+  assert.equal(get.status, 405);
+
+  const notification = await worker.fetch(
+    new Request("https://rpc-staging.kasane.network", {
+      method: "POST",
+      body: JSON.stringify({ jsonrpc: "2.0", method: "web3_clientVersion" }),
+    }),
+    env
+  );
+  assert.equal(notification.status, 204);
+  assert.equal(await notification.text(), "");
+}
+
+async function testWorkerBodyLimit(): Promise<void> {
+  const res = await worker.fetch(
+    new Request("https://rpc-staging.kasane.network", {
+      method: "POST",
+      body: "x".repeat(1025),
+    }),
+    { EVM_CANISTER_ID: "aaaaa-aa", RPC_GATEWAY_MAX_HTTP_BODY_SIZE: "1024" }
+  );
+  assert.equal(res.status, 413);
+}
+
 function testRpcErrorPrefixPassthrough(): void {
   const mapped = __test_map_rpc_error(
     1,
@@ -840,13 +998,26 @@ function testRpcErrorPrefixPassthrough(): void {
   });
 }
 
+function jsonRpcErrorCode(value: unknown): number | undefined {
+  if (typeof value !== "object" || value === null || !("error" in value)) {
+    return undefined;
+  }
+  const error = value.error;
+  if (typeof error !== "object" || error === null || !("code" in error)) {
+    return undefined;
+  }
+  return typeof error.code === "number" ? error.code : undefined;
+}
+
 testHex();
 testJsonRpc();
-testConfigIdentityPemPath();
+testOpsStatusCandidProjection();
+testConfigIdentityPem();
 testConfigCorsOrigins();
 testConfigLogsBlockhashScanLimit();
 testCorsAllowOriginResolution();
 testIdentityFromEd25519Pem();
+testIdentityFromSecretPem();
 testCallParamsDefaultBlockTag();
 testTxCountParamsDefaultBlockTag();
 testLatestTagNormalization();
@@ -871,10 +1042,14 @@ testGetLogsErrorMapping();
 testLogSortOrder();
 
 async function main(): Promise<void> {
+  await testParamShapeErrorsReturnInvalidParams();
   await testInvalidTxHashReturnsInvalidParams();
   await testGetLogsFilterParsing();
   await testCanisterCompatibilityProbe();
   await testRetryablePromiseCache();
+  await testWorkerPostSingleAndBatch();
+  await testWorkerOptionsGetAndNotification();
+  await testWorkerBodyLimit();
   console.log("ok");
 }
 

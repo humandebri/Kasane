@@ -18,7 +18,7 @@ If you use update calls such as `eth_sendRawTransaction`, set a signing identity
 
 ```env
 EVM_CANISTER_ID=aaaaa-aa
-RPC_GATEWAY_IDENTITY_PEM_PATH=/path/to/secrets/rpc-gateway-identity.pem
+RPC_GATEWAY_IDENTITY_PEM="-----BEGIN PRIVATE KEY-----..."
 ```
 
 Supported PEM formats are `secp256k1` and `ed25519 (PKCS#8)`. If `icp identity export` outputs key type `ec`, it is not usable here. Create a dedicated `secp256k1` key for the gateway.
@@ -210,12 +210,23 @@ If these gaps become blocking, implement `address[]`, OR topics, and better `blo
 npm run test
 npm run lint
 npm run build
+npm run typecheck:worker
 ```
+
+Cloudflare Workers deploy uses `wrangler.jsonc`.
+
+```bash
+npm run dev:worker
+npm run deploy:staging
+```
+
+Set `RPC_GATEWAY_IDENTITY_PEM` with Cloudflare Secrets, not `vars`.
+Staging uses the production canister for reads, so staging smoke must stay read-only. Production deploy is manual through the Cloudflare Deploy workflow input `deploy_production=true`.
 
 Optional live-connect smoke:
 
 ```bash
-npm run smoke:all
+npm run smoke:read
 
 # monitor post-submit execution status (success when status=0x1)
 npm run smoke:watch-receipt -- 0x<tx_hash> 120 1500
@@ -224,16 +235,22 @@ npm run smoke:watch-receipt -- 0x<tx_hash> 120 1500
 ## Production Operation for receipt.status Monitoring
 
 Minimal flow (recommended):
-1. Save tx hash right after `eth_sendRawTransaction`
-2. Pass that hash to `smoke:watch-receipt`
-3. Alert on `status!=0x1` / timeout / rpc error
+1. Run read-only smoke against `https://rpc.kasane.network`
+2. Send one low-risk tx approved by the operator after cutover
+3. Save tx hash right after `eth_sendRawTransaction`
+4. Pass that hash to `smoke:watch-receipt`
+5. Alert on `status!=0x1` / timeout / rpc error
+
+Rollback: if read or write validation fails, move the Cloudflare route/DNS back to the previous Contabo RPC endpoint.
 
 Example:
 
 ```bash
 cd tools/rpc-gateway
+EVM_RPC_URL="https://rpc.kasane.network" npm run smoke:read
+
 EVM_RPC_URL="https://rpc.example.com" \
   npm run smoke:watch-receipt -- 0x<tx_hash> 180 1500
 ```
 
-For persistent systemd-based operation, see [ops/README.md](./ops/README.md).
+The systemd receipt watcher in [ops/README.md](./ops/README.md) is legacy / rollback operation. Production gateway traffic is expected to run through Cloudflare Workers.

@@ -1,4 +1,4 @@
-// どこで: wrapper-vite Playwright 設定 / 何を: 最小E2Eを Vite dev server 上で実行する / なぜ: Juno 履歴導線の回帰を手元で素早く検知するため
+// どこで: wrapper-vite Playwright 設定 / 何を: 最小E2Eを Vite dev server 上で実行する / なぜ: 主要画面の回帰を手元で素早く検知するため
 
 import { defineConfig } from "@playwright/test";
 

@@ -64,15 +64,7 @@ export function AppRouter(): ReactElement {
               path="/"
               element={(
                 <Suspense fallback={<DashboardRouteFallback />}>
-                  <DashboardRoute configState={resolveConfig()} view="console" />
-                </Suspense>
-              )}
-            />
-            <Route
-              path="/history"
-              element={(
-                <Suspense fallback={<DashboardRouteFallback />}>
-                  <DashboardRoute configState={resolveConfig()} view="history" />
+                  <DashboardRoute configState={resolveConfig()} />
                 </Suspense>
               )}
             />
@@ -80,15 +72,7 @@ export function AppRouter(): ReactElement {
               path="/requests/:requestId"
               element={(
                 <Suspense fallback={<DashboardRouteFallback />}>
-                  <DashboardRoute configState={resolveConfig()} view="console" />
-                </Suspense>
-              )}
-            />
-            <Route
-              path="/history/requests/:requestId"
-              element={(
-                <Suspense fallback={<DashboardRouteFallback />}>
-                  <DashboardRoute configState={resolveConfig()} view="history" />
+                  <DashboardRoute configState={resolveConfig()} />
                 </Suspense>
               )}
             />

@@ -14,7 +14,7 @@ use evm_core::chain::{ChainError, ExecResult, TxIn};
 use evm_core::hash;
 use evm_core::revm_exec::{ExecError, OpHaltReason, OpTransactionError};
 use evm_core::tx_decode::IcSyntheticTxInput;
-use evm_core::wrap_precompile::WRAP_PRECOMPILE_ADDRESS;
+use evm_core::wrap_precompile::{NATIVE_WITHDRAW_PRECOMPILE_ADDRESS, WRAP_PRECOMPILE_ADDRESS};
 use evm_db::chain_data::constants::MAX_RETURN_DATA;
 use evm_db::chain_data::receipt::log_entry_from_parts;
 use evm_db::chain_data::{
@@ -502,6 +502,36 @@ fn sample_unwrap_request(
     }
 }
 
+fn sample_wrap_request(status: RequestStatus) -> WrapStoredRequest {
+    WrapStoredRequest {
+        caller: vec![1],
+        asset_id: vec![2],
+        amount: vec![0x11; 32],
+        evm_recipient: vec![0x55; 20],
+        gas_limit: 21_000,
+        fee_ledger_canister: vec![7],
+        max_fee_e8s: 9,
+        quoted_gas_price_wei: 10,
+        fee_created_at_time: 1,
+        pull_created_at_time: 2,
+        withdraw_created_at_time: 0,
+        result: WrapRequestResult {
+            status,
+            pull_ledger_tx_id: None,
+            mint_tx_id: None,
+            error_code: None,
+            withdrawn: false,
+            withdraw_ledger_tx_id: None,
+            withdraw_error_code: None,
+            withdraw_in_progress: false,
+            mint_failed_recoverable: false,
+            fee_ledger_tx_id: Some(vec![6]),
+            charged_fee_e8s: Some(7),
+            charged_gas_price_wei: Some(8),
+        },
+    }
+}
+
 fn find_subsequence_positions(haystack: &[u8], needle: &[u8]) -> Vec<usize> {
     if needle.is_empty() || haystack.len() < needle.len() {
         return Vec::new();
@@ -517,6 +547,14 @@ fn unwrap_log_data(asset_id: &[u8], amount: [u8; 32], recipient: &[u8]) -> Vec<u
     let mut out = Vec::with_capacity(2 + asset_id.len() + amount.len() + recipient.len());
     out.push(u8::try_from(asset_id.len()).expect("asset len"));
     out.extend_from_slice(asset_id);
+    out.extend_from_slice(&amount);
+    out.push(u8::try_from(recipient.len()).expect("recipient len"));
+    out.extend_from_slice(recipient);
+    out
+}
+
+fn native_withdraw_log_data(amount: [u8; 32], recipient: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(33 + recipient.len());
     out.extend_from_slice(&amount);
     out.push(u8::try_from(recipient.len()).expect("recipient len"));
     out.extend_from_slice(recipient);
@@ -973,6 +1011,78 @@ fn recover_unwrap_dispatch_after_upgrade_ignores_terminal_requests() {
         assert_eq!(
             state.unwrap_requests.get(&failed).map(|req| req.status),
             Some(UnwrapRequestStatus::DispatchFailed)
+        );
+    });
+}
+
+#[test]
+fn pending_wrap_submission_rejects_concurrent_same_request() {
+    init_stable_state();
+    let request_id = TxId([0x6au8; 32]);
+    let caller = Principal::self_authenticating(b"wrap-pending-caller");
+    let other = Principal::self_authenticating(b"wrap-pending-other");
+
+    super::reserve_wrap_pending_submission(request_id, caller).expect("reserve");
+    assert_eq!(
+        super::reserve_wrap_pending_submission(request_id, caller).expect_err("same caller"),
+        "request.in_progress"
+    );
+    assert_eq!(
+        super::reserve_wrap_pending_submission(request_id, other).expect_err("other caller"),
+        "request.idempotency_mismatch"
+    );
+
+    super::clear_wrap_pending_submission(request_id);
+    super::reserve_wrap_pending_submission(request_id, caller).expect("reserve after clear");
+}
+
+#[test]
+fn recover_wrap_worker_after_upgrade_requeues_active_requests_without_duplicates() {
+    init_stable_state();
+    let queued_existing = TxId([0x6bu8; 32]);
+    let queued_missing = TxId([0x6cu8; 32]);
+    let running_missing = TxId([0x6du8; 32]);
+    let succeeded = TxId([0x6eu8; 32]);
+
+    with_state_mut(|state| {
+        let mut meta = *state.wrap_queue_meta.get();
+        let seq = meta.push();
+        state.wrap_queue_meta.set(meta);
+        state.wrap_queue.insert(seq, queued_existing);
+        state
+            .wrap_requests
+            .insert(queued_existing, sample_wrap_request(RequestStatus::Queued));
+        state
+            .wrap_requests
+            .insert(queued_missing, sample_wrap_request(RequestStatus::Queued));
+        state
+            .wrap_requests
+            .insert(running_missing, sample_wrap_request(RequestStatus::Running));
+        state
+            .wrap_requests
+            .insert(succeeded, sample_wrap_request(RequestStatus::Succeeded));
+    });
+
+    assert!(super::recover_wrap_worker_state_after_upgrade());
+    with_state(|state| {
+        let queued = state
+            .wrap_queue
+            .iter()
+            .map(|entry| entry.value())
+            .collect::<BTreeSet<_>>();
+        assert_eq!(queued.len(), 3);
+        assert!(queued.contains(&queued_existing));
+        assert!(queued.contains(&queued_missing));
+        assert!(queued.contains(&running_missing));
+        assert!(!queued.contains(&succeeded));
+        assert_eq!(
+            state
+                .wrap_requests
+                .get(&running_missing)
+                .expect("running")
+                .result
+                .status,
+            RequestStatus::Queued
         );
     });
 }
@@ -1998,6 +2108,27 @@ fn internal_unwrap_dispatch_fails_invalid_integrated_ledger_without_call() {
 }
 
 #[test]
+fn native_withdraw_marker_uses_gross_semantics() {
+    let mut request = sample_unwrap_request(UnwrapRequestStatus::Queued, None, 1);
+    request.asset_id = super::NATIVE_WITHDRAW_ASSET_MARKER.to_vec();
+
+    assert!(super::is_native_withdraw_dispatch_request(&request));
+}
+
+#[test]
+fn native_withdraw_gross_transfer_amount_subtracts_fee() {
+    let amount = Nat::from(100_000u128);
+
+    let out = super::native_withdraw_gross_transfer_amount(&amount, 10_000).expect("amount");
+
+    assert_eq!(out, Nat::from(90_000u128));
+    assert_eq!(
+        super::native_withdraw_gross_transfer_amount(&amount, 100_000).expect_err("fee"),
+        "native_withdraw.amount_not_above_fee"
+    );
+}
+
+#[test]
 fn apply_post_upgrade_migrations_resyncs_gas_limit_and_fee_floors_only() {
     init_stable_state();
     let current = evm_db::meta::current_schema_version();
@@ -2686,6 +2817,11 @@ fn unwrap_request_ids_for_tx_derives_one_id_per_unwrap_log() {
             vec![unwrap_topic],
             unwrap_log_data(&[0x05, 0x06], amount, &[0x07, 0x08]),
         ),
+        log_entry_from_parts(
+            NATIVE_WITHDRAW_PRECOMPILE_ADDRESS.into_array(),
+            vec![hash::keccak256(b"KasaneNativeWithdrawalRequest(bytes)")],
+            native_withdraw_log_data(amount, &[0x09, 0x0a]),
+        ),
     ];
     with_state_mut(|state| {
         let receipt = ReceiptLike {
@@ -2714,8 +2850,9 @@ fn unwrap_request_ids_for_tx_derives_one_id_per_unwrap_log() {
         .into_iter()
         .map(|value| value.0.to_vec())
         .collect::<Vec<_>>();
-    assert_eq!(request_ids.len(), 2);
+    assert_eq!(request_ids.len(), 3);
     assert_ne!(request_ids[0], request_ids[1]);
+    assert_ne!(request_ids[1], request_ids[2]);
     assert_eq!(
         request_ids[0],
         super::derive_unwrap_request_id(&tx_id, 0)
@@ -2730,6 +2867,56 @@ fn unwrap_request_ids_for_tx_derives_one_id_per_unwrap_log() {
             .0
             .to_vec()
     );
+    assert_eq!(
+        request_ids[2],
+        super::derive_unwrap_request_id(&tx_id, 3)
+            .expect("native id")
+            .0
+            .to_vec()
+    );
+}
+
+#[test]
+fn record_unwrap_requests_from_block_stores_native_withdraw_logs_as_gross() {
+    init_stable_state();
+    let tx_id = TxId([0x24u8; 32]);
+    let amount = [0x42u8; 32];
+    with_state_mut(|state| {
+        let receipt = ReceiptLike {
+            tx_id,
+            block_number: 10,
+            tx_index: 0,
+            status: 1,
+            gas_used: 1,
+            effective_gas_price: 1,
+            l1_data_fee: 0,
+            operator_fee: 0,
+            total_fee: 0,
+            return_data_hash: [0u8; 32],
+            return_data: Vec::new(),
+            contract_address: None,
+            logs: vec![log_entry_from_parts(
+                NATIVE_WITHDRAW_PRECOMPILE_ADDRESS.into_array(),
+                vec![hash::keccak256(b"KasaneNativeWithdrawalRequest(bytes)")],
+                native_withdraw_log_data(amount, &[0x09, 0x0a]),
+            )],
+        };
+        let ptr = state
+            .blob_store
+            .store_bytes(receipt.to_bytes().as_ref())
+            .expect("store receipt");
+        state.receipts.insert(tx_id, ptr);
+    });
+
+    super::record_unwrap_requests_from_block(&[tx_id]);
+
+    let request_id = super::derive_unwrap_request_id(&tx_id, 0).expect("request id");
+    with_state(|state| {
+        let req = state.unwrap_requests.get(&request_id).expect("request");
+        assert_eq!(req.asset_id, super::NATIVE_WITHDRAW_ASSET_MARKER);
+        assert_eq!(req.amount, amount);
+        assert_eq!(state.unwrap_dispatch_queue.len(), 1);
+    });
 }
 
 #[test]

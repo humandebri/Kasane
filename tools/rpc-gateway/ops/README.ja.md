@@ -2,7 +2,9 @@
 
 English version: [./README.md](./README.md)
 
-`eth_sendRawTransaction` の戻り値だけでは実行成功は保証されないため、`eth_getTransactionReceipt.status` 監視を本番運用に組み込みます。
+`eth_sendRawTransaction` の戻り値だけでは実行成功は保証されないため、`eth_getTransactionReceipt.status` 監視を本番運用に組み込む。
+
+この systemd 導線は Cloudflare Workers 移行後の旧運用/rollback用。本番gateway通信は `wrangler.jsonc` と Cloudflare routes を使う。
 
 ## 1. 手動実行
 
