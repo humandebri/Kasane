@@ -3067,11 +3067,7 @@ fn metrics(window: u64) -> MetricsView {
         let summary = metrics.window_summary(window);
         let pruned_before_block = state.prune_state.get().pruned_before();
         let rate = summary.block_rate_per_sec_x1000();
-        let avg = if summary.blocks == 0 {
-            0
-        } else {
-            summary.txs / summary.blocks
-        };
+        let avg = summary.txs.checked_div(summary.blocks).unwrap_or(0);
         MetricsView {
             window,
             blocks: summary.blocks,
@@ -4202,10 +4198,7 @@ async fn unwrap_dispatch_tick() {
 #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
 async fn wrap_worker_tick() {
     WRAP_WORKER_SCHEDULED.store(false, Ordering::SeqCst);
-    loop {
-        let Some(request_id) = dequeue_wrap_request() else {
-            break;
-        };
+    while let Some(request_id) = dequeue_wrap_request() {
         let req = with_state_mut(|state| {
             let mut req = state.wrap_requests.get(&request_id)?;
             req.result.status = StoredRequestStatus::Running;
