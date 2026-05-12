@@ -54,8 +54,8 @@ docs/ops/reports/
 contracts/cache/
 contracts/out/
 
-# local internet identity artifacts
-.local/internet-identity/
+# local artifacts
+.local/
 
 # local Codex workspace metadata
 /.codex/

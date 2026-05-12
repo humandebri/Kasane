@@ -8,7 +8,7 @@ export function Input({ className, type = "text", ...props }: React.ComponentPro
     <input
       type={type}
       className={cn(
-        "flex h-10 w-full rounded-md border border-zinc-300 bg-white px-3 text-sm outline-none transition focus-visible:ring-2 focus-visible:ring-emerald-400/60",
+        "flex h-10 w-full rounded-md border border-zinc-300 bg-white px-3 text-sm outline-none transition focus-visible:ring-2 focus-visible:ring-sky-300/60",
         className
       )}
       {...props}

@@ -3,7 +3,8 @@
 import type { ActorSubclass, Identity } from "@icp-sdk/core/agent";
 import { IDL } from "@icp-sdk/core/candid";
 import { Principal } from "@icp-sdk/core/principal";
-import { createIdentityActor, createQueryActor } from "./actor-utils";
+import { createAuthenticatedActor, createQueryActor } from "./actor-utils";
+import type { AuthenticatedCaller } from "./authenticated-caller";
 
 type ApproveError =
   | { BadFee: { expected_fee: bigint } }
@@ -109,6 +110,16 @@ function decodeLedgerDecimals(metadata: Array<[string, MetadataValue]>): number 
   throw new Error("wrap.asset_metadata_failed:decimals_missing");
 }
 
+function decodeLedgerText(metadata: Array<[string, MetadataValue]>, key: string): string | null {
+  for (const [entryKey, value] of metadata) {
+    if (entryKey !== key) {
+      continue;
+    }
+    return "Text" in value ? value.Text : null;
+  }
+  return null;
+}
+
 function decodeApproveError(err: ApproveError): string {
   if ("BadFee" in err) {
     return `icrc2.approve.bad_fee:${err.BadFee.expected_fee.toString()}`;
@@ -141,12 +152,12 @@ export async function approveLedgerSpend(args: {
   ledgerCanisterId: string;
   spenderCanisterId: string;
   amount: bigint;
-  identity: Identity;
+  caller: AuthenticatedCaller | Identity;
 }): Promise<bigint> {
-  const actor = await createIdentityActor<Icrc2Actor>({
+  const actor = await createAuthenticatedActor<Icrc2Actor>({
     canisterId: args.ledgerCanisterId,
     idlFactory: icrc2IdlFactory,
-    identity: args.identity,
+    caller: args.caller,
   });
 
   const out = await actor.icrc2_approve({
@@ -185,10 +196,12 @@ export async function getLedgerAllowance(args: {
 export async function getLedgerBalance(args: {
   ledgerCanisterId: string;
   ownerPrincipalText: string;
+  queryHost?: string;
 }): Promise<bigint> {
   const actor = await createQueryActor<Icrc2Actor>({
     canisterId: args.ledgerCanisterId,
     idlFactory: icrc2IdlFactory,
+    queryHost: args.queryHost,
   });
   return actor.icrc1_balance_of({
     owner: Principal.fromText(args.ownerPrincipalText),
@@ -196,11 +209,12 @@ export async function getLedgerBalance(args: {
   });
 }
 
-export async function getLedgerDecimals(ledgerCanisterId: string): Promise<number> {
+export async function getLedgerDecimals(ledgerCanisterId: string, queryHost?: string): Promise<number> {
   try {
     const actor = await createQueryActor<Icrc2Actor>({
       canisterId: ledgerCanisterId,
       idlFactory: icrc2IdlFactory,
+      queryHost,
     });
     return decodeLedgerDecimals(await actor.icrc1_metadata());
   } catch (error) {
@@ -216,6 +230,36 @@ export async function getLedgerDecimals(ledgerCanisterId: string): Promise<numbe
   }
 }
 
+export async function getLedgerMetadata(ledgerCanisterId: string): Promise<{
+  decimals: number;
+  symbol: string | null;
+  name: string | null;
+}> {
+  try {
+    const actor = await createQueryActor<Icrc2Actor>({
+      canisterId: ledgerCanisterId,
+      idlFactory: icrc2IdlFactory,
+    });
+    const metadata = await actor.icrc1_metadata();
+    return {
+      decimals: decodeLedgerDecimals(metadata),
+      symbol: decodeLedgerText(metadata, "icrc1:symbol"),
+      name: decodeLedgerText(metadata, "icrc1:name"),
+    };
+  } catch (error) {
+    if (error instanceof Error && (
+      error.message === "wrap.asset_decimals_invalid"
+      || error.message.startsWith("wrap.asset_metadata_failed:")
+    )) {
+      throw error;
+    }
+    throw new Error(
+      `wrap.asset_metadata_failed:${error instanceof Error ? error.message : "query_failed"}`,
+    );
+  }
+}
+
 export const icrcClientTestHooks = {
   decodeLedgerDecimals,
+  decodeLedgerText,
 };

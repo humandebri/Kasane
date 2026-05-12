@@ -70,6 +70,7 @@ pub enum AppMemoryId {
     UnwrapDispatchMeta = 56,
     RuntimeConfig = 57,
     InternalTraces = 58,
+    NativeCreditRecords = 59,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -79,7 +80,7 @@ pub struct MemoryRegionInfo {
     pub include_in_estimate: bool,
 }
 
-const ALL_MEMORY_REGIONS: [MemoryRegionInfo; 59] = [
+const ALL_MEMORY_REGIONS: [MemoryRegionInfo; 60] = [
     MemoryRegionInfo {
         id: AppMemoryId::Upgrades,
         name: "Upgrades",
@@ -375,6 +376,11 @@ const ALL_MEMORY_REGIONS: [MemoryRegionInfo; 59] = [
         name: "InternalTraces",
         include_in_estimate: true,
     },
+    MemoryRegionInfo {
+        id: AppMemoryId::NativeCreditRecords,
+        name: "NativeCreditRecords",
+        include_in_estimate: true,
+    },
 ];
 
 impl AppMemoryId {
@@ -439,6 +445,7 @@ impl AppMemoryId {
             AppMemoryId::UnwrapDispatchMeta => 56,
             AppMemoryId::RuntimeConfig => 57,
             AppMemoryId::InternalTraces => 58,
+            AppMemoryId::NativeCreditRecords => 59,
         }
     }
 

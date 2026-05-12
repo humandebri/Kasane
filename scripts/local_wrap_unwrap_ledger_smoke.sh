@@ -527,6 +527,7 @@ WRAP_INIT_ARGS="(record {
   kasane_canister = principal \"${EVM_CANISTER_ID}\";
   evm_gateway_canister = principal \"${EVM_CANISTER_ID}\";
   fee_ledger_canister = principal \"${LEDGER_CANISTER_ID}\";
+  native_ledger_canister = principal \"${EVM_CANISTER_ID}\";
   wrap_factory_address = vec { $(python - <<PY
 hexv = "${FACTORY_ADDRESS_HEX}".strip()
 print("; ".join(str(b) for b in bytes.fromhex(hexv)))
@@ -551,6 +552,32 @@ wait_for_pattern \
   "query_pp '${ROOT_DIR}/crates/ic-evm-gateway/evm_canister.did' evm_canister rpc_eth_gas_price '()'" \
   "Ok ="
 
+WRAP_QUOTE_OUT="$(query_pp "${ROOT_DIR}/othercanisters/wrap-canister/wrap_canister.did" wrap_canister quote_wrap_request "(record {
+  asset_id = principal \"${LEDGER_CANISTER_ID}\";
+  amount_e8s = ${WRAP_AMOUNT} : nat;
+  evm_recipient = vec { $(python - <<'PY'
+print("; ".join(["85"] * 20))
+PY
+) };
+  gas_limit = ${WRAP_GAS_LIMIT} : nat64;
+})")"
+WRAP_QUOTED_FEE_E8S="$(OUTPUT_TEXT="${WRAP_QUOTE_OUT}" python - <<'PY'
+import os, re
+m = re.search(r'charged_fee_e8s\s*=\s*([0-9_]+)\s*:\s*nat', os.environ["OUTPUT_TEXT"])
+print(m.group(1).replace('_', '') if m else '')
+PY
+)"
+WRAP_QUOTED_GAS_PRICE_WEI="$(OUTPUT_TEXT="${WRAP_QUOTE_OUT}" python - <<'PY'
+import os, re
+m = re.search(r'charged_gas_price_wei\s*=\s*([0-9_]+)\s*:\s*nat', os.environ["OUTPUT_TEXT"])
+print(m.group(1).replace('_', '') if m else '')
+PY
+)"
+[[ -n "${WRAP_QUOTED_FEE_E8S}" && -n "${WRAP_QUOTED_GAS_PRICE_WEI}" ]] || {
+  echo "failed to parse wrap quote: ${WRAP_QUOTE_OUT}" >&2
+  exit 1
+}
+
 log "wrap should fail before approve with insufficient allowance"
 WRAP_NO_APPROVE_OUT="$(update_call "${ROOT_DIR}/othercanisters/wrap-canister/wrap_canister.did" wrap_canister submit_wrap_request "(record {
   asset_id = principal \"${LEDGER_CANISTER_ID}\";
@@ -559,7 +586,11 @@ WRAP_NO_APPROVE_OUT="$(update_call "${ROOT_DIR}/othercanisters/wrap-canister/wra
 print("; ".join(["85"] * 20))
 PY
   ) };
+  evm_nonce = 0 : nat64;
   gas_limit = ${WRAP_GAS_LIMIT} : nat64;
+  max_fee_e8s = ${WRAP_QUOTED_FEE_E8S} : nat;
+  quoted_gas_price_wei = ${WRAP_QUOTED_GAS_PRICE_WEI} : nat;
+  fee_ledger_canister = principal \"${LEDGER_CANISTER_ID}\";
 })" 2>&1 || true)"
 [[ "${WRAP_NO_APPROVE_OUT}" == *"fee.transfer_from_failed:insufficient_allowance:"* ]] || {
   echo "${WRAP_NO_APPROVE_OUT}" >&2
@@ -586,7 +617,11 @@ WRAP_SUBMIT_OUT="$(update_call "${ROOT_DIR}/othercanisters/wrap-canister/wrap_ca
 print("; ".join(["85"] * 20))
 PY
   ) };
+  evm_nonce = 0 : nat64;
   gas_limit = ${WRAP_GAS_LIMIT} : nat64;
+  max_fee_e8s = ${WRAP_QUOTED_FEE_E8S} : nat;
+  quoted_gas_price_wei = ${WRAP_QUOTED_GAS_PRICE_WEI} : nat;
+  fee_ledger_canister = principal \"${LEDGER_CANISTER_ID}\";
 })")"
 [[ "${WRAP_SUBMIT_OUT}" == *"variant { Ok ="* ]] || {
   echo "${WRAP_SUBMIT_OUT}" >&2

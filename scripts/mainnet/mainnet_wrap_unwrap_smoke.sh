@@ -530,12 +530,22 @@ m = re.search(r'charged_fee_e8s\s*=\s*([0-9_]+)\s*:\s*nat', os.environ["OUTPUT_T
 print(m.group(1).replace('_', '') if m else '')
 PY
 )"
+WRAP_QUOTED_GAS_PRICE_WEI="$(OUTPUT_TEXT="${WRAP_QUOTE_OUT}" python - <<'PY'
+import os, re
+m = re.search(r'charged_gas_price_wei\s*=\s*([0-9_]+)\s*:\s*nat', os.environ["OUTPUT_TEXT"])
+print(m.group(1).replace('_', '') if m else '')
+PY
+)"
+[[ -n "${WRAP_QUOTED_FEE_E8S}" && -n "${WRAP_QUOTED_GAS_PRICE_WEI}" ]] || {
+  echo "failed to parse wrap quote: ${WRAP_QUOTE_OUT}" >&2
+  exit 1
+}
 
 log "approve fee ledger if needed"
 icp canister call -e "${ICP_ENV}" --identity "${ICP_IDENTITY_NAME}" "${FEE_LEDGER_CANISTER_ID}" icrc2_approve "(record { from_subaccount = null; spender = record { owner = principal \"${WRAP_CANISTER_ID}\"; subaccount = null }; amount = ${WRAP_ALLOWANCE_E8S} : nat; expected_allowance = null; expires_at = null; fee = null; memo = null; created_at_time = null })" >/dev/null
 
 log "submit wrap request"
-WRAP_SUBMIT_OUT="$(icp canister call -e "${ICP_ENV}" --identity "${ICP_IDENTITY_NAME}" "${WRAP_CANISTER_ID}" submit_wrap_request "(record { asset_id = principal \"${FEE_LEDGER_CANISTER_ID}\"; amount_e8s = ${WRAP_AMOUNT_E8S} : nat; evm_recipient = blob \"${WRAP_RECIPIENT_BLOB}\"; evm_nonce = ${WRAP_NONCE} : nat64; gas_limit = ${WRAP_GAS_LIMIT} : nat64 })")"
+WRAP_SUBMIT_OUT="$(icp canister call -e "${ICP_ENV}" --identity "${ICP_IDENTITY_NAME}" "${WRAP_CANISTER_ID}" submit_wrap_request "(record { asset_id = principal \"${FEE_LEDGER_CANISTER_ID}\"; amount_e8s = ${WRAP_AMOUNT_E8S} : nat; evm_recipient = blob \"${WRAP_RECIPIENT_BLOB}\"; evm_nonce = ${WRAP_NONCE} : nat64; gas_limit = ${WRAP_GAS_LIMIT} : nat64; max_fee_e8s = ${WRAP_QUOTED_FEE_E8S} : nat; quoted_gas_price_wei = ${WRAP_QUOTED_GAS_PRICE_WEI} : nat; fee_ledger_canister = principal \"${FEE_LEDGER_CANISTER_ID}\" })")"
 candid_is_ok "${WRAP_SUBMIT_OUT}" >/dev/null
 
 WRAP_REQUEST_ID_HEX="$(extract_first_blob_hex "${WRAP_SUBMIT_OUT}")"

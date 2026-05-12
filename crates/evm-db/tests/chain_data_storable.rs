@@ -612,6 +612,21 @@ fn runtime_config_roundtrip() {
 }
 
 #[test]
+fn runtime_config_rejects_invalid_wrap_canister_id_bytes() {
+    assert_eq!(
+        RuntimeConfigV1::try_new_from_bytes(&[], [0x44u8; 20]).unwrap_err(),
+        "runtime_config.wrap_canister_id_invalid"
+    );
+    assert_eq!(
+        RuntimeConfigV1::try_new_from_bytes(&[0x11u8; 30], [0x44u8; 20]).unwrap_err(),
+        "runtime_config.wrap_canister_id_invalid"
+    );
+    assert!(RuntimeConfigV1::new_from_bytes(&[], [0x44u8; 20])
+        .wrap_canister_id_bytes()
+        .is_err());
+}
+
+#[test]
 fn localized_decode_failures_do_not_set_needs_migration() {
     init_stable_state();
     clear_needs_migration();

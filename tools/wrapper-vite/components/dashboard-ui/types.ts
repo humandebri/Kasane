@@ -1,7 +1,14 @@
-// どこで: dashboard UI部品 / 何を: 画面専用の共有型を定義 / なぜ: 分割コンポーネント間の契約を明確にするため
+// どこで: dashboard UI部品 / 何を: 画面専用の共有型を定義 / なぜ: Oisy と MetaMask の表示契約を明確に保つため
 
 import type { DispatchStatus, ExecutionStatus } from "@/lib/types";
-import type { WalletSource } from "@/lib/wallet/types";
+import type { KasaneTransactionStatus } from "@/lib/kasane-rpc";
+import type { MetaMaskSession, WalletSession } from "@/lib/wallet/types";
+
+type DashboardOisyCapabilities = {
+  ledgerApproveSupported: boolean;
+  wrapCanisterSupported: boolean;
+  gatewaySupported: boolean;
+};
 
 export type ActiveTab = "unwrap" | "wrap";
 
@@ -48,15 +55,17 @@ export type WrapNonceStatus =
   | "error";
 
 export type DashboardWalletState = {
-  session: {
-    principalText: string;
-    source: WalletSource;
-  } | null;
-  connecting: boolean;
+  oisySession: WalletSession | null;
+  metaMaskSession: MetaMaskSession | null;
+  oisyConnecting: boolean;
+  metaMaskConnecting: boolean;
+  metaMaskAvailable: boolean;
+  oisyCapabilities: DashboardOisyCapabilities;
   error: string | null;
 };
 
-export type StatusPanelView = {
+export type RequestStatusPanelView = {
+  kind: "request";
   requestId: string;
   dispatchStatus: DispatchStatus | null;
   executionStatus: ExecutionStatus | null;
@@ -67,3 +76,9 @@ export type StatusPanelView = {
   withdrawLedgerTxId: string | null;
   withdrawErrorCode: string | null;
 };
+
+export type TransactionStatusPanelView = KasaneTransactionStatus & {
+  kind: "transaction";
+};
+
+export type StatusPanelView = RequestStatusPanelView | TransactionStatusPanelView;

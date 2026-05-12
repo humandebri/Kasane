@@ -22,6 +22,7 @@ export function mergeStatus(input: StatusMergeInput): StatusResponse {
   const withdrawErrorCode = input.executionResult?.withdrawErrorCode ?? null;
 
   return {
+    kind: "request",
     requestId: input.requestIdHex,
     dispatchStatus,
     executionStatus,

@@ -31,6 +31,7 @@ struct WrapInitArgs {
     kasane_canister: Principal,
     evm_gateway_canister: Principal,
     fee_ledger_canister: Principal,
+    native_ledger_canister: Principal,
     wrap_factory_address: Vec<u8>,
     cycle_fee_e8s: u64,
     gas_price_buffer_bps: u32,
@@ -63,6 +64,25 @@ struct SubmitWrapRequestArgs {
     evm_recipient: Vec<u8>,
     evm_nonce: u64,
     gas_limit: u64,
+    max_fee_e8s: Nat,
+    quoted_gas_price_wei: Nat,
+    fee_ledger_canister: Principal,
+}
+
+fn submit_wrap_request_args(
+    fee_ledger_id: Principal,
+    evm_recipient: Vec<u8>,
+) -> SubmitWrapRequestArgs {
+    SubmitWrapRequestArgs {
+        asset_id: fee_ledger_id,
+        amount_e8s: Nat::from(WRAP_AMOUNT_E8S),
+        evm_recipient,
+        evm_nonce: 0,
+        gas_limit: TEST_WRAP_GAS_LIMIT,
+        max_fee_e8s: Nat::from(WRAP_AMOUNT_E8S * 2),
+        quoted_gas_price_wei: Nat::from(u128::MAX),
+        fee_ledger_canister: fee_ledger_id,
+    }
 }
 
 #[derive(Clone, Debug, CandidType, Deserialize, Eq, PartialEq)]
@@ -401,8 +421,8 @@ fn set_allowed_assets(pic: &PocketIc, wrap_id: Principal, assets: Vec<Principal>
             Encode!(&assets).expect("encode allowed assets"),
         )
         .unwrap_or_else(|err| panic!("set_allowed_assets call failed: {err}"));
-    let result: Result<(), String> = Decode!(&out, Result<(), String>)
-        .expect("decode set_allowed_assets response");
+    let result: Result<(), String> =
+        Decode!(&out, Result<(), String>).expect("decode set_allowed_assets response");
     result.unwrap_or_else(|err| panic!("set_allowed_assets rejected: {err}"));
 }
 
@@ -444,6 +464,7 @@ fn install_pair_with_options(
         kasane_canister: gateway_id,
         evm_gateway_canister: wrap_gateway_id,
         fee_ledger_canister: fee_ledger_id,
+        native_ledger_canister: Principal::self_authenticating(b"native-ledger-test"),
         wrap_factory_address: predict_create_address(caller_evm, 0).to_vec(),
         cycle_fee_e8s: 1_000_000,
         gas_price_buffer_bps: 12_000,
@@ -1183,13 +1204,7 @@ fn wrap_submit_request_succeeds_with_real_ledger_and_factory() {
     );
     approve_fee_ledger_for_wrap(&pic, fee_ledger_id, wrap_id, WRAP_AMOUNT_E8S * 2);
 
-    let args = SubmitWrapRequestArgs {
-        asset_id: fee_ledger_id,
-        amount_e8s: Nat::from(WRAP_AMOUNT_E8S),
-        evm_recipient: caller_evm.to_vec(),
-        evm_nonce: 0,
-        gas_limit: TEST_WRAP_GAS_LIMIT,
-    };
+    let args = submit_wrap_request_args(fee_ledger_id, caller_evm.to_vec());
     let out = pic
         .update_call(
             wrap_id,
@@ -1254,13 +1269,10 @@ fn unwrap_dispatch_succeeds_with_real_wrap_canister() {
             wrap_id,
             test_caller(),
             "submit_wrap_request",
-            Encode!(&SubmitWrapRequestArgs {
-                asset_id: fee_ledger_id,
-                amount_e8s: Nat::from(WRAP_AMOUNT_E8S),
-                evm_recipient: caller_evm.to_vec(),
-                evm_nonce: 0,
-                gas_limit: TEST_WRAP_GAS_LIMIT,
-            })
+            Encode!(&submit_wrap_request_args(
+                fee_ledger_id,
+                caller_evm.to_vec()
+            ))
             .expect("encode wrap submit"),
         )
         .unwrap();
@@ -1419,13 +1431,10 @@ fn unwrap_completes_and_credits_recipient_ledger_balance() {
             wrap_id,
             caller,
             "submit_wrap_request",
-            Encode!(&SubmitWrapRequestArgs {
-                asset_id: fee_ledger_id,
-                amount_e8s: Nat::from(WRAP_AMOUNT_E8S),
-                evm_recipient: caller_evm.to_vec(),
-                evm_nonce: 0,
-                gas_limit: TEST_WRAP_GAS_LIMIT,
-            })
+            Encode!(&submit_wrap_request_args(
+                fee_ledger_id,
+                caller_evm.to_vec()
+            ))
             .expect("encode wrap submit"),
         )
         .unwrap();
@@ -1630,13 +1639,10 @@ fn unwrap_requirements_report_readiness_transitions() {
             wrap_id,
             test_caller(),
             "submit_wrap_request",
-            Encode!(&SubmitWrapRequestArgs {
-                asset_id: fee_ledger_id,
-                amount_e8s: Nat::from(WRAP_AMOUNT_E8S),
-                evm_recipient: caller_evm.to_vec(),
-                evm_nonce: 0,
-                gas_limit: TEST_WRAP_GAS_LIMIT,
-            })
+            Encode!(&submit_wrap_request_args(
+                fee_ledger_id,
+                caller_evm.to_vec()
+            ))
             .expect("encode wrap submit"),
         )
         .unwrap();
@@ -1883,13 +1889,10 @@ fn unwrap_burn_then_ledger_transfer_failure_is_retryable_without_double_refund()
             wrap_id,
             caller,
             "submit_wrap_request",
-            Encode!(&SubmitWrapRequestArgs {
-                asset_id: broken_ledger_id,
-                amount_e8s: Nat::from(WRAP_AMOUNT_E8S),
-                evm_recipient: caller_evm.to_vec(),
-                evm_nonce: 0,
-                gas_limit: TEST_WRAP_GAS_LIMIT,
-            })
+            Encode!(&submit_wrap_request_args(
+                broken_ledger_id,
+                caller_evm.to_vec()
+            ))
             .expect("encode wrap submit"),
         )
         .unwrap();
@@ -2105,13 +2108,10 @@ fn wrap_recover_failed_wrap_returns_funds_after_gateway_reinstall_breaks_mint_st
             wrap_id,
             caller,
             "submit_wrap_request",
-            Encode!(&SubmitWrapRequestArgs {
-                asset_id: fee_ledger_id,
-                amount_e8s: Nat::from(WRAP_AMOUNT_E8S),
-                evm_recipient: caller_evm.to_vec(),
-                evm_nonce: 0,
-                gas_limit: TEST_WRAP_GAS_LIMIT,
-            })
+            Encode!(&submit_wrap_request_args(
+                fee_ledger_id,
+                caller_evm.to_vec()
+            ))
             .expect("encode wrap submit"),
         )
         .unwrap();
@@ -2371,13 +2371,10 @@ fn wrap_recover_failed_wrap_rejects_concurrent_second_call_while_first_is_in_pro
             wrap_id,
             caller,
             "submit_wrap_request",
-            Encode!(&SubmitWrapRequestArgs {
-                asset_id: fee_ledger_id,
-                amount_e8s: Nat::from(WRAP_AMOUNT_E8S),
-                evm_recipient: caller_evm.to_vec(),
-                evm_nonce: 0,
-                gas_limit: TEST_WRAP_GAS_LIMIT,
-            })
+            Encode!(&submit_wrap_request_args(
+                fee_ledger_id,
+                caller_evm.to_vec()
+            ))
             .expect("encode wrap submit"),
         )
         .unwrap();

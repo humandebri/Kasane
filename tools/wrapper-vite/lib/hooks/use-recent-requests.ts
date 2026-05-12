@@ -1,10 +1,10 @@
 // どこで: Recent Requests hook / 何を: Juno から principal ごとの履歴を取得・保存する / なぜ: dashboard から session memory を外して永続化するため
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { Identity } from "@icp-sdk/core/agent";
 import type { HistoryEntry } from "@/components/dashboard-ui/types";
 import { listRecentRequests, saveRecentRequest } from "@/lib/canister/recent-requests-client";
 import { mergeRecentRequestHistory } from "@/lib/recent-requests";
+import type { AuthenticatedCaller } from "@/lib/canister/authenticated-caller";
 
 export function createRecentRequestsScopeKey(args: {
   principalText: string | null;
@@ -30,7 +30,7 @@ export function shouldApplyRecentRequestsResult(args: {
 
 export function useRecentRequests(params: {
   principalText: string | null;
-  getIdentity: () => Promise<Identity | null>;
+  getCaller: () => Promise<AuthenticatedCaller | null>;
   satelliteId: string | null;
 }) {
   const [history, setHistory] = useState<HistoryEntry[]>([]);
@@ -66,12 +66,12 @@ export function useRecentRequests(params: {
     }
     setLoading(true);
     try {
-      const identity = await params.getIdentity();
-      if (identity === null) {
+      const caller = await params.getCaller();
+      if (caller === null) {
         throw new Error("wallet.not_connected");
       }
       const nextHistory = await listRecentRequests(
-        identity,
+        caller,
         params.principalText,
         params.satelliteId,
       );
@@ -106,7 +106,7 @@ export function useRecentRequests(params: {
         setLoading(false);
       }
     }
-  }, [params.getIdentity, params.principalText, params.satelliteId]);
+  }, [params.getCaller, params.principalText, params.satelliteId]);
 
   const save = useCallback(async (entry: HistoryEntry): Promise<void> => {
     if (!params.principalText || !params.satelliteId) {
@@ -114,12 +114,12 @@ export function useRecentRequests(params: {
     }
     const scopeKey = currentScopeKeyRef.current;
     try {
-      const identity = await params.getIdentity();
-      if (identity === null) {
+      const caller = await params.getCaller();
+      if (caller === null) {
         throw new Error("wallet.not_connected");
       }
       const saved = await saveRecentRequest(
-        identity,
+        caller,
         params.principalText,
         params.satelliteId,
         entry,
@@ -141,7 +141,7 @@ export function useRecentRequests(params: {
       }
       setError(nextError instanceof Error ? nextError.message : "history.save_failed");
     }
-  }, [params.getIdentity, params.principalText, params.satelliteId]);
+  }, [params.getCaller, params.principalText, params.satelliteId]);
 
   useEffect(() => {
     void refresh();

@@ -58,8 +58,8 @@ try {
   console.log("2. Open http://localhost:5866 and confirm the local Satellite exists.");
   console.log("3. npm run juno:functions:build");
   console.log("4. npm run dev");
-  console.log("5. Confirm 'Connect wallet to load history' appears while disconnected.");
-  console.log("6. Continue with Google or Internet Identity and submit one request successfully.");
+  console.log("5. Confirm 'Connect Oisy to view request history.' appears on /history while disconnected.");
+  console.log("6. Connect Oisy and confirm the wallet modal shows the signer principal.");
   console.log("7. Confirm Recent Requests shows the new request.");
   console.log("8. Reload and confirm the same principal sees the same request.");
   console.log("9. Open /requests/:requestId and confirm the status modal reopens.");

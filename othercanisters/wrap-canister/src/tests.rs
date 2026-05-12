@@ -1,19 +1,22 @@
 use super::{
     apply_insert_request_outcome, apply_runtime_config, approval_required_for_readiness,
     decode_asset_decimals, decode_stored_request, decode_u256_be, dequeue_request,
-    derive_wrap_request_id, encode_factory_mint_for_asset_call_data, encode_stored_request,
-    enqueue_request, init_state, insert_request, insert_wrap_request, is_withdrawable,
-    map_transfer_reply, mark_request_running, mark_wrap_request_running, nat_from_32_be,
-    nat_to_be_bytes, normalize_submit_wrap_args, on_worker_queue_drain, on_wrap_worker_queue_drain,
-    principal_from_bytes, recover_request_state_after_upgrade,
-    recover_wrap_request_state_after_upgrade, schedule_worker, schedule_wrap_worker,
-    submit_error_to_code, to_request_id, to_withdraw_error_code, transfer_error_to_code,
-    transfer_from_error_to_code, u256_from_u64, validate_non_anonymous_principal,
+    derive_native_deposit_request_id, derive_wrap_request_id,
+    encode_factory_mint_for_asset_call_data, encode_stored_request, enqueue_request,
+    existing_native_deposit_response, init_state, insert_request, insert_wrap_request,
+    is_withdrawable, map_transfer_reply, mark_request_running, mark_wrap_request_running,
+    nat_from_32_be, nat_to_be_bytes, native_withdraw_receive_amount, normalize_submit_wrap_args,
+    on_worker_queue_drain, on_wrap_worker_queue_drain, principal_from_bytes,
+    recover_request_state_after_upgrade, recover_wrap_request_state_after_upgrade, schedule_worker,
+    schedule_wrap_worker, submit_error_to_code, to_request_id, to_withdraw_error_code,
+    transfer_error_to_code, transfer_from_error_to_code, u256_from_u64, validate_native_deposit_id,
+    validate_non_anonymous_principal, validate_quote_within_approval, validate_runtime_config,
     validate_withdraw_request, with_state, with_state_mut, FeeCharge, GetUnwrapRequirementsArgs,
     Icrc1MetadataValue, Icrc1TransferError, Icrc2TransferFromError, InitArgs, InsertRequestOutcome,
-    NormalizedDispatchUnwrapRequest, NormalizedSubmitWrapRequest, QueueMeta, RequestResult,
-    RequestStatus, StoredRequest, SubmitTxError, SubmitWrapRequestArgs, UnwrapReadiness,
-    WrapRequestResult, WrapStoredRequest, WORKER_SCHEDULED, WRAP_WORKER_SCHEDULED,
+    NormalizedDispatchUnwrapRequest, NormalizedSubmitNativeDeposit, NormalizedSubmitWrapRequest,
+    QueueMeta, RequestResult, RequestStatus, StoredRequest, SubmitTxError, SubmitWrapRequestArgs,
+    UnwrapReadiness, WrapQuote, WrapRequestResult, WrapStoredRequest, WORKER_SCHEDULED,
+    WRAP_WORKER_SCHEDULED,
 };
 use candid::{decode_one, encode_one, Nat, Principal};
 use ic_evm_rpc_types::ApiError;
@@ -76,6 +79,7 @@ fn reset_state() {
         let _ = state.wrap_queue_meta.set(super::QueueMeta::new());
         let _ = state.kasane_canister.set(Vec::new());
         let _ = state.evm_gateway_canister.set(Vec::new());
+        let _ = state.native_ledger_canister.set(Vec::new());
         let _ = state.fee_policy.set(super::FeePolicyStored {
             fee_ledger_canister: Vec::new(),
             cycle_fee_e8s: super::DEFAULT_CYCLE_FEE_E8S,
@@ -95,6 +99,7 @@ fn sample_init_args(seed: u8, factory: [u8; 20]) -> InitArgs {
         kasane_canister: Principal::self_authenticating([seed, 1]),
         evm_gateway_canister: Principal::self_authenticating([seed, 2]),
         fee_ledger_canister: Principal::self_authenticating([seed, 3]),
+        native_ledger_canister: Principal::self_authenticating([seed, 5]),
         wrap_factory_address: factory.to_vec(),
         cycle_fee_e8s: u64::from(seed) + 1_000,
         gas_price_buffer_bps: 12_000 + u32::from(seed),
@@ -112,12 +117,38 @@ fn test_fee_charge() -> FeeCharge {
     }
 }
 
+fn test_fee_ledger() -> Principal {
+    Principal::self_authenticating(b"wrap-fee-ledger")
+}
+
 fn sample_unwrap_args(request_id: [u8; 32]) -> NormalizedDispatchUnwrapRequest {
     NormalizedDispatchUnwrapRequest {
         request_id: request_id.to_vec(),
         asset_id: vec![2u8; 29],
         amount: vec![0u8; 32],
         recipient: vec![3u8; 29],
+    }
+}
+
+fn sample_normalized_wrap_request() -> NormalizedSubmitWrapRequest {
+    NormalizedSubmitWrapRequest {
+        request_id: to_request_id(&[0x11; 32]).expect("id"),
+        asset_id: vec![2u8; 29],
+        amount: vec![0u8; 32],
+        evm_recipient: vec![4u8; 20],
+        gas_limit: 200_000,
+        max_fee_e8s: 1_000_000,
+        quoted_gas_price_wei: 300_000_000_000,
+        fee_ledger_canister: test_fee_ledger(),
+    }
+}
+
+fn sample_wrap_quote() -> WrapQuote {
+    WrapQuote {
+        charged_fee_e8s: 1_000_000,
+        charged_gas_price_wei: 300_000_000_000,
+        cycle_fee_e8s: super::DEFAULT_CYCLE_FEE_E8S,
+        fee_ledger_canister: test_fee_ledger(),
     }
 }
 
@@ -155,6 +186,138 @@ fn sample_failed_unwrap_request_for(recipient: Principal) -> StoredRequest {
             dispatch_error: None,
         },
     }
+}
+
+#[test]
+fn icrc10_supported_standards_advertise_icrc21() {
+    let standards = super::icrc21::supported_standards();
+    assert!(standards.iter().any(|item| item.name == "ICRC-21"));
+}
+
+#[test]
+fn icrc21_retry_request_rejects_missing_request() {
+    reset_state();
+    let response = run_ready_future(super::icrc21::consent_message(
+        super::icrc21::Icrc21ConsentMessageRequest {
+            method: "retry_request".to_string(),
+            arg: encode_one(super::RetryRequestArgs {
+                request_id: vec![0x55; 32],
+            })
+            .expect("encode retry args"),
+            user_preferences: super::icrc21::Icrc21ConsentMessageSpec {
+                metadata: super::icrc21::Icrc21ConsentMessageMetadata {
+                    utc_offset_minutes: Some(540),
+                    language: "en".to_string(),
+                },
+                device_spec: None,
+            },
+        },
+    ));
+    assert!(matches!(
+        response,
+        Err(super::icrc21::Icrc21Error::ConsentMessageUnavailable(_))
+    ));
+}
+
+#[test]
+fn icrc21_recover_failed_wrap_rejects_missing_request() {
+    reset_state();
+    let response = run_ready_future(super::icrc21::consent_message(
+        super::icrc21::Icrc21ConsentMessageRequest {
+            method: "recover_failed_wrap".to_string(),
+            arg: encode_one(super::RecoverFailedWrapArgs {
+                request_id: vec![0x77; 32],
+            })
+            .expect("encode recover args"),
+            user_preferences: super::icrc21::Icrc21ConsentMessageSpec {
+                metadata: super::icrc21::Icrc21ConsentMessageMetadata {
+                    utc_offset_minutes: Some(540),
+                    language: "en".to_string(),
+                },
+                device_spec: None,
+            },
+        },
+    ));
+    assert!(matches!(
+        response,
+        Err(super::icrc21::Icrc21Error::ConsentMessageUnavailable(_))
+    ));
+}
+
+#[test]
+fn icrc21_submit_wrap_request_rejects_when_quote_unavailable() {
+    reset_state();
+    let response = run_ready_future(super::icrc21::consent_message(
+        super::icrc21::Icrc21ConsentMessageRequest {
+            method: "submit_wrap_request".to_string(),
+            arg: encode_one(super::SubmitWrapRequestArgs {
+                asset_id: Principal::self_authenticating([2u8; 32]),
+                amount_e8s: Nat::from(10_000_000u64),
+                evm_recipient: vec![0x11; 20],
+                evm_nonce: 7,
+                gas_limit: 210_000,
+                max_fee_e8s: Nat::from(1_000_000u64),
+                quoted_gas_price_wei: Nat::from(300_000_000_000u64),
+                fee_ledger_canister: test_fee_ledger(),
+            })
+            .expect("encode submit args"),
+            user_preferences: super::icrc21::Icrc21ConsentMessageSpec {
+                metadata: super::icrc21::Icrc21ConsentMessageMetadata {
+                    utc_offset_minutes: Some(540),
+                    language: "en".to_string(),
+                },
+                device_spec: None,
+            },
+        },
+    ));
+    assert!(matches!(
+        response,
+        Err(super::icrc21::Icrc21Error::ConsentMessageUnavailable(_))
+    ));
+}
+
+#[test]
+fn icrc21_submit_wrap_request_accepts_line_display_request_shape() {
+    reset_state();
+    let response = run_ready_future(super::icrc21::consent_message(
+        super::icrc21::Icrc21ConsentMessageRequest {
+            method: "submit_wrap_request".to_string(),
+            arg: encode_one(super::SubmitWrapRequestArgs {
+                asset_id: Principal::self_authenticating([2u8; 32]),
+                amount_e8s: Nat::from(10_000_000u64),
+                evm_recipient: vec![0x11; 20],
+                evm_nonce: 7,
+                gas_limit: 210_000,
+                max_fee_e8s: Nat::from(1_000_000u64),
+                quoted_gas_price_wei: Nat::from(300_000_000_000u64),
+                fee_ledger_canister: test_fee_ledger(),
+            })
+            .expect("encode submit args"),
+            user_preferences: super::icrc21::Icrc21ConsentMessageSpec {
+                metadata: super::icrc21::Icrc21ConsentMessageMetadata {
+                    utc_offset_minutes: Some(540),
+                    language: "en".to_string(),
+                },
+                device_spec: Some(super::icrc21::Icrc21DeviceSpec::LineDisplay(
+                    super::icrc21::Icrc21LineDisplaySpec {
+                        characters_per_line: 24,
+                        lines_per_page: 4,
+                    },
+                )),
+            },
+        },
+    ));
+    assert!(matches!(
+        response,
+        Err(super::icrc21::Icrc21Error::ConsentMessageUnavailable(_))
+    ));
+}
+
+#[test]
+fn wrap_did_does_not_export_fields_display_icrc21_shape() {
+    let did = include_str!("../wrap_canister.did");
+    assert!(!did.contains("FieldsDisplay"));
+    assert!(did.contains("LineDisplay"));
 }
 
 #[test]
@@ -244,6 +407,25 @@ fn replace_allowed_assets_overwrites_previous_entries() {
         super::ensure_asset_allowed(Principal::self_authenticating(b"asset-c").as_slice()),
         Err("asset.not_allowed".to_string())
     );
+}
+
+#[test]
+fn native_ledger_cannot_be_allowed_wrap_asset() {
+    reset_state();
+    let native = Principal::self_authenticating(b"native-ledger");
+    let mut args = sample_init_args(1, [0x11; 20]);
+    args.native_ledger_canister = native;
+    args.allowed_assets = vec![native];
+
+    let err = validate_runtime_config(&args).expect_err("native ICP must not be wrappable");
+    assert_eq!(err, "asset.native_ledger_not_wrappable");
+
+    apply_runtime_config(sample_init_args(2, [0x22; 20]));
+    with_state_mut(|state| {
+        let native = principal_from_bytes(state.native_ledger_canister.get()).expect("native");
+        let err = super::replace_allowed_assets(state, &[native]).expect_err("reject native");
+        assert_eq!(err, "asset.native_ledger_not_wrappable");
+    });
 }
 
 #[test]
@@ -816,6 +998,9 @@ fn wrap_insert_request_rejects_duplicate() {
         amount,
         evm_recipient,
         gas_limit: 200_000,
+        max_fee_e8s: 1_000_000,
+        quoted_gas_price_wei: 300_000_000_000,
+        fee_ledger_canister: test_fee_ledger(),
     };
     let request_id = to_request_id(&request_id).expect("id");
     insert_wrap_request(args.clone(), caller, request_id, test_fee_charge(), 1)
@@ -851,6 +1036,87 @@ fn wrap_request_id_changes_when_evm_nonce_changes() {
     );
 
     assert_ne!(first, second);
+}
+
+#[test]
+fn native_deposit_request_id_changes_when_deposit_id_changes() {
+    let caller = Principal::self_authenticating(b"native-deposit-caller");
+    let first = derive_native_deposit_request_id(caller.as_slice(), &[1u8; 32]);
+    let second = derive_native_deposit_request_id(caller.as_slice(), &[2u8; 32]);
+
+    assert_ne!(first, second);
+    assert_eq!(
+        first,
+        derive_native_deposit_request_id(caller.as_slice(), &[1u8; 32])
+    );
+}
+
+#[test]
+fn native_deposit_id_requires_32_bytes() {
+    assert!(validate_native_deposit_id(&[1u8; 32]).is_ok());
+    assert_eq!(
+        validate_native_deposit_id(&[1u8; 31]).expect_err("short id must fail"),
+        "arg.deposit_id_invalid"
+    );
+    assert_eq!(
+        validate_native_deposit_id(&[1u8; 33]).expect_err("long id must fail"),
+        "arg.deposit_id_invalid"
+    );
+}
+
+#[test]
+fn native_deposit_same_deposit_id_rejects_payload_mismatch() {
+    reset_state();
+    let caller = Principal::self_authenticating(b"native-deposit-idempotent");
+    let request_id_raw = derive_native_deposit_request_id(caller.as_slice(), &[8u8; 32]);
+    let request_id = to_request_id(&request_id_raw).expect("id");
+    with_state_mut(|state| {
+        state.wrap_requests.insert(
+            request_id,
+            WrapStoredRequest {
+                caller: caller.as_slice().to_vec(),
+                asset_id: Vec::new(),
+                amount: vec![1u8; 32],
+                evm_recipient: vec![2u8; 20],
+                gas_limit: 0,
+                fee_created_at_time: 1,
+                pull_created_at_time: 0,
+                withdraw_created_at_time: 0,
+                result: WrapRequestResult {
+                    status: RequestStatus::Succeeded,
+                    pull_ledger_tx_id: None,
+                    mint_tx_id: None,
+                    error_code: None,
+                    withdrawn: false,
+                    withdraw_ledger_tx_id: None,
+                    withdraw_error_code: None,
+                    withdraw_in_progress: false,
+                    mint_failed_recoverable: false,
+                    fee_ledger_tx_id: Some(vec![0xAA]),
+                    charged_fee_e8s: Some(1_000),
+                    charged_gas_price_wei: None,
+                },
+            },
+        );
+    });
+
+    let args = NormalizedSubmitNativeDeposit {
+        request_id,
+        amount: vec![3u8; 32],
+        evm_recipient: vec![2u8; 20],
+        max_fee_e8s: 1_000,
+        fee_ledger_canister: test_fee_ledger(),
+    };
+    let err = existing_native_deposit_response(request_id, &args, caller)
+        .expect("existing request")
+        .expect_err("payload mismatch must reject");
+
+    match err {
+        ApiError::Rejected(detail) => {
+            assert_eq!(detail.code, "request.idempotency_mismatch");
+        }
+        other => panic!("unexpected error: {other:?}"),
+    }
 }
 
 #[test]
@@ -890,6 +1156,9 @@ fn mark_wrap_request_running_sets_running_status() {
             amount,
             evm_recipient,
             gas_limit: 300_000,
+            max_fee_e8s: 1_000_000,
+            quoted_gas_price_wei: 300_000_000_000,
+            fee_ledger_canister: test_fee_ledger(),
         },
         caller,
         request_id,
@@ -916,9 +1185,54 @@ fn wrap_normalize_submit_rejects_zero_gas_limit() {
         evm_recipient: vec![5u8; 20],
         evm_nonce: 0,
         gas_limit: 0,
+        max_fee_e8s: Nat::from(1_000_000u64),
+        quoted_gas_price_wei: Nat::from(300_000_000_000u64),
+        fee_ledger_canister: test_fee_ledger(),
     })
     .expect_err("zero gas limit must fail");
     assert_eq!(err, "arg.gas_limit_invalid");
+}
+
+#[test]
+fn wrap_quote_approval_accepts_matching_quote() {
+    let args = sample_normalized_wrap_request();
+    let quote = sample_wrap_quote();
+    validate_quote_within_approval(&args, &quote).expect("matching quote");
+}
+
+#[test]
+fn wrap_quote_approval_rejects_fee_increase_before_transfer() {
+    let args = sample_normalized_wrap_request();
+    let mut quote = sample_wrap_quote();
+    quote.charged_fee_e8s = args.max_fee_e8s + 1;
+    let err = validate_quote_within_approval(&args, &quote).expect_err("fee must be bounded");
+    assert_eq!(err, "fee.quote_exceeded");
+}
+
+#[test]
+fn wrap_quote_approval_rejects_gas_price_increase_before_transfer() {
+    let args = sample_normalized_wrap_request();
+    let mut quote = sample_wrap_quote();
+    quote.charged_gas_price_wei = args.quoted_gas_price_wei + 1;
+    let err = validate_quote_within_approval(&args, &quote).expect_err("gas price must be bounded");
+    assert_eq!(err, "fee.gas_price_exceeded");
+}
+
+#[test]
+fn wrap_quote_approval_rejects_fee_ledger_change_before_transfer() {
+    let args = sample_normalized_wrap_request();
+    let mut quote = sample_wrap_quote();
+    quote.fee_ledger_canister = Principal::self_authenticating(b"changed-fee-ledger");
+    let err = validate_quote_within_approval(&args, &quote).expect_err("ledger must be stable");
+    assert_eq!(err, "fee.ledger_changed");
+}
+
+#[test]
+fn runtime_config_rejects_excessive_cycle_fee() {
+    let mut args = sample_init_args(1, [0x22; 20]);
+    args.cycle_fee_e8s = super::MAX_CYCLE_FEE_E8S + 1;
+    let err = validate_runtime_config(&args).expect_err("cycle fee cap");
+    assert_eq!(err, "arg.cycle_fee_e8s_out_of_range");
 }
 
 #[test]
@@ -1507,4 +1821,17 @@ fn recover_wrap_request_state_after_upgrade_clears_withdraw_in_progress() {
         assert_eq!(req.result.status, RequestStatus::Failed);
         assert_eq!(state.wrap_queue.len(), 0);
     });
+}
+
+#[test]
+fn native_withdraw_receive_amount_rejects_fee_or_less() {
+    assert_eq!(native_withdraw_receive_amount(10_001, 10_000), Ok(1));
+    assert_eq!(
+        native_withdraw_receive_amount(10_000, 10_000),
+        Err("native_withdraw.amount_not_above_fee")
+    );
+    assert_eq!(
+        native_withdraw_receive_amount(9_999, 10_000),
+        Err("native_withdraw.amount_not_above_fee")
+    );
 }

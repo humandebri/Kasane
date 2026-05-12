@@ -4,15 +4,24 @@ import type { InternetIdentityDomain } from "@junobuild/core";
 
 export type WrapperConfig = {
   icHost: string;
+  icpTokenListUrl: string;
   kasaneEvmCanisterId: string;
   wrapCanisterId: string;
   evmWrapFactory: string;
+  kasaneRpcUrl: string;
+  kasaneChainId: bigint;
+  kasaneChainName: string;
+  kasaneNativeCurrencySymbol: string;
+  kasaneBlockExplorerUrl: string | null;
 };
 
 export type EnvMap = Record<string, string | undefined>;
 
 function optionalEnv(
-  name: "VITE_GOOGLE_CLIENT_ID" | "VITE_INTERNET_IDENTITY_URL" | "VITE_II_DERIVATION_ORIGIN",
+  name:
+    | "VITE_INTERNET_IDENTITY_URL"
+    | "VITE_II_DERIVATION_ORIGIN"
+    | "VITE_KASANE_BLOCK_EXPLORER_URL",
   env: EnvMap,
 ): string | null {
   const value = env[name];
@@ -25,22 +34,32 @@ function optionalEnv(
 
 const REQUIRED_KEYS = [
   "VITE_IC_HOST",
+  "VITE_ICP_TOKEN_LIST_URL",
   "VITE_KASANE_EVM_CANISTER_ID",
   "VITE_WRAP_CANISTER_ID",
   "VITE_EVM_WRAP_FACTORY",
+  "VITE_KASANE_RPC_URL",
+  "VITE_KASANE_CHAIN_ID",
+  "VITE_KASANE_CHAIN_NAME",
+  "VITE_KASANE_NATIVE_CURRENCY_SYMBOL",
 ] as const;
 
 function getBundledEnv(): EnvMap {
   const bundledImportMetaEnv = import.meta.env;
   return {
     VITE_IC_HOST: bundledImportMetaEnv?.VITE_IC_HOST,
-    VITE_GOOGLE_CLIENT_ID: bundledImportMetaEnv?.VITE_GOOGLE_CLIENT_ID,
+    VITE_ICP_TOKEN_LIST_URL: bundledImportMetaEnv?.VITE_ICP_TOKEN_LIST_URL,
     VITE_INTERNET_IDENTITY_URL: bundledImportMetaEnv?.VITE_INTERNET_IDENTITY_URL,
     VITE_II_DERIVATION_ORIGIN: bundledImportMetaEnv?.VITE_II_DERIVATION_ORIGIN,
     VITE_KASANE_EVM_CANISTER_ID: bundledImportMetaEnv?.VITE_KASANE_EVM_CANISTER_ID,
     VITE_WRAP_CANISTER_ID: bundledImportMetaEnv?.VITE_WRAP_CANISTER_ID,
     VITE_EVM_WRAP_FACTORY: bundledImportMetaEnv?.VITE_EVM_WRAP_FACTORY,
     VITE_JUNO_SATELLITE_ID: bundledImportMetaEnv?.VITE_JUNO_SATELLITE_ID,
+    VITE_KASANE_RPC_URL: bundledImportMetaEnv?.VITE_KASANE_RPC_URL,
+    VITE_KASANE_CHAIN_ID: bundledImportMetaEnv?.VITE_KASANE_CHAIN_ID,
+    VITE_KASANE_CHAIN_NAME: bundledImportMetaEnv?.VITE_KASANE_CHAIN_NAME,
+    VITE_KASANE_NATIVE_CURRENCY_SYMBOL: bundledImportMetaEnv?.VITE_KASANE_NATIVE_CURRENCY_SYMBOL,
+    VITE_KASANE_BLOCK_EXPLORER_URL: bundledImportMetaEnv?.VITE_KASANE_BLOCK_EXPLORER_URL,
   };
 }
 
@@ -59,13 +78,27 @@ function shouldFetchRootKey(icHost: string): boolean {
     || icHost.startsWith("https://localhost:");
 }
 
+function parseChainId(value: string): bigint {
+  const trimmed = value.trim();
+  if (!/^[0-9]+$/u.test(trimmed)) {
+    throw new Error("config.invalid:VITE_KASANE_CHAIN_ID");
+  }
+  return BigInt(trimmed);
+}
+
 export function loadConfigFromEnv(env: EnvMap): WrapperConfig {
   const icHost = requiredEnv("VITE_IC_HOST", env);
   return {
     icHost,
+    icpTokenListUrl: requiredEnv("VITE_ICP_TOKEN_LIST_URL", env),
     kasaneEvmCanisterId: requiredEnv("VITE_KASANE_EVM_CANISTER_ID", env),
     wrapCanisterId: requiredEnv("VITE_WRAP_CANISTER_ID", env),
     evmWrapFactory: requiredEnv("VITE_EVM_WRAP_FACTORY", env),
+    kasaneRpcUrl: requiredEnv("VITE_KASANE_RPC_URL", env),
+    kasaneChainId: parseChainId(requiredEnv("VITE_KASANE_CHAIN_ID", env)),
+    kasaneChainName: requiredEnv("VITE_KASANE_CHAIN_NAME", env),
+    kasaneNativeCurrencySymbol: requiredEnv("VITE_KASANE_NATIVE_CURRENCY_SYMBOL", env),
+    kasaneBlockExplorerUrl: optionalEnv("VITE_KASANE_BLOCK_EXPLORER_URL", env),
   };
 }
 
@@ -79,14 +112,6 @@ export function resolveConfiguredIdentityProviderFromEnv(env: EnvMap): string | 
 
 export function resolveConfiguredIdentityProvider(env: EnvMap = getBundledEnv()): string | null {
   return resolveConfiguredIdentityProviderFromEnv(env);
-}
-
-export function resolveConfiguredGoogleClientIdFromEnv(env: EnvMap): string | null {
-  return optionalEnv("VITE_GOOGLE_CLIENT_ID", env);
-}
-
-export function resolveConfiguredGoogleClientId(env: EnvMap = getBundledEnv()): string | null {
-  return resolveConfiguredGoogleClientIdFromEnv(env);
 }
 
 export function resolveConfiguredInternetIdentityDomainFromEnv(env: EnvMap): InternetIdentityDomain | null {
@@ -135,10 +160,10 @@ export function resolveJunoSatelliteId(env: EnvMap = getBundledEnv()): string | 
 export const configTestHooks = {
   optionalEnv,
   loadConfigFromEnv,
-  resolveConfiguredGoogleClientIdFromEnv,
   resolveConfiguredIdentityProviderFromEnv,
   resolveConfiguredInternetIdentityDomainFromEnv,
   resolveConfiguredDerivationOriginFromEnv,
   resolveJunoSatelliteIdFromEnv,
   shouldFetchRootKey,
+  parseChainId,
 };

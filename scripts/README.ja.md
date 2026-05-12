@@ -141,17 +141,19 @@ scripts/measure_precompile_ratio.sh
   - precompile ratio の計測は deploy 前に `scripts/run_precompile_profile_e2e.sh` / `scripts/measure_precompile_ratio.sh` で実施し、既定の fixed ratio `1/100` を見直す場合は再デプロイする
   - `MODE=upgrade` でも `WRAP_CANISTER_ID` と `EVM_WRAP_FACTORY` が必須
   - instruction soft limit を install / upgrade で上書きしたい場合だけ `QUERY_INSTRUCTION_SOFT_LIMIT` / `UPDATE_INSTRUCTION_SOFT_LIMIT` を事前 export する
+  - wrapper-vite を同時更新する場合は `evm_canister` -> `wrap_canister` -> frontend の順で deploy する。frontend は `get_unwrap_request_ids_by_eth_tx_hash` に依存する
   - 対象は `evm_canister`。`wrap_canister` の upgrade は [docs/ops/wrap-canister-deploy-runbook.ja.md](/Users/0xhude/Desktop/ICP/Kasane/docs/ops/wrap-canister-deploy-runbook.ja.md) の手順で別途実行する
 - `scripts/mainnet/ic_mainnet_post_upgrade_smoke.sh`: デプロイ後の最小RPC確認
 - `scripts/verify_submit_after_deploy.sh`: verify submit の手動/CIフック
 - `scripts/mainnet/mainnet_method_test.sh`: 本番メソッド検証（重い）
 - `scripts/mainnet/mainnet_wrap_unwrap_smoke.sh`: TESTICP を使った wrap -> unwrap 実経路確認
-  - wrap 側は `quote_wrap_request` -> `submit_wrap_request` の新 API で実行する
+  - wrap 側は `quote_wrap_request` の `charged_fee_e8s` / `charged_gas_price_wei` / `fee_ledger_canister` を `submit_wrap_request` に固定して実行する
   - unwrap の status 追跡は `get_unwrap_dispatch_overview` + `wrap_canister.get_request` を使う
   - unwrap 前に wrapped token の `approve(factory, amount)` を自動投入する
   - 破壊的 DID 変更後は script/client を canister と同時更新する前提
   - `MINING_IDLE_OBSERVE_SEC`: 冒頭の idle 観測秒数（既定: `6`）
   - `IDLE_MAX_CYCLE_DELTA`: idle 観測で許容する cycle 減少上限。`0` で閾値チェック無効（既定: `0`）
+- `scripts/report_icrc1_logos.sh`: `icrc1_metadata` の `icrc1:logo` を収集して `docs/ops/reports/` に markdown 保存
 
 ### prune運用
 - `scripts/ops/apply_prune_policy.sh`: policy適用 + pruning有効化 + status確認

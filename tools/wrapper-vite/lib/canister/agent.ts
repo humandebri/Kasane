@@ -3,7 +3,7 @@
 import { HttpAgent, type Identity } from "@icp-sdk/core/agent";
 import { configTestHooks, loadConfig, type WrapperConfig } from "../config";
 
-let cachedQueryAgent: HttpAgent | null = null;
+const cachedQueryAgents = new Map<string, HttpAgent>();
 const cachedIdentityAgents = new Map<string, HttpAgent>();
 
 function resolveBoundFetch(): typeof globalThis.fetch | undefined {
@@ -28,13 +28,14 @@ const defaultAgentDeps: AgentDeps = {
 };
 
 export async function getQueryAgent(deps: AgentDeps = defaultAgentDeps): Promise<HttpAgent> {
-  if (cachedQueryAgent) {
-    return cachedQueryAgent;
-  }
   const cfg = deps.loadConfig();
+  const cached = cachedQueryAgents.get(cfg.icHost);
+  if (cached) {
+    return cached;
+  }
   const agent = new HttpAgent({ host: cfg.icHost, fetch: resolveBoundFetch() });
   await maybeFetchRootKey(agent, configTestHooks.shouldFetchRootKey(cfg.icHost));
-  cachedQueryAgent = agent;
+  cachedQueryAgents.set(cfg.icHost, agent);
   return agent;
 }
 
@@ -56,6 +57,6 @@ export async function getIdentityAgent(identity: Identity, deps: AgentDeps = def
 }
 
 export function resetAgentCache(): void {
-  cachedQueryAgent = null;
+  cachedQueryAgents.clear();
   cachedIdentityAgents.clear();
 }

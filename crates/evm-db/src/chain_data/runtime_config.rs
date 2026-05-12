@@ -34,18 +34,40 @@ impl RuntimeConfigV1 {
         wrap_canister_id: Principal,
         wrap_factory_address: [u8; WRAP_FACTORY_ADDRESS_BYTES],
     ) -> Self {
+        Self::try_new_from_bytes(wrap_canister_id.as_slice(), wrap_factory_address)
+            .expect("principal length is valid")
+    }
+
+    pub fn new_from_bytes(
+        wrap_canister_id: &[u8],
+        wrap_factory_address: [u8; WRAP_FACTORY_ADDRESS_BYTES],
+    ) -> Self {
+        Self::try_new_from_bytes(wrap_canister_id, wrap_factory_address)
+            .unwrap_or_else(|_| Self::new_unconfigured())
+    }
+
+    pub fn try_new_from_bytes(
+        wrap_canister_id: &[u8],
+        wrap_factory_address: [u8; WRAP_FACTORY_ADDRESS_BYTES],
+    ) -> Result<Self, &'static str> {
+        if !(1..=WRAP_CANISTER_MAX_BYTES).contains(&wrap_canister_id.len()) {
+            return Err("runtime_config.wrap_canister_id_invalid");
+        }
         let mut wrap_canister_bytes = [0u8; WRAP_CANISTER_MAX_BYTES];
-        let raw = wrap_canister_id.as_slice();
-        wrap_canister_bytes[..raw.len()].copy_from_slice(raw);
-        Self {
+        wrap_canister_bytes[..wrap_canister_id.len()].copy_from_slice(wrap_canister_id);
+        Ok(Self {
             configured: true,
-            wrap_canister_len: raw.len() as u8,
+            wrap_canister_len: wrap_canister_id.len() as u8,
             wrap_canister_bytes,
             wrap_factory_address,
-        }
+        })
     }
 
     pub fn wrap_canister_id(&self) -> Result<Principal, &'static str> {
+        Ok(Principal::from_slice(&self.wrap_canister_id_bytes()?))
+    }
+
+    pub fn wrap_canister_id_bytes(&self) -> Result<Vec<u8>, &'static str> {
         if !self.configured {
             return Err("runtime_config.not_configured");
         }
@@ -53,7 +75,7 @@ impl RuntimeConfigV1 {
         if !(1..=WRAP_CANISTER_MAX_BYTES).contains(&len) {
             return Err("runtime_config.wrap_canister_id_invalid");
         }
-        Ok(Principal::from_slice(&self.wrap_canister_bytes[..len]))
+        Ok(self.wrap_canister_bytes[..len].to_vec())
     }
 
     pub fn wrap_factory_address(&self) -> Result<[u8; WRAP_FACTORY_ADDRESS_BYTES], &'static str> {

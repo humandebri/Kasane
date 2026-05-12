@@ -11,6 +11,7 @@ import {
 import { encodeApproveCall } from "../erc20";
 import { callerEvmAddressFromPrincipalText } from "../principal";
 import { getUnwrapRequirements } from "./wrap-client";
+import type { AuthenticatedCaller } from "./authenticated-caller";
 
 type Erc20ClientDeps = {
   readRequirements: typeof getUnwrapRequirements;
@@ -36,7 +37,7 @@ export async function approveWrappedTokenIfNeeded(args: {
   assetId: string;
   amount: bigint;
   principalText: string;
-  identity: Identity;
+  caller: AuthenticatedCaller | Identity;
 }): Promise<void> {
   const deps = testDeps ?? {
     readRequirements: getUnwrapRequirements,
@@ -75,7 +76,7 @@ export async function approveWrappedTokenIfNeeded(args: {
     data,
     nonce,
     gasLimit,
-    identity: args.identity,
+    caller: args.caller,
   });
 }
 

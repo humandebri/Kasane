@@ -3,9 +3,12 @@
 # wrapper-vite E2E
 
 - 自動化対象
-  - 未接続時の `Recent Requests` 表示
+  - console 初期表示
+  - wallet modal の connector 表示
+  - `/history` の未接続表示
   - `/requests/:requestId` での status modal 再表示
 - 手動スモーク対象
-  - wallet 接続
+  - Oisy 接続
+  - MetaMask 接続
   - 実際の request 送信
   - Juno Datastore 保存と reload 後の再取得

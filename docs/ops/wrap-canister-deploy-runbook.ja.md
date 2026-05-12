@@ -24,7 +24,8 @@ export WRAP_SUBNET_ID=4ecnw-byqwz-dtgss-ua2mh-pfvs7-c3lct-gtf4e-hnu75-j7eek-iifq
 export EVM_CANISTER_ID=<existing_evm_canister_id>
 export KASANE_CANISTER_ID=<existing_kasane_canister_id>
 export FEE_LEDGER_CANISTER_ID=<icp_ledger_canister_id>
-export ALLOWED_ASSET_CANISTER_ID="${FEE_LEDGER_CANISTER_ID}"
+export NATIVE_LEDGER_CANISTER_ID=<icp_ledger_canister_id>
+export ALLOWED_ASSET_CANISTER_ID=<non_native_icrc_ledger_canister_id>
 
 # wrap fee policy（初期値）
 export CYCLE_FEE_E8S=1000000
@@ -51,6 +52,7 @@ PY
 - 新しい `WrapTokenFactory` は `constructor(address minter_)` です。deploy 時は `wrap_canister` 由来の EVM address を constructor に必ず入れてください。
 - 現行運用では `KASANE_CANISTER_ID` は `EVM_CANISTER_ID` と同じ principal を入れます。`wrap_canister` は unwrap dispatch caller を `kasane_canister` と照合します。
 - `fee_ledger_canister` / `cycle_fee_e8s` / `gas_price_buffer_bps` は既存 mainnet 設定を維持する場合、upgrade 前に `get_fee_policy` で現値を取得してそのまま渡してください。
+- `ALLOWED_ASSET_CANISTER_ID` は `NATIVE_LEDGER_CANISTER_ID` 以外にしてください。ICP ledger は native bridge 正本なので factory wrap 対象外です。
 - `wrap_factory_address` は Candid 上 `blob` です。`vec { ... }` ではなく、必ず `blob "\xx..."` 形式で渡してください。
 
 前提確認:
@@ -58,6 +60,11 @@ PY
 ```bash
 icp canister status "${EVM_CANISTER_ID}" -e "${ICP_ENV}" --identity "${ICP_IDENTITY_NAME}"
 ```
+
+deploy順序:
+
+- 監査対応版は `evm_canister` upgrade -> `wrap_canister` upgrade -> `wrapper-vite` / frontend deploy の順で反映します。
+- `wrapper-vite` は MetaMask unwrap の request id 解決で `evm_canister.get_unwrap_request_ids_by_eth_tx_hash` を呼ぶため、frontend を gateway より先に出すと unwrap 後の追跡に失敗します。
 
 ---
 
@@ -107,6 +114,7 @@ icp canister install wrap_canister \
     kasane_canister = principal \"${KASANE_CANISTER_ID}\";
     evm_gateway_canister = principal \"${EVM_CANISTER_ID}\";
     fee_ledger_canister = principal \"${FEE_LEDGER_CANISTER_ID}\";
+    native_ledger_canister = principal \"${NATIVE_LEDGER_CANISTER_ID}\";
     wrap_factory_address = blob \"${EVM_WRAP_FACTORY_BLOB}\";
     cycle_fee_e8s = ${CYCLE_FEE_E8S} : nat64;
     gas_price_buffer_bps = ${GAS_PRICE_BUFFER_BPS} : nat32;
@@ -128,6 +136,7 @@ icp canister install wrap_canister \
     kasane_canister = principal \"${KASANE_CANISTER_ID}\";
     evm_gateway_canister = principal \"${EVM_CANISTER_ID}\";
     fee_ledger_canister = principal \"${FEE_LEDGER_CANISTER_ID}\";
+    native_ledger_canister = principal \"${NATIVE_LEDGER_CANISTER_ID}\";
     wrap_factory_address = blob \"${EVM_WRAP_FACTORY_BLOB}\";
     cycle_fee_e8s = ${CYCLE_FEE_E8S} : nat64;
     gas_price_buffer_bps = ${GAS_PRICE_BUFFER_BPS} : nat32;
@@ -160,9 +169,13 @@ dfx canister call --query wrap_canister export_did '()' --network "${ICP_ENV}"
 ## 6. 運用上の注意
 
 - `submit_wrap_request` は wallet caller 本人で実行され、`from_owner` は canister 側で `msg_caller` 固定です（引数で渡しません）。
+- `submit_wrap_request` は直前の `quote_wrap_request` から得た `charged_fee_e8s` / `charged_gas_price_wei` / `fee_ledger_canister` を上限として渡します。超過・ledger変更時は送金前に拒否されます。
 - Wrap手数料（`cycles + gas`）は `fee_ledger_canister` から `icrc2_transfer_from` で前払い徴収されます。
 - wrap mint 時の decimals は対象 ledger の `icrc1_metadata` を一次情報として取得します。metadata が壊れている ledger は wrap できません。
 - wrap 対象 asset は on-chain allowlist に載っている principal だけです。初回 install / upgrade の `allowed_assets` で明示してください。
+- `native_ledger_canister` は Kasane native ICP bridge の正本 ledger です。`allowed_assets` に同じ principal を入れると `asset.native_ledger_not_wrappable` で拒否されます。
+- native ICP withdraw は `quote_native_withdrawal` で `ledger_fee_e8s` と `receive_amount_e8s` を取得してからEVM txを送信してください。
+- native withdraw precompile は低水準APIです。fee以下の `msg.value` を直接送るとv1ではrefund対象外です。
 - `set_fee_policy` は controller のみ実行可能です。例:
 
 ```bash

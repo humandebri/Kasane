@@ -18,6 +18,8 @@ use std::collections::BTreeSet;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tiny_keccak::{Hasher, Keccak};
 
+mod icrc21;
+
 #[cfg(target_arch = "wasm32")]
 getrandom::register_custom_getrandom!(always_fail_getrandom);
 
@@ -37,6 +39,7 @@ const MEM_WRAP_QUEUE_META: MemoryId = MemoryId::new(7);
 const MEM_ALLOWED_ASSETS: MemoryId = MemoryId::new(8);
 const MEM_FEE_POLICY: MemoryId = MemoryId::new(9);
 const MEM_WRAP_EVM_CONFIG: MemoryId = MemoryId::new(10);
+const MEM_NATIVE_LEDGER_CANISTER: MemoryId = MemoryId::new(11);
 const PRINCIPAL_MAX_BYTES: usize = 29;
 const AMOUNT_BYTES: usize = 32;
 const EVM_ADDRESS_BYTES: usize = 20;
@@ -47,22 +50,73 @@ const WRAP_STORED_REQUEST_MAX_BYTES: u32 = 768;
 const FEE_POLICY_MAX_BYTES: u32 = 128;
 const WRAP_EVM_CONFIG_MAX_BYTES: u32 = 32;
 const DEFAULT_CYCLE_FEE_E8S: u64 = 1_000_000;
+const MAX_CYCLE_FEE_E8S: u64 = 1_000_000_000_000;
 const DEFAULT_GAS_PRICE_BUFFER_BPS: u32 = 12_000;
 const GAS_PRICE_DENOMINATOR_BPS: u128 = 10_000;
 const WEI_PER_E8S: u128 = 10_000_000_000;
 type Memory = VirtualMemory<DefaultMemoryImpl>;
 type RetryTransferReservation = (Vec<u8>, Vec<u8>, Vec<u8>);
-type NormalizedSubmitWrapArgsParts = (Vec<u8>, Vec<u8>, Vec<u8>, u64, u64);
+type NormalizedSubmitWrapArgsParts = (Vec<u8>, Vec<u8>, Vec<u8>, u64, u64, u128, u128, Principal);
 
 #[derive(Clone, Debug, CandidType, Deserialize)]
 pub struct InitArgs {
     pub kasane_canister: Principal,
     pub evm_gateway_canister: Principal,
     pub fee_ledger_canister: Principal,
+    pub native_ledger_canister: Principal,
     pub wrap_factory_address: Vec<u8>,
     pub cycle_fee_e8s: u64,
     pub gas_price_buffer_bps: u32,
     pub allowed_assets: Vec<Principal>,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize)]
+pub struct QuoteNativeDepositArgs {
+    pub amount_e8s: Nat,
+    pub evm_recipient: Vec<u8>,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize)]
+pub struct QuoteNativeDepositOk {
+    pub charged_fee_e8s: Nat,
+    pub native_ledger_canister: Principal,
+    pub fee_ledger_canister: Principal,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize)]
+pub struct SubmitNativeDepositArgs {
+    pub deposit_id: Vec<u8>,
+    pub amount_e8s: Nat,
+    pub evm_recipient: Vec<u8>,
+    pub max_fee_e8s: Nat,
+    pub fee_ledger_canister: Principal,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize)]
+pub struct SubmitNativeDepositOk {
+    pub request_id: Vec<u8>,
+    pub charged_fee_e8s: Nat,
+    pub fee_ledger_tx_id: Vec<u8>,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize)]
+pub struct QuoteNativeWithdrawalArgs {
+    pub amount_e8s: Nat,
+    pub recipient: Principal,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize)]
+pub struct QuoteNativeWithdrawalOk {
+    pub native_ledger_canister: Principal,
+    pub ledger_fee_e8s: Nat,
+    pub receive_amount_e8s: Nat,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize)]
+pub struct DispatchNativeWithdrawalRequestArgs {
+    pub request_id: Vec<u8>,
+    pub amount_e8s: Nat,
+    pub recipient: Principal,
 }
 
 #[derive(Clone, Debug, CandidType, Deserialize)]
@@ -88,6 +142,9 @@ pub struct SubmitWrapRequestArgs {
     pub evm_recipient: Vec<u8>,
     pub evm_nonce: u64,
     pub gas_limit: u64,
+    pub max_fee_e8s: Nat,
+    pub quoted_gas_price_wei: Nat,
+    pub fee_ledger_canister: Principal,
 }
 
 #[derive(Clone, Debug, CandidType, Deserialize)]
@@ -305,6 +362,18 @@ struct NormalizedSubmitWrapRequest {
     amount: Vec<u8>,
     evm_recipient: Vec<u8>,
     gas_limit: u64,
+    max_fee_e8s: u128,
+    quoted_gas_price_wei: u128,
+    fee_ledger_canister: Principal,
+}
+
+#[derive(Clone, Debug)]
+struct NormalizedSubmitNativeDeposit {
+    request_id: RequestId,
+    amount: Vec<u8>,
+    evm_recipient: Vec<u8>,
+    max_fee_e8s: u128,
+    fee_ledger_canister: Principal,
 }
 
 #[derive(Clone, Debug)]
@@ -496,6 +565,7 @@ impl Storable for WrapEvmConfigStored {
 struct StableState {
     kasane_canister: StableCell<Vec<u8>, Memory>,
     evm_gateway_canister: StableCell<Vec<u8>, Memory>,
+    native_ledger_canister: StableCell<Vec<u8>, Memory>,
     fee_policy: StableCell<FeePolicyStored, Memory>,
     wrap_evm_config: StableCell<WrapEvmConfigStored, Memory>,
     allowed_assets: StableBTreeMap<Vec<u8>, u8, Memory>,
@@ -559,6 +629,9 @@ fn init_state() {
         let evm_gateway_canister = with_memory(MEM_EVM_GATEWAY_CANISTER, |memory| {
             StableCell::init(memory, Vec::<u8>::new())
         });
+        let native_ledger_canister = with_memory(MEM_NATIVE_LEDGER_CANISTER, |memory| {
+            StableCell::init(memory, Vec::<u8>::new())
+        });
         let fee_policy = with_memory(MEM_FEE_POLICY, |memory| {
             StableCell::init(
                 memory,
@@ -586,6 +659,7 @@ fn init_state() {
         *cell.borrow_mut() = Some(StableState {
             kasane_canister,
             evm_gateway_canister,
+            native_ledger_canister,
             fee_policy,
             wrap_evm_config,
             allowed_assets,
@@ -652,6 +726,9 @@ fn apply_runtime_config(args: InitArgs) {
         let _ = state
             .evm_gateway_canister
             .set(args.evm_gateway_canister.as_slice().to_vec());
+        let _ = state
+            .native_ledger_canister
+            .set(args.native_ledger_canister.as_slice().to_vec());
         let _ = state.fee_policy.set(FeePolicyStored {
             fee_ledger_canister: args.fee_ledger_canister.as_slice().to_vec(),
             cycle_fee_e8s: args.cycle_fee_e8s,
@@ -675,12 +752,24 @@ fn validate_runtime_config(args: &InitArgs) -> Result<(), String> {
         &args.fee_ledger_canister,
         "arg.fee_ledger_canister_anonymous",
     )?;
+    validate_non_anonymous_principal(
+        &args.native_ledger_canister,
+        "arg.native_ledger_canister_anonymous",
+    )?;
+    validate_cycle_fee_e8s(args.cycle_fee_e8s)?;
     validate_gas_price_buffer_bps(args.gas_price_buffer_bps)?;
     validate_evm_address(
         args.wrap_factory_address.as_slice(),
         "arg.wrap_factory_address_invalid",
     )?;
     validate_allowed_assets(args.allowed_assets.as_slice())?;
+    if args
+        .allowed_assets
+        .iter()
+        .any(|asset| asset == &args.native_ledger_canister)
+    {
+        return Err("asset.native_ledger_not_wrappable".to_string());
+    }
     Ok(())
 }
 
@@ -697,6 +786,68 @@ fn dispatch_unwrap_request(
     );
     Ok(DispatchUnwrapRequestOk {
         request_id: request_id.0.to_vec(),
+    })
+}
+
+#[ic_cdk::update]
+async fn dispatch_native_withdrawal_request(
+    args: DispatchNativeWithdrawalRequestArgs,
+) -> Result<DispatchUnwrapRequestOk, ApiError> {
+    init_state();
+    map_string_result(ensure_kasane_caller())?;
+    validate_non_anonymous_principal(&args.recipient, "arg.recipient_anonymous")
+        .map_err(api_invalid_argument)?;
+    let request_id = request_id_or_invalid_argument(args.request_id.as_slice())?;
+    if with_state(|state| state.requests.get(&request_id).is_some()) {
+        return Ok(DispatchUnwrapRequestOk {
+            request_id: request_id.0.to_vec(),
+        });
+    }
+    let amount = nat_to_fixed_be::<32>(&args.amount_e8s)
+        .ok_or_else(|| api_invalid_argument("arg.amount_out_of_range".to_string()))?;
+    validate_amount_bytes(amount.as_slice()).map_err(api_invalid_argument)?;
+    let ledger = expected_native_ledger_canister().map_err(api_internal)?;
+    let fee = fetch_icrc1_fee(ledger).await.map_err(api_rejected)?;
+    let amount_u128 = nat_to_u128(&args.amount_e8s)
+        .ok_or_else(|| api_invalid_argument("arg.amount_out_of_range".to_string()))?;
+    let transfer_amount_e8s = native_withdraw_receive_amount(amount_u128, fee)
+        .map_err(|code| api_rejected(code.to_string()))?;
+    let transfer_amount = u256_from_u128(transfer_amount_e8s).to_vec();
+    let normalized = NormalizedDispatchUnwrapRequest {
+        request_id: request_id.0.to_vec(),
+        asset_id: ledger.as_slice().to_vec(),
+        amount: transfer_amount,
+        recipient: args.recipient.as_slice().to_vec(),
+    };
+    let request_id = apply_insert_request_outcome(
+        map_string_result(insert_request(normalized))?,
+        schedule_worker,
+    );
+    Ok(DispatchUnwrapRequestOk {
+        request_id: request_id.0.to_vec(),
+    })
+}
+
+#[ic_cdk::query(composite = true)]
+async fn quote_native_withdrawal(
+    args: QuoteNativeWithdrawalArgs,
+) -> Result<QuoteNativeWithdrawalOk, ApiError> {
+    init_state();
+    validate_non_anonymous_principal(&args.recipient, "arg.recipient_anonymous")
+        .map_err(api_invalid_argument)?;
+    let amount_u128 = nat_to_u128(&args.amount_e8s)
+        .ok_or_else(|| api_invalid_argument("arg.amount_out_of_range".to_string()))?;
+    if amount_u128 == 0 {
+        return Err(api_invalid_argument("arg.amount_zero".to_string()));
+    }
+    let ledger = expected_native_ledger_canister().map_err(api_internal)?;
+    let fee = fetch_icrc1_fee(ledger).await.map_err(api_rejected)?;
+    let receive_amount = native_withdraw_receive_amount(amount_u128, fee)
+        .map_err(|code| api_rejected(code.to_string()))?;
+    Ok(QuoteNativeWithdrawalOk {
+        native_ledger_canister: ledger,
+        ledger_fee_e8s: Nat::from(fee),
+        receive_amount_e8s: Nat::from(receive_amount),
     })
 }
 
@@ -751,12 +902,85 @@ async fn submit_wrap_request(args: SubmitWrapRequestArgs) -> Result<SubmitWrapRe
     })
 }
 
+#[ic_cdk::query(composite = true)]
+async fn quote_native_deposit(
+    args: QuoteNativeDepositArgs,
+) -> Result<QuoteNativeDepositOk, ApiError> {
+    init_state();
+    let amount = nat_to_fixed_be::<32>(&args.amount_e8s)
+        .ok_or_else(|| api_invalid_argument("arg.amount_out_of_range".to_string()))?;
+    if amount.iter().all(|&byte| byte == 0) {
+        return Err(api_invalid_argument("arg.amount_zero".to_string()));
+    }
+    validate_evm_address(args.evm_recipient.as_slice(), "arg.evm_recipient_invalid")
+        .map_err(api_invalid_argument)?;
+    let fee_policy = map_string_result(get_fee_policy_stored())?;
+    Ok(QuoteNativeDepositOk {
+        charged_fee_e8s: Nat::from(fee_policy.cycle_fee_e8s),
+        native_ledger_canister: expected_native_ledger_canister().map_err(api_internal)?,
+        fee_ledger_canister: principal_from_bytes(fee_policy.fee_ledger_canister.as_slice())
+            .map_err(api_internal)?,
+    })
+}
+
+#[ic_cdk::update]
+async fn submit_native_deposit(
+    args: SubmitNativeDepositArgs,
+) -> Result<SubmitNativeDepositOk, ApiError> {
+    init_state();
+    let caller = ic_cdk::api::msg_caller();
+    map_string_result(validate_non_anonymous_principal(
+        &caller,
+        "auth.caller_anonymous",
+    ))?;
+    let normalized = build_submit_native_deposit(args, caller).await?;
+    let request_id = normalized.request_id;
+    if let Some(existing) = existing_native_deposit_response(request_id, &normalized, caller) {
+        return existing;
+    }
+    map_string_result(reserve_pending_wrap_submission(request_id))?;
+    let out = submit_native_deposit_inner(normalized, caller).await;
+    release_pending_wrap_submission(request_id);
+    let (request_id, fee_charge) = out?;
+    Ok(SubmitNativeDepositOk {
+        request_id: request_id.0.to_vec(),
+        charged_fee_e8s: Nat::from(fee_charge.charged_fee_e8s),
+        fee_ledger_tx_id: fee_charge.ledger_tx_id,
+    })
+}
+
+fn existing_native_deposit_response(
+    request_id: RequestId,
+    args: &NormalizedSubmitNativeDeposit,
+    caller: Principal,
+) -> Option<Result<SubmitNativeDepositOk, ApiError>> {
+    with_state(|state| {
+        let existing = state.wrap_requests.get(&request_id)?;
+        if existing.caller.as_slice() != caller.as_slice()
+            || existing.amount != args.amount
+            || existing.evm_recipient != args.evm_recipient
+        {
+            return Some(Err(api_rejected(
+                "request.idempotency_mismatch".to_string(),
+            )));
+        }
+        let fee_ledger_tx_id = existing.result.fee_ledger_tx_id.clone()?;
+        let charged_fee_e8s = existing.result.charged_fee_e8s?;
+        Some(Ok(SubmitNativeDepositOk {
+            request_id: request_id.0.to_vec(),
+            charged_fee_e8s: Nat::from(charged_fee_e8s),
+            fee_ledger_tx_id,
+        }))
+    })
+}
+
 async fn submit_wrap_request_inner(
     args: NormalizedSubmitWrapRequest,
     caller: Principal,
     request_id: RequestId,
 ) -> Result<(RequestId, FeeCharge), ApiError> {
     let quote = quote_wrap_request_inner(args.gas_limit).await?;
+    validate_quote_within_approval(&args, &quote).map_err(api_rejected)?;
     let fee_amount = u256_from_u128(quote.charged_fee_e8s);
     let fee_created_at_time = current_time_nanos();
     let fee_ledger_tx_id = attempt_icrc2_transfer_from(
@@ -782,6 +1006,161 @@ async fn submit_wrap_request_inner(
         fee_created_at_time,
     ))?;
     Ok((request_id, fee_charge))
+}
+
+async fn build_submit_native_deposit(
+    args: SubmitNativeDepositArgs,
+    caller: Principal,
+) -> Result<NormalizedSubmitNativeDeposit, ApiError> {
+    validate_native_deposit_id(args.deposit_id.as_slice()).map_err(api_invalid_argument)?;
+    validate_evm_address(args.evm_recipient.as_slice(), "arg.evm_recipient_invalid")
+        .map_err(api_invalid_argument)?;
+    let amount = nat_to_fixed_be::<32>(&args.amount_e8s)
+        .ok_or_else(|| api_invalid_argument("arg.amount_out_of_range".to_string()))?;
+    if amount.iter().all(|&byte| byte == 0) {
+        return Err(api_invalid_argument("arg.amount_zero".to_string()));
+    }
+    let max_fee_e8s = nat_to_u128(&args.max_fee_e8s)
+        .ok_or_else(|| api_invalid_argument("arg.max_fee_out_of_range".to_string()))?;
+    let request_id = RequestId(derive_native_deposit_request_id(
+        caller.as_slice(),
+        args.deposit_id.as_slice(),
+    ));
+    Ok(NormalizedSubmitNativeDeposit {
+        request_id,
+        amount: amount.to_vec(),
+        evm_recipient: args.evm_recipient,
+        max_fee_e8s,
+        fee_ledger_canister: args.fee_ledger_canister,
+    })
+}
+
+async fn submit_native_deposit_inner(
+    args: NormalizedSubmitNativeDeposit,
+    caller: Principal,
+) -> Result<(RequestId, FeeCharge), ApiError> {
+    let fee_policy = map_string_result(get_fee_policy_stored())?;
+    let fee_ledger =
+        principal_from_bytes(fee_policy.fee_ledger_canister.as_slice()).map_err(api_internal)?;
+    if fee_ledger != args.fee_ledger_canister {
+        return Err(api_rejected("fee.ledger_changed".to_string()));
+    }
+    if u128::from(fee_policy.cycle_fee_e8s) > args.max_fee_e8s {
+        return Err(api_rejected("fee.quote_exceeded".to_string()));
+    }
+    let request_id = args.request_id;
+    let fee_created_at_time = current_time_nanos();
+    let fee_amount = u256_from_u128(u128::from(fee_policy.cycle_fee_e8s));
+    let fee_ledger_tx_id = attempt_icrc2_transfer_from(
+        caller.as_slice().to_vec(),
+        fee_policy.fee_ledger_canister.clone(),
+        fee_amount.to_vec(),
+        request_memo(request_id, TransferMemoKind::Fee),
+        fee_created_at_time,
+    )
+    .await
+    .map_err(map_fee_collection_error)
+    .map_err(api_rejected)?;
+    let fee_charge = FeeCharge {
+        ledger_tx_id: fee_ledger_tx_id,
+        charged_fee_e8s: u128::from(fee_policy.cycle_fee_e8s),
+        charged_gas_price_wei: 0,
+    };
+    let native_ledger = expected_native_ledger_canister().map_err(api_internal)?;
+    let pull_created_at_time = current_time_nanos();
+    let pull = attempt_icrc2_transfer_from(
+        caller.as_slice().to_vec(),
+        native_ledger.as_slice().to_vec(),
+        args.amount.clone(),
+        request_memo(request_id, TransferMemoKind::Pull),
+        pull_created_at_time,
+    )
+    .await;
+    let mut req = WrapStoredRequest {
+        caller: caller.as_slice().to_vec(),
+        asset_id: native_ledger.as_slice().to_vec(),
+        amount: args.amount.clone(),
+        evm_recipient: args.evm_recipient.clone(),
+        gas_limit: 0,
+        fee_created_at_time,
+        pull_created_at_time,
+        withdraw_created_at_time: 0,
+        result: WrapRequestResult {
+            status: RequestStatus::Running,
+            pull_ledger_tx_id: None,
+            mint_tx_id: None,
+            error_code: None,
+            withdrawn: false,
+            withdraw_ledger_tx_id: None,
+            withdraw_error_code: None,
+            withdraw_in_progress: false,
+            mint_failed_recoverable: false,
+            fee_ledger_tx_id: Some(fee_charge.ledger_tx_id.clone()),
+            charged_fee_e8s: Some(fee_charge.charged_fee_e8s),
+            charged_gas_price_wei: Some(0),
+        },
+    };
+    match pull {
+        Ok(pull_tx_id) => {
+            req.result.pull_ledger_tx_id = Some(pull_tx_id);
+            match credit_native_deposit_on_gateway(request_id, args.evm_recipient, args.amount)
+                .await
+            {
+                Ok(credit_id) => {
+                    req.result.status = RequestStatus::Succeeded;
+                    req.result.mint_tx_id = Some(credit_id);
+                }
+                Err(code) => {
+                    req.result.status = RequestStatus::Failed;
+                    req.result.error_code = Some(code);
+                    req.result.mint_failed_recoverable = true;
+                }
+            }
+        }
+        Err(code) => {
+            req.result.status = RequestStatus::Failed;
+            req.result.error_code = Some(code);
+        }
+    }
+    with_state_mut(|state| {
+        if let Some(existing) = state.wrap_requests.get(&request_id) {
+            if existing.asset_id != req.asset_id
+                || existing.amount != req.amount
+                || existing.evm_recipient != req.evm_recipient
+            {
+                return Err("request.idempotency_mismatch".to_string());
+            }
+            return Ok(());
+        }
+        state.wrap_requests.insert(request_id, req);
+        Ok(())
+    })
+    .map_err(api_rejected)?;
+    Ok((request_id, fee_charge))
+}
+
+fn api_error_code(err: ApiError) -> String {
+    match err {
+        ApiError::InvalidArgument(detail)
+        | ApiError::Rejected(detail)
+        | ApiError::Internal(detail) => detail.code,
+    }
+}
+
+fn validate_quote_within_approval(
+    args: &NormalizedSubmitWrapRequest,
+    quote: &WrapQuote,
+) -> Result<(), String> {
+    if quote.fee_ledger_canister != args.fee_ledger_canister {
+        return Err("fee.ledger_changed".to_string());
+    }
+    if quote.charged_fee_e8s > args.max_fee_e8s {
+        return Err("fee.quote_exceeded".to_string());
+    }
+    if quote.charged_gas_price_wei > args.quoted_gas_price_wei {
+        return Err("fee.gas_price_exceeded".to_string());
+    }
+    Ok(())
 }
 
 #[ic_cdk::update]
@@ -875,6 +1254,59 @@ async fn retry_request(args: RetryRequestArgs) -> Result<RequestOverview, ApiErr
         })));
     }
     request_overview_or_internal(request_id)
+}
+
+#[ic_cdk::update]
+async fn retry_native_withdrawal(args: RetryRequestArgs) -> Result<RequestOverview, ApiError> {
+    retry_request(args).await
+}
+
+#[ic_cdk::query]
+fn get_native_deposit_result(request_id: Vec<u8>) -> Option<RequestOverview> {
+    get_request(request_id)
+}
+
+#[ic_cdk::update]
+async fn retry_native_deposit(args: RetryRequestArgs) -> Result<RequestOverview, ApiError> {
+    init_state();
+    let request_id = request_id_or_invalid_argument(args.request_id.as_slice())?;
+    let caller = ic_cdk::api::msg_caller();
+    let (evm_recipient, amount) = with_state(|state| {
+        let req = state.wrap_requests.get(&request_id)?;
+        if req.caller.as_slice() != caller.as_slice()
+            || req.result.status != RequestStatus::Failed
+            || !req.result.mint_failed_recoverable
+            || req.result.pull_ledger_tx_id.is_none()
+            || req.result.mint_tx_id.is_some()
+        {
+            return None;
+        }
+        Some((req.evm_recipient.clone(), req.amount.clone()))
+    })
+    .ok_or_else(|| api_rejected("native_deposit.retry_invalid_state".to_string()))?;
+    match credit_native_deposit_on_gateway(request_id, evm_recipient, amount).await {
+        Ok(credit_id) => {
+            with_state_mut(|state| {
+                if let Some(mut req) = state.wrap_requests.get(&request_id) {
+                    req.result.status = RequestStatus::Succeeded;
+                    req.result.mint_tx_id = Some(credit_id);
+                    req.result.error_code = None;
+                    req.result.mint_failed_recoverable = false;
+                    state.wrap_requests.insert(request_id, req);
+                }
+            });
+            request_overview_or_internal(request_id)
+        }
+        Err(code) => {
+            with_state_mut(|state| {
+                if let Some(mut req) = state.wrap_requests.get(&request_id) {
+                    req.result.error_code = Some(code.clone());
+                    state.wrap_requests.insert(request_id, req);
+                }
+            });
+            Err(api_rejected(code))
+        }
+    }
 }
 
 fn insert_request(args: NormalizedDispatchUnwrapRequest) -> Result<InsertRequestOutcome, String> {
@@ -1082,13 +1514,27 @@ fn normalize_submit_wrap_args(
     args: SubmitWrapRequestArgs,
 ) -> Result<NormalizedSubmitWrapArgsParts, String> {
     validate_principal_bytes(args.asset_id.as_slice())?;
+    validate_non_anonymous_principal(
+        &args.fee_ledger_canister,
+        "arg.fee_ledger_canister_anonymous",
+    )?;
     let amount = nat_to_fixed_be::<32>(&args.amount_e8s)
         .ok_or_else(|| "arg.amount_out_of_range".to_string())?
         .to_vec();
+    let max_fee_e8s =
+        nat_to_u128(&args.max_fee_e8s).ok_or_else(|| "arg.max_fee_out_of_range".to_string())?;
+    let quoted_gas_price_wei = nat_to_u128(&args.quoted_gas_price_wei)
+        .ok_or_else(|| "arg.quoted_gas_price_out_of_range".to_string())?;
     validate_amount_bytes(amount.as_slice())?;
     validate_evm_address(args.evm_recipient.as_slice(), "arg.evm_recipient_invalid")?;
     if args.gas_limit == 0 {
         return Err("arg.gas_limit_invalid".to_string());
+    }
+    if max_fee_e8s == 0 {
+        return Err("arg.max_fee_invalid".to_string());
+    }
+    if quoted_gas_price_wei == 0 {
+        return Err("arg.quoted_gas_price_invalid".to_string());
     }
     Ok((
         args.asset_id.as_slice().to_vec(),
@@ -1096,6 +1542,9 @@ fn normalize_submit_wrap_args(
         args.evm_recipient,
         args.evm_nonce,
         args.gas_limit,
+        max_fee_e8s,
+        quoted_gas_price_wei,
+        args.fee_ledger_canister,
     ))
 }
 
@@ -1127,6 +1576,13 @@ fn validate_allowed_assets(assets: &[Principal]) -> Result<(), String> {
 
 fn replace_allowed_assets(state: &mut StableState, assets: &[Principal]) -> Result<(), String> {
     validate_allowed_assets(assets)?;
+    let native = state.native_ledger_canister.get().clone();
+    if assets
+        .iter()
+        .any(|asset| asset.as_slice() == native.as_slice())
+    {
+        return Err("asset.native_ledger_not_wrappable".to_string());
+    }
     let keys: Vec<_> = state
         .allowed_assets
         .range(..)
@@ -1143,7 +1599,12 @@ fn replace_allowed_assets(state: &mut StableState, assets: &[Principal]) -> Resu
 
 fn ensure_asset_allowed(asset_id: &[u8]) -> Result<(), String> {
     validate_principal_bytes(asset_id)?;
-    let allowed = with_state(|state| state.allowed_assets.contains_key(&asset_id.to_vec()));
+    let allowed = with_state(|state| {
+        if state.native_ledger_canister.get().as_slice() == asset_id {
+            return false;
+        }
+        state.allowed_assets.contains_key(&asset_id.to_vec())
+    });
     if allowed {
         Ok(())
     } else {
@@ -1318,8 +1779,16 @@ async fn build_submit_wrap_request(
     args: SubmitWrapRequestArgs,
     caller: Principal,
 ) -> Result<NormalizedSubmitWrapRequest, ApiError> {
-    let (asset_id, amount, evm_recipient, evm_nonce, gas_limit) =
-        normalize_submit_wrap_args(args).map_err(api_invalid_argument)?;
+    let (
+        asset_id,
+        amount,
+        evm_recipient,
+        evm_nonce,
+        gas_limit,
+        max_fee_e8s,
+        quoted_gas_price_wei,
+        fee_ledger_canister,
+    ) = normalize_submit_wrap_args(args).map_err(api_invalid_argument)?;
     let request_id = RequestId(derive_wrap_request_id(
         caller.as_slice(),
         asset_id.as_slice(),
@@ -1337,6 +1806,9 @@ async fn build_submit_wrap_request(
         amount,
         evm_recipient,
         gas_limit,
+        max_fee_e8s,
+        quoted_gas_price_wei,
+        fee_ledger_canister,
     })
 }
 
@@ -1466,6 +1938,23 @@ fn derive_wrap_request_id(
     let mut out = [0u8; 32];
     keccak.finalize(&mut out);
     out
+}
+
+fn derive_native_deposit_request_id(from_owner: &[u8], deposit_id: &[u8]) -> [u8; 32] {
+    let mut keccak = Keccak::v256();
+    keccak.update(b"kasane.native.deposit.v2");
+    hash_len_prefixed(&mut keccak, from_owner);
+    hash_len_prefixed(&mut keccak, deposit_id);
+    let mut out = [0u8; 32];
+    keccak.finalize(&mut out);
+    out
+}
+
+fn validate_native_deposit_id(deposit_id: &[u8]) -> Result<(), String> {
+    if deposit_id.len() != 32 {
+        return Err("arg.deposit_id_invalid".to_string());
+    }
+    Ok(())
 }
 
 fn request_memo(request_id: RequestId, kind: TransferMemoKind) -> Vec<u8> {
@@ -1612,6 +2101,19 @@ fn get_allowed_assets() -> Result<Vec<Principal>, String> {
     allowed_assets_view()
 }
 
+#[ic_cdk::query]
+fn icrc10_supported_standards() -> Vec<icrc21::StandardRecord> {
+    init_state();
+    icrc21::supported_standards()
+}
+
+#[ic_cdk::update]
+async fn icrc21_canister_call_consent_message(
+    request: icrc21::Icrc21ConsentMessageRequest,
+) -> icrc21::Icrc21ConsentMessageResponse {
+    icrc21::consent_message(request).await
+}
+
 fn recover_request_state_after_upgrade(_now: u64) -> bool {
     with_state_mut(|state| {
         let mut queued_ids = BTreeSet::new();
@@ -1719,6 +2221,7 @@ fn set_fee_policy(args: SetFeePolicyArgs) -> Result<(), String> {
         &args.fee_ledger_canister,
         "arg.fee_ledger_canister_anonymous",
     )?;
+    validate_cycle_fee_e8s(args.cycle_fee_e8s)?;
     validate_gas_price_buffer_bps(args.gas_price_buffer_bps)?;
     with_state_mut(|state| {
         let _ = state.fee_policy.set(FeePolicyStored {
@@ -2215,6 +2718,17 @@ async fn fetch_asset_decimals(asset_id: &[u8]) -> Result<u8, String> {
     }
 }
 
+async fn fetch_icrc1_fee(ledger: Principal) -> Result<u128, String> {
+    let call_result = ic_cdk::call::Call::unbounded_wait(ledger, "icrc1_fee").await;
+    match call_result {
+        Ok(resp) => match resp.candid_tuple::<(Nat,)>() {
+            Ok((fee,)) => nat_to_u128(&fee).ok_or_else(|| "ledger.fee_out_of_range".to_string()),
+            Err(err) => Err(format!("ledger.fee_decode_failed:{err}")),
+        },
+        Err(err) => Err(format!("ledger.fee_call_failed:{err}")),
+    }
+}
+
 fn decode_asset_decimals(metadata: &[(String, Icrc1MetadataValue)]) -> Result<u8, String> {
     for (key, value) in metadata {
         if key != "icrc1:decimals" {
@@ -2266,6 +2780,27 @@ async fn submit_mint_tx(
             Err(err) => Err(format!("evm_gateway.decode_failed:{err}")),
         },
         Err(err) => Err(format!("evm_gateway.call_failed:{err}")),
+    }
+}
+
+async fn credit_native_deposit_on_gateway(
+    request_id: RequestId,
+    evm_recipient: Vec<u8>,
+    amount_e8s: Vec<u8>,
+) -> Result<Vec<u8>, String> {
+    let gateway = expected_evm_gateway_canister()?;
+    let amount = nat_from_32_be(amount_e8s.as_slice())?;
+    let amount_wei = nat_mul_u128(&amount, WEI_PER_E8S);
+    let call_result = ic_cdk::call::Call::unbounded_wait(gateway, "credit_native_deposit")
+        .with_arg((request_id.0.to_vec(), evm_recipient, amount_wei))
+        .await;
+    match call_result {
+        Ok(resp) => match resp.candid_tuple::<(Result<(), ApiError>,)>() {
+            Ok((Ok(()),)) => Ok(request_id.0.to_vec()),
+            Ok((Err(err),)) => Err(format!("evm_gateway.credit_failed:{}", api_error_code(err))),
+            Err(err) => Err(format!("evm_gateway.credit_decode_failed:{err}")),
+        },
+        Err(err) => Err(format!("evm_gateway.credit_call_failed:{err}")),
     }
 }
 
@@ -2451,6 +2986,20 @@ fn nat_to_u128(value: &Nat) -> Option<u128> {
     Some(u128::from_be_bytes(out))
 }
 
+fn nat_mul_u128(value: &Nat, multiplier: u128) -> Nat {
+    Nat(&value.0 * BigUint::from(multiplier))
+}
+
+fn native_withdraw_receive_amount(
+    amount_e8s: u128,
+    ledger_fee_e8s: u128,
+) -> Result<u128, &'static str> {
+    if amount_e8s <= ledger_fee_e8s {
+        return Err("native_withdraw.amount_not_above_fee");
+    }
+    Ok(amount_e8s - ledger_fee_e8s)
+}
+
 fn nat_to_fixed_be<const N: usize>(value: &Nat) -> Option<[u8; N]> {
     let bytes = value.0.to_bytes_be();
     if bytes.len() > N {
@@ -2533,6 +3082,13 @@ fn validate_gas_price_buffer_bps(value: u32) -> Result<(), String> {
     Ok(())
 }
 
+fn validate_cycle_fee_e8s(value: u64) -> Result<(), String> {
+    if value > MAX_CYCLE_FEE_E8S {
+        return Err("arg.cycle_fee_e8s_out_of_range".to_string());
+    }
+    Ok(())
+}
+
 fn get_fee_policy_stored() -> Result<FeePolicyStored, String> {
     let stored = with_state(|state| state.fee_policy.get().clone());
     if stored.fee_ledger_canister.is_empty() {
@@ -2587,6 +3143,14 @@ fn expected_evm_gateway_canister() -> Result<Principal, String> {
     let expected = with_state(|state| state.evm_gateway_canister.get().clone());
     if expected.is_empty() {
         return Err("config.evm_gateway_missing".to_string());
+    }
+    principal_from_bytes(expected.as_slice())
+}
+
+fn expected_native_ledger_canister() -> Result<Principal, String> {
+    let expected = with_state(|state| state.native_ledger_canister.get().clone());
+    if expected.is_empty() {
+        return Err("config.native_ledger_missing".to_string());
     }
     principal_from_bytes(expected.as_slice())
 }

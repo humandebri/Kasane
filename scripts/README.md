@@ -140,12 +140,14 @@ scripts/measure_precompile_ratio.sh
   - measure precompile ratio before deploy with `scripts/run_precompile_profile_e2e.sh` / `scripts/measure_precompile_ratio.sh`; if you need to change the default fixed ratio `1/100`, rebuild and redeploy
   - even with `MODE=upgrade`, `WRAP_CANISTER_ID` and `EVM_WRAP_FACTORY` are required
   - set `QUERY_INSTRUCTION_SOFT_LIMIT` / `UPDATE_INSTRUCTION_SOFT_LIMIT` only when you intentionally want install / upgrade to overwrite the current soft limits
+  - when deploying wrapper-vite at the same time, deploy `evm_canister` -> `wrap_canister` -> frontend; the frontend depends on `get_unwrap_request_ids_by_eth_tx_hash`
   - this script targets `evm_canister`; upgrade `wrap_canister` separately via [docs/ops/wrap-canister-deploy-runbook.ja.md](/Users/0xhude/Desktop/ICP/Kasane/docs/ops/wrap-canister-deploy-runbook.ja.md)
 - `scripts/mainnet/ic_mainnet_post_upgrade_smoke.sh`: minimum RPC checks after deploy
 - `scripts/verify_submit_after_deploy.sh`: manual/CI hook for verify submit
 - `scripts/mainnet/mainnet_method_test.sh`: heavy mainnet method test
   - `MINING_IDLE_OBSERVE_SEC`: idle observation seconds at start (default: `6`)
   - `IDLE_MAX_CYCLE_DELTA`: allowed cycle decrease in idle observation. `0` disables threshold check (default: `0`)
+- `scripts/report_icrc1_logos.sh`: collect `icrc1:logo` from `icrc1_metadata` and save a markdown report under `docs/ops/reports/`
 
 ### Prune Operations
 - `scripts/ops/apply_prune_policy.sh`: apply policy + enable pruning + status check

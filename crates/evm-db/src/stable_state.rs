@@ -5,10 +5,10 @@ use crate::blob_store::BlobStore;
 use crate::chain_data::constants::CHAIN_ID;
 use crate::chain_data::{
     CallerKey, ChainStateV1, DroppedRingStateV1, GcStateV1, HashKey, Head, LogConfigV1,
-    MetricsStateV1, MigrationStateV1, MismatchRecordV1, NodeRecord, OpsConfigV1, OpsMetricsV1,
-    OpsStateV1, PendingFeeKey, PruneConfigV1, PruneJournal, PruneStateV1, QueueMeta, ReadyKey,
-    ReadySeqKey, RuntimeConfigV1, SenderKey, SenderNonceKey, StateRootMetaV1, StateRootMetricsV1,
-    StoredTxBytes, TxId, UnwrapDispatchRequest,
+    MetricsStateV1, MigrationStateV1, MismatchRecordV1, NativeCreditRecord, NodeRecord,
+    OpsConfigV1, OpsMetricsV1, OpsStateV1, PendingFeeKey, PruneConfigV1, PruneJournal,
+    PruneStateV1, QueueMeta, ReadyKey, ReadySeqKey, RuntimeConfigV1, SenderKey, SenderNonceKey,
+    StateRootMetaV1, StateRootMetricsV1, StoredTxBytes, TxId, UnwrapDispatchRequest,
 };
 use crate::memory::{get_memory, AppMemoryId, VMem};
 use crate::types::keys::{AccountKey, CodeKey, StorageKey};
@@ -49,6 +49,7 @@ pub type StateRootMismatch = StableBTreeMap<u64, MismatchRecordV1, VMem>;
 pub type StateRootNodeDb = StableBTreeMap<HashKey, NodeRecord, VMem>;
 pub type StateRootAccountLeafHash = StableBTreeMap<AccountKey, HashKey, VMem>;
 pub type StateRootGcQueue = StableBTreeMap<u64, HashKey, VMem>;
+pub type NativeCreditRecords = StableBTreeMap<TxId, NativeCreditRecord, VMem>;
 
 pub struct StableState {
     pub accounts: Accounts,
@@ -103,6 +104,7 @@ pub struct StableState {
     pub state_root_account_leaf_hash: StateRootAccountLeafHash,
     pub state_root_gc_queue: StateRootGcQueue,
     pub state_root_gc_state: StableCell<GcStateV1, VMem>,
+    pub native_credit_records: NativeCreditRecords,
 }
 
 thread_local! {
@@ -211,6 +213,7 @@ pub fn init_stable_state() {
     let state_root_gc_queue = StableBTreeMap::init(get_memory(AppMemoryId::StateRootGcQueue));
     let state_root_gc_state =
         StableCell::init(get_memory(AppMemoryId::StateRootGcState), GcStateV1::new());
+    let native_credit_records = StableBTreeMap::init(get_memory(AppMemoryId::NativeCreditRecords));
     STABLE_STATE.with(|s| {
         *s.borrow_mut() = Some(StableState {
             accounts,
@@ -265,6 +268,7 @@ pub fn init_stable_state() {
             state_root_account_leaf_hash,
             state_root_gc_queue,
             state_root_gc_state,
+            native_credit_records,
         });
     });
 }

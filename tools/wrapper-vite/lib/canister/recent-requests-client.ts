@@ -1,12 +1,12 @@
 // どこで: Juno Recent Requests client / 何を: satellite custom functions を query/update する / なぜ: 履歴取得と保存を frontend から統一的に扱うため
 
-import type { Identity } from "@icp-sdk/core/agent";
 import { IDL } from "@icp-sdk/core/candid";
 import { Principal } from "@icp-sdk/core/principal";
 import { z } from "zod";
-import { createIdentityActor } from "@/lib/canister/actor-utils";
+import { createAuthenticatedActor } from "@/lib/canister/actor-utils";
 import type { HistoryEntry } from "@/components/dashboard-ui/types";
 import { RecentRequestDocSchema, toHistoryEntry, toRecentRequestDoc } from "@/lib/recent-requests";
+import type { AuthenticatedCaller } from "./authenticated-caller";
 
 type RecentRequestsActor = {
   app_list_recent_requests: () => Promise<{
@@ -42,32 +42,32 @@ const RecentRequestDocsJsonSchema = z.array(RecentRequestDocSchema);
 const cachedRecentRequestActors = new Map<string, Promise<RecentRequestsActor>>();
 
 type RecentRequestsClientDeps = {
-  createIdentityActor: typeof createIdentityActor;
+  createAuthenticatedActor: typeof createAuthenticatedActor;
 };
 
 const defaultRecentRequestsClientDeps: RecentRequestsClientDeps = {
-  createIdentityActor,
+  createAuthenticatedActor,
 };
 
 let recentRequestsClientDeps: RecentRequestsClientDeps = defaultRecentRequestsClientDeps;
 
-function createRecentRequestsActorCacheKey(identity: Identity, satelliteId: string): string {
-  return `${identity.getPrincipal().toText()}:${satelliteId}`;
+function createRecentRequestsActorCacheKey(caller: AuthenticatedCaller, satelliteId: string): string {
+  return `${caller.principalText}:${satelliteId}`;
 }
 
 async function createRecentRequestsActor(
-  identity: Identity,
+  caller: AuthenticatedCaller,
   satelliteId: string,
 ): Promise<RecentRequestsActor> {
-  const key = createRecentRequestsActorCacheKey(identity, satelliteId);
+  const key = createRecentRequestsActorCacheKey(caller, satelliteId);
   const cached = cachedRecentRequestActors.get(key);
   if (cached !== undefined) {
     return cached;
   }
-  const actorPromise = recentRequestsClientDeps.createIdentityActor<RecentRequestsActor>({
+  const actorPromise = recentRequestsClientDeps.createAuthenticatedActor<RecentRequestsActor>({
     canisterId: Principal.fromText(satelliteId),
     idlFactory: recentRequestsIdlFactory,
-    identity,
+    caller,
   }).catch((error: unknown) => {
     cachedRecentRequestActors.delete(key);
     throw error;
@@ -77,11 +77,11 @@ async function createRecentRequestsActor(
 }
 
 export async function listRecentRequests(
-  identity: Identity,
+  caller: AuthenticatedCaller,
   principalText: string,
   satelliteId: string,
 ): Promise<HistoryEntry[]> {
-  const actor = await createRecentRequestsActor(identity, satelliteId);
+  const actor = await createRecentRequestsActor(caller, satelliteId);
   const docs = await actor.app_list_recent_requests();
   const parsed = RecentRequestDocsJsonSchema.parse(JSON.parse(docs.entriesJson));
   return parsed
@@ -90,12 +90,12 @@ export async function listRecentRequests(
 }
 
 export async function saveRecentRequest(
-  identity: Identity,
+  caller: AuthenticatedCaller,
   principalText: string,
   satelliteId: string,
   entry: HistoryEntry,
 ): Promise<HistoryEntry> {
-  const actor = await createRecentRequestsActor(identity, satelliteId);
+  const actor = await createRecentRequestsActor(caller, satelliteId);
   const saved = await actor.app_save_recent_request(
     toRecentRequestDoc(principalText, entry),
   );

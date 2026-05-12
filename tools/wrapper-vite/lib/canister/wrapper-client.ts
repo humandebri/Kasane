@@ -12,7 +12,8 @@ import type {
 import { loadConfig, type WrapperConfig } from "../config";
 import type { DispatchResultView, DispatchStatus } from "../types";
 import { callerEvmAddressFromPrincipalText } from "../principal";
-import { createActorCache, createIdentityActor, createQueryActor } from "./actor-utils";
+import { createActorCache, createAuthenticatedActor, createQueryActor } from "./actor-utils";
+import type { AuthenticatedCaller } from "./authenticated-caller";
 import {
   applyWrapGasHeadroom,
   applyUnwrapGasHeadroom,
@@ -39,6 +40,7 @@ type QueryActorLike = {
   rpc_eth_estimate_gas_object: PlainActorMethod<WrapperService["rpc_eth_estimate_gas_object"]>;
   rpc_eth_call_object: PlainActorMethod<WrapperService["rpc_eth_call_object"]>;
   estimate_ic_tx: PlainActorMethod<WrapperService["estimate_ic_tx"]>;
+  get_unwrap_request_ids_by_eth_tx_hash: PlainActorMethod<WrapperService["get_unwrap_request_ids_by_eth_tx_hash"]>;
   get_unwrap_request_ids_by_tx_id: PlainActorMethod<WrapperService["get_unwrap_request_ids_by_tx_id"]>;
   get_unwrap_dispatch_overview: PlainActorMethod<WrapperService["get_unwrap_dispatch_overview"]>;
 };
@@ -67,13 +69,13 @@ async function getQueryActor(): Promise<QueryActorLike> {
   });
 }
 
-async function getSubmitActor(identity: Identity): Promise<SubmitActorLike> {
-  return actorCache.getSubmitActor(identity, async (nextIdentity) => {
+async function getSubmitActor(caller: AuthenticatedCaller | Identity): Promise<SubmitActorLike> {
+  return actorCache.getSubmitActor(caller, async (nextCaller) => {
     const cfg = wrapperClientDeps.loadConfig();
-    return createIdentityActor<WrapperActor>({
+    return createAuthenticatedActor<WrapperActor>({
       canisterId: cfg.kasaneEvmCanisterId,
       idlFactory: wrapperIdlFactory,
-      identity: nextIdentity,
+      caller: nextCaller,
     });
   });
 }
@@ -264,7 +266,7 @@ export async function submitIcTx(args: {
   data: Uint8Array;
   nonce: bigint;
   gasLimit: bigint;
-  identity: Identity;
+  caller: AuthenticatedCaller | Identity;
   maxFeePerGas?: bigint;
   maxPriorityFeePerGas?: bigint;
 }): Promise<Uint8Array> {
@@ -274,7 +276,7 @@ export async function submitIcTx(args: {
       ? getMaxPriorityFeePerGasWei()
       : Promise.resolve(args.maxPriorityFeePerGas),
   ]);
-  const out = await (await getSubmitActor(args.identity)).submit_ic_tx({
+  const out = await (await getSubmitActor(args.caller)).submit_ic_tx({
     to: [args.to],
     from: [],
     value: 0n,
@@ -303,6 +305,10 @@ export async function getDispatchResult(requestId: Uint8Array): Promise<Dispatch
 
 export async function getUnwrapRequestIdsByTxId(txId: Uint8Array): Promise<Uint8Array[]> {
   return (await getQueryActor()).get_unwrap_request_ids_by_tx_id(txId);
+}
+
+export async function getUnwrapRequestIdsByEthTxHash(ethTxHash: Uint8Array): Promise<Uint8Array[]> {
+  return (await getQueryActor()).get_unwrap_request_ids_by_eth_tx_hash(ethTxHash);
 }
 
 export const wrapperClientTestHooks = {
