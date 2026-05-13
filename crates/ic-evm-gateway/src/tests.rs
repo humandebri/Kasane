@@ -20,7 +20,8 @@ use evm_db::chain_data::receipt::log_entry_from_parts;
 use evm_db::chain_data::{
     BlockData, MigrationPhase, MintSubmitStatus, OpsMode, ReceiptLike, RequestStatus,
     RuntimeConfigV1, StoredTxBytes, TxId, TxKind, TxLoc, UnwrapDispatchRequest,
-    UnwrapRequestStatus, WrapRequestResult, WrapRequestStage, WrapStoredRequest,
+    UnwrapRequestStatus, WrapPendingSubmission, WrapRequestResult, WrapRequestStage,
+    WrapStoredRequest, WRAP_DECODE_FAILURE_CODE,
 };
 use evm_db::memory::{get_memory, AppMemoryId, WASM_PAGE_SIZE_BYTES};
 use evm_db::meta::{
@@ -1046,6 +1047,29 @@ fn pending_wrap_submission_rejects_concurrent_same_request() {
 }
 
 #[test]
+fn pending_wrap_submission_replaces_decode_failure_placeholder() {
+    init_stable_state();
+    let request_id = TxId([0x6bu8; 32]);
+    let caller = Principal::self_authenticating(b"wrap-pending-caller");
+    with_state_mut(|state| {
+        state.wrap_pending_submissions.insert(
+            request_id,
+            WrapPendingSubmission {
+                caller: Vec::new(),
+                request_id: Vec::new(),
+            },
+        );
+    });
+
+    super::reserve_wrap_pending_submission(request_id, caller).expect("reserve after placeholder");
+
+    let stored = with_state(|state| state.wrap_pending_submissions.get(&request_id))
+        .expect("pending submission");
+    assert_eq!(stored.caller, caller.as_slice());
+    assert_eq!(stored.request_id, request_id.0);
+}
+
+#[test]
 fn recover_wrap_worker_after_upgrade_requeues_active_requests_without_duplicates() {
     init_stable_state();
     let queued_existing = TxId([0x6bu8; 32]);
@@ -1651,6 +1675,45 @@ fn quote_wrap_request_rejects_disallowed_asset_before_gas_quote() {
         Err(ApiError::Rejected(detail)) => assert_eq!(detail.code, "asset.not_allowed"),
         other => panic!("unexpected quote result: {other:?}"),
     }
+}
+
+#[test]
+fn quote_wrap_request_allowed_asset_uses_floor_when_fee_sample_missing() {
+    init_stable_state();
+    let fee_ledger = Principal::self_authenticating(b"fee-ledger");
+    let native_ledger = Principal::self_authenticating(b"native-ledger");
+    let allowed_asset = Principal::self_authenticating(b"asset-ledger");
+    let args = InitArgs {
+        genesis_balances: vec![GenesisBalanceView {
+            address: vec![0x33u8; 20],
+            amount: 1,
+        }],
+        wrap_canister_id: Principal::self_authenticating(b"wrap-integrated"),
+        wrap_factory_address: vec![0x44u8; 20],
+        wrap_config: Some(WrapConfigArgs {
+            fee_ledger_canister: fee_ledger,
+            native_ledger_canister: native_ledger,
+            cycle_fee_e8s: 1_000_000,
+            gas_price_buffer_bps: 12_000,
+            allowed_assets: vec![allowed_asset],
+        }),
+        query_instruction_soft_limit: None,
+        update_instruction_soft_limit: None,
+    };
+    super::apply_wrap_config_from_init_args(&args);
+
+    let out = super::quote_wrap_request(QuoteWrapRequestArgs {
+        asset_id: allowed_asset,
+        amount_e8s: Nat::from(1u128),
+        evm_recipient: vec![0x55; 20],
+        gas_limit: 21_000,
+    })
+    .expect("quote should use floor without fee sample");
+
+    assert_eq!(out.charged_gas_price_wei, Nat::from(180_000_000_000u128));
+    assert_eq!(out.charged_fee_e8s, Nat::from(1_378_000u128));
+    assert_eq!(out.cycle_fee_e8s, 1_000_000);
+    assert_eq!(out.fee_ledger_canister, fee_ledger);
 }
 
 #[test]
@@ -3198,6 +3261,82 @@ fn raw_stable_corruption_does_not_trap_query_or_dispatch_for_unwrap_request() {
     assert_eq!(
         stored.and_then(|value| value.error_code),
         Some(super::UNWRAP_QUARANTINE_ERROR.to_string())
+    );
+}
+
+#[test]
+fn raw_stable_corruption_does_not_trap_query_or_recovery_for_wrap_request() {
+    init_stable_state();
+    let request_id = TxId([0x15u8; 32]);
+    let request = sample_wrap_request(RequestStatus::Queued);
+    let encoded = request.to_bytes().into_owned();
+    with_state_mut(|state| {
+        state.wrap_requests.insert(request_id, request);
+    });
+
+    let memory = get_memory(AppMemoryId::WrapRequests);
+    let pages = memory.size();
+    assert!(pages > 0, "wrap request memory pages must be allocated");
+    let mut dump = vec![0u8; (pages * WASM_PAGE_SIZE_BYTES) as usize];
+    memory.read(0, &mut dump);
+    let candidates = find_subsequence_positions(&dump, &encoded);
+    assert!(
+        !candidates.is_empty(),
+        "encoded wrap request bytes must be present in stable memory"
+    );
+
+    let mut corrupted_target = false;
+    for encoded_offset in candidates.into_iter() {
+        let checksum_last = encoded_offset + encoded.len() - 1;
+        let original = dump[checksum_last];
+        memory.write(checksum_last as u64, &[original ^ 0x01]);
+        let is_decode_failed = with_state(|state| {
+            state.wrap_requests.get(&request_id).is_some_and(|value| {
+                value.result.status == RequestStatus::Failed
+                    && value.result.error_code.as_deref() == Some(WRAP_DECODE_FAILURE_CODE)
+            })
+        });
+        if is_decode_failed {
+            corrupted_target = true;
+            break;
+        }
+        memory.write(checksum_last as u64, &[original]);
+    }
+    assert!(
+        corrupted_target,
+        "failed to corrupt the inserted wrap request payload"
+    );
+
+    let query_out = catch_unwind(AssertUnwindSafe(|| {
+        super::get_request(request_id.0.to_vec())
+    }));
+    assert!(
+        query_out.is_ok(),
+        "query path must not trap on raw corruption"
+    );
+    let overview = query_out
+        .expect("query must not panic")
+        .expect("overview must exist");
+    assert_eq!(overview.status, RequestStatus::Failed);
+    assert_eq!(overview.stage, Some(super::RequestStageView::Failed));
+    assert_eq!(
+        overview.error.map(|error| error.code),
+        Some(WRAP_DECODE_FAILURE_CODE.to_string())
+    );
+
+    let recover_out = catch_unwind(AssertUnwindSafe(
+        super::recover_wrap_worker_state_after_upgrade,
+    ));
+    assert!(
+        recover_out.is_ok(),
+        "worker recovery must not trap on raw corruption"
+    );
+    let repair_out = catch_unwind(AssertUnwindSafe(|| {
+        super::repair_stale_operations(987_654_321)
+    }));
+    assert!(
+        repair_out.is_ok(),
+        "stale repair must not trap on raw corruption"
     );
 }
 

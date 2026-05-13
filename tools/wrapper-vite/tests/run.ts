@@ -450,6 +450,66 @@ async function runNativeDepositDraftTests(): Promise<void> {
   }
 }
 
+async function runFinishSubmittedWrapRequestTests(): Promise<void> {
+  const store = new Map<string, string>();
+  const localStorage = {
+    getItem(key: string): string | null {
+      return store.get(key) ?? null;
+    },
+    setItem(key: string, value: string): void {
+      store.set(key, value);
+    },
+  };
+  Reflect.defineProperty(globalThis, "window", {
+    configurable: true,
+    value: { localStorage },
+  });
+  try {
+    const draftArgs = {
+      assetId: "2vxsx-fae",
+      amountE8s: 10n,
+      evmRecipient: hexToBytes("0x1111111111111111111111111111111111111111"),
+      principalText: "4c52m-aiaaa-aaaam-agwwa-cai",
+    };
+    const draft = wrapperActionsTestHooks.reserveNativeDepositDraft(draftArgs);
+    const requestIdHex = `0x${"45".repeat(32)}`;
+    const requestIds: string[] = [];
+    const lastSubmitted: string[] = [];
+    let polledRequestId: string | null = null;
+
+    let thrown: unknown = null;
+    try {
+      await wrapperActionsTestHooks.finishSubmittedWrapRequest({
+        requestIdHex,
+        nativeDepositDraftKey: draft.key,
+        clearNativeDepositDraft: wrapperActionsTestHooks.clearNativeDepositDraft,
+        setLastSubmittedWrapRequestId: (requestId) => {
+          lastSubmitted.push(requestId);
+        },
+        onRequestIdInput: (requestId) => {
+          requestIds.push(requestId);
+        },
+        startPollingSubmittedRequest: async (requestId) => {
+          polledRequestId = requestId;
+          throw new Error("status.poll_failed");
+        },
+      });
+    } catch (error) {
+      thrown = error;
+    }
+
+    assert.equal(thrown instanceof Error ? thrown.message : null, "status.poll_failed");
+    assert.deepEqual(lastSubmitted, [requestIdHex]);
+    assert.deepEqual(requestIds, [requestIdHex]);
+    assert.equal(polledRequestId, requestIdHex);
+    const nextDraft = wrapperActionsTestHooks.reserveNativeDepositDraft(draftArgs);
+    assert.notEqual(bytesToHex(nextDraft.depositId), bytesToHex(draft.depositId));
+    wrapperActionsTestHooks.clearNativeDepositDraft(nextDraft.key);
+  } finally {
+    Reflect.deleteProperty(globalThis, "window");
+  }
+}
+
 async function runWrapperActionAssetRoutingTests(): Promise<void> {
   assert.equal(
     wrapperActionsTestHooks.isNativeWithdrawalAssetId(DEFAULT_ASSET_ID, DEFAULT_ASSET_ID),
@@ -1711,6 +1771,7 @@ async function main(): Promise<void> {
   await runMetaMaskHelperTests();
   await runFinishSubmittedUnwrapRequestTests();
   await runNativeDepositDraftTests();
+  await runFinishSubmittedWrapRequestTests();
   await runWrapperActionAssetRoutingTests();
   await runActorCacheTests();
   await runWrapEstimateEncodingTests();

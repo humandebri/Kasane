@@ -220,6 +220,22 @@ async function finishSubmittedUnwrapRequest(args: {
   args.resetUnwrapNonceDeadline();
 }
 
+async function finishSubmittedWrapRequest(args: {
+  requestIdHex: string;
+  nativeDepositDraftKey: string | null;
+  clearNativeDepositDraft: (key: string) => void;
+  setLastSubmittedWrapRequestId: (requestId: string) => void;
+  onRequestIdInput: (requestId: string) => void;
+  startPollingSubmittedRequest: (requestIdHex: string) => Promise<void>;
+}): Promise<void> {
+  if (args.nativeDepositDraftKey !== null) {
+    args.clearNativeDepositDraft(args.nativeDepositDraftKey);
+  }
+  args.setLastSubmittedWrapRequestId(args.requestIdHex);
+  args.onRequestIdInput(args.requestIdHex);
+  await args.startPollingSubmittedRequest(args.requestIdHex);
+}
+
 export function useWrapperActions(params: {
   cfg: AppConfig | null;
   configError: string | null;
@@ -623,12 +639,14 @@ export function useWrapperActions(params: {
           feeLedgerCanister: quote.feeLedgerCanister,
         }, caller);
       const requestIdHex = bytesToHex(submitResult.requestId);
-      if (nativeDepositDraft !== null) {
-        clearNativeDepositDraft(nativeDepositDraft.key);
-      }
-      setLastSubmittedWrapRequestId(requestIdHex);
-      params.onRequestIdInput(requestIdHex);
-      await startPollingSubmittedRequest(requestIdHex);
+      await finishSubmittedWrapRequest({
+        requestIdHex,
+        nativeDepositDraftKey: nativeDepositDraft?.key ?? null,
+        clearNativeDepositDraft,
+        setLastSubmittedWrapRequestId,
+        onRequestIdInput: params.onRequestIdInput,
+        startPollingSubmittedRequest,
+      });
       if (!isNativeDeposit) {
         await params.forms.refreshWrapNonce().catch(() => undefined);
       }
@@ -839,6 +857,7 @@ export function useWrapperActions(params: {
 
 export const wrapperActionsTestHooks = {
   clearNativeDepositDraft,
+  finishSubmittedWrapRequest,
   finishSubmittedUnwrapRequest,
   isNativeWithdrawalAssetId,
   reserveNativeDepositDraft,

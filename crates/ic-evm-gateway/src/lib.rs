@@ -670,6 +670,17 @@ fn current_fee_policy() -> Result<FeePolicyView, String> {
     })
 }
 
+fn wrap_quote_gas_price() -> Result<u128, ApiError> {
+    match ic_evm_rpc::rpc_eth_gas_price() {
+        Ok(value) => Ok(value),
+        Err(err) if err.error_prefix.as_deref() == Some("exec.state.unavailable") => {
+            let min_gas_price = with_state(|state| state.chain_state.get().min_gas_price);
+            Ok(u128::from(min_gas_price.max(DEFAULT_MIN_FEE_FLOOR)))
+        }
+        Err(err) => Err(rpc_error_to_api_error(err)),
+    }
+}
+
 fn current_block_gas_limit() -> u64 {
     with_state(|state| state.chain_state.get().block_gas_limit)
 }
@@ -765,7 +776,7 @@ fn sanitize_wrap_request(
 fn quote_wrap_request_inner(gas_limit: u64) -> Result<QuoteWrapRequestOk, ApiError> {
     validate_wrap_gas_limit(gas_limit).map_err(|err| api_invalid_argument(&err, &err))?;
     let fee_policy = current_fee_policy().map_err(|err| api_internal(&err, &err))?;
-    let base_gas_price = ic_evm_rpc::rpc_eth_gas_price().map_err(rpc_error_to_api_error)?;
+    let base_gas_price = wrap_quote_gas_price()?;
     let charged_gas_price_wei = base_gas_price
         .saturating_mul(u128::from(fee_policy.gas_price_buffer_bps))
         .saturating_add(GAS_PRICE_DENOMINATOR_BPS - 1)
@@ -980,10 +991,14 @@ fn existing_wrap_request_response(
 fn reserve_wrap_pending_submission(request_id: TxId, caller: Principal) -> Result<(), String> {
     with_state_mut(|state| {
         if let Some(existing) = state.wrap_pending_submissions.get(&request_id) {
-            if existing.caller.as_slice() == caller.as_slice() {
-                return Err("request.in_progress".to_string());
+            if existing.is_decode_failure_placeholder() || existing.request_id != request_id.0 {
+                state.wrap_pending_submissions.remove(&request_id);
+            } else {
+                if existing.caller.as_slice() == caller.as_slice() {
+                    return Err("request.in_progress".to_string());
+                }
+                return Err("request.idempotency_mismatch".to_string());
             }
-            return Err("request.idempotency_mismatch".to_string());
         }
         state.wrap_pending_submissions.insert(
             request_id,
