@@ -64,7 +64,6 @@ export function KasaneShell(props: {
             </Link>
             <nav className="hidden items-center gap-2 md:flex">
               <NavItem label="Console" to="/" />
-              <NavItem label="History" to="/history" />
             </nav>
           </div>
           <button
@@ -99,7 +98,6 @@ export function KasaneShell(props: {
             </div>
             <div className="mt-6 flex flex-col gap-2">
               <NavItem label="Console" onClick={props.onDrawerClose} to="/" />
-              <NavItem label="History" onClick={props.onDrawerClose} to="/history" />
             </div>
           </aside>
         </div>

@@ -1,7 +1,6 @@
 // where: gateway canister client / what: provides query/update call wrappers / why: keep handler responsibility focused on JSON-RPC translation
 
 import { Actor, HttpAgent } from "@icp-sdk/core/agent";
-import { readFileSync } from "node:fs";
 import { CONFIG } from "./config.js";
 import { idlFactory } from "./candid.js";
 import { identityFromPem } from "./identity.js";
@@ -17,6 +16,10 @@ export type DecodedTxView = {
   gas_price: [] | [bigint];
   max_fee_per_gas: [] | [bigint];
   max_priority_fee_per_gas: [] | [bigint];
+  tx_type: [] | [number];
+  signature_v: [] | [bigint];
+  signature_r: [] | [Uint8Array];
+  signature_s: [] | [Uint8Array];
 };
 
 export type EthTxView = {
@@ -45,7 +48,9 @@ export type EthReceiptView = {
   operator_fee: bigint;
   eth_tx_hash: [] | [Uint8Array];
   gas_used: bigint;
+  cumulative_gas_used: [] | [bigint];
   contract_address: [] | [Uint8Array];
+  tx_type: [] | [number];
   tx_hash: Uint8Array;
 };
 
@@ -71,6 +76,7 @@ export type EthLogItemView = {
   log_index: number;
   data: Uint8Array;
   block_number: bigint;
+  block_hash: [] | [Uint8Array];
   topics: Uint8Array[];
   address: Uint8Array;
   eth_tx_hash: [] | [Uint8Array];
@@ -188,15 +194,34 @@ type Methods = {
   get_ops_status: () => Promise<OpsStatusView>;
 };
 
-let actorPromise: Promise<Methods> | null = null;
+let actorCache: { key: string; promise: Promise<Methods> } | null = null;
 
 export async function getActor(): Promise<Methods> {
-  if (!actorPromise) {
-    actorPromise = withRetryablePromiseCache(createActor, () => actorPromise, (next) => {
-      actorPromise = next;
-    });
+  const key = actorConfigKey();
+  if (actorCache?.key === key) {
+    return actorCache.promise;
   }
-  return actorPromise;
+  const promise = createActor().catch((error: unknown) => {
+    if (actorCache?.key === key && actorCache.promise === promise) {
+      actorCache = null;
+    }
+    throw error;
+  });
+  actorCache = { key, promise };
+  return actorCache.promise;
+}
+
+function actorConfigKey(): string {
+  return JSON.stringify({
+    canisterId: CONFIG.canisterId,
+    icHost: CONFIG.icHost,
+    fetchRootKey: CONFIG.fetchRootKey,
+    identityPem: CONFIG.identityPem,
+  });
+}
+
+export function __test_identity_from_current_config() {
+  return loadOptionalIdentityFromPem();
 }
 
 function withRetryablePromiseCache<T>(
@@ -217,12 +242,15 @@ function withRetryablePromiseCache<T>(
 }
 
 async function createActor(): Promise<Methods> {
+  if (!CONFIG.canisterId) {
+    throw new Error("EVM_CANISTER_ID is required");
+  }
   const fetchFn = globalThis.fetch;
   if (typeof fetchFn !== "function") {
     throw new Error("global fetch is not available; use Node 18+");
   }
   const identity = loadOptionalIdentityFromPem();
-  const agent = new HttpAgent({ host: CONFIG.icHost, fetch: fetchFn, identity });
+  const agent = new HttpAgent({ host: CONFIG.icHost, fetch: fetchFn.bind(globalThis), identity });
   if (CONFIG.fetchRootKey) {
     await agent.fetchRootKey();
   }
@@ -272,9 +300,8 @@ export function __test_create_retryable_promise_cache<T>(factory: () => Promise<
 }
 
 function loadOptionalIdentityFromPem() {
-  if (!CONFIG.identityPemPath) {
+  if (!CONFIG.identityPem) {
     return undefined;
   }
-  const pem = readFileSync(CONFIG.identityPemPath, "utf8");
-  return identityFromPem(pem);
+  return identityFromPem(CONFIG.identityPem);
 }

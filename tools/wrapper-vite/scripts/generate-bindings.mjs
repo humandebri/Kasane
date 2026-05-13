@@ -1,5 +1,5 @@
 // どこで: wrapper-vite bindgen スクリプト
-// 何を: wrap/gateway canister の generated declarations を再生成する
+// 何を: gateway canister の generated declarations を再生成する
 // なぜ: 手書き IDL を廃止し、frontend の actor 定義 drift を防ぐため
 
 import { execFileSync } from "node:child_process";
@@ -12,11 +12,6 @@ const wrapperViteDir = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const bindgenBin = resolve(wrapperViteDir, "node_modules/.bin/icp-bindgen");
 
 const targets = [
-  {
-    canisterName: "wrap_canister",
-    didFile: resolve(wrapperViteDir, "../../othercanisters/wrap-canister/wrap_canister.did"),
-    outDir: resolve(wrapperViteDir, "src/declarations/wrap_canister"),
-  },
   {
     canisterName: "evm_canister",
     didFile: resolve(wrapperViteDir, "../../crates/ic-evm-gateway/evm_canister.did"),

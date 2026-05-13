@@ -22,6 +22,7 @@ serde = { version = "1", features = ["derive"] }
 num-bigint = "0.4"
 getrandom = { version = "0.2", default-features = false, features = ["custom"] }
 tracing = { version = "0.1.41", features = ["max_level_info", "release_max_level_warn"] }
+tiny-keccak = { version = "2", features = ["keccak"] }
 canbench-rs = { version = "0.4.1", optional = true }
 ic-evm-rpc-types = { path = "../ic-evm-rpc-types" }
 ic-evm-metrics = { path = "../ic-evm-metrics" }

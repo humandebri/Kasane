@@ -71,6 +71,14 @@ pub enum AppMemoryId {
     RuntimeConfig = 57,
     InternalTraces = 58,
     NativeCreditRecords = 59,
+    WrapRequests = 60,
+    WrapQueue = 61,
+    WrapQueueMeta = 62,
+    WrapAllowedAssets = 63,
+    WrapFeePolicy = 64,
+    WrapEvmConfig = 65,
+    WrapNativeLedgerCanister = 66,
+    WrapPendingSubmissions = 67,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -80,7 +88,7 @@ pub struct MemoryRegionInfo {
     pub include_in_estimate: bool,
 }
 
-const ALL_MEMORY_REGIONS: [MemoryRegionInfo; 60] = [
+const ALL_MEMORY_REGIONS: [MemoryRegionInfo; 68] = [
     MemoryRegionInfo {
         id: AppMemoryId::Upgrades,
         name: "Upgrades",
@@ -381,6 +389,46 @@ const ALL_MEMORY_REGIONS: [MemoryRegionInfo; 60] = [
         name: "NativeCreditRecords",
         include_in_estimate: true,
     },
+    MemoryRegionInfo {
+        id: AppMemoryId::WrapRequests,
+        name: "WrapRequests",
+        include_in_estimate: true,
+    },
+    MemoryRegionInfo {
+        id: AppMemoryId::WrapQueue,
+        name: "WrapQueue",
+        include_in_estimate: true,
+    },
+    MemoryRegionInfo {
+        id: AppMemoryId::WrapQueueMeta,
+        name: "WrapQueueMeta",
+        include_in_estimate: true,
+    },
+    MemoryRegionInfo {
+        id: AppMemoryId::WrapAllowedAssets,
+        name: "WrapAllowedAssets",
+        include_in_estimate: false,
+    },
+    MemoryRegionInfo {
+        id: AppMemoryId::WrapFeePolicy,
+        name: "WrapFeePolicy",
+        include_in_estimate: false,
+    },
+    MemoryRegionInfo {
+        id: AppMemoryId::WrapEvmConfig,
+        name: "WrapEvmConfig",
+        include_in_estimate: false,
+    },
+    MemoryRegionInfo {
+        id: AppMemoryId::WrapNativeLedgerCanister,
+        name: "WrapNativeLedgerCanister",
+        include_in_estimate: false,
+    },
+    MemoryRegionInfo {
+        id: AppMemoryId::WrapPendingSubmissions,
+        name: "WrapPendingSubmissions",
+        include_in_estimate: true,
+    },
 ];
 
 impl AppMemoryId {
@@ -446,6 +494,14 @@ impl AppMemoryId {
             AppMemoryId::RuntimeConfig => 57,
             AppMemoryId::InternalTraces => 58,
             AppMemoryId::NativeCreditRecords => 59,
+            AppMemoryId::WrapRequests => 60,
+            AppMemoryId::WrapQueue => 61,
+            AppMemoryId::WrapQueueMeta => 62,
+            AppMemoryId::WrapAllowedAssets => 63,
+            AppMemoryId::WrapFeePolicy => 64,
+            AppMemoryId::WrapEvmConfig => 65,
+            AppMemoryId::WrapNativeLedgerCanister => 66,
+            AppMemoryId::WrapPendingSubmissions => 67,
         }
     }
 

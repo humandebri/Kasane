@@ -28,6 +28,8 @@ Japanese version: [./rpc-gateway-mirror-runbook.ja.md](./rpc-gateway-mirror-runb
 - workflow: `.github/workflows/rpc-gateway-mirror.yml`
 - trigger: push to `main` with `tools/rpc-gateway/**` changes or `workflow_dispatch`
 - flow: guards -> gateway test/build -> subtree split -> mirror push (non-force, then force fallback)
+- `tools/rpc-gateway/.github/workflows/*` is intentionally kept under the subtree. After split, those files become root workflows in `kasane-network/rpc-gateway`.
+- Do not move the Cloudflare deploy workflow to the monorepo root; that would remove it from the mirror and risk duplicate deploys from the monorepo.
 
 ## Recovery
 - auth issues: re-login `gh`

@@ -1,32 +1,27 @@
 "use client";
 
 // どこで: wrapper dashboard
-// 何を: /swap 風 shell・wallet modal・console/history 切替を束ねる
+// 何を: /swap 風 shell・wallet modal・consoleを束ねる
 // なぜ: 既存ビジネスロジックを保ったまま UI 骨格を刷新するため
 
-import { Suspense, lazy, useEffect, useMemo, useState, type ReactElement } from "react";
+import { useEffect, useMemo, useState, type ReactElement } from "react";
 import { ConsoleCard } from "@/components/dashboard-ui/console-card";
 import { KasaneShell } from "@/components/dashboard-ui/kasane-shell";
 import { ManageTokensDrawer } from "@/components/dashboard-ui/manage-tokens-drawer";
 import { RequestStatusModal } from "@/components/dashboard-ui/request-status-modal";
 import { WalletConnectModal } from "@/components/dashboard-ui/wallet-connect-modal";
-import { HistoryPage } from "@/components/history-page";
 import type { ActiveTab, StatusPanelView, WrapActionStep } from "@/components/dashboard-ui/types";
 import { applySelectedAsset } from "@/lib/icp-token-list";
 import { useKasaneTxTracker } from "@/lib/hooks/use-kasane-tx-tracker";
 import { useLedgerBalance } from "@/lib/hooks/use-ledger-balance";
 import { useManageTokens } from "@/lib/hooks/use-manage-tokens";
-import { useRecentRequests } from "@/lib/hooks/use-recent-requests";
 import { useStatusTracker } from "@/lib/hooks/use-status-tracker";
 import { useUnwrapBalance } from "@/lib/hooks/use-unwrap-balance";
 import { useWrapperActions } from "@/lib/hooks/use-wrapper-actions";
 import { useWrapperForms } from "@/lib/hooks/use-wrapper-forms";
 import type { loadConfig } from "@/lib/config";
-import { resolveJunoSatelliteId } from "@/lib/config";
 import { formatTokenAmount } from "@/lib/wrap-flow";
 import { useWallet } from "@/lib/wallet/use-wallet";
-
-const LazyHistoryPage = lazy(async () => ({ default: HistoryPage }));
 
 export type WrapperDashboardConfigState = {
   cfg: ReturnType<typeof loadConfig> | null;
@@ -41,13 +36,11 @@ export function WrapperDashboard(
     statusModalOpen,
     onOpenRequest,
     onCloseRequest,
-    view,
   }: WrapperDashboardConfigState & {
     activeRequestId: string | null;
     statusModalOpen: boolean;
     onOpenRequest: (requestId: string) => void;
     onCloseRequest: () => void;
-    view: "console" | "history";
   },
 ): ReactElement {
   const wallet = useWallet();
@@ -59,11 +52,6 @@ export function WrapperDashboard(
   const tracker = useStatusTracker();
 
   const manageTokens = useManageTokens(cfg?.icpTokenListUrl ?? null, wallet.oisySession?.principalText ?? null);
-  const recentRequests = useRecentRequests({
-    principalText: wallet.oisySession?.principalText ?? null,
-    getCaller: wallet.getCaller,
-    satelliteId: resolveJunoSatelliteId(),
-  });
   const txTracker = useKasaneTxTracker({
     rpcUrl: cfg?.kasaneRpcUrl ?? null,
     explorerBaseUrl: cfg?.kasaneBlockExplorerUrl ?? null,
@@ -92,7 +80,6 @@ export function WrapperDashboard(
     getCaller: wallet.getCaller,
     forms,
     tracker,
-    onRequestSubmitted: (entry) => recentRequests.save(entry),
     onRequestIdInput: onOpenRequest,
     onMetaMaskTransactionSubmitted: (transactionHash) => {
       setMetaMaskModalOpen(true);
@@ -159,74 +146,62 @@ export function WrapperDashboard(
       onWalletClick={() => setWalletModalOpen(true)}
       walletLabel={walletLabel}
     >
-      {view === "console" ? (
-        <div className="flex w-full max-w-[72rem] flex-col gap-5 lg:flex-row lg:items-start lg:justify-center">
-          <div className="w-full lg:flex-1">
-            <ManageTokensDrawer
-              error={manageTokens.error}
-              loading={manageTokens.loading}
-              mode="mobile"
-              onRefresh={() => void manageTokens.refresh()}
-              onSelectAsset={selectAsset}
-              onToggleMobile={() => setManageTokensOpen((current) => !current)}
-              open={manageTokensOpen}
-              rows={manageTokens.rows}
-              selectedAssetId={selectedAssetId}
-            />
-            <ConsoleCard
-              assetOptions={manageTokens.assetOptions}
-              configError={configError}
-              lastSubmittedWrapRequestId={actions.lastSubmittedWrapRequestId}
-              onOpenWallet={() => setWalletModalOpen(true)}
-              onSubmitUnwrap={() => void actions.submitUnwrap()}
-              onSubmitWrap={() => void actions.submitWrap()}
-              onTabChange={setTab}
-              onUnwrapChange={forms.setUnwrapForm}
-              onWrapChange={forms.setWrapForm}
-              submitLoading={actions.submitLoading}
-              tab={tab}
-              unwrapForm={forms.unwrapForm}
-              wallet={wallet}
-              wrapActionStep={actions.wrapActionStep}
-              wrapChargedGasPriceWei={actions.wrapGasDetails?.chargedGasPriceWei.toString() ?? null}
-              wrapFeeEstimateText={actions.wrapFeeEstimateText}
-              wrapForm={forms.wrapForm}
-              wrapGasEstimateError={forms.wrapGasEstimateError}
-              wrapGasEstimateStatus={forms.wrapGasEstimateStatus}
-              wrapMaxAmountText={wrapMaxAmountText}
-              wrapMaxPriorityFeePerGasWei={actions.wrapGasDetails?.maxPriorityFeePerGasWei.toString() ?? null}
-              wrapNonceError={forms.wrapNonceError}
-              wrapNonceStatus={forms.wrapNonceStatus}
-              wrapPreviewRequestId={forms.wrapPreviewRequestId}
-              wrapBalanceText={wrapBalance.balanceText}
-              unwrapBalanceText={unwrapBalance.balanceText}
-            />
-          </div>
-          <div className="hidden lg:block">
-            <ManageTokensDrawer
-              error={manageTokens.error}
-              loading={manageTokens.loading}
-              mode="desktop"
-              onRefresh={() => void manageTokens.refresh()}
-              onSelectAsset={selectAsset}
-              onToggleMobile={() => undefined}
-              open
-              rows={manageTokens.rows}
-              selectedAssetId={selectedAssetId}
-            />
-          </div>
-        </div>
-      ) : (
-        <Suspense fallback={<div className="w-full max-w-3xl rounded-[2rem] bg-white/90 p-5 shadow-xl">Loading history...</div>}>
-          <LazyHistoryPage
-            error={recentRequests.error}
-            history={recentRequests.history}
-            loading={recentRequests.loading}
-            onOpen={onOpenRequest}
-            wallet={wallet}
+      <div className="flex w-full max-w-[72rem] flex-col gap-5 lg:flex-row lg:items-start lg:justify-center">
+        <div className="w-full lg:flex-1">
+          <ManageTokensDrawer
+            error={manageTokens.error}
+            loading={manageTokens.loading}
+            mode="mobile"
+            onRefresh={() => void manageTokens.refresh()}
+            onSelectAsset={selectAsset}
+            onToggleMobile={() => setManageTokensOpen((current) => !current)}
+            open={manageTokensOpen}
+            rows={manageTokens.rows}
+            selectedAssetId={selectedAssetId}
           />
-        </Suspense>
-      )}
+          <ConsoleCard
+            assetOptions={manageTokens.assetOptions}
+            configError={configError}
+            lastSubmittedWrapRequestId={actions.lastSubmittedWrapRequestId}
+            onOpenWallet={() => setWalletModalOpen(true)}
+            onSubmitUnwrap={() => void actions.submitUnwrap()}
+            onSubmitWrap={() => void actions.submitWrap()}
+            onTabChange={setTab}
+            onUnwrapChange={forms.setUnwrapForm}
+            onWrapChange={forms.setWrapForm}
+            submitLoading={actions.submitLoading}
+            tab={tab}
+            unwrapForm={forms.unwrapForm}
+            wallet={wallet}
+            wrapActionStep={actions.wrapActionStep}
+            wrapChargedGasPriceWei={actions.wrapGasDetails?.chargedGasPriceWei.toString() ?? null}
+            wrapFeeEstimateText={actions.wrapFeeEstimateText}
+            wrapForm={forms.wrapForm}
+            wrapGasEstimateError={forms.wrapGasEstimateError}
+            wrapGasEstimateStatus={forms.wrapGasEstimateStatus}
+            wrapMaxAmountText={wrapMaxAmountText}
+            wrapMaxPriorityFeePerGasWei={actions.wrapGasDetails?.maxPriorityFeePerGasWei.toString() ?? null}
+            wrapNonceError={forms.wrapNonceError}
+            wrapNonceStatus={forms.wrapNonceStatus}
+            wrapPreviewRequestId={forms.wrapPreviewRequestId}
+            wrapBalanceText={wrapBalance.balanceText}
+            unwrapBalanceText={unwrapBalance.balanceText}
+          />
+        </div>
+        <div className="hidden lg:block">
+          <ManageTokensDrawer
+            error={manageTokens.error}
+            loading={manageTokens.loading}
+            mode="desktop"
+            onRefresh={() => void manageTokens.refresh()}
+            onSelectAsset={selectAsset}
+            onToggleMobile={() => undefined}
+            open
+            rows={manageTokens.rows}
+            selectedAssetId={selectedAssetId}
+          />
+        </div>
+      </div>
 
       <WalletConnectModal
         onClose={() => setWalletModalOpen(false)}

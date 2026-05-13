@@ -47,6 +47,58 @@ optional_nat64_field() {
   printf '  %s = opt %s : nat64;\n' "${field_name}" "${value}"
 }
 
+optional_wrap_config_field() {
+  if [[ -z "${WRAP_FEE_LEDGER_CANISTER_ID:-}" && -z "${WRAP_NATIVE_LEDGER_CANISTER_ID:-}" && -z "${WRAP_ALLOWED_ASSET_IDS:-}" ]]; then
+    printf '  wrap_config = null;\n'
+    return 0
+  fi
+  if [[ -z "${WRAP_FEE_LEDGER_CANISTER_ID:-}" ]]; then
+    echo "[lib_init_args] error: WRAP_FEE_LEDGER_CANISTER_ID is required when wrap_config is set" >&2
+    return 1
+  fi
+  if [[ -z "${WRAP_NATIVE_LEDGER_CANISTER_ID:-}" ]]; then
+    echo "[lib_init_args] error: WRAP_NATIVE_LEDGER_CANISTER_ID is required when wrap_config is set" >&2
+    return 1
+  fi
+  if [[ -z "${WRAP_ALLOWED_ASSET_IDS:-}" ]]; then
+    echo "[lib_init_args] error: WRAP_ALLOWED_ASSET_IDS is required when wrap_config is set" >&2
+    return 1
+  fi
+  local cycle_fee="${WRAP_CYCLE_FEE_E8S:-1000000}"
+  local gas_buffer="${WRAP_GAS_PRICE_BUFFER_BPS:-12000}"
+  if [[ ! "${cycle_fee}" =~ ^[0-9]+$ ]]; then
+    echo "[lib_init_args] error: WRAP_CYCLE_FEE_E8S must be an unsigned integer" >&2
+    return 1
+  fi
+  if [[ ! "${gas_buffer}" =~ ^[0-9]+$ ]]; then
+    echo "[lib_init_args] error: WRAP_GAS_PRICE_BUFFER_BPS must be an unsigned integer" >&2
+    return 1
+  fi
+  local allowed=""
+  local id
+  local old_ifs="${IFS}"
+  IFS=","
+  for id in ${WRAP_ALLOWED_ASSET_IDS}; do
+    id="${id//[[:space:]]/}"
+    [[ -n "${id}" ]] || continue
+    allowed="${allowed} principal \"${id}\";"
+  done
+  IFS="${old_ifs}"
+  if [[ -z "${allowed}" ]]; then
+    echo "[lib_init_args] error: WRAP_ALLOWED_ASSET_IDS must contain at least one principal" >&2
+    return 1
+  fi
+  cat <<EOF
+  wrap_config = opt record {
+    fee_ledger_canister = principal "${WRAP_FEE_LEDGER_CANISTER_ID}";
+    native_ledger_canister = principal "${WRAP_NATIVE_LEDGER_CANISTER_ID}";
+    cycle_fee_e8s = ${cycle_fee} : nat64;
+    gas_price_buffer_bps = ${gas_buffer} : nat32;
+    allowed_assets = vec {${allowed} };
+  };
+EOF
+}
+
 caller_evm_blob_from_principal() {
   local principal="$1"
   local caller_hex
@@ -84,6 +136,7 @@ PY
   genesis_balances = vec { record { address = blob "${blob}"; amount = ${amount} : nat } };
   wrap_canister_id = principal "${WRAP_CANISTER_ID}";
   wrap_factory_address = blob "${factory_blob}";
+$(optional_wrap_config_field)
 $(optional_nat64_field "QUERY_INSTRUCTION_SOFT_LIMIT" "query_instruction_soft_limit")
 $(optional_nat64_field "UPDATE_INSTRUCTION_SOFT_LIMIT" "update_instruction_soft_limit")
 })

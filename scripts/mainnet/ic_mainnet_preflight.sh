@@ -7,6 +7,8 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "${REPO_ROOT}"
 
+source "${REPO_ROOT}/scripts/lib_legacy_wrap_drain.sh"
+
 ICP_ENV="${ICP_ENV:-ic}"
 CANISTER_NAME="${CANISTER_NAME:-evm_canister}"
 CANISTER_ID="${CANISTER_ID:-}"
@@ -85,6 +87,12 @@ fi
 if [[ "${RUN_RELEASE_GUARD}" == "1" ]]; then
   log "running release guard"
   scripts/release_wasm_guard.sh
+fi
+
+if legacy_wrap_drain_required; then
+  require_cmd "${DFX_BIN:-dfx}"
+  log "running legacy wrap drain gate"
+  check_legacy_wrap_drain
 fi
 
 TARGET="$(status_target)"

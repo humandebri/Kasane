@@ -13,20 +13,11 @@
     "test": "tsx tests/run.ts",
     "test:e2e": "playwright test",
     "test:e2e:install": "playwright install chromium",
-    "test:local:preflight": "npm run bindgen:check && npm run lint && npm test && npm run build && npm run juno:functions:build",
-    "test:local:smoke": "node scripts/local-smoke.mjs",
-    "test:local:wrapper": "node scripts/local-wrapper-smoke.mjs",
-    "test:local:wrapper:preflight": "sh scripts/local-wrapper-preflight.sh",
-    "juno:emulator:start": "juno emulator start",
-    "juno:emulator:stop": "juno emulator stop",
-    "juno:functions:build": "juno functions build",
-    "juno:hosting:prune": "npx @junobuild/cli@0.14.3 hosting prune",
-    "juno:hosting:deploy:prune": "npx @junobuild/cli@0.14.3 hosting deploy --prune"
+    "test:local:preflight": "npm run bindgen:check && npm run lint && npm test && npm run build"
   },
   "dependencies": {
     "@dfinity/ic-pub-key": "1.0.1",
     "@icp-sdk/core": "^5.0.0",
-    "@junobuild/core": "^5.2.2",
     "@noble/hashes": "^1.8.0",
     "@radix-ui/react-popover": "^1.1.15",
     "@radix-ui/react-tabs": "^1.1.13",
@@ -47,9 +38,6 @@
   },
   "devDependencies": {
     "@icp-sdk/bindgen": "^0.2.3",
-    "@junobuild/config": "latest",
-    "@junobuild/functions": "latest",
-    "@junobuild/vite-plugin": "latest",
     "@playwright/test": "^1.58.2",
     "@tailwindcss/postcss": "^4.1.12",
     "@types/node": "^24.3.0",

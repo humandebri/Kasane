@@ -1,12 +1,11 @@
-// どこで: Vite 設定 / 何を: React・Juno・alias をまとめて定義 / なぜ: wrapper dashboard を Juno 配備前提の SPA として動かすため
+// どこで: Vite 設定 / 何を: React・alias・chunk 分割を定義 / なぜ: wrapper dashboard を静的SPAとして配備するため
 
 import { fileURLToPath, URL } from "node:url";
 import react from "@vitejs/plugin-react";
-import juno from "@junobuild/vite-plugin";
 import { defineConfig } from "vite";
 
 export default defineConfig({
-  plugins: [react(), juno()],
+  plugins: [react()],
   build: {
     rollupOptions: {
       output: {
@@ -15,8 +14,7 @@ export default defineConfig({
             return undefined;
           }
           if (
-            id.includes("@junobuild/core")
-            || id.includes("@icp-sdk/core")
+            id.includes("@icp-sdk/core")
             || id.includes("@dfinity/ic-pub-key")
           ) {
             return "auth-sdk";

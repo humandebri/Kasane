@@ -1,15 +1,15 @@
-// どこで: wrap-canister クライアント / 何を: 新 wrap/unwrap API を UI 向けに公開する / なぜ: request_id 手組みや旧 status API を排除するため
+// どこで: 統合版wrapクライアント / 何を: evm_canister の wrap/unwrap API を UI 向けに公開する / なぜ: request_id 手組みや旧 status API を排除するため
 
 import type { ActorSubclass, Identity } from "@icp-sdk/core/agent";
 import { Principal } from "@icp-sdk/core/principal";
-import { idlFactory as wrapIdlFactory } from "@/src/declarations/wrap_canister/wrap_canister.did.js";
+import { idlFactory as wrapIdlFactory } from "@/src/declarations/evm_canister/evm_canister.did.js";
 import type {
-  _SERVICE as WrapService,
   ApiError as ApiErrorWire,
+  _SERVICE as WrapService,
   RequestKind as RequestKindVariant,
   RequestOverview as RequestOverviewWire,
   RequestStatus as RequestStatusVariant,
-} from "@/src/declarations/wrap_canister/wrap_canister.did";
+} from "@/src/declarations/evm_canister/evm_canister.did";
 import { loadConfig, type WrapperConfig } from "../config";
 import type { ExecutionStatus, WrapExecutionResult } from "../types";
 import { createActorCache, createAuthenticatedActor, createQueryActor } from "./actor-utils";
@@ -29,6 +29,7 @@ type QueryActorLike = {
   quote_native_withdrawal: PlainActorMethod<WrapService["quote_native_withdrawal"]>;
   get_unwrap_requirements: PlainActorMethod<WrapService["get_unwrap_requirements"]>;
   get_fee_policy: PlainActorMethod<WrapService["get_fee_policy"]>;
+  get_wrap_runtime_config: PlainActorMethod<WrapService["get_wrap_runtime_config"]>;
 };
 type SubmitActorLike = {
   retry_request: PlainActorMethod<WrapService["retry_request"]>;
@@ -95,16 +96,18 @@ function decodeApiError(err: ApiErrorWire): string {
 }
 
 function isWrapRequest(value: RequestOverviewWire): boolean {
-  return "Wrap" in value.kind;
+  return "Wrap" in value.kind || "NativeDeposit" in value.kind;
 }
 
 function inferMintRecoverable(value: RequestOverviewWire): boolean {
   return (
     isWrapRequest(value) &&
     "Failed" in value.status &&
-    value.pull_ledger_tx_id.length > 0 &&
-    value.mint_tx_id.length === 0 &&
-    value.withdraw_ledger_tx_id.length === 0
+    (value.recoverable ?? (
+      value.pull_ledger_tx_id.length > 0 &&
+      value.mint_tx_id.length === 0 &&
+      value.withdraw_ledger_tx_id.length === 0
+    ))
   );
 }
 
@@ -125,9 +128,9 @@ export async function getExecutionResult(
       ledgerTxId: value.ledger_tx_id[0] ?? value.pull_ledger_tx_id[0] ?? null,
       errorCode: value.error[0]?.code ?? null,
       mintFailedRecoverable: inferMintRecoverable(value),
-      withdrawn: value.withdraw_ledger_tx_id.length > 0,
+      withdrawn: value.withdrawn ?? value.withdraw_ledger_tx_id.length > 0,
       withdrawLedgerTxId: value.withdraw_ledger_tx_id[0] ?? null,
-      withdrawErrorCode: value.withdraw_error_code?.[0] ?? null,
+      withdrawErrorCode: value.withdraw_error?.[0]?.code ?? null,
     };
   }
 
@@ -328,9 +331,9 @@ export async function getNativeDepositResult(requestId: Uint8Array): Promise<Wra
     ledgerTxId: value.ledger_tx_id[0] ?? value.pull_ledger_tx_id[0] ?? null,
     errorCode: value.error[0]?.code ?? null,
     mintFailedRecoverable: inferMintRecoverable(value),
-    withdrawn: value.withdraw_ledger_tx_id.length > 0,
+    withdrawn: value.withdrawn ?? value.withdraw_ledger_tx_id.length > 0,
     withdrawLedgerTxId: value.withdraw_ledger_tx_id[0] ?? null,
-    withdrawErrorCode: value.withdraw_error_code?.[0] ?? null,
+    withdrawErrorCode: value.withdraw_error?.[0]?.code ?? null,
   };
 }
 
@@ -384,6 +387,24 @@ export async function getFeePolicy(): Promise<{
     feeLedgerCanister: out.Ok.fee_ledger_canister.toText(),
     cycleFeeE8s: out.Ok.cycle_fee_e8s,
     gasPriceBufferBps: out.Ok.gas_price_buffer_bps,
+  };
+}
+
+export async function getWrapRuntimeConfig(): Promise<{
+  nativeLedgerCanister: string;
+  feeLedgerCanister: string;
+  allowedAssets: string[];
+  wrapFactoryAddress: Uint8Array;
+}> {
+  const out = await (await getQueryActor()).get_wrap_runtime_config();
+  if ("Err" in out) {
+    throw new Error(out.Err);
+  }
+  return {
+    nativeLedgerCanister: out.Ok.native_ledger_canister.toText(),
+    feeLedgerCanister: out.Ok.fee_ledger_canister.toText(),
+    allowedAssets: out.Ok.allowed_assets.map((asset) => asset.toText()),
+    wrapFactoryAddress: out.Ok.wrap_factory_address,
   };
 }
 

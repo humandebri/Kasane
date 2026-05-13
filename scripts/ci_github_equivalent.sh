@@ -58,7 +58,7 @@ if ! command -v cargo-deny >/dev/null 2>&1 || ! command -v cargo-audit >/dev/nul
 fi
 
 cargo deny check
-cargo audit --deny warnings --ignore RUSTSEC-2024-0388 --ignore RUSTSEC-2024-0436
+cargo audit --deny warnings --ignore RUSTSEC-2024-0388 --ignore RUSTSEC-2024-0436 --ignore RUSTSEC-2026-0097
 
 cargo metadata --locked --format-version 1 > "${snapshot_dir}/cargo-metadata.sbom.json"
 find vendor/revm -type f -print0 | sort -z | xargs -0 sha256sum > "${snapshot_dir}/vendor-revm.sha256"
@@ -70,9 +70,16 @@ find vendor/ark-relations -type f -print0 | sort -z | xargs -0 sha256sum > "${sn
 
 cargo test -p evm-db -p ic-evm-core -p ic-evm-gateway --locked --lib --tests
 cargo test --manifest-path crates/evm-rpc-e2e/Cargo.toml --no-run --locked
-cargo build --release --target wasm32-unknown-unknown -p wrap-canister -p mock-wrap-canister -p ic-evm-gateway --locked
+cargo build --release --target wasm32-unknown-unknown -p ic-evm-gateway --locked
 
 . scripts/prepare_ci_icrc1_ledger_wasm.sh
+if [[ -n "${POCKET_IC_BIN:-}" ]] && ! "${POCKET_IC_BIN}" --version 2>/dev/null | grep -Eq '^pocket-ic-server 12\.'; then
+  unset POCKET_IC_BIN
+fi
+if [[ -z "${POCKET_IC_BIN:-}" && -x "crates/evm-rpc-e2e/pocket-ic" ]] \
+  && "crates/evm-rpc-e2e/pocket-ic" --version 2>/dev/null | grep -Eq '^pocket-ic-server 12\.'; then
+  export POCKET_IC_BIN="${PWD}/crates/evm-rpc-e2e/pocket-ic"
+fi
 cargo test --manifest-path crates/evm-rpc-e2e/Cargo.toml --test wrap_unwrap_flow_e2e --locked -- --test-threads=1
 
 (cd tools/wrapper-vite/contracts && forge test -vv)

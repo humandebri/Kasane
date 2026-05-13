@@ -61,6 +61,10 @@ export const idlFactory: IDL.InterfaceFactory = ({ IDL }) => {
     gas_price: IDL.Opt(IDL.Nat),
     max_fee_per_gas: IDL.Opt(IDL.Nat),
     max_priority_fee_per_gas: IDL.Opt(IDL.Nat),
+    tx_type: IDL.Opt(IDL.Nat8),
+    signature_v: IDL.Opt(IDL.Nat64),
+    signature_r: IDL.Opt(IDL.Vec(IDL.Nat8)),
+    signature_s: IDL.Opt(IDL.Vec(IDL.Nat8)),
   });
   const EthTxView = IDL.Record({
     raw: IDL.Vec(IDL.Nat8),
@@ -94,7 +98,9 @@ export const idlFactory: IDL.InterfaceFactory = ({ IDL }) => {
     operator_fee: IDL.Nat,
     eth_tx_hash: IDL.Opt(IDL.Vec(IDL.Nat8)),
     gas_used: IDL.Nat64,
+    cumulative_gas_used: IDL.Opt(IDL.Nat64),
     contract_address: IDL.Opt(IDL.Vec(IDL.Nat8)),
+    tx_type: IDL.Opt(IDL.Nat8),
     tx_hash: IDL.Vec(IDL.Nat8),
   });
   const EthBlockView = IDL.Record({
@@ -124,6 +130,7 @@ export const idlFactory: IDL.InterfaceFactory = ({ IDL }) => {
     log_index: IDL.Nat32,
     data: IDL.Vec(IDL.Nat8),
     block_number: IDL.Nat64,
+    block_hash: IDL.Opt(IDL.Vec(IDL.Nat8)),
     topics: IDL.Vec(IDL.Vec(IDL.Nat8)),
     address: IDL.Vec(IDL.Nat8),
     eth_tx_hash: IDL.Opt(IDL.Vec(IDL.Nat8)),
@@ -158,34 +165,10 @@ export const idlFactory: IDL.InterfaceFactory = ({ IDL }) => {
     Rejected: IDL.Text,
     InvalidArgument: IDL.Text,
   });
-  const OpsModeView = IDL.Variant({
-    Low: IDL.Null,
-    Normal: IDL.Null,
-    Critical: IDL.Null,
-  });
-  const OpsConfigView = IDL.Record({
-    low_watermark: IDL.Nat,
-    freeze_on_critical: IDL.Bool,
-    critical: IDL.Nat,
-  });
   const OpsStatusView = IDL.Record({
     needs_migration: IDL.Bool,
     critical_corrupt: IDL.Bool,
-    decode_failure_last_ts: IDL.Nat64,
-    log_filter_override: IDL.Opt(IDL.Text),
-    last_cycle_balance: IDL.Nat,
-    mode: OpsModeView,
-    instruction_soft_limit: IDL.Nat64,
-    last_check_ts: IDL.Nat64,
-    mining_error_count: IDL.Nat64,
-    log_truncated_count: IDL.Nat64,
     schema_version: IDL.Nat32,
-    safe_stop_latched: IDL.Bool,
-    decode_failure_last_label: IDL.Opt(IDL.Text),
-    prune_error_count: IDL.Nat64,
-    block_gas_limit: IDL.Nat64,
-    config: OpsConfigView,
-    decode_failure_count: IDL.Nat64,
   });
 
   return IDL.Service({

@@ -25,14 +25,14 @@ use ic_evm_rpc::{
     rpc_eth_call_object, rpc_eth_call_object_at, rpc_eth_call_rawtx, rpc_eth_estimate_gas_object,
     rpc_eth_estimate_gas_object_at, rpc_eth_fee_history, rpc_eth_gas_price, rpc_eth_get_balance,
     rpc_eth_get_block_by_number_with_status, rpc_eth_get_block_number_by_hash, rpc_eth_get_code,
-    rpc_eth_get_storage_at, rpc_eth_get_transaction_by_eth_hash, rpc_eth_get_transaction_count_at,
-    rpc_eth_get_transaction_receipt_by_eth_hash,
+    rpc_eth_get_logs_paged, rpc_eth_get_storage_at, rpc_eth_get_transaction_by_eth_hash,
+    rpc_eth_get_transaction_count_at, rpc_eth_get_transaction_receipt_by_eth_hash,
     rpc_eth_get_transaction_receipt_with_status_by_eth_hash,
     rpc_eth_get_transaction_receipt_with_status_by_tx_id, rpc_eth_history_window,
     rpc_eth_max_priority_fee_per_gas, rpc_eth_send_raw_transaction, submit_tx_in_with_code,
 };
 use ic_evm_rpc_types::{
-    RpcBlockLookupView, RpcBlockTagView, RpcCallObjectView, RpcReceiptLookupView,
+    EthLogFilterView, RpcBlockLookupView, RpcBlockTagView, RpcCallObjectView, RpcReceiptLookupView,
 };
 use std::sync::{Mutex, OnceLock};
 
@@ -1509,6 +1509,151 @@ fn get_transaction_receipt_has_block_wide_log_index() {
         .expect("receipt must exist");
     assert_eq!(out.logs.len(), 1);
     assert_eq!(out.logs[0].log_index, 2);
+    assert_eq!(out.cumulative_gas_used, Some(42_000));
+}
+
+#[test]
+fn get_logs_paged_uses_block_wide_indexes_and_next_cursor() {
+    let _guard = test_lock().lock().expect("lock");
+    init_stable_state();
+
+    let raw0 = vec![0x02, 0x20];
+    let raw1 = vec![0x02, 0x21];
+    let tx0 = TxId(hash::stored_tx_id(
+        TxKind::EthSigned,
+        &raw0,
+        None,
+        None,
+        None,
+    ));
+    let tx1 = TxId(hash::stored_tx_id(
+        TxKind::EthSigned,
+        &raw1,
+        None,
+        None,
+        None,
+    ));
+    let block = BlockData::new(
+        8,
+        [0u8; 32],
+        [0x88u8; 32],
+        1_700_000_008,
+        1_000_000_000,
+        3_000_000,
+        42_000,
+        [0u8; 20],
+        vec![tx0, tx1],
+        [8u8; 32],
+        [9u8; 32],
+    );
+    let receipt0 = ReceiptLike {
+        tx_id: tx0,
+        block_number: 8,
+        tx_index: 0,
+        status: 1,
+        gas_used: 21_000,
+        effective_gas_price: 1,
+        l1_data_fee: 0,
+        operator_fee: 0,
+        total_fee: 0,
+        return_data_hash: [0u8; 32],
+        return_data: Vec::new(),
+        contract_address: None,
+        logs: vec![
+            log_entry_from_parts([0x11; 20], vec![[0x22; 32]], vec![0xaa]),
+            log_entry_from_parts([0x11; 20], vec![[0x23; 32]], vec![0xbb]),
+        ],
+    };
+    let receipt1 = ReceiptLike {
+        tx_id: tx1,
+        block_number: 8,
+        tx_index: 1,
+        status: 1,
+        gas_used: 21_000,
+        effective_gas_price: 1,
+        l1_data_fee: 0,
+        operator_fee: 0,
+        total_fee: 0,
+        return_data_hash: [0u8; 32],
+        return_data: Vec::new(),
+        contract_address: None,
+        logs: vec![log_entry_from_parts(
+            [0x12; 20],
+            vec![[0x24; 32]],
+            vec![0xcc],
+        )],
+    };
+    with_state_mut(|state| {
+        state.tx_store.insert(
+            tx0,
+            StoredTxBytes::new_with_fees(
+                tx0,
+                TxKind::EthSigned,
+                raw0,
+                None,
+                Vec::new(),
+                Vec::new(),
+                0,
+                0,
+                false,
+            ),
+        );
+        state.tx_store.insert(
+            tx1,
+            StoredTxBytes::new_with_fees(
+                tx1,
+                TxKind::EthSigned,
+                raw1,
+                None,
+                Vec::new(),
+                Vec::new(),
+                0,
+                0,
+                false,
+            ),
+        );
+        let block_ptr = state
+            .blob_store
+            .store_bytes(&block.clone().into_bytes())
+            .expect("store block");
+        state.blocks.insert(8, block_ptr);
+        state.head.set(Head {
+            number: 8,
+            block_hash: [0x88; 32],
+            timestamp: 1_700_000_008,
+        });
+        let receipt0_ptr = state
+            .blob_store
+            .store_bytes(&receipt0.clone().into_bytes())
+            .expect("store receipt0");
+        let receipt1_ptr = state
+            .blob_store
+            .store_bytes(&receipt1.clone().into_bytes())
+            .expect("store receipt1");
+        state.receipts.insert(tx0, receipt0_ptr);
+        state.receipts.insert(tx1, receipt1_ptr);
+    });
+
+    let filter = EthLogFilterView {
+        from_block: Some(8),
+        to_block: Some(8),
+        address: None,
+        topic0: None,
+        topic1: None,
+        limit: None,
+    };
+    let page0 = rpc_eth_get_logs_paged(filter.clone(), None, 1).expect("page0");
+    assert_eq!(page0.items.len(), 1);
+    assert_eq!(page0.items[0].log_index, 0);
+    assert_eq!(page0.items[0].block_hash, Some(vec![0x88; 32]));
+
+    let page1 = rpc_eth_get_logs_paged(filter.clone(), page0.next_cursor, 1).expect("page1");
+    assert_eq!(page1.items.len(), 1);
+    assert_eq!(page1.items[0].log_index, 1);
+
+    let page2 = rpc_eth_get_logs_paged(filter, page1.next_cursor, 1).expect("page2");
+    assert_eq!(page2.items.len(), 1);
+    assert_eq!(page2.items[0].log_index, 2);
 }
 
 #[test]

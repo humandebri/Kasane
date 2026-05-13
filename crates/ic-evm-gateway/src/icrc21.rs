@@ -9,8 +9,7 @@ use evm_core::wrap_precompile::WRAP_PRECOMPILE_ADDRESS;
 use crate::{parse_submit_ic_tx_args, SubmitIcTxArgsDto};
 
 const ICRC_10_URL: &str = "https://github.com/dfinity/ICRC/blob/main/ICRCs/ICRC-10/ICRC-10.md";
-const ICRC_21_URL: &str =
-    "https://github.com/dfinity/wg-identity-authentication/blob/main/topics/ICRC-21/icrc_21_consent_msg.md";
+const ICRC_21_URL: &str = "https://github.com/dfinity/wg-identity-authentication/blob/main/topics/ICRC-21/icrc_21_consent_msg.md";
 const ERC20_APPROVE_SELECTOR: [u8; 4] = [0x09, 0x5e, 0xa7, 0xb3];
 
 #[derive(Clone, Debug, CandidType, Deserialize, Eq, PartialEq)]

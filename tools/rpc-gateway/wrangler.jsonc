@@ -1,0 +1,86 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "kasane-rpc-gateway",
+  "main": "src/worker.ts",
+  "compatibility_date": "2026-05-12",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": false,
+  "observability": {
+    "enabled": true,
+    "head_sampling_rate": 1
+  },
+  "vars": {
+    "EVM_CANISTER_ID": "4c52m-aiaaa-aaaam-agwwa-cai",
+    "RPC_GATEWAY_IC_HOST": "https://icp-api.io",
+    "RPC_GATEWAY_FETCH_ROOT_KEY": "false",
+    "RPC_GATEWAY_CLIENT_VERSION": "kasane/phase2-gateway/v0.1.0",
+    "RPC_GATEWAY_MAX_HTTP_BODY_SIZE": "262144",
+    "RPC_GATEWAY_MAX_BATCH_LEN": "20",
+    "RPC_GATEWAY_MAX_JSON_DEPTH": "20",
+    "RPC_GATEWAY_LOGS_BLOCKHASH_SCAN_LIMIT": "2000",
+    "RPC_GATEWAY_CORS_ORIGIN": "*"
+  },
+  "secrets": {
+    "required": ["RPC_GATEWAY_IDENTITY_PEM"]
+  },
+  "env": {
+    "staging": {
+      "name": "kasane-rpc-gateway-staging",
+      "routes": [
+        {
+          "pattern": "rpc-staging.kasane.network",
+          "custom_domain": true
+        }
+      ],
+      "observability": {
+        "enabled": true,
+        "head_sampling_rate": 1
+      },
+      "vars": {
+        "EVM_CANISTER_ID": "4c52m-aiaaa-aaaam-agwwa-cai",
+        "RPC_GATEWAY_IC_HOST": "https://icp-api.io",
+        "RPC_GATEWAY_FETCH_ROOT_KEY": "false",
+        "RPC_GATEWAY_CLIENT_VERSION": "kasane/phase2-gateway/v0.1.0",
+        "RPC_GATEWAY_MAX_HTTP_BODY_SIZE": "262144",
+        "RPC_GATEWAY_MAX_BATCH_LEN": "20",
+        "RPC_GATEWAY_MAX_JSON_DEPTH": "20",
+        "RPC_GATEWAY_LOGS_BLOCKHASH_SCAN_LIMIT": "2000",
+        "RPC_GATEWAY_CORS_ORIGIN": "*"
+      },
+      "secrets": {
+        "required": ["RPC_GATEWAY_IDENTITY_PEM"]
+      }
+    },
+    "production": {
+      "name": "kasane-rpc-gateway-production",
+      "routes": [
+        {
+          "pattern": "rpc.kasane.network",
+          "custom_domain": true
+        },
+        {
+          "pattern": "rpc-testnet.kasane.network",
+          "custom_domain": true
+        }
+      ],
+      "observability": {
+        "enabled": true,
+        "head_sampling_rate": 0.1
+      },
+      "vars": {
+        "EVM_CANISTER_ID": "4c52m-aiaaa-aaaam-agwwa-cai",
+        "RPC_GATEWAY_IC_HOST": "https://icp-api.io",
+        "RPC_GATEWAY_FETCH_ROOT_KEY": "false",
+        "RPC_GATEWAY_CLIENT_VERSION": "kasane/phase2-gateway/v0.1.0",
+        "RPC_GATEWAY_MAX_HTTP_BODY_SIZE": "262144",
+        "RPC_GATEWAY_MAX_BATCH_LEN": "20",
+        "RPC_GATEWAY_MAX_JSON_DEPTH": "20",
+        "RPC_GATEWAY_LOGS_BLOCKHASH_SCAN_LIMIT": "2000",
+        "RPC_GATEWAY_CORS_ORIGIN": "*"
+      },
+      "secrets": {
+        "required": ["RPC_GATEWAY_IDENTITY_PEM"]
+      }
+    }
+  }
+}

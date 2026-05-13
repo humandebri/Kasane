@@ -1,4 +1,4 @@
-// どこで: wrapper-vite E2E / 何を: 履歴欄の未接続表示と request route の再表示を確認する / なぜ: ローカル検証の最低限の UI 回帰を自動化するため
+// どこで: wrapper-vite E2E / 何を: console と request route を確認する / なぜ: ローカル検証の最低限の UI 回帰を自動化するため
 
 import { expect, test } from "@playwright/test";
 
@@ -27,12 +27,6 @@ test("wallet modal lists oisy and metamask connectors", async ({ page }) => {
   await expect(page.getByRole("button", { name: "Connect Oisy" })).toBeVisible();
   await expect(page.getByRole("button", { name: "Connect MetaMask" })).toBeVisible();
   await expect(page.getByText("Extension not detected in this browser.")).toBeVisible();
-});
-
-test("history route renders separate history page", async ({ page }) => {
-  await page.goto("/history");
-  await expect(page.locator("h1", { hasText: "Recent Requests" })).toBeVisible();
-  await expect(page.getByTestId("history-panel").locator("p", { hasText: "Connect Oisy to view request history." })).toBeVisible();
 });
 
 test("request route reopens the status modal", async ({ page }) => {

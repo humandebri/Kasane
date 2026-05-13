@@ -21,6 +21,7 @@ fn sample_request() -> UnwrapDispatchRequest {
         ledger_tx_id: Some(vec![0xE5u8; 16]),
         error_code: Some("wrap.integration.sample".to_string()),
         updated_at: 123_456_799,
+        transfer_created_at_time: 123_456_800,
     }
 }
 

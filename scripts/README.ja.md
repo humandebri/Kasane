@@ -134,21 +134,22 @@ scripts/measure_precompile_ratio.sh
 
 ### mainnet運用
 - `scripts/mainnet/ic_mainnet_preflight.sh`: 本番前の最小チェック
-  - `CANISTER_NAME` は既定で `evm_canister`。`wrap_canister` はこの script の対象外
+  - `CANISTER_NAME` は既定で `evm_canister`
   - 既定の cycles 下限は `MIN_CYCLES=2000000000000`
+  - 旧 standalone wrap canister がある場合は `LEGACY_WRAP_CANISTER_ID` と `LEGACY_WRAP_REQUEST_IDS_FILE` で残件drainを確認する
+  - request id が存在しない場合も `ALLOW_EMPTY_LEGACY_WRAP_REQUESTS=1` の明示が必要
 - `scripts/mainnet/ic_mainnet_deploy.sh`: 本番デプロイ本体
   - 既定 build では `precompile-profile-admin` feature を有効化しない
   - precompile ratio の計測は deploy 前に `scripts/run_precompile_profile_e2e.sh` / `scripts/measure_precompile_ratio.sh` で実施し、既定の fixed ratio `1/100` を見直す場合は再デプロイする
   - `MODE=upgrade` でも `WRAP_CANISTER_ID` と `EVM_WRAP_FACTORY` が必須
   - instruction soft limit を install / upgrade で上書きしたい場合だけ `QUERY_INSTRUCTION_SOFT_LIMIT` / `UPDATE_INSTRUCTION_SOFT_LIMIT` を事前 export する
-  - wrapper-vite を同時更新する場合は `evm_canister` -> `wrap_canister` -> frontend の順で deploy する。frontend は `get_unwrap_request_ids_by_eth_tx_hash` に依存する
-  - 対象は `evm_canister`。`wrap_canister` の upgrade は [docs/ops/wrap-canister-deploy-runbook.ja.md](/Users/0xhude/Desktop/ICP/Kasane/docs/ops/wrap-canister-deploy-runbook.ja.md) の手順で別途実行する
+  - wrapper-vite を同時更新する場合は `evm_canister` -> frontend の順で deploy する。frontend は `get_unwrap_request_ids_by_eth_tx_hash` に依存する
 - `scripts/mainnet/ic_mainnet_post_upgrade_smoke.sh`: デプロイ後の最小RPC確認
 - `scripts/verify_submit_after_deploy.sh`: verify submit の手動/CIフック
 - `scripts/mainnet/mainnet_method_test.sh`: 本番メソッド検証（重い）
 - `scripts/mainnet/mainnet_wrap_unwrap_smoke.sh`: TESTICP を使った wrap -> unwrap 実経路確認
   - wrap 側は `quote_wrap_request` の `charged_fee_e8s` / `charged_gas_price_wei` / `fee_ledger_canister` を `submit_wrap_request` に固定して実行する
-  - unwrap の status 追跡は `get_unwrap_dispatch_overview` + `wrap_canister.get_request` を使う
+  - unwrap の status 追跡は `get_unwrap_dispatch_overview` + `evm_canister.get_request` を使う
   - unwrap 前に wrapped token の `approve(factory, amount)` を自動投入する
   - 破壊的 DID 変更後は script/client を canister と同時更新する前提
   - `MINING_IDLE_OBSERVE_SEC`: 冒頭の idle 観測秒数（既定: `6`）
@@ -167,7 +168,11 @@ scripts/measure_precompile_ratio.sh
 ## 主要環境変数（よく使うもの）
 - `CANISTER_NAME` / `CANISTER_ID`
 - `WRAP_CANISTER_ID`
-  - 実際の `wrap_canister` principal が必要な wrap/unwrap smoke・ledger 系スクリプトで使用
+  - 統合版wrapでは `evm_canister` principal を使用
+- `LEGACY_WRAP_CANISTER_ID`
+  - 旧 standalone wrap canister の残件drain確認用。`EVM_CANISTER_ID` と異なる場合だけ preflight gate が有効
+- `LEGACY_WRAP_REQUEST_IDS_FILE`
+  - 旧 wrap request id manifest。空の場合は `ALLOW_EMPTY_LEGACY_WRAP_REQUESTS=1` が必須
 - `EVM_WRAP_FACTORY`
   - `scripts/mainnet/ic_mainnet_deploy.sh` の必須値。20-byte EVM factory address を `0x...` 形式で渡す
 - `QUERY_INSTRUCTION_SOFT_LIMIT`

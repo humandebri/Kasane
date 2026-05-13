@@ -9,11 +9,16 @@
     "build": "tsc -p tsconfig.json",
     "start": "node dist/src/main.js",
     "lint": "tsc -p tsconfig.json --noEmit",
+    "typecheck:worker": "wrangler types /tmp/rpc-gateway-worker.d.ts && tsc -p tsconfig.json --noEmit",
+    "dev:worker": "wrangler dev --env staging --local --port 8787",
+    "deploy:staging": "wrangler deploy --env staging",
+    "deploy:production": "wrangler deploy --env production",
     "test": "EVM_CANISTER_ID=aaaaa-aa tsx tests/run.ts",
     "smoke:viem": "tsx smoke/viem_smoke.ts",
     "smoke:ethers": "tsx smoke/ethers_smoke.ts",
     "smoke:foundry": "bash smoke/foundry_smoke.sh",
     "smoke:watch-receipt": "tsx smoke/receipt_watch.ts",
+    "smoke:read": "bash smoke/run_read_only.sh",
     "smoke:all": "bash smoke/run_all.sh"
   },
   "dependencies": {
@@ -23,6 +28,7 @@
     "@types/node": "^22.10.2",
     "tsx": "^4.19.2",
     "typescript": "^5.7.3",
+    "wrangler": "^4.0.0",
     "ethers": "^6.15.0",
     "viem": "^2.37.13"
   }

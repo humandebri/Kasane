@@ -26,12 +26,6 @@ export type WrapFormState = {
   gasLimit: string;
 };
 
-export type HistoryEntry = {
-  requestId: string;
-  kind: ActiveTab;
-  submittedAt: string;
-};
-
 export type WrapActionStep =
   | "idle"
   | "quoting"

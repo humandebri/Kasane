@@ -11,15 +11,6 @@ canisters:
       configuration:
         package: ic-evm-gateway
         candid: crates/ic-evm-gateway/evm_canister.did
-  - name: wrap_canister
-    settings:
-      freezing_threshold: 2592000
-    recipe:
-      type: "@dfinity/rust@v3.0.0"
-      configuration:
-        package: wrap-canister
-        candid: othercanisters/wrap-canister/wrap_canister.did
-
 networks:
   - name: local
     mode: managed
