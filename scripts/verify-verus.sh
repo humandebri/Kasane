@@ -34,6 +34,7 @@ for lib_rs in "${verified_roots[@]}"; do
     "${VERUS_BIN}" \
       --no-cheating \
       --cfg verus_keep_ghost \
+      --edition=2021 \
       --crate-type=lib \
       "${lib_rs}"
   )

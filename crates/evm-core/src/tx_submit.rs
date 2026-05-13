@@ -47,6 +47,13 @@ pub fn apply_nonce_and_replacement(
     base_fee: u64,
 ) -> Result<Option<TxId>, NonceRuleError> {
     let expected_nonce = expected_nonce_for_sender(state, sender);
+    if nonce < expected_nonce {
+        return Err(NonceRuleError::TooLow);
+    }
+    if nonce > expected_nonce {
+        return Err(NonceRuleError::Gap);
+    }
+
     let current = state.pending_current_by_sender.get(&sender);
     let old_effective = match current {
         Some(old_tx_id) => Some(effective_gas_price_for_tx(state, old_tx_id, base_fee)?),
