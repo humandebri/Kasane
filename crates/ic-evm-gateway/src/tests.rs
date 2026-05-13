@@ -18,9 +18,9 @@ use evm_core::wrap_precompile::{NATIVE_WITHDRAW_PRECOMPILE_ADDRESS, WRAP_PRECOMP
 use evm_db::chain_data::constants::MAX_RETURN_DATA;
 use evm_db::chain_data::receipt::log_entry_from_parts;
 use evm_db::chain_data::{
-    BlockData, MigrationPhase, OpsMode, ReceiptLike, RequestStatus, RuntimeConfigV1, StoredTxBytes,
-    TxId, TxKind, TxLoc, UnwrapDispatchRequest, UnwrapRequestStatus, WrapRequestResult,
-    WrapStoredRequest,
+    BlockData, MigrationPhase, MintSubmitStatus, OpsMode, ReceiptLike, RequestStatus,
+    RuntimeConfigV1, StoredTxBytes, TxId, TxKind, TxLoc, UnwrapDispatchRequest,
+    UnwrapRequestStatus, WrapRequestResult, WrapRequestStage, WrapStoredRequest,
 };
 use evm_db::memory::{get_memory, AppMemoryId, WASM_PAGE_SIZE_BYTES};
 use evm_db::meta::{
@@ -502,6 +502,7 @@ fn sample_unwrap_request(
         ledger_tx_id: None,
         error_code: error_code.map(str::to_string),
         updated_at,
+        transfer_created_at_time: 0,
     }
 }
 
@@ -531,6 +532,11 @@ fn sample_wrap_request(status: RequestStatus) -> WrapStoredRequest {
             fee_ledger_tx_id: Some(vec![6]),
             charged_fee_e8s: Some(7),
             charged_gas_price_wei: Some(8),
+            stage: WrapRequestStage::FeeCollected,
+            updated_at: 3,
+            mint_nonce: None,
+            mint_submitted_at_time: 0,
+            mint_submit_status: MintSubmitStatus::NotSubmitted,
         },
     }
 }
@@ -1792,6 +1798,11 @@ fn get_request_returns_wrap_overview_from_integrated_state() {
                     fee_ledger_tx_id: Some(vec![6]),
                     charged_fee_e8s: Some(7),
                     charged_gas_price_wei: Some(8),
+                    stage: WrapRequestStage::Succeeded,
+                    updated_at: 3,
+                    mint_nonce: None,
+                    mint_submitted_at_time: 0,
+                    mint_submit_status: MintSubmitStatus::NotSubmitted,
                 },
             },
         );
@@ -1840,6 +1851,11 @@ fn existing_native_deposit_response_is_idempotent_for_same_request() {
                     fee_ledger_tx_id: Some(vec![6]),
                     charged_fee_e8s: Some(7),
                     charged_gas_price_wei: Some(0),
+                    stage: WrapRequestStage::Succeeded,
+                    updated_at: 3,
+                    mint_nonce: None,
+                    mint_submitted_at_time: 0,
+                    mint_submit_status: MintSubmitStatus::NotSubmitted,
                 },
             },
         );
@@ -1886,6 +1902,11 @@ fn existing_native_deposit_response_rejects_idempotency_mismatch() {
                     fee_ledger_tx_id: Some(vec![6]),
                     charged_fee_e8s: Some(7),
                     charged_gas_price_wei: Some(0),
+                    stage: WrapRequestStage::Succeeded,
+                    updated_at: 3,
+                    mint_nonce: None,
+                    mint_submitted_at_time: 0,
+                    mint_submit_status: MintSubmitStatus::NotSubmitted,
                 },
             },
         );
@@ -1902,7 +1923,7 @@ fn existing_native_deposit_response_rejects_idempotency_mismatch() {
 }
 
 #[test]
-fn insert_wrap_request_saves_fee_quote_and_enqueues() {
+fn ensure_wrap_request_before_fee_saves_quote_then_enqueues_after_fee() {
     init_stable_state();
     let caller = Principal::self_authenticating(b"wrap-caller");
     let request_id = TxId([0xacu8; 32]);
@@ -1917,13 +1938,27 @@ fn insert_wrap_request_saves_fee_quote_and_enqueues() {
         fee_ledger_canister: Principal::self_authenticating(b"fee-ledger"),
     };
 
-    super::insert_wrap_request(args, caller, vec![9], 7, 8, 123).expect("insert");
-    super::enqueue_wrap_request(request_id);
+    super::ensure_wrap_request_before_fee(args, caller, 7, 8).expect("insert");
 
     with_state(|state| {
         let req = state.wrap_requests.get(&request_id).expect("request");
         assert_eq!(req.caller, caller.as_slice());
         assert_eq!(req.result.status, RequestStatus::Queued);
+        assert_eq!(req.result.stage, WrapRequestStage::FeePending);
+        assert_eq!(req.result.fee_ledger_tx_id, None);
+        assert_eq!(req.result.charged_fee_e8s, Some(7));
+        assert_eq!(req.result.charged_gas_price_wei, Some(8));
+        assert_eq!(state.wrap_queue.get(&0), None);
+    });
+
+    super::record_wrap_fee_collected(request_id, vec![9]).expect("fee");
+    super::enqueue_wrap_request_once(request_id);
+
+    with_state(|state| {
+        let req = state.wrap_requests.get(&request_id).expect("request");
+        assert_eq!(req.caller, caller.as_slice());
+        assert_eq!(req.result.status, RequestStatus::Queued);
+        assert_eq!(req.result.stage, WrapRequestStage::FeeCollected);
         assert_eq!(req.result.fee_ledger_tx_id, Some(vec![9]));
         assert_eq!(req.result.charged_fee_e8s, Some(7));
         assert_eq!(req.result.charged_gas_price_wei, Some(8));
@@ -1947,7 +1982,8 @@ fn existing_wrap_request_response_is_idempotent_for_same_request() {
         quoted_gas_price_wei: 200,
         fee_ledger_canister: fee_ledger,
     };
-    super::insert_wrap_request(args, caller, vec![9], 7, 8, 123).expect("insert");
+    super::ensure_wrap_request_before_fee(args, caller, 7, 8).expect("insert");
+    super::record_wrap_fee_collected(request_id, vec![9]).expect("fee");
     let retry_args = super::NormalizedSubmitWrapRequest {
         request_id,
         asset_id: vec![1],
@@ -1985,7 +2021,8 @@ fn existing_wrap_request_response_rejects_idempotency_mismatch() {
         quoted_gas_price_wei: 200,
         fee_ledger_canister: fee_ledger,
     };
-    super::insert_wrap_request(args, caller, vec![9], 7, 8, 123).expect("insert");
+    super::ensure_wrap_request_before_fee(args, caller, 7, 8).expect("insert");
+    super::record_wrap_fee_collected(request_id, vec![9]).expect("fee");
     let retry_args = super::NormalizedSubmitWrapRequest {
         request_id,
         asset_id: vec![1],
@@ -2035,6 +2072,7 @@ fn get_request_returns_unwrap_dispatch_overview_from_integrated_state() {
                 ledger_tx_id: None,
                 error_code: Some("dispatch.failed".to_string()),
                 updated_at: 1,
+                transfer_created_at_time: 0,
             },
         );
     });
@@ -2094,6 +2132,7 @@ fn retry_unwrap_dispatch_requeues_failed_request() {
                 ledger_tx_id: None,
                 error_code: Some("dispatch.failed".to_string()),
                 updated_at: 1,
+                transfer_created_at_time: 0,
             },
         );
     });
@@ -2126,6 +2165,7 @@ fn internal_unwrap_dispatch_fails_invalid_integrated_ledger_without_call() {
         ledger_tx_id: None,
         error_code: None,
         updated_at: 1,
+        transfer_created_at_time: 1,
     };
 
     let out = run_ready_future(super::dispatch_unwrap_request_internal(request_id, req));
@@ -3075,6 +3115,7 @@ fn raw_stable_corruption_does_not_trap_query_or_dispatch_for_unwrap_request() {
         ledger_tx_id: Some(vec![0xE5u8; 17]),
         error_code: Some("wrap.integration.gateway.raw-corrupt.7f3e2c1b".to_string()),
         updated_at: 987_654_333,
+        transfer_created_at_time: 987_654_334,
     };
     let encoded = request.to_bytes().into_owned();
     with_state_mut(|state| {
@@ -3363,6 +3404,7 @@ fn quarantine_decode_failed_unwrap_requests_marks_dead_letter_and_dequeues() {
                 ledger_tx_id: None,
                 error_code: None,
                 updated_at: 1,
+                transfer_created_at_time: 0,
             },
         );
     });

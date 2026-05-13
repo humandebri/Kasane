@@ -67,6 +67,7 @@ Explorer の実装詳細（ルート一覧・lib層責務）は `tools/explorer/
 ## 運用上の決定事項（2026-02-04）
 
 - InitArgs: Candidは service : (opt InitArgs) を維持するが、互換性維持目的であり runtime では None を拒否する。
+- integrated gateway wasm では `InitArgs.wrap_canister_id` は runtime 上 `canister_self()` に置換される。引数は互換性維持用で、運用上の参照先は `get_wrap_runtime_config` と canister id を正本にする。
 - 互換ターゲットは Ethereum JSON-RPC + EVM 実行意味論に固定し、OP/Superchain互換は非目標とする。
 - ネイティブ通貨運用（2026-02-11）:
   - 表示上のネイティブ通貨は `ICP` とする。

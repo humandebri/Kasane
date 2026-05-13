@@ -10,10 +10,10 @@ use evm_db::chain_data::runtime_defaults::{DEFAULT_BLOCK_GAS_LIMIT, DEFAULT_MIN_
 use evm_db::chain_data::DEFAULT_MINING_INTERVAL_MS;
 use evm_db::chain_data::MIN_PRUNE_MAX_OPS_PER_TICK;
 use evm_db::chain_data::{
-    BlockData, FeePolicyStored, MigrationPhase, OpsMode, ReceiptLike,
+    BlockData, FeePolicyStored, MigrationPhase, MintSubmitStatus, OpsMode, ReceiptLike,
     RequestStatus as StoredRequestStatus, RuntimeConfigV1, TxId, TxKind, TxLoc, TxLocKind,
     UnwrapDispatchRequest, UnwrapRequestStatus, WrapEvmConfigStored, WrapPendingSubmission,
-    LOG_CONFIG_FILTER_MAX, UNWRAP_DECODE_FAILURE_CODE,
+    WrapRequestStage, LOG_CONFIG_FILTER_MAX, UNWRAP_DECODE_FAILURE_CODE,
 };
 use evm_db::memory::{all_memory_regions, memory_size_pages, WASM_PAGE_SIZE_BYTES};
 use evm_db::meta::{
@@ -68,6 +68,9 @@ const NATIVE_WITHDRAW_ASSET_MARKER: &[u8] = b"kasane.native.icp";
 const MAX_CYCLE_FEE_E8S: u64 = 1_000_000_000_000;
 const GAS_PRICE_DENOMINATOR_BPS: u128 = 10_000;
 const WEI_PER_E8S: u128 = 10_000_000_000;
+const MAX_STORED_ERROR_CODE_BYTES: usize = 160;
+const MAX_STORED_LEDGER_TX_ID_BYTES: usize = 128;
+const STALE_OPERATION_NANOS: u64 = 10 * 60 * 1_000_000_000;
 
 static UNWRAP_DISPATCH_SCHEDULED: std::sync::atomic::AtomicBool =
     std::sync::atomic::AtomicBool::new(false);
@@ -105,6 +108,13 @@ pub struct FeePolicyView {
 
 #[derive(Clone, Debug, CandidType, Deserialize)]
 pub struct SetFeePolicyArgs {
+    pub fee_ledger_canister: Principal,
+    pub cycle_fee_e8s: u64,
+    pub gas_price_buffer_bps: u32,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize)]
+pub struct FeePolicyArgs {
     pub fee_ledger_canister: Principal,
     pub cycle_fee_e8s: u64,
     pub gas_price_buffer_bps: u32,
@@ -195,6 +205,14 @@ pub struct QuoteNativeWithdrawalOk {
     pub native_ledger_canister: Principal,
     pub ledger_fee_e8s: Nat,
     pub receive_amount_e8s: Nat,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize)]
+pub struct WrapRuntimeConfigView {
+    pub native_ledger_canister: Principal,
+    pub fee_ledger_canister: Principal,
+    pub allowed_assets: Vec<Principal>,
+    pub wrap_factory_address: Vec<u8>,
 }
 
 #[derive(Clone, Debug, CandidType, Deserialize)]
@@ -307,7 +325,9 @@ enum Icrc2TransferFromError {
 #[derive(Clone, Copy, Debug, CandidType, Deserialize, Eq, PartialEq)]
 pub enum RequestKind {
     Wrap,
+    NativeDeposit,
     Unwrap,
+    NativeWithdrawal,
 }
 
 #[derive(Clone, Copy, Debug, CandidType, Deserialize, Eq, PartialEq)]
@@ -345,16 +365,39 @@ pub struct RequestErrorView {
     pub message: String,
 }
 
+#[derive(Clone, Copy, Debug, CandidType, Deserialize, Eq, PartialEq)]
+pub enum RequestStageView {
+    FeePending,
+    FeeCollected,
+    PullPending,
+    Pulled,
+    MintSubmitting,
+    MintSubmitted,
+    Succeeded,
+    Failed,
+    Refunding,
+    Refunded,
+    Queued,
+    Dispatching,
+    Dispatched,
+    DispatchFailed,
+}
+
 #[derive(Clone, Debug, CandidType, Deserialize)]
 pub struct RequestOverview {
     pub kind: RequestKind,
     pub request_id: Vec<u8>,
     pub status: RequestStatus,
+    pub stage: Option<RequestStageView>,
     pub error: Option<RequestErrorView>,
     pub fee_ledger_tx_id: Option<Vec<u8>>,
     pub pull_ledger_tx_id: Option<Vec<u8>>,
     pub mint_tx_id: Option<Vec<u8>>,
     pub withdraw_ledger_tx_id: Option<Vec<u8>>,
+    pub recoverable: bool,
+    pub withdrawn: bool,
+    pub withdraw_in_progress: bool,
+    pub withdraw_error: Option<RequestErrorView>,
     pub ledger_tx_id: Option<Vec<u8>>,
     pub dispatch_status: Option<RequestDispatchStatusView>,
     pub dispatch_error: Option<String>,
@@ -440,7 +483,7 @@ fn validate_wrap_config(config: &WrapConfigArgs) -> Result<(), String> {
     Ok(())
 }
 
-fn validate_set_fee_policy(args: &SetFeePolicyArgs) -> Result<(), String> {
+fn validate_set_fee_policy(args: &FeePolicyArgs) -> Result<(), String> {
     validate_non_anonymous_principal(&args.fee_ledger_canister, "arg.fee_ledger_anonymous")?;
     if args.cycle_fee_e8s > MAX_CYCLE_FEE_E8S {
         return Err("arg.cycle_fee_e8s_out_of_range".to_string());
@@ -627,7 +670,100 @@ fn current_fee_policy() -> Result<FeePolicyView, String> {
     })
 }
 
+fn current_block_gas_limit() -> u64 {
+    with_state(|state| state.chain_state.get().block_gas_limit)
+}
+
+fn validate_wrap_gas_limit(gas_limit: u64) -> Result<(), String> {
+    if gas_limit == 0 {
+        return Err("arg.gas_limit_zero".to_string());
+    }
+    let configured = current_block_gas_limit();
+    let max = if configured == 0 {
+        DEFAULT_BLOCK_GAS_LIMIT
+    } else {
+        configured
+    };
+    if gas_limit > max {
+        return Err("arg.gas_limit_exceeds_block".to_string());
+    }
+    Ok(())
+}
+
+fn clamp_utf8_bytes(value: &str, max_bytes: usize) -> String {
+    if value.len() <= max_bytes {
+        return value.to_string();
+    }
+    let mut end = max_bytes;
+    while !value.is_char_boundary(end) {
+        end = end.saturating_sub(1);
+    }
+    value[..end].to_string()
+}
+
+fn clamp_error_code(code: String) -> String {
+    clamp_utf8_bytes(&code, MAX_STORED_ERROR_CODE_BYTES)
+}
+
+fn validate_stored_ledger_tx_id(tx_id: &[u8]) -> Result<(), String> {
+    if tx_id.is_empty() || tx_id.len() > MAX_STORED_LEDGER_TX_ID_BYTES {
+        return Err("ledger.tx_id_invalid".to_string());
+    }
+    Ok(())
+}
+
+fn validated_ledger_tx_id(tx_id: Vec<u8>) -> Result<Vec<u8>, String> {
+    validate_stored_ledger_tx_id(&tx_id)?;
+    Ok(tx_id)
+}
+
+fn validate_stored_principal_bytes(bytes: &[u8]) -> Result<(), String> {
+    if bytes.is_empty() || bytes.len() > evm_db::chain_data::wrap_request::PRINCIPAL_MAX_BYTES {
+        return Err("arg.principal_invalid".to_string());
+    }
+    Ok(())
+}
+
+fn validate_wrap_request_storage(
+    req: &evm_db::chain_data::WrapStoredRequest,
+) -> Result<(), String> {
+    validate_stored_principal_bytes(&req.caller)?;
+    validate_stored_principal_bytes(&req.asset_id)?;
+    validate_stored_principal_bytes(&req.fee_ledger_canister)?;
+    validate_evm_address(&req.evm_recipient, "arg.evm_recipient_invalid")?;
+    if req.amount.len() != 32 {
+        return Err("arg.amount_invalid".to_string());
+    }
+    if let Some(tx_id) = req.result.fee_ledger_tx_id.as_deref() {
+        validate_stored_ledger_tx_id(tx_id)?;
+    }
+    if let Some(tx_id) = req.result.pull_ledger_tx_id.as_deref() {
+        validate_stored_ledger_tx_id(tx_id)?;
+    }
+    if let Some(tx_id) = req.result.withdraw_ledger_tx_id.as_deref() {
+        validate_stored_ledger_tx_id(tx_id)?;
+    }
+    if let Some(tx_id) = req.result.mint_tx_id.as_deref() {
+        validate_stored_ledger_tx_id(tx_id)?;
+    }
+    Ok(())
+}
+
+fn sanitize_wrap_request(
+    mut req: evm_db::chain_data::WrapStoredRequest,
+) -> Result<evm_db::chain_data::WrapStoredRequest, String> {
+    if let Some(code) = req.result.error_code.take() {
+        req.result.error_code = Some(clamp_error_code(code));
+    }
+    if let Some(code) = req.result.withdraw_error_code.take() {
+        req.result.withdraw_error_code = Some(clamp_error_code(code));
+    }
+    validate_wrap_request_storage(&req)?;
+    Ok(req)
+}
+
 fn quote_wrap_request_inner(gas_limit: u64) -> Result<QuoteWrapRequestOk, ApiError> {
+    validate_wrap_gas_limit(gas_limit).map_err(|err| api_invalid_argument(&err, &err))?;
     let fee_policy = current_fee_policy().map_err(|err| api_internal(&err, &err))?;
     let base_gas_price = ic_evm_rpc::rpc_eth_gas_price().map_err(rpc_error_to_api_error)?;
     let charged_gas_price_wei = base_gas_price
@@ -740,9 +876,6 @@ async fn submit_wrap_request(args: SubmitWrapRequestArgs) -> Result<SubmitWrapRe
     let normalized = normalize_submit_wrap_request(args, caller)?;
     ensure_asset_allowed(Principal::from_slice(&normalized.asset_id))
         .map_err(|err| api_rejected(&err, &err))?;
-    if let Some(existing) = existing_wrap_request_response(&normalized, caller) {
-        return existing;
-    }
     let quote = quote_wrap_request_inner(normalized.gas_limit)?;
     validate_wrap_quote_within_approval(&normalized, &quote)
         .map_err(|err| api_rejected(&err, &err))?;
@@ -751,33 +884,35 @@ async fn submit_wrap_request(args: SubmitWrapRequestArgs) -> Result<SubmitWrapRe
     let charged_gas_price_wei = nat_to_u128(&quote.charged_gas_price_wei)
         .ok_or_else(|| api_internal("fee.quote_out_of_range", "fee.quote_out_of_range"))?;
     let request_id = normalized.request_id;
+    if let Some(existing) = existing_wrap_request_response(&normalized, caller) {
+        return existing;
+    }
     reserve_wrap_pending_submission(request_id, caller).map_err(|err| api_rejected(&err, &err))?;
-    let fee_created_at_time = current_time_nanos();
+    let req =
+        ensure_wrap_request_before_fee(normalized, caller, charged_fee_e8s, charged_gas_price_wei)
+            .map_err(|err| {
+                clear_wrap_pending_submission(request_id);
+                api_rejected(&err, &err)
+            })?;
     let fee_ledger_tx_id = attempt_icrc2_transfer_from(
         caller,
         quote.fee_ledger_canister,
         quote.charged_fee_e8s.clone(),
         request_memo(request_id, TransferMemoKind::Fee),
-        fee_created_at_time,
+        req.fee_created_at_time,
     )
     .await
     .map_err(|err| {
+        record_wrap_request_failure(request_id, map_fee_collection_error(&err), false);
         clear_wrap_pending_submission(request_id);
         let code = map_fee_collection_error(&err);
         api_rejected(&code, &code)
     })?;
-    if let Err(err) = insert_wrap_request(
-        normalized,
-        caller,
-        fee_ledger_tx_id.clone(),
-        charged_fee_e8s,
-        charged_gas_price_wei,
-        fee_created_at_time,
-    ) {
+    if let Err(err) = record_wrap_fee_collected(request_id, fee_ledger_tx_id.clone()) {
         clear_wrap_pending_submission(request_id);
         return Err(api_rejected(&err, &err));
     }
-    enqueue_wrap_request(request_id);
+    enqueue_wrap_request_once(request_id);
     clear_wrap_pending_submission(request_id);
     #[cfg(target_arch = "wasm32")]
     schedule_wrap_worker();
@@ -820,12 +955,7 @@ fn existing_wrap_request_response(
                 "request.idempotency_mismatch",
             )));
         }
-        let Some(fee_ledger_tx_id) = existing.result.fee_ledger_tx_id.clone() else {
-            return Some(Err(api_rejected(
-                "request.idempotency_incomplete",
-                "request.idempotency_incomplete",
-            )));
-        };
+        let fee_ledger_tx_id = existing.result.fee_ledger_tx_id.clone()?;
         let Some(charged_fee_e8s) = existing.result.charged_fee_e8s else {
             return Some(Err(api_rejected(
                 "request.idempotency_incomplete",
@@ -935,60 +1065,98 @@ fn validate_wrap_quote_within_approval(
     Ok(())
 }
 
-fn insert_wrap_request(
+fn ensure_wrap_request_before_fee(
     args: NormalizedSubmitWrapRequest,
     caller: Principal,
-    fee_ledger_tx_id: Vec<u8>,
     charged_fee_e8s: u128,
     charged_gas_price_wei: u128,
-    fee_created_at_time: u64,
-) -> Result<(), String> {
+) -> Result<evm_db::chain_data::WrapStoredRequest, String> {
     let request_id = args.request_id;
-    let out = with_state_mut(|state| {
-        if state.wrap_requests.contains_key(&request_id) {
-            return Err("wrap.request.duplicate".to_string());
+    with_state_mut(|state| {
+        if let Some(existing) = state.wrap_requests.get(&request_id) {
+            return Ok(existing);
         }
-        state.wrap_requests.insert(
-            request_id,
-            evm_db::chain_data::WrapStoredRequest {
-                caller: caller.as_slice().to_vec(),
-                asset_id: args.asset_id,
-                amount: args.amount,
-                evm_recipient: args.evm_recipient,
-                gas_limit: args.gas_limit,
-                fee_ledger_canister: args.fee_ledger_canister.as_slice().to_vec(),
-                max_fee_e8s: args.max_fee_e8s,
-                quoted_gas_price_wei: args.quoted_gas_price_wei,
-                fee_created_at_time,
-                pull_created_at_time: current_time_nanos(),
-                withdraw_created_at_time: 0,
-                result: evm_db::chain_data::WrapRequestResult {
-                    status: StoredRequestStatus::Queued,
-                    pull_ledger_tx_id: None,
-                    mint_tx_id: None,
-                    error_code: None,
-                    withdrawn: false,
-                    withdraw_ledger_tx_id: None,
-                    withdraw_error_code: None,
-                    withdraw_in_progress: false,
-                    mint_failed_recoverable: false,
-                    fee_ledger_tx_id: Some(fee_ledger_tx_id),
-                    charged_fee_e8s: Some(charged_fee_e8s),
-                    charged_gas_price_wei: Some(charged_gas_price_wei),
-                },
+        let now = current_time_nanos();
+        let req = sanitize_wrap_request(evm_db::chain_data::WrapStoredRequest {
+            caller: caller.as_slice().to_vec(),
+            asset_id: args.asset_id,
+            amount: args.amount,
+            evm_recipient: args.evm_recipient,
+            gas_limit: args.gas_limit,
+            fee_ledger_canister: args.fee_ledger_canister.as_slice().to_vec(),
+            max_fee_e8s: args.max_fee_e8s,
+            quoted_gas_price_wei: args.quoted_gas_price_wei,
+            fee_created_at_time: now,
+            pull_created_at_time: now,
+            withdraw_created_at_time: 0,
+            result: evm_db::chain_data::WrapRequestResult {
+                status: StoredRequestStatus::Queued,
+                pull_ledger_tx_id: None,
+                mint_tx_id: None,
+                error_code: None,
+                withdrawn: false,
+                withdraw_ledger_tx_id: None,
+                withdraw_error_code: None,
+                withdraw_in_progress: false,
+                mint_failed_recoverable: false,
+                fee_ledger_tx_id: None,
+                charged_fee_e8s: Some(charged_fee_e8s),
+                charged_gas_price_wei: Some(charged_gas_price_wei),
+                stage: WrapRequestStage::FeePending,
+                updated_at: now,
+                mint_nonce: None,
+                mint_submitted_at_time: 0,
+                mint_submit_status: MintSubmitStatus::NotSubmitted,
             },
-        );
-        Ok(())
-    });
-    out
+        })?;
+        state.wrap_requests.insert(request_id, req.clone());
+        Ok(req)
+    })
 }
 
-fn enqueue_wrap_request(request_id: TxId) {
+fn record_wrap_fee_collected(request_id: TxId, fee_ledger_tx_id: Vec<u8>) -> Result<(), String> {
+    let fee_ledger_tx_id = validated_ledger_tx_id(fee_ledger_tx_id)?;
     with_state_mut(|state| {
+        let Some(mut req) = state.wrap_requests.get(&request_id) else {
+            return Err("request.not_found".to_string());
+        };
+        req.result.fee_ledger_tx_id = Some(fee_ledger_tx_id);
+        req.result.error_code = None;
+        req.result.stage = WrapRequestStage::FeeCollected;
+        req.result.updated_at = current_time_nanos();
+        let req = sanitize_wrap_request(req)?;
+        state.wrap_requests.insert(request_id, req);
+        Ok(())
+    })
+}
+
+fn enqueue_wrap_request_once(request_id: TxId) {
+    with_state_mut(|state| {
+        for entry in state.wrap_queue.range(..) {
+            if entry.value() == request_id {
+                return;
+            }
+        }
         let mut meta = *state.wrap_queue_meta.get();
         let seq = meta.push();
         state.wrap_queue_meta.set(meta);
         state.wrap_queue.insert(seq, request_id);
+    });
+}
+
+fn record_wrap_request_failure(request_id: TxId, code: String, mint_failed_recoverable: bool) {
+    with_state_mut(|state| {
+        let Some(mut req) = state.wrap_requests.get(&request_id) else {
+            return;
+        };
+        req.result.status = StoredRequestStatus::Failed;
+        req.result.stage = WrapRequestStage::Failed;
+        req.result.error_code = Some(clamp_error_code(code));
+        req.result.mint_failed_recoverable = mint_failed_recoverable;
+        req.result.updated_at = current_time_nanos();
+        if let Ok(req) = sanitize_wrap_request(req) {
+            state.wrap_requests.insert(request_id, req);
+        }
     });
 }
 
@@ -1283,92 +1451,81 @@ async fn submit_native_deposit(
         return existing;
     }
     reserve_wrap_pending_submission(request_id, caller).map_err(|err| api_rejected(&err, &err))?;
-
-    let fee_created_at_time = current_time_nanos();
-    let fee_ledger_tx_id = attempt_icrc2_transfer_from(
-        caller,
-        fee_policy.fee_ledger_canister,
-        Nat::from(fee_policy.cycle_fee_e8s),
-        request_memo(request_id, TransferMemoKind::Fee),
-        fee_created_at_time,
-    )
-    .await
-    .map_err(|err| {
-        clear_wrap_pending_submission(request_id);
-        let code = map_fee_collection_error(&err);
-        api_rejected(&code, &code)
-    })?;
-
-    let pull_created_at_time = current_time_nanos();
-    let pull = attempt_icrc2_transfer_from(
+    let mut req = ensure_native_deposit_request_before_fee(NativeDepositRequestDraft {
+        request_id,
         caller,
         native_ledger,
-        args.amount_e8s.clone(),
-        request_memo(request_id, TransferMemoKind::Pull),
-        pull_created_at_time,
-    )
-    .await;
-
-    let mut req = evm_db::chain_data::WrapStoredRequest {
-        caller: caller.as_slice().to_vec(),
-        asset_id: native_ledger.as_slice().to_vec(),
         amount: amount.to_vec(),
         evm_recipient: args.evm_recipient.clone(),
-        gas_limit: 0,
-        fee_ledger_canister: fee_policy.fee_ledger_canister.as_slice().to_vec(),
+        fee_ledger_canister: fee_policy.fee_ledger_canister,
         max_fee_e8s,
-        quoted_gas_price_wei: 0,
-        fee_created_at_time,
-        pull_created_at_time,
-        withdraw_created_at_time: 0,
-        result: evm_db::chain_data::WrapRequestResult {
-            status: StoredRequestStatus::Running,
-            pull_ledger_tx_id: None,
-            mint_tx_id: None,
-            error_code: None,
-            withdrawn: false,
-            withdraw_ledger_tx_id: None,
-            withdraw_error_code: None,
-            withdraw_in_progress: false,
-            mint_failed_recoverable: false,
-            fee_ledger_tx_id: Some(fee_ledger_tx_id.clone()),
-            charged_fee_e8s: Some(u128::from(fee_policy.cycle_fee_e8s)),
-            charged_gas_price_wei: Some(0),
-        },
-    };
-    match pull {
-        Ok(pull_ledger_tx_id) => {
-            req.result.pull_ledger_tx_id = Some(pull_ledger_tx_id);
-            let amount_wei = Nat(BigUint::from_bytes_be(&amount) * BigUint::from(WEI_PER_E8S));
-            match nat_to_fixed_be::<32>(&amount_wei)
-                .ok_or_else(|| api_rejected("arg.amount_out_of_range", "arg.amount_out_of_range"))
-                .and_then(|amount_wei| {
-                    let mut recipient = [0u8; 20];
-                    recipient.copy_from_slice(&args.evm_recipient);
-                    credit_native_deposit_internal(request_id.0, recipient, amount_wei)
-                }) {
-                Ok(()) => {
-                    req.result.status = StoredRequestStatus::Succeeded;
-                    req.result.mint_tx_id = Some(request_id.0.to_vec());
-                }
-                Err(err) => {
-                    req.result.status = StoredRequestStatus::Failed;
-                    req.result.error_code =
-                        Some(format!("evm_gateway.credit_failed:{}", api_error_code(err)));
-                    req.result.mint_failed_recoverable = true;
-                }
+        charged_fee_e8s: fee_policy.cycle_fee_e8s,
+    })
+    .map_err(|err| {
+        clear_wrap_pending_submission(request_id);
+        api_rejected(&err, &err)
+    })?;
+
+    if req.result.fee_ledger_tx_id.is_none() {
+        let fee_ledger_tx_id = attempt_icrc2_transfer_from(
+            caller,
+            fee_policy.fee_ledger_canister,
+            Nat::from(fee_policy.cycle_fee_e8s),
+            request_memo(request_id, TransferMemoKind::Fee),
+            req.fee_created_at_time,
+        )
+        .await
+        .map_err(|err| {
+            record_wrap_request_failure(request_id, map_fee_collection_error(&err), false);
+            clear_wrap_pending_submission(request_id);
+            let code = map_fee_collection_error(&err);
+            api_rejected(&code, &code)
+        })?;
+        record_native_deposit_fee_collected(request_id, fee_ledger_tx_id).map_err(|err| {
+            clear_wrap_pending_submission(request_id);
+            api_rejected(&err, &err)
+        })?;
+        req = with_state(|state| state.wrap_requests.get(&request_id))
+            .ok_or_else(|| api_internal("request.not_found", "request.not_found"))?;
+    }
+
+    if req.result.pull_ledger_tx_id.is_none() {
+        let pull = attempt_icrc2_transfer_from(
+            caller,
+            native_ledger,
+            args.amount_e8s.clone(),
+            request_memo(request_id, TransferMemoKind::Pull),
+            req.pull_created_at_time,
+        )
+        .await;
+        match pull {
+            Ok(pull_ledger_tx_id) => {
+                record_native_deposit_pulled(request_id, pull_ledger_tx_id).map_err(|err| {
+                    clear_wrap_pending_submission(request_id);
+                    api_rejected(&err, &err)
+                })?;
+            }
+            Err(err) => {
+                record_wrap_request_failure(request_id, err.clone(), false);
+                clear_wrap_pending_submission(request_id);
+                return Err(api_rejected(&err, &err));
             }
         }
-        Err(err) => {
-            req.result.status = StoredRequestStatus::Failed;
-            req.result.error_code = Some(err);
-        }
+        req = with_state(|state| state.wrap_requests.get(&request_id))
+            .ok_or_else(|| api_internal("request.not_found", "request.not_found"))?;
     }
-    if let Err(err) = insert_native_deposit_request(request_id, req) {
-        clear_wrap_pending_submission(request_id);
-        return Err(api_rejected(&err, &err));
+
+    if req.result.mint_tx_id.is_none() || req.result.status != StoredRequestStatus::Succeeded {
+        finalize_native_deposit_credit(request_id, &req, &args.evm_recipient)?;
     }
     clear_wrap_pending_submission(request_id);
+    let fee_ledger_tx_id = with_state(|state| {
+        state
+            .wrap_requests
+            .get(&request_id)
+            .and_then(|req| req.result.fee_ledger_tx_id)
+    })
+    .ok_or_else(|| api_internal("request.missing_fee_tx", "request.missing_fee_tx"))?;
     Ok(SubmitNativeDepositOk {
         request_id: request_id.0.to_vec(),
         charged_fee_e8s: Nat::from(fee_policy.cycle_fee_e8s),
@@ -1392,6 +1549,9 @@ fn existing_native_deposit_response(
                 "request.idempotency_mismatch",
                 "request.idempotency_mismatch",
             )));
+        }
+        if existing.result.status != StoredRequestStatus::Succeeded {
+            return None;
         }
         let fee_ledger_tx_id = existing.result.fee_ledger_tx_id.clone()?;
         let charged_fee_e8s = existing.result.charged_fee_e8s?;
@@ -1418,24 +1578,140 @@ fn prepare_native_deposit_funding(
     Ok((fee_policy, native_ledger))
 }
 
-fn insert_native_deposit_request(
+struct NativeDepositRequestDraft {
     request_id: TxId,
-    req: evm_db::chain_data::WrapStoredRequest,
-) -> Result<(), String> {
-    let out = with_state_mut(|state| {
-        if let Some(existing) = state.wrap_requests.get(&request_id) {
-            if existing.asset_id != req.asset_id
-                || existing.amount != req.amount
-                || existing.evm_recipient != req.evm_recipient
-            {
-                return Err("request.idempotency_mismatch".to_string());
-            }
-            return Ok(());
+    caller: Principal,
+    native_ledger: Principal,
+    amount: Vec<u8>,
+    evm_recipient: Vec<u8>,
+    fee_ledger_canister: Principal,
+    max_fee_e8s: u128,
+    charged_fee_e8s: u64,
+}
+
+fn ensure_native_deposit_request_before_fee(
+    draft: NativeDepositRequestDraft,
+) -> Result<evm_db::chain_data::WrapStoredRequest, String> {
+    with_state_mut(|state| {
+        if let Some(existing) = state.wrap_requests.get(&draft.request_id) {
+            return Ok(existing);
         }
+        let now = current_time_nanos();
+        let req = sanitize_wrap_request(evm_db::chain_data::WrapStoredRequest {
+            caller: draft.caller.as_slice().to_vec(),
+            asset_id: draft.native_ledger.as_slice().to_vec(),
+            amount: draft.amount,
+            evm_recipient: draft.evm_recipient,
+            gas_limit: 0,
+            fee_ledger_canister: draft.fee_ledger_canister.as_slice().to_vec(),
+            max_fee_e8s: draft.max_fee_e8s,
+            quoted_gas_price_wei: 0,
+            fee_created_at_time: now,
+            pull_created_at_time: now,
+            withdraw_created_at_time: 0,
+            result: evm_db::chain_data::WrapRequestResult {
+                status: StoredRequestStatus::Running,
+                pull_ledger_tx_id: None,
+                mint_tx_id: None,
+                error_code: None,
+                withdrawn: false,
+                withdraw_ledger_tx_id: None,
+                withdraw_error_code: None,
+                withdraw_in_progress: false,
+                mint_failed_recoverable: false,
+                fee_ledger_tx_id: None,
+                charged_fee_e8s: Some(u128::from(draft.charged_fee_e8s)),
+                charged_gas_price_wei: Some(0),
+                stage: WrapRequestStage::FeePending,
+                updated_at: now,
+                mint_nonce: None,
+                mint_submitted_at_time: 0,
+                mint_submit_status: MintSubmitStatus::NotSubmitted,
+            },
+        })?;
+        state.wrap_requests.insert(draft.request_id, req.clone());
+        Ok(req)
+    })
+}
+
+fn record_native_deposit_fee_collected(
+    request_id: TxId,
+    fee_ledger_tx_id: Vec<u8>,
+) -> Result<(), String> {
+    let fee_ledger_tx_id = validated_ledger_tx_id(fee_ledger_tx_id)?;
+    with_state_mut(|state| {
+        let Some(mut req) = state.wrap_requests.get(&request_id) else {
+            return Err("request.not_found".to_string());
+        };
+        req.result.fee_ledger_tx_id = Some(fee_ledger_tx_id);
+        req.result.stage = WrapRequestStage::FeeCollected;
+        req.result.updated_at = current_time_nanos();
+        req.result.error_code = None;
+        let req = sanitize_wrap_request(req)?;
         state.wrap_requests.insert(request_id, req);
         Ok(())
+    })
+}
+
+fn record_native_deposit_pulled(
+    request_id: TxId,
+    pull_ledger_tx_id: Vec<u8>,
+) -> Result<(), String> {
+    let pull_ledger_tx_id = validated_ledger_tx_id(pull_ledger_tx_id)?;
+    with_state_mut(|state| {
+        let Some(mut req) = state.wrap_requests.get(&request_id) else {
+            return Err("request.not_found".to_string());
+        };
+        req.result.pull_ledger_tx_id = Some(pull_ledger_tx_id);
+        req.result.stage = WrapRequestStage::Pulled;
+        req.result.updated_at = current_time_nanos();
+        req.result.error_code = None;
+        let req = sanitize_wrap_request(req)?;
+        state.wrap_requests.insert(request_id, req);
+        Ok(())
+    })
+}
+
+fn finalize_native_deposit_credit(
+    request_id: TxId,
+    req: &evm_db::chain_data::WrapStoredRequest,
+    evm_recipient: &[u8],
+) -> Result<(), ApiError> {
+    let amount_wei = Nat(BigUint::from_bytes_be(&req.amount) * BigUint::from(WEI_PER_E8S));
+    let outcome = nat_to_fixed_be::<32>(&amount_wei)
+        .ok_or_else(|| api_rejected("arg.amount_out_of_range", "arg.amount_out_of_range"))
+        .and_then(|amount_wei| {
+            let mut recipient = [0u8; 20];
+            recipient.copy_from_slice(evm_recipient);
+            credit_native_deposit_internal(request_id.0, recipient, amount_wei)
+        });
+    with_state_mut(|state| {
+        let Some(mut req) = state.wrap_requests.get(&request_id) else {
+            return;
+        };
+        req.result.updated_at = current_time_nanos();
+        match outcome {
+            Ok(()) => {
+                req.result.status = StoredRequestStatus::Succeeded;
+                req.result.stage = WrapRequestStage::Succeeded;
+                req.result.mint_tx_id = Some(request_id.0.to_vec());
+                req.result.error_code = None;
+                req.result.mint_failed_recoverable = false;
+            }
+            Err(err) => {
+                req.result.status = StoredRequestStatus::Failed;
+                req.result.stage = WrapRequestStage::Failed;
+                req.result.error_code = Some(clamp_error_code(format!(
+                    "evm_gateway.credit_failed:{}",
+                    api_error_code(err)
+                )));
+                req.result.mint_failed_recoverable = true;
+            }
+        }
+        if let Ok(req) = sanitize_wrap_request(req) {
+            state.wrap_requests.insert(request_id, req);
+        }
     });
-    out?;
     Ok(())
 }
 
@@ -1533,6 +1809,7 @@ fn insert_unwrap_dispatch_request(
                 ledger_tx_id: None,
                 error_code: None,
                 updated_at: current_time_nanos(),
+                transfer_created_at_time: 0,
             },
         );
         let mut meta = *state.unwrap_dispatch_meta.get();
@@ -1809,20 +2086,46 @@ fn get_allowed_assets() -> Result<Vec<Principal>, String> {
 }
 
 #[ic_cdk::query]
+fn get_wrap_runtime_config() -> Result<WrapRuntimeConfigView, String> {
+    let fee_policy = current_fee_policy()?;
+    let native_ledger_canister = current_native_ledger_canister()?;
+    let wrap_factory_address = expected_wrap_factory_address()?;
+    let allowed_assets = get_allowed_assets()?;
+    Ok(WrapRuntimeConfigView {
+        native_ledger_canister,
+        fee_ledger_canister: fee_policy.fee_ledger_canister,
+        allowed_assets,
+        wrap_factory_address,
+    })
+}
+
+#[ic_cdk::query]
 fn get_request(request_id: Vec<u8>) -> Option<RequestOverview> {
     let request_id = tx_id_from_bytes(request_id)?;
     with_state(|state| {
         if let Some(req) = state.wrap_requests.get(&request_id) {
             let result = &req.result;
             return Some(RequestOverview {
-                kind: RequestKind::Wrap,
+                kind: if req.gas_limit == 0 {
+                    RequestKind::NativeDeposit
+                } else {
+                    RequestKind::Wrap
+                },
                 request_id: request_id.0.to_vec(),
                 status: request_status_to_view(result.status),
+                stage: Some(wrap_request_stage_to_view(result.stage)),
                 error: result.error_code.as_deref().map(request_error_view),
                 fee_ledger_tx_id: result.fee_ledger_tx_id.clone(),
                 pull_ledger_tx_id: result.pull_ledger_tx_id.clone(),
                 mint_tx_id: result.mint_tx_id.clone(),
                 withdraw_ledger_tx_id: result.withdraw_ledger_tx_id.clone(),
+                recoverable: result.mint_failed_recoverable,
+                withdrawn: result.withdrawn,
+                withdraw_in_progress: result.withdraw_in_progress,
+                withdraw_error: result
+                    .withdraw_error_code
+                    .as_deref()
+                    .map(request_error_view),
                 ledger_tx_id: None,
                 dispatch_status: None,
                 dispatch_error: None,
@@ -1833,14 +2136,23 @@ fn get_request(request_id: Vec<u8>) -> Option<RequestOverview> {
         state.unwrap_requests.get(&request_id).map(|req| {
             let (status, dispatch_status) = unwrap_request_status_to_request_status(req.status);
             RequestOverview {
-                kind: RequestKind::Unwrap,
+                kind: if is_native_withdraw_dispatch_request(&req) {
+                    RequestKind::NativeWithdrawal
+                } else {
+                    RequestKind::Unwrap
+                },
                 request_id: request_id.0.to_vec(),
                 status,
+                stage: Some(unwrap_request_stage_to_view(req.status)),
                 error: req.error_code.as_deref().map(request_error_view),
                 fee_ledger_tx_id: None,
                 pull_ledger_tx_id: None,
                 mint_tx_id: None,
                 withdraw_ledger_tx_id: None,
+                recoverable: req.status == UnwrapRequestStatus::DispatchFailed,
+                withdrawn: false,
+                withdraw_in_progress: req.status == UnwrapRequestStatus::Dispatching,
+                withdraw_error: req.error_code.as_deref().map(request_error_view),
                 ledger_tx_id: req.ledger_tx_id.clone(),
                 dispatch_status: Some(dispatch_status),
                 dispatch_error: req.error_code.clone(),
@@ -1943,7 +2255,12 @@ async fn recover_failed_wrap(args: RecoverFailedWrapArgs) -> Result<RequestOverv
         if req.result.withdrawn || req.result.withdraw_ledger_tx_id.is_some() {
             return Err("wrap.recover_already_withdrawn".to_string());
         }
+        if req.withdraw_created_at_time == 0 {
+            req.withdraw_created_at_time = current_time_nanos();
+        }
         req.result.withdraw_in_progress = true;
+        req.result.stage = WrapRequestStage::Refunding;
+        req.result.updated_at = current_time_nanos();
         state.wrap_requests.insert(request_id, req.clone());
         Ok(req)
     });
@@ -1958,7 +2275,7 @@ async fn recover_failed_wrap(args: RecoverFailedWrapArgs) -> Result<RequestOverv
         caller,
         Nat(BigUint::from_bytes_be(&req.amount)),
         request_memo(request_id, TransferMemoKind::Withdraw),
-        current_time_nanos(),
+        req.withdraw_created_at_time,
     )
     .await;
 
@@ -1967,17 +2284,31 @@ async fn recover_failed_wrap(args: RecoverFailedWrapArgs) -> Result<RequestOverv
             return;
         };
         req.result.withdraw_in_progress = false;
+        req.result.updated_at = current_time_nanos();
         match transfer {
             Ok(ledger_tx_id) => {
                 req.result.withdrawn = true;
-                req.result.withdraw_ledger_tx_id = Some(ledger_tx_id);
-                req.result.withdraw_error_code = None;
+                req.result.stage = WrapRequestStage::Refunded;
+                match validated_ledger_tx_id(ledger_tx_id) {
+                    Ok(tx_id) => {
+                        req.result.withdraw_ledger_tx_id = Some(tx_id);
+                        req.result.withdraw_error_code = None;
+                    }
+                    Err(err) => {
+                        req.result.withdrawn = false;
+                        req.result.stage = WrapRequestStage::Failed;
+                        req.result.withdraw_error_code = Some(err);
+                    }
+                }
             }
             Err(err) => {
-                req.result.withdraw_error_code = Some(err);
+                req.result.stage = WrapRequestStage::Failed;
+                req.result.withdraw_error_code = Some(clamp_error_code(err));
             }
         }
-        state.wrap_requests.insert(request_id, req);
+        if let Ok(req) = sanitize_wrap_request(req) {
+            state.wrap_requests.insert(request_id, req);
+        }
     });
     get_request(request_id.0.to_vec())
         .ok_or_else(|| api_internal("request.not_found", "request.not_found"))
@@ -2017,6 +2348,30 @@ fn request_error_view(code: &str) -> RequestErrorView {
     }
 }
 
+fn wrap_request_stage_to_view(stage: WrapRequestStage) -> RequestStageView {
+    match stage {
+        WrapRequestStage::FeePending => RequestStageView::FeePending,
+        WrapRequestStage::FeeCollected => RequestStageView::FeeCollected,
+        WrapRequestStage::PullPending => RequestStageView::PullPending,
+        WrapRequestStage::Pulled => RequestStageView::Pulled,
+        WrapRequestStage::MintSubmitting => RequestStageView::MintSubmitting,
+        WrapRequestStage::MintSubmitted => RequestStageView::MintSubmitted,
+        WrapRequestStage::Succeeded => RequestStageView::Succeeded,
+        WrapRequestStage::Failed => RequestStageView::Failed,
+        WrapRequestStage::Refunding => RequestStageView::Refunding,
+        WrapRequestStage::Refunded => RequestStageView::Refunded,
+    }
+}
+
+fn unwrap_request_stage_to_view(status: UnwrapRequestStatus) -> RequestStageView {
+    match status {
+        UnwrapRequestStatus::Queued => RequestStageView::Queued,
+        UnwrapRequestStatus::Dispatching => RequestStageView::Dispatching,
+        UnwrapRequestStatus::Dispatched => RequestStageView::Dispatched,
+        UnwrapRequestStatus::DispatchFailed => RequestStageView::DispatchFailed,
+    }
+}
+
 fn unwrap_request_status_to_request_status(
     status: UnwrapRequestStatus,
 ) -> (RequestStatus, RequestDispatchStatusView) {
@@ -2038,7 +2393,7 @@ fn unwrap_request_status_to_request_status(
 }
 
 #[ic_cdk::update]
-fn set_fee_policy(args: SetFeePolicyArgs) -> Result<(), String> {
+fn set_fee_policy(args: FeePolicyArgs) -> Result<(), String> {
     if let Some(reason) = reject_anonymous_update() {
         return Err(reason);
     }
@@ -2132,6 +2487,121 @@ fn restore_wrap_worker_after_upgrade() {
     }
 }
 
+#[ic_cdk::update]
+fn repair_stale_wrap_operations() -> Result<(), String> {
+    if let Some(reason) = reject_anonymous_update() {
+        return Err(reason);
+    }
+    require_control_plane_write()?;
+    repair_stale_operations(current_time_nanos());
+    Ok(())
+}
+
+fn repair_stale_operations(now: u64) {
+    let (wrap_needs_schedule, unwrap_needs_schedule) = with_state_mut(|state| {
+        let cutoff = now.saturating_sub(STALE_OPERATION_NANOS);
+        let mut wrap_requeue = Vec::new();
+        let mut unwrap_requeue = Vec::new();
+
+        let wrap_items: Vec<_> = state
+            .wrap_requests
+            .iter()
+            .map(|entry| (*entry.key(), entry.value().clone()))
+            .collect();
+        for (request_id, mut req) in wrap_items {
+            if req.result.withdraw_in_progress && req.result.updated_at <= cutoff {
+                req.result.withdraw_in_progress = false;
+                req.result.stage = WrapRequestStage::Failed;
+                req.result.updated_at = now;
+                let _ = sanitize_wrap_request(req.clone()).map(|clean| {
+                    state.wrap_requests.insert(request_id, clean);
+                });
+                continue;
+            }
+            if req.result.status == StoredRequestStatus::Running && req.result.updated_at <= cutoff
+            {
+                if req.result.mint_tx_id.is_some()
+                    || req.result.mint_submit_status == MintSubmitStatus::Submitted
+                {
+                    req.result.status = StoredRequestStatus::Succeeded;
+                    req.result.stage = WrapRequestStage::Succeeded;
+                    req.result.updated_at = now;
+                    let _ = sanitize_wrap_request(req.clone()).map(|clean| {
+                        state.wrap_requests.insert(request_id, clean);
+                    });
+                } else {
+                    req.result.status = StoredRequestStatus::Queued;
+                    req.result.updated_at = now;
+                    let _ = sanitize_wrap_request(req.clone()).map(|clean| {
+                        state.wrap_requests.insert(request_id, clean);
+                    });
+                    wrap_requeue.push(request_id);
+                }
+            }
+        }
+
+        let unwrap_items: Vec<_> = state
+            .unwrap_requests
+            .iter()
+            .map(|entry| (*entry.key(), entry.value().clone()))
+            .collect();
+        for (request_id, mut req) in unwrap_items {
+            if req.status == UnwrapRequestStatus::Dispatching && req.updated_at <= cutoff {
+                req.status = UnwrapRequestStatus::Queued;
+                req.updated_at = now;
+                if req.transfer_created_at_time == 0 {
+                    req.transfer_created_at_time = now;
+                }
+                state.unwrap_requests.insert(request_id, req);
+                unwrap_requeue.push(request_id);
+            }
+        }
+
+        let mut wrap_queued = BTreeSet::new();
+        for entry in state.wrap_queue.iter() {
+            wrap_queued.insert(entry.value());
+        }
+        let mut wrap_meta = *state.wrap_queue_meta.get();
+        for request_id in wrap_requeue {
+            if wrap_queued.insert(request_id) {
+                let seq = wrap_meta.push();
+                state.wrap_queue.insert(seq, request_id);
+            }
+        }
+        state.wrap_queue_meta.set(wrap_meta);
+
+        let mut unwrap_queued = BTreeSet::new();
+        for entry in state.unwrap_dispatch_queue.iter() {
+            unwrap_queued.insert(entry.value());
+        }
+        let mut unwrap_meta = *state.unwrap_dispatch_meta.get();
+        for request_id in unwrap_requeue {
+            if unwrap_queued.insert(request_id) {
+                let seq = unwrap_meta.push();
+                state.unwrap_dispatch_queue.insert(seq, request_id);
+            }
+        }
+        state.unwrap_dispatch_meta.set(unwrap_meta);
+        (
+            !state.wrap_queue.is_empty(),
+            !state.unwrap_dispatch_queue.is_empty(),
+        )
+    });
+    #[cfg(target_arch = "wasm32")]
+    {
+        if wrap_needs_schedule {
+            schedule_wrap_worker();
+        }
+        if unwrap_needs_schedule {
+            schedule_unwrap_dispatch();
+        }
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let _ = (wrap_needs_schedule, unwrap_needs_schedule);
+    }
+}
+
 fn recover_wrap_worker_state_after_upgrade() -> bool {
     with_state_mut(|state| {
         let mut queued_ids = BTreeSet::new();
@@ -2152,13 +2622,22 @@ fn recover_wrap_worker_state_after_upgrade() -> bool {
 
         let mut meta = *state.wrap_queue_meta.get();
         for request_id in candidates {
+            let mut should_queue = true;
             if let Some(mut req) = state.wrap_requests.get(&request_id) {
                 if req.result.status == StoredRequestStatus::Running {
-                    req.result.status = StoredRequestStatus::Queued;
+                    if req.result.mint_tx_id.is_some()
+                        || req.result.mint_submit_status == MintSubmitStatus::Submitted
+                    {
+                        req.result.status = StoredRequestStatus::Succeeded;
+                        req.result.stage = WrapRequestStage::Succeeded;
+                        should_queue = false;
+                    } else {
+                        req.result.status = StoredRequestStatus::Queued;
+                    }
                     state.wrap_requests.insert(request_id, req);
                 }
             }
-            if queued_ids.insert(request_id) {
+            if should_queue && queued_ids.insert(request_id) {
                 let seq = meta.push();
                 state.wrap_queue.insert(seq, request_id);
             }
@@ -2292,6 +2771,10 @@ const INSPECT_METHOD_POLICIES: &[InspectMethodPolicy] = &[
     },
     InspectMethodPolicy {
         method: "recover_failed_wrap",
+        payload_limit: INSPECT_MANAGE_PAYLOAD_LIMIT,
+    },
+    InspectMethodPolicy {
+        method: "repair_stale_wrap_operations",
         payload_limit: INSPECT_MANAGE_PAYLOAD_LIMIT,
     },
     InspectMethodPolicy {
@@ -3836,6 +4319,7 @@ fn run_cycle_observer_once() -> CycleObserverTickOutcome {
     }
     let migration_pending = migration_pending();
     let mode = observe_cycles();
+    repair_stale_operations(current_time_nanos());
     let schedule_mining_called =
         should_schedule_mining_after_cycle_observer(mode, migration_pending);
     if schedule_mining_called {
@@ -4002,6 +4486,7 @@ fn record_unwrap_requests_from_block(tx_ids: &[TxId]) {
                             ledger_tx_id: None,
                             error_code: None,
                             updated_at: now,
+                            transfer_created_at_time: 0,
                         },
                     );
                     let mut meta = *state.unwrap_dispatch_meta.get();
@@ -4032,6 +4517,7 @@ fn record_unwrap_requests_from_block(tx_ids: &[TxId]) {
                         ledger_tx_id: None,
                         error_code: None,
                         updated_at: now,
+                        transfer_created_at_time: 0,
                     },
                 );
                 let mut meta = *state.unwrap_dispatch_meta.get();
@@ -4102,6 +4588,9 @@ fn pop_next_dispatch_request(now: u64) -> Result<Option<(TxId, UnwrapDispatchReq
         }
         req.status = UnwrapRequestStatus::Dispatching;
         req.updated_at = now;
+        if req.transfer_created_at_time == 0 {
+            req.transfer_created_at_time = now;
+        }
         state.unwrap_requests.insert(request_id, req.clone());
         Ok(Some((request_id, req)))
     });
@@ -4202,6 +4691,7 @@ async fn wrap_worker_tick() {
         let req = with_state_mut(|state| {
             let mut req = state.wrap_requests.get(&request_id)?;
             req.result.status = StoredRequestStatus::Running;
+            req.result.updated_at = current_time_nanos();
             state.wrap_requests.insert(request_id, req.clone());
             Some(req)
         });
@@ -4239,17 +4729,32 @@ async fn execute_wrap_request(
         Ok(asset) => asset,
         Err(code) => return wrap_failed(None, code, false),
     };
-    let pull = attempt_icrc2_transfer_from(
-        caller,
-        asset,
-        Nat(BigUint::from_bytes_be(&req.amount)),
-        request_memo(request_id, TransferMemoKind::Pull),
-        req.pull_created_at_time,
-    )
-    .await;
-    let pull_ledger_tx_id = match pull {
-        Ok(tx_id) => tx_id,
-        Err(code) => return wrap_failed(None, code, false),
+    let pull_ledger_tx_id = match req.result.pull_ledger_tx_id.clone() {
+        Some(tx_id) => tx_id,
+        None => {
+            mark_wrap_stage(
+                request_id,
+                WrapRequestStage::PullPending,
+                StoredRequestStatus::Running,
+            );
+            let pull = attempt_icrc2_transfer_from(
+                caller,
+                asset,
+                Nat(BigUint::from_bytes_be(&req.amount)),
+                request_memo(request_id, TransferMemoKind::Pull),
+                req.pull_created_at_time,
+            )
+            .await;
+            match pull {
+                Ok(tx_id) => {
+                    if let Err(code) = record_wrap_pull_success(request_id, tx_id.clone()) {
+                        return wrap_failed(None, code, false);
+                    }
+                    tx_id
+                }
+                Err(code) => return wrap_failed(None, code, false),
+            }
+        }
     };
     let mint = submit_mint_tx_internal(request_id, &req).await;
     match mint {
@@ -4280,10 +4785,47 @@ fn wrap_failed(
 }
 
 #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+fn mark_wrap_stage(request_id: TxId, stage: WrapRequestStage, status: StoredRequestStatus) {
+    with_state_mut(|state| {
+        let Some(mut req) = state.wrap_requests.get(&request_id) else {
+            return;
+        };
+        req.result.status = status;
+        req.result.stage = stage;
+        req.result.updated_at = current_time_nanos();
+        if let Ok(req) = sanitize_wrap_request(req) {
+            state.wrap_requests.insert(request_id, req);
+        }
+    });
+}
+
+#[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+fn record_wrap_pull_success(request_id: TxId, pull_ledger_tx_id: Vec<u8>) -> Result<(), String> {
+    let pull_ledger_tx_id = validated_ledger_tx_id(pull_ledger_tx_id)?;
+    let out = with_state_mut(|state| {
+        let Some(mut req) = state.wrap_requests.get(&request_id) else {
+            return Err("request.not_found".to_string());
+        };
+        req.result.pull_ledger_tx_id = Some(pull_ledger_tx_id);
+        req.result.stage = WrapRequestStage::Pulled;
+        req.result.updated_at = current_time_nanos();
+        req.result.error_code = None;
+        let req = sanitize_wrap_request(req)?;
+        state.wrap_requests.insert(request_id, req);
+        Ok(())
+    });
+    out?;
+    Ok(())
+}
+
+#[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
 async fn submit_mint_tx_internal(
-    _request_id: TxId,
+    request_id: TxId,
     req: &evm_db::chain_data::WrapStoredRequest,
 ) -> Result<Vec<u8>, String> {
+    if let Some(tx_id) = req.result.mint_tx_id.clone() {
+        return Ok(tx_id);
+    }
     let factory = expected_wrap_factory_address()?;
     let token_decimals = fetch_asset_decimals(&req.asset_id).await?;
     let data = encode_factory_mint_for_asset_call_data(
@@ -4294,7 +4836,11 @@ async fn submit_mint_tx_internal(
     )?;
     let wrap_evm = hash::derive_evm_address_from_principal(ic_cdk::api::canister_self().as_slice())
         .map_err(|_| "wrap.evm_address_derivation_failed".to_string())?;
-    let nonce = chain::expected_nonce_for_sender_view(wrap_evm);
+    let nonce = req
+        .result
+        .mint_nonce
+        .unwrap_or_else(|| chain::expected_nonce_for_sender_view(wrap_evm));
+    record_wrap_mint_submitting(request_id, nonce)?;
     let charged_gas_price_wei = req.result.charged_gas_price_wei.unwrap_or(0);
     let suggested_priority_fee_wei =
         ic_evm_rpc::rpc_eth_max_priority_fee_per_gas().map_err(|err| {
@@ -4315,12 +4861,95 @@ async fn submit_mint_tx_internal(
         nonce,
         data,
     };
-    submit_ic_tx_internal(
+    let tx_id = derive_ic_synthetic_tx_id(
+        ic_cdk::api::canister_self().as_slice(),
+        ic_cdk::api::canister_self().as_slice(),
+        &tx,
+        wrap_evm,
+    );
+    let submit = submit_ic_tx_internal(
         ic_cdk::api::canister_self().as_slice().to_vec(),
         "wrap_mint",
         tx,
+    );
+    match submit {
+        Ok(tx_id) => {
+            record_wrap_mint_submitted(request_id, tx_id.clone())?;
+            Ok(tx_id)
+        }
+        Err(err) => {
+            if is_duplicate_mint_submit_error(&err) && chain::get_tx_loc(&tx_id).is_some() {
+                let tx_id = tx_id.0.to_vec();
+                record_wrap_mint_submitted(request_id, tx_id.clone())?;
+                return Ok(tx_id);
+            }
+            Err(format!(
+                "evm_gateway.submit_failed:{}",
+                submit_error_to_code(err)
+            ))
+        }
+    }
+}
+
+#[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+fn derive_ic_synthetic_tx_id(
+    caller_principal: &[u8],
+    canister_id: &[u8],
+    tx: &evm_core::tx_decode::IcSyntheticTxInput,
+    caller_evm: [u8; 20],
+) -> TxId {
+    let tx_bytes = evm_core::tx_decode::encode_ic_synthetic_input(tx);
+    TxId(hash::stored_tx_id(
+        TxKind::IcSynthetic,
+        &tx_bytes,
+        Some(caller_evm),
+        Some(canister_id),
+        Some(caller_principal),
+    ))
+}
+
+#[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+fn is_duplicate_mint_submit_error(err: &SubmitTxError) -> bool {
+    matches!(
+        err,
+        SubmitTxError::Rejected(code)
+            if code == "submit.tx_already_seen" || code == "submit.nonce_conflict"
     )
-    .map_err(|err| format!("evm_gateway.submit_failed:{}", submit_error_to_code(err)))
+}
+
+#[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+fn record_wrap_mint_submitting(request_id: TxId, nonce: u64) -> Result<(), String> {
+    with_state_mut(|state| {
+        let Some(mut req) = state.wrap_requests.get(&request_id) else {
+            return Err("request.not_found".to_string());
+        };
+        req.result.mint_nonce = Some(nonce);
+        req.result.mint_submit_status = MintSubmitStatus::Submitting;
+        req.result.stage = WrapRequestStage::MintSubmitting;
+        req.result.updated_at = current_time_nanos();
+        let req = sanitize_wrap_request(req)?;
+        state.wrap_requests.insert(request_id, req);
+        Ok(())
+    })
+}
+
+#[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+fn record_wrap_mint_submitted(request_id: TxId, tx_id: Vec<u8>) -> Result<(), String> {
+    let tx_id = validated_ledger_tx_id(tx_id)?;
+    with_state_mut(|state| {
+        let Some(mut req) = state.wrap_requests.get(&request_id) else {
+            return Err("request.not_found".to_string());
+        };
+        req.result.mint_tx_id = Some(tx_id);
+        req.result.mint_submitted_at_time = current_time_nanos();
+        req.result.mint_submit_status = MintSubmitStatus::Submitted;
+        req.result.stage = WrapRequestStage::MintSubmitted;
+        req.result.updated_at = current_time_nanos();
+        req.result.error_code = None;
+        let req = sanitize_wrap_request(req)?;
+        state.wrap_requests.insert(request_id, req);
+        Ok(())
+    })
 }
 
 #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
@@ -4339,11 +4968,24 @@ fn apply_wrap_execution_outcome(request_id: TxId, outcome: WrapExecutionOutcome)
             return;
         };
         req.result.status = outcome.status;
-        req.result.pull_ledger_tx_id = outcome.pull_ledger_tx_id;
-        req.result.mint_tx_id = outcome.mint_tx_id;
-        req.result.error_code = outcome.error_code;
+        if outcome.pull_ledger_tx_id.is_some() {
+            req.result.pull_ledger_tx_id = outcome.pull_ledger_tx_id;
+        }
+        if outcome.mint_tx_id.is_some() {
+            req.result.mint_tx_id = outcome.mint_tx_id;
+        }
+        req.result.error_code = outcome.error_code.map(clamp_error_code);
         req.result.mint_failed_recoverable = outcome.mint_failed_recoverable;
-        state.wrap_requests.insert(request_id, req);
+        req.result.stage = match outcome.status {
+            StoredRequestStatus::Succeeded => WrapRequestStage::Succeeded,
+            StoredRequestStatus::Failed => WrapRequestStage::Failed,
+            StoredRequestStatus::Running => WrapRequestStage::MintSubmitting,
+            StoredRequestStatus::Queued => WrapRequestStage::FeeCollected,
+        };
+        req.result.updated_at = current_time_nanos();
+        if let Ok(req) = sanitize_wrap_request(req) {
+            state.wrap_requests.insert(request_id, req);
+        }
     });
 }
 
@@ -4423,7 +5065,7 @@ async fn dispatch_unwrap_request_internal(
         recipient,
         amount,
         request_memo(request_id, TransferMemoKind::Unwrap),
-        current_time_nanos(),
+        req.transfer_created_at_time,
     )
     .await
     {
@@ -4450,9 +5092,11 @@ fn finalize_unwrap_dispatch_attempt(
             return;
         };
         req.updated_at = now;
-        req.ledger_tx_id = applied.ledger_tx_id;
+        req.ledger_tx_id = applied
+            .ledger_tx_id
+            .and_then(|tx_id| validated_ledger_tx_id(tx_id).ok());
         req.status = applied.status;
-        req.error_code = applied.error_code;
+        req.error_code = applied.error_code.map(clamp_error_code);
         state.unwrap_requests.insert(request_id, req);
     });
 }

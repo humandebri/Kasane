@@ -168,6 +168,7 @@ dfx canister call --query wrap_canister export_did '()' --network "${ICP_ENV}"
 
 ## 6. 運用上の注意
 
+- integrated gateway wasm では `InitArgs.wrap_canister_id` は `canister_self()` として扱われます。指定値は wire 互換維持用で、実行時の参照先確認は `get_wrap_runtime_config` を使ってください。
 - `submit_wrap_request` は wallet caller 本人で実行され、`from_owner` は canister 側で `msg_caller` 固定です（引数で渡しません）。
 - `submit_wrap_request` は直前の `quote_wrap_request` から得た `charged_fee_e8s` / `charged_gas_price_wei` / `fee_ledger_canister` を上限として渡します。超過・ledger変更時は送金前に拒否されます。
 - Wrap手数料（`cycles + gas`）は `fee_ledger_canister` から `icrc2_transfer_from` で前払い徴収されます。

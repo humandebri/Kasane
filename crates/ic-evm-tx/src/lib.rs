@@ -92,7 +92,10 @@ fn recovered_from_tx<T: Transaction>(
     let chain_id = tx.chain_id();
     let signature_v = match tx_type {
         TX_TYPE_LEGACY_ENVELOPE => chain_id
-            .map(|id| id.saturating_mul(2).saturating_add(35 + u64::from(signature.v())))
+            .map(|id| {
+                id.saturating_mul(2)
+                    .saturating_add(35 + u64::from(signature.v()))
+            })
             .unwrap_or(27 + u64::from(signature.v())),
         _ => u64::from(signature.v()),
     };

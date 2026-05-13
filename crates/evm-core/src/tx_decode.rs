@@ -226,6 +226,9 @@ pub fn decode_tx_view<'a>(
 }
 
 pub fn decode_eth_raw_tx(bytes: &[u8]) -> Result<TxEnv, DecodeError> {
+    if let Some(TX_TYPE_EIP4844 | TX_TYPE_EIP7702) = bytes.first().copied() {
+        return Err(DecodeError::UnsupportedType);
+    }
     let recovered = decode_eth_raw_tx_to_recovered(bytes)?;
     Ok(decoded_to_tx_env(&recovered))
 }

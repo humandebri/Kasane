@@ -66,7 +66,10 @@ fn decode_preserves_access_list() {
     let decoded = decode_eth_raw_tx(&sign_encoded(tx, &signer)).expect("decode");
     assert_eq!(decoded.access_list.0.len(), 1);
     assert_eq!(decoded.access_list.0[0].address, Address::from([0x44; 20]));
-    assert_eq!(decoded.access_list.0[0].storage_keys, vec![B256::from([0x55; 32])]);
+    assert_eq!(
+        decoded.access_list.0[0].storage_keys,
+        vec![B256::from([0x55; 32])]
+    );
 }
 
 #[test]

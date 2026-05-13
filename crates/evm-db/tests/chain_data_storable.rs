@@ -7,11 +7,11 @@ use evm_db::chain_data::constants::{
 use evm_db::chain_data::receipt::LogEntry;
 use evm_db::chain_data::{
     BlockData, CallerKey, ChainStateV1, FeePolicyStored, Head, InternalTrace,
-    InternalTraceActionKind, InternalTraceSet, OpsMetricsV1, PruneJournal, QueueMeta, ReceiptLike,
-    RequestStatus, RuntimeConfigV1, StoredTx, StoredTxBytes, TxId, TxIndexEntry, TxKind, TxLoc,
-    UnwrapDispatchRequest, UnwrapRequestStatus, WrapEvmConfigStored, WrapPendingSubmission,
-    WrapRequestResult, WrapStoredRequest, MAX_INTERNAL_TRACES_PER_TX_U32,
-    UNWRAP_DECODE_FAILURE_CODE,
+    InternalTraceActionKind, InternalTraceSet, MintSubmitStatus, OpsMetricsV1, PruneJournal,
+    QueueMeta, ReceiptLike, RequestStatus, RuntimeConfigV1, StoredTx, StoredTxBytes, TxId,
+    TxIndexEntry, TxKind, TxLoc, UnwrapDispatchRequest, UnwrapRequestStatus, WrapEvmConfigStored,
+    WrapPendingSubmission, WrapRequestResult, WrapRequestStage, WrapStoredRequest,
+    MAX_INTERNAL_TRACES_PER_TX_U32, UNWRAP_DECODE_FAILURE_CODE,
 };
 use evm_db::chain_data::{LogConfigV1, LOG_CONFIG_FILTER_MAX};
 use evm_db::chain_data::{
@@ -749,6 +749,11 @@ fn wrap_stored_request_roundtrip() {
             fee_ledger_tx_id: Some(vec![11]),
             charged_fee_e8s: Some(12),
             charged_gas_price_wei: Some(13),
+            stage: WrapRequestStage::Failed,
+            updated_at: 14,
+            mint_nonce: Some(15),
+            mint_submitted_at_time: 16,
+            mint_submit_status: MintSubmitStatus::Submitted,
         },
     };
 
@@ -759,6 +764,8 @@ fn wrap_stored_request_roundtrip() {
     assert_eq!(decoded.max_fee_e8s, 17);
     assert_eq!(decoded.quoted_gas_price_wei, 18);
     assert_eq!(decoded.result.status, RequestStatus::Failed);
+    assert_eq!(decoded.result.stage, WrapRequestStage::Failed);
+    assert_eq!(decoded.result.mint_nonce, Some(15));
     assert!(decoded.result.withdrawn);
     assert!(decoded.result.mint_failed_recoverable);
 }

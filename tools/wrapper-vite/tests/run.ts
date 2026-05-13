@@ -194,11 +194,16 @@ async function runExecutionBranchTests(): Promise<void> {
       kind: { Unwrap: null },
       request_id: requestId,
       status: { Succeeded: null },
+      recoverable: false,
       error: [],
+      stage: [],
       fee_ledger_tx_id: [],
       pull_ledger_tx_id: [],
       mint_tx_id: [],
       withdraw_ledger_tx_id: [],
+      withdrawn: false,
+      withdraw_in_progress: false,
+      withdraw_error: [],
       ledger_tx_id: [Uint8Array.from([0xaa, 0xbb])],
       dispatch_status: [],
       dispatch_error: [],
@@ -215,11 +220,16 @@ async function runExecutionBranchTests(): Promise<void> {
       kind: { Wrap: null },
       request_id: requestId,
       status: { Failed: null },
+      recoverable: true,
       error: [{ code: "wrap_failed", message: "wrap_failed" }],
+      stage: [{ Failed: null }],
       fee_ledger_tx_id: [],
       pull_ledger_tx_id: [Uint8Array.from([0x01])],
       mint_tx_id: [],
       withdraw_ledger_tx_id: [],
+      withdrawn: false,
+      withdraw_in_progress: false,
+      withdraw_error: [{ code: "withdraw_failed", message: "withdraw_failed" }],
       ledger_tx_id: [],
       dispatch_status: [],
       dispatch_error: [],
@@ -230,7 +240,7 @@ async function runExecutionBranchTests(): Promise<void> {
   });
   assert.equal(wrapPreferred?.errorCode, "wrap_failed");
   assert.equal(wrapPreferred?.mintFailedRecoverable, true);
-  assert.equal(wrapPreferred?.withdrawErrorCode, null);
+  assert.equal(wrapPreferred?.withdrawErrorCode, "withdraw_failed");
 
   const missingWithdrawErrorCode = await getExecutionResult(requestId, {
     readRequest: async () => {
@@ -244,11 +254,16 @@ async function runExecutionBranchTests(): Promise<void> {
         kind: { Wrap: null },
         request_id: requestId,
         status: { Failed: null },
+        recoverable: true,
         error: noError,
+        stage: noDispatchStatus,
         fee_ledger_tx_id: noBytes,
         pull_ledger_tx_id: pullLedgerTxId,
         mint_tx_id: noBytes,
         withdraw_ledger_tx_id: noBytes,
+        withdrawn: false,
+        withdraw_in_progress: false,
+        withdraw_error: noError,
         withdraw_error_code: noBytes,
         ledger_tx_id: noBytes,
         dispatch_status: noDispatchStatus,
@@ -256,7 +271,7 @@ async function runExecutionBranchTests(): Promise<void> {
         charged_fee_e8s: noNat,
         charged_gas_price_wei: noNat,
       };
-      Reflect.deleteProperty(value, "withdraw_error_code");
+      Reflect.deleteProperty(value, "withdraw_error");
       return [value];
     },
   });
@@ -436,14 +451,20 @@ async function runNativeDepositDraftTests(): Promise<void> {
 }
 
 async function runWrapperActionAssetRoutingTests(): Promise<void> {
-  assert.equal(wrapperActionsTestHooks.isNativeWithdrawalAssetId(DEFAULT_ASSET_ID), true);
-  assert.equal(wrapperActionsTestHooks.isNativeWithdrawalAssetId(LOCAL_TEST_ASSET_ID), true);
   assert.equal(
-    wrapperActionsTestHooks.isNativeWithdrawalAssetId("mxzaz-hqaaa-aaaar-qaada-cai"),
+    wrapperActionsTestHooks.isNativeWithdrawalAssetId(DEFAULT_ASSET_ID, DEFAULT_ASSET_ID),
+    true,
+  );
+  assert.equal(
+    wrapperActionsTestHooks.isNativeWithdrawalAssetId(LOCAL_TEST_ASSET_ID, LOCAL_TEST_ASSET_ID),
+    true,
+  );
+  assert.equal(
+    wrapperActionsTestHooks.isNativeWithdrawalAssetId("mxzaz-hqaaa-aaaar-qaada-cai", DEFAULT_ASSET_ID),
     false,
   );
   assert.equal(
-    wrapperActionsTestHooks.isNativeWithdrawalAssetId("ss2fx-dyaaa-aaaar-qacoq-cai"),
+    wrapperActionsTestHooks.isNativeWithdrawalAssetId("ss2fx-dyaaa-aaaar-qacoq-cai", DEFAULT_ASSET_ID),
     false,
   );
 }
@@ -879,6 +900,9 @@ async function runUnwrapRequirementsTests(): Promise<void> {
     get_fee_policy: async () => {
       throw new Error("unused get_fee_policy");
     },
+    get_wrap_runtime_config: async () => {
+      throw new Error("unused get_wrap_runtime_config");
+    },
     get_unwrap_requirements: async () => ({
       Ok: {
         factory_address: hexToBytes("0x2222222222222222222222222222222222222222"),
@@ -916,6 +940,9 @@ async function runUnwrapRequirementsTests(): Promise<void> {
     },
     get_fee_policy: async () => {
       throw new Error("unused get_fee_policy");
+    },
+    get_wrap_runtime_config: async () => {
+      throw new Error("unused get_wrap_runtime_config");
     },
     get_unwrap_requirements: async () => ({
       Ok: {
@@ -966,6 +993,9 @@ async function runNativeWithdrawClientTests(): Promise<void> {
     },
     get_fee_policy: async () => {
       throw new Error("unused get_fee_policy");
+    },
+    get_wrap_runtime_config: async () => {
+      throw new Error("unused get_wrap_runtime_config");
     },
     get_unwrap_requirements: async () => {
       throw new Error("unused get_unwrap_requirements");

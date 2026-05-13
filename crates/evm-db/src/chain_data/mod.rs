@@ -69,6 +69,6 @@ pub use tx::{
 pub use tx_loc::{TxLoc, TxLocKind};
 pub use unwrap_request::{UnwrapDispatchRequest, UnwrapRequestStatus, UNWRAP_DECODE_FAILURE_CODE};
 pub use wrap_request::{
-    FeePolicyStored, RequestStatus, WrapEvmConfigStored, WrapPendingSubmission, WrapRequestResult,
-    WrapStoredRequest,
+    FeePolicyStored, MintSubmitStatus, RequestStatus, WrapEvmConfigStored, WrapPendingSubmission,
+    WrapRequestResult, WrapRequestStage, WrapStoredRequest,
 };

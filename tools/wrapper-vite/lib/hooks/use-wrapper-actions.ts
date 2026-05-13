@@ -8,15 +8,12 @@ import type {
 } from "@/components/dashboard-ui/types";
 import { approveLedgerSpend, getLedgerAllowance } from "@/lib/canister/icrc2-client";
 import {
-  DEFAULT_ASSET_ID,
-  LOCAL_TEST_ASSET_ID,
-} from "@/lib/asset-catalog";
-import {
   getMaxPriorityFeePerGasWei,
   getUnwrapRequestIdsByEthTxHash,
 } from "@/lib/canister/wrapper-client";
 import {
   getUnwrapRequirements,
+  getWrapRuntimeConfig,
   quoteNativeDeposit,
   quoteNativeWithdrawal,
   quoteWrapRequest,
@@ -184,8 +181,8 @@ function clearNativeDepositDraft(key: string): void {
   saveNativeDepositDrafts(drafts);
 }
 
-function isNativeWithdrawalAssetId(assetId: string): boolean {
-  return assetId === DEFAULT_ASSET_ID || assetId === LOCAL_TEST_ASSET_ID;
+function isNativeWithdrawalAssetId(assetId: string, nativeLedgerCanister: string): boolean {
+  return assetId === nativeLedgerCanister;
 }
 
 async function waitForTransactionFinal(args: {
@@ -369,7 +366,8 @@ export function useWrapperActions(params: {
     let unwrapTarget: string;
     let unwrapData: string;
     let valueWei = 0n;
-    if (isNativeWithdrawalAssetId(assetId)) {
+    const runtimeConfig = await getWrapRuntimeConfig();
+    if (isNativeWithdrawalAssetId(assetId, runtimeConfig.nativeLedgerCanister)) {
       const nativeQuote = await quoteNativeWithdrawal({
         amountE8s: amount,
         recipient,

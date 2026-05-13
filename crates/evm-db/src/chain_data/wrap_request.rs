@@ -6,10 +6,33 @@ use ic_stable_structures::Storable;
 use std::borrow::Cow;
 
 pub const PRINCIPAL_MAX_BYTES: usize = 29;
-pub const WRAP_STORED_REQUEST_MAX_BYTES: u32 = 768;
+pub const WRAP_STORED_REQUEST_MAX_BYTES: u32 = 1_280;
 pub const FEE_POLICY_MAX_BYTES: u32 = 128;
 pub const WRAP_EVM_CONFIG_MAX_BYTES: u32 = 32;
 pub const WRAP_PENDING_SUBMISSION_MAX_BYTES: u32 = 96;
+
+#[derive(Clone, Copy, Debug, CandidType, Default, Deserialize, Eq, PartialEq)]
+pub enum WrapRequestStage {
+    FeePending,
+    #[default]
+    FeeCollected,
+    PullPending,
+    Pulled,
+    MintSubmitting,
+    MintSubmitted,
+    Succeeded,
+    Failed,
+    Refunding,
+    Refunded,
+}
+
+#[derive(Clone, Copy, Debug, CandidType, Default, Deserialize, Eq, PartialEq)]
+pub enum MintSubmitStatus {
+    #[default]
+    NotSubmitted,
+    Submitting,
+    Submitted,
+}
 
 #[derive(Clone, Copy, Debug, CandidType, Deserialize, Eq, PartialEq)]
 pub enum RequestStatus {
@@ -41,6 +64,16 @@ pub struct WrapRequestResult {
     pub charged_fee_e8s: Option<u128>,
     #[serde(default)]
     pub charged_gas_price_wei: Option<u128>,
+    #[serde(default)]
+    pub stage: WrapRequestStage,
+    #[serde(default)]
+    pub updated_at: u64,
+    #[serde(default)]
+    pub mint_nonce: Option<u64>,
+    #[serde(default)]
+    pub mint_submitted_at_time: u64,
+    #[serde(default)]
+    pub mint_submit_status: MintSubmitStatus,
 }
 
 #[derive(Clone, Debug, CandidType, Deserialize)]

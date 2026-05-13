@@ -149,7 +149,9 @@ enum RequestDispatchStatusView {
 #[derive(Clone, Copy, Debug, CandidType, Deserialize, Eq, PartialEq)]
 enum RequestKind {
     Wrap,
+    NativeDeposit,
     Unwrap,
+    NativeWithdrawal,
 }
 
 #[derive(Clone, Copy, Debug, CandidType, Deserialize, Eq, PartialEq)]
@@ -892,15 +894,21 @@ fn wait_for_unwrap_status(
     request_id: &[u8],
     expected: WrapRequestStatus,
 ) -> RequestOverview {
+    let mut last = None;
     for _ in 0..20 {
         settle(pic, 1);
         if let Some(overview) = wrap_get_request(pic, wrap_id, request_id) {
-            if overview.kind == RequestKind::Unwrap && overview.status == expected {
+            last = Some(overview.clone());
+            if matches!(
+                overview.kind,
+                RequestKind::Unwrap | RequestKind::NativeWithdrawal
+            ) && overview.status == expected
+            {
                 return overview;
             }
         }
     }
-    panic!("unwrap request did not reach expected status");
+    panic!("unwrap request did not reach expected status; last={last:?}");
 }
 
 fn wrap_get_unwrap_requirements(
@@ -1324,6 +1332,7 @@ fn integrated_gateway_native_deposit_and_withdrawal_paths_work() {
     let deposit_ok = deposit_result.expect("native deposit should succeed");
     let deposit_overview = wrap_get_request(&pic, gateway_id, &deposit_ok.request_id)
         .expect("native deposit overview");
+    assert_eq!(deposit_overview.kind, RequestKind::NativeDeposit);
     assert_eq!(deposit_overview.status, WrapRequestStatus::Succeeded);
     assert!(deposit_overview.pull_ledger_tx_id.is_some());
     assert_eq!(
@@ -1404,7 +1413,7 @@ fn integrated_gateway_native_deposit_and_withdrawal_paths_work() {
     let request_id = derive_unwrap_request_id(&withdraw_receipt.tx_id, log_index);
     let withdrawal =
         wait_for_unwrap_status(&pic, gateway_id, &request_id, WrapRequestStatus::Succeeded);
-    assert_eq!(withdrawal.kind, RequestKind::Unwrap);
+    assert_eq!(withdrawal.kind, RequestKind::NativeWithdrawal);
     assert!(withdrawal.ledger_tx_id.is_some());
     assert_eq!(
         ledger_balance_of(&pic, native_ledger_id, recipient) - recipient_before,
