@@ -1,3 +1,6 @@
+# This workflow is committed under tools/rpc-gateway so subtree mirror publishes it
+# as .github/workflows/cloudflare-deploy.yml in kasane-network/rpc-gateway.
+# Keep npm commands at repo root here; package files live at root after mirroring.
 name: Cloudflare Deploy
 
 on:
