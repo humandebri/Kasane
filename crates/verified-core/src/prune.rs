@@ -59,12 +59,11 @@ pub fn ratio_bytes(target: u64, ratio_bps: u32) -> u64 {
     }
     let numerator = u128::from(target) * ratio;
     let bytes = numerator / BPS_DENOMINATOR;
-    let result = if bytes > u128::from(u64::MAX) {
+    if bytes > u128::from(u64::MAX) {
         u64::MAX
     } else {
         bytes as u64
-    };
-    result
+    }
 }
 
 #[cfg_attr(verus_keep_ghost, verus_spec(bytes => ensures
