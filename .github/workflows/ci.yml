@@ -39,7 +39,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y jq unzip
           release_json="$(mktemp)"
-          curl -fsSL "https://api.github.com/repos/verus-lang/verus/releases/tags/${VERUS_TAG}" -o "${release_json}"
+          curl --retry 5 --retry-all-errors --retry-delay 2 -fsSL "https://api.github.com/repos/verus-lang/verus/releases/tags/${VERUS_TAG}" -o "${release_json}"
           asset_url="$(jq -r '.assets[].browser_download_url | select(test("x86-linux.*\\.zip$"))' "${release_json}" | head -n 1)"
           asset_digest="$(jq -r '.assets[] | select(.name | test("x86-linux.*\\.zip$")) | .digest // ""' "${release_json}" | head -n 1)"
           if [[ -z "${asset_url}" ]]; then
@@ -50,7 +50,7 @@ jobs:
             echo "Verus asset digest mismatch for ${VERUS_TAG}: ${asset_digest}" >&2
             exit 1
           fi
-          curl -fsSL "${asset_url}" -o /tmp/verus.zip
+          curl --retry 5 --retry-all-errors --retry-delay 2 -fsSL "${asset_url}" -o /tmp/verus.zip
           echo "${VERUS_LINUX_X86_SHA256}  /tmp/verus.zip" | sha256sum -c -
           unzip -q /tmp/verus.zip -d /tmp/verus-release
           verus_bin="$(find /tmp/verus-release -type f -name verus -perm -111 | head -n 1)"
