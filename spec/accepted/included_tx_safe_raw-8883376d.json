@@ -4,7 +4,7 @@
   "slug": "included_tx_safe_raw-8883376d",
   "file": "crates/verified-core/src/core_safety_included.rs",
   "function": "included_tx_safe_raw",
-  "git_commit": "5a64c9f3da2f4eab906ace9b5d61a5ff0f16eb29",
+  "git_commit": "10e8abd458bd615ab1010dfc3737fa96d3e7c8cc",
   "worktree_dirty": false,
   "source_hash": "7e720680b2cb24d5789374c3b79ac1e99027ca71e00fadd48903dcefc1e53d8e",
   "semantic_hash": "6dc668816494aa65069d63e12f80cf9f2da179de8741e69c7b90e61bc88a24d2",

@@ -11,16 +11,16 @@
     "semantic_hash": "bf3de588a850213c5f19b3c3133b2f360e830849940559083c2e4fee1bcaeb2f",
     "created_at": "2026-05-15T12:07:27Z"
   },
-  "signature": "pub fn block_commit_safe_raw(\n    previous_head: u64,\n    committed_head: u64,\n    included_count: u64,\n    staged_count: u64,\n    safe_included_count: u64,\n    block_gas_used: u64,\n    block_gas_limit: u64,\n) -> bool",
+  "signature": "pub fn block_commit_safe_raw(previous_head: u64, committed_head: u64, included_count: u64, staged_count: u64, safe_included_count: u64, block_gas_used: u64, block_gas_limit: u64) -> bool",
   "body": "{\n    previous_head < u64::MAX\n        && committed_head == previous_head + 1\n        && (block_gas_limit == 0 || block_gas_used <= block_gas_limit)\n        && included_count != 0\n        && included_count == staged_count\n        && safe_included_count == included_count\n}",
   "span": {
     "start_line": 6,
-    "end_line": 21
+    "end_line": 13
   },
-  "git_commit": "5a64c9f3da2f4eab906ace9b5d61a5ff0f16eb29",
-  "worktree_dirty": false,
-  "source_hash": "b39faf9979ce7183b540439379372e92835318904382bcd57e20df88432305f2",
-  "semantic_hash": "4239ff9744392bfca4c2a1513aba01c762fa811340f4655943b4e3b39f3ef3ba",
+  "git_commit": "10e8abd458bd615ab1010dfc3737fa96d3e7c8cc",
+  "worktree_dirty": true,
+  "source_hash": "bd38172fcaaa46a74e2990d3c2d08a0219f4e8408d6ff8a69798001ba02d051e",
+  "semantic_hash": "d65a27c3dbdc15c577a215af8417934902ba527d4b55182f5f96cf6becc9e9f6",
   "dependency_hash_inputs": [
     {
       "kind": "use",

@@ -4,7 +4,7 @@
   "slug": "submit_transition_safe_raw-3a7d7873",
   "file": "crates/verified-core/src/core_safety.rs",
   "function": "submit_transition_safe_raw",
-  "git_commit": "5a64c9f3da2f4eab906ace9b5d61a5ff0f16eb29",
+  "git_commit": "10e8abd458bd615ab1010dfc3737fa96d3e7c8cc",
   "worktree_dirty": false,
   "source_hash": "1118af33bd9ea8d71008adc64d8af448ca24462efeac8cc84fbf5f3de0ff05ea",
   "semantic_hash": "fa7f2587e9b5a6e4349748c889f4aebeed6de57b5a1cce8796c69a7608d3d7e1",

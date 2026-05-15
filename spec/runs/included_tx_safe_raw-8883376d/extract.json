@@ -11,16 +11,16 @@
     "semantic_hash": "200dc7e13579af9bb069bfa545c6cbd32dd681daffcd07dcf07ca103ae440c2b",
     "created_at": "2026-05-15T12:07:25Z"
   },
-  "signature": "pub fn included_tx_safe_raw(\n    has_tx_index: u64,\n    has_receipt: u64,\n    receipt_tx_id_matches: u64,\n    index_key_matches_tx_id: u64,\n    loc_matches_position: u64,\n    receipt_matches_position: u64,\n    index_matches_position: u64,\n    block_number: u64,\n) -> bool",
+  "signature": "pub fn included_tx_safe_raw(has_tx_index: u64, has_receipt: u64, receipt_tx_id_matches: u64, index_key_matches_tx_id: u64, loc_matches_position: u64, receipt_matches_position: u64, index_matches_position: u64, block_number: u64) -> bool",
   "body": "{\n    has_tx_index == 1\n        && has_receipt == 1\n        && block_number > 0\n        && receipt_tx_id_matches == 1\n        && index_key_matches_tx_id == 1\n        && loc_matches_position == 1\n        && receipt_matches_position == 1\n        && index_matches_position == 1\n}",
   "span": {
     "start_line": 6,
-    "end_line": 24
+    "end_line": 15
   },
-  "git_commit": "5a64c9f3da2f4eab906ace9b5d61a5ff0f16eb29",
-  "worktree_dirty": false,
-  "source_hash": "7e720680b2cb24d5789374c3b79ac1e99027ca71e00fadd48903dcefc1e53d8e",
-  "semantic_hash": "6dc668816494aa65069d63e12f80cf9f2da179de8741e69c7b90e61bc88a24d2",
+  "git_commit": "10e8abd458bd615ab1010dfc3737fa96d3e7c8cc",
+  "worktree_dirty": true,
+  "source_hash": "7584af7de23ac12ec45cc49852b04b44dd46c13053cf3440d4abd28160c26be4",
+  "semantic_hash": "2f06f09b8a089ea16a1cfb4f51f4161d3f27ec82af6c6a96eb976d49ec7417b4",
   "dependency_hash_inputs": [
     {
       "kind": "use",
