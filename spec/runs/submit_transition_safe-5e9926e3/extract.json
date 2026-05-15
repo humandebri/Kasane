@@ -17,10 +17,10 @@
     "start_line": 49,
     "end_line": 80
   },
-  "git_commit": "0e1cc96bcf8c44bcd8209096be775abafd9ae137",
-  "worktree_dirty": true,
+  "git_commit": "a848c3ce3ac0221f613064663c95db4fb6c796ea",
+  "worktree_dirty": false,
   "source_hash": "5e9926e385ee27de688cf107e99eccd13e8f2757b8a744c830a289080e6ed65c",
-  "semantic_hash": "7100c28757c0fd9171871615827268bf49a87efed9ba4d7bd532f84067ec568d",
+  "semantic_hash": "2fb07ed2b815737697d1556138e561540968d3b2a560e2a9c89110df9cc7a762",
   "dependency_hash_inputs": [
     {
       "kind": "use",
@@ -62,7 +62,7 @@
       "kind": "module",
       "name": "cfg",
       "file": "crates/verified-core/src/core_safety.rs",
-      "hash": "0d46fcd208fda4493d7195469d0c720ca6ec2bbd97140bb5c3f9e657aa90f942"
+      "hash": "9b368b9979d7aa03db6a617147d0181b4275b5734bb26fd88db24e6eef8701ca"
     },
     {
       "kind": "use",

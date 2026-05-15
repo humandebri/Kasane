@@ -14,13 +14,13 @@
   "signature": "#[cfg_attr(verus_keep_ghost, verus_spec(safe => ensures\n    safe == (\n        facts.has_tx_index\n        && facts.has_receipt\n        && facts.receipt_tx_id_matches\n        && facts.index_key_matches_tx_id\n        && facts.loc_matches_position\n        && facts.receipt_matches_position\n        && facts.index_matches_position\n        && facts.block_number > 0\n    ),\n))]\npub fn included_tx_safe(facts: IncludedTxFacts) -> bool",
   "body": "{\n    facts.has_tx_index\n        && facts.has_receipt\n        && facts.block_number > 0\n        && facts.receipt_tx_id_matches\n        && facts.index_key_matches_tx_id\n        && facts.loc_matches_position\n        && facts.receipt_matches_position\n        && facts.index_matches_position\n}",
   "span": {
-    "start_line": 80,
-    "end_line": 101
+    "start_line": 82,
+    "end_line": 103
   },
-  "git_commit": "84ed97b317f8b423af7e5df4f7688feb54599384",
+  "git_commit": "a848c3ce3ac0221f613064663c95db4fb6c796ea",
   "worktree_dirty": false,
   "source_hash": "194ead498b0ea20a942e6c51fc03289334a32f97bd436054178b5a70c0736378",
-  "semantic_hash": "2102c129c4bbc6e0e0f034436511bf3ab3d5974f19021a40e2413150e3fa1ecf",
+  "semantic_hash": "a336dc331b1758e992493e63eebff2acd91a7f425b51467086f37483789e7bf8",
   "dependency_hash_inputs": [
     {
       "kind": "use",
@@ -62,7 +62,7 @@
       "kind": "module",
       "name": "cfg",
       "file": "crates/verified-core/src/core_safety.rs",
-      "hash": "46df887b67095d38a8d96f91bf477067030cd91e28f7b9e6ca2aba6a6c672d51"
+      "hash": "9b368b9979d7aa03db6a617147d0181b4275b5734bb26fd88db24e6eef8701ca"
     },
     {
       "kind": "use",
