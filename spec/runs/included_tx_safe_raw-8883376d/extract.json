@@ -11,16 +11,16 @@
     "semantic_hash": "200dc7e13579af9bb069bfa545c6cbd32dd681daffcd07dcf07ca103ae440c2b",
     "created_at": "2026-05-15T12:07:25Z"
   },
-  "signature": "#[cfg_attr(verus_keep_ghost, verus_spec(safe => ensures\n    safe == (\n        has_tx_index\n        && has_receipt\n        && receipt_tx_id_matches\n        && index_key_matches_tx_id\n        && loc_matches_position\n        && receipt_matches_position\n        && index_matches_position\n        && block_number > 0\n    ),\n))]\npub fn included_tx_safe_raw(\n    has_tx_index: bool,\n    has_receipt: bool,\n    receipt_tx_id_matches: bool,\n    index_key_matches_tx_id: bool,\n    loc_matches_position: bool,\n    receipt_matches_position: bool,\n    index_matches_position: bool,\n    block_number: u64,\n) -> bool",
-  "body": "{\n    has_tx_index\n        && has_receipt\n        && block_number > 0\n        && receipt_tx_id_matches\n        && index_key_matches_tx_id\n        && loc_matches_position\n        && receipt_matches_position\n        && index_matches_position\n}",
+  "signature": "#[cfg_attr(verus_keep_ghost, verus_spec(safe => ensures\n    safe == (\n        has_tx_index == 1\n        && has_receipt == 1\n        && receipt_tx_id_matches == 1\n        && index_key_matches_tx_id == 1\n        && loc_matches_position == 1\n        && receipt_matches_position == 1\n        && index_matches_position == 1\n        && block_number > 0\n    ),\n))]\npub fn included_tx_safe_raw(\n    has_tx_index: u64,\n    has_receipt: u64,\n    receipt_tx_id_matches: u64,\n    index_key_matches_tx_id: u64,\n    loc_matches_position: u64,\n    receipt_matches_position: u64,\n    index_matches_position: u64,\n    block_number: u64,\n) -> bool",
+  "body": "{\n    has_tx_index == 1\n        && has_receipt == 1\n        && block_number > 0\n        && receipt_tx_id_matches == 1\n        && index_key_matches_tx_id == 1\n        && loc_matches_position == 1\n        && receipt_matches_position == 1\n        && index_matches_position == 1\n}",
   "span": {
     "start_line": 44,
     "end_line": 74
   },
-  "git_commit": "1c29a686bc2e2032d056b69826cb4217a7cb0334",
+  "git_commit": "7c518ff73ff0ed5a562ee74062a42bf030de5f7a",
   "worktree_dirty": false,
-  "source_hash": "8883376d72032a1c2763639c9b66be22fb0d0b0fd41ea54619d9bb82a98c9763",
-  "semantic_hash": "f36a3e08a6f5fa9775fe08df81966740e65bdee2c1c624a20a3fe7c771f4f0e9",
+  "source_hash": "43c3c089a1607427679e5cd869e36d903885af3ef2606a00ff1e7a3309f63553",
+  "semantic_hash": "829ab27b3c1b8995d7db68986cc6059900db157c4d12c567f46cfb7c45cdc199",
   "dependency_hash_inputs": [
     {
       "kind": "use",

@@ -11,16 +11,16 @@
     "semantic_hash": "5a42d752fbfb9dbd515f43b51b2822024ca162427dfa173e19451af00a27605d",
     "created_at": "2026-05-15T12:07:22Z"
   },
-  "signature": "#[cfg_attr(verus_keep_ghost, verus_spec(safe => ensures\n    safe == (\n        (decision_code == SUBMIT_DECISION_ACCEPT\n            && pending_slot_points_to_new\n            && new_current_written\n            && queued_loc_written\n            && !replacement_old_removed)\n        || (decision_code == SUBMIT_DECISION_REPLACE\n            && pending_slot_points_to_new\n            && new_current_written\n            && queued_loc_written\n            && replacement_old_removed)\n    ),\n))]\npub fn submit_transition_safe_raw(\n    decision_code: u8,\n    pending_slot_points_to_new: bool,\n    new_current_written: bool,\n    queued_loc_written: bool,\n    replacement_old_removed: bool,\n) -> bool",
-  "body": "{\n    (decision_code == SUBMIT_DECISION_ACCEPT\n        && pending_slot_points_to_new\n        && new_current_written\n        && queued_loc_written\n        && !replacement_old_removed)\n        || (decision_code == SUBMIT_DECISION_REPLACE\n            && pending_slot_points_to_new\n            && new_current_written\n            && queued_loc_written\n            && replacement_old_removed)\n}",
+  "signature": "#[cfg_attr(verus_keep_ghost, verus_spec(safe => ensures\n    safe == (\n        (decision_code == SUBMIT_DECISION_ACCEPT\n            && pending_slot_points_to_new == 1\n            && new_current_written == 1\n            && queued_loc_written == 1\n            && replacement_old_removed == 0)\n        || (decision_code == SUBMIT_DECISION_REPLACE\n            && pending_slot_points_to_new == 1\n            && new_current_written == 1\n            && queued_loc_written == 1\n            && replacement_old_removed == 1)\n    ),\n))]\npub fn submit_transition_safe_raw(\n    decision_code: u64,\n    pending_slot_points_to_new: u64,\n    new_current_written: u64,\n    queued_loc_written: u64,\n    replacement_old_removed: u64,\n) -> bool",
+  "body": "{\n    (decision_code == SUBMIT_DECISION_ACCEPT\n        && pending_slot_points_to_new == 1\n        && new_current_written == 1\n        && queued_loc_written == 1\n        && replacement_old_removed == 0)\n        || (decision_code == SUBMIT_DECISION_REPLACE\n            && pending_slot_points_to_new == 1\n            && new_current_written == 1\n            && queued_loc_written == 1\n            && replacement_old_removed == 1)\n}",
   "span": {
     "start_line": 11,
     "end_line": 42
   },
-  "git_commit": "1c29a686bc2e2032d056b69826cb4217a7cb0334",
+  "git_commit": "7c518ff73ff0ed5a562ee74062a42bf030de5f7a",
   "worktree_dirty": false,
-  "source_hash": "3a7d787348db3ccbe4c6f3378ac49f0d6c3a350b3f96ad2c9c9949fc6640a9e6",
-  "semantic_hash": "17e88366095fa960bcb22b4931f09ff080a9bdfb658a386093b4e23d8ba0de18",
+  "source_hash": "a6e5c4b16cee2d7e778a2ecbb0ec632496188829d212bedfe563b39194aad484",
+  "semantic_hash": "49900b369e6f20ae1a5c754f7c70e644f62bb8005e989e04a32447c674496e8b",
   "dependency_hash_inputs": [
     {
       "kind": "use",

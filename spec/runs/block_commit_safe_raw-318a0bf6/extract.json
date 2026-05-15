@@ -11,16 +11,16 @@
     "semantic_hash": "bf3de588a850213c5f19b3c3133b2f360e830849940559083c2e4fee1bcaeb2f",
     "created_at": "2026-05-15T12:07:27Z"
   },
-  "signature": "#[cfg_attr(verus_keep_ghost, verus_spec(safe => ensures\n    safe == (\n        previous_head < u64::MAX\n        && committed_head == previous_head + 1\n        && (block_gas_limit == 0 || block_gas_used <= block_gas_limit)\n        && included_count != 0\n        && included_count == staged_count\n        && safe_included_count == included_count\n    ),\n))]\npub fn block_commit_safe_raw(\n    previous_head: u64,\n    committed_head: u64,\n    included_count: usize,\n    staged_count: usize,\n    safe_included_count: usize,\n    block_gas_used: u64,\n    block_gas_limit: u64,\n) -> bool",
+  "signature": "#[cfg_attr(verus_keep_ghost, verus_spec(safe => ensures\n    safe == (\n        previous_head < u64::MAX\n        && committed_head == previous_head + 1\n        && (block_gas_limit == 0 || block_gas_used <= block_gas_limit)\n        && included_count != 0\n        && included_count == staged_count\n        && safe_included_count == included_count\n    ),\n))]\npub fn block_commit_safe_raw(\n    previous_head: u64,\n    committed_head: u64,\n    included_count: u64,\n    staged_count: u64,\n    safe_included_count: u64,\n    block_gas_used: u64,\n    block_gas_limit: u64,\n) -> bool",
   "body": "{\n    previous_head < u64::MAX\n        && committed_head == previous_head + 1\n        && (block_gas_limit == 0 || block_gas_used <= block_gas_limit)\n        && included_count != 0\n        && included_count == staged_count\n        && safe_included_count == included_count\n}",
   "span": {
     "start_line": 76,
     "end_line": 101
   },
-  "git_commit": "1c29a686bc2e2032d056b69826cb4217a7cb0334",
+  "git_commit": "7c518ff73ff0ed5a562ee74062a42bf030de5f7a",
   "worktree_dirty": false,
-  "source_hash": "5a02746364dad45f66576b0b048417633657d8a38e25e4a30d08bf9b565ebe01",
-  "semantic_hash": "ba7275ba25f31bf4ddf4ff30f4a75ba49fb4f32f57ef5707afb730d2f94fd944",
+  "source_hash": "47a78ea02551bb1ed69abdb0366498dd846942a77c079b964a6b290d607f8620",
+  "semantic_hash": "c1faab7360ab1319830873e0fb03ffd32b6b8079a67f4b8e4dd9f5d9f1071ca1",
   "dependency_hash_inputs": [
     {
       "kind": "use",
