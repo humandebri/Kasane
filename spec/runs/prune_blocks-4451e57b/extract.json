@@ -1,0 +1,410 @@
+{
+  "target": "prune_blocks",
+  "entry": {
+    "display_name": "prune_blocks",
+    "function": "prune_blocks",
+    "function_path": "prune_blocks",
+    "file": "crates/evm-core/src/chain.rs",
+    "target_id": "9af2686ef00de0b76d32b068c2b268a52ce519a2c6d20dbe277ae06e164ce9c3",
+    "slug": "prune_blocks-4451e57b",
+    "source_hash": "4451e57bdaa1ad2ae5a1d28fb995fa91562040a6d5f9249d3d8fb76b55ef8c18",
+    "semantic_hash": "b239466cd05026c3dd6a029d7d802f53d8dc8ec8635b728fcde3cd395201bd6a",
+    "created_at": "2026-05-14T03:39:57Z"
+  },
+  "signature": "pub fn prune_blocks(retain: u64, max_ops: u32) -> Result<PruneResult, ChainError>",
+  "body": "{\n    if retain == 0 || max_ops == 0 {\n        return Err(ChainError::InvalidLimit);\n    }\n    with_state_mut(|state| {\n        recover_prune_journal(state)?;\n        let head_number = state.head.get().number;\n        if head_number <= retain {\n            let pruned_before = state.prune_state.get().pruned_before();\n            return Ok(PruneResult {\n                did_work: false,\n                remaining: 0,\n                pruned_before_block: pruned_before,\n            });\n        }\n        let prune_before = match verified_core::prune::prune_before_block(head_number, retain) {\n            Some(value) => value,\n            None => {\n                let pruned_before = state.prune_state.get().pruned_before();\n                return Ok(PruneResult {\n                    did_work: false,\n                    remaining: 0,\n                    pruned_before_block: pruned_before,\n                });\n            }\n        };\n        let mut prune_state = *state.prune_state.get();\n        let mut next =\n            verified_core::prune::normalize_next_prune_block(verified_core::prune::PruneCursor {\n                next_prune_block: prune_state.next_prune_block,\n                pruned_before_block: prune_state.pruned_before(),\n            });\n        let mut did_work = false;\n        let mut ops_used: u64 = 0;\n        let max_ops = u64::from(max_ops);\n        while next <= prune_before {\n            let block = match load_block(state, next) {\n                Some(value) => value,\n                None => {\n                    let cursor = verified_core::prune::advance_after_pruned_block(next);\n                    prune_state.set_pruned_before(cursor.pruned_before_block.unwrap_or(next));\n                    next = cursor.next_prune_block;\n                    did_work = true;\n                    continue;\n                }\n            };\n            let needed = prune_ops_needed_for_block(state, next, &block);\n            if ops_used.saturating_add(needed) > max_ops {\n                break;\n            }\n            let mut ptrs = collect_ptrs_for_block(state, next, &block);\n            state\n                .prune_journal\n                .insert(next, PruneJournal { ptrs: ptrs.clone() });\n            prune_state.set_journal_block(next);\n            // WAL: persist recovery cursor before destructive deletes.\n            state.prune_state.set(prune_state);\n\n            let _ = state.blocks.remove(&next);\n            for tx_id in block.tx_ids.iter() {\n                remove_pending_fee_index_by_tx_id(state, *tx_id);\n                decrement_principal_pending_count_for_tx(state, *tx_id);\n                state.receipts.remove(tx_id);\n                state.tx_index.remove(tx_id);\n                state.internal_traces.remove(tx_id);\n                tx_locs_remove(state, tx_id);\n                remove_eth_tx_hash_index_for_tx_id(state, *tx_id);\n                state.tx_store.remove(tx_id);\n                state.seen_tx.remove(tx_id);\n            }\n            ops_used = ops_used.saturating_add(needed);\n            let cursor = verified_core::prune::advance_after_pruned_block(next);\n            prune_state.set_pruned_before(cursor.pruned_before_block.unwrap_or(next));\n            next = cursor.next_prune_block;\n            did_work = true;\n\n            for ptr in ptrs.drain(..) {\n                state\n                    .blob_store\n                    .reclaim_for_prune(&ptr)\n                    .map_err(|_| ChainError::ExecFailed(None))?;\n            }\n            state.prune_journal.remove(&next.saturating_sub(1));\n            prune_state.clear_journal();\n            state.prune_state.set(prune_state);\n        }\n        prune_state.next_prune_block = next;\n        state.prune_state.set(prune_state);\n        refresh_oldest(state);\n        let remaining = verified_core::prune::remaining_blocks(next, prune_before);\n        Ok(PruneResult {\n            did_work,\n            remaining,\n            pruned_before_block: prune_state.pruned_before(),\n        })\n    })\n}",
+  "span": {
+    "start_line": 2261,
+    "end_line": 2357
+  },
+  "git_commit": "703d7df1dcdc48c6f15be3733c6da4ec5c6a8dad",
+  "worktree_dirty": false,
+  "source_hash": "4451e57bdaa1ad2ae5a1d28fb995fa91562040a6d5f9249d3d8fb76b55ef8c18",
+  "semantic_hash": "b239466cd05026c3dd6a029d7d802f53d8dc8ec8635b728fcde3cd395201bd6a",
+  "dependency_hash_inputs": [
+    {
+      "kind": "use",
+      "name": "use",
+      "file": "crates/evm-core/src/chain.rs",
+      "hash": "e7ae3a4b4cf36c501434bf70e5eb383492b3182f84b547b3ba3b9c179dd479f0"
+    },
+    {
+      "kind": "use",
+      "name": "use",
+      "file": "crates/evm-core/src/chain.rs",
+      "hash": "c568d192c3aa4354800af16265713599dce85ab4c9e07278a7a7dc7d4880c100"
+    },
+    {
+      "kind": "use",
+      "name": "use",
+      "file": "crates/evm-core/src/chain.rs",
+      "hash": "b26d2428039c6f37848c6f2acf28813f7a33c639fea553ebc565ed51de8d454d"
+    },
+    {
+      "kind": "use",
+      "name": "use",
+      "file": "crates/evm-core/src/chain.rs",
+      "hash": "830fb1465e58e7fc7aec3f26779cd653658ce4cc5d9db9618e91abb3d2158c77"
+    },
+    {
+      "kind": "use",
+      "name": "use",
+      "file": "crates/evm-core/src/chain.rs",
+      "hash": "36688125e16eb6e6a4d131f4cd9c9eddedf6e060b84c7f0737d89c8b0c71128a"
+    },
+    {
+      "kind": "use",
+      "name": "use",
+      "file": "crates/evm-core/src/chain.rs",
+      "hash": "a270683413e4882685ce27faa34336dc53a61dfc89842c9e10f8242374e9c1ea"
+    },
+    {
+      "kind": "use",
+      "name": "use",
+      "file": "crates/evm-core/src/chain.rs",
+      "hash": "fb303882d044ddb33652ccca787eed8e0ef837ec36409e033b12b54ca0573e26"
+    },
+    {
+      "kind": "use",
+      "name": "use",
+      "file": "crates/evm-core/src/chain.rs",
+      "hash": "b6c9bdfa9353fc66b061f9f4f22797e47f6d28d89b9f8f741ad57bae96f8ae68"
+    },
+    {
+      "kind": "use",
+      "name": "use",
+      "file": "crates/evm-core/src/chain.rs",
+      "hash": "69f3747d6e8f25efa55b3889404286f18575e4a23e9affa6037626a3054074b8"
+    },
+    {
+      "kind": "use",
+      "name": "use",
+      "file": "crates/evm-core/src/chain.rs",
+      "hash": "20f12920b44b808af1bbab0c74e32d272d45ed15990bad065dee36333a31b804"
+    },
+    {
+      "kind": "use",
+      "name": "use",
+      "file": "crates/evm-core/src/chain.rs",
+      "hash": "9d824051ac822ca1d3a8ec2ae3d4031ca0325ecce3aa8db67aaa4472fce169bc"
+    },
+    {
+      "kind": "use",
+      "name": "use",
+      "file": "crates/evm-core/src/chain.rs",
+      "hash": "bd020c698818b3126d3a40e43d12c89e3bade3eaa6f0c0918b74bf3a622a6090"
+    },
+    {
+      "kind": "use",
+      "name": "use",
+      "file": "crates/evm-core/src/chain.rs",
+      "hash": "b38ffa70dff4a974c8c010f65b6e012bb5b50a87d18ab6453005e6cb42601213"
+    },
+    {
+      "kind": "use",
+      "name": "use",
+      "file": "crates/evm-core/src/chain.rs",
+      "hash": "8426e77a2fdaccfe404aa6571b5b0c8721aaaf89f8d6f4170105232f193d83ca"
+    },
+    {
+      "kind": "use",
+      "name": "use",
+      "file": "crates/evm-core/src/chain.rs",
+      "hash": "783b4337fa836c456b2ac473aa2247951fa03fb798f5035fc9828265ae1f94e3"
+    },
+    {
+      "kind": "use",
+      "name": "use",
+      "file": "crates/evm-core/src/chain.rs",
+      "hash": "5912970886e67d4194bc6d1d18e22b3643534e6384c936312c57f6c9a2c5fec5"
+    },
+    {
+      "kind": "use",
+      "name": "use",
+      "file": "crates/evm-core/src/chain.rs",
+      "hash": "9e5588e9617d4a0ac404b1db64499072327d7aaf30bf7689c8ab2f2c10486828"
+    },
+    {
+      "kind": "use",
+      "name": "use",
+      "file": "crates/evm-core/src/chain.rs",
+      "hash": "89d90a839388d15a23b90529dc361bff606b9482fea1274c4e982671465b71b4"
+    },
+    {
+      "kind": "use",
+      "name": "use",
+      "file": "crates/evm-core/src/chain.rs",
+      "hash": "a703974f16892e02e1b3356784feb802ae8888f490c72dc29b854918dc33a432"
+    },
+    {
+      "kind": "use",
+      "name": "use",
+      "file": "crates/evm-core/src/chain.rs",
+      "hash": "bef68d88e6aeb6a5638ebd9bdbe54608e3febc58ae1f1e038b91ac0a33d5c3d8"
+    },
+    {
+      "kind": "use",
+      "name": "use",
+      "file": "crates/evm-core/src/chain.rs",
+      "hash": "d740fb31f83ee7e6d6d918375551f1e32d533d3861455bc8cb2ec9a2f7e698c5"
+    },
+    {
+      "kind": "use",
+      "name": "use",
+      "file": "crates/evm-core/src/chain.rs",
+      "hash": "36d6d0a51181b3a59283f165f5cf2c4bb5072c26a75cc788476be2d9227ca581"
+    },
+    {
+      "kind": "use",
+      "name": "use",
+      "file": "crates/evm-core/src/chain.rs",
+      "hash": "938daee1e79d56ecd2de07a3e79e0401e2099f27b69296e8384e2375373a5f97"
+    },
+    {
+      "kind": "use",
+      "name": "use",
+      "file": "crates/evm-core/src/chain.rs",
+      "hash": "90af71e1203398ea2df5c4b97dd2f539c72a10e28a84ef25379568d3dcfde6b7"
+    },
+    {
+      "kind": "use",
+      "name": "use",
+      "file": "crates/evm-core/src/chain.rs",
+      "hash": "910749e827a3078d7a5ec584cf53f9511ff8b88ac441c977f15e3e182875d35c"
+    },
+    {
+      "kind": "use",
+      "name": "cfg",
+      "file": "crates/evm-core/src/chain.rs",
+      "hash": "d2bcf4ce6aa78e2056a36826c465b7539decde0a23b70951ec1e1e799fb549e4"
+    },
+    {
+      "kind": "use",
+      "name": "use",
+      "file": "crates/evm-core/src/chain.rs",
+      "hash": "1976cc35c6778b2ad879272521eaa993a14b6d3d178cdcf9f92ce3f062da07eb"
+    },
+    {
+      "kind": "use",
+      "name": "use",
+      "file": "crates/evm-core/src/chain.rs",
+      "hash": "3309b894e6a95d09d13030d40371613864c869fad184b3a3db9a1ab6d25accda"
+    },
+    {
+      "kind": "use",
+      "name": "use",
+      "file": "crates/evm-core/src/chain.rs",
+      "hash": "ded65dd08488727345f5fd8a96a19f6cfc02ed7df08613d9627400f09a4f9229"
+    },
+    {
+      "kind": "use",
+      "name": "use",
+      "file": "crates/evm-core/src/chain.rs",
+      "hash": "56a7f9de061a1b5ba0b61f4b4f7bc02fc5f66af7f36813482fa7dc234195a1a2"
+    },
+    {
+      "kind": "use",
+      "name": "use",
+      "file": "crates/evm-core/src/chain.rs",
+      "hash": "56a7f9de061a1b5ba0b61f4b4f7bc02fc5f66af7f36813482fa7dc234195a1a2"
+    },
+    {
+      "kind": "impl",
+      "name": "cfg",
+      "file": "crates/evm-core/src/chain.rs",
+      "hash": "a0a7ad4ecee1abcd96021a540c8a3ee9550c3491a67a7aeeedf472d4c4490eb7"
+    },
+    {
+      "kind": "impl",
+      "name": "cfg",
+      "file": "crates/evm-core/src/chain.rs",
+      "hash": "395bf10496d2863e14719226673104f558a6ea476515cac37cb60e05f8c81957"
+    },
+    {
+      "kind": "impl",
+      "name": "impl",
+      "file": "crates/evm-core/src/chain.rs",
+      "hash": "f2b8b3a39bdc819fefe8bf374180f1148e59e8d4eb4dba08065fb74fb972c52b"
+    },
+    {
+      "kind": "impl",
+      "name": "impl",
+      "file": "crates/evm-core/src/chain.rs",
+      "hash": "18f1e34b78d767168edfde4c5d8c3c66e9c4ece1d21a0590e90df465d08643f4"
+    },
+    {
+      "kind": "impl",
+      "name": "impl",
+      "file": "crates/evm-core/src/chain.rs",
+      "hash": "f1089b79edaa38d006bbd2543307498103c3c78ead37c64435c123d7c365535c"
+    },
+    {
+      "kind": "module",
+      "name": "cfg",
+      "file": "crates/evm-core/src/chain.rs",
+      "hash": "e4b8e1eb3292eca1cb1c0388606e96702254b41e528d17d0b806197b9c54d602"
+    },
+    {
+      "kind": "function",
+      "name": "collect_ptrs_for_block",
+      "file": "crates/evm-core/src/chain.rs",
+      "hash": "c821560a448af68ee1c6eb412024aa7f53f1a3aa0db9dfb2a958d06ad596875b"
+    },
+    {
+      "kind": "function",
+      "name": "decrement_principal_pending_count_for_tx",
+      "file": "crates/evm-core/src/chain.rs",
+      "hash": "46987bc4758e4fc04251484de02a5774882378a76172d31f2688a2fa470ead69"
+    },
+    {
+      "kind": "function",
+      "name": "load_block",
+      "file": "crates/evm-core/src/chain.rs",
+      "hash": "13f1ecb9c9222e052a44d22fd2a914aafe0e17a79bb0294576ab50028b0966c2"
+    },
+    {
+      "kind": "function",
+      "name": "prune_ops_needed_for_block",
+      "file": "crates/evm-core/src/chain.rs",
+      "hash": "a637c45e61579eafe761afbc3e2c6ac73710339fea184c587551b9ce7866f03b"
+    },
+    {
+      "kind": "function",
+      "name": "recover_prune_journal",
+      "file": "crates/evm-core/src/chain.rs",
+      "hash": "1b4948ff6147ed6f64ba44e881c9099eab85ca1a3dfad7a7d6e778c2e7b07f29"
+    },
+    {
+      "kind": "function",
+      "name": "refresh_oldest",
+      "file": "crates/evm-core/src/chain.rs",
+      "hash": "af75c8c3b3f350ee83229b2395a779d9eb7180e249ca90e4754eda79a5e70cf3"
+    },
+    {
+      "kind": "function",
+      "name": "remove_eth_tx_hash_index_for_tx_id",
+      "file": "crates/evm-core/src/chain.rs",
+      "hash": "22ab6f0a54b876d774de52eb8181c6065dfcf3a28cf6e5c930d5a98cd8e63126"
+    },
+    {
+      "kind": "function",
+      "name": "remove_pending_fee_index_by_tx_id",
+      "file": "crates/evm-core/src/chain.rs",
+      "hash": "53452aa3bbd7bcf7f75fe427921001047f6344abc51e95077fe3e914bd99af8d"
+    },
+    {
+      "kind": "function",
+      "name": "tx_locs_remove",
+      "file": "crates/evm-core/src/chain.rs",
+      "hash": "cf02dfecc410e6193b1e7a8afb9cefe8474b54589368331b5db82a99bc7ec64b"
+    },
+    {
+      "kind": "type",
+      "name": "Clone",
+      "file": "crates/evm-core/src/chain.rs",
+      "hash": "75a59fc14d056a05758ba3d8b46b043abb81ef08549e3449cda54ae46539f56e"
+    },
+    {
+      "kind": "type",
+      "name": "Clone",
+      "file": "crates/evm-core/src/chain.rs",
+      "hash": "6ab93e77d8d159ce5300ec901fcaf5fe32028fee4a2ade16a46595a4bdfa30e8"
+    },
+    {
+      "kind": "type",
+      "name": "struct",
+      "file": "crates/evm-core/src/chain.rs",
+      "hash": "6cd19eef4b00ad3ca3117327e5611a0b24a82d8b4e874066d6a31cb9b1d79a1f"
+    },
+    {
+      "kind": "type",
+      "name": "Clone",
+      "file": "crates/evm-core/src/chain.rs",
+      "hash": "d58dbd15d90f1357b112288266b172c27b1a2359b4979298bdb099c3fb7ef604"
+    },
+    {
+      "kind": "type",
+      "name": "Clone",
+      "file": "crates/evm-core/src/chain.rs",
+      "hash": "87c54a78abf3e614d3959f4e6365590a530cd48df6080675b5de07b51586633e"
+    }
+  ],
+  "unresolved_dependencies": [
+    "ChainError::ExecFailed",
+    "clear_journal",
+    "clone",
+    "drain",
+    "get",
+    "insert",
+    "iter",
+    "map_err",
+    "pruned_before",
+    "reclaim_for_prune",
+    "remove",
+    "saturating_add",
+    "saturating_sub",
+    "set",
+    "set_journal_block",
+    "set_pruned_before",
+    "u64::from",
+    "unwrap_or",
+    "verified_core::prune::advance_after_pruned_block",
+    "verified_core::prune::normalize_next_prune_block",
+    "verified_core::prune::prune_before_block",
+    "verified_core::prune::remaining_blocks",
+    "with_state_mut"
+  ],
+  "tool_version": "0.1.0",
+  "cfg": [],
+  "features": [],
+  "types": [],
+  "called_functions": [
+    "ChainError::ExecFailed",
+    "Err",
+    "Ok",
+    "clear_journal",
+    "clone",
+    "collect_ptrs_for_block",
+    "decrement_principal_pending_count_for_tx",
+    "drain",
+    "get",
+    "insert",
+    "iter",
+    "load_block",
+    "map_err",
+    "prune_ops_needed_for_block",
+    "pruned_before",
+    "reclaim_for_prune",
+    "recover_prune_journal",
+    "refresh_oldest",
+    "remove",
+    "remove_eth_tx_hash_index_for_tx_id",
+    "remove_pending_fee_index_by_tx_id",
+    "saturating_add",
+    "saturating_sub",
+    "set",
+    "set_journal_block",
+    "set_pruned_before",
+    "tx_locs_remove",
+    "u64::from",
+    "unwrap_or",
+    "verified_core::prune::advance_after_pruned_block",
+    "verified_core::prune::normalize_next_prune_block",
+    "verified_core::prune::prune_before_block",
+    "verified_core::prune::remaining_blocks",
+    "with_state_mut"
+  ],
+  "callers": [],
+  "tests": [],
+  "panic_sites": [
+    "unwrap"
+  ],
+  "overflow_sites": [
+    "*"
+  ],
+  "casts": [],
+  "division_sites": [
+    "/"
+  ],
+  "llm_context_files": []
+}

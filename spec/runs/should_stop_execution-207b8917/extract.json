@@ -1,0 +1,59 @@
+{
+  "target": "should_stop_execution",
+  "entry": {
+    "display_name": "should_stop_execution",
+    "function": "should_stop_execution",
+    "function_path": "should_stop_execution",
+    "file": "crates/verified-core/src/block.rs",
+    "target_id": "bb5b677c76635020eb395881a17f57db79f6d5373325ffcbaaa7a20044ac695c",
+    "slug": "should_stop_execution-207b8917",
+    "source_hash": "207b8917aba05a0e57fdbfa90be39c0e28e586fee3db5a9e1ba3ca68e4f6408e",
+    "semantic_hash": "3b26bd46cb29deee1b1b0351d0b169ada91df7214b1a471dafe653286e306225",
+    "created_at": "2026-05-14T03:39:58Z"
+  },
+  "signature": "#[cfg_attr(verus_keep_ghost, verus_spec(stop => ensures\n    stop == (\n        (block_gas_limit > 0 && block_gas_used >= block_gas_limit)\n        || (\n            instruction_soft_limit > 0\n            && (if instruction_current >= instruction_start",
+  "body": "{\n                instruction_current - instruction_start\n            } else {\n                0\n            }) >= instruction_soft_limit\n        )\n    ),\n))]\npub fn should_stop_execution(\n    block_gas_used: u64,\n    block_gas_limit: u64,\n    instruction_soft_limit: u64,\n    instruction_start: u64,\n    instruction_current: u64,\n) -> bool {\n    (block_gas_limit > 0 && block_gas_used >= block_gas_limit)\n        || instruction_limit_exhausted(\n            instruction_soft_limit,\n            instruction_start,\n            instruction_current,\n        )\n}",
+  "span": {
+    "start_line": 63,
+    "end_line": 89
+  },
+  "git_commit": "703d7df1dcdc48c6f15be3733c6da4ec5c6a8dad",
+  "worktree_dirty": false,
+  "source_hash": "207b8917aba05a0e57fdbfa90be39c0e28e586fee3db5a9e1ba3ca68e4f6408e",
+  "semantic_hash": "3b26bd46cb29deee1b1b0351d0b169ada91df7214b1a471dafe653286e306225",
+  "dependency_hash_inputs": [
+    {
+      "kind": "use",
+      "name": "cfg",
+      "file": "crates/verified-core/src/block.rs",
+      "hash": "a5eb4157d5d32303032e3dc786e34f004ebe17f0ff1bb26f90ac9eb42478596c"
+    },
+    {
+      "kind": "module",
+      "name": "cfg",
+      "file": "crates/verified-core/src/block.rs",
+      "hash": "d8e47647a10231de813238f6b98d10a8fe314f0eb9116e11fb3ce4f92f8e3e7a"
+    },
+    {
+      "kind": "use",
+      "name": "use",
+      "file": "crates/verified-core/src/block.rs",
+      "hash": "e2200818deff3246a03f1b0915ba0d64e75512dffac569eb5b7530c44e2bd052"
+    }
+  ],
+  "unresolved_dependencies": [],
+  "tool_version": "0.1.0",
+  "cfg": [],
+  "features": [],
+  "types": [],
+  "called_functions": [],
+  "callers": [],
+  "tests": [],
+  "panic_sites": [],
+  "overflow_sites": [
+    "-"
+  ],
+  "casts": [],
+  "division_sites": [],
+  "llm_context_files": []
+}

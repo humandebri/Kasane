@@ -1,0 +1,11 @@
+{
+  "target": "submit_ic_tx_input-f634c1cd",
+  "check_result": "fail",
+  "stale_reasons": [
+    "unresolved dependencies: StoredTxBytes::new_with_fees, TxId, TxLoc::queued, as_slice, clone, compute_effective_gas_price, crate::time::now_sec, encode_ic_synthetic_input, get, hash::stored_tx_id, insert, is_none, is_some, len, ok_or, push, record_submission, set, with_state_mut"
+  ],
+  "drift_reasons": [
+    "unresolved dependencies"
+  ],
+  "dirty_paths": []
+}

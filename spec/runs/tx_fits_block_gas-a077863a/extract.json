@@ -1,0 +1,61 @@
+{
+  "target": "tx_fits_block_gas",
+  "entry": {
+    "display_name": "tx_fits_block_gas",
+    "function": "tx_fits_block_gas",
+    "function_path": "tx_fits_block_gas",
+    "file": "crates/verified-core/src/block.rs",
+    "target_id": "242e75379da52f284c65cc51e88ad6c5426341a2d66698510e699bf9d3a1bf95",
+    "slug": "tx_fits_block_gas-a077863a",
+    "source_hash": "a077863aed07847974e9d344860a48d2d236ceb51d5b217ee3a0a739f3bb8c55",
+    "semantic_hash": "099669607edc32f25d9177b1c8a22b32f0bec7b3c485bd5ab89ed86c52fd378f",
+    "created_at": "2026-05-14T03:39:58Z"
+  },
+  "signature": "#[cfg_attr(verus_keep_ghost, verus_spec(fits => ensures\n    fits == (block_gas_limit == 0 || tx_gas_limit <= block_gas_limit.saturating_sub(block_gas_used)),\n))]\npub fn tx_fits_block_gas(block_gas_used: u64, block_gas_limit: u64, tx_gas_limit: u64) -> bool",
+  "body": "{\n    block_gas_limit == 0 || tx_gas_limit <= block_gas_limit.saturating_sub(block_gas_used)\n}",
+  "span": {
+    "start_line": 110,
+    "end_line": 115
+  },
+  "git_commit": "703d7df1dcdc48c6f15be3733c6da4ec5c6a8dad",
+  "worktree_dirty": false,
+  "source_hash": "a077863aed07847974e9d344860a48d2d236ceb51d5b217ee3a0a739f3bb8c55",
+  "semantic_hash": "099669607edc32f25d9177b1c8a22b32f0bec7b3c485bd5ab89ed86c52fd378f",
+  "dependency_hash_inputs": [
+    {
+      "kind": "use",
+      "name": "cfg",
+      "file": "crates/verified-core/src/block.rs",
+      "hash": "a5eb4157d5d32303032e3dc786e34f004ebe17f0ff1bb26f90ac9eb42478596c"
+    },
+    {
+      "kind": "module",
+      "name": "cfg",
+      "file": "crates/verified-core/src/block.rs",
+      "hash": "d8e47647a10231de813238f6b98d10a8fe314f0eb9116e11fb3ce4f92f8e3e7a"
+    },
+    {
+      "kind": "use",
+      "name": "use",
+      "file": "crates/verified-core/src/block.rs",
+      "hash": "e2200818deff3246a03f1b0915ba0d64e75512dffac569eb5b7530c44e2bd052"
+    }
+  ],
+  "unresolved_dependencies": [
+    "saturating_sub"
+  ],
+  "tool_version": "0.1.0",
+  "cfg": [],
+  "features": [],
+  "types": [],
+  "called_functions": [
+    "saturating_sub"
+  ],
+  "callers": [],
+  "tests": [],
+  "panic_sites": [],
+  "overflow_sites": [],
+  "casts": [],
+  "division_sites": [],
+  "llm_context_files": []
+}

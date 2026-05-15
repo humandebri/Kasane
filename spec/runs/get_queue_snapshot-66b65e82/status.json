@@ -1,0 +1,11 @@
+{
+  "target": "get_queue_snapshot-66b65e82",
+  "check_result": "fail",
+  "stale_reasons": [
+    "unresolved dependencies: StoredTx::try_from, and_then, copy_from_slice, get, key, len, map, ok, push, range, u64::from_be_bytes, unwrap_or, value, verified_core::batch::snapshot_limit_reached, with_state"
+  ],
+  "drift_reasons": [
+    "unresolved dependencies"
+  ],
+  "dirty_paths": []
+}

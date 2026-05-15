@@ -1,0 +1,24 @@
+{
+  "target": "included_tx_safe",
+  "target_id": "9f5af8f237fc202c0ade046685a743c3031821fa058a1f35277e568a9a6459e4",
+  "slug": "included_tx_safe-194ead49",
+  "git_commit": "703d7df1dcdc48c6f15be3733c6da4ec5c6a8dad",
+  "worktree_dirty": true,
+  "source_hash": "194ead498b0ea20a942e6c51fc03289334a32f97bd436054178b5a70c0736378",
+  "semantic_hash": "2102c129c4bbc6e0e0f034436511bf3ab3d5974f19021a40e2413150e3fa1ecf",
+  "tool_version": "0.1.0",
+  "scenarios": [
+    {
+      "id": "included_tx_safe-nominal",
+      "kind": "example",
+      "executable": false,
+      "inputs": {},
+      "expected": {},
+      "review_status": "accepted",
+      "status_note": "covers tx index, receipt, tx id binding, and location/receipt/index position evidence",
+      "reviewed_by": "0xhude",
+      "reviewed_at": "2026-05-15T11:49:00Z",
+      "rationale": "以下をシナリオ候補にする。MC/DC相当で、各条件が単独で結果を反転することを確認できる。\n\n| id | has_tx_index | has_receipt | receipt_tx_id_matches | index_key_matches_tx_id | loc_matches_position | receipt_matches_position | index_matches_position | block_number | expected |\n|---|---|---|---|---|---|---|---|---:|---|\n| `included_all_valid` | true | true | true | true | true | true | true | 1 | true |\n| `missing_tx_index` | false | true | true | true | true | true | true | 1 | false |\n| `missing_receipt` | true | false | true | true | true | true | true | 1 | false |\n| `receipt_tx_id_mismatch` | true | true | false | true | true | true | true | 1 | false |\n| `index_key_mismatch` | true | true | true | false | true | true | true | 1 | false |\n| `loc_position_mismatch` | true | true | true | true | false | true | true | 1 | false |\n| `receipt_position_mismatch` | true | true | true | true | true | false | true | 1 | false |\n| `index_position_mismatch` | true | true | true | true | true | true | false | 1 | false |\n| `zero_block_number` | true | true | true | true | true | true | true | 0 | false |\n\n追加候補:\n\n| id | purpose | expected |\n|---|---|---|\n| `multiple_invalid_facts` | 複数false時もfalseに落ちる確認 | false |\n| `large_block_number_valid` | `block_number > 0` が境界以外でtrueになる確認 | true |\n\n主検証は最初の9件で十分。`large_block_number_valid` は型が `u64` 等で境界外リスクを見る価値がある場合だけ追加。"
+    }
+  ]
+}

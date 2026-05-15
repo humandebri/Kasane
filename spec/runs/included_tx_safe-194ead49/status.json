@@ -1,0 +1,13 @@
+{
+  "target": "included_tx_safe-194ead49",
+  "check_result": "fail",
+  "stale_reasons": [
+    {
+      "code": "worktree_dirty_at_extract"
+    }
+  ],
+  "drift_reasons": [],
+  "dirty_paths": [
+    "crates/verified-core/src/core_safety.rs"
+  ]
+}

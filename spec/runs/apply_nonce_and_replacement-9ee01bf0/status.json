@@ -1,0 +1,11 @@
+{
+  "target": "apply_nonce_and_replacement-9ee01bf0",
+  "check_result": "fail",
+  "stale_reasons": [
+    "unresolved dependencies: classify_nonce, get, map, ok_or"
+  ],
+  "drift_reasons": [
+    "unresolved dependencies"
+  ],
+  "dirty_paths": []
+}
