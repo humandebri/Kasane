@@ -1,0 +1,47 @@
+{
+  "target": "block_commit_safe_raw",
+  "entry": {
+    "display_name": "block_commit_safe_raw",
+    "function": "block_commit_safe_raw",
+    "function_path": "block_commit_safe_raw",
+    "file": "crates/verified-core/src/core_safety.rs",
+    "target_id": "403ccf956447da359f91169e64a7ae1ae12c194ab012011091e1957d78783b01",
+    "slug": "block_commit_safe_raw-318a0bf6",
+    "source_hash": "318a0bf6163944ecb55fb9957b60e4b3150376ff426c3a59c24bad4fcd6a08d0",
+    "semantic_hash": "bf3de588a850213c5f19b3c3133b2f360e830849940559083c2e4fee1bcaeb2f",
+    "created_at": "2026-05-15T12:07:27Z"
+  },
+  "signature": "#[cfg_attr(verus_keep_ghost, verus_spec(safe => ensures\n    safe == (\n        previous_head < u64::MAX\n        && committed_head == previous_head + 1\n        && (block_gas_limit == 0 || block_gas_used <= block_gas_limit)\n        && included_count != 0\n        && included_count == staged_count\n        && safe_included_count == included_count\n    ),\n))]\npub fn block_commit_safe_raw(\n    previous_head: u64,\n    committed_head: u64,\n    included_count: usize,\n    staged_count: usize,\n    safe_included_count: usize,\n    block_gas_used: u64,\n    block_gas_limit: u64,\n) -> bool",
+  "body": "{\n    previous_head < u64::MAX\n        && committed_head == previous_head + 1\n        && (block_gas_limit == 0 || block_gas_used <= block_gas_limit)\n        && included_count != 0\n        && included_count == staged_count\n        && safe_included_count == included_count\n}",
+  "span": {
+    "start_line": 76,
+    "end_line": 101
+  },
+  "git_commit": "4aed4c6b20d169ba2d31ba9c585394470dc69edf",
+  "worktree_dirty": true,
+  "source_hash": "5a02746364dad45f66576b0b048417633657d8a38e25e4a30d08bf9b565ebe01",
+  "semantic_hash": "ba7275ba25f31bf4ddf4ff30f4a75ba49fb4f32f57ef5707afb730d2f94fd944",
+  "dependency_hash_inputs": [
+    {
+      "kind": "use",
+      "name": "cfg",
+      "file": "crates/verified-core/src/core_safety.rs",
+      "hash": "a5eb4157d5d32303032e3dc786e34f004ebe17f0ff1bb26f90ac9eb42478596c"
+    }
+  ],
+  "unresolved_dependencies": [],
+  "tool_version": "0.1.0",
+  "cfg": [],
+  "features": [],
+  "types": [],
+  "called_functions": [],
+  "callers": [],
+  "tests": [],
+  "panic_sites": [],
+  "overflow_sites": [
+    "+"
+  ],
+  "casts": [],
+  "division_sites": [],
+  "llm_context_files": []
+}

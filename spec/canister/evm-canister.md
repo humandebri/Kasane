@@ -147,8 +147,8 @@ verified model must preserve:
   a strictly higher effective gas price
 - pending uniqueness: each sender has at most one current pending transaction,
   and a replaced transaction is removed from execution candidates
-- block safety: head number is monotonic, and included transactions do not exceed
-  configured block gas evidence
+- block safety: nonterminal produced block head advances by exactly one, and
+  included transactions do not exceed configured block gas evidence
 - receipt/index consistency: every included transaction has one matching
   receipt, index entry, and included location
 
@@ -194,7 +194,8 @@ Failure semantics:
 
 `produce_block` selects pending executable transactions, executes them, persists
 the block, and advances indexes. It must respect transaction count limits,
-instruction soft limits, and block gas limits.
+instruction soft limits, and block gas limits. `block_gas_limit == 0` is the
+existing pure-model sentinel for disabled gas limiting.
 
 Block invariants for review:
 

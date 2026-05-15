@@ -1,9 +1,9 @@
 # EVM Canister Traceability
 
 This file links canister-level spec sections to `specgen` extracts and
-`verified_core` references. Core safety targets have `draft`, `scenarios`,
-contract terms, and linked test evidence; `accept`, `apply-contract`,
-`gen-verus`, and `verify` still require a clean source anchor.
+`verified_core` references. Core safety raw targets have `draft`, `scenarios`,
+review output, contract terms, and linked test evidence; `accept`,
+`apply-contract`, `gen-verus`, and `verify` require a clean source anchor.
 
 ## specgen Extracts
 
@@ -24,9 +24,9 @@ contract terms, and linked test evidence; `accept`, `apply-contract`,
 | Block instruction stop | `verified_core::block::should_stop_execution` | `spec/runs/should_stop_execution-207b8917/extract.json` |
 | Instruction budget | `verified_core::block::remaining_instruction_budget` | `spec/runs/remaining_instruction_budget-77147f7b/extract.json` |
 | Block gas budget | `verified_core::block::tx_fits_block_gas` | `spec/runs/tx_fits_block_gas-a077863a/extract.json` |
-| Core safety model | `verified_core::core_safety::submit_transition_safe` | `spec/runs/submit_transition_safe-5e9926e3/extract.json` |
-| Core safety model | `verified_core::core_safety::included_tx_safe` | `spec/runs/included_tx_safe-194ead49/extract.json` |
-| Core safety model | `verified_core::core_safety::block_commit_safe` | `spec/runs/block_commit_safe-9ce347ac/extract.json` |
+| Core safety model | `verified_core::core_safety::submit_transition_safe_raw` | `spec/runs/submit_transition_safe_raw-3a7d7873/extract.json` |
+| Core safety model | `verified_core::core_safety::included_tx_safe_raw` | `spec/runs/included_tx_safe_raw-8883376d/extract.json` |
+| Core safety model | `verified_core::core_safety::block_commit_safe_raw` | `spec/runs/block_commit_safe_raw-318a0bf6/extract.json` |
 
 ## Canister Entrypoint Sources
 
@@ -50,21 +50,21 @@ contract terms, and linked test evidence; `accept`, `apply-contract`,
 | Block production stops on instruction or policy budget. | `verified_core::block::should_stop_execution` |
 | Remaining instruction budget saturates safely. | `verified_core::block::remaining_instruction_budget` |
 | Transaction gas inclusion respects block gas limit. | `verified_core::block::tx_fits_block_gas` |
-| Accepted submit transition writes current pending and queued location evidence. | `verified_core::core_safety::submit_transition_safe` |
-| Included transaction has matching location, receipt, and index evidence. | `verified_core::core_safety::included_tx_safe` |
-| Block commit has monotonic head, gas, and batch-count evidence. | `verified_core::core_safety::block_commit_safe` |
+| Accepted submit transition writes current pending and queued location evidence. | `verified_core::core_safety::submit_transition_safe_raw` |
+| Included transaction has matching location, receipt, and index evidence. | `verified_core::core_safety::included_tx_safe_raw` |
+| Block commit has strict nonterminal head progress, gas, and batch-count evidence. | `verified_core::core_safety::block_commit_safe_raw` |
 
 ## Adapter Evidence
 
 | Boundary | Evidence |
 | --- | --- |
-| nonce replacement adapter | `crates/evm-core/tests/phase1_nonce_sequence.rs::replacement_requires_higher_effective_fee` is linked as test evidence for `submit_transition_safe`; it proves same-nonce lower/equal replacement is rejected, strict higher replacement wins, the old tx is dropped, and only the replacement is included |
-| block persistence adapter | `crates/evm-core/tests/common/mod.rs::assert_block_persist_invariants` is linked as test evidence for `included_tx_safe` and `block_commit_safe`; it proves included tx ids have matching receipt, tx index, tx loc, no pending/ready refs, and block persistence invariants |
+| nonce replacement adapter | `crates/evm-core/tests/phase1_nonce_sequence.rs::replacement_requires_higher_effective_fee` is linked as test evidence for `submit_transition_safe_raw`; it proves same-nonce lower/equal replacement is rejected, strict higher replacement wins, the old tx is dropped, and only the replacement is included |
+| block persistence adapter | `crates/evm-core/tests/common/mod.rs::assert_block_persist_invariants` is linked as test evidence for `included_tx_safe_raw` and `block_commit_safe_raw`; it proves included tx ids have matching receipt, tx index, tx loc, no pending/ready refs, and block persistence invariants |
 
 ## Review Gaps
 
-- `specgen status --check` for `submit_transition_safe`,
-  `included_tx_safe`, and `block_commit_safe` currently has no drift reasons;
+- `specgen status --check` for `submit_transition_safe_raw`,
+  `included_tx_safe_raw`, and `block_commit_safe_raw` currently has no drift reasons;
   it fails only because the targets were extracted from a dirty worktree while
   this change is still uncommitted.
 - Adapter test functions are not specgen targets because they are unit-return

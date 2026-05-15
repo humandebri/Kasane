@@ -1,0 +1,45 @@
+{
+  "target": "submit_transition_safe_raw",
+  "entry": {
+    "display_name": "submit_transition_safe_raw",
+    "function": "submit_transition_safe_raw",
+    "function_path": "submit_transition_safe_raw",
+    "file": "crates/verified-core/src/core_safety.rs",
+    "target_id": "729ffbba69632ada68d96ab374b811c1de70290bb90f98ed5b08640bff3b9836",
+    "slug": "submit_transition_safe_raw-3a7d7873",
+    "source_hash": "3a7d787348db3ccbe4c6f3378ac49f0d6c3a350b3f96ad2c9c9949fc6640a9e6",
+    "semantic_hash": "5a42d752fbfb9dbd515f43b51b2822024ca162427dfa173e19451af00a27605d",
+    "created_at": "2026-05-15T12:07:22Z"
+  },
+  "signature": "#[cfg_attr(verus_keep_ghost, verus_spec(safe => ensures\n    safe == (\n        (decision_code == SUBMIT_DECISION_ACCEPT\n            && pending_slot_points_to_new\n            && new_current_written\n            && queued_loc_written\n            && !replacement_old_removed)\n        || (decision_code == SUBMIT_DECISION_REPLACE\n            && pending_slot_points_to_new\n            && new_current_written\n            && queued_loc_written\n            && replacement_old_removed)\n    ),\n))]\npub fn submit_transition_safe_raw(\n    decision_code: u8,\n    pending_slot_points_to_new: bool,\n    new_current_written: bool,\n    queued_loc_written: bool,\n    replacement_old_removed: bool,\n) -> bool",
+  "body": "{\n    (decision_code == SUBMIT_DECISION_ACCEPT\n        && pending_slot_points_to_new\n        && new_current_written\n        && queued_loc_written\n        && !replacement_old_removed)\n        || (decision_code == SUBMIT_DECISION_REPLACE\n            && pending_slot_points_to_new\n            && new_current_written\n            && queued_loc_written\n            && replacement_old_removed)\n}",
+  "span": {
+    "start_line": 11,
+    "end_line": 42
+  },
+  "git_commit": "4aed4c6b20d169ba2d31ba9c585394470dc69edf",
+  "worktree_dirty": true,
+  "source_hash": "3a7d787348db3ccbe4c6f3378ac49f0d6c3a350b3f96ad2c9c9949fc6640a9e6",
+  "semantic_hash": "17e88366095fa960bcb22b4931f09ff080a9bdfb658a386093b4e23d8ba0de18",
+  "dependency_hash_inputs": [
+    {
+      "kind": "use",
+      "name": "cfg",
+      "file": "crates/verified-core/src/core_safety.rs",
+      "hash": "a5eb4157d5d32303032e3dc786e34f004ebe17f0ff1bb26f90ac9eb42478596c"
+    }
+  ],
+  "unresolved_dependencies": [],
+  "tool_version": "0.1.0",
+  "cfg": [],
+  "features": [],
+  "types": [],
+  "called_functions": [],
+  "callers": [],
+  "tests": [],
+  "panic_sites": [],
+  "overflow_sites": [],
+  "casts": [],
+  "division_sites": [],
+  "llm_context_files": []
+}

@@ -1,0 +1,20 @@
+{
+  "preconditions": [
+    "true"
+  ],
+  "postconditions": [
+    "result == (previous_head < u64::MAX && committed_head == previous_head + 1 && (block_gas_limit == 0 || block_gas_used <= block_gas_limit) && included_count != 0 && included_count == staged_count && safe_included_count == included_count)"
+  ],
+  "acceptance_criteria": [
+    "A committed block is safe only when a nonterminal head advances by exactly one, block gas stays within limit unless the limit is disabled, and the included/staged/safe counts exactly match and are nonempty."
+  ],
+  "test_evidence": [
+    {
+      "scenario_id": "block_commit_safe_raw-nominal",
+      "command": "cargo test -p verified-core block_commit_requires_head_gas_and_batch_evidence && cargo test -p ic-evm-core produce_block_selects_top_k_by_fee_then_submission_order",
+      "test_name": "verified-core block commit evidence cases plus evm-core block production adapter test",
+      "recorded_at": "2026-05-15T12:10:18Z"
+    }
+  ],
+  "risk_level": "medium"
+}

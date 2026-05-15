@@ -1,0 +1,20 @@
+{
+  "preconditions": [
+    "true"
+  ],
+  "postconditions": [
+    "result == ((decision_code == SUBMIT_DECISION_ACCEPT && pending_slot_points_to_new && new_current_written && queued_loc_written && !replacement_old_removed) || (decision_code == SUBMIT_DECISION_REPLACE && pending_slot_points_to_new && new_current_written && queued_loc_written && replacement_old_removed))"
+  ],
+  "acceptance_criteria": [
+    "Accept transitions require new current pending and queued location evidence and must not remove an old tx; Replace transitions require the same writes plus old tx removal evidence; low, gap, and conflict decisions are rejected by adapter output."
+  ],
+  "test_evidence": [
+    {
+      "scenario_id": "submit_transition_safe_raw-nominal",
+      "command": "cargo test -p verified-core submit_transition_requires_nonce_acceptance_and_adapter_writes && cargo test -p ic-evm-core replacement_requires_higher_effective_fee",
+      "test_name": "verified-core submit transition cases plus evm-core replacement adapter test",
+      "recorded_at": "2026-05-15T12:09:55Z"
+    }
+  ],
+  "risk_level": "medium"
+}
