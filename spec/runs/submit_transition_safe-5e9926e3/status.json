@@ -1,0 +1,18 @@
+{
+  "target": "submit_transition_safe-5e9926e3",
+  "check_result": "fail",
+  "stale_reasons": [
+    {
+      "code": "worktree_dirty_at_extract"
+    }
+  ],
+  "drift_reasons": [
+    {
+      "code": "provider_failure",
+      "stage": "scenarios"
+    }
+  ],
+  "dirty_paths": [
+    "crates/verified-core/src/core_safety.rs"
+  ]
+}

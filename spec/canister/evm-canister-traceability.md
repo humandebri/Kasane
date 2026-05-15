@@ -24,7 +24,7 @@ contract terms, and linked test evidence; `accept`, `apply-contract`,
 | Block instruction stop | `verified_core::block::should_stop_execution` | `spec/runs/should_stop_execution-207b8917/extract.json` |
 | Instruction budget | `verified_core::block::remaining_instruction_budget` | `spec/runs/remaining_instruction_budget-77147f7b/extract.json` |
 | Block gas budget | `verified_core::block::tx_fits_block_gas` | `spec/runs/tx_fits_block_gas-a077863a/extract.json` |
-| Core safety model | `verified_core::core_safety::submit_transition_safe` | `spec/runs/submit_transition_safe-2614d31a/extract.json` |
+| Core safety model | `verified_core::core_safety::submit_transition_safe` | `spec/runs/submit_transition_safe-5e9926e3/extract.json` |
 | Core safety model | `verified_core::core_safety::included_tx_safe` | `spec/runs/included_tx_safe-194ead49/extract.json` |
 | Core safety model | `verified_core::core_safety::block_commit_safe` | `spec/runs/block_commit_safe-9ce347ac/extract.json` |
 

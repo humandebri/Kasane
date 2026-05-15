@@ -51,7 +51,8 @@ pub struct BlockCommitFacts {
         NonceDecision::Accept =>
             facts.pending_slot_points_to_new
                 && facts.new_current_written
-                && facts.queued_loc_written,
+                && facts.queued_loc_written
+                && !facts.replacement_old_removed,
         NonceDecision::Replace =>
             facts.pending_slot_points_to_new
                 && facts.new_current_written
@@ -66,6 +67,7 @@ pub fn submit_transition_safe(facts: SubmitTransitionFacts) -> bool {
             facts.pending_slot_points_to_new
                 && facts.new_current_written
                 && facts.queued_loc_written
+                && !facts.replacement_old_removed
         }
         NonceDecision::Replace => {
             facts.pending_slot_points_to_new
@@ -186,6 +188,34 @@ mod tests {
             queued_loc_written: true,
             replacement_old_removed: false,
         }));
+        assert!(!submit_transition_safe(SubmitTransitionFacts {
+            decision: NonceDecision::Accept,
+            pending_slot_points_to_new: false,
+            new_current_written: true,
+            queued_loc_written: true,
+            replacement_old_removed: false,
+        }));
+        assert!(!submit_transition_safe(SubmitTransitionFacts {
+            decision: NonceDecision::Accept,
+            pending_slot_points_to_new: true,
+            new_current_written: false,
+            queued_loc_written: true,
+            replacement_old_removed: false,
+        }));
+        assert!(!submit_transition_safe(SubmitTransitionFacts {
+            decision: NonceDecision::Accept,
+            pending_slot_points_to_new: true,
+            new_current_written: true,
+            queued_loc_written: false,
+            replacement_old_removed: false,
+        }));
+        assert!(!submit_transition_safe(SubmitTransitionFacts {
+            decision: NonceDecision::Accept,
+            pending_slot_points_to_new: true,
+            new_current_written: true,
+            queued_loc_written: true,
+            replacement_old_removed: true,
+        }));
         assert!(submit_transition_safe(SubmitTransitionFacts {
             decision: NonceDecision::Replace,
             pending_slot_points_to_new: true,
@@ -202,6 +232,20 @@ mod tests {
         }));
         assert!(!submit_transition_safe(SubmitTransitionFacts {
             decision: NonceDecision::Gap,
+            pending_slot_points_to_new: true,
+            new_current_written: true,
+            queued_loc_written: true,
+            replacement_old_removed: true,
+        }));
+        assert!(!submit_transition_safe(SubmitTransitionFacts {
+            decision: NonceDecision::TooLow,
+            pending_slot_points_to_new: true,
+            new_current_written: true,
+            queued_loc_written: true,
+            replacement_old_removed: true,
+        }));
+        assert!(!submit_transition_safe(SubmitTransitionFacts {
+            decision: NonceDecision::Conflict,
             pending_slot_points_to_new: true,
             new_current_written: true,
             queued_loc_written: true,

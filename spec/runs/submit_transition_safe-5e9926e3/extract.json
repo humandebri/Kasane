@@ -5,22 +5,22 @@
     "function": "submit_transition_safe",
     "function_path": "submit_transition_safe",
     "file": "crates/verified-core/src/core_safety.rs",
-    "target_id": "4528d175a4fd4b969be072d9051758955af1c55333e8b4b762ff597c55b1f4f1",
-    "slug": "submit_transition_safe-2614d31a",
-    "source_hash": "2614d31a4a4907697ec3e02f19047ef7fb96231eec06496748eb14bbea2301d7",
-    "semantic_hash": "9d7662472f7122ee0694fbdaaec25fea77edb91adbbba0e8e01228a3050eff4a",
-    "created_at": "2026-05-15T11:47:07Z"
+    "target_id": "baec1f1271718c50969143a912a7bbe24b8c2fbe800d975b302fde9b6d9c8f02",
+    "slug": "submit_transition_safe-5e9926e3",
+    "source_hash": "5e9926e385ee27de688cf107e99eccd13e8f2757b8a744c830a289080e6ed65c",
+    "semantic_hash": "7100c28757c0fd9171871615827268bf49a87efed9ba4d7bd532f84067ec568d",
+    "created_at": "2026-05-15T11:57:55Z"
   },
   "signature": "#[cfg_attr(verus_keep_ghost, verus_spec(safe => ensures\n    safe == match facts.decision",
-  "body": "{\n        NonceDecision::Accept =>\n            facts.pending_slot_points_to_new\n                && facts.new_current_written\n                && facts.queued_loc_written,\n        NonceDecision::Replace =>\n            facts.pending_slot_points_to_new\n                && facts.new_current_written\n                && facts.queued_loc_written\n                && facts.replacement_old_removed,\n        NonceDecision::TooLow | NonceDecision::Gap | NonceDecision::Conflict => false,\n    },\n))]\npub fn submit_transition_safe(facts: SubmitTransitionFacts) -> bool {\n    match facts.decision {\n        NonceDecision::Accept => {\n            facts.pending_slot_points_to_new\n                && facts.new_current_written\n                && facts.queued_loc_written\n        }\n        NonceDecision::Replace => {\n            facts.pending_slot_points_to_new\n                && facts.new_current_written\n                && facts.queued_loc_written\n                && facts.replacement_old_removed\n        }\n        NonceDecision::TooLow | NonceDecision::Gap | NonceDecision::Conflict => false,\n    }\n}",
+  "body": "{\n        NonceDecision::Accept =>\n            facts.pending_slot_points_to_new\n                && facts.new_current_written\n                && facts.queued_loc_written\n                && !facts.replacement_old_removed,\n        NonceDecision::Replace =>\n            facts.pending_slot_points_to_new\n                && facts.new_current_written\n                && facts.queued_loc_written\n                && facts.replacement_old_removed,\n        NonceDecision::TooLow | NonceDecision::Gap | NonceDecision::Conflict => false,\n    },\n))]\npub fn submit_transition_safe(facts: SubmitTransitionFacts) -> bool {\n    match facts.decision {\n        NonceDecision::Accept => {\n            facts.pending_slot_points_to_new\n                && facts.new_current_written\n                && facts.queued_loc_written\n                && !facts.replacement_old_removed\n        }\n        NonceDecision::Replace => {\n            facts.pending_slot_points_to_new\n                && facts.new_current_written\n                && facts.queued_loc_written\n                && facts.replacement_old_removed\n        }\n        NonceDecision::TooLow | NonceDecision::Gap | NonceDecision::Conflict => false,\n    }\n}",
   "span": {
     "start_line": 49,
-    "end_line": 78
+    "end_line": 80
   },
-  "git_commit": "84ed97b317f8b423af7e5df4f7688feb54599384",
-  "worktree_dirty": false,
-  "source_hash": "2614d31a4a4907697ec3e02f19047ef7fb96231eec06496748eb14bbea2301d7",
-  "semantic_hash": "9d7662472f7122ee0694fbdaaec25fea77edb91adbbba0e8e01228a3050eff4a",
+  "git_commit": "0e1cc96bcf8c44bcd8209096be775abafd9ae137",
+  "worktree_dirty": true,
+  "source_hash": "5e9926e385ee27de688cf107e99eccd13e8f2757b8a744c830a289080e6ed65c",
+  "semantic_hash": "7100c28757c0fd9171871615827268bf49a87efed9ba4d7bd532f84067ec568d",
   "dependency_hash_inputs": [
     {
       "kind": "use",
@@ -62,7 +62,7 @@
       "kind": "module",
       "name": "cfg",
       "file": "crates/verified-core/src/core_safety.rs",
-      "hash": "46df887b67095d38a8d96f91bf477067030cd91e28f7b9e6ca2aba6a6c672d51"
+      "hash": "0d46fcd208fda4493d7195469d0c720ca6ec2bbd97140bb5c3f9e657aa90f942"
     },
     {
       "kind": "use",

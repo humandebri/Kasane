@@ -1,11 +1,12 @@
-Generate scenario candidates:
+Generate a concise spec draft candidate:
 #[cfg_attr(verus_keep_ghost, verus_spec(safe => ensures
     safe == match facts.decision
 {
         NonceDecision::Accept =>
             facts.pending_slot_points_to_new
                 && facts.new_current_written
-                && facts.queued_loc_written,
+                && facts.queued_loc_written
+                && !facts.replacement_old_removed,
         NonceDecision::Replace =>
             facts.pending_slot_points_to_new
                 && facts.new_current_written
@@ -20,6 +21,7 @@ pub fn submit_transition_safe(facts: SubmitTransitionFacts) -> bool {
             facts.pending_slot_points_to_new
                 && facts.new_current_written
                 && facts.queued_loc_written
+                && !facts.replacement_old_removed
         }
         NonceDecision::Replace => {
             facts.pending_slot_points_to_new

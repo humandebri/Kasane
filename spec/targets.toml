@@ -164,17 +164,6 @@ semantic_hash = "099669607edc32f25d9177b1c8a22b32f0bec7b3c485bd5ab89ed86c52fd378
 created_at = "2026-05-14T03:39:58Z"
 
 [[targets]]
-display_name = "submit_transition_safe"
-function = "submit_transition_safe"
-function_path = "submit_transition_safe"
-file = "crates/verified-core/src/core_safety.rs"
-target_id = "4528d175a4fd4b969be072d9051758955af1c55333e8b4b762ff597c55b1f4f1"
-slug = "submit_transition_safe-2614d31a"
-source_hash = "2614d31a4a4907697ec3e02f19047ef7fb96231eec06496748eb14bbea2301d7"
-semantic_hash = "9d7662472f7122ee0694fbdaaec25fea77edb91adbbba0e8e01228a3050eff4a"
-created_at = "2026-05-15T11:47:07Z"
-
-[[targets]]
 display_name = "included_tx_safe"
 function = "included_tx_safe"
 function_path = "included_tx_safe"
@@ -195,3 +184,14 @@ slug = "block_commit_safe-9ce347ac"
 source_hash = "9ce347ac9e0c4f7f51bc344f0f3e6e70a86210a46865b67862551dd106555c0f"
 semantic_hash = "5faabe5ff1b9ce811054fe93bfb04e7cd61f3fb74bd18a081bfb35d8a3fbe9eb"
 created_at = "2026-05-15T11:47:15Z"
+
+[[targets]]
+display_name = "submit_transition_safe"
+function = "submit_transition_safe"
+function_path = "submit_transition_safe"
+file = "crates/verified-core/src/core_safety.rs"
+target_id = "baec1f1271718c50969143a912a7bbe24b8c2fbe800d975b302fde9b6d9c8f02"
+slug = "submit_transition_safe-5e9926e3"
+source_hash = "5e9926e385ee27de688cf107e99eccd13e8f2757b8a744c830a289080e6ed65c"
+semantic_hash = "7100c28757c0fd9171871615827268bf49a87efed9ba4d7bd532f84067ec568d"
+created_at = "2026-05-15T11:57:55Z"
