@@ -3,10 +3,10 @@
     "true"
   ],
   "postconditions": [
-    "result == (has_tx_index && has_receipt && receipt_tx_id_matches && index_key_matches_tx_id && loc_matches_position && receipt_matches_position && index_matches_position && block_number > 0)"
+    "result == (has_tx_index == 1 && has_receipt == 1 && receipt_tx_id_matches == 1 && index_key_matches_tx_id == 1 && loc_matches_position == 1 && receipt_matches_position == 1 && index_matches_position == 1 && block_number > 0)"
   ],
   "acceptance_criteria": [
-    "An included transaction is safe only when tx index, receipt, tx id, location, receipt position, index position, and nonzero block number evidence all agree."
+    "An included transaction is safe only when tx index, receipt, tx id, location, receipt position, and index position evidence are all 1-valued and the block number is nonzero."
   ],
   "test_evidence": [
     {

@@ -1,13 +1,3 @@
 {
-  "target": "included_tx_safe_raw-8883376d",
-  "check_result": "fail",
-  "stale_reasons": [
-    {
-      "code": "worktree_dirty_at_extract"
-    }
-  ],
-  "drift_reasons": [],
-  "dirty_paths": [
-    "crates/verified-core/src/core_safety.rs"
-  ]
+  "state": "accepted"
 }
