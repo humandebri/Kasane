@@ -1,0 +1,48 @@
+{
+  "target": "block_commit_safe_raw",
+  "target_id": "403ccf956447da359f91169e64a7ae1ae12c194ab012011091e1957d78783b01",
+  "slug": "block_commit_safe_raw-318a0bf6",
+  "file": "crates/verified-core/src/core_safety_block.rs",
+  "function": "block_commit_safe_raw",
+  "git_commit": "5a64c9f3da2f4eab906ace9b5d61a5ff0f16eb29",
+  "worktree_dirty": false,
+  "source_hash": "b39faf9979ce7183b540439379372e92835318904382bcd57e20df88432305f2",
+  "semantic_hash": "4239ff9744392bfca4c2a1513aba01c762fa811340f4655943b4e3b39f3ef3ba",
+  "dependency_hash_inputs": [
+    {
+      "kind": "use",
+      "name": "cfg",
+      "file": "crates/verified-core/src/core_safety_block.rs",
+      "hash": "a5eb4157d5d32303032e3dc786e34f004ebe17f0ff1bb26f90ac9eb42478596c"
+    }
+  ],
+  "unresolved_dependencies": [],
+  "spec_source_of_truth": "accepted_json",
+  "tool_version": "0.1.0",
+  "preconditions": [
+    "true"
+  ],
+  "postconditions": [
+    "result == (previous_head < u64::MAX && committed_head == previous_head + 1 && (block_gas_limit == 0 || block_gas_used <= block_gas_limit) && included_count != 0 && included_count == staged_count && safe_included_count == included_count)"
+  ],
+  "acceptance_criteria": [
+    "A committed block is safe only when a nonterminal head advances by exactly one, block gas stays within limit unless the limit is disabled, and the included/staged/safe counts exactly match and are nonempty."
+  ],
+  "test_evidence": [
+    {
+      "scenario_id": "block_commit_safe_raw-nominal",
+      "command": "cargo test -p verified-core block_commit_requires_head_gas_and_batch_evidence && cargo test -p ic-evm-core produce_block_selects_top_k_by_fee_then_submission_order",
+      "test_name": "verified-core block commit evidence cases plus evm-core block production adapter test",
+      "recorded_at": "2026-05-15T12:10:18Z"
+    }
+  ],
+  "risk_level": "medium",
+  "verified_subject": "implementation",
+  "contract_hash": "0adfa2894d689d1bc6f626938a945f356537df1222b40b95f8b71a16a8e61333",
+  "applied_contract_hash": "0adfa2894d689d1bc6f626938a945f356537df1222b40b95f8b71a16a8e61333",
+  "applied_at": "2026-05-15T12:25:27Z",
+  "panic_behavior": "documented",
+  "overflow_behavior": "documented",
+  "rejected_behaviors": [],
+  "open_assumptions": []
+}

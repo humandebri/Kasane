@@ -1,0 +1,48 @@
+{
+  "target": "included_tx_safe_raw",
+  "target_id": "224c160e61755ee6272563ea6dab57a1fa0c100d4d673b442182059bedf4d3ae",
+  "slug": "included_tx_safe_raw-8883376d",
+  "file": "crates/verified-core/src/core_safety_included.rs",
+  "function": "included_tx_safe_raw",
+  "git_commit": "5a64c9f3da2f4eab906ace9b5d61a5ff0f16eb29",
+  "worktree_dirty": false,
+  "source_hash": "7e720680b2cb24d5789374c3b79ac1e99027ca71e00fadd48903dcefc1e53d8e",
+  "semantic_hash": "6dc668816494aa65069d63e12f80cf9f2da179de8741e69c7b90e61bc88a24d2",
+  "dependency_hash_inputs": [
+    {
+      "kind": "use",
+      "name": "cfg",
+      "file": "crates/verified-core/src/core_safety_included.rs",
+      "hash": "a5eb4157d5d32303032e3dc786e34f004ebe17f0ff1bb26f90ac9eb42478596c"
+    }
+  ],
+  "unresolved_dependencies": [],
+  "spec_source_of_truth": "accepted_json",
+  "tool_version": "0.1.0",
+  "preconditions": [
+    "true"
+  ],
+  "postconditions": [
+    "result == (has_tx_index == 1 && has_receipt == 1 && receipt_tx_id_matches == 1 && index_key_matches_tx_id == 1 && loc_matches_position == 1 && receipt_matches_position == 1 && index_matches_position == 1 && block_number > 0)"
+  ],
+  "acceptance_criteria": [
+    "An included transaction is safe only when tx index, receipt, tx id, location, receipt position, and index position evidence are all 1-valued and the block number is nonzero."
+  ],
+  "test_evidence": [
+    {
+      "scenario_id": "included_tx_safe_raw-nominal",
+      "command": "cargo test -p verified-core included_tx_requires_receipt_index_and_position_evidence && cargo test -p ic-evm-core produce_block_selects_top_k_by_fee_then_submission_order",
+      "test_name": "verified-core included tx evidence cases plus evm-core block production adapter test",
+      "recorded_at": "2026-05-15T12:10:07Z"
+    }
+  ],
+  "risk_level": "medium",
+  "verified_subject": "implementation",
+  "contract_hash": "bb83f6a6256a26696727c069a8fdbfcf70d178a85c4e4bac1bfa5dfc36fc9311",
+  "applied_contract_hash": "bb83f6a6256a26696727c069a8fdbfcf70d178a85c4e4bac1bfa5dfc36fc9311",
+  "applied_at": "2026-05-15T12:25:27Z",
+  "panic_behavior": "documented",
+  "overflow_behavior": "documented",
+  "rejected_behaviors": [],
+  "open_assumptions": []
+}

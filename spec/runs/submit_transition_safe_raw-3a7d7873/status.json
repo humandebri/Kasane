@@ -1,3 +1,17 @@
 {
-  "state": "accepted"
+  "target": "submit_transition_safe_raw-3a7d7873",
+  "check_result": "fail",
+  "stale_reasons": [
+    {
+      "code": "git_commit_mismatch"
+    }
+  ],
+  "drift_reasons": [
+    {
+      "code": "contract_hash_mismatch"
+    }
+  ],
+  "dirty_paths": [
+    "crates/verified-core/src/core_safety.rs"
+  ]
 }
