@@ -4,10 +4,10 @@
   "slug": "submit_transition_safe_raw-3a7d7873",
   "file": "crates/verified-core/src/core_safety.rs",
   "function": "submit_transition_safe_raw",
-  "git_commit": "10e8abd458bd615ab1010dfc3737fa96d3e7c8cc",
+  "git_commit": "9ae50545b2a91cdfaa427257878285a48b68def2",
   "worktree_dirty": false,
-  "source_hash": "1118af33bd9ea8d71008adc64d8af448ca24462efeac8cc84fbf5f3de0ff05ea",
-  "semantic_hash": "fa7f2587e9b5a6e4349748c889f4aebeed6de57b5a1cce8796c69a7608d3d7e1",
+  "source_hash": "f33ec03567056f009ca2830b7177a4a05ad239fda1282759197ba453c7b032f5",
+  "semantic_hash": "f34426b568d33ff13bc336522e701b290b4ea18729ae9479ee086f1936716c24",
   "dependency_hash_inputs": [
     {
       "kind": "use",
@@ -31,16 +31,16 @@
   "test_evidence": [
     {
       "scenario_id": "submit_transition_safe_raw-nominal",
-      "command": "cargo test -p verified-core submit_transition_requires_nonce_acceptance_and_adapter_writes && cargo test -p ic-evm-core replacement_requires_higher_effective_fee",
-      "test_name": "verified-core submit transition cases plus evm-core replacement adapter test",
-      "recorded_at": "2026-05-15T12:09:55Z"
+      "command": "cargo test -p verified-core && cargo test -p ic-evm-core replacement_requires_higher_effective_fee",
+      "test_name": "verified-core unit suite plus evm-core replacement adapter test",
+      "recorded_at": "2026-05-15T12:51:07Z"
     }
   ],
   "risk_level": "medium",
   "verified_subject": "implementation",
   "contract_hash": "1b3bcc22b4af011df2aea133b3c9c57ba87f48ff492fa94ebf6df1cc3bfd5b40",
   "applied_contract_hash": "1b3bcc22b4af011df2aea133b3c9c57ba87f48ff492fa94ebf6df1cc3bfd5b40",
-  "applied_at": "2026-05-15T12:25:27Z",
+  "applied_at": "2026-05-15T12:51:53Z",
   "panic_behavior": "documented",
   "overflow_behavior": "documented",
   "rejected_behaviors": [],

@@ -11,9 +11,9 @@
   "test_evidence": [
     {
       "scenario_id": "submit_transition_safe_raw-nominal",
-      "command": "cargo test -p verified-core submit_transition_requires_nonce_acceptance_and_adapter_writes && cargo test -p ic-evm-core replacement_requires_higher_effective_fee",
-      "test_name": "verified-core submit transition cases plus evm-core replacement adapter test",
-      "recorded_at": "2026-05-15T12:09:55Z"
+      "command": "cargo test -p verified-core && cargo test -p ic-evm-core replacement_requires_higher_effective_fee",
+      "test_name": "verified-core unit suite plus evm-core replacement adapter test",
+      "recorded_at": "2026-05-15T12:51:07Z"
     }
   ],
   "risk_level": "medium"

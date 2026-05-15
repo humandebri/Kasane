@@ -3,7 +3,15 @@
 #[cfg(verus_keep_ghost)]
 use vstd::prelude::*;
 
-pub fn block_commit_safe_raw(previous_head: u64, committed_head: u64, included_count: u64, staged_count: u64, safe_included_count: u64, block_gas_used: u64, block_gas_limit: u64) -> bool {
+// specgen:contract block_commit_safe_raw-318a0bf6 0adfa2894d689d1bc6f626938a945f356537df1222b40b95f8b71a16a8e61333
+#[cfg_attr(verus_keep_ghost, verus_spec(result =>
+    requires
+        true,
+    ensures
+        result == (previous_head < u64::MAX && committed_head == previous_head + 1 && (block_gas_limit == 0 || block_gas_used <= block_gas_limit) && included_count != 0 && included_count == staged_count && safe_included_count == included_count),
+))]
+pub fn block_commit_safe_raw(previous_head: u64, committed_head: u64, included_count: u64, staged_count: u64, safe_included_count: u64, block_gas_used: u64, block_gas_limit: u64) -> bool
+{
     previous_head < u64::MAX
         && committed_head == previous_head + 1
         && (block_gas_limit == 0 || block_gas_used <= block_gas_limit)

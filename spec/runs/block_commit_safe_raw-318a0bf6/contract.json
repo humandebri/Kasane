@@ -11,9 +11,9 @@
   "test_evidence": [
     {
       "scenario_id": "block_commit_safe_raw-nominal",
-      "command": "cargo test -p verified-core block_commit_requires_head_gas_and_batch_evidence && cargo test -p ic-evm-core produce_block_selects_top_k_by_fee_then_submission_order",
-      "test_name": "verified-core block commit evidence cases plus evm-core block production adapter test",
-      "recorded_at": "2026-05-15T12:10:18Z"
+      "command": "cargo test -p verified-core && cargo test -p ic-evm-core produce_block_selects_top_k_by_fee_then_submission_order",
+      "test_name": "verified-core unit suite plus evm-core block production adapter test",
+      "recorded_at": "2026-05-15T12:51:14Z"
     }
   ],
   "risk_level": "medium"

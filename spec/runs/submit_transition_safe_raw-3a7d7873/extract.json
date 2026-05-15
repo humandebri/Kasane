@@ -15,10 +15,10 @@
   "body": "{\n    (decision_code == SUBMIT_DECISION_ACCEPT\n        && pending_slot_points_to_new == 1\n        && new_current_written == 1\n        && queued_loc_written == 1\n        && replacement_old_removed == 0)\n        || (decision_code == SUBMIT_DECISION_REPLACE\n            && pending_slot_points_to_new == 1\n            && new_current_written == 1\n            && queued_loc_written == 1\n            && replacement_old_removed == 1)\n}",
   "span": {
     "start_line": 11,
-    "end_line": 22
+    "end_line": 18
   },
-  "git_commit": "10e8abd458bd615ab1010dfc3737fa96d3e7c8cc",
-  "worktree_dirty": true,
+  "git_commit": "9ae50545b2a91cdfaa427257878285a48b68def2",
+  "worktree_dirty": false,
   "source_hash": "f33ec03567056f009ca2830b7177a4a05ad239fda1282759197ba453c7b032f5",
   "semantic_hash": "f34426b568d33ff13bc336522e701b290b4ea18729ae9479ee086f1936716c24",
   "dependency_hash_inputs": [

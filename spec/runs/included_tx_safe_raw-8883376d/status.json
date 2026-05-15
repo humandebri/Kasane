@@ -1,3 +1,7 @@
 {
-  "state": "accepted"
+  "target": "included_tx_safe_raw-8883376d",
+  "check_result": "pass",
+  "stale_reasons": [],
+  "drift_reasons": [],
+  "dirty_paths": []
 }

@@ -1,3 +1,7 @@
 {
-  "state": "accepted"
+  "target": "block_commit_safe_raw-318a0bf6",
+  "check_result": "pass",
+  "stale_reasons": [],
+  "drift_reasons": [],
+  "dirty_paths": []
 }

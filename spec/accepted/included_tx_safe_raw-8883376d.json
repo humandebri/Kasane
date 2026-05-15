@@ -4,10 +4,10 @@
   "slug": "included_tx_safe_raw-8883376d",
   "file": "crates/verified-core/src/core_safety_included.rs",
   "function": "included_tx_safe_raw",
-  "git_commit": "10e8abd458bd615ab1010dfc3737fa96d3e7c8cc",
+  "git_commit": "9ae50545b2a91cdfaa427257878285a48b68def2",
   "worktree_dirty": false,
-  "source_hash": "7e720680b2cb24d5789374c3b79ac1e99027ca71e00fadd48903dcefc1e53d8e",
-  "semantic_hash": "6dc668816494aa65069d63e12f80cf9f2da179de8741e69c7b90e61bc88a24d2",
+  "source_hash": "7584af7de23ac12ec45cc49852b04b44dd46c13053cf3440d4abd28160c26be4",
+  "semantic_hash": "2f06f09b8a089ea16a1cfb4f51f4161d3f27ec82af6c6a96eb976d49ec7417b4",
   "dependency_hash_inputs": [
     {
       "kind": "use",
@@ -31,16 +31,16 @@
   "test_evidence": [
     {
       "scenario_id": "included_tx_safe_raw-nominal",
-      "command": "cargo test -p verified-core included_tx_requires_receipt_index_and_position_evidence && cargo test -p ic-evm-core produce_block_selects_top_k_by_fee_then_submission_order",
-      "test_name": "verified-core included tx evidence cases plus evm-core block production adapter test",
-      "recorded_at": "2026-05-15T12:10:07Z"
+      "command": "cargo test -p verified-core && cargo test -p ic-evm-core produce_block_selects_top_k_by_fee_then_submission_order",
+      "test_name": "verified-core unit suite plus evm-core block production adapter test",
+      "recorded_at": "2026-05-15T12:51:11Z"
     }
   ],
   "risk_level": "medium",
   "verified_subject": "implementation",
   "contract_hash": "bb83f6a6256a26696727c069a8fdbfcf70d178a85c4e4bac1bfa5dfc36fc9311",
   "applied_contract_hash": "bb83f6a6256a26696727c069a8fdbfcf70d178a85c4e4bac1bfa5dfc36fc9311",
-  "applied_at": "2026-05-15T12:25:27Z",
+  "applied_at": "2026-05-15T12:51:53Z",
   "panic_behavior": "documented",
   "overflow_behavior": "documented",
   "rejected_behaviors": [],

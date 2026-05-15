@@ -11,9 +11,9 @@
   "test_evidence": [
     {
       "scenario_id": "included_tx_safe_raw-nominal",
-      "command": "cargo test -p verified-core included_tx_requires_receipt_index_and_position_evidence && cargo test -p ic-evm-core produce_block_selects_top_k_by_fee_then_submission_order",
-      "test_name": "verified-core included tx evidence cases plus evm-core block production adapter test",
-      "recorded_at": "2026-05-15T12:10:07Z"
+      "command": "cargo test -p verified-core && cargo test -p ic-evm-core produce_block_selects_top_k_by_fee_then_submission_order",
+      "test_name": "verified-core unit suite plus evm-core block production adapter test",
+      "recorded_at": "2026-05-15T12:51:11Z"
     }
   ],
   "risk_level": "medium"
