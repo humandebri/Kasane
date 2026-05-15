@@ -11,16 +11,16 @@
     "semantic_hash": "5a42d752fbfb9dbd515f43b51b2822024ca162427dfa173e19451af00a27605d",
     "created_at": "2026-05-15T12:07:22Z"
   },
-  "signature": "#[cfg_attr(verus_keep_ghost, verus_spec(safe => ensures\n    safe == (\n        (decision_code == SUBMIT_DECISION_ACCEPT\n            && pending_slot_points_to_new == 1\n            && new_current_written == 1\n            && queued_loc_written == 1\n            && replacement_old_removed == 0)\n        || (decision_code == SUBMIT_DECISION_REPLACE\n            && pending_slot_points_to_new == 1\n            && new_current_written == 1\n            && queued_loc_written == 1\n            && replacement_old_removed == 1)\n    ),\n))]\npub fn submit_transition_safe_raw(\n    decision_code: u64,\n    pending_slot_points_to_new: u64,\n    new_current_written: u64,\n    queued_loc_written: u64,\n    replacement_old_removed: u64,\n) -> bool",
+  "signature": "pub fn submit_transition_safe_raw(\n    decision_code: u64,\n    pending_slot_points_to_new: u64,\n    new_current_written: u64,\n    queued_loc_written: u64,\n    replacement_old_removed: u64,\n) -> bool",
   "body": "{\n    (decision_code == SUBMIT_DECISION_ACCEPT\n        && pending_slot_points_to_new == 1\n        && new_current_written == 1\n        && queued_loc_written == 1\n        && replacement_old_removed == 0)\n        || (decision_code == SUBMIT_DECISION_REPLACE\n            && pending_slot_points_to_new == 1\n            && new_current_written == 1\n            && queued_loc_written == 1\n            && replacement_old_removed == 1)\n}",
   "span": {
     "start_line": 11,
-    "end_line": 42
+    "end_line": 28
   },
-  "git_commit": "7c518ff73ff0ed5a562ee74062a42bf030de5f7a",
-  "worktree_dirty": false,
-  "source_hash": "a6e5c4b16cee2d7e778a2ecbb0ec632496188829d212bedfe563b39194aad484",
-  "semantic_hash": "49900b369e6f20ae1a5c754f7c70e644f62bb8005e989e04a32447c674496e8b",
+  "git_commit": "34120f91d2f1fc9305e4c710749751ec3888c5cf",
+  "worktree_dirty": true,
+  "source_hash": "1118af33bd9ea8d71008adc64d8af448ca24462efeac8cc84fbf5f3de0ff05ea",
+  "semantic_hash": "fa7f2587e9b5a6e4349748c889f4aebeed6de57b5a1cce8796c69a7608d3d7e1",
   "dependency_hash_inputs": [
     {
       "kind": "use",

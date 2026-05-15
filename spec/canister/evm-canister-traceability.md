@@ -25,8 +25,8 @@ review output, contract terms, and linked test evidence; `accept`,
 | Instruction budget | `verified_core::block::remaining_instruction_budget` | `spec/runs/remaining_instruction_budget-77147f7b/extract.json` |
 | Block gas budget | `verified_core::block::tx_fits_block_gas` | `spec/runs/tx_fits_block_gas-a077863a/extract.json` |
 | Core safety model | `verified_core::core_safety::submit_transition_safe_raw` | `spec/runs/submit_transition_safe_raw-3a7d7873/extract.json` |
-| Core safety model | `verified_core::core_safety::included_tx_safe_raw` | `spec/runs/included_tx_safe_raw-8883376d/extract.json` |
-| Core safety model | `verified_core::core_safety::block_commit_safe_raw` | `spec/runs/block_commit_safe_raw-318a0bf6/extract.json` |
+| Core safety model | `verified_core::core_safety_included::included_tx_safe_raw` | `spec/runs/included_tx_safe_raw-8883376d/extract.json` |
+| Core safety model | `verified_core::core_safety_block::block_commit_safe_raw` | `spec/runs/block_commit_safe_raw-318a0bf6/extract.json` |
 
 ## Canister Entrypoint Sources
 
@@ -51,8 +51,8 @@ review output, contract terms, and linked test evidence; `accept`,
 | Remaining instruction budget saturates safely. | `verified_core::block::remaining_instruction_budget` |
 | Transaction gas inclusion respects block gas limit. | `verified_core::block::tx_fits_block_gas` |
 | Accepted submit transition writes current pending and queued location evidence. | `verified_core::core_safety::submit_transition_safe_raw` |
-| Included transaction has matching location, receipt, and index evidence. | `verified_core::core_safety::included_tx_safe_raw` |
-| Block commit has strict nonterminal head progress, gas, and batch-count evidence. | `verified_core::core_safety::block_commit_safe_raw` |
+| Included transaction has matching location, receipt, and index evidence. | `verified_core::core_safety_included::included_tx_safe_raw` |
+| Block commit has strict nonterminal head progress, gas, and batch-count evidence. | `verified_core::core_safety_block::block_commit_safe_raw` |
 
 ## Adapter Evidence
 

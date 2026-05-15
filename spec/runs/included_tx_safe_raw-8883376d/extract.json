@@ -4,28 +4,28 @@
     "display_name": "included_tx_safe_raw",
     "function": "included_tx_safe_raw",
     "function_path": "included_tx_safe_raw",
-    "file": "crates/verified-core/src/core_safety.rs",
+    "file": "crates/verified-core/src/core_safety_included.rs",
     "target_id": "224c160e61755ee6272563ea6dab57a1fa0c100d4d673b442182059bedf4d3ae",
     "slug": "included_tx_safe_raw-8883376d",
     "source_hash": "8883376d72032a1c2763639c9b66be22fb0d0b0fd41ea54619d9bb82a98c9763",
     "semantic_hash": "200dc7e13579af9bb069bfa545c6cbd32dd681daffcd07dcf07ca103ae440c2b",
     "created_at": "2026-05-15T12:07:25Z"
   },
-  "signature": "#[cfg_attr(verus_keep_ghost, verus_spec(safe => ensures\n    safe == (\n        has_tx_index == 1\n        && has_receipt == 1\n        && receipt_tx_id_matches == 1\n        && index_key_matches_tx_id == 1\n        && loc_matches_position == 1\n        && receipt_matches_position == 1\n        && index_matches_position == 1\n        && block_number > 0\n    ),\n))]\npub fn included_tx_safe_raw(\n    has_tx_index: u64,\n    has_receipt: u64,\n    receipt_tx_id_matches: u64,\n    index_key_matches_tx_id: u64,\n    loc_matches_position: u64,\n    receipt_matches_position: u64,\n    index_matches_position: u64,\n    block_number: u64,\n) -> bool",
+  "signature": "pub fn included_tx_safe_raw(\n    has_tx_index: u64,\n    has_receipt: u64,\n    receipt_tx_id_matches: u64,\n    index_key_matches_tx_id: u64,\n    loc_matches_position: u64,\n    receipt_matches_position: u64,\n    index_matches_position: u64,\n    block_number: u64,\n) -> bool",
   "body": "{\n    has_tx_index == 1\n        && has_receipt == 1\n        && block_number > 0\n        && receipt_tx_id_matches == 1\n        && index_key_matches_tx_id == 1\n        && loc_matches_position == 1\n        && receipt_matches_position == 1\n        && index_matches_position == 1\n}",
   "span": {
-    "start_line": 44,
-    "end_line": 74
+    "start_line": 6,
+    "end_line": 24
   },
-  "git_commit": "7c518ff73ff0ed5a562ee74062a42bf030de5f7a",
-  "worktree_dirty": false,
-  "source_hash": "43c3c089a1607427679e5cd869e36d903885af3ef2606a00ff1e7a3309f63553",
-  "semantic_hash": "829ab27b3c1b8995d7db68986cc6059900db157c4d12c567f46cfb7c45cdc199",
+  "git_commit": "34120f91d2f1fc9305e4c710749751ec3888c5cf",
+  "worktree_dirty": true,
+  "source_hash": "7e720680b2cb24d5789374c3b79ac1e99027ca71e00fadd48903dcefc1e53d8e",
+  "semantic_hash": "6dc668816494aa65069d63e12f80cf9f2da179de8741e69c7b90e61bc88a24d2",
   "dependency_hash_inputs": [
     {
       "kind": "use",
       "name": "cfg",
-      "file": "crates/verified-core/src/core_safety.rs",
+      "file": "crates/verified-core/src/core_safety_included.rs",
       "hash": "a5eb4157d5d32303032e3dc786e34f004ebe17f0ff1bb26f90ac9eb42478596c"
     }
   ],
