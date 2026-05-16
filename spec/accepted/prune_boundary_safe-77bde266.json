@@ -1,0 +1,48 @@
+{
+  "target": "prune_boundary_safe",
+  "target_id": "0910550eed2560103dfbdb04091f17cf39c9e5972ce36578b8eb08ba095e5e0e",
+  "slug": "prune_boundary_safe-77bde266",
+  "file": "crates/verified-core/src/prune_safety/boundary.rs",
+  "function": "prune_boundary_safe",
+  "git_commit": "18e8ee8e7baf1cee11784c88c37c0ffc190b418a",
+  "worktree_dirty": false,
+  "source_hash": "77bde2669656453e5bf1ca19273a79287ec5f39c84ba1b3fbae22f182129a75a",
+  "semantic_hash": "5c9a4a620ffa373b8f9e9788b515284f4d6537295c9dc43d1f04232aada60702",
+  "dependency_hash_inputs": [
+    {
+      "kind": "use",
+      "name": "cfg",
+      "file": "crates/verified-core/src/prune_safety/boundary.rs",
+      "hash": "a5eb4157d5d32303032e3dc786e34f004ebe17f0ff1bb26f90ac9eb42478596c"
+    }
+  ],
+  "unresolved_dependencies": [],
+  "spec_source_of_truth": "accepted_json",
+  "tool_version": "0.1.0",
+  "preconditions": [
+    "true"
+  ],
+  "postconditions": [
+    "result == (next_present == false || (retain > 0 && head > retain && next_boundary <= head - retain && (previous_present == false || previous <= next_boundary)))"
+  ],
+  "acceptance_criteria": [
+    "A prune boundary is safe only when it is unset or moves monotonically to a block at or before head - retain, so retained blocks are not crossed."
+  ],
+  "test_evidence": [
+    {
+      "scenario_id": "prune_boundary_safe-nominal",
+      "command": "cargo test -p verified-core prune && cargo test -p ic-evm-core prune && cargo test -p ic-evm-gateway pruned && cargo test -p ic-evm-gateway get_receipt_returns",
+      "test_name": "verified-core prune safety plus evm-core prune and gateway pruned/retained query adapter tests",
+      "recorded_at": "2026-05-16T03:18:04Z"
+    }
+  ],
+  "risk_level": "medium",
+  "verified_subject": "implementation",
+  "contract_hash": "b333ea9039f7ea43a15bce9b691bec941e5345525fb4689756d2b030b77dae30",
+  "applied_contract_hash": "b333ea9039f7ea43a15bce9b691bec941e5345525fb4689756d2b030b77dae30",
+  "applied_at": "2026-05-16T03:18:11Z",
+  "panic_behavior": "documented",
+  "overflow_behavior": "documented",
+  "rejected_behaviors": [],
+  "open_assumptions": []
+}

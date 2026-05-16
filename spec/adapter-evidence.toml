@@ -24,3 +24,48 @@ covered_by = [
   "included_tx_safe_raw-8883376d",
   "block_commit_safe_raw-318a0bf6",
 ]
+
+[[coverage]]
+file = "crates/evm-core/src/chain.rs"
+function = "prune_blocks"
+covered_by = [
+  "block_is_prunable-04224fd7",
+  "prune_boundary_safe-77bde266",
+  "prune_tx_cleanup_complete-171d1899",
+]
+
+[[coverage]]
+file = "crates/evm-core/src/chain.rs"
+function = "prune_tick"
+covered_by = [
+  "block_is_prunable-04224fd7",
+  "prune_boundary_safe-77bde266",
+  "prune_tx_cleanup_complete-171d1899",
+]
+
+[[coverage]]
+file = "crates/ic-evm-gateway/src/lib.rs"
+function = "prune_blocks"
+covered_by = [
+  "block_is_prunable-04224fd7",
+  "prune_boundary_safe-77bde266",
+  "prune_tx_cleanup_complete-171d1899",
+]
+
+[[coverage]]
+file = "crates/ic-evm-gateway/src/lib.rs"
+function = "get_receipt"
+covered_by = [
+  "block_is_prunable-04224fd7",
+  "prune_boundary_safe-77bde266",
+  "prune_tx_cleanup_complete-171d1899",
+]
+
+[[coverage]]
+file = "crates/ic-evm-gateway/src/lib.rs"
+function = "get_block"
+covered_by = [
+  "block_is_prunable-04224fd7",
+  "prune_boundary_safe-77bde266",
+  "prune_tx_cleanup_complete-171d1899",
+]

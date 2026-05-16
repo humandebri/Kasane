@@ -27,6 +27,9 @@ review output, contract terms, and linked test evidence; `accept`,
 | Core safety model | `verified_core::core_safety::submit_transition_safe_raw` | `spec/runs/submit_transition_safe_raw-3a7d7873/extract.json` |
 | Core safety model | `verified_core::core_safety_included::included_tx_safe_raw` | `spec/runs/included_tx_safe_raw-8883376d/extract.json` |
 | Core safety model | `verified_core::core_safety_block::block_commit_safe_raw` | `spec/runs/block_commit_safe_raw-318a0bf6/extract.json` |
+| Pruning safety model | `verified_core::prune_safety::block_is_prunable` | `spec/runs/block_is_prunable-04224fd7/extract.json` |
+| Pruning safety model | `verified_core::prune_safety::prune_boundary_safe` | `spec/runs/prune_boundary_safe-77bde266/extract.json` |
+| Pruning safety model | `verified_core::prune_safety::prune_tx_cleanup_complete` | `spec/runs/prune_tx_cleanup_complete-171d1899/extract.json` |
 
 ## Canister Entrypoint Sources
 
@@ -53,6 +56,9 @@ review output, contract terms, and linked test evidence; `accept`,
 | Accepted submit transition writes current pending and queued location evidence. | `verified_core::core_safety::submit_transition_safe_raw` |
 | Included transaction has matching location, receipt, and index evidence. | `verified_core::core_safety_included::included_tx_safe_raw` |
 | Block commit has strict nonterminal head progress, gas, and batch-count evidence. | `verified_core::core_safety_block::block_commit_safe_raw` |
+| Pruning only crosses blocks at or before the retention boundary. | `verified_core::prune_safety::block_is_prunable` |
+| Pruned boundary is unset or monotonically advances without entering retained range. | `verified_core::prune_safety::prune_boundary_safe` |
+| Pruned transaction cleanup removes receipt, tx index, tx loc, seen-tx, tx store, and internal traces from observation. | `verified_core::prune_safety::prune_tx_cleanup_complete` |
 
 ## Adapter Evidence
 
@@ -61,6 +67,8 @@ review output, contract terms, and linked test evidence; `accept`,
 | nonce replacement adapter | `crates/evm-core/tests/phase1_nonce_sequence.rs::replacement_requires_higher_effective_fee` is linked as test evidence for `submit_transition_safe_raw`; it proves same-nonce lower/equal replacement is rejected, strict higher replacement wins, the old tx is dropped, and only the replacement is included |
 | block persistence adapter | `crates/evm-core/tests/common/mod.rs::assert_block_persist_invariants` is linked as test evidence for `included_tx_safe_raw` and `block_commit_safe_raw`; it proves included tx ids have matching receipt, tx index, tx loc, no pending/ready refs, and block persistence invariants |
 | gateway submit/receipt adapter | `crates/ic-evm-gateway/src/tests.rs::gateway_submit_ic_tx_adapter_preserves_queue_and_receipt_invariants` is linked through `spec/adapter-evidence.toml` and the accepted test evidence for `submit_transition_safe_raw`, `included_tx_safe_raw`, and `block_commit_safe_raw`; it proves DTO parsing plus gateway submit helper writes queued location, pending receipt status, included location, receipt, tx index, and monotonic head after block production |
+| pruning adapter | `crates/evm-core/tests/phase1_prune.rs` and `crates/evm-core/tests/prune_journal.rs` are linked as test evidence for the pruning safety targets; they prove old block/receipt/index/location deletion, retained range preservation, `max_ops` bounding, journal recovery, and idempotency |
+| gateway pruning query adapter | `crates/ic-evm-gateway/src/tests.rs` pruned/receipt lookup tests are linked through `spec/adapter-evidence.toml`; they prove pruned blocks and receipts return `Pruned`, unknown tx with prune boundary returns `PossiblyPruned` through RPC status lookup, and retained receipts remain queryable |
 
 ## Review Gaps
 
@@ -72,6 +80,10 @@ review output, contract terms, and linked test evidence; `accept`,
   integration checks with many runtime dependencies. Production adapter helpers
   that are intentionally covered by pure-model test evidence are listed in
   `spec/adapter-evidence.toml`.
+- Pruning proof excludes stable memory, StableBTreeMap, blob reclaim physical
+  reuse, IC trap/crash persistence, and OS/process behavior. These remain trust
+  boundaries; the proof covers the pure boundary and observation invariants plus
+  adapter evidence.
 - `specgen status --check` passes for `submit_tx_in` and
   `should_stop_execution`. Most adapter/core extracts currently report
   unresolved dependencies because `specgen extract` is function-local and the
