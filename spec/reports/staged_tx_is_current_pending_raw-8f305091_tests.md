@@ -1,0 +1,13 @@
+# test evidence: staged_tx_is_current_pending_raw-8f305091
+
+- git_commit: 0570339f56a81732819c12f7e07f79a58a609f91
+- worktree_dirty: false
+- semantic_hash: 0aaf3eafa2dcf641996e9aa709a1537b158e106a527c267a3235736c950b2155
+- spec_hash: 24da9ab88c3bb152e0617ff122d2755cc9231ad9a3021941fe6c774eed9d12fb
+- target_hash: dcfa39c6469a968015d02017b45df0ae161b67802b979894469e5f443d651a29
+- source_hash: 86845648a950705fef350c93d451fe27e728e5402ca00a28417d1f37ae15a063
+- evidence_hash: e4982a7336b4b615494b7c4d1c154e0c1b518fa278424faf64ec978a16dec215
+- result: success
+
+## cases
+- staged_tx_is_current_pending_raw-nominal verified-core staging pure tests plus gateway replacement stale-tx exclusion evidence exit_code=0 result=success
