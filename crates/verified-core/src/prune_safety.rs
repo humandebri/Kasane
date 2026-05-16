@@ -8,4 +8,4 @@ pub mod cleanup;
 pub use block_prunable::block_is_prunable;
 pub use block_retained::block_is_retained;
 pub use boundary::prune_boundary_safe;
-pub use cleanup::{PruneTxCleanupInput, prune_tx_cleanup_complete};
+pub use cleanup::{prune_tx_cleanup_complete, PruneTxCleanupInput};

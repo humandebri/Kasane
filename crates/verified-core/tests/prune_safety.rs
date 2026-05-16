@@ -1,8 +1,8 @@
 //! どこで: verified-core pruning safety / 何を: public pure API / なぜ: gate対象の実装ファイルを小さく保つため
 
 use verified_core::prune_safety::{
-    PruneTxCleanupInput, block_is_prunable, block_is_retained, prune_boundary_safe,
-    prune_tx_cleanup_complete,
+    block_is_prunable, block_is_retained, prune_boundary_safe, prune_tx_cleanup_complete,
+    PruneTxCleanupInput,
 };
 
 #[test]
