@@ -1,0 +1,48 @@
+{
+  "target": "upgrade_core_observation_preserved_raw",
+  "target_id": "cef70d19cee8d3c0ae8a13b09d7968c6eed59c0990b926abe75dcb6794b56c10",
+  "slug": "upgrade_core_observation_preserved_raw-191130e4",
+  "file": "crates/verified-core/src/upgrade_safety.rs",
+  "function": "upgrade_core_observation_preserved_raw",
+  "git_commit": "1a13c8ac89218b6489fb0ee15ed5e9f7f5793c7b",
+  "worktree_dirty": false,
+  "source_hash": "191130e4b8b76d4409ea2457fd792448803236c01a7acc1f282fcf3cb7df6b93",
+  "semantic_hash": "7dea973b8bd70f123edd509a26aea84e43cc7c3f136c1bebdfdb5883999d9489",
+  "dependency_hash_inputs": [
+    {
+      "kind": "use",
+      "name": "cfg",
+      "file": "crates/verified-core/src/upgrade_safety.rs",
+      "hash": "a5eb4157d5d32303032e3dc786e34f004ebe17f0ff1bb26f90ac9eb42478596c"
+    }
+  ],
+  "unresolved_dependencies": [],
+  "spec_source_of_truth": "accepted_json",
+  "tool_version": "0.1.0",
+  "preconditions": [
+    "true"
+  ],
+  "postconditions": [
+    "result == (head_same == 1 && pruned_boundary_same == 1 && pending_same == 1 && receipt_same == 1 && tx_index_same == 1 && tx_loc_same == 1)"
+  ],
+  "acceptance_criteria": [
+    "Upgrade observation preservation: after adapter restore/reinitialization, head, pruned boundary, current pending mapping, receipt payload, tx_index payload, and tx_loc must all match their pre-upgrade observations; IC runtime persistence is a trust boundary."
+  ],
+  "test_evidence": [
+    {
+      "scenario_id": "upgrade_core_observation_preserved_raw-nominal",
+      "command": "cargo test -p verified-core --test upgrade_safety upgrade_observation && cargo test -p evm-db --test phase0_stable_state stable_state_reinit_preserves_core_upgrade_observations",
+      "test_name": "verified-core pure upgrade observation tests plus evm-db stable-state reinit adapter evidence",
+      "recorded_at": "2026-05-16T10:32:31Z"
+    }
+  ],
+  "risk_level": "medium",
+  "verified_subject": "implementation",
+  "contract_hash": "e00562e4e451eadbc30e2148ad744959cffb2c4f4e96eb1a9b0b8779f7bbd70c",
+  "applied_contract_hash": "e00562e4e451eadbc30e2148ad744959cffb2c4f4e96eb1a9b0b8779f7bbd70c",
+  "applied_at": "2026-05-16T10:33:00Z",
+  "panic_behavior": "documented",
+  "overflow_behavior": "documented",
+  "rejected_behaviors": [],
+  "open_assumptions": []
+}
