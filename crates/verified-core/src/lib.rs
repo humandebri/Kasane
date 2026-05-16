@@ -11,6 +11,7 @@ pub mod fee;
 pub mod nonce;
 pub mod pending;
 pub mod prune;
+pub mod prune_safety;
 pub mod queue;
 pub mod stable_codec;
 pub mod state_diff;

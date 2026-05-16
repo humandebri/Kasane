@@ -2479,6 +2479,24 @@ fn get_block_returns_not_found_for_corrupt_block_payload() {
 }
 
 #[test]
+fn get_block_returns_pruned_for_pruned_boundary() {
+    init_stable_state();
+    with_state_mut(|state| {
+        let mut prune_state = *state.prune_state.get();
+        prune_state.set_pruned_before(8);
+        state.prune_state.set(prune_state);
+    });
+
+    let out = super::get_block(8);
+    assert!(matches!(
+        out,
+        Err(super::LookupError::Pruned {
+            pruned_before_block: 8
+        })
+    ));
+}
+
+#[test]
 fn get_receipt_returns_not_found_for_corrupt_receipt_payload() {
     init_stable_state();
     let tx_id = TxId([0x81u8; 32]);
@@ -2493,6 +2511,66 @@ fn get_receipt_returns_not_found_for_corrupt_receipt_payload() {
 
     let out = super::get_receipt(tx_id.0.to_vec());
     assert!(matches!(out, Err(super::LookupError::NotFound)));
+}
+
+#[test]
+fn get_receipt_returns_ok_for_retained_receipt() {
+    init_stable_state();
+    let tx_id = TxId([0x82u8; 32]);
+    with_state_mut(|state| {
+        let receipt = fake_receipt_for_lookup(tx_id, 9);
+        let ptr = state
+            .blob_store
+            .store_bytes(receipt.to_bytes().as_ref())
+            .expect("store receipt");
+        state.receipts.insert(tx_id, ptr);
+        state.tx_locs.insert(tx_id, TxLoc::included(9, 0));
+        let mut prune_state = *state.prune_state.get();
+        prune_state.set_pruned_before(5);
+        state.prune_state.set(prune_state);
+    });
+
+    let out = super::get_receipt(tx_id.0.to_vec()).expect("retained receipt");
+    assert_eq!(out.tx_id, tx_id.0.to_vec());
+    assert_eq!(out.block_number, 9);
+}
+
+#[test]
+fn get_receipt_returns_pruned_when_location_is_before_boundary() {
+    init_stable_state();
+    let tx_id = TxId([0x83u8; 32]);
+    with_state_mut(|state| {
+        state.tx_locs.insert(tx_id, TxLoc::included(4, 0));
+        let mut prune_state = *state.prune_state.get();
+        prune_state.set_pruned_before(5);
+        state.prune_state.set(prune_state);
+    });
+
+    let out = super::get_receipt(tx_id.0.to_vec());
+    assert!(matches!(
+        out,
+        Err(super::LookupError::Pruned {
+            pruned_before_block: 5
+        })
+    ));
+}
+
+fn fake_receipt_for_lookup(tx_id: TxId, block_number: u64) -> ReceiptLike {
+    ReceiptLike {
+        tx_id,
+        block_number,
+        tx_index: 0,
+        status: 1,
+        gas_used: 0,
+        effective_gas_price: 0,
+        l1_data_fee: 0,
+        operator_fee: 0,
+        total_fee: 0,
+        return_data_hash: [0u8; 32],
+        return_data: Vec::new(),
+        contract_address: None,
+        logs: Vec::new(),
+    }
 }
 
 #[test]
