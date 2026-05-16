@@ -4,6 +4,7 @@ use verified_core::prune_safety::{
     block_is_prunable, block_is_retained, prune_boundary_safe, prune_partial_progress_safe_raw,
     prune_query_observation_safe_raw, prune_tx_cleanup_complete, PruneTxCleanupInput,
 };
+use verified_core::stable_namespace::stable_tx_namespace_disjoint_raw;
 
 #[test]
 fn prune_prunable_boundary_excludes_retained_range() {
@@ -115,4 +116,12 @@ fn prune_partial_progress_keeps_cursor_restartable() {
     assert!(!prune_partial_progress_safe_raw(
         1, 5, 1, 6, 7, 10, 5, 5, 1, 1
     ));
+}
+
+#[test]
+fn stable_tx_namespace_requires_strict_memory_order() {
+    assert!(stable_tx_namespace_disjoint_raw(8, 9, 10, 11, 16, 37, 58));
+    assert!(!stable_tx_namespace_disjoint_raw(8, 9, 10, 10, 16, 37, 58));
+    assert!(!stable_tx_namespace_disjoint_raw(8, 9, 10, 11, 16, 16, 58));
+    assert!(!stable_tx_namespace_disjoint_raw(8, 9, 10, 11, 16, 37, 37));
 }

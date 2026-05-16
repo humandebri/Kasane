@@ -51,6 +51,7 @@ specgen_rustfmt_skip=(
   "crates/verified-core/src/prune_safety/query.rs"
   "crates/verified-core/src/receipt_index.rs"
   "crates/verified-core/src/staging.rs"
+  "crates/verified-core/src/stable_namespace.rs"
 )
 
 workspace_rustfmt_dirs=(

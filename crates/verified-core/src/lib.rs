@@ -15,6 +15,7 @@ pub mod prune;
 pub mod prune_safety;
 pub mod queue;
 pub mod receipt_index;
+pub mod stable_namespace;
 pub mod stable_codec;
 pub mod staging;
 pub mod state_diff;

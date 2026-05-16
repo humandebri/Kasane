@@ -101,3 +101,17 @@ covered_by = [
   "prune_query_observation_safe_raw-cb39bc8e",
   "prune_tx_cleanup_complete-171d1899",
 ]
+
+[[coverage]]
+file = "crates/evm-db/src/memory.rs"
+function = "get_memory"
+covered_by = [
+  "stable_tx_namespace_disjoint_raw-edcca87a",
+]
+
+[[coverage]]
+file = "crates/evm-db/src/stable_state.rs"
+function = "init_stable_state"
+covered_by = [
+  "stable_tx_namespace_disjoint_raw-edcca87a",
+]
