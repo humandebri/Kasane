@@ -1208,6 +1208,80 @@ fn no_reject_for_test() -> Option<String> {
     None
 }
 
+fn no_schedule_for_test() {}
+
+#[test]
+fn gateway_submit_ic_tx_adapter_preserves_queue_and_receipt_invariants() {
+    init_stable_state();
+    set_migration_not_pending_for_test();
+
+    let caller = Principal::self_authenticating(b"gateway-submit-caller");
+    let canister = Principal::self_authenticating(b"gateway-submit-canister");
+    let (max_fee_per_gas, max_priority_fee_per_gas) = evm_db::stable_state::with_state(|state| {
+        let chain_state = *state.chain_state.get();
+        let min_priority = u128::from(chain_state.min_priority_fee);
+        let required_max_fee = u128::from(chain_state.base_fee)
+            .saturating_add(min_priority)
+            .max(u128::from(chain_state.min_gas_price));
+        (required_max_fee, min_priority)
+    });
+    let args = SubmitIcTxArgsDto {
+        to: Some(vec![0x11; 20]),
+        from: None,
+        value: Nat::from(0u8),
+        gas_limit: 50_000,
+        nonce: 0,
+        max_fee_per_gas: Nat::from(max_fee_per_gas),
+        max_priority_fee_per_gas: Nat::from(max_priority_fee_per_gas),
+        data: Vec::new(),
+    };
+    let tx = parse_submit_ic_tx_args(args).expect("parse submit_ic_tx args");
+    let caller_evm =
+        hash::derive_evm_address_from_principal(caller.as_slice()).expect("caller evm");
+    chain::credit_balance(caller_evm, 1_000_000_000_000_000_000).expect("fund caller");
+    let expected_tx_id =
+        super::derive_ic_synthetic_tx_id(caller.as_slice(), canister.as_slice(), &tx, caller_evm);
+
+    let returned_tx_id = super::submit_ic_tx_internal_with_canister_and_scheduler(
+        caller.as_slice().to_vec(),
+        canister.as_slice().to_vec(),
+        "submit_ic_tx",
+        tx,
+        no_schedule_for_test,
+    )
+    .expect("submit_ic_tx adapter");
+    assert_eq!(returned_tx_id, expected_tx_id.0.to_vec());
+
+    let queued_loc = chain::get_tx_loc(&expected_tx_id).expect("queued tx loc");
+    assert_eq!(queued_loc.kind, evm_db::chain_data::TxLocKind::Queued);
+    assert!(matches!(
+        super::get_receipt(returned_tx_id.clone()),
+        Err(super::LookupError::Pending)
+    ));
+    evm_db::stable_state::with_state(|state| {
+        assert!(state.tx_store.get(&expected_tx_id).is_some());
+        assert!(state.receipts.get(&expected_tx_id).is_none());
+    });
+
+    let previous_head = chain::get_head_number();
+    let outcome = chain::produce_block(1).expect("produce block");
+    assert_eq!(outcome.block.tx_ids, vec![expected_tx_id]);
+    assert_eq!(chain::get_head_number(), previous_head + 1);
+
+    let included_loc = chain::get_tx_loc(&expected_tx_id).expect("included tx loc");
+    assert_eq!(included_loc.kind, evm_db::chain_data::TxLocKind::Included);
+    assert_eq!(included_loc.block_number, outcome.block.number);
+    assert_eq!(included_loc.tx_index, 0);
+    let receipt = super::get_receipt(returned_tx_id).expect("receipt view");
+    assert_eq!(receipt.tx_id, expected_tx_id.0.to_vec());
+    assert_eq!(receipt.block_number, outcome.block.number);
+    assert_eq!(receipt.tx_index, 0);
+    evm_db::stable_state::with_state(|state| {
+        assert!(state.receipts.get(&expected_tx_id).is_some());
+        assert!(state.tx_index.get(&expected_tx_id).is_some());
+    });
+}
+
 #[test]
 fn mining_tick_stops_on_empty_queue_and_restarts_after_tx_arrival() {
     init_stable_state();

@@ -31,16 +31,16 @@
   "test_evidence": [
     {
       "scenario_id": "included_tx_safe_raw-nominal",
-      "command": "cargo test -p verified-core && cargo test -p ic-evm-core produce_block_selects_top_k_by_fee_then_submission_order",
-      "test_name": "verified-core unit suite plus evm-core block production adapter test",
-      "recorded_at": "2026-05-15T12:51:11Z"
+      "command": "cargo test -p verified-core && cargo test -p ic-evm-core produce_block_selects_top_k_by_fee_then_submission_order && cargo test -p ic-evm-gateway gateway_submit_ic_tx_adapter_preserves_queue_and_receipt_invariants",
+      "test_name": "verified-core unit suite plus evm-core block production and gateway receipt adapter tests",
+      "recorded_at": "2026-05-15T23:57:56Z"
     }
   ],
   "risk_level": "medium",
   "verified_subject": "implementation",
   "contract_hash": "bb83f6a6256a26696727c069a8fdbfcf70d178a85c4e4bac1bfa5dfc36fc9311",
   "applied_contract_hash": "bb83f6a6256a26696727c069a8fdbfcf70d178a85c4e4bac1bfa5dfc36fc9311",
-  "applied_at": "2026-05-15T12:51:53Z",
+  "applied_at": "2026-05-15T23:58:14Z",
   "panic_behavior": "documented",
   "overflow_behavior": "documented",
   "rejected_behaviors": [],

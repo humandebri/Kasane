@@ -11,9 +11,9 @@
   "test_evidence": [
     {
       "scenario_id": "submit_transition_safe_raw-nominal",
-      "command": "cargo test -p verified-core && cargo test -p ic-evm-core replacement_requires_higher_effective_fee",
-      "test_name": "verified-core unit suite plus evm-core replacement adapter test",
-      "recorded_at": "2026-05-15T12:51:07Z"
+      "command": "cargo test -p verified-core && cargo test -p ic-evm-core replacement_requires_higher_effective_fee && cargo test -p ic-evm-gateway gateway_submit_ic_tx_adapter_preserves_queue_and_receipt_invariants",
+      "test_name": "verified-core unit suite plus evm-core replacement and gateway submit/receipt adapter tests",
+      "recorded_at": "2026-05-15T23:57:55Z"
     }
   ],
   "risk_level": "medium"

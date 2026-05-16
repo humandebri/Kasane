@@ -60,6 +60,7 @@ review output, contract terms, and linked test evidence; `accept`,
 | --- | --- |
 | nonce replacement adapter | `crates/evm-core/tests/phase1_nonce_sequence.rs::replacement_requires_higher_effective_fee` is linked as test evidence for `submit_transition_safe_raw`; it proves same-nonce lower/equal replacement is rejected, strict higher replacement wins, the old tx is dropped, and only the replacement is included |
 | block persistence adapter | `crates/evm-core/tests/common/mod.rs::assert_block_persist_invariants` is linked as test evidence for `included_tx_safe_raw` and `block_commit_safe_raw`; it proves included tx ids have matching receipt, tx index, tx loc, no pending/ready refs, and block persistence invariants |
+| gateway submit/receipt adapter | `crates/ic-evm-gateway/src/tests.rs::gateway_submit_ic_tx_adapter_preserves_queue_and_receipt_invariants` is linked through `spec/adapter-evidence.toml` and the accepted test evidence for `submit_transition_safe_raw`, `included_tx_safe_raw`, and `block_commit_safe_raw`; it proves DTO parsing plus gateway submit helper writes queued location, pending receipt status, included location, receipt, tx index, and monotonic head after block production |
 
 ## Review Gaps
 
@@ -68,8 +69,9 @@ review output, contract terms, and linked test evidence; `accept`,
   it fails only because the targets were extracted from a dirty worktree while
   this change is still uncommitted.
 - Adapter test functions are not specgen targets because they are unit-return
-  integration checks with many runtime dependencies. They are linked as test
-  evidence from the accepted pure-model targets instead.
+  integration checks with many runtime dependencies. Production adapter helpers
+  that are intentionally covered by pure-model test evidence are listed in
+  `spec/adapter-evidence.toml`.
 - `specgen status --check` passes for `submit_tx_in` and
   `should_stop_execution`. Most adapter/core extracts currently report
   unresolved dependencies because `specgen extract` is function-local and the

@@ -1,7 +1,3 @@
 {
-  "target": "submit_transition_safe_raw-3a7d7873",
-  "check_result": "pass",
-  "stale_reasons": [],
-  "drift_reasons": [],
-  "dirty_paths": []
+  "state": "verified"
 }
