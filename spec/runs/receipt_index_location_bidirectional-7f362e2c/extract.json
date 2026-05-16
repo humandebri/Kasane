@@ -17,8 +17,8 @@
     "start_line": 16,
     "end_line": 27
   },
-  "git_commit": "45c236f431ea13639e1ce09e51a6e84f7b627d28",
-  "worktree_dirty": true,
+  "git_commit": "8e028b2221e63e1f6bdb4260bfa80a5f3d4598ee",
+  "worktree_dirty": false,
   "source_hash": "7f362e2c26ea1e9b56eda044aaac97c8e7ea546c2e33dee844350504411674bb",
   "semantic_hash": "d553b2dd715ff607be716b4f3e729a79528c7d9b7f58393e9d3285a37e135dc0",
   "dependency_hash_inputs": [
