@@ -1,0 +1,45 @@
+{
+  "target": "upgrade_core_observation_preserved_raw",
+  "entry": {
+    "display_name": "upgrade_core_observation_preserved_raw",
+    "function": "upgrade_core_observation_preserved_raw",
+    "function_path": "upgrade_core_observation_preserved_raw",
+    "file": "crates/verified-core/src/upgrade_safety.rs",
+    "target_id": "cef70d19cee8d3c0ae8a13b09d7968c6eed59c0990b926abe75dcb6794b56c10",
+    "slug": "upgrade_core_observation_preserved_raw-191130e4",
+    "source_hash": "191130e4b8b76d4409ea2457fd792448803236c01a7acc1f282fcf3cb7df6b93",
+    "semantic_hash": "7dea973b8bd70f123edd509a26aea84e43cc7c3f136c1bebdfdb5883999d9489",
+    "created_at": "2026-05-16T10:28:41Z"
+  },
+  "signature": "pub fn upgrade_core_observation_preserved_raw(head_same: u64, pruned_boundary_same: u64, pending_same: u64, receipt_same: u64, tx_index_same: u64, tx_loc_same: u64) -> bool",
+  "body": "{\n    head_same == 1\n        && pruned_boundary_same == 1\n        && pending_same == 1\n        && receipt_same == 1\n        && tx_index_same == 1\n        && tx_loc_same == 1\n}",
+  "span": {
+    "start_line": 6,
+    "end_line": 13
+  },
+  "git_commit": "2d344b0fd7f9384a0aa23cb9683b0a9c62aa9ef3",
+  "worktree_dirty": true,
+  "source_hash": "191130e4b8b76d4409ea2457fd792448803236c01a7acc1f282fcf3cb7df6b93",
+  "semantic_hash": "7dea973b8bd70f123edd509a26aea84e43cc7c3f136c1bebdfdb5883999d9489",
+  "dependency_hash_inputs": [
+    {
+      "kind": "use",
+      "name": "cfg",
+      "file": "crates/verified-core/src/upgrade_safety.rs",
+      "hash": "a5eb4157d5d32303032e3dc786e34f004ebe17f0ff1bb26f90ac9eb42478596c"
+    }
+  ],
+  "unresolved_dependencies": [],
+  "tool_version": "0.1.0",
+  "cfg": [],
+  "features": [],
+  "types": [],
+  "called_functions": [],
+  "callers": [],
+  "tests": [],
+  "panic_sites": [],
+  "overflow_sites": [],
+  "casts": [],
+  "division_sites": [],
+  "llm_context_files": []
+}

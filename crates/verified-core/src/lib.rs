@@ -20,3 +20,4 @@ pub mod stable_codec;
 pub mod staging;
 pub mod state_diff;
 pub mod tx_index;
+pub mod upgrade_safety;

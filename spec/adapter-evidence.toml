@@ -114,4 +114,33 @@ file = "crates/evm-db/src/stable_state.rs"
 function = "init_stable_state"
 covered_by = [
   "stable_tx_namespace_disjoint_raw-edcca87a",
+  "upgrade_core_observation_preserved_raw-191130e4",
+]
+
+[[coverage]]
+file = "crates/evm-db/src/upgrade.rs"
+function = "pre_upgrade"
+covered_by = [
+  "upgrade_core_observation_preserved_raw-191130e4",
+]
+
+[[coverage]]
+file = "crates/evm-db/src/upgrade.rs"
+function = "post_upgrade"
+covered_by = [
+  "upgrade_core_observation_preserved_raw-191130e4",
+]
+
+[[coverage]]
+file = "crates/ic-evm-gateway/src/lib.rs"
+function = "pre_upgrade"
+covered_by = [
+  "upgrade_core_observation_preserved_raw-191130e4",
+]
+
+[[coverage]]
+file = "crates/ic-evm-gateway/src/lib.rs"
+function = "post_upgrade"
+covered_by = [
+  "upgrade_core_observation_preserved_raw-191130e4",
 ]
