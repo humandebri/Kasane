@@ -48,17 +48,16 @@ fn prune_cleanup_complete_requires_observable_indexes_gone() {
 
 #[test]
 fn prune_query_observation_rejects_ok_for_pruned_boundary() {
-    assert!(prune_query_observation_safe_raw(1, 12, 10, 1, 1, 0));
-    assert!(prune_query_observation_safe_raw(1, 8, 10, 0, 0, 1));
-    assert!(!prune_query_observation_safe_raw(1, 8, 10, 0, 0, 0));
-    assert!(!prune_query_observation_safe_raw(1, 8, 10, 0, 1, 0));
-    assert!(!prune_query_observation_safe_raw(1, 12, 10, 0, 1, 0));
-    assert!(!prune_query_observation_safe_raw(1, 12, 10, 1, 0, 0));
-    assert!(!prune_query_observation_safe_raw(1, 12, 10, 1, 0, 1));
-    assert!(!prune_query_observation_safe_raw(1, 12, 10, 1, 1, 1));
-    assert!(!prune_query_observation_safe_raw(0, 12, 10, 0, 0, 1));
-    assert!(!prune_query_observation_safe_raw(0, 12, 10, 0, 2, 2));
-    assert!(!prune_query_observation_safe_raw(0, 12, 10, 0, 1, 2));
-    assert!(!prune_query_observation_safe_raw(0, 12, 10, 0, 2, 1));
-    assert!(!prune_query_observation_safe_raw(2, 12, 10, 1, 1, 0));
+    assert!(prune_query_observation_safe_raw(12, 10, 1, 1, 0));
+    assert!(prune_query_observation_safe_raw(8, 10, 0, 0, 1));
+    assert!(!prune_query_observation_safe_raw(8, 10, 0, 0, 0));
+    assert!(!prune_query_observation_safe_raw(8, 10, 0, 1, 0));
+    assert!(!prune_query_observation_safe_raw(12, 10, 0, 1, 0));
+    assert!(!prune_query_observation_safe_raw(12, 10, 1, 0, 0));
+    assert!(!prune_query_observation_safe_raw(12, 10, 1, 0, 1));
+    assert!(!prune_query_observation_safe_raw(12, 10, 1, 1, 1));
+    assert!(!prune_query_observation_safe_raw(12, 10, 0, 2, 2));
+    assert!(!prune_query_observation_safe_raw(12, 10, 0, 1, 2));
+    assert!(!prune_query_observation_safe_raw(12, 10, 0, 2, 1));
+    assert!(!prune_query_observation_safe_raw(12, 10, 2, 1, 0));
 }
