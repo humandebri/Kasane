@@ -51,6 +51,7 @@ covered_by = [
   "block_is_prunable-04224fd7",
   "block_is_retained-9d9115e5",
   "prune_boundary_safe-77bde266",
+  "prune_query_observation_safe_raw-cb39bc8e",
   "prune_tx_cleanup_complete-171d1899",
 ]
 
@@ -61,6 +62,7 @@ covered_by = [
   "block_is_prunable-04224fd7",
   "block_is_retained-9d9115e5",
   "prune_boundary_safe-77bde266",
+  "prune_query_observation_safe_raw-cb39bc8e",
   "prune_tx_cleanup_complete-171d1899",
 ]
 
@@ -71,6 +73,7 @@ covered_by = [
   "block_is_prunable-04224fd7",
   "block_is_retained-9d9115e5",
   "prune_boundary_safe-77bde266",
+  "prune_query_observation_safe_raw-cb39bc8e",
   "prune_tx_cleanup_complete-171d1899",
 ]
 
@@ -81,6 +84,7 @@ covered_by = [
   "block_is_prunable-04224fd7",
   "block_is_retained-9d9115e5",
   "prune_boundary_safe-77bde266",
+  "prune_query_observation_safe_raw-cb39bc8e",
   "prune_tx_cleanup_complete-171d1899",
 ]
 
@@ -91,5 +95,6 @@ covered_by = [
   "block_is_prunable-04224fd7",
   "block_is_retained-9d9115e5",
   "prune_boundary_safe-77bde266",
+  "prune_query_observation_safe_raw-cb39bc8e",
   "prune_tx_cleanup_complete-171d1899",
 ]

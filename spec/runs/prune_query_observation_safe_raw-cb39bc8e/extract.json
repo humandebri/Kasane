@@ -1,0 +1,45 @@
+{
+  "target": "prune_query_observation_safe_raw",
+  "entry": {
+    "display_name": "prune_query_observation_safe_raw",
+    "function": "prune_query_observation_safe_raw",
+    "function_path": "prune_query_observation_safe_raw",
+    "file": "crates/verified-core/src/prune_safety/query.rs",
+    "target_id": "6b91ef4206965d0fe0fa2d249ccc8ff624c8db4a929b66743886993ba5ff61d8",
+    "slug": "prune_query_observation_safe_raw-cb39bc8e",
+    "source_hash": "cb39bc8e5e80c0dd29cca53db2eaa3831fff7ff1a4ad55128e630b92a9f77c46",
+    "semantic_hash": "7b2f1421fe4aae248900bedb4dfba137ae67ff4b40bf58f3147b4e8b178d3db8",
+    "created_at": "2026-05-16T08:42:13Z"
+  },
+  "signature": "pub fn prune_query_observation_safe_raw(\n    boundary_present: u64,\n    block_number: u64,\n    pruned_before: u64,\n    retained: u64,\n    returned_ok: u64,\n    returned_pruned: u64,\n) -> bool",
+  "body": "{\n    boundary_present <= 1\n        && retained <= 1\n        && returned_ok <= 1\n        && returned_pruned <= 1\n        && (returned_ok == 0 || retained != 0)\n        && (boundary_present == 0 || block_number > pruned_before || returned_ok == 0)\n        && (retained == 0 || returned_pruned == 0)\n        && !(returned_ok != 0 && returned_pruned != 0)\n        && (returned_pruned == 0 || (boundary_present != 0 && block_number <= pruned_before))\n}",
+  "span": {
+    "start_line": 6,
+    "end_line": 23
+  },
+  "git_commit": "1946d97dae8b1b5f03e38b24849fe6f09b96c178",
+  "worktree_dirty": true,
+  "source_hash": "0cec26b2b449d548ec517d910fa5ec0a9839e7dd1d2cf9b64284637633f6762e",
+  "semantic_hash": "74d83fba47ec171c218ec8f4d2199adc4e63e2b175e3743f496b73fcdc7e37d3",
+  "dependency_hash_inputs": [
+    {
+      "kind": "use",
+      "name": "cfg",
+      "file": "crates/verified-core/src/prune_safety/query.rs",
+      "hash": "a5eb4157d5d32303032e3dc786e34f004ebe17f0ff1bb26f90ac9eb42478596c"
+    }
+  ],
+  "unresolved_dependencies": [],
+  "tool_version": "0.1.0",
+  "cfg": [],
+  "features": [],
+  "types": [],
+  "called_functions": [],
+  "callers": [],
+  "tests": [],
+  "panic_sites": [],
+  "overflow_sites": [],
+  "casts": [],
+  "division_sites": [],
+  "llm_context_files": []
+}

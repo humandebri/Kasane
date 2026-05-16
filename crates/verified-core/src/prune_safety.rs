@@ -4,8 +4,10 @@ pub mod block_prunable;
 pub mod block_retained;
 pub mod boundary;
 pub mod cleanup;
+pub mod query;
 
 pub use block_prunable::block_is_prunable;
 pub use block_retained::block_is_retained;
 pub use boundary::prune_boundary_safe;
 pub use cleanup::{prune_tx_cleanup_complete, PruneTxCleanupInput};
+pub use query::prune_query_observation_safe_raw;

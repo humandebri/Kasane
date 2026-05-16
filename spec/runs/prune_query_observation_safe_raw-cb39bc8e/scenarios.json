@@ -1,0 +1,24 @@
+{
+  "target": "prune_query_observation_safe_raw",
+  "target_id": "6b91ef4206965d0fe0fa2d249ccc8ff624c8db4a929b66743886993ba5ff61d8",
+  "slug": "prune_query_observation_safe_raw-cb39bc8e",
+  "git_commit": "1946d97dae8b1b5f03e38b24849fe6f09b96c178",
+  "worktree_dirty": true,
+  "source_hash": "0cec26b2b449d548ec517d910fa5ec0a9839e7dd1d2cf9b64284637633f6762e",
+  "semantic_hash": "74d83fba47ec171c218ec8f4d2199adc4e63e2b175e3743f496b73fcdc7e37d3",
+  "tool_version": "0.1.0",
+  "scenarios": [
+    {
+      "id": "prune_query_observation_safe_raw-nominal",
+      "kind": "example",
+      "executable": false,
+      "inputs": {},
+      "expected": {},
+      "review_status": "accepted",
+      "status_note": "covers one-way pruning query safety: pruned-boundary Ok rejection, retained Pruned rejection, Ok requires retained observation, canonical flags, and Ok/Pruned mutual exclusion",
+      "reviewed_by": "0xhude",
+      "reviewed_at": "2026-05-16T08:57:55Z",
+      "rationale": "`(boundary_present, block_number, pruned_before, retained, returned_ok, returned_pruned)`\n\n**true 候補**\n\n```rust\n// 境界なし: pruning 判定不能、pruned 返却なし\n(0, 10, 10, 0, 0, 0)\n(0, 10, 10, 1, 0, 0)\n(0, 10, 10, 1, 1, 0)\n\n// 境界あり、block は未 prune 側\n(1, 11, 10, 0, 0, 0)\n(1, 11, 10, 1, 0, 0)\n(1, 11, 10, 1, 1, 0)\n\n// 境界あり、block は prune 済み側\n(1, 10, 10, 0, 0, 0)\n(1, 10, 10, 0, 0, 1)\n(1, 10, 10, 1, 0, 0)\n\n// block_number < pruned_before も <= 側として確認\n(1, 9, 10, 0, 0, 1)\n```\n\n**false 候補**\n\n```rust\n// boolean 扱いの引数が 1 超過\n(2, 10, 10, 0, 0, 0)\n(0, 10, 10, 2, 0, 0)\n(0, 10, 10, 0, 2, 0)\n(0, 10, 10, 0, 0, 2)\n\n// returned_ok なのに retained なし\n(0, 10, 10, 0, 1, 0)\n\n// boundary あり、prune 済み側なのに ok\n(1, 10, 10, 1, 1, 0)\n\n// retained と returned_pruned が同時成立\n(1, 10, 10, 1, 0, 1)\n\n// ok と pruned が同時成立\n(1, 10, 10, 0, 1, 1)\n\n// pruned 返却なのに boundary なし\n(0, 10, 10, 0, 0, 1)\n\n// pruned 返却なのに block が未 prune 側\n(1, 11, 10, 0, 0, 1)\n```"
+    }
+  ]
+}

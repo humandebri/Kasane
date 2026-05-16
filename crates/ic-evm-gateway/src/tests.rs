@@ -2603,6 +2603,65 @@ fn get_block_returns_pruned_for_pruned_boundary() {
 }
 
 #[test]
+fn get_block_returns_ok_when_prune_boundary_is_absent() {
+    init_stable_state();
+    with_state_mut(|state| {
+        let block = BlockData::new(
+            0,
+            [0x20; 32],
+            [0x21; 32],
+            123,
+            1,
+            DEFAULT_BLOCK_GAS_LIMIT,
+            0,
+            [0x22; 20],
+            Vec::new(),
+            [0x23; 32],
+            [0x24; 32],
+        );
+        let ptr = state
+            .blob_store
+            .store_bytes(block.to_bytes().as_ref())
+            .expect("store unpruned block");
+        state.blocks.insert(0, ptr);
+    });
+
+    let out = super::get_block(0).expect("block without prune boundary");
+    assert_eq!(out.number, 0);
+}
+
+#[test]
+fn get_block_returns_ok_for_retained_block() {
+    init_stable_state();
+    with_state_mut(|state| {
+        let block = BlockData::new(
+            9,
+            [0x10; 32],
+            [0x11; 32],
+            123,
+            1,
+            DEFAULT_BLOCK_GAS_LIMIT,
+            0,
+            [0x12; 20],
+            Vec::new(),
+            [0x13; 32],
+            [0x14; 32],
+        );
+        let ptr = state
+            .blob_store
+            .store_bytes(block.to_bytes().as_ref())
+            .expect("store retained block");
+        state.blocks.insert(9, ptr);
+        let mut prune_state = *state.prune_state.get();
+        prune_state.set_pruned_before(5);
+        state.prune_state.set(prune_state);
+    });
+
+    let out = super::get_block(9).expect("retained block");
+    assert_eq!(out.number, 9);
+}
+
+#[test]
 fn get_receipt_returns_not_found_for_corrupt_receipt_payload() {
     init_stable_state();
     let tx_id = TxId([0x81u8; 32]);
