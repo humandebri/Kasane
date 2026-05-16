@@ -1,8 +1,8 @@
 //! どこで: verified-core pruning safety / 何を: public pure API / なぜ: gate対象の実装ファイルを小さく保つため
 
 use verified_core::prune_safety::{
-    block_is_prunable, block_is_retained, prune_boundary_safe, prune_query_observation_safe_raw,
-    prune_tx_cleanup_complete, PruneTxCleanupInput,
+    block_is_prunable, block_is_retained, prune_boundary_safe, prune_partial_progress_safe_raw,
+    prune_query_observation_safe_raw, prune_tx_cleanup_complete, PruneTxCleanupInput,
 };
 
 #[test]
@@ -60,4 +60,59 @@ fn prune_query_observation_rejects_ok_for_pruned_boundary() {
     assert!(!prune_query_observation_safe_raw(12, 10, 0, 1, 2));
     assert!(!prune_query_observation_safe_raw(12, 10, 0, 2, 1));
     assert!(!prune_query_observation_safe_raw(12, 10, 2, 1, 0));
+}
+
+#[test]
+fn prune_partial_progress_keeps_cursor_restartable() {
+    assert!(prune_partial_progress_safe_raw(
+        1, 5, 1, 6, 7, 10, 6, 5, 1, 1
+    ));
+    assert!(prune_partial_progress_safe_raw(
+        0, 0, 1, 0, 1, 10, 1, 0, 1, 0
+    ));
+    assert!(prune_partial_progress_safe_raw(
+        1, 5, 1, 5, 6, 10, 0, 1, 0, 0
+    ));
+    assert!(!prune_partial_progress_safe_raw(
+        1, 5, 1, 5, 6, 10, 1, 1, 1, 0
+    ));
+    assert!(!prune_partial_progress_safe_raw(
+        1, 6, 1, 5, 6, 10, 1, 1, 1, 0
+    ));
+    assert!(!prune_partial_progress_safe_raw(
+        1, 5, 1, 6, 7, 10, 0, 1, 0, 0
+    ));
+    assert!(!prune_partial_progress_safe_raw(
+        1, 5, 0, 0, 0, 10, 0, 1, 0, 0
+    ));
+    assert!(!prune_partial_progress_safe_raw(
+        1, 5, 1, 6, 6, 10, 1, 1, 1, 0
+    ));
+    assert!(!prune_partial_progress_safe_raw(
+        1, 5, 0, 0, 6, 10, 1, 1, 1, 0
+    ));
+    assert!(!prune_partial_progress_safe_raw(
+        1, 5, 1, 6, 7, 5, 6, 1, 1, 0
+    ));
+    assert!(!prune_partial_progress_safe_raw(
+        1,
+        u64::MAX,
+        1,
+        u64::MAX,
+        u64::MAX,
+        10,
+        0,
+        1,
+        0,
+        0
+    ));
+    assert!(!prune_partial_progress_safe_raw(
+        1, 5, 1, 6, 7, 10, 1, 5, 0, 1
+    ));
+    assert!(prune_partial_progress_safe_raw(
+        1, 5, 1, 5, 6, 10, 0, 11, 0, 1
+    ));
+    assert!(!prune_partial_progress_safe_raw(
+        1, 5, 1, 6, 7, 10, 5, 5, 1, 1
+    ));
 }

@@ -47,6 +47,7 @@ specgen_rustfmt_skip=(
   "crates/verified-core/src/prune_safety/block_retained.rs"
   "crates/verified-core/src/prune_safety/boundary.rs"
   "crates/verified-core/src/prune_safety/cleanup.rs"
+  "crates/verified-core/src/prune_safety/progress.rs"
   "crates/verified-core/src/prune_safety/query.rs"
   "crates/verified-core/src/receipt_index.rs"
   "crates/verified-core/src/staging.rs"

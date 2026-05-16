@@ -155,6 +155,58 @@ fn prune_blocks_respects_max_ops() {
     });
 }
 
+#[test]
+fn prune_blocks_resumes_after_max_ops_stop() {
+    init_stable_state();
+
+    let tx1 = TxId([0x41; 32]);
+    let tx2 = TxId([0x42; 32]);
+    let tx3 = TxId([0x43; 32]);
+
+    let block1 = make_block(1, tx1);
+    let block2 = make_block(2, tx2);
+    let block3 = make_block(3, tx3);
+
+    with_state_mut(|state| {
+        insert_block(state, 1, &block1);
+        insert_block(state, 2, &block2);
+        insert_block(state, 3, &block3);
+        insert_tx_index(state, tx1, 1);
+        insert_tx_index(state, tx2, 2);
+        insert_tx_index(state, tx3, 3);
+        insert_receipt(state, tx1, 1);
+        insert_receipt(state, tx2, 2);
+        insert_receipt(state, tx3, 3);
+        state.seen_tx.insert(tx1, 1);
+        state.seen_tx.insert(tx2, 1);
+        state.seen_tx.insert(tx3, 1);
+        state.tx_locs.insert(tx1, TxLoc::included(1, 0));
+        state.tx_locs.insert(tx2, TxLoc::included(2, 0));
+        state.tx_locs.insert(tx3, TxLoc::included(3, 0));
+        let mut head = *state.head.get();
+        head.number = 3;
+        state.head.set(head);
+    });
+
+    let first = chain::prune_blocks(1, 6).expect("first partial prune should succeed");
+    assert!(first.did_work);
+    assert_eq!(first.pruned_before_block, Some(1));
+    assert_eq!(first.remaining, 1);
+
+    let second = chain::prune_blocks(1, 6).expect("second partial prune should resume");
+    assert!(second.did_work);
+    assert_eq!(second.pruned_before_block, Some(2));
+    assert_eq!(second.remaining, 0);
+
+    with_state(|state| {
+        assert!(state.blocks.get(&1).is_none());
+        assert!(state.blocks.get(&2).is_none());
+        assert!(state.blocks.get(&3).is_some());
+        assert_eq!(state.prune_state.get().pruned_before(), Some(2));
+        assert!(state.prune_state.get().journal_block().is_none());
+    });
+}
+
 fn make_block(number: u64, tx_id: TxId) -> BlockData {
     let parent_hash = [0u8; 32];
     let number_u8 = u8::try_from(number).unwrap_or(0);
