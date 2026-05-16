@@ -1,5 +1,8 @@
 //! どこで: pruning境界 / 何を: blockが保持範囲にあるか / なぜ: prune対象外の履歴を明示するため
 
+#[cfg(verus_keep_ghost)]
+use vstd::prelude::*;
+
 pub fn block_is_retained(head: u64, retain: u64, block: u64) -> bool {
     if block > head {
         return false;
