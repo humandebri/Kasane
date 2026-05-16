@@ -4,37 +4,23 @@ timeout: false
 truncated: true
 
 ## stdout
-**Findings**
+**指摘**
 
-- Medium: [receipt_index.rs](/Users/0xhude/Desktop/ICP/Kasane/crates/verified-core/src/receipt_index.rs:16) は `tx_index_present=false && receipt_present=false && included_loc_present=false` で `true` になる。整合性述語なら妥当。ただし「included tx の存在証明」や「receipt がある」保証として使うと、全欠損入力で通過する。呼出側で存在を要求するなら `tx_index_present || receipt_present || included_loc_present` ではなく、用途に応じて `T && R && L` を precondition/別述語に分離するべき。
+- Medium: [receipt_index.rs](/Users/0xhude/Desktop/ICP/Kasane/crates/verified-core/src/receipt_index.rs:18) の Verus contract が実装式をそのまま複製している。Verus は「実装が意図仕様を満たす」ではなく「実装が同じ式を返す」だけを証明する形になる。意図を固定するなら、`result == ((!T && !R && !L) || (T && R && L && I && M && P))` のような正規化仕様、または `result ==> ...` / `!result ==> ...` の性質に分離するべき。
 
-- Low: [p0_safety.rs](/Users/0xhude/Desktop/ICP/Kasane/crates/verified-core/tests/p0_safety.rs:28) は `index_matches_loc=false` と `receipt_matches_loc=false` の単独欠陥を固定していない。`loc_points_to_block_tx=false` はあるが、`I/M` 条件を削る mutation を捕捉しにくい。`all_present_index_mismatch`、`all_present_receipt_mismatch`、`none_absent_stale_flags` を追加すると境界が明確になる。
+- Medium: [receipt_index.rs](/Users/0xhude/Desktop/ICP/Kasane/crates/verified-core/src/receipt_index.rs:24) は `tx_index_present=false && receipt_present=false && included_loc_present=false` で `true`。整合性述語なら妥当。ただし「receipt/index/location が存在する証明」として使うと全欠損で通過する。存在保証が必要な呼出側では `T && R && L` を別 precondition にするか、この関数を存在込みの述語に寄せる必要がある。
 
-**実装評価**
+- Low: [p0_safety.rs](/Users/0xhude/Desktop/ICP/Kasane/crates/verified-core/tests/p0_safety.rs:28) は `index_matches_loc=false` と `receipt_matches_loc=false` の単独ケースを実行テストしていない。`all_present_index_mismatch` と `all_present_receipt_mismatch` を追加すると、リンク一致条件の削除 mutation を検出できる。
 
-式は次と等価:
-
-```text
-valid iff
-  (!T && !R && !L)
-  || (T && R && L && I && M && P)
-```
-
-部分存在は全て `false`。`I/M/P` は `T/R/L` 全欠損時に無視される。
-
-**Verus**
-
-`ensures result == ((!T && !R && !L) || (T && R && L && I && M && P))` が最も読みやすい。現行の含意連結でも証明対象としては問題ないが、vacuous truth が見えにくい。Verus 契約は簡約形を推奨。
-
-検証コマンドは未実行。今回は読解レビューのみ。
+補足: 論理式自体は `(!T && !R && !L) || (T && R && L && I && M && P)` と等価。部分存在は通過しない。敵対的観点では、この関数は boolean 化された観測を信用するだけなので、adapter 側で全フラグを同一 canonical block/tx/location から生成する契約が必須。
 
 
 ## stderr
 Reading additional input from stdin...
-2026-05-16T08:26:05.307625Z  WARN codex_core_plugins::manifest: ignoring interface.defaultPrompt: prompt must be at most 128 characters path=/Users/0xhude/.codex/.tmp/plugins/plugins/build-ios-apps/.codex-plugin/plugin.json
-2026-05-16T08:26:05.308597Z  WARN codex_core_plugins::manifest: ignoring interface.defaultPrompt: maximum of 3 prompts is supported path=/Users/0xhude/.codex/.tmp/plugins/plugins/plugin-eval/.codex-plugin/plugin.json
-2026-05-16T08:26:05.316099Z  WARN codex_core_plugins::manifest: ignoring interface.defaultPrompt: maximum of 3 prompts is supported path=/Users/0xhude/.codex/.tmp/plugins/plugins/twilio-developer-kit/.codex-plugin/plugin.json
-2026-05-16T08:26:05.316208Z  WARN codex_core_plugins::manifest: ignoring interface.defaultPrompt: maximum of 3 prompts is supported path=/Users/0xhude/.codex/.tmp/plugins/plugins/openai-developers/.codex-plugin/plugin.json
+2026-05-16T08:35:45.988886Z  WARN codex_core_plugins::manifest: ignoring interface.defaultPrompt: prompt must be at most 128 characters path=/Users/0xhude/.codex/.tmp/plugins/plugins/build-ios-apps/.codex-plugin/plugin.json
+2026-05-16T08:35:45.989197Z  WARN codex_core_plugins::manifest: ignoring interface.defaultPrompt: maximum of 3 prompts is supported path=/Users/0xhude/.codex/.tmp/plugins/plugins/plugin-eval/.codex-plugin/plugin.json
+2026-05-16T08:35:45.991694Z  WARN codex_core_plugins::manifest: ignoring interface.defaultPrompt: maximum of 3 prompts is supported path=/Users/0xhude/.codex/.tmp/plugins/plugins/twilio-developer-kit/.codex-plugin/plugin.json
+2026-05-16T08:35:45.991729Z  WARN codex_core_plugins::manifest: ignoring interface.defaultPrompt: maximum of 3 prompts is supported path=/Users/0xhude/.codex/.tmp/plugins/plugins/openai-developers/.codex-plugin/plugin.json
 OpenAI Codex v0.130.0
 --------
 workdir: /Users/0xhude/Desktop/ICP/Kasane
@@ -44,7 +30,7 @@ approval: never
 sandbox: read-only
 reasoning effort: high
 reasoning summaries: none
-session id: 019e2fe4-8509-76c0-87e5-de1724d15efe
+session id: 019e2fed-5e86-7a11-8f5b-439f0c94072c
 --------
 user
 Review as implementation, edge-case, adversarial, Verus:
@@ -61,47 +47,47 @@ pub fn receipt_index_location_bidirectional(input: ReceiptIndexObservation) -> b
                 && input.receipt_matches_loc
                 && input.loc_points_to_block_tx))
 }
-2026-05-16T08:26:06.303617Z ERROR rmcp::transport::worker: worker quit with fatal: Transport channel closed, when AuthRequired(AuthRequiredError { www_authenticate_header: "Bearer realm=\"OAuth\", resource_metadata=\"https://mcp.cloudflare.com/.well-known/oauth-protected-resource/mcp\", error=\"invalid_token\", error_description=\"Missing or invalid access token\"" })
-2026-05-16T08:26:12.205831Z  WARN codex_core_plugins::manifest: ignoring interface.defaultPrompt: prompt must be at most 128 characters path=/Users/0xhude/.codex/.tmp/plugins/plugins/build-ios-apps/.codex-plugin/plugin.json
-2026-05-16T08:26:12.206366Z  WARN codex_core_plugins::manifest: ignoring interface.defaultPrompt: maximum of 3 prompts is supported path=/Users/0xhude/.codex/.tmp/plugins/plugins/plugin-eval/.codex-plugin/plugin.json
-2026-05-16T08:26:12.210700Z  WARN codex_core_plugins::manifest: ignoring interface.defaultPrompt: maximum of 3 prompts is supported path=/Users/0xhude/.codex/.tmp/plugins/plugins/twilio-developer-kit/.codex-plugin/plugin.json
-2026-05-16T08:26:12.210781Z  WARN codex_core_plugins::manifest: ignoring interface.defaultPrompt: maximum of 3 prompts is supported path=/Users/0xhude/.codex/.tmp/plugins/plugins/openai-developers/.codex-plugin/plugin.json
-2026-05-16T08:26:12.238363Z  WARN codex_core_skills::loader: ignoring interface.icon_small: icon path must not contain '..'
-2026-05-16T08:26:12.238381Z  WARN codex_core_skills::loader: ignoring interface.icon_large: icon path must not contain '..'
-2026-05-16T08:26:12.239495Z  WARN codex_core_skills::loader: ignoring interface.icon_small: icon path must not contain '..'
-2026-05-16T08:26:12.239510Z  WARN codex_core_skills::loader: ignoring interface.icon_large: icon path must not contain '..'
-2026-05-16T08:26:12.240302Z  WARN codex_core_skills::loader: ignoring interface.icon_small: icon path must not contain '..'
-2026-05-16T08:26:12.240314Z  WARN codex_core_skills::loader: ignoring interface.icon_large: icon path must not contain '..'
-2026-05-16T08:26:12.241208Z  WARN codex_core_skills::loader: ignoring interface.icon_small: icon path must not contain '..'
-2026-05-16T08:26:12.241221Z  WARN codex_core_skills::loader: ignoring interface.icon_large: icon path must not contain '..'
-2026-05-16T08:26:12.241990Z  WARN codex_core_skills::loader: ignoring interface.icon_small: icon path must not contain '..'
-2026-05-16T08:26:12.242002Z  WARN codex_core_skills::loader: ignoring interface.icon_large: icon path must not contain '..'
-2026-05-16T08:26:12.244046Z  WARN codex_core_skills::loader: ignoring interface.icon_small: icon path must not contain '..'
-2026-05-16T08:26:12.244062Z  WARN codex_core_skills::loader: ignoring interface.icon_large: icon path must not contain '..'
-2026-05-16T08:26:12.344764Z  WARN codex_core_plugins::manifest: ignoring interface.defaultPrompt: maximum of 3 prompts is supported path=/Users/0xhude/.codex/.tmp/plugins/plugins/openai-developers/.codex-plugin/plugin.json
-2026-05-16T08:26:12.354145Z  WARN codex_core_plugins::manifest: ignoring interface.defaultPrompt: maximum of 3 prompts is supported path=/Users/0xhude/.codex/.tmp/plugins/plugins/openai-developers/.codex-plugin/plugin.json
-2026-05-16T08:26:12.354304Z  WARN codex_core_plugins::manifest: ignoring interface.defaultPrompt: maximum of 3 prompts is supported path=/Users/0xhude/.codex/.tmp/plugins/plugins/openai-developers/.codex-plugin/plugin.json
-2026-05-16T08:26:14.316313Z  WARN codex_core_plugins::manifest: ignoring interface.defaultPrompt: prompt must be at most 128 characters path=/Users/0xhude/.codex/.tmp/plugins/plugins/build-ios-apps/.codex-plugin/plugin.json
-2026-05-16T08:26:14.317051Z  WARN codex_core_plugins::manifest: ignoring interface.defaultPrompt: maximum of 3 prompts is supported path=/Users/0xhude/.codex/.tmp/plugins/plugins/plugin-eval/.codex-plugin/plugin.json
-2026-05-16T08:26:14.324343Z  WARN codex_core_plugins::manifest: ignoring interface.defaultPrompt: maximum of 3 prompts is supported path=/Users/0xhude/.codex/.tmp/plugins/plugins/twilio-developer-kit/.codex-plugin/plugin.json
-2026-05-16T08:26:14.324461Z  WARN codex_core_plugins::manifest: ignoring interface.defaultPrompt: maximum of 3 prompts is supported path=/Users/0xhude/.codex/.tmp/plugins/plugins/openai-developers/.codex-plugin/plugin.json
-2026-05-16T08:26:14.358820Z  WARN codex_core_skills::loader: ignoring interface.icon_small: icon path must not contain '..'
-2026-05-16T08:26:14.358858Z  WARN codex_core_skills::loader: ignoring interface.icon_large: icon path must not contain '..'
-2026-05-16T08:26:14.359866Z  WARN codex_core_skills::loader: ignoring interface.icon_small: icon path must not contain '..'
-2026-05-16T08:26:14.359882Z  WARN codex_core_skills::loader: ignoring interface.icon_large: icon path must not contain '..'
-2026-05-16T08:26:14.360867Z  WARN codex_core_skills::loader: ignoring interface.icon_small: icon path must not contain '..'
-2026-05-16T08:26:14.360885Z  WARN codex_core_skills::loader: ignoring interface.icon_large: icon path must not contain '..'
-2026-05-16T08:26:14.361925Z  WARN codex_core_skills::loader: ignoring interface.icon_small: icon path must not contain '..'
-2026-05-16T08:26:14.361939Z  WARN codex_core_skills::loader: ignoring interface.icon_large: icon path must not contain '..'
-2026-05-16T08:26:14.362841Z  WARN codex_core_skills::loader: ignoring interface.icon_small: icon path must not contain '..'
-2026-05-16T08:26:14.362855Z  WARN codex_core_skills::loader: ignoring interface.icon_large: icon path must not contain '..'
-2026-05-16T08:26:14.365264Z  WARN codex_core_skills::loader: ignoring interface.icon_small: icon path must not contain '..'
-2026-05-16T08:26:14.365279Z  WARN codex_core_skills::loader: ignoring interface.icon_large: icon path must not contain '..'
-2026-05-16T08:26:14.530793Z  WARN codex_core_plugins::manifest: ignoring interface.defaultPrompt: maximum of 3 prompts is supported path=/Users/0xhude/.codex/.tmp/plugins/plugins/openai-developers/.codex-plugin/plugin.json
-2026-05-16T08:26:14.541050Z  WARN codex_core_plugins::manifest: ignoring interface.defaultPrompt: maximum of 3 prompts is supported path=/Users/0xhude/.codex/.tmp/plugins/plugins/openai-developers/.codex-plugin/plugin.json
-2026-05-16T08:26:14.541216Z  WARN codex_core_plugins::manifest: ignoring interface.defaultPrompt: maximum of 3 prompts is supported path=/Users/0xhude/.codex/.tmp/plugins/plugins/openai-developers/.codex-plugin/plugin.json
+2026-05-16T08:35:46.320572Z ERROR rmcp::transport::worker: worker quit with fatal: Transport channel closed, when AuthRequired(AuthRequiredError { www_authenticate_header: "Bearer realm=\"OAuth\", resource_metadata=\"https://mcp.cloudflare.com/.well-known/oauth-protected-resource/mcp\", error=\"invalid_token\", error_description=\"Missing or invalid access token\"" })
+2026-05-16T08:35:51.116245Z  WARN codex_core_plugins::manifest: ignoring interface.defaultPrompt: prompt must be at most 128 characters path=/Users/0xhude/.codex/.tmp/plugins/plugins/build-ios-apps/.codex-plugin/plugin.json
+2026-05-16T08:35:51.116610Z  WARN codex_core_plugins::manifest: ignoring interface.defaultPrompt: maximum of 3 prompts is supported path=/Users/0xhude/.codex/.tmp/plugins/plugins/plugin-eval/.codex-plugin/plugin.json
+2026-05-16T08:35:51.119248Z  WARN codex_core_plugins::manifest: ignoring interface.defaultPrompt: maximum of 3 prompts is supported path=/Users/0xhude/.codex/.tmp/plugins/plugins/twilio-developer-kit/.codex-plugin/plugin.json
+2026-05-16T08:35:51.119284Z  WARN codex_core_plugins::manifest: ignoring interface.defaultPrompt: maximum of 3 prompts is supported path=/Users/0xhude/.codex/.tmp/plugins/plugins/openai-developers/.codex-plugin/plugin.json
+2026-05-16T08:35:51.130596Z  WARN codex_core_skills::loader: ignoring interface.icon_small: icon path must not contain '..'
+2026-05-16T08:35:51.130606Z  WARN codex_core_skills::loader: ignoring interface.icon_large: icon path must not contain '..'
+2026-05-16T08:35:51.130922Z  WARN codex_core_skills::loader: ignoring interface.icon_small: icon path must not contain '..'
+2026-05-16T08:35:51.130926Z  WARN codex_core_skills::loader: ignoring interface.icon_large: icon path must not contain '..'
+2026-05-16T08:35:51.131232Z  WARN codex_core_skills::loader: ignoring interface.icon_small: icon path must not contain '..'
+2026-05-16T08:35:51.131234Z  WARN codex_core_skills::loader: ignoring interface.icon_large: icon path must not contain '..'
+2026-05-16T08:35:51.131532Z  WARN codex_core_skills::loader: ignoring interface.icon_small: icon path must not contain '..'
+2026-05-16T08:35:51.131535Z  WARN codex_core_skills::loader: ignoring interface.icon_large: icon path must not contain '..'
+2026-05-16T08:35:51.131831Z  WARN codex_core_skills::loader: ignoring interface.icon_small: icon path must not contain '..'
+2026-05-16T08:35:51.131833Z  WARN codex_core_skills::loader: ignoring interface.icon_large: icon path must not contain '..'
+2026-05-16T08:35:51.132461Z  WARN codex_core_skills::loader: ignoring interface.icon_small: icon path must not contain '..'
+2026-05-16T08:35:51.132463Z  WARN codex_core_skills::loader: ignoring interface.icon_large: icon path must not contain '..'
+2026-05-16T08:35:51.157962Z  WARN codex_core_plugins::manifest: ignoring interface.defaultPrompt: maximum of 3 prompts is supported path=/Users/0xhude/.codex/.tmp/plugins/plugins/openai-developers/.codex-plugin/plugin.json
+2026-05-16T08:35:51.160593Z  WARN codex_core_plugins::manifest: ignoring interface.defaultPrompt: maximum of 3 prompts is supported path=/Users/0xhude/.codex/.tmp/plugins/plugins/openai-developers/.codex-plugin/plugin.json
+2026-05-16T08:35:51.160647Z  WARN codex_core_plugins::manifest: ignoring interface.defaultPrompt: maximum of 3 prompts is supported path=/Users/0xhude/.codex/.tmp/plugins/plugins/openai-developers/.codex-plugin/plugin.json
+2026-05-16T08:35:52.763789Z  WARN codex_core_plugins::manifest: ignoring interface.defaultPrompt: prompt must be at most 128 characters path=/Users/0xhude/.codex/.tmp/plugins/plugins/build-ios-apps/.codex-plugin/plugin.json
+2026-05-16T08:35:52.764065Z  WARN codex_core_plugins::manifest: ignoring interface.defaultPrompt: maximum of 3 prompts is supported path=/Users/0xhude/.codex/.tmp/plugins/plugins/plugin-eval/.codex-plugin/plugin.json
+2026-05-16T08:35:52.766277Z  WARN codex_core_plugins::manifest: ignoring interface.defaultPrompt: maximum of 3 prompts is supported path=/Users/0xhude/.codex/.tmp/plugins/plugins/twilio-developer-kit/.codex-plugin/plugin.json
+2026-05-16T08:35:52.766311Z  WARN codex_core_plugins::manifest: ignoring interface.defaultPrompt: maximum of 3 prompts is supported path=/Users/0xhude/.codex/.tmp/plugins/plugins/openai-developers/.codex-plugin/plugin.json
+2026-05-16T08:35:52.775426Z  WARN codex_core_skills::loader: ignoring interface.icon_small: icon path must not contain '..'
+2026-05-16T08:35:52.775429Z  WARN codex_core_skills::loader: ignoring interface.icon_large: icon path must not contain '..'
+2026-05-16T08:35:52.775708Z  WARN codex_core_skills::loader: ignoring interface.icon_small: icon path must not contain '..'
+2026-05-16T08:35:52.775710Z  WARN codex_core_skills::loader: ignoring interface.icon_large: icon path must not contain '..'
+2026-05-16T08:35:52.775989Z  WARN codex_core_skills::loader: ignoring interface.icon_small: icon path must not contain '..'
+2026-05-16T08:35:52.775992Z  WARN codex_core_skills::loader: ignoring interface.icon_large: icon path must not contain '..'
+2026-05-16T08:35:52.776285Z  WARN codex_core_skills::loader: ignoring interface.icon_small: icon path must not contain '..'
+2026-05-16T08:35:52.776288Z  WARN codex_core_skills::loader: ignoring interface.icon_large: icon path must not contain '..'
+2026-05-16T08:35:52.776570Z  WARN codex_core_skills::loader: ignoring interface.icon_small: icon path must not contain '..'
+2026-05-16T08:35:52.776572Z  WARN codex_core_skills::loader: ignoring interface.icon_large: icon path must not contain '..'
+2026-05-16T08:35:52.777190Z  WARN codex_core_skills::loader: ignoring interface.icon_small: icon path must not contain '..'
+2026-05-16T08:35:52.777192Z  WARN codex_core_skills::loader: ignoring interface.icon_large: icon path must not contain '..'
+2026-05-16T08:35:52.801140Z  WARN codex_core_plugins::manifest: ignoring interface.defaultPrompt: maximum of 3 prompts is supported path=/Users/0xhude/.codex/.tmp/plugins/plugins/openai-developers/.codex-plugin/plugin.json
+2026-05-16T08:35:52.803694Z  WARN codex_core_plugins::manifest: ignoring interface.defaultPrompt: maximum of 3 prompts is supported path=/Users/0xhude/.codex/.tmp/plugins/plugins/openai-developers/.codex-plugin/plugin.json
+2026-05-16T08:35:52.803748Z  WARN codex_core_plugins::manifest: ignoring interface.defaultPrompt: maximum of 3 prompts is supported path=/Users/0xhude/.codex/.tmp/plugins/plugins/openai-developers/.codex-plugin/plugin.json
 codex
-`rust-review` と `kasane-rust-review` を使う。まず対象型と周辺仕様を確認して、式単体ではなく既存の意図との差分で見る。
+`kasane-rust-review` と `rust-review` を使う。まず該当型と呼び出し文脈を確認し、Verus 仕様としての強さ・空虚真・双方向性の欠落を重点確認する。
 exec
 /bin/zsh -lc "sed -n '1,220p' /Users/0xhude/.codex/skills/rust-review/SKILL.md" in /Users/0xhude/Desktop/ICP/Kasane
 exec
@@ -170,29 +156,30 @@ Review Rust changes with a bug-risk-first mindset. Keep the main skill short, th
 - If the review needs command-based confirmation, hand off to `$rust-verify`.
 
 exec
-/bin/zsh -lc 'rg -n "ReceiptIndexObservation|receipt_index_location_bidirectional|tx_index_present|included_loc_present|receipt_matches_loc|loc_points_to_block_tx" -S .' in /Users/0xhude/Desktop/ICP/Kasane
+/bin/zsh -lc 'rg -n "receipt_index_location_bidirectional|ReceiptIndexObservation|tx_index_present|included_loc_present|index_matches_loc|loc_points_to_block_tx" -S .' in /Users/0xhude/Desktop/ICP/Kasane
  succeeded in 0ms:
-./crates/verified-core/src/receipt_index.rs:7:pub struct ReceiptIndexObservation {
-./crates/verified-core/src/receipt_index.rs:8:    pub tx_index_present: bool,
-./crates/verified-core/src/receipt_index.rs:10:    pub included_loc_present: bool,
-./crates/verified-core/src/receipt_index.rs:12:    pub receipt_matches_loc: bool,
-./crates/verified-core/src/receipt_index.rs:13:    pub loc_points_to_block_tx: bool,
-./crates/verified-core/src/receipt_index.rs:16:pub fn receipt_index_location_bidirectional(input: ReceiptIndexObservation) -> bool {
-./crates/verified-core/src/receipt_index.rs:17:    (!input.tx_index_present
-./crates/verified-core/src/receipt_index.rs:18:        || (input.receipt_present && input.included_loc_present && input.index_matches_loc))
-./crates/verified-core/src/receipt_index.rs:20:            || (input.tx_index_present && input.included_loc_present && input.receipt_matches_loc))
-./crates/verified-core/src/receipt_index.rs:21:        && (!input.included_loc_present
-./crates/verified-core/src/receipt_index.rs:22:            || (input.tx_index_present
-./crates/verified-core/src/receipt_index.rs:25:                && input.receipt_matches_loc
-./crates/verified-core/src/receipt_index.rs:26:                && input.loc_points_to_block_tx))
-./spec/runs/receipt_index_location_bidirectional-7f362e2c/contract.json:6:    "result == ((!input.tx_index_present || (input.receipt_present && input.included_loc_present && input.index_matches_loc)) && (!input.receipt_present || (input.tx_index_present && input.included_loc_present && input.receipt_matches_loc)) && (!input.included_loc_present || (input.tx_index_present && input.receipt_present && input.index_matches_loc && input.receipt_matches_loc && input.loc_points_to_block_tx)))"
-./spec/runs/receipt_index_location_bidirectional-7f362e2c/contract.json:13:      "scenario_id": "receipt_index_location_bidirectional-nominal",
+./spec/reports/receipt_index_location_bidirectional-7f362e2c_verify.md:1:# verify: receipt_index_location_bidirectional-7f362e2c
+./crates/verified-core/src/receipt_index.rs:8:pub struct ReceiptIndexObservation {
+./crates/verified-core/src/receipt_index.rs:9:    pub tx_index_present: bool,
+./crates/verified-core/src/receipt_index.rs:11:    pub included_loc_present: bool,
+./crates/verified-core/src/receipt_index.rs:12:    pub index_matches_loc: bool,
+./crates/verified-core/src/receipt_index.rs:14:    pub loc_points_to_block_tx: bool,
+./crates/verified-core/src/receipt_index.rs:17:// specgen:contract receipt_index_location_bidirectional-7f362e2c 075accd33b10181d1a2abecfa98ebbde6583902282a1ac2bd3e3e8fcf9fb9679
+./crates/verified-core/src/receipt_index.rs:22:        result == ((!input.tx_index_present || (input.receipt_present && input.included_loc_present && input.index_matches_loc)) && (!input.receipt_present || (input.tx_index_present && input.included_loc_present && input.receipt_matches_loc)) && (!input.included_loc_present || (input.tx_index_present && input.receipt_present && input.index_matches_loc && input.receipt_matches_loc && input.loc_points_to_block_tx))),
+./crates/verified-core/src/receipt_index.rs:24:pub fn receipt_index_location_bidirectional(input: ReceiptIndexObservation) -> bool
+./crates/verified-core/src/receipt_index.rs:26:    (!input.tx_index_present
+./crates/verified-core/src/receipt_index.rs:27:        || (input.receipt_present && input.included_loc_present && input.index_matches_loc))
+./crates/verified-core/src/receipt_index.rs:29:            || (input.tx_index_present && input.included_loc_present && input.receipt_matches_loc))
+./crates/verified-core/src/receipt_index.rs:30:        && (!input.included_loc_present
+./crates/verified-core/src/receipt_index.rs:31:            || (input.tx_index_present
+./crates/verified-core/src/receipt_index.rs:33:                && input.index_matches_loc
+./crates/verified-core/src/receipt_index.rs:35:                && input.loc_points_to_block_tx))
 ./crates/verified-core/tests/p0_safety.rs:4:use verified_core::receipt_index::{receipt_index_location_bidirectional, ReceiptIndexObservation};
 ./crates/verified-core/tests/p0_safety.rs:28:fn receipt_index_location_bidirectional_requires_all_reverse_links() {
 ./crates/verified-core/tests/p0_safety.rs:29:    let ok = ReceiptIndexObservation {
 ./crates/verified-core/tests/p0_safety.rs:30:        tx_index_present: true,
 ./crates/verified-core/tests/p0_safety.rs:32:        included_loc_present: true,
-./crates/verified-core/tests/p0_safety.rs:34:        receipt_matches_loc: true,
+./crates/verified-core/tests/p0_safety.rs:33:        index_matches_loc: true,
 ./crates/verified-core/tests/p0_safety.rs:35:        loc_points_to_block_tx: true,
 ./crates/verified-core/tests/p0_safety.rs:37:    assert!(receipt_index_location_bidirectional(ok));
 ./crates/verified-core/tests/p0_safety.rs:39:    assert!(!receipt_index_location_bidirectional(
@@ -206,6 +193,28 @@ exec
 ./crates/verified-core/tests/p0_safety.rs:57:    assert!(!receipt_index_location_bidirectional(
 ./crates/verified-core/tests/p0_safety.rs:58:        ReceiptIndexObservation {
 ./crates/verified-core/tests/p0_safety.rs:59:            loc_points_to_block_tx: false,
+./spec/reports/receipt_index_location_bidirectional-7f362e2c_verify.json:2:  "slug": "receipt_index_location_bidirectional-7f362e2c",
+./spec/runs/receipt_index_location_bidirectional-7f362e2c/reviews/arbiter.json:2:  "target": "receipt_index_location_bidirectional",
+./spec/runs/receipt_index_location_bidirectional-7f362e2c/reviews/arbiter.json:4:  "slug": "receipt_index_location_bidirectional-7f362e2c",
+./spec/runs/receipt_index_location_bidirectional-7f362e2c/reviews/edge-case.md:5:- Medium: [receipt_index.rs](/Users/0xhude/Desktop/ICP/Kasane/crates/verified-core/src/receipt_index.rs:16) は `tx_index_present=false && receipt_present=false && included_loc_present=false` で `true` になる。整合性述語なら妥当。ただし「included tx の存在証明」や「receipt がある」保証として使うと、全欠損入力で通過する。呼出側で存在を要求するなら `tx_index_present || receipt_present || included_loc_present` ではなく、用途に応じて `T && R && L` を precondition/別述語に分離するべき。
+./spec/runs/receipt_index_location_bidirectional-7f362e2c/reviews/edge-case.md:7:- Low: [p0_safety.rs](/Users/0xhude/Desktop/ICP/Kasane/crates/verified-core/tests/p0_safety.rs:28) は `index_matches_loc=false` と `receipt_matches_loc=false` の単独欠陥を固定していない。`loc_points_to_block_tx=false` はあるが、`I/M` 条件を削る mutation を捕捉しにくい。`all_present_index_mismatch`、`all_present_receipt_mismatch`、`none_absent_stale_flags` を追加すると境界が明確になる。
+./spec/runs/receipt_index_location_bidirectional-7f362e2c/reviews/adversarial.md:5:- Medium: [receipt_index.rs](/Users/0xhude/Desktop/ICP/Kasane/crates/verified-core/src/receipt_index.rs:16) は `tx_index_present=false && receipt_present=false && included_loc_present=false` で `true` になる。整合性述語なら妥当。ただし「included tx の存在証明」や「receipt がある」保証として使うと、全欠損入力で通過する。呼出側で存在を要求するなら `tx_index_present || receipt_present || included_loc_present` ではなく、用途に応じて `T && R && L` を precondition/別述語に分離するべき。
+./spec/runs/receipt_index_location_bidirectional-7f362e2c/reviews/adversarial.md:7:- Low: [p0_safety.rs](/Users/0xhude/Desktop/ICP/Kasane/crates/verified-core/tests/p0_safety.rs:28) は `index_matches_loc=false` と `receipt_matches_loc=false` の単独欠陥を固定していない。`loc_points_to_block_tx=false` はあるが、`I/M` 条件を削る mutation を捕捉しにくい。`all_present_index_mismatch`、`all_present_receipt_mismatch`、`none_absent_stale_flags` を追加すると境界が明確になる。
+./spec/runs/receipt_index_location_bidirectional-7f362e2c/reviews/verus.md:5:- Medium: [receipt_index.rs](/Users/0xhude/Desktop/ICP/Kasane/crates/verified-core/src/receipt_index.rs:16) は `tx_index_present=false && receipt_present=false && included_loc_present=false` で `true` になる。整合性述語なら妥当。ただし「included tx の存在証明」や「receipt がある」保証として使うと、全欠損入力で通過する。呼出側で存在を要求するなら `tx_index_present || receipt_present || included_loc_present` ではなく、用途に応じて `T && R && L` を precondition/別述語に分離するべき。
+./spec/runs/receipt_index_location_bidirectional-7f362e2c/reviews/verus.md:7:- Low: [p0_safety.rs](/Users/0xhude/Desktop/ICP/Kasane/crates/verified-core/tests/p0_safety.rs:28) は `index_matches_loc=false` と `receipt_matches_loc=false` の単独欠陥を固定していない。`loc_points_to_block_tx=false` はあるが、`I/M` 条件を削る mutation を捕捉しにくい。`all_present_index_mismatch`、`all_present_receipt_mismatch`、`none_absent_stale_flags` を追加すると境界が明確になる。
+./spec/targets.toml:266:display_name = "receipt_index_location_bidirectional"
+./spec/targets.toml:267:function = "receipt_index_location_bidirectional"
+./spec/targets.toml:268:function_path = "receipt_index_location_bidirectional"
+./spec/targets.toml:271:slug = "receipt_index_location_bidirectional-7f362e2c"
+./spec/runs/receipt_index_location_bidirectional-7f362e2c/reviews/implementation.md:5:- Medium: [receipt_index.rs](/Users/0xhude/Desktop/ICP/Kasane/crates/verified-core/src/receipt_index.rs:16) は `tx_index_present=false && receipt_present=false && included_loc_present=false` で `true` になる。整合性述語なら妥当。ただし「included tx の存在証明」や「receipt がある」保証として使うと、全欠損入力で通過する。呼出側で存在を要求するなら `tx_index_present || receipt_present || included_loc_present` ではなく、用途に応じて `T && R && L` を precondition/別述語に分離するべき。
+./spec/runs/receipt_index_location_bidirectional-7f362e2c/reviews/implementation.md:7:- Low: [p0_safety.rs](/Users/0xhude/Desktop/ICP/Kasane/crates/verified-core/tests/p0_safety.rs:28) は `index_matches_loc=false` と `receipt_matches_loc=false` の単独欠陥を固定していない。`loc_points_to_block_tx=false` はあるが、`I/M` 条件を削る mutation を捕捉しにくい。`all_present_index_mismatch`、`all_present_receipt_mismatch`、`none_absent_stale_flags` を追加すると境界が明確になる。
+./spec/adapter-evidence.toml:8:  "receipt_index_location_bidirectional-7f362e2c",
+./spec/adapter-evidence.toml:20:  "receipt_index_location_bidirectional-7f362e2c",
+./spec/adapter-evidence.toml:32:  "receipt_index_location_bidirectional-7f362e2c",
+./spec/adapter-evidence.toml:42:  "receipt_index_location_bidirectional-7f362e2c",
+./spec/runs/receipt_index_location_bidirectional-7f362e2c/contract.json:6:    "result == ((!input.tx_index_present || (input.receipt_present && input.included_loc_present && input.index_matches_loc)) && (!input.receipt_present || (input.tx_index_present && input.included_loc_present && input.receipt_matches_loc)) && (!input.included_loc_present || (input.tx_index_present && input.receipt_present && input.index_matches_loc && input.receipt_matches_loc && input.loc_points_to_block_tx)))"
+./spec/runs/receipt_index_location_bidirectional-7f362e2c/contract.json:13:      "scenario_id": "receipt_index_location_bidirectional-nominal",
+./spec/runs/receipt_index_location_bidirectional-7f362e2c/status.json:2:  "target": "receipt_index_location_bidirectional-7f362e2c",
 ./spec/runs/receipt_index_location_bidirectional-7f362e2c/extract.json:2:  "target": "receipt_index_location_bidirectional",
 ./spec/runs/receipt_index_location_bidirectional-7f362e2c/extract.json:4:    "display_name": "receipt_index_location_bidirectional",
 ./spec/runs/receipt_index_location_bidirectional-7f362e2c/extract.json:5:    "function": "receipt_index_location_bidirectional",
@@ -223,7 +232,7 @@ exec
 ./spec/runs/receipt_index_location_bidirectional-7f362e2c/draft.md:14:            && !input.included_loc_present)
 ./spec/runs/receipt_index_location_bidirectional-7f362e2c/draft.md:15:            || (input.tx_index_present
 ./spec/runs/receipt_index_location_bidirectional-7f362e2c/draft.md:17:                && input.included_loc_present
-./spec/runs/receipt_index_location_bidirectional-7f362e2c/draft.md:19:                && input.receipt_matches_loc
+./spec/runs/receipt_index_location_bidirectional-7f362e2c/draft.md:18:                && input.index_matches_loc
 ./spec/runs/receipt_index_location_bidirectional-7f362e2c/draft.md:20:                && input.loc_points_to_block_tx))
 ./spec/runs/receipt_index_location_bidirectional-7f362e2c/draft.md:25:`receipt_index_location_bidirectional` は、receipt index / receipt / included location の観測が「全欠損」または「全存在かつ相互一致」の場合だけ `true` を返す。部分的な存在、location 不一致、location が block transaction を指さない場合は `false`。
 ./spec/runs/receipt_index_location_bidirectional-7f362e2c/llm/scenarios.prompt.md:2:pub fn receipt_index_location_bidirectional(input: ReceiptIndexObservation) -> bool
@@ -232,56 +241,28 @@ exec
 ./spec/runs/receipt_index_location_bidirectional-7f362e2c/llm/scenarios.prompt.md:7:            || (input.tx_index_present && input.included_loc_present && input.receipt_matches_loc))
 ./spec/runs/receipt_index_location_bidirectional-7f362e2c/llm/scenarios.prompt.md:8:        && (!input.included_loc_present
 ./spec/runs/receipt_index_location_bidirectional-7f362e2c/llm/scenarios.prompt.md:9:            || (input.tx_index_present
-./spec/runs/receipt_index_location_bidirectional-7f362e2c/llm/scenarios.prompt.md:12:                && input.receipt_matches_loc
+./spec/runs/receipt_index_location_bidirectional-7f362e2c/llm/scenarios.prompt.md:11:                && input.index_matches_loc
 ./spec/runs/receipt_index_location_bidirectional-7f362e2c/llm/scenarios.prompt.md:13:                && input.loc_points_to_block_tx))
+./spec/runs/receipt_index_location_bidirectional-7f362e2c/llm/review.prompt.md:2:pub fn receipt_index_location_bidirectional(input: ReceiptIndexObservation) -> bool
+./spec/runs/receipt_index_location_bidirectional-7f362e2c/llm/review.prompt.md:4:    (!input.tx_index_present
+./spec/runs/receipt_index_location_bidirectional-7f362e2c/llm/review.prompt.md:5:        || (input.receipt_present && input.included_loc_present && input.index_matches_loc))
+./spec/runs/receipt_index_location_bidirectional-7f362e2c/llm/review.prompt.md:7:            || (input.tx_index_present && input.included_loc_present && input.receipt_matches_loc))
+./spec/runs/receipt_index_location_bidirectional-7f362e2c/llm/review.prompt.md:8:        && (!input.included_loc_present
+./spec/runs/receipt_index_location_bidirectional-7f362e2c/llm/review.prompt.md:9:            || (input.tx_index_present
+./spec/runs/receipt_index_location_bidirectional-7f362e2c/llm/review.prompt.md:11:                && input.index_matches_loc
+./spec/runs/receipt_index_location_bidirectional-7f362e2c/llm/review.prompt.md:13:                && input.loc_points_to_block_tx))
 ./spec/runs/receipt_index_location_bidirectional-7f362e2c/llm/draft.prompt.md:2:pub fn receipt_index_location_bidirectional(input: ReceiptIndexObservation) -> bool
 ./spec/runs/receipt_index_location_bidirectional-7f362e2c/llm/draft.prompt.md:4:    (!input.tx_index_present
 ./spec/runs/receipt_index_location_bidirectional-7f362e2c/llm/draft.prompt.md:5:        || (input.receipt_present && input.included_loc_present && input.index_matches_loc))
 ./spec/runs/receipt_index_location_bidirectional-7f362e2c/llm/draft.prompt.md:7:            || (input.tx_index_present && input.included_loc_present && input.receipt_matches_loc))
 ./spec/runs/receipt_index_location_bidirectional-7f362e2c/llm/draft.prompt.md:8:        && (!input.included_loc_present
 ./spec/runs/receipt_index_location_bidirectional-7f362e2c/llm/draft.prompt.md:9:            || (input.tx_index_present
-./spec/runs/receipt_index_location_bidirectional-7f362e2c/llm/draft.prompt.md:12:                && input.receipt_matches_loc
+./spec/runs/receipt_index_location_bidirectional-7f362e2c/llm/draft.prompt.md:11:                && input.index_matches_loc
 ./spec/runs/receipt_index_location_bidirectional-7f362e2c/llm/draft.prompt.md:13:                && input.loc_points_to_block_tx))
-./spec/runs/receipt_index_location_bidirectional-7f362e2c/llm/review.response.md:9:- Medium: [receipt_index.rs](/Users/0xhude/Desktop/ICP/Kasane/crates/verified-core/src/receipt_index.rs:16) は `T=R=L=false` を `true` にする。`contract.json` の precondition も `true` なので、「included tx の存在証明」として使うと、観測全欠損で通過する。整合性述語なら妥当。存在も保証したいなら、呼出側 precondition か別述語で `tx_index_present || receipt_present || included_loc_present` を要求する。最終的に「included tx なら必ず存在」まで主張するなら、この関数自体を `T && R && L && I && M && P` 相当に寄せる必要がある。
-./spec/runs/receipt_index_location_bidirectional-7f362e2c/llm/review.response.md:11:- Low: [p0_safety.rs](/Users/0xhude/Desktop/ICP/Kasane/crates/verified-core/tests/p0_safety.rs:28) が `index_matches_loc=false` と `receipt_matches_loc=false` を直接検出していない。現状だと `index_matches_loc` / `receipt_matches_loc` 条件を削るミューテーションを単体テストが捕捉しにくい。`all_present_index_mismatch`、`all_present_receipt_mismatch`、`none_absent_stale_flags` を追加すると境界が固定できる。
-./spec/runs/receipt_index_location_bidirectional-7f362e2c/llm/review.response.md:43:pub fn receipt_index_location_bidirectional(input: ReceiptIndexObservation) -> bool
-./spec/runs/receipt_index_location_bidirectional-7f362e2c/llm/review.response.md:45:    (!input.tx_index_present
-./spec/runs/receipt_index_location_bidirectional-7f362e2c/llm/review.response.md:46:        || (input.receipt_present && input.included_loc_present && input.index_matches_loc))
-./spec/runs/receipt_index_location_bidirectional-7f362e2c/llm/review.response.md:48:            || (input.tx_index_present && input.included_loc_present && input.receipt_matches_loc))
-./spec/runs/receipt_index_location_bidirectional-7f362e2c/llm/review.response.md:49:        && (!input.included_loc_present
-./spec/runs/receipt_index_location_bidirectional-7f362e2c/llm/review.response.md:50:            || (input.tx_index_present
-./spec/runs/receipt_index_location_bidirectional-7f362e2c/llm/review.response.md:53:                && input.receipt_matches_loc
-./spec/runs/receipt_index_location_bidirectional-7f362e2c/llm/review.response.md:54:                && input.loc_points_to_block_tx))
-./spec/runs/receipt_index_location_bidirectional-7f362e2c/llm/review.response.md:244:/bin/zsh -lc 'rg -n "receipt_index_location_bidirectional|ReceiptIndexObservation|index_matches_loc|loc_points_to_block_tx" .' in /Users/0xhude/Desktop/ICP/Kasane
-./spec/runs/receipt_index_location_bidirectional-7f362e2c/llm/review.response.md:246:./spec/adapter-evidence.toml:8:  "receipt_index_location_bidirectional-7f362e2c",
-./spec/runs/receipt_index_location_bidirectional-7f362e2c/llm/review.response.md:247:./spec/adapter-evidence.toml:20:  "receipt_index_location_bidirectional-7f362e2c",
-./spec/runs/receipt_index_location_bidirectional-7f362e2c/llm/review.response.md:248:./spec/adapter-evidence.toml:32:  "receipt_index_location_bidirectional-7f362e2c",
-./spec/runs/receipt_index_location_bidirectional-7f362e2c/llm/review.response.md:249:./spec/adapter-evidence.toml:42:  "receipt_index_location_bidirectional-7f362e2c",
-./spec/runs/receipt_index_location_bidirectional-7f362e2c/llm/review.response.md:250:./crates/verified-core/src/receipt_index.rs:7:pub struct ReceiptIndexObservation {
-./spec/runs/receipt_index_location_bidirectional-7f362e2c/llm/review.response.md:252:./crates/verified-core/src/receipt_index.rs:13:    pub loc_points_to_block_tx: bool,
-./spec/runs/receipt_index_location_bidirectional-7f362e2c/llm/review.response.md:253:./crates/verified-core/src/receipt_index.rs:16:pub fn receipt_index_location_bidirectional(input: ReceiptIndexObservation) -> bool {
-./spec/runs/receipt_index_location_bidirectional-7f362e2c/llm/review.response.md:254:./crates/verified-core/src/receipt_index.rs:18:        || (input.receipt_present && input.included_loc_present && input.index_matches_loc))
-./spec/runs/receipt_index_location_bidirectional-7f362e2c/llm/review.response.md:256:./crates/verified-core/src/receipt_index.rs:26:                && input.loc_points_to_block_tx))
-./spec/runs/receipt_index_location_bidirectional-7f362e2c/llm/review.response.md:257:./crates/verified-core/tests/p0_safety.rs:4:use verified_core::receipt_index::{receipt_index_location_bidirectional, ReceiptIndexObservation};
-./spec/runs/receipt_index_location_bidirectional-7f362e2c/llm/review.response.md:258:./crates/verified-core/tests/p0_safety.rs:28:fn receipt_index_location_bidirectional_requires_all_reverse_links() {
-./spec/runs/receipt_index_location_bidirectional-7f362e2c/llm/review.response.md:259:./crates/verified-core/tests/p0_safety.rs:29:    let ok = ReceiptIndexObservation {
-./spec/runs/receipt_index_location_bidirectional-7f362e2c/llm/review.response.md:261:./crates/verified-core/tests/p0_safety.rs:35:        loc_points_to_block_tx: true,
-./spec/runs/receipt_index_location_bidirectional-7f362e2c/llm/review.response.md:262:./crates/verified-core/tests/p0_safety.rs:37:    assert!(receipt_index_location_bidirectional(ok));
-./spec/runs/receipt_index_location_bidirectional-7f362e2c/llm/review.response.md:263:./crates/verified-core/tests/p0_safety.rs:39:    assert!(!receipt_index_location_bidirectional(
-./spec/runs/receipt_index_location_bidirectional-7f362e2c/llm/review.response.md:264:./crates/verified-core/tests/p0_safety.rs:40:        ReceiptIndexObservation {
-./spec/runs/receipt_index_location_bidirectional-7f362e2c/llm/review.response.md:265:./crates/verified-core/tests/p0_safety.rs:45:    assert!(!receipt_index_location_bidirectional(
-./spec/runs/receipt_index_location_bidirectional-7f362e2c/llm/review.response.md:266:./crates/verified-core/tests/p0_safety.rs:46:        ReceiptIndexObservation {
-./spec/runs/receipt_index_location_bidirectional-7f362e2c/llm/review.response.md:267:./crates/verified-core/tests/p0_safety.rs:51:    assert!(!receipt_index_location_bidirectional(
-./spec/runs/receipt_index_location_bidirectional-7f362e2c/llm/review.response.md:268:./crates/verified-core/tests/p0_safety.rs:52:        ReceiptIndexObservation {
-./spec/runs/receipt_index_location_bidirectional-7f362e2c/llm/review.response.md:269:./crates/verified-core/tests/p0_safety.rs:57:    assert!(!receipt_index_location_bidirectional(
-./spec/runs/receipt_index_location_bidirectional-7f362e2c/llm/review.response.md:270:./crates/verified-core/tests/p0_safety.rs:58:        ReceiptIndexObservation {
-./spec/runs/receipt_index_location_bidirectional-7f362e2c/llm/review.response.md:271:./crates/verified-core/tests/p0_safety.rs:59:            loc_points_to_block_tx: false,
-./spec/runs/receipt_index_location_bidirectional-7f362e2c/llm/review.response.md:272:./spec/runs/receipt_index_location_bidirectional-7f362e2c/contract.json:6:    "result == ((!input.tx_index_present || (input.receipt_present && input.included_loc_present && input.index_matches_loc)) && (!input.receipt_present || (input.tx_index_present && input.included_loc_present && input.receipt_matches_loc)) && (!input.included_loc_present || (input.tx_index_present && input.receipt_present && input.index_matches_loc && input.receipt_matches_loc && input.loc_points_to_block_tx)))"
-./spec/runs/receipt_index_location_bidirectional-7f362e2c/llm/review.response.md:273:./spec/runs/receipt_index_location_bidirectional-7f362e2c/contract.json:13:      "scenario_id": "receipt_index_location_bidirectional-nominal",
-./spec/runs/receipt_index_location_bidirectional-7f362e2c/llm/review.response.md:274:./spec/runs/receipt_index_location_bidirectional-7f362e2c/extract.json:2:  "target": "receipt_index_location_bidirectional",
-./spec/runs/receipt_index_location_bidirectional-7f362e2c/llm/review.response.md:275:./spec/runs/receipt_index_location_bidirectional-7f362e2c/extract.json:4:    "display_name": "receipt_index_location_bidirectional",
-./spec/runs/receipt_index_location_bidirectional-7f362e2c/llm/review.response.md:276:./spec/runs/receipt_index_location_bidirectional-7f362e2c/extract.json:5:    "function": "receipt_index_location_bidirectional",
-./spec/runs/receipt_index_location_bidirectional-7f362e2c/llm/review.response.md:277:./spec/runs/receipt_index_location_bidirectional-7f362e2c/extract.json:6:    "function_path": "receipt_index_location_bidirectional",
-./spec/runs/receipt_index_location_bidirectional-7f362e2c/llm/review.response.md:278:./spec/runs/receipt_index_location_bidirectional-7f362e2c/extract.json:9:    "slug": "receipt_index_location_bidirectional-7f362e2c",
-./spec/runs/receipt_index_location_bidirectional-7f362e2c/llm/review.response.md:279:./spec/runs/receipt_index_location_bidirectional-7f362e2c/extract.json:14:  "signature": "pub fn receipt_index_location_bidirectional(input: ReceiptIndexObservation) -> bool",
-./spec/runs/receipt_index_location_bidirectional-7f362e2c/llm/review.response.md:280:./spec/runs/receipt_index_location_bidirectional-7f362e2c/extract.json:15:  "body": "{\n    (!input.tx_index_present\n        || (input.receipt_present && input.included_loc_present && input.index_matches_loc))\n        && (!input.receipt_present\n            || (input.tx_index_present && input.included_loc_present && input.receipt_matches_loc))\n        && (!input.included_loc_present\n            || (input.tx_index_present\n                && input.receipt_present\n                && input.index_matches_loc\n                && input.receipt_matches_loc\n                && input.loc_points_to
+./spec/runs/receipt_index_location_bidirectional-7f362e2c/llm/review.response.md:9:- Medium: [receipt_index.rs](/Users/0xhude/Desktop/ICP/Kasane/crates/verified-core/src/receipt_index.rs:16) は `tx_index_present=false && receipt_present=false && included_loc_present=false` で `true` になる。整合性述語なら妥当。ただし「included tx の存在証明」や「receipt がある」保証として使うと、全欠損入力で通過する。呼出側で存在を要求するなら `tx_index_present || receipt_present || included_loc_present` ではなく、用途に応じて `T && R && L` を precondition/別述語に分離するべき。
+./spec/runs/receipt_index_location_bidirectional-7f362e2c/llm/review.response.md:11:- Low: [p0_safety.rs](/Users/0xhude/Desktop/ICP/Kasane/crates/verified-core/tests/p0_safety.rs:28) は `index_matches_loc=false` と `receipt_matches_loc=false` の単独欠陥を固定していない。`loc_points_to_block_tx=false` はあるが、`I/M` 条件を削る mutation を捕捉しにくい。`all_present_index_mismatch`、`all_present_receipt_mismatch`、`none_absent_stale_flags` を追加すると境界が明確になる。
+./spec/runs/receipt_index_location_bidirectional-7f362e2c/llm/review.response.md:51:pub fn receipt_index_location_bidirectional(input: ReceiptIndexObservation) -> bool
+./spec/runs/receipt_index_location_bidirectional-7f362e2c/llm/review.response.md:53:    (!input.tx_index_present
+./spec/runs/receipt_index_location_bidirectional-7f362e2c/llm/review.response.md:54:        || (input.receipt_present && input.included_loc_present && input.index_matches_loc))
+./spec/runs/receipt_index_location_bidirectional-7f362e2c/llm/review.response.md:56:            || (input.tx_index_present && input.included_loc_present && input.receipt_matches_loc))
+./spec/r
