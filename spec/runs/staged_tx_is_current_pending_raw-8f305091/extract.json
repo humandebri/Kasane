@@ -15,10 +15,10 @@
   "body": "{\n    ready_points_to_tx == 1\n        && pending_meta_points_to_tx == 1\n        && current_pending_points_to_tx == 1\n        && tx_payload_present == 1\n        && tx_not_marked_dropped == 1\n}",
   "span": {
     "start_line": 6,
-    "end_line": 11
+    "end_line": 13
   },
-  "git_commit": "b0cd7a8078f50f5a9b6e3be05f2ea5c004747341",
-  "worktree_dirty": true,
+  "git_commit": "0570339f56a81732819c12f7e07f79a58a609f91",
+  "worktree_dirty": false,
   "source_hash": "86845648a950705fef350c93d451fe27e728e5402ca00a28417d1f37ae15a063",
   "semantic_hash": "0aaf3eafa2dcf641996e9aa709a1537b158e106a527c267a3235736c950b2155",
   "dependency_hash_inputs": [
