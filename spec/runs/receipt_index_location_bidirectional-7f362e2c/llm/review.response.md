@@ -1,7 +1,7 @@
 command: /Users/0xhude/.nvm/versions/node/v22.22.0/bin/codex exec --sandbox read-only <prompt>
 exit_code: 0
 timeout: false
-truncated: true
+truncated: false
 
 ## stdout
 **指摘**
