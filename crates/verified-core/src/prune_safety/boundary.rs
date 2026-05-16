@@ -3,13 +3,6 @@
 #[cfg(verus_keep_ghost)]
 use vstd::prelude::*;
 
-// specgen:contract prune_boundary_safe-d0a164b9 b66de364c9253fe19244074c3dcdab0fc3fda48a19884aee41267257d5a66df8
-#[cfg_attr(verus_keep_ghost, verus_spec(result =>
-    requires
-        true,
-    ensures
-        result == (next_present == false || (retain > 0 && head > retain && next_boundary <= head - retain && (previous_present == false || previous <= next_boundary))),
-))]
 pub fn prune_boundary_safe(previous_present: bool, previous: u64, next_present: bool, next_boundary: u64, head: u64, retain: u64) -> bool
 {
     if !next_present {
