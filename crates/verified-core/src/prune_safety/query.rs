@@ -6,7 +6,7 @@ use vstd::prelude::*;
 pub fn prune_query_observation_safe_raw(
     boundary_present: u64,
     block_number: u64,
-    pruned_before: u64,
+    pruned_through: u64,
     retained: u64,
     returned_ok: u64,
     returned_pruned: u64,
@@ -17,9 +17,9 @@ pub fn prune_query_observation_safe_raw(
         && returned_pruned <= 1
         && (returned_ok == 0 || retained > 0)
         && (retained == 0 || returned_ok > 0)
-        && (boundary_present == 0 || block_number > pruned_before || returned_ok == 0)
-        && (boundary_present == 0 || block_number > pruned_before || returned_pruned > 0)
+        && (boundary_present == 0 || block_number > pruned_through || returned_ok == 0)
+        && (boundary_present == 0 || block_number > pruned_through || returned_pruned > 0)
         && (retained == 0 || returned_pruned == 0)
         && (returned_ok == 0 || returned_pruned == 0)
-        && (returned_pruned == 0 || (boundary_present > 0 && block_number <= pruned_before))
+        && (returned_pruned == 0 || (boundary_present > 0 && block_number <= pruned_through))
 }
