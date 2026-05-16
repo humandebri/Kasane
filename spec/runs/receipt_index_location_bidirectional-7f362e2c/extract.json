@@ -14,13 +14,13 @@
   "signature": "pub fn receipt_index_location_bidirectional(input: ReceiptIndexObservation) -> bool",
   "body": "{\n    (!input.tx_index_present\n        || (input.receipt_present && input.included_loc_present && input.index_matches_loc))\n        && (!input.receipt_present\n            || (input.tx_index_present && input.included_loc_present && input.receipt_matches_loc))\n        && (!input.included_loc_present\n            || (input.tx_index_present\n                && input.receipt_present\n                && input.index_matches_loc\n                && input.receipt_matches_loc\n                && input.loc_points_to_block_tx))\n}",
   "span": {
-    "start_line": 16,
-    "end_line": 28
+    "start_line": 17,
+    "end_line": 29
   },
-  "git_commit": "0570339f56a81732819c12f7e07f79a58a609f91",
+  "git_commit": "2ff47cf9ec949b314adc26f94ad9e340cbda4cbb",
   "worktree_dirty": false,
   "source_hash": "7f362e2c26ea1e9b56eda044aaac97c8e7ea546c2e33dee844350504411674bb",
-  "semantic_hash": "d553b2dd715ff607be716b4f3e729a79528c7d9b7f58393e9d3285a37e135dc0",
+  "semantic_hash": "65653aa7145cdbf01e5bba597b116f13697d9431c2ce49dcfd4b2965fe50b52e",
   "dependency_hash_inputs": [
     {
       "kind": "use",
@@ -30,9 +30,9 @@
     },
     {
       "kind": "type",
-      "name": "Clone",
+      "name": "verus_keep_ghost",
       "file": "crates/verified-core/src/receipt_index.rs",
-      "hash": "c9f978342ee3ff3d8355a56dc0ed4b19a262518f63f40c0cee243a88932c2b07"
+      "hash": "f6e4f76a88cbc3b52f9126079ef05773e08145ffa085cc02a89f5a447b7d30ab"
     }
   ],
   "unresolved_dependencies": [],
