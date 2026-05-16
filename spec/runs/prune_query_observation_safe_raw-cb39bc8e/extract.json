@@ -11,16 +11,16 @@
     "semantic_hash": "7b2f1421fe4aae248900bedb4dfba137ae67ff4b40bf58f3147b4e8b178d3db8",
     "created_at": "2026-05-16T08:42:13Z"
   },
-  "signature": "pub fn prune_query_observation_safe_raw(\n    block_number: u64,\n    pruned_through: u64,\n    retained: u64,\n    returned_ok: u64,\n    returned_pruned: u64,\n) -> bool",
+  "signature": "pub fn prune_query_observation_safe_raw(block_number: u64, pruned_through: u64, retained: u64, returned_ok: u64, returned_pruned: u64) -> bool",
   "body": "{\n    retained <= 1\n        && returned_ok <= 1\n        && returned_pruned <= 1\n        && ((block_number <= pruned_through\n            && retained == 0\n            && returned_ok == 0\n            && returned_pruned == 1)\n            || (pruned_through < block_number && returned_pruned == 0 && retained == returned_ok))\n}",
   "span": {
     "start_line": 6,
-    "end_line": 21
+    "end_line": 11
   },
-  "git_commit": "e5653c859a82d960de279312d0d9447f85c3ab1f",
+  "git_commit": "941d7c6db6f9248e26f936f0aa0a9463221ca9b0",
   "worktree_dirty": false,
-  "source_hash": "f995e92b50e4742b6dad30a894153c55aa064e306118b40cfcf7e1bbd8f2c608",
-  "semantic_hash": "445d7982acc1963af76d4baf9875f22f0cc5103df8aceed986503da7aa4b5d62",
+  "source_hash": "c24d9434a4b229cde3c0785ac1a58044c6df44d268f930b35cc44f4a496a0a6f",
+  "semantic_hash": "25a63d2507154a759be4dfb3c2492a34de1e0369f05cd3518d822a93035808fc",
   "dependency_hash_inputs": [
     {
       "kind": "use",
