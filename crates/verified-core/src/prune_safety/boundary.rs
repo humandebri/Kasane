@@ -8,25 +8,18 @@ use vstd::prelude::*;
     requires
         true,
     ensures
-        result == (!next_present || (retain > 0 && head > retain && next <= head - retain && (!previous_present || previous <= next))),
+        result == (next_present == false || (retain > 0 && head > retain && next_boundary <= head - retain && (previous_present == false || previous <= next_boundary))),
 ))]
-pub fn prune_boundary_safe(
-    previous_present: bool,
-    previous: u64,
-    next_present: bool,
-    next: u64,
-    head: u64,
-    retain: u64,
-) -> bool
+pub fn prune_boundary_safe(previous_present: bool, previous: u64, next_present: bool, next_boundary: u64, head: u64, retain: u64) -> bool
 {
     if !next_present {
         return true;
     }
-    if retain == 0 || head <= retain || next > head - retain {
+    if retain == 0 || head <= retain || next_boundary > head - retain {
         return false;
     }
     if previous_present {
-        previous <= next
+        previous <= next_boundary
     } else {
         true
     }
