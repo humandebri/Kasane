@@ -15,9 +15,9 @@
   "body": "{\n    seen_tx < tx_store\n        && tx_store < tx_index\n        && tx_index < receipts\n        && receipts < tx_locs\n        && tx_locs < tx_locs_v3\n        && tx_locs_v3 < internal_traces\n}",
   "span": {
     "start_line": 6,
-    "end_line": 13
+    "end_line": 11
   },
-  "git_commit": "655eb69df86c6f5467bc646f165eda8ed95d7fb9",
+  "git_commit": "bdc412ff69ea98e3aa777a1b90e9f9c9d4b4fc64",
   "worktree_dirty": true,
   "source_hash": "edcca87a73f1fc2393350930c833bf1f61ca2674e1dc15a3abd75213aa841567",
   "semantic_hash": "fa398a53c3b9462e36a27f99a9162cdadb5bf55083bd94388b596ab41735666c",
