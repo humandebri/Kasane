@@ -6,7 +6,7 @@ use verified_core::prune_safety::{
 };
 
 #[test]
-fn prunable_boundary_excludes_retained_range() {
+fn prune_prunable_boundary_excludes_retained_range() {
     assert!(block_is_prunable(10, 3, 7));
     assert!(!block_is_prunable(10, 3, 8));
     assert!(!block_is_prunable(10, 0, 1));
