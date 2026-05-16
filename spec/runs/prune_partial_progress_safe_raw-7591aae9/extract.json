@@ -15,9 +15,9 @@
   "body": "{\n    previous_present <= 1\n        && next_present <= 1\n        && did_work <= 1\n        && stopped_for_budget <= 1\n        && ops_used <= max_ops\n        && (did_work == 0 || next_present == 1)\n        && (previous_present == 0 || next_present == 1)\n        && (did_work == 0 || previous_present == 0 || previous_boundary < next_boundary)\n        && (previous_present == 0\n            || next_present == 0\n            || previous_boundary == next_boundary\n            || did_work == 1)\n        && (previous_present == 0 || next_present == 0 || previous_boundary <= next_boundary)\n        && (next_present == 0 || next_boundary < next_cursor)\n        && (stopped_for_budget == 0 || next_present == 1)\n        && (stopped_for_budget == 0\n            || max_ops < next_ops_needed\n            || (next_ops_needed <= max_ops && max_ops - next_ops_needed < ops_used))\n}",
   "span": {
     "start_line": 6,
-    "end_line": 25
+    "end_line": 13
   },
-  "git_commit": "e352489ad3eea17d8af4d095ff0a9b33803abc51",
+  "git_commit": "11e4b141e461fbad085433afe1b9eea924a30699",
   "worktree_dirty": true,
   "source_hash": "c491e58e0c461fea45ed041ac0f74a8d0a29f1a5aa7343ec398fb2f719e6ce38",
   "semantic_hash": "1b99e5bb671295a876bfacad9c1660aeb4c265390fa65f17ef002511f906c153",
