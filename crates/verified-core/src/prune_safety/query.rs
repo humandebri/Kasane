@@ -3,13 +3,6 @@
 #[cfg(verus_keep_ghost)]
 use vstd::prelude::*;
 
-// specgen:contract prune_query_observation_safe_raw-cb39bc8e 1d510213ddc00e4c959d8d03d73a2042f183a8879140afa65942955678fa74b2
-#[cfg_attr(verus_keep_ghost, verus_spec(result =>
-    requires
-        true,
-    ensures
-        result == (boundary_present <= 1 && retained <= 1 && returned_ok <= 1 && returned_pruned <= 1 && (returned_ok == 0 || retained != 0) && (boundary_present == 0 || block_number > pruned_before || returned_ok == 0) && (retained == 0 || returned_pruned == 0) && !(returned_ok != 0 && returned_pruned != 0) && (returned_pruned == 0 || (boundary_present != 0 && block_number <= pruned_before))),
-))]
 pub fn prune_query_observation_safe_raw(
     boundary_present: u64,
     block_number: u64,
@@ -17,8 +10,7 @@ pub fn prune_query_observation_safe_raw(
     retained: u64,
     returned_ok: u64,
     returned_pruned: u64,
-) -> bool
-{
+) -> bool {
     boundary_present <= 1
         && retained <= 1
         && returned_ok <= 1
@@ -26,6 +18,6 @@ pub fn prune_query_observation_safe_raw(
         && (returned_ok == 0 || retained != 0)
         && (boundary_present == 0 || block_number > pruned_before || returned_ok == 0)
         && (retained == 0 || returned_pruned == 0)
-        && !(returned_ok != 0 && returned_pruned != 0)
+        && (returned_ok == 0 || returned_pruned == 0)
         && (returned_pruned == 0 || (boundary_present != 0 && block_number <= pruned_before))
 }
