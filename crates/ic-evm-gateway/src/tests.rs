@@ -19,9 +19,9 @@ use evm_db::chain_data::constants::MAX_RETURN_DATA;
 use evm_db::chain_data::receipt::log_entry_from_parts;
 use evm_db::chain_data::{
     BlockData, MigrationPhase, MintSubmitStatus, OpsMode, ReceiptLike, RequestStatus,
-    RuntimeConfigV1, StoredTxBytes, TxId, TxKind, TxLoc, UnwrapDispatchRequest,
-    UnwrapRequestStatus, WrapPendingSubmission, WrapRequestResult, WrapRequestStage,
-    WrapStoredRequest, WRAP_DECODE_FAILURE_CODE,
+    RuntimeConfigV1, StoredTxBytes, TxId, TxIndexEntry, TxKind, TxLoc, TxLocKind,
+    UnwrapDispatchRequest, UnwrapRequestStatus, WrapPendingSubmission, WrapRequestResult,
+    WrapRequestStage, WrapStoredRequest, WRAP_DECODE_FAILURE_CODE,
 };
 use evm_db::memory::{get_memory, AppMemoryId, WASM_PAGE_SIZE_BYTES};
 use evm_db::meta::{
@@ -1210,6 +1210,31 @@ fn no_reject_for_test() -> Option<String> {
 
 fn no_schedule_for_test() {}
 
+fn assert_included_receipt_index_location_links(tx_id: TxId, block_number: u64, tx_index: u32) {
+    let loc = chain::get_tx_loc(&tx_id).expect("included tx loc");
+    assert_eq!(loc.kind, TxLocKind::Included);
+    assert_eq!(loc.block_number, block_number);
+    assert_eq!(loc.tx_index, tx_index);
+
+    let block = chain::get_block(block_number).expect("included block");
+    assert_eq!(block.tx_ids.get(tx_index as usize), Some(&tx_id));
+
+    evm_db::stable_state::with_state(|state| {
+        let index_ptr = state.tx_index.get(&tx_id).expect("tx index ptr");
+        let index_bytes = state.blob_store.read(&index_ptr).expect("tx index bytes");
+        let index = TxIndexEntry::from_bytes(Cow::Owned(index_bytes));
+        assert_eq!(index.block_number, block_number);
+        assert_eq!(index.tx_index, tx_index);
+
+        let receipt_ptr = state.receipts.get(&tx_id).expect("receipt ptr");
+        let receipt_bytes = state.blob_store.read(&receipt_ptr).expect("receipt bytes");
+        let receipt = ReceiptLike::from_bytes(Cow::Owned(receipt_bytes));
+        assert_eq!(receipt.tx_id, tx_id);
+        assert_eq!(receipt.block_number, block_number);
+        assert_eq!(receipt.tx_index, tx_index);
+    });
+}
+
 #[test]
 fn gateway_submit_ic_tx_adapter_preserves_queue_and_receipt_invariants() {
     init_stable_state();
@@ -1276,10 +1301,91 @@ fn gateway_submit_ic_tx_adapter_preserves_queue_and_receipt_invariants() {
     assert_eq!(receipt.tx_id, expected_tx_id.0.to_vec());
     assert_eq!(receipt.block_number, outcome.block.number);
     assert_eq!(receipt.tx_index, 0);
-    evm_db::stable_state::with_state(|state| {
-        assert!(state.receipts.get(&expected_tx_id).is_some());
-        assert!(state.tx_index.get(&expected_tx_id).is_some());
+    assert_included_receipt_index_location_links(expected_tx_id, outcome.block.number, 0);
+}
+
+#[test]
+fn replacement_old_tx_is_not_staged_or_included() {
+    init_stable_state();
+    set_migration_not_pending_for_test();
+
+    let caller = Principal::self_authenticating(b"gateway-replacement-caller");
+    let canister = Principal::self_authenticating(b"gateway-replacement-canister");
+    let (max_fee_per_gas, max_priority_fee_per_gas) = evm_db::stable_state::with_state(|state| {
+        let chain_state = *state.chain_state.get();
+        let min_priority = u128::from(chain_state.min_priority_fee);
+        let required_max_fee = u128::from(chain_state.base_fee)
+            .saturating_add(min_priority)
+            .max(u128::from(chain_state.min_gas_price));
+        (required_max_fee, min_priority)
     });
+    let caller_evm =
+        hash::derive_evm_address_from_principal(caller.as_slice()).expect("caller evm");
+    chain::credit_balance(caller_evm, 1_000_000_000_000_000_000).expect("fund caller");
+
+    let first_tx =
+        build_ic_synthetic_tx_input_for_test(0, max_fee_per_gas, max_priority_fee_per_gas);
+    let first_tx_id = super::derive_ic_synthetic_tx_id(
+        caller.as_slice(),
+        canister.as_slice(),
+        &first_tx,
+        caller_evm,
+    );
+    super::submit_ic_tx_internal_with_canister_and_scheduler(
+        caller.as_slice().to_vec(),
+        canister.as_slice().to_vec(),
+        "submit_ic_tx",
+        first_tx,
+        no_schedule_for_test,
+    )
+    .expect("first submit");
+
+    let replacement_tx = build_ic_synthetic_tx_input_for_test(
+        0,
+        max_fee_per_gas.saturating_add(10_000),
+        max_priority_fee_per_gas.saturating_add(10_000),
+    );
+    let replacement_tx_id = super::derive_ic_synthetic_tx_id(
+        caller.as_slice(),
+        canister.as_slice(),
+        &replacement_tx,
+        caller_evm,
+    );
+    super::submit_ic_tx_internal_with_canister_and_scheduler(
+        caller.as_slice().to_vec(),
+        canister.as_slice().to_vec(),
+        "submit_ic_tx",
+        replacement_tx,
+        no_schedule_for_test,
+    )
+    .expect("replacement submit");
+
+    evm_db::stable_state::with_state(|state| {
+        assert_eq!(state.pending_current_by_sender.len(), 1);
+        assert!(state.tx_store.get(&first_tx_id).is_none());
+        assert!(state
+            .ready_queue
+            .iter()
+            .all(|entry| entry.value() != first_tx_id));
+        assert!(state
+            .ready_by_seq
+            .iter()
+            .all(|entry| entry.value() != first_tx_id));
+        assert!(state
+            .pending_by_sender_nonce
+            .iter()
+            .all(|entry| { entry.value() == replacement_tx_id && entry.value() != first_tx_id }));
+    });
+    assert_eq!(
+        chain::get_tx_loc(&first_tx_id).map(|loc| loc.kind),
+        Some(TxLocKind::Dropped)
+    );
+
+    let outcome = chain::produce_block(1).expect("produce replacement block");
+    assert_eq!(outcome.block.tx_ids, vec![replacement_tx_id]);
+    assert!(!outcome.block.tx_ids.contains(&first_tx_id));
+    assert!(chain::get_receipt(&first_tx_id).is_none());
+    assert_included_receipt_index_location_links(replacement_tx_id, outcome.block.number, 0);
 }
 
 #[test]

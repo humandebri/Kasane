@@ -1,0 +1,24 @@
+{
+  "target": "receipt_index_location_bidirectional",
+  "target_id": "6de7b322c0489b139fbc6f46e0464c3c00f56f10d22203cab9d4b8027ae87353",
+  "slug": "receipt_index_location_bidirectional-7f362e2c",
+  "git_commit": "45c236f431ea13639e1ce09e51a6e84f7b627d28",
+  "worktree_dirty": true,
+  "source_hash": "7f362e2c26ea1e9b56eda044aaac97c8e7ea546c2e33dee844350504411674bb",
+  "semantic_hash": "d553b2dd715ff607be716b4f3e729a79528c7d9b7f58393e9d3285a37e135dc0",
+  "tool_version": "0.1.0",
+  "scenarios": [
+    {
+      "id": "receipt_index_location_bidirectional-nominal",
+      "kind": "example",
+      "executable": false,
+      "inputs": {},
+      "expected": {},
+      "review_status": "accepted",
+      "status_note": "covers forward and reverse receipt/index/location links and vacuous absence case",
+      "reviewed_by": "0xhude",
+      "reviewed_at": "2026-05-16T08:19:42Z",
+      "rationale": "候補。`tx_index_present=T`, `receipt_present=R`, `included_loc_present=L`, `index_matches_loc=I`, `receipt_matches_loc=M`, `loc_points_to_block_tx=P`。\n\n| id | T | R | L | I | M | P | expected | 狙い |\n|---|---|---|---|---|---|---|---|---|\n| none_absent | false | false | false | false | false | false | true | 全要素欠落。含意が全部vacuous |\n| none_absent_stale_flags | false | false | false | true | true | true | true | presentでないmatch/point flagは無視 |\n| tx_only | true | false | false | true | true | true | false | tx index単独は禁止 |\n| receipt_only | false | true | false | true | true | true | false | receipt単独は禁止 |\n| loc_only | false | false | true | true | true | true | false | included loc単独は禁止 |\n| tx_receipt_no_loc | true | true | false | true | true | true | false | tx/receiptがあってloc欠落 |\n| tx_loc_no_receipt | true | false | true | true | true | true | false | tx/locがあってreceipt欠落 |\n| receipt_loc_no_tx | false | true | true | true | true | true | false | receipt/locがあってtx欠落 |\n| all_present_aligned | true | true | true | true | true | true | true | 正常系 |\n| all_present_index_mismatch | true | true | true | false | true | true | false | tx indexとloc不一致 |\n| all_present_receipt_mismatch | true | true | true | true | false | true | false | receiptとloc不一致 |\n| all_present_loc_wrong_target | true | true | true | true | true | false | false | locがblock txを指さない |\n| all_present_all_bad | true | true | true | false | false | false | false | 複合不一致 |\n\n最小の性質は次。\n\n```text\nvalid iff\n  (T,R,L が全て false)\n  OR\n  (T,R,L,I,M,P が全て true)\n```\n\n`I/M/P` は `T/R/L` が全欠落のとき結果に影響しない。"
+    }
+  ]
+}

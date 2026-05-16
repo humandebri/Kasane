@@ -1,0 +1,47 @@
+{
+  "target": "no_reorg_append_only_raw",
+  "entry": {
+    "display_name": "no_reorg_append_only_raw",
+    "function": "no_reorg_append_only_raw",
+    "function_path": "no_reorg_append_only_raw",
+    "file": "crates/verified-core/src/no_reorg.rs",
+    "target_id": "437b3743e85de255ed69105022251db56728e14357597162ef26e17a118a786d",
+    "slug": "no_reorg_append_only_raw-f8bac44c",
+    "source_hash": "f8bac44c1efdfa27b0b550c2955e02a134ecb3fd90e1d4a448b95c40520fde58",
+    "semantic_hash": "901f8070f0a2be75c95df3e3042c20ff116174a9e47cd1a0277fbe7812d4db5d",
+    "created_at": "2026-05-16T08:14:40Z"
+  },
+  "signature": "pub fn no_reorg_append_only_raw(\n    previous_head: u64,\n    committed_head: u64,\n    parent_points_to_previous_head: u64,\n    previous_blocks_unchanged: u64,\n    previous_receipts_unchanged: u64,\n    previous_indexes_unchanged: u64,\n) -> bool",
+  "body": "{\n    previous_head < u64::MAX\n        && committed_head == previous_head + 1\n        && parent_points_to_previous_head == 1\n        && previous_blocks_unchanged == 1\n        && previous_receipts_unchanged == 1\n        && previous_indexes_unchanged == 1\n}",
+  "span": {
+    "start_line": 6,
+    "end_line": 20
+  },
+  "git_commit": "45c236f431ea13639e1ce09e51a6e84f7b627d28",
+  "worktree_dirty": true,
+  "source_hash": "f8bac44c1efdfa27b0b550c2955e02a134ecb3fd90e1d4a448b95c40520fde58",
+  "semantic_hash": "901f8070f0a2be75c95df3e3042c20ff116174a9e47cd1a0277fbe7812d4db5d",
+  "dependency_hash_inputs": [
+    {
+      "kind": "use",
+      "name": "cfg",
+      "file": "crates/verified-core/src/no_reorg.rs",
+      "hash": "a5eb4157d5d32303032e3dc786e34f004ebe17f0ff1bb26f90ac9eb42478596c"
+    }
+  ],
+  "unresolved_dependencies": [],
+  "tool_version": "0.1.0",
+  "cfg": [],
+  "features": [],
+  "types": [],
+  "called_functions": [],
+  "callers": [],
+  "tests": [],
+  "panic_sites": [],
+  "overflow_sites": [
+    "+"
+  ],
+  "casts": [],
+  "division_sites": [],
+  "llm_context_files": []
+}

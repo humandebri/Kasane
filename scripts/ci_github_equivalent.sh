@@ -42,10 +42,13 @@ specgen_rustfmt_skip=(
   "crates/verified-core/src/core_safety.rs"
   "crates/verified-core/src/core_safety_block.rs"
   "crates/verified-core/src/core_safety_included.rs"
+  "crates/verified-core/src/no_reorg.rs"
   "crates/verified-core/src/prune_safety/block_prunable.rs"
   "crates/verified-core/src/prune_safety/block_retained.rs"
   "crates/verified-core/src/prune_safety/boundary.rs"
   "crates/verified-core/src/prune_safety/cleanup.rs"
+  "crates/verified-core/src/receipt_index.rs"
+  "crates/verified-core/src/staging.rs"
 )
 
 workspace_rustfmt_dirs=(

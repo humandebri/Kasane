@@ -3,8 +3,11 @@ file = "crates/ic-evm-gateway/src/lib.rs"
 function = "submit_ic_tx_internal"
 covered_by = [
   "submit_transition_safe_raw-3a7d7873",
+  "staged_tx_is_current_pending_raw-8f305091",
   "included_tx_safe_raw-8883376d",
+  "receipt_index_location_bidirectional-7f362e2c",
   "block_commit_safe_raw-318a0bf6",
+  "no_reorg_append_only_raw-f8bac44c",
 ]
 
 [[coverage]]
@@ -12,8 +15,11 @@ file = "crates/ic-evm-gateway/src/lib.rs"
 function = "submit_ic_tx_internal_with_canister"
 covered_by = [
   "submit_transition_safe_raw-3a7d7873",
+  "staged_tx_is_current_pending_raw-8f305091",
   "included_tx_safe_raw-8883376d",
+  "receipt_index_location_bidirectional-7f362e2c",
   "block_commit_safe_raw-318a0bf6",
+  "no_reorg_append_only_raw-f8bac44c",
 ]
 
 [[coverage]]
@@ -21,8 +27,21 @@ file = "crates/ic-evm-gateway/src/lib.rs"
 function = "submit_ic_tx_internal_with_canister_and_scheduler"
 covered_by = [
   "submit_transition_safe_raw-3a7d7873",
+  "staged_tx_is_current_pending_raw-8f305091",
   "included_tx_safe_raw-8883376d",
+  "receipt_index_location_bidirectional-7f362e2c",
   "block_commit_safe_raw-318a0bf6",
+  "no_reorg_append_only_raw-f8bac44c",
+]
+
+[[coverage]]
+file = "crates/evm-core/src/chain.rs"
+function = "produce_block"
+covered_by = [
+  "staged_tx_is_current_pending_raw-8f305091",
+  "receipt_index_location_bidirectional-7f362e2c",
+  "block_commit_safe_raw-318a0bf6",
+  "no_reorg_append_only_raw-f8bac44c",
 ]
 
 [[coverage]]
