@@ -1,3 +1,17 @@
 {
-  "state": "extracted"
+  "target": "prune_query_observation_safe_raw-cb39bc8e",
+  "check_result": "fail",
+  "stale_reasons": [
+    {
+      "code": "git_commit_mismatch"
+    }
+  ],
+  "drift_reasons": [
+    {
+      "code": "contract_hash_mismatch"
+    }
+  ],
+  "dirty_paths": [
+    "crates/verified-core/src/prune_safety/query.rs"
+  ]
 }
