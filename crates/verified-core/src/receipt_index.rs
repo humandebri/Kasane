@@ -3,6 +3,7 @@
 #[cfg(verus_keep_ghost)]
 use vstd::prelude::*;
 
+#[cfg_attr(verus_keep_ghost, verus_verify)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ReceiptIndexObservation {
     pub tx_index_present: bool,
