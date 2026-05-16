@@ -3,10 +3,10 @@
     "true"
   ],
   "postconditions": [
-    "result == (boundary_present <= 1 && retained <= 1 && returned_ok <= 1 && returned_pruned <= 1 && (returned_ok == 0 || retained != 0) && (boundary_present == 0 || block_number > pruned_before || returned_ok == 0) && (retained == 0 || returned_pruned == 0) && !(returned_ok != 0 && returned_pruned != 0) && (returned_pruned == 0 || (boundary_present != 0 && block_number <= pruned_before)))"
+    "result == (retained <= 1 && returned_ok <= 1 && returned_pruned <= 1 && ((block_number <= pruned_through && retained == 0 && returned_ok == 0 && returned_pruned == 1) || (pruned_through < block_number && returned_pruned == 0 && retained == returned_ok)))"
   ],
   "acceptance_criteria": [
-    "One-way pruning query safety: canonical query flags only; Ok requires a retained observation; a query at or below an active pruned boundary never returns Ok; a retained observation never returns Pruned; Pruned requires an active boundary at or above the block; Ok and Pruned are mutually exclusive."
+    "Active pruning query observation safety: canonical query flags only; a block at or below the inclusive pruned-through boundary must return Pruned and never Ok; above the boundary, Pruned is not returned and retained observations are exactly Ok observations."
   ],
   "test_evidence": [
     {
