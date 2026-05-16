@@ -31,6 +31,10 @@ review output, contract terms, and linked test evidence; `accept`,
 | Pruning safety model | `verified_core::prune_safety::block_is_retained` | `spec/runs/block_is_retained-9d9115e5/extract.json` |
 | Pruning safety model | `verified_core::prune_safety::prune_boundary_safe` | `spec/runs/prune_boundary_safe-77bde266/extract.json` |
 | Pruning safety model | `verified_core::prune_safety::prune_tx_cleanup_complete` | `spec/runs/prune_tx_cleanup_complete-171d1899/extract.json` |
+| Pruning safety model | `verified_core::prune_safety::prune_query_observation_safe_raw` | `spec/runs/prune_query_observation_safe_raw-cb39bc8e/extract.json` |
+| Pruning safety model | `verified_core::prune_safety::prune_partial_progress_safe_raw` | `spec/runs/prune_partial_progress_safe_raw-7591aae9/extract.json` |
+| Stable namespace model | `verified_core::stable_namespace::stable_tx_namespace_disjoint_raw` | `spec/runs/stable_tx_namespace_disjoint_raw-edcca87a/extract.json` |
+| Upgrade observation model | `verified_core::upgrade_safety::upgrade_core_observation_preserved_raw` | `spec/runs/upgrade_core_observation_preserved_raw-191130e4/extract.json` |
 
 ## Canister Entrypoint Sources
 
@@ -61,6 +65,10 @@ review output, contract terms, and linked test evidence; `accept`,
 | Retained blocks are nonfuture blocks outside the prunable range. | `verified_core::prune_safety::block_is_retained` |
 | Pruned boundary is unset or monotonically advances without entering retained range. | `verified_core::prune_safety::prune_boundary_safe` |
 | Pruned transaction cleanup removes receipt, tx index, tx loc, seen-tx, tx store, and internal traces from observation. | `verified_core::prune_safety::prune_tx_cleanup_complete` |
+| Pruned query observations never return `Ok` for pruned blocks and never return `Pruned` for retained blocks. | `verified_core::prune_safety::prune_query_observation_safe_raw` |
+| Partial prune progress never exceeds `max_ops`, never drops or regresses an existing boundary, and can resume after budget stop. | `verified_core::prune_safety::prune_partial_progress_safe_raw` |
+| Tx-related stable maps use strictly ordered stable memory namespaces. | `verified_core::stable_namespace::stable_tx_namespace_disjoint_raw` |
+| Upgrade adapter observations preserve head, pruned boundary, pending current, receipt, tx index, and tx location. | `verified_core::upgrade_safety::upgrade_core_observation_preserved_raw` |
 
 ## Adapter Evidence
 
@@ -71,6 +79,8 @@ review output, contract terms, and linked test evidence; `accept`,
 | gateway submit/receipt adapter | `crates/ic-evm-gateway/src/tests.rs::gateway_submit_ic_tx_adapter_preserves_queue_and_receipt_invariants` is linked through `spec/adapter-evidence.toml` and the accepted test evidence for `submit_transition_safe_raw`, `included_tx_safe_raw`, and `block_commit_safe_raw`; it proves DTO parsing plus gateway submit helper writes queued location, pending receipt status, included location, receipt, tx index, and monotonic head after block production |
 | pruning adapter | `crates/evm-core/tests/phase1_prune.rs` and `crates/evm-core/tests/prune_journal.rs` are linked as test evidence for the pruning safety targets; they prove old block/receipt/index/location deletion, retained range preservation, `max_ops` bounding, journal recovery, and idempotency |
 | gateway pruning query adapter | `crates/ic-evm-gateway/src/tests.rs` pruned/receipt lookup tests are linked through `spec/adapter-evidence.toml`; they prove pruned blocks and receipts return `Pruned`, unknown tx with prune boundary returns `PossiblyPruned` through RPC status lookup, and retained receipts remain queryable |
+| stable namespace adapter | `crates/evm-db/tests/chain_data_memory_layout.rs::tx_related_memory_ids_are_disjoint` is linked as test evidence; it proves `seen_tx`, `tx_store`, `tx_index`, `receipts`, `tx_locs`, `tx_locs_v3`, and `internal_traces` use distinct `AppMemoryId` values |
+| upgrade observation adapter | `crates/evm-db/tests/phase0_stable_state.rs::stable_state_reinit_preserves_core_upgrade_observations` is linked as test evidence; it proves stable-state reinitialization preserves head, pruned boundary, current pending, receipt, tx index, and tx location observations |
 
 ## Review Gaps
 
@@ -82,10 +92,12 @@ review output, contract terms, and linked test evidence; `accept`,
   integration checks with many runtime dependencies. Production adapter helpers
   that are intentionally covered by pure-model test evidence are listed in
   `spec/adapter-evidence.toml`.
-- Pruning proof excludes stable memory, StableBTreeMap, blob reclaim physical
-  reuse, IC trap/crash persistence, and OS/process behavior. These remain trust
-  boundaries; the proof covers the pure boundary and observation invariants plus
-  adapter evidence.
+- Pruning proof covers block history deletion and query/index observations. It
+  excludes current account state, state root/trie correctness, stable memory,
+  StableBTreeMap internals, blob reclaim physical reuse, IC trap/crash
+  persistence, and OS/process behavior. Adapter evidence shows the prune path
+  deletes history/index maps and does not treat account/state-root correctness as
+  a proved claim.
 - `specgen status --check` passes for `submit_tx_in` and
   `should_stop_execution`. Most adapter/core extracts currently report
   unresolved dependencies because `specgen extract` is function-local and the
@@ -96,5 +108,5 @@ review output, contract terms, and linked test evidence; `accept`,
   follow-up because their behavior crosses async ledger calls and request state.
 - RPC query semantics need additional extracts from `crates/ic-evm-rpc/src/lib.rs`
   before they can be accepted as function-level specs.
-- Upgrade recovery needs focused scenarios around `pre_upgrade`, `post_upgrade`,
-  wrap worker recovery, and unwrap dispatch recovery before acceptance.
+- Wrap and unwrap worker recovery after upgrade remains adapter-only follow-up
+  coverage; the accepted upgrade target covers core chain observations only.

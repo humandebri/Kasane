@@ -128,6 +128,12 @@ canister adapterは外部APIとstable map操作だけを担当する。
 - `prune_journal`
 - `blob_store`
 
+非対象:
+- `accounts`
+- `storage`
+- `codes`
+- state root/trie storage
+
 検出:
 - `phase1_prune`
 - `prune_journal`

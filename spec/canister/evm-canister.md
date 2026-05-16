@@ -159,10 +159,18 @@ showing observed state follows the pure model.
 Trust boundaries outside this proof:
 
 - revm execution semantics
+- state root/trie correctness and current account-state equivalence
 - IC runtime scheduling and query/update execution model
 - stable memory implementation
 - ledger and other external canister calls
 - OS, process, build toolchain, and host filesystem behavior
+
+Pruning proof scope is narrower than full state correctness. It claims old block
+history, receipts, indexes, locations, seen-tx markers, tx store records, and
+internal traces become consistently unobservable across the pruned boundary. It
+does not prove revm state transition validity, account trie correctness, or
+state root correctness. Adapter evidence only checks that pruning does not use
+the current account/state-root storage path as part of history deletion.
 
 ## Transaction Lifecycle
 

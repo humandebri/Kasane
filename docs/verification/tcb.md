@@ -15,6 +15,7 @@
 | TCB-revm | `revm` | EVM実行意味論、gas消費、halt理由が上流仕様どおりである | 互換E2E、既存revmテスト、固定feature検査 |
 | TCB-alloy | `alloy-*` | RLP、署名、Ethereum型のdecode/encodeが仕様どおりである | 既存unit/integration、RPC互換smoke |
 | TCB-keccak | `keccak` | hash実装がEthereum互換である | 既知ベクトルテスト、state rootテスト |
+| TCB-state-root | state root/account state | pruning証明は履歴削除の観測整合だけを対象とし、current account state、trie、state root正当性は証明しない | state root migration/unit test、revm DB test、運用smoke |
 | TCB-dfinity | DFINITY crates | `ic-cdk`、`ic-stable-structures`、Candid、timerが公開契約どおり動く | PocketIC、upgrade/smoke |
 | TCB-ic-runtime | IC runtime | caller、time、cycles、performance counter、stable memoryがIC仕様どおりである | local/mainnet smoke、運用監視 |
 | TCB-typescript | TypeScript tools | explorer/indexer/gateway UIはVerus対象外である | TypeScript検査、npm test、E2E |
