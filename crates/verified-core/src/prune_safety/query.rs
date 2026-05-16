@@ -13,11 +13,9 @@ pub fn prune_query_observation_safe_raw(
     retained <= 1
         && returned_ok <= 1
         && returned_pruned <= 1
-        && (returned_ok == 0 || 0 < retained)
-        && (retained == 0 || 0 < returned_ok)
-        && (pruned_through < block_number || returned_ok == 0)
-        && (pruned_through < block_number || 0 < returned_pruned)
-        && (retained == 0 || returned_pruned == 0)
-        && (returned_ok == 0 || returned_pruned == 0)
-        && (returned_pruned == 0 || block_number <= pruned_through)
+        && ((block_number <= pruned_through
+            && retained == 0
+            && returned_ok == 0
+            && returned_pruned == 1)
+            || (pruned_through < block_number && returned_pruned == 0 && retained == returned_ok))
 }
