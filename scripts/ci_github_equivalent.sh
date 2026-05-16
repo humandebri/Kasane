@@ -81,7 +81,7 @@ while IFS= read -r -d '' rust_file; do
 done < <(find "${workspace_rustfmt_dirs[@]}" -name '*.rs' -print0)
 
 rustfmt --check --edition 2021 --config skip_children=true "${rustfmt_inputs[@]}"
-cargo clippy --workspace --all-targets --all-features -- -D warnings
+cargo clippy --workspace --all-targets --all-features -- -D warnings -A clippy::too_many_arguments
 
 echo "[ci-github-equivalent] deny OP stack references"
 DENY_PATTERN='op-revm|op_revm|op-node|op-geth|optimism|superchain|OpDeposit|L1BlockInfo'

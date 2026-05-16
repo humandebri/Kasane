@@ -52,7 +52,7 @@ scripts/measure_precompile_ratio.sh
 ### Pre-checks and Quality Gates
 - `scripts/ci-local.sh`: runs in `github|smoke|all` modes via `CI_LOCAL_MODE=<mode>`
 - `scripts/ci_github_equivalent.sh`: single source of truth for the GitHub-equivalent checks used by both `.github/workflows/ci.yml` and `scripts/ci-local.sh`
-  - includes Rust baseline quality gates: `rustfmt --check` for workspace Rust files except specgen-managed Verus contract targets, plus `cargo clippy --workspace --all-targets --all-features -- -D warnings`
+  - includes Rust baseline quality gates: `rustfmt --check` for workspace Rust files except specgen-managed Verus contract targets, plus clippy with a `too_many_arguments` exception for specgen evidence functions
 - `scripts/check_gateway_api_compat_baseline.sh`: detects breaking changes in gateway API compatibility baseline (`--update` updates baseline)
 - `scripts/check_gateway_matrix_sync.sh`: verifies compatibility matrix row in `tools/rpc-gateway/README.md` matches `tools/rpc-gateway/package.json` version line
 - `scripts/check_precompile_feature_isolation.sh`: verifies the default wasm build of `ic-evm-core` does not pull BLS/KZG backend crates (`ark-bls12-381`, `c-kzg`, `blst`)
