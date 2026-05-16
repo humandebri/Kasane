@@ -13,7 +13,15 @@ pub struct ReceiptIndexObservation {
     pub loc_points_to_block_tx: bool,
 }
 
-pub fn receipt_index_location_bidirectional(input: ReceiptIndexObservation) -> bool {
+// specgen:contract receipt_index_location_bidirectional-7f362e2c 075accd33b10181d1a2abecfa98ebbde6583902282a1ac2bd3e3e8fcf9fb9679
+#[cfg_attr(verus_keep_ghost, verus_spec(result =>
+    requires
+        true,
+    ensures
+        result == ((!input.tx_index_present || (input.receipt_present && input.included_loc_present && input.index_matches_loc)) && (!input.receipt_present || (input.tx_index_present && input.included_loc_present && input.receipt_matches_loc)) && (!input.included_loc_present || (input.tx_index_present && input.receipt_present && input.index_matches_loc && input.receipt_matches_loc && input.loc_points_to_block_tx))),
+))]
+pub fn receipt_index_location_bidirectional(input: ReceiptIndexObservation) -> bool
+{
     (!input.tx_index_present
         || (input.receipt_present && input.included_loc_present && input.index_matches_loc))
         && (!input.receipt_present

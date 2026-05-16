@@ -11,16 +11,16 @@
     "semantic_hash": "901f8070f0a2be75c95df3e3042c20ff116174a9e47cd1a0277fbe7812d4db5d",
     "created_at": "2026-05-16T08:14:40Z"
   },
-  "signature": "pub fn no_reorg_append_only_raw(\n    previous_head: u64,\n    committed_head: u64,\n    parent_points_to_previous_head: u64,\n    previous_blocks_unchanged: u64,\n    previous_receipts_unchanged: u64,\n    previous_indexes_unchanged: u64,\n) -> bool",
+  "signature": "pub fn no_reorg_append_only_raw(previous_head: u64, committed_head: u64, parent_points_to_previous_head: u64, previous_blocks_unchanged: u64, previous_receipts_unchanged: u64, previous_indexes_unchanged: u64) -> bool",
   "body": "{\n    previous_head < u64::MAX\n        && committed_head == previous_head + 1\n        && parent_points_to_previous_head == 1\n        && previous_blocks_unchanged == 1\n        && previous_receipts_unchanged == 1\n        && previous_indexes_unchanged == 1\n}",
   "span": {
     "start_line": 6,
-    "end_line": 20
+    "end_line": 13
   },
-  "git_commit": "8e028b2221e63e1f6bdb4260bfa80a5f3d4598ee",
-  "worktree_dirty": false,
-  "source_hash": "f8bac44c1efdfa27b0b550c2955e02a134ecb3fd90e1d4a448b95c40520fde58",
-  "semantic_hash": "901f8070f0a2be75c95df3e3042c20ff116174a9e47cd1a0277fbe7812d4db5d",
+  "git_commit": "b0cd7a8078f50f5a9b6e3be05f2ea5c004747341",
+  "worktree_dirty": true,
+  "source_hash": "055472bb63db6ffcc7723e85fb47709a25b3e41d9fe2521b2281ed3b59a36552",
+  "semantic_hash": "a3b9683567d2d81260e883f0ebc21321f9f577674570befd0365a1fdf087bacb",
   "dependency_hash_inputs": [
     {
       "kind": "use",

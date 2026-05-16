@@ -11,16 +11,16 @@
     "semantic_hash": "01e3253152d39ab3884ccbcaae345bfb0276e2f35d25346253301e0ba55ddc6d",
     "created_at": "2026-05-16T08:13:56Z"
   },
-  "signature": "pub fn staged_tx_is_current_pending_raw(\n    ready_points_to_tx: u64,\n    pending_meta_points_to_tx: u64,\n    current_pending_points_to_tx: u64,\n    tx_payload_present: u64,\n    tx_not_marked_dropped: u64,\n) -> bool",
+  "signature": "pub fn staged_tx_is_current_pending_raw(ready_points_to_tx: u64, pending_meta_points_to_tx: u64, current_pending_points_to_tx: u64, tx_payload_present: u64, tx_not_marked_dropped: u64) -> bool",
   "body": "{\n    ready_points_to_tx == 1\n        && pending_meta_points_to_tx == 1\n        && current_pending_points_to_tx == 1\n        && tx_payload_present == 1\n        && tx_not_marked_dropped == 1\n}",
   "span": {
     "start_line": 6,
-    "end_line": 18
+    "end_line": 11
   },
-  "git_commit": "8e028b2221e63e1f6bdb4260bfa80a5f3d4598ee",
-  "worktree_dirty": false,
-  "source_hash": "8f3050911d0e6e3e05e12e96739a545c70d0c0c8a35e7098ea55c3984a12602c",
-  "semantic_hash": "01e3253152d39ab3884ccbcaae345bfb0276e2f35d25346253301e0ba55ddc6d",
+  "git_commit": "b0cd7a8078f50f5a9b6e3be05f2ea5c004747341",
+  "worktree_dirty": true,
+  "source_hash": "86845648a950705fef350c93d451fe27e728e5402ca00a28417d1f37ae15a063",
+  "semantic_hash": "0aaf3eafa2dcf641996e9aa709a1537b158e106a527c267a3235736c950b2155",
   "dependency_hash_inputs": [
     {
       "kind": "use",
