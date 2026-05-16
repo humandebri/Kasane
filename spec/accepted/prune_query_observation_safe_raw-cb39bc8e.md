@@ -2,8 +2,8 @@
 
 <!-- generated from accepted json; do not edit by hand -->
 
-- git_commit: e5653c859a82d960de279312d0d9447f85c3ab1f
-- semantic_hash: 445d7982acc1963af76d4baf9875f22f0cc5103df8aceed986503da7aa4b5d62
+- git_commit: 941d7c6db6f9248e26f936f0aa0a9463221ca9b0
+- semantic_hash: 25a63d2507154a759be4dfb3c2492a34de1e0369f05cd3518d822a93035808fc
 - contract_hash: c0cb83ae04627e437d3f197528eb0ccf29fbcef6d7aa84a5e0d9761383b2e15e
-- applied_contract_hash: c0cb83ae04627e437d3f197528eb0ccf29fbcef6d7aa84a5e0d9761383b2e15e
+- applied_contract_hash: 
 - source_of_truth: accepted_json

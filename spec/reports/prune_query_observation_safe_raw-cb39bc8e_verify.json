@@ -1,0 +1,15 @@
+{
+  "slug": "prune_query_observation_safe_raw-cb39bc8e",
+  "command": "verus /Users/0xhude/Desktop/ICP/Kasane/crates/verified-core/src/prune_safety/query.rs",
+  "exit_code": 0,
+  "git_commit": "941d7c6db6f9248e26f936f0aa0a9463221ca9b0",
+  "worktree_dirty": false,
+  "semantic_hash": "25a63d2507154a759be4dfb3c2492a34de1e0369f05cd3518d822a93035808fc",
+  "spec_hash": "2aee3443211d653bbda2af101b1dbd93e984ef908f31610392f666d78de57f82",
+  "target_hash": "834b1e1d9be9af1f43bd3ce02c41afe39e7433a99d6713845d08c13c680c6ff3",
+  "contract_hash": "c0cb83ae04627e437d3f197528eb0ccf29fbcef6d7aa84a5e0d9761383b2e15e",
+  "source_hash": "c24d9434a4b229cde3c0785ac1a58044c6df44d268f930b35cc44f4a496a0a6f",
+  "verified_subject": "implementation",
+  "result": "success",
+  "output": "verification results:: 1 verified, 0 errors\n"
+}
