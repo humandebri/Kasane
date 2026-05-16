@@ -1,0 +1,20 @@
+{
+  "preconditions": [
+    "true"
+  ],
+  "postconditions": [
+    "result == (block <= head && (retain == 0 || head <= retain || block > head - retain))"
+  ],
+  "acceptance_criteria": [
+    "A block is retained only when it is not in the future and pruning is disabled, head is within retain, or the block is above head - retain."
+  ],
+  "test_evidence": [
+    {
+      "scenario_id": "block_is_retained-nominal",
+      "command": "cargo test -p verified-core prune && cargo test -p ic-evm-core prune && cargo test -p ic-evm-gateway pruned && cargo test -p ic-evm-gateway get_receipt_returns",
+      "test_name": "verified-core prune safety plus evm-core prune and gateway pruned/retained query adapter tests",
+      "recorded_at": "2026-05-16T03:33:02Z"
+    }
+  ],
+  "risk_level": "medium"
+}

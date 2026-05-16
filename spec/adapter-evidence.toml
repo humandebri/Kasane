@@ -30,6 +30,7 @@ file = "crates/evm-core/src/chain.rs"
 function = "prune_blocks"
 covered_by = [
   "block_is_prunable-04224fd7",
+  "block_is_retained-9d9115e5",
   "prune_boundary_safe-77bde266",
   "prune_tx_cleanup_complete-171d1899",
 ]
@@ -39,6 +40,7 @@ file = "crates/evm-core/src/chain.rs"
 function = "prune_tick"
 covered_by = [
   "block_is_prunable-04224fd7",
+  "block_is_retained-9d9115e5",
   "prune_boundary_safe-77bde266",
   "prune_tx_cleanup_complete-171d1899",
 ]
@@ -48,6 +50,7 @@ file = "crates/ic-evm-gateway/src/lib.rs"
 function = "prune_blocks"
 covered_by = [
   "block_is_prunable-04224fd7",
+  "block_is_retained-9d9115e5",
   "prune_boundary_safe-77bde266",
   "prune_tx_cleanup_complete-171d1899",
 ]
@@ -57,6 +60,7 @@ file = "crates/ic-evm-gateway/src/lib.rs"
 function = "get_receipt"
 covered_by = [
   "block_is_prunable-04224fd7",
+  "block_is_retained-9d9115e5",
   "prune_boundary_safe-77bde266",
   "prune_tx_cleanup_complete-171d1899",
 ]
@@ -66,6 +70,7 @@ file = "crates/ic-evm-gateway/src/lib.rs"
 function = "get_block"
 covered_by = [
   "block_is_prunable-04224fd7",
+  "block_is_retained-9d9115e5",
   "prune_boundary_safe-77bde266",
   "prune_tx_cleanup_complete-171d1899",
 ]

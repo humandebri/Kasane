@@ -28,6 +28,7 @@ review output, contract terms, and linked test evidence; `accept`,
 | Core safety model | `verified_core::core_safety_included::included_tx_safe_raw` | `spec/runs/included_tx_safe_raw-8883376d/extract.json` |
 | Core safety model | `verified_core::core_safety_block::block_commit_safe_raw` | `spec/runs/block_commit_safe_raw-318a0bf6/extract.json` |
 | Pruning safety model | `verified_core::prune_safety::block_is_prunable` | `spec/runs/block_is_prunable-04224fd7/extract.json` |
+| Pruning safety model | `verified_core::prune_safety::block_is_retained` | `spec/runs/block_is_retained-9d9115e5/extract.json` |
 | Pruning safety model | `verified_core::prune_safety::prune_boundary_safe` | `spec/runs/prune_boundary_safe-77bde266/extract.json` |
 | Pruning safety model | `verified_core::prune_safety::prune_tx_cleanup_complete` | `spec/runs/prune_tx_cleanup_complete-171d1899/extract.json` |
 
@@ -57,6 +58,7 @@ review output, contract terms, and linked test evidence; `accept`,
 | Included transaction has matching location, receipt, and index evidence. | `verified_core::core_safety_included::included_tx_safe_raw` |
 | Block commit has strict nonterminal head progress, gas, and batch-count evidence. | `verified_core::core_safety_block::block_commit_safe_raw` |
 | Pruning only crosses blocks at or before the retention boundary. | `verified_core::prune_safety::block_is_prunable` |
+| Retained blocks are nonfuture blocks outside the prunable range. | `verified_core::prune_safety::block_is_retained` |
 | Pruned boundary is unset or monotonically advances without entering retained range. | `verified_core::prune_safety::prune_boundary_safe` |
 | Pruned transaction cleanup removes receipt, tx index, tx loc, seen-tx, tx store, and internal traces from observation. | `verified_core::prune_safety::prune_tx_cleanup_complete` |
 
