@@ -14,7 +14,15 @@ pub struct PruneTxCleanupInput {
     pub seen_tx: bool,
 }
 
-pub fn prune_tx_cleanup_complete(input: PruneTxCleanupInput) -> bool {
+// specgen:contract prune_tx_cleanup_complete-171d1899 eaa6fc361e08aa330d07782b3acb9f2ae27626ffe0c5cd251c7ed4bab3162321
+#[cfg_attr(verus_keep_ghost, verus_spec(result =>
+    requires
+        true,
+    ensures
+        result == (!input.tx_store && !input.receipt && !input.tx_index && !input.internal_traces && !input.tx_loc && !input.seen_tx),
+))]
+pub fn prune_tx_cleanup_complete(input: PruneTxCleanupInput) -> bool
+{
     !input.tx_store
         && !input.receipt
         && !input.tx_index

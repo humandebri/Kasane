@@ -30,11 +30,11 @@ mod tests {
 
     #[test]
     fn prune_boundary_is_monotonic_and_retention_safe() {
-        assert!(prune_boundary_safe(None, Some(7), 10, 3));
-        assert!(prune_boundary_safe(Some(5), Some(7), 10, 3));
-        assert!(!prune_boundary_safe(Some(8), Some(7), 10, 3));
-        assert!(!prune_boundary_safe(Some(7), Some(8), 10, 3));
-        assert!(prune_boundary_safe(Some(7), None, 10, 3));
+        assert!(prune_boundary_safe(false, 0, true, 7, 10, 3));
+        assert!(prune_boundary_safe(true, 5, true, 7, 10, 3));
+        assert!(!prune_boundary_safe(true, 8, true, 7, 10, 3));
+        assert!(!prune_boundary_safe(true, 7, true, 8, 10, 3));
+        assert!(prune_boundary_safe(true, 7, false, 0, 10, 3));
     }
 
     #[test]

@@ -4,19 +4,22 @@
 use vstd::prelude::*;
 
 pub fn prune_boundary_safe(
-    previous: Option<u64>,
-    next: Option<u64>,
+    previous_present: bool,
+    previous: u64,
+    next_present: bool,
+    next: u64,
     head: u64,
     retain: u64,
 ) -> bool {
-    let Some(next_boundary) = next else {
+    if !next_present {
         return true;
-    };
-    if retain == 0 || head <= retain || next_boundary > head - retain {
+    }
+    if retain == 0 || head <= retain || next > head - retain {
         return false;
     }
-    match previous {
-        Some(previous_boundary) => previous_boundary <= next_boundary,
-        None => true,
+    if previous_present {
+        previous <= next
+    } else {
+        true
     }
 }
