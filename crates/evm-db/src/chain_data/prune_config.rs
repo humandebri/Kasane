@@ -254,26 +254,15 @@ fn decode_flags(value: u8) -> (bool, bool, bool) {
 }
 
 fn compute_ratio_bytes(target: u64, ratio_bps: u32) -> u64 {
-    let numerator = u128::from(target).saturating_mul(u128::from(ratio_bps));
-    let value = numerator / 10_000u128;
-    u64::try_from(value).unwrap_or(u64::MAX)
+    verified_core::prune::ratio_bytes(target, ratio_bps)
 }
 
 fn compute_high_water(target: u64, headroom_bps: u32) -> u64 {
-    if headroom_bps == 0 {
-        return target;
-    }
-    let half = headroom_bps / 2;
-    let ratio = 10_000u32.saturating_sub(half);
-    compute_ratio_bytes(target, ratio)
+    verified_core::prune::high_water(target, headroom_bps)
 }
 
 fn compute_low_water(target: u64, headroom_bps: u32) -> u64 {
-    if headroom_bps == 0 {
-        return target;
-    }
-    let ratio = 10_000u32.saturating_sub(headroom_bps);
-    compute_ratio_bytes(target, ratio)
+    verified_core::prune::low_water(target, headroom_bps)
 }
 
 #[cfg(test)]

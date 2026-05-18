@@ -1,0 +1,51 @@
+{
+  "target": "receipt_index_location_bidirectional",
+  "entry": {
+    "display_name": "receipt_index_location_bidirectional",
+    "function": "receipt_index_location_bidirectional",
+    "function_path": "receipt_index_location_bidirectional",
+    "file": "crates/verified-core/src/receipt_index.rs",
+    "target_id": "6de7b322c0489b139fbc6f46e0464c3c00f56f10d22203cab9d4b8027ae87353",
+    "slug": "receipt_index_location_bidirectional-7f362e2c",
+    "source_hash": "7f362e2c26ea1e9b56eda044aaac97c8e7ea546c2e33dee844350504411674bb",
+    "semantic_hash": "d553b2dd715ff607be716b4f3e729a79528c7d9b7f58393e9d3285a37e135dc0",
+    "created_at": "2026-05-16T08:14:43Z"
+  },
+  "signature": "pub fn receipt_index_location_bidirectional(input: ReceiptIndexObservation) -> bool",
+  "body": "{\n    (!input.tx_index_present\n        || (input.receipt_present && input.included_loc_present && input.index_matches_loc))\n        && (!input.receipt_present\n            || (input.tx_index_present && input.included_loc_present && input.receipt_matches_loc))\n        && (!input.included_loc_present\n            || (input.tx_index_present\n                && input.receipt_present\n                && input.index_matches_loc\n                && input.receipt_matches_loc\n                && input.loc_points_to_block_tx))\n}",
+  "span": {
+    "start_line": 17,
+    "end_line": 29
+  },
+  "git_commit": "2ff47cf9ec949b314adc26f94ad9e340cbda4cbb",
+  "worktree_dirty": false,
+  "source_hash": "7f362e2c26ea1e9b56eda044aaac97c8e7ea546c2e33dee844350504411674bb",
+  "semantic_hash": "65653aa7145cdbf01e5bba597b116f13697d9431c2ce49dcfd4b2965fe50b52e",
+  "dependency_hash_inputs": [
+    {
+      "kind": "use",
+      "name": "cfg",
+      "file": "crates/verified-core/src/receipt_index.rs",
+      "hash": "a5eb4157d5d32303032e3dc786e34f004ebe17f0ff1bb26f90ac9eb42478596c"
+    },
+    {
+      "kind": "type",
+      "name": "verus_keep_ghost",
+      "file": "crates/verified-core/src/receipt_index.rs",
+      "hash": "f6e4f76a88cbc3b52f9126079ef05773e08145ffa085cc02a89f5a447b7d30ab"
+    }
+  ],
+  "unresolved_dependencies": [],
+  "tool_version": "0.1.0",
+  "cfg": [],
+  "features": [],
+  "types": [],
+  "called_functions": [],
+  "callers": [],
+  "tests": [],
+  "panic_sites": [],
+  "overflow_sites": [],
+  "casts": [],
+  "division_sites": [],
+  "llm_context_files": []
+}

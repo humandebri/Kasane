@@ -1,0 +1,20 @@
+{
+  "preconditions": [
+    "true"
+  ],
+  "postconditions": [
+    "result == (next_present == false || (retain > 0 && head > retain && next_boundary <= head - retain && (previous_present == false || previous <= next_boundary)))"
+  ],
+  "acceptance_criteria": [
+    "A prune boundary is safe only when it is unset or moves monotonically to a block at or before head - retain, so retained blocks are not crossed."
+  ],
+  "test_evidence": [
+    {
+      "scenario_id": "prune_boundary_safe-nominal",
+      "command": "cargo test -p verified-core prune && cargo test -p ic-evm-core prune && cargo test -p ic-evm-gateway pruned && cargo test -p ic-evm-gateway get_receipt_returns",
+      "test_name": "verified-core prune safety plus evm-core prune and gateway pruned/retained query adapter tests",
+      "recorded_at": "2026-05-16T03:18:04Z"
+    }
+  ],
+  "risk_level": "medium"
+}

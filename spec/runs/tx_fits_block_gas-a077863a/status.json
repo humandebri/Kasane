@@ -1,0 +1,11 @@
+{
+  "target": "tx_fits_block_gas-a077863a",
+  "check_result": "fail",
+  "stale_reasons": [
+    "unresolved dependencies: saturating_sub"
+  ],
+  "drift_reasons": [
+    "unresolved dependencies"
+  ],
+  "dirty_paths": []
+}

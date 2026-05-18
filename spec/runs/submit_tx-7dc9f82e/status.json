@@ -1,0 +1,11 @@
+{
+  "target": "submit_tx-7dc9f82e",
+  "check_result": "fail",
+  "stale_reasons": [
+    "unresolved dependencies: Address::from, ChainError::InvariantViolation, StoredTxBytes::new_with_fees, TxId, TxLoc::queued, as_slice, clone, compute_effective_gas_price, crate::time::now_sec, decode_tx, get, hash::stored_tx_id, insert, is_none, is_some, len, map_err, ok_or, push, record_submission, set, to_string, try_address_to_bytes, with_state_mut"
+  ],
+  "drift_reasons": [
+    "unresolved dependencies"
+  ],
+  "dirty_paths": []
+}

@@ -1,0 +1,24 @@
+{
+  "target": "upgrade_core_observation_preserved_raw",
+  "target_id": "cef70d19cee8d3c0ae8a13b09d7968c6eed59c0990b926abe75dcb6794b56c10",
+  "slug": "upgrade_core_observation_preserved_raw-191130e4",
+  "git_commit": "2d344b0fd7f9384a0aa23cb9683b0a9c62aa9ef3",
+  "worktree_dirty": true,
+  "source_hash": "191130e4b8b76d4409ea2457fd792448803236c01a7acc1f282fcf3cb7df6b93",
+  "semantic_hash": "7dea973b8bd70f123edd509a26aea84e43cc7c3f136c1bebdfdb5883999d9489",
+  "tool_version": "0.1.0",
+  "scenarios": [
+    {
+      "id": "upgrade_core_observation_preserved_raw-nominal",
+      "kind": "example",
+      "executable": false,
+      "inputs": {},
+      "expected": {},
+      "review_status": "accepted",
+      "status_note": "covers upgrade observation preservation: head, pruned boundary, pending current, receipt, tx_index, and tx_loc must all compare equal after adapter restore",
+      "reviewed_by": "0xhude",
+      "reviewed_at": "2026-05-16T10:32:16Z",
+      "rationale": "`upgrade_core_observation_preserved_raw` のシナリオ候補:\n\n| ID | head | pruned | pending | receipt | tx_index | tx_loc | 期待値 | 目的 |\n|---|---:|---:|---:|---:|---:|---:|---|---|\n| S1 | 1 | 1 | 1 | 1 | 1 | 1 | `true` | 全観測保持 |\n| S2 | 0 | 1 | 1 | 1 | 1 | 1 | `false` | head 不一致 |\n| S3 | 1 | 0 | 1 | 1 | 1 | 1 | `false` | pruned boundary 不一致 |\n| S4 | 1 | 1 | 0 | 1 | 1 | 1 | `false` | pending 不一致 |\n| S5 | 1 | 1 | 1 | 0 | 1 | 1 | `false` | receipt 不一致 |\n| S6 | 1 | 1 | 1 | 1 | 0 | 1 | `false` | tx index 不一致 |\n| S7 | 1 | 1 | 1 | 1 | 1 | 0 | `false` | tx location 不一致 |\n| S8 | 2 | 1 | 1 | 1 | 1 | 1 | `false` | `1` 以外は非保持 |\n| S9 | 1 | 1 | 1 | 1 | 1 | `u64::MAX` | `false` | 最大値も非保持 |\n| S10 | 0 | 1 | 2 | 1 | 0 | 1 | `false` | 複数不一致 |\n\n性質候補:\n\n- 6入力がすべて `1` の場合のみ `true`\n- 任意の入力が `1` 以外なら `false`\n- `u64` 全域に追加 precondition なし"
+    }
+  ]
+}

@@ -1,0 +1,14 @@
+{
+  "target": "classify_nonce-3dada50d",
+  "check_result": "fail",
+  "stale_reasons": [],
+  "drift_reasons": [
+    {
+      "code": "accepted_md_json_mismatch"
+    },
+    {
+      "code": "contract_hash_mismatch"
+    }
+  ],
+  "dirty_paths": []
+}

@@ -1,0 +1,20 @@
+{
+  "preconditions": [
+    "true"
+  ],
+  "postconditions": [
+    "result == (previous_head < u64::MAX && committed_head == previous_head + 1 && (block_gas_limit == 0 || block_gas_used <= block_gas_limit) && included_count != 0 && included_count == staged_count && safe_included_count == included_count)"
+  ],
+  "acceptance_criteria": [
+    "A committed block is safe only when a nonterminal head advances by exactly one, block gas stays within limit unless the limit is disabled, and the included/staged/safe counts exactly match and are nonempty."
+  ],
+  "test_evidence": [
+    {
+      "scenario_id": "block_commit_safe_raw-nominal",
+      "command": "cargo test -p verified-core && cargo test -p ic-evm-core produce_block_selects_top_k_by_fee_then_submission_order && cargo test -p ic-evm-gateway gateway_submit_ic_tx_adapter_preserves_queue_and_receipt_invariants",
+      "test_name": "verified-core unit suite plus evm-core block commit and gateway head/receipt adapter tests",
+      "recorded_at": "2026-05-15T23:57:56Z"
+    }
+  ],
+  "risk_level": "medium"
+}

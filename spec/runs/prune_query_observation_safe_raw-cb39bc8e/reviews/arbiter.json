@@ -1,0 +1,14 @@
+{
+  "target": "prune_query_observation_safe_raw",
+  "target_id": "6b91ef4206965d0fe0fa2d249ccc8ff624c8db4a929b66743886993ba5ff61d8",
+  "slug": "prune_query_observation_safe_raw-cb39bc8e",
+  "git_commit": "e5653c859a82d960de279312d0d9447f85c3ab1f",
+  "worktree_dirty": false,
+  "source_hash": "f995e92b50e4742b6dad30a894153c55aa064e306118b40cfcf7e1bbd8f2c608",
+  "semantic_hash": "445d7982acc1963af76d4baf9875f22f0cc5103df8aceed986503da7aa4b5d62",
+  "tool_version": "0.1.0",
+  "blocking_issues": [],
+  "human_questions": [],
+  "auto_safe_edits": [],
+  "risk": "medium"
+}

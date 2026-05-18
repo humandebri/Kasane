@@ -1,0 +1,14 @@
+{
+  "target": "should_stop_execution",
+  "target_id": "bb5b677c76635020eb395881a17f57db79f6d5373325ffcbaaa7a20044ac695c",
+  "slug": "should_stop_execution-207b8917",
+  "git_commit": "703d7df1dcdc48c6f15be3733c6da4ec5c6a8dad",
+  "worktree_dirty": false,
+  "source_hash": "207b8917aba05a0e57fdbfa90be39c0e28e586fee3db5a9e1ba3ca68e4f6408e",
+  "semantic_hash": "3b26bd46cb29deee1b1b0351d0b169ada91df7214b1a471dafe653286e306225",
+  "tool_version": "0.1.0",
+  "blocking_issues": [],
+  "human_questions": [],
+  "auto_safe_edits": [],
+  "risk": "low"
+}

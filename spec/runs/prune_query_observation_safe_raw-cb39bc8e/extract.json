@@ -1,0 +1,45 @@
+{
+  "target": "prune_query_observation_safe_raw",
+  "entry": {
+    "display_name": "prune_query_observation_safe_raw",
+    "function": "prune_query_observation_safe_raw",
+    "function_path": "prune_query_observation_safe_raw",
+    "file": "crates/verified-core/src/prune_safety/query.rs",
+    "target_id": "6b91ef4206965d0fe0fa2d249ccc8ff624c8db4a929b66743886993ba5ff61d8",
+    "slug": "prune_query_observation_safe_raw-cb39bc8e",
+    "source_hash": "cb39bc8e5e80c0dd29cca53db2eaa3831fff7ff1a4ad55128e630b92a9f77c46",
+    "semantic_hash": "7b2f1421fe4aae248900bedb4dfba137ae67ff4b40bf58f3147b4e8b178d3db8",
+    "created_at": "2026-05-16T08:42:13Z"
+  },
+  "signature": "pub fn prune_query_observation_safe_raw(block_number: u64, pruned_through: u64, retained: u64, returned_ok: u64, returned_pruned: u64) -> bool",
+  "body": "{\n    retained <= 1\n        && returned_ok <= 1\n        && returned_pruned <= 1\n        && ((block_number <= pruned_through\n            && retained == 0\n            && returned_ok == 0\n            && returned_pruned == 1)\n            || (pruned_through < block_number && returned_pruned == 0 && retained == returned_ok))\n}",
+  "span": {
+    "start_line": 6,
+    "end_line": 11
+  },
+  "git_commit": "941d7c6db6f9248e26f936f0aa0a9463221ca9b0",
+  "worktree_dirty": false,
+  "source_hash": "c24d9434a4b229cde3c0785ac1a58044c6df44d268f930b35cc44f4a496a0a6f",
+  "semantic_hash": "25a63d2507154a759be4dfb3c2492a34de1e0369f05cd3518d822a93035808fc",
+  "dependency_hash_inputs": [
+    {
+      "kind": "use",
+      "name": "cfg",
+      "file": "crates/verified-core/src/prune_safety/query.rs",
+      "hash": "a5eb4157d5d32303032e3dc786e34f004ebe17f0ff1bb26f90ac9eb42478596c"
+    }
+  ],
+  "unresolved_dependencies": [],
+  "tool_version": "0.1.0",
+  "cfg": [],
+  "features": [],
+  "types": [],
+  "called_functions": [],
+  "callers": [],
+  "tests": [],
+  "panic_sites": [],
+  "overflow_sites": [],
+  "casts": [],
+  "division_sites": [],
+  "llm_context_files": []
+}

@@ -13,6 +13,8 @@ use evm_db::stable_state::{init_stable_state, with_state, with_state_mut};
 use evm_db::types::keys::make_account_key;
 use evm_db::types::values::AccountVal;
 
+mod common;
+
 const TEST_MAX_FEE_PER_GAS: u128 = 500_000_000_000;
 const TEST_MAX_PRIORITY_FEE_PER_GAS: u128 = 250_000_000_000;
 
@@ -51,6 +53,7 @@ fn produce_block_marks_decode_drop() {
     let loc = chain::get_tx_loc(&tx_id).expect("tx_loc");
     assert_eq!(loc.kind, TxLocKind::Dropped);
     assert_eq!(loc.drop_code, DROP_CODE_DECODE);
+    common::assert_dropped_tx_purged(tx_id, DROP_CODE_DECODE);
 
     with_state(|state| {
         assert!(state.tx_store.get(&tx_id).is_none());
@@ -82,6 +85,7 @@ fn produce_block_marks_missing_envelope() {
     let loc = chain::get_tx_loc(&tx_id).expect("tx_loc");
     assert_eq!(loc.kind, TxLocKind::Dropped);
     assert_eq!(loc.drop_code, DROP_CODE_MISSING);
+    common::assert_dropped_tx_purged(tx_id, DROP_CODE_MISSING);
 }
 
 #[test]
@@ -120,6 +124,7 @@ fn produce_block_marks_caller_missing() {
     let loc = chain::get_tx_loc(&tx_id).expect("tx_loc");
     assert_eq!(loc.kind, TxLocKind::Dropped);
     assert_eq!(loc.drop_code, DROP_CODE_CALLER_MISSING);
+    common::assert_dropped_tx_purged(tx_id, DROP_CODE_CALLER_MISSING);
 }
 
 #[test]
@@ -139,6 +144,7 @@ fn produce_block_marks_exec_drop() {
     let loc = chain::get_tx_loc(&tx_id).expect("tx_loc");
     assert_eq!(loc.kind, TxLocKind::Dropped);
     assert_eq!(loc.drop_code, DROP_CODE_EXEC_PRECHECK);
+    common::assert_dropped_tx_purged(tx_id, DROP_CODE_EXEC_PRECHECK);
 }
 
 #[test]
@@ -188,6 +194,7 @@ fn produce_block_marks_precheck_drop_without_nonce_bump() {
     let loc = chain::get_tx_loc(&tx_id).expect("tx_loc");
     assert_eq!(loc.kind, TxLocKind::Dropped);
     assert_eq!(loc.drop_code, DROP_CODE_EXEC_PRECHECK);
+    common::assert_dropped_tx_purged(tx_id, DROP_CODE_EXEC_PRECHECK);
     let nonce_after = chain::expected_nonce_for_sender_view(sender);
     assert_eq!(nonce_after, nonce_before);
 }
@@ -215,6 +222,7 @@ fn produce_block_drop_only_purges_queue() {
     let loc = chain::get_tx_loc(&tx_id).expect("tx_loc");
     assert_eq!(loc.kind, TxLocKind::Dropped);
     assert_eq!(loc.drop_code, DROP_CODE_MISSING);
+    common::assert_dropped_tx_purged(tx_id, DROP_CODE_MISSING);
 
     with_state(|state| {
         assert!(state.tx_store.get(&tx_id).is_none());
@@ -249,6 +257,7 @@ fn produce_block_marks_block_gas_exceeded_drop() {
     let loc = chain::get_tx_loc(&tx_id).expect("tx_loc");
     assert_eq!(loc.kind, TxLocKind::Dropped);
     assert_eq!(loc.drop_code, DROP_CODE_BLOCK_GAS_EXCEEDED);
+    common::assert_dropped_tx_purged(tx_id, DROP_CODE_BLOCK_GAS_EXCEEDED);
 }
 
 fn build_ic_tx_bytes_with_fee(max_fee: u128, max_priority: u128) -> Vec<u8> {

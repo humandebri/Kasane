@@ -1,0 +1,14 @@
+{
+  "target": "stable_tx_namespace_disjoint_raw",
+  "target_id": "b1e5caee760362712d3b2007eff2094559cd27a189e7e7bad8bb2be58173bcb0",
+  "slug": "stable_tx_namespace_disjoint_raw-edcca87a",
+  "git_commit": "655eb69df86c6f5467bc646f165eda8ed95d7fb9",
+  "worktree_dirty": true,
+  "source_hash": "edcca87a73f1fc2393350930c833bf1f61ca2674e1dc15a3abd75213aa841567",
+  "semantic_hash": "fa398a53c3b9462e36a27f99a9162cdadb5bf55083bd94388b596ab41735666c",
+  "tool_version": "0.1.0",
+  "blocking_issues": [],
+  "human_questions": [],
+  "auto_safe_edits": [],
+  "risk": "medium"
+}

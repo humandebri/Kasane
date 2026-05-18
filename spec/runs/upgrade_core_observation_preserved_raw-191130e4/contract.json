@@ -1,0 +1,20 @@
+{
+  "preconditions": [
+    "true"
+  ],
+  "postconditions": [
+    "result == (head_same == 1 && pruned_boundary_same == 1 && pending_same == 1 && receipt_same == 1 && tx_index_same == 1 && tx_loc_same == 1)"
+  ],
+  "acceptance_criteria": [
+    "Upgrade observation preservation: after adapter restore/reinitialization, head, pruned boundary, current pending mapping, receipt payload, tx_index payload, and tx_loc must all match their pre-upgrade observations; IC runtime persistence is a trust boundary."
+  ],
+  "test_evidence": [
+    {
+      "scenario_id": "upgrade_core_observation_preserved_raw-nominal",
+      "command": "cargo test -p verified-core --test upgrade_safety upgrade_observation && cargo test -p evm-db --test phase0_stable_state stable_state_reinit_preserves_core_upgrade_observations",
+      "test_name": "verified-core pure upgrade observation tests plus evm-db stable-state reinit adapter evidence",
+      "recorded_at": "2026-05-16T10:32:31Z"
+    }
+  ],
+  "risk_level": "medium"
+}

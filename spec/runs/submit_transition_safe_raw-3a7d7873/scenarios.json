@@ -1,0 +1,24 @@
+{
+  "target": "submit_transition_safe_raw",
+  "target_id": "729ffbba69632ada68d96ab374b811c1de70290bb90f98ed5b08640bff3b9836",
+  "slug": "submit_transition_safe_raw-3a7d7873",
+  "git_commit": "4aed4c6b20d169ba2d31ba9c585394470dc69edf",
+  "worktree_dirty": true,
+  "source_hash": "3a7d787348db3ccbe4c6f3378ac49f0d6c3a350b3f96ad2c9c9949fc6640a9e6",
+  "semantic_hash": "5a42d752fbfb9dbd515f43b51b2822024ca162427dfa173e19451af00a27605d",
+  "tool_version": "0.1.0",
+  "scenarios": [
+    {
+      "id": "submit_transition_safe_raw-nominal",
+      "kind": "example",
+      "executable": false,
+      "inputs": {},
+      "expected": {},
+      "review_status": "accepted",
+      "status_note": "pure submit transition safety accepts only nonce-accepted writes or strict replacement removal evidence",
+      "reviewed_by": "0xhude",
+      "reviewed_at": "2026-05-15T12:09:37Z",
+      "rationale": "前提: `SUBMIT_DECISION_ACCEPT != SUBMIT_DECISION_REPLACE`。`OTHER` は両者以外の `u8`。\n\n| id | decision_code | pending_slot_points_to_new | new_current_written | queued_loc_written | replacement_old_removed | expected |\n|---|---:|---:|---:|---:|---:|---:|\n| accept_ok | ACCEPT | true | true | true | false | true |\n| replace_ok | REPLACE | true | true | true | true | true |\n| accept_old_removed | ACCEPT | true | true | true | true | false |\n| replace_old_not_removed | REPLACE | true | true | true | false | false |\n| accept_pending_false | ACCEPT | false | true | true | false | false |\n| accept_current_false | ACCEPT | true | false | true | false | false |\n| accept_queued_false | ACCEPT | true | true | false | false | false |\n| replace_pending_false | REPLACE | false | true | true | true | false |\n| replace_current_false | REPLACE | true | false | true | true | false |\n| replace_queued_false | REPLACE | true | true | false | true | false |\n| other_accept_shape | OTHER | true | true | true | false | false |\n| other_replace_shape | OTHER | true | true | true | true | false |\n\n最小の重要観点:\n- `ACCEPT` は `replacement_old_removed == false` のみ成功\n- `REPLACE` は `replacement_old_removed == true` のみ成功\n- 共通必須条件は `pending_slot_points_to_new && new_current_written && queued_loc_written`\n- 未知の `decision_code` は、他条件が揃っても常に `false`"
+    }
+  ]
+}

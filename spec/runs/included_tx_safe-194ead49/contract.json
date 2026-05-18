@@ -1,0 +1,20 @@
+{
+  "preconditions": [
+    "true"
+  ],
+  "postconditions": [
+    "result == (facts.has_tx_index && facts.has_receipt && facts.receipt_tx_id_matches && facts.index_key_matches_tx_id && facts.loc_matches_position && facts.receipt_matches_position && facts.index_matches_position && facts.block_number > 0)"
+  ],
+  "acceptance_criteria": [
+    "included transaction is safe exactly when tx index, receipt, tx id binding, location, receipt position, index position, and nonzero block evidence all match"
+  ],
+  "test_evidence": [
+    {
+      "scenario_id": "included_tx_safe-nominal",
+      "command": "cargo test -p verified-core included_tx_requires_receipt_index_and_position_evidence && cargo test -p ic-evm-core produce_block_selects_top_k_by_fee_then_submission_order",
+      "test_name": "core_safety::tests::included_tx_requires_receipt_index_and_position_evidence; phase1_chain_behavior::produce_block_selects_top_k_by_fee_then_submission_order",
+      "recorded_at": "2026-05-15T11:49:35Z"
+    }
+  ],
+  "risk_level": "medium"
+}

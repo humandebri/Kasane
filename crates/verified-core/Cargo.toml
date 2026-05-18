@@ -1,0 +1,15 @@
+[package]
+name = "verified-core"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[lib]
+name = "verified_core"
+crate-type = ["rlib"]
+doctest = false
+
+[dependencies]
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(verus_keep_ghost)"] }

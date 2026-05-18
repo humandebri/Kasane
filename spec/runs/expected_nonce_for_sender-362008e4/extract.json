@@ -1,0 +1,86 @@
+{
+  "target": "expected_nonce_for_sender",
+  "entry": {
+    "display_name": "expected_nonce_for_sender",
+    "function": "expected_nonce_for_sender",
+    "function_path": "expected_nonce_for_sender",
+    "file": "crates/evm-core/src/tx_submit.rs",
+    "target_id": "02189271d08b1531fb47227eaa80bef843f56fffe42c448819bff3f9a4f565ee",
+    "slug": "expected_nonce_for_sender-362008e4",
+    "source_hash": "362008e41c59a774f2f73d619350a273a4464aaac8bdeeaab0d14fcb17c94550",
+    "semantic_hash": "51882e81863bf941c3d6bf5ca355ca0162d0139c6d311b4229b0964702644920",
+    "created_at": "2026-05-14T03:39:58Z"
+  },
+  "signature": "pub fn expected_nonce_for_sender(state: &mut StableState, sender: SenderKey) -> u64",
+  "body": "{\n    // gap不許可のため、submit時に期待nonceを固定し、実行/ドロップ時にのみ進める。\n    if let Some(value) = state.sender_expected_nonce.get(&sender) {\n        return value;\n    }\n    let nonce = account_nonce_from_state(state, sender);\n    state.sender_expected_nonce.insert(sender, nonce);\n    nonce\n}",
+  "span": {
+    "start_line": 16,
+    "end_line": 24
+  },
+  "git_commit": "703d7df1dcdc48c6f15be3733c6da4ec5c6a8dad",
+  "worktree_dirty": false,
+  "source_hash": "362008e41c59a774f2f73d619350a273a4464aaac8bdeeaab0d14fcb17c94550",
+  "semantic_hash": "51882e81863bf941c3d6bf5ca355ca0162d0139c6d311b4229b0964702644920",
+  "dependency_hash_inputs": [
+    {
+      "kind": "use",
+      "name": "use",
+      "file": "crates/evm-core/src/tx_submit.rs",
+      "hash": "782e0be8b36f23434e16dba2953deb4d7cc618752ae87bef65553ed9404ddda2"
+    },
+    {
+      "kind": "use",
+      "name": "use",
+      "file": "crates/evm-core/src/tx_submit.rs",
+      "hash": "218240656942d68436dfb87dda6b66f62b9ff616fd49a90a9dc94cbf26f945e6"
+    },
+    {
+      "kind": "use",
+      "name": "use",
+      "file": "crates/evm-core/src/tx_submit.rs",
+      "hash": "3c5e7dc016f64471c24ddee8bf80bea9b1dfaa3a79893d16b64c451ec64324ff"
+    },
+    {
+      "kind": "use",
+      "name": "use",
+      "file": "crates/evm-core/src/tx_submit.rs",
+      "hash": "8426e77a2fdaccfe404aa6571b5b0c8721aaaf89f8d6f4170105232f193d83ca"
+    },
+    {
+      "kind": "use",
+      "name": "use",
+      "file": "crates/evm-core/src/tx_submit.rs",
+      "hash": "79a1138cead027bf04ecbbff3ea784d893479810489c3cfad6e4b5f4b7e1e080"
+    },
+    {
+      "kind": "function",
+      "name": "account_nonce_from_state",
+      "file": "crates/evm-core/src/tx_submit.rs",
+      "hash": "713f5c8de8623bd20e337b01f2f4c9bf81af34c64c0a3f1945de7681c5ce7d0a"
+    }
+  ],
+  "unresolved_dependencies": [
+    "get",
+    "insert"
+  ],
+  "tool_version": "0.1.0",
+  "cfg": [],
+  "features": [],
+  "types": [],
+  "called_functions": [
+    "account_nonce_from_state",
+    "get",
+    "insert"
+  ],
+  "callers": [],
+  "tests": [],
+  "panic_sites": [
+    "expect"
+  ],
+  "overflow_sites": [],
+  "casts": [],
+  "division_sites": [
+    "/"
+  ],
+  "llm_context_files": []
+}

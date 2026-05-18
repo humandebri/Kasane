@@ -1,0 +1,14 @@
+{
+  "target": "prune_partial_progress_safe_raw",
+  "target_id": "46ffe8cfd2154bfbb251e536fd928bbeb0e87b0037486491a90d763237de0787",
+  "slug": "prune_partial_progress_safe_raw-7591aae9",
+  "git_commit": "e352489ad3eea17d8af4d095ff0a9b33803abc51",
+  "worktree_dirty": true,
+  "source_hash": "c6ab22f8e8e9f187fcdd99485ae56548b5945a0a6daaf6a8f0c86fb907b4951c",
+  "semantic_hash": "ced03b5267e4b198fbe6bc0ac83caaed2b77abbb4c68bace0d109aff3f435aa0",
+  "tool_version": "0.1.0",
+  "blocking_issues": [],
+  "human_questions": [],
+  "auto_safe_edits": [],
+  "risk": "medium"
+}

@@ -2,7 +2,7 @@
 
 use evm_core::chain::{self, TxIn};
 use evm_core::hash;
-use evm_db::chain_data::constants::DROP_CODE_DECODE;
+use evm_db::chain_data::constants::{DROP_CODE_CALLER_MISSING, DROP_CODE_DECODE};
 use evm_db::chain_data::{
     CallerKey, ReadyKey, ReadySeqKey, SenderNonceKey, StoredTxBytes, TxId, TxKind, TxLocKind,
 };
@@ -84,6 +84,7 @@ fn principal_pending_and_fee_indexes_track_lifecycle() {
 
     let outcome = chain::produce_block(1).expect("produce");
     assert_eq!(outcome.block.tx_ids.len(), 1);
+    common::assert_block_persist_invariants(outcome.block.number, &outcome.block.tx_ids);
     with_state(|state| {
         let key = CallerKey::from_principal_bytes(&principal);
         assert_eq!(state.principal_pending_count.get(&key), None);
@@ -117,6 +118,7 @@ fn rebuild_runtime_indexes_recovers_from_empty_indexes() {
     });
 
     chain::rebuild_pending_runtime_indexes();
+    common::assert_runtime_indexes_match_pending();
 
     with_state(|state| {
         let pending_len = state.pending_by_sender_nonce.len();
@@ -148,6 +150,7 @@ fn rebuild_fee_index_keeps_entries_even_when_unaffordable() {
     });
 
     chain::rebuild_pending_runtime_indexes();
+    common::assert_runtime_indexes_match_pending();
 
     with_state(|state| {
         let pending_len = state.pending_by_sender_nonce.len();
@@ -200,6 +203,8 @@ fn produce_block_outcome_reports_dropped_count() {
     let outcome = chain::produce_block(2).expect("produce");
     assert_eq!(outcome.block.tx_ids, vec![good_id]);
     assert_eq!(outcome.dropped, 1);
+    common::assert_block_persist_invariants(outcome.block.number, &outcome.block.tx_ids);
+    common::assert_dropped_tx_purged(bad_id, DROP_CODE_CALLER_MISSING);
 }
 
 #[test]
@@ -248,6 +253,7 @@ fn rebuild_runtime_indexes_drops_decode_broken_pending_entries() {
     });
 
     chain::rebuild_pending_runtime_indexes();
+    common::assert_runtime_indexes_match_pending();
 
     with_state(|state| {
         assert!(state.tx_store.get(&bad_id).is_none());
@@ -268,4 +274,68 @@ fn rebuild_runtime_indexes_drops_decode_broken_pending_entries() {
             decode_before.saturating_add(1)
         );
     });
+}
+
+#[test]
+fn rebuild_eth_tx_hash_index_matches_tx_store() {
+    init_stable_state();
+    let raw_a = vec![0x01, 0x02, 0x03];
+    let raw_b = vec![0x04, 0x05, 0x06];
+    let tx_a = TxId(hash::stored_tx_id(
+        TxKind::EthSigned,
+        &raw_a,
+        None,
+        None,
+        None,
+    ));
+    let tx_b = TxId(hash::stored_tx_id(
+        TxKind::EthSigned,
+        &raw_b,
+        None,
+        None,
+        None,
+    ));
+    with_state_mut(|state| {
+        state.tx_store.insert(
+            tx_a,
+            StoredTxBytes::new_with_fees(
+                tx_a,
+                TxKind::EthSigned,
+                raw_a,
+                None,
+                Vec::new(),
+                Vec::new(),
+                1,
+                0,
+                false,
+            ),
+        );
+        state.tx_store.insert(
+            tx_b,
+            StoredTxBytes::new_with_fees(
+                tx_b,
+                TxKind::EthSigned,
+                raw_b,
+                None,
+                Vec::new(),
+                Vec::new(),
+                1,
+                0,
+                false,
+            ),
+        );
+        clear_map(&mut state.eth_tx_hash_index);
+    });
+
+    let (cursor, rebuilt, done) = chain::rebuild_eth_tx_hash_index_batch(None, 1);
+    assert_eq!(rebuilt, 1);
+    assert!(!done);
+    let (_, rebuilt, done) = chain::rebuild_eth_tx_hash_index_batch(cursor, 4);
+    assert_eq!(rebuilt, 1);
+    assert!(done);
+
+    let (ok, indexed, expected) = chain::verify_eth_tx_hash_index(16);
+    assert!(ok, "indexed={indexed} expected={expected}");
+    assert_eq!(indexed, 2);
+    assert_eq!(expected, 2);
 }

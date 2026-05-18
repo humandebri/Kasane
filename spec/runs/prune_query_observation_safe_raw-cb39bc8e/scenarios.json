@@ -1,0 +1,24 @@
+{
+  "target": "prune_query_observation_safe_raw",
+  "target_id": "6b91ef4206965d0fe0fa2d249ccc8ff624c8db4a929b66743886993ba5ff61d8",
+  "slug": "prune_query_observation_safe_raw-cb39bc8e",
+  "git_commit": "e5653c859a82d960de279312d0d9447f85c3ab1f",
+  "worktree_dirty": false,
+  "source_hash": "f995e92b50e4742b6dad30a894153c55aa064e306118b40cfcf7e1bbd8f2c608",
+  "semantic_hash": "445d7982acc1963af76d4baf9875f22f0cc5103df8aceed986503da7aa4b5d62",
+  "tool_version": "0.1.0",
+  "scenarios": [
+    {
+      "id": "prune_query_observation_safe_raw-nominal",
+      "kind": "example",
+      "executable": false,
+      "inputs": {},
+      "expected": {},
+      "review_status": "accepted",
+      "status_note": "covers active inclusive prune boundary completeness with parser-safe branch predicate: pruned-through blocks return Pruned and never Ok; retained non-pruned observations return Ok; non-pruned missing observations may return no Ok/Pruned",
+      "reviewed_by": "0xhude",
+      "reviewed_at": "2026-05-16T09:36:00Z",
+      "rationale": "候補:\n\n| name | block_number | pruned_through | retained | returned_ok | returned_pruned | expected |\n|---|---:|---:|---:|---:|---:|---|\n| pruned_equal_boundary | 10 | 10 | 0 | 0 | 1 | true |\n| pruned_below_boundary | 9 | 10 | 0 | 0 | 1 | true |\n| not_pruned_empty_retention | 11 | 10 | 0 | 0 | 0 | true |\n| not_pruned_retained_one | 11 | 10 | 1 | 1 | 0 | true |\n| zero_pruned_boundary | 0 | 0 | 0 | 0 | 1 | true |\n| max_not_pruned_boundary | u64::MAX | u64::MAX - 1 | 1 | 1 | 0 | true |\n\n負例候補:\n\n| name | block_number | pruned_through | retained | returned_ok | returned_pruned | expected |\n|---|---:|---:|---:|---:|---:|---|\n| pruned_but_returned_ok | 10 | 10 | 0 | 1 | 0 | false |\n| pruned_but_retained | 10 | 10 | 1 | 0 | 1 | false |\n| pruned_but_not_reported_pruned | 10 | 10 | 0 | 0 | 0 | false |\n| not_pruned_but_returned_pruned | 11 | 10 | 1 | 0 | 1 | false |\n| not_pruned_mismatch_retained_ok | 11 | 10 | 1 | 0 | 0 | false |\n| retained_exceeds_limit | 11 | 10 | 2 | 1 | 0 | false |\n| returned_ok_exceeds_limit | 11 | 10 | 1 | 2 | 0 | false |\n| returned_pruned_exceeds_limit | 10 | 10 | 0 | 0 | 2 | false |"
+    }
+  ]
+}

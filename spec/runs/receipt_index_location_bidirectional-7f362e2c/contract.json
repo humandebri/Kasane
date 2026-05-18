@@ -1,0 +1,20 @@
+{
+  "preconditions": [
+    "true"
+  ],
+  "postconditions": [
+    "result == ((!input.tx_index_present || (input.receipt_present && input.included_loc_present && input.index_matches_loc)) && (!input.receipt_present || (input.tx_index_present && input.included_loc_present && input.receipt_matches_loc)) && (!input.included_loc_present || (input.tx_index_present && input.receipt_present && input.index_matches_loc && input.receipt_matches_loc && input.loc_points_to_block_tx)))"
+  ],
+  "acceptance_criteria": [
+    "For an included tx, tx_index implies receipt and included location, receipt implies tx_index and included location, and included location implies tx_index, receipt, matching positions, and the block slot containing the same tx."
+  ],
+  "test_evidence": [
+    {
+      "scenario_id": "receipt_index_location_bidirectional-nominal",
+      "command": "cargo test -p verified-core --test p0_safety && cargo test -p ic-evm-gateway gateway_submit_ic_tx_adapter_preserves_queue_and_receipt_invariants && cargo test -p ic-evm-gateway replacement_old_tx_is_not_staged_or_included",
+      "test_name": "verified-core bidirectional pure tests plus gateway receipt/index/location adapter evidence",
+      "recorded_at": "2026-05-16T08:21:03Z"
+    }
+  ],
+  "risk_level": "medium"
+}

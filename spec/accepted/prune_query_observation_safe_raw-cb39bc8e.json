@@ -1,0 +1,48 @@
+{
+  "target": "prune_query_observation_safe_raw",
+  "target_id": "6b91ef4206965d0fe0fa2d249ccc8ff624c8db4a929b66743886993ba5ff61d8",
+  "slug": "prune_query_observation_safe_raw-cb39bc8e",
+  "file": "crates/verified-core/src/prune_safety/query.rs",
+  "function": "prune_query_observation_safe_raw",
+  "git_commit": "941d7c6db6f9248e26f936f0aa0a9463221ca9b0",
+  "worktree_dirty": false,
+  "source_hash": "c24d9434a4b229cde3c0785ac1a58044c6df44d268f930b35cc44f4a496a0a6f",
+  "semantic_hash": "25a63d2507154a759be4dfb3c2492a34de1e0369f05cd3518d822a93035808fc",
+  "dependency_hash_inputs": [
+    {
+      "kind": "use",
+      "name": "cfg",
+      "file": "crates/verified-core/src/prune_safety/query.rs",
+      "hash": "a5eb4157d5d32303032e3dc786e34f004ebe17f0ff1bb26f90ac9eb42478596c"
+    }
+  ],
+  "unresolved_dependencies": [],
+  "spec_source_of_truth": "accepted_json",
+  "tool_version": "0.1.0",
+  "preconditions": [
+    "true"
+  ],
+  "postconditions": [
+    "result == (retained <= 1 && returned_ok <= 1 && returned_pruned <= 1 && ((block_number <= pruned_through && retained == 0 && returned_ok == 0 && returned_pruned == 1) || (pruned_through < block_number && returned_pruned == 0 && retained == returned_ok)))"
+  ],
+  "acceptance_criteria": [
+    "Active pruning query observation safety: canonical query flags only; a block at or below the inclusive pruned-through boundary must return Pruned and never Ok; above the boundary, Pruned is not returned and retained observations are exactly Ok observations."
+  ],
+  "test_evidence": [
+    {
+      "scenario_id": "prune_query_observation_safe_raw-nominal",
+      "command": "cargo test -p verified-core --test prune_safety prune_query_observation && cargo test -p ic-evm-gateway get_block_returns_pruned_for_pruned_boundary && cargo test -p ic-evm-gateway get_block_returns_ok_when_prune_boundary_is_absent && cargo test -p ic-evm-gateway get_block_returns_ok_for_retained_block && cargo test -p ic-evm-gateway get_receipt_returns_pruned_when_location_is_before_boundary && cargo test -p ic-evm-gateway get_receipt_returns_ok_for_retained_receipt",
+      "test_name": "verified-core pruning query pure tests plus gateway pruned/retained/absent-boundary block and receipt adapter evidence",
+      "recorded_at": "2026-05-16T08:58:14Z"
+    }
+  ],
+  "risk_level": "medium",
+  "verified_subject": "implementation",
+  "contract_hash": "c0cb83ae04627e437d3f197528eb0ccf29fbcef6d7aa84a5e0d9761383b2e15e",
+  "applied_contract_hash": "",
+  "applied_at": "",
+  "panic_behavior": "documented",
+  "overflow_behavior": "documented",
+  "rejected_behaviors": [],
+  "open_assumptions": []
+}

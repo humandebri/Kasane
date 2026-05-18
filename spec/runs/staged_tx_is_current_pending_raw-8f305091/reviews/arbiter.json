@@ -1,0 +1,14 @@
+{
+  "target": "staged_tx_is_current_pending_raw",
+  "target_id": "b11a174ada55a5da874578cd663871c2ff89a9e016f96f35a5ada71fdc9d339f",
+  "slug": "staged_tx_is_current_pending_raw-8f305091",
+  "git_commit": "8e028b2221e63e1f6bdb4260bfa80a5f3d4598ee",
+  "worktree_dirty": false,
+  "source_hash": "8f3050911d0e6e3e05e12e96739a545c70d0c0c8a35e7098ea55c3984a12602c",
+  "semantic_hash": "01e3253152d39ab3884ccbcaae345bfb0276e2f35d25346253301e0ba55ddc6d",
+  "tool_version": "0.1.0",
+  "blocking_issues": [],
+  "human_questions": [],
+  "auto_safe_edits": [],
+  "risk": "medium"
+}

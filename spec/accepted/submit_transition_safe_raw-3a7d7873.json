@@ -1,0 +1,48 @@
+{
+  "target": "submit_transition_safe_raw",
+  "target_id": "729ffbba69632ada68d96ab374b811c1de70290bb90f98ed5b08640bff3b9836",
+  "slug": "submit_transition_safe_raw-3a7d7873",
+  "file": "crates/verified-core/src/core_safety.rs",
+  "function": "submit_transition_safe_raw",
+  "git_commit": "9ae50545b2a91cdfaa427257878285a48b68def2",
+  "worktree_dirty": false,
+  "source_hash": "f33ec03567056f009ca2830b7177a4a05ad239fda1282759197ba453c7b032f5",
+  "semantic_hash": "f34426b568d33ff13bc336522e701b290b4ea18729ae9479ee086f1936716c24",
+  "dependency_hash_inputs": [
+    {
+      "kind": "use",
+      "name": "cfg",
+      "file": "crates/verified-core/src/core_safety.rs",
+      "hash": "a5eb4157d5d32303032e3dc786e34f004ebe17f0ff1bb26f90ac9eb42478596c"
+    }
+  ],
+  "unresolved_dependencies": [],
+  "spec_source_of_truth": "accepted_json",
+  "tool_version": "0.1.0",
+  "preconditions": [
+    "true"
+  ],
+  "postconditions": [
+    "result == ((decision_code == SUBMIT_DECISION_ACCEPT && pending_slot_points_to_new == 1 && new_current_written == 1 && queued_loc_written == 1 && replacement_old_removed == 0) || (decision_code == SUBMIT_DECISION_REPLACE && pending_slot_points_to_new == 1 && new_current_written == 1 && queued_loc_written == 1 && replacement_old_removed == 1))"
+  ],
+  "acceptance_criteria": [
+    "Accept transitions require 1-valued new current pending and queued location evidence and 0-valued old tx removal; Replace transitions require the same write evidence plus 1-valued old tx removal evidence; low, gap, and conflict decisions are rejected by adapter output."
+  ],
+  "test_evidence": [
+    {
+      "scenario_id": "submit_transition_safe_raw-nominal",
+      "command": "cargo test -p verified-core && cargo test -p ic-evm-core replacement_requires_higher_effective_fee && cargo test -p ic-evm-gateway gateway_submit_ic_tx_adapter_preserves_queue_and_receipt_invariants",
+      "test_name": "verified-core unit suite plus evm-core replacement and gateway submit/receipt adapter tests",
+      "recorded_at": "2026-05-15T23:57:55Z"
+    }
+  ],
+  "risk_level": "medium",
+  "verified_subject": "implementation",
+  "contract_hash": "1b3bcc22b4af011df2aea133b3c9c57ba87f48ff492fa94ebf6df1cc3bfd5b40",
+  "applied_contract_hash": "1b3bcc22b4af011df2aea133b3c9c57ba87f48ff492fa94ebf6df1cc3bfd5b40",
+  "applied_at": "2026-05-15T23:58:10Z",
+  "panic_behavior": "documented",
+  "overflow_behavior": "documented",
+  "rejected_behaviors": [],
+  "open_assumptions": []
+}

@@ -1,0 +1,24 @@
+{
+  "target": "prune_boundary_safe",
+  "target_id": "0910550eed2560103dfbdb04091f17cf39c9e5972ce36578b8eb08ba095e5e0e",
+  "slug": "prune_boundary_safe-77bde266",
+  "git_commit": "18e8ee8e7baf1cee11784c88c37c0ffc190b418a",
+  "worktree_dirty": false,
+  "source_hash": "77bde2669656453e5bf1ca19273a79287ec5f39c84ba1b3fbae22f182129a75a",
+  "semantic_hash": "5c9a4a620ffa373b8f9e9788b515284f4d6537295c9dc43d1f04232aada60702",
+  "tool_version": "0.1.0",
+  "scenarios": [
+    {
+      "id": "prune_boundary_safe-nominal",
+      "kind": "example",
+      "executable": false,
+      "inputs": {},
+      "expected": {},
+      "review_status": "accepted",
+      "status_note": "Boundary cases cover unset boundary, monotonic advance, backward movement rejection, disabled pruning rejection, and retained range rejection.",
+      "reviewed_by": "0xhude",
+      "reviewed_at": "2026-05-16T03:17:35Z",
+      "rationale": "分岐網羅＋境界候補:\n\n| id | previous_present | previous | next_present | next_boundary | head | retain | expected | 狙い |\n|---|---:|---:|---:|---:|---:|---:|---:|---|\n| S1 | false | 0 | false | 0 | 0 | 0 | true | `!next_present` は常に true |\n| S2 | true | 999 | false | 999 | 1 | 1 | true | `next_present=false` が他条件を上書き |\n| S3 | false | 0 | true | 0 | 10 | 0 | false | `retain == 0` |\n| S4 | false | 0 | true | 0 | 5 | 10 | false | `head < retain` |\n| S5 | false | 0 | true | 0 | 10 | 10 | false | `head == retain` |\n| S6 | false | 0 | true | 8 | 10 | 3 | false | `next_boundary > head - retain` |\n| S7 | false | 999 | true | 7 | 10 | 3 | true | 境界一致 `next_boundary == head - retain`、previousなし |\n| S8 | false | 999 | true | 6 | 10 | 3 | true | prune対象範囲内、previousなし |\n| S9 | true | 6 | true | 7 | 10 | 3 | true | `previous <= next_boundary` |\n| S10 | true | 7 | true | 7 | 10 | 3 | true | previous境界一致 |\n| S11 | true | 8 | true | 7 | 10 | 3 | false | `previous > next_boundary` |\n| S12 | true | u64::MAX | true | u64::MAX - 1 | u64::MAX | 1 | false | 最大値近傍、previous超過 |\n\n最小セットなら `S1, S3, S5, S6, S7, S9, S11` で主要分岐は押さえられる。"
+    }
+  ]
+}

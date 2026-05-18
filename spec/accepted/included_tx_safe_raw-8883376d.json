@@ -1,0 +1,48 @@
+{
+  "target": "included_tx_safe_raw",
+  "target_id": "224c160e61755ee6272563ea6dab57a1fa0c100d4d673b442182059bedf4d3ae",
+  "slug": "included_tx_safe_raw-8883376d",
+  "file": "crates/verified-core/src/core_safety_included.rs",
+  "function": "included_tx_safe_raw",
+  "git_commit": "9ae50545b2a91cdfaa427257878285a48b68def2",
+  "worktree_dirty": false,
+  "source_hash": "7584af7de23ac12ec45cc49852b04b44dd46c13053cf3440d4abd28160c26be4",
+  "semantic_hash": "2f06f09b8a089ea16a1cfb4f51f4161d3f27ec82af6c6a96eb976d49ec7417b4",
+  "dependency_hash_inputs": [
+    {
+      "kind": "use",
+      "name": "cfg",
+      "file": "crates/verified-core/src/core_safety_included.rs",
+      "hash": "a5eb4157d5d32303032e3dc786e34f004ebe17f0ff1bb26f90ac9eb42478596c"
+    }
+  ],
+  "unresolved_dependencies": [],
+  "spec_source_of_truth": "accepted_json",
+  "tool_version": "0.1.0",
+  "preconditions": [
+    "true"
+  ],
+  "postconditions": [
+    "result == (has_tx_index == 1 && has_receipt == 1 && receipt_tx_id_matches == 1 && index_key_matches_tx_id == 1 && loc_matches_position == 1 && receipt_matches_position == 1 && index_matches_position == 1 && block_number > 0)"
+  ],
+  "acceptance_criteria": [
+    "An included transaction is safe only when tx index, receipt, tx id, location, receipt position, and index position evidence are all 1-valued and the block number is nonzero."
+  ],
+  "test_evidence": [
+    {
+      "scenario_id": "included_tx_safe_raw-nominal",
+      "command": "cargo test -p verified-core && cargo test -p ic-evm-core produce_block_selects_top_k_by_fee_then_submission_order && cargo test -p ic-evm-gateway gateway_submit_ic_tx_adapter_preserves_queue_and_receipt_invariants",
+      "test_name": "verified-core unit suite plus evm-core block production and gateway receipt adapter tests",
+      "recorded_at": "2026-05-15T23:57:56Z"
+    }
+  ],
+  "risk_level": "medium",
+  "verified_subject": "implementation",
+  "contract_hash": "bb83f6a6256a26696727c069a8fdbfcf70d178a85c4e4bac1bfa5dfc36fc9311",
+  "applied_contract_hash": "bb83f6a6256a26696727c069a8fdbfcf70d178a85c4e4bac1bfa5dfc36fc9311",
+  "applied_at": "2026-05-15T23:58:14Z",
+  "panic_behavior": "documented",
+  "overflow_behavior": "documented",
+  "rejected_behaviors": [],
+  "open_assumptions": []
+}

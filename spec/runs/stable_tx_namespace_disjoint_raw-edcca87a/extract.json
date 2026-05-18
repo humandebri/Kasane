@@ -1,0 +1,45 @@
+{
+  "target": "stable_tx_namespace_disjoint_raw",
+  "entry": {
+    "display_name": "stable_tx_namespace_disjoint_raw",
+    "function": "stable_tx_namespace_disjoint_raw",
+    "function_path": "stable_tx_namespace_disjoint_raw",
+    "file": "crates/verified-core/src/stable_namespace.rs",
+    "target_id": "b1e5caee760362712d3b2007eff2094559cd27a189e7e7bad8bb2be58173bcb0",
+    "slug": "stable_tx_namespace_disjoint_raw-edcca87a",
+    "source_hash": "edcca87a73f1fc2393350930c833bf1f61ca2674e1dc15a3abd75213aa841567",
+    "semantic_hash": "fa398a53c3b9462e36a27f99a9162cdadb5bf55083bd94388b596ab41735666c",
+    "created_at": "2026-05-16T10:21:27Z"
+  },
+  "signature": "pub fn stable_tx_namespace_disjoint_raw(seen_tx: u64, tx_store: u64, tx_index: u64, receipts: u64, tx_locs: u64, tx_locs_v3: u64, internal_traces: u64) -> bool",
+  "body": "{\n    seen_tx < tx_store\n        && tx_store < tx_index\n        && tx_index < receipts\n        && receipts < tx_locs\n        && tx_locs < tx_locs_v3\n        && tx_locs_v3 < internal_traces\n}",
+  "span": {
+    "start_line": 6,
+    "end_line": 11
+  },
+  "git_commit": "1cc13bedca3ffcf62f8b075a82bb1f73641ec010",
+  "worktree_dirty": false,
+  "source_hash": "edcca87a73f1fc2393350930c833bf1f61ca2674e1dc15a3abd75213aa841567",
+  "semantic_hash": "fa398a53c3b9462e36a27f99a9162cdadb5bf55083bd94388b596ab41735666c",
+  "dependency_hash_inputs": [
+    {
+      "kind": "use",
+      "name": "cfg",
+      "file": "crates/verified-core/src/stable_namespace.rs",
+      "hash": "a5eb4157d5d32303032e3dc786e34f004ebe17f0ff1bb26f90ac9eb42478596c"
+    }
+  ],
+  "unresolved_dependencies": [],
+  "tool_version": "0.1.0",
+  "cfg": [],
+  "features": [],
+  "types": [],
+  "called_functions": [],
+  "callers": [],
+  "tests": [],
+  "panic_sites": [],
+  "overflow_sites": [],
+  "casts": [],
+  "division_sites": [],
+  "llm_context_files": []
+}

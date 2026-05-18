@@ -53,7 +53,7 @@ scripts/measure_precompile_ratio.sh
 ### 事前確認・品質ゲート
 - `scripts/ci-local.sh`: `CI_LOCAL_MODE=<mode>` で `github|smoke|all` の3モードを切り替える
 - `scripts/ci_github_equivalent.sh`: `.github/workflows/ci.yml` と `scripts/ci-local.sh` が共有する GitHub 相当チェックの単一ソース
-  - Rust の標準品質ゲートとして `cargo fmt --all -- --check` と `cargo clippy --workspace --all-targets --all-features -- -D warnings` を含む
+  - Rust の標準品質ゲートとして、specgen 管理の Verus contract target を除く workspace Rust file の `rustfmt --check` と、specgen evidence 多引数関数向けに `too_many_arguments` だけ例外化した clippy を含む
 - `scripts/check_gateway_api_compat_baseline.sh`: Gateway API compatibility baseline の破壊変更を検知（`--update` でベースライン更新）
 - `scripts/check_gateway_matrix_sync.sh`: `tools/rpc-gateway/README.md` の互換マトリクス行が `tools/rpc-gateway/package.json` のバージョン系列と一致するか検証
 - `scripts/check_precompile_feature_isolation.sh`: `ic-evm-core` の既定 wasm build に BLS/KZG backend crate（`ark-bls12-381`, `c-kzg`, `blst`）が流入していないか検証

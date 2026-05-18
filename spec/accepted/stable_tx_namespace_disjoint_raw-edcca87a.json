@@ -1,0 +1,48 @@
+{
+  "target": "stable_tx_namespace_disjoint_raw",
+  "target_id": "b1e5caee760362712d3b2007eff2094559cd27a189e7e7bad8bb2be58173bcb0",
+  "slug": "stable_tx_namespace_disjoint_raw-edcca87a",
+  "file": "crates/verified-core/src/stable_namespace.rs",
+  "function": "stable_tx_namespace_disjoint_raw",
+  "git_commit": "bdc412ff69ea98e3aa777a1b90e9f9c9d4b4fc64",
+  "worktree_dirty": false,
+  "source_hash": "edcca87a73f1fc2393350930c833bf1f61ca2674e1dc15a3abd75213aa841567",
+  "semantic_hash": "fa398a53c3b9462e36a27f99a9162cdadb5bf55083bd94388b596ab41735666c",
+  "dependency_hash_inputs": [
+    {
+      "kind": "use",
+      "name": "cfg",
+      "file": "crates/verified-core/src/stable_namespace.rs",
+      "hash": "a5eb4157d5d32303032e3dc786e34f004ebe17f0ff1bb26f90ac9eb42478596c"
+    }
+  ],
+  "unresolved_dependencies": [],
+  "spec_source_of_truth": "accepted_json",
+  "tool_version": "0.1.0",
+  "preconditions": [
+    "true"
+  ],
+  "postconditions": [
+    "result == (seen_tx < tx_store && tx_store < tx_index && tx_index < receipts && receipts < tx_locs && tx_locs < tx_locs_v3 && tx_locs_v3 < internal_traces)"
+  ],
+  "acceptance_criteria": [
+    "Stable tx namespace safety: tx-related StableBTreeMap memory ids are in strict ascending order, which is sufficient evidence that seen_tx, tx_store, tx_index, receipts, tx_locs, tx_locs_v3, and internal_traces cannot share the same stable memory namespace."
+  ],
+  "test_evidence": [
+    {
+      "scenario_id": "stable_tx_namespace_disjoint_raw-nominal",
+      "command": "cargo test -p verified-core --test prune_safety stable_tx_namespace && cargo test -p evm-db --test chain_data_memory_layout tx_related_memory_ids_are_disjoint",
+      "test_name": "verified-core pure namespace tests plus evm-db AppMemoryId adapter evidence",
+      "recorded_at": "2026-05-16T10:25:03Z"
+    }
+  ],
+  "risk_level": "medium",
+  "verified_subject": "implementation",
+  "contract_hash": "a2cac3332aac62f5ed0418cb3b3c4dbe54a8df812f021f900e764db13d0dc8a6",
+  "applied_contract_hash": "a2cac3332aac62f5ed0418cb3b3c4dbe54a8df812f021f900e764db13d0dc8a6",
+  "applied_at": "2026-05-16T10:25:38Z",
+  "panic_behavior": "documented",
+  "overflow_behavior": "documented",
+  "rejected_behaviors": [],
+  "open_assumptions": []
+}

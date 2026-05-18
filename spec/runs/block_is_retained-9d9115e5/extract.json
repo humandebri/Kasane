@@ -1,0 +1,47 @@
+{
+  "target": "block_is_retained",
+  "entry": {
+    "display_name": "block_is_retained",
+    "function": "block_is_retained",
+    "function_path": "block_is_retained",
+    "file": "crates/verified-core/src/prune_safety/block_retained.rs",
+    "target_id": "dacedafac12dccb1b861f00170efa9bc84ed1a6f42cce3e96f7b1a2e20e5477d",
+    "slug": "block_is_retained-9d9115e5",
+    "source_hash": "9d9115e5f68e8345ecdf9b116dc5efd5cb5860d1fcf943769e0eb6de9e55bbcd",
+    "semantic_hash": "e4af40e6fe1aa259aaabaaa386b6780157b0e07a3d8ec08a9c1babe2055bad9f",
+    "created_at": "2026-05-16T03:30:32Z"
+  },
+  "signature": "pub fn block_is_retained(head: u64, retain: u64, block: u64) -> bool",
+  "body": "{\n    if block > head {\n        return false;\n    }\n    if retain == 0 || head <= retain {\n        return true;\n    }\n    block > head - retain\n}",
+  "span": {
+    "start_line": 6,
+    "end_line": 14
+  },
+  "git_commit": "e7c4bd6deef99685a57a519fa4643f44b1ee134b",
+  "worktree_dirty": false,
+  "source_hash": "9d9115e5f68e8345ecdf9b116dc5efd5cb5860d1fcf943769e0eb6de9e55bbcd",
+  "semantic_hash": "e4af40e6fe1aa259aaabaaa386b6780157b0e07a3d8ec08a9c1babe2055bad9f",
+  "dependency_hash_inputs": [
+    {
+      "kind": "use",
+      "name": "cfg",
+      "file": "crates/verified-core/src/prune_safety/block_retained.rs",
+      "hash": "a5eb4157d5d32303032e3dc786e34f004ebe17f0ff1bb26f90ac9eb42478596c"
+    }
+  ],
+  "unresolved_dependencies": [],
+  "tool_version": "0.1.0",
+  "cfg": [],
+  "features": [],
+  "types": [],
+  "called_functions": [],
+  "callers": [],
+  "tests": [],
+  "panic_sites": [],
+  "overflow_sites": [
+    "-"
+  ],
+  "casts": [],
+  "division_sites": [],
+  "llm_context_files": []
+}
