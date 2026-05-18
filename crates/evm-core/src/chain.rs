@@ -556,6 +556,7 @@ fn tx_locs_remove(state: &mut StableState, tx_id: &TxId) {
     }
 }
 
+#[cfg(debug_assertions)]
 fn debug_assert_queued_adapter_effects(
     state: &StableState,
     tx_id: TxId,
@@ -581,6 +582,7 @@ fn debug_assert_queued_adapter_effects(
     }
 }
 
+#[cfg(debug_assertions)]
 fn debug_assert_persisted_included_effects(
     state: &StableState,
     tx_id: TxId,
@@ -611,6 +613,7 @@ fn debug_assert_persisted_included_effects(
         .all(|entry| entry.value() != tx_id));
 }
 
+#[cfg(debug_assertions)]
 fn debug_assert_dropped_payload_effects(state: &StableState, tx_id: TxId, drop_code: u16) {
     debug_assert!(state.tx_store.get(&tx_id).is_none());
     debug_assert!(state.pending_fee_key_by_tx_id.get(&tx_id).is_none());
@@ -855,7 +858,10 @@ pub fn submit_tx(
             is_dynamic_fee,
             seq,
         )?;
-        debug_assert_queued_adapter_effects(state, tx_id, pending_key, seq);
+        #[cfg(debug_assertions)]
+        {
+            debug_assert_queued_adapter_effects(state, tx_id, pending_key, seq);
+        }
         Ok(tx_id)
     })
 }
@@ -963,7 +969,10 @@ pub fn submit_ic_tx_input(
             is_dynamic_fee,
             seq,
         )?;
-        debug_assert_queued_adapter_effects(state, tx_id, pending_key, seq);
+        #[cfg(debug_assertions)]
+        {
+            debug_assert_queued_adapter_effects(state, tx_id, pending_key, seq);
+        }
         Ok(tx_id)
     })
 }
@@ -1568,12 +1577,15 @@ pub fn produce_block(max_txs: usize) -> Result<ProduceBlockOutcome, ChainError> 
                 Some(persisted.sender_nonce),
                 true,
             );
-            debug_assert_persisted_included_effects(
-                state,
-                persisted.tx_id,
-                number,
-                persisted.tx_index,
-            );
+            #[cfg(debug_assertions)]
+            {
+                debug_assert_persisted_included_effects(
+                    state,
+                    persisted.tx_id,
+                    number,
+                    persisted.tx_index,
+                );
+            }
         }
         state.blocks.insert(number, block_ptr);
         state.head.set(Head {
@@ -3133,7 +3145,10 @@ fn mark_dropped_and_purge_payload(
     state.tx_store.remove(&tx_id);
     tx_locs_insert(state, tx_id, TxLoc::dropped(drop_code));
     push_dropped_ring(state, tx_id);
-    debug_assert_dropped_payload_effects(state, tx_id, drop_code);
+    #[cfg(debug_assertions)]
+    {
+        debug_assert_dropped_payload_effects(state, tx_id, drop_code);
+    }
 }
 
 fn push_dropped_ring(state: &mut evm_db::stable_state::StableState, tx_id: TxId) {
