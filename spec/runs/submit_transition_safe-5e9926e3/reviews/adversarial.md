@@ -1,0 +1,1 @@
+Adversarial review: accepted. A malicious adapter cannot mark a rejected nonce decision safe by setting all observation flags, and cannot mark normal accept safe if it also removed an old transaction.

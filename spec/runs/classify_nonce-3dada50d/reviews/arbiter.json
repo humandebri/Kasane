@@ -1,0 +1,23 @@
+{
+  "target": "classify_nonce",
+  "target_id": "ee78b7e5fd713b7a6cb00e75e1f2234f131220723b4ad3bb9ffb3380a17c5efd",
+  "slug": "classify_nonce-3dada50d",
+  "git_commit": "703d7df1dcdc48c6f15be3733c6da4ec5c6a8dad",
+  "worktree_dirty": false,
+  "source_hash": "3dada50dbfbec3c3991a06ad15fca6be5687c8c58a8a3a825fb8ed419d5afc2b",
+  "semantic_hash": "fa9487ba51d96176707f328ef5a7921718815d559e995dab958c1269eb12930b",
+  "tool_version": "0.1.0",
+  "blocking_issues": [],
+  "human_questions": [
+    {
+      "question_id": "replacement-strict-price",
+      "question": "Should replacement require incoming_effective_gas_price > pending_effective_gas_price, with equal price rejected as Conflict?"
+    },
+    {
+      "question_id": "nonce-order-precedence",
+      "question": "Should TooLow and Gap take precedence over any pending replacement-price comparison?"
+    }
+  ],
+  "auto_safe_edits": [],
+  "risk": "medium"
+}

@@ -58,17 +58,13 @@ impl Storable for ReadyKey {
 
     fn from_bytes(bytes: Cow<'_, [u8]>) -> Self {
         let data = bytes.as_ref();
-        match data.len() {
-            READY_KEY_LEN => {
-                let mut buf = [0u8; READY_KEY_LEN];
-                buf.copy_from_slice(data);
-                Self(buf)
-            }
-            _ => {
-                mark_decode_failure(b"ready_key", false);
-                ReadyKey(hash_to_array(b"ready_key", data))
-            }
+        if !verified_core::stable_codec::fixed_len_matches(data.len(), READY_KEY_LEN) {
+            mark_decode_failure(b"ready_key", false);
+            return ReadyKey(hash_to_array(b"ready_key", data));
         }
+        let mut buf = [0u8; READY_KEY_LEN];
+        buf.copy_from_slice(data);
+        Self(buf)
     }
 
     const BOUND: Bound = Bound::Bounded {
@@ -107,7 +103,7 @@ impl Storable for ReadySeqKey {
 
     fn from_bytes(bytes: Cow<'_, [u8]>) -> Self {
         let data = bytes.as_ref();
-        if data.len() != READY_SEQ_KEY_LEN {
+        if !verified_core::stable_codec::fixed_len_matches(data.len(), READY_SEQ_KEY_LEN) {
             mark_decode_failure(b"ready_seq_key", false);
             return ReadySeqKey(hash_to_array(b"ready_seq_key", data));
         }
@@ -158,7 +154,7 @@ impl Storable for PendingFeeKey {
 
     fn from_bytes(bytes: Cow<'_, [u8]>) -> Self {
         let data = bytes.as_ref();
-        if data.len() != PENDING_FEE_KEY_LEN {
+        if !verified_core::stable_codec::fixed_len_matches(data.len(), PENDING_FEE_KEY_LEN) {
             mark_decode_failure(b"pending_fee_key", false);
             return PendingFeeKey(hash_to_array(b"pending_fee_key", data));
         }
@@ -196,7 +192,7 @@ impl Storable for SenderKey {
 
     fn from_bytes(bytes: Cow<'_, [u8]>) -> Self {
         let data = bytes.as_ref();
-        if data.len() != SENDER_KEY_LEN {
+        if !verified_core::stable_codec::fixed_len_matches(data.len(), SENDER_KEY_LEN) {
             mark_decode_failure(b"sender_key", false);
             return SenderKey(hash_to_array(b"sender_key", data));
         }
@@ -250,7 +246,7 @@ impl Storable for SenderNonceKey {
 
     fn from_bytes(bytes: Cow<'_, [u8]>) -> Self {
         let data = bytes.as_ref();
-        if data.len() != SENDER_NONCE_KEY_LEN {
+        if !verified_core::stable_codec::fixed_len_matches(data.len(), SENDER_NONCE_KEY_LEN) {
             mark_decode_failure(b"sender_nonce_key", false);
             let hashed = hash_to_array::<SENDER_NONCE_KEY_LEN>(b"sender_nonce_key", data);
             let mut sender = [0u8; 20];

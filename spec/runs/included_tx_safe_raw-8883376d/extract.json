@@ -1,0 +1,45 @@
+{
+  "target": "included_tx_safe_raw",
+  "entry": {
+    "display_name": "included_tx_safe_raw",
+    "function": "included_tx_safe_raw",
+    "function_path": "included_tx_safe_raw",
+    "file": "crates/verified-core/src/core_safety_included.rs",
+    "target_id": "224c160e61755ee6272563ea6dab57a1fa0c100d4d673b442182059bedf4d3ae",
+    "slug": "included_tx_safe_raw-8883376d",
+    "source_hash": "8883376d72032a1c2763639c9b66be22fb0d0b0fd41ea54619d9bb82a98c9763",
+    "semantic_hash": "200dc7e13579af9bb069bfa545c6cbd32dd681daffcd07dcf07ca103ae440c2b",
+    "created_at": "2026-05-15T12:07:25Z"
+  },
+  "signature": "pub fn included_tx_safe_raw(has_tx_index: u64, has_receipt: u64, receipt_tx_id_matches: u64, index_key_matches_tx_id: u64, loc_matches_position: u64, receipt_matches_position: u64, index_matches_position: u64, block_number: u64) -> bool",
+  "body": "{\n    has_tx_index == 1\n        && has_receipt == 1\n        && block_number > 0\n        && receipt_tx_id_matches == 1\n        && index_key_matches_tx_id == 1\n        && loc_matches_position == 1\n        && receipt_matches_position == 1\n        && index_matches_position == 1\n}",
+  "span": {
+    "start_line": 6,
+    "end_line": 13
+  },
+  "git_commit": "9ae50545b2a91cdfaa427257878285a48b68def2",
+  "worktree_dirty": false,
+  "source_hash": "7584af7de23ac12ec45cc49852b04b44dd46c13053cf3440d4abd28160c26be4",
+  "semantic_hash": "2f06f09b8a089ea16a1cfb4f51f4161d3f27ec82af6c6a96eb976d49ec7417b4",
+  "dependency_hash_inputs": [
+    {
+      "kind": "use",
+      "name": "cfg",
+      "file": "crates/verified-core/src/core_safety_included.rs",
+      "hash": "a5eb4157d5d32303032e3dc786e34f004ebe17f0ff1bb26f90ac9eb42478596c"
+    }
+  ],
+  "unresolved_dependencies": [],
+  "tool_version": "0.1.0",
+  "cfg": [],
+  "features": [],
+  "types": [],
+  "called_functions": [],
+  "callers": [],
+  "tests": [],
+  "panic_sites": [],
+  "overflow_sites": [],
+  "casts": [],
+  "division_sites": [],
+  "llm_context_files": []
+}

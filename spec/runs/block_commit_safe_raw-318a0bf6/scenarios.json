@@ -1,0 +1,24 @@
+{
+  "target": "block_commit_safe_raw",
+  "target_id": "403ccf956447da359f91169e64a7ae1ae12c194ab012011091e1957d78783b01",
+  "slug": "block_commit_safe_raw-318a0bf6",
+  "git_commit": "4aed4c6b20d169ba2d31ba9c585394470dc69edf",
+  "worktree_dirty": true,
+  "source_hash": "318a0bf6163944ecb55fb9957b60e4b3150376ff426c3a59c24bad4fcd6a08d0",
+  "semantic_hash": "bf3de588a850213c5f19b3c3133b2f360e830849940559083c2e4fee1bcaeb2f",
+  "tool_version": "0.1.0",
+  "scenarios": [
+    {
+      "id": "block_commit_safe_raw-nominal",
+      "kind": "example",
+      "executable": false,
+      "inputs": {},
+      "expected": {},
+      "review_status": "accepted",
+      "status_note": "pure block commit safety requires monotonic head gas bound and exact persisted batch evidence",
+      "reviewed_by": "0xhude",
+      "reviewed_at": "2026-05-15T12:09:42Z",
+      "rationale": "シナリオ候補。引数順は関数定義と同じ。\n\n| ID | 目的 | 入力 | 期待 |\n|---|---|---:|---|\n| S01 | 全条件成立 | `(10, 11, 2, 2, 2, 50, 100)` | `true` |\n| S02 | head 同値は許可 | `(10, 10, 1, 1, 1, 0, 1)` | `true` |\n| S03 | `block_gas_limit == 0` はガス上限無視 | `(10, 10, 1, 1, 1, u64::MAX, 0)` | `true` |\n| S04 | gas used == limit は許可 | `(10, 10, 1, 1, 1, 100, 100)` | `true` |\n| S05 | committed head が後退 | `(10, 9, 1, 1, 1, 0, 0)` | `false` |\n| S06 | gas used が limit 超過 | `(10, 10, 1, 1, 1, 101, 100)` | `false` |\n| S07 | included_count が 0 | `(10, 10, 0, 0, 0, 0, 0)` | `false` |\n| S08 | staged_count 不一致 | `(10, 10, 2, 1, 2, 0, 0)` | `false` |\n| S09 | safe_included_count 不一致 | `(10, 10, 2, 2, 1, 0, 0)` | `false` |\n| S10 | usize 最大値境界 | `(u64::MAX, u64::MAX, usize::MAX, usize::MAX, usize::MAX, u64::MAX, u64::MAX)` | `true` |\n\n最小寄りなら S01, S03, S05-S09 で主要分岐は押さえられる。S02/S04/S10 は境界補強。"
+    }
+  ]
+}

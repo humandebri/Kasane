@@ -1,73 +1,64 @@
 # Precompile Profile Cleanup Memo
 
-## 目的
-- precompile の instruction/cycle 比課金を決めるための計測導線は残す
-- ただし、本番 canister に計測専用 API を常設しない
-- 運用導線は script / PocketIC 側に寄せる
+## Purpose
 
-## 現状
-- canister 内に profile 集計本体がある
-  - precompile 実行時の instruction / extra_gas を集計
-- canister state に precompile ratio は保持しない
-  - 既定 build は fixed ratio `1/100` をコードで持つ
-- canister API がある
+- Keep the measurement path needed to tune instruction-to-gas charging for precompiles.
+- Do not expose measurement-only APIs in the production canister by default.
+- Keep operational measurement in scripts and PocketIC flows where possible.
+
+## Current State
+
+- The canister contains the profile aggregation logic.
+- Precompile execution records instruction counts and computed `extra_gas`.
+- The default build keeps the fixed ratio `1/100` in code, not in canister state.
+- Measurement APIs exist:
   - `get_precompile_profile`
   - `clear_precompile_profile`
   - `profile_precompile_call`
-- `profile_precompile_call` は PocketIC / local 計測用の update API
-  - `query` では profile が永続化されないため追加した
+- `profile_precompile_call` is an update API for PocketIC/local measurement because query calls do not persist profile entries.
 
-## 結論
-- script に寄せるのは賛成
-- ただし、計測値を canister 内で集計する都合上、計測ビルドでは最小限の canister 側コードは必要
-- 本番では `profile_precompile_call` は消すか feature gate で無効化するのがよい
+## Decision
 
-## 推奨構成
-1. 常設してよいもの
-- precompile 実行時の profile 集計本体
-- 固定 extra gas ratio（既定 build は `1/100`）
+Measurement scripts are the primary workflow, but measurement builds still need minimal canister-side code because aggregation happens inside execution. Production builds should remove or feature-gate `profile_precompile_call`.
 
-2. 条件付きにしたいもの
+## Recommended Shape
+
+Always-on:
+- precompile profile aggregation used by execution
+- fixed extra-gas ratio (`1/100` in the default build)
+
+Feature-gated:
 - `get_precompile_profile`
 - `clear_precompile_profile`
 - `profile_precompile_call`
 
-3. 運用の主導線
+Primary scripts:
 - `scripts/run_precompile_profile_e2e.sh`
 - `scripts/measure_precompile_ratio.sh`
 
-## 実装方針
-### A. 一番おすすめ
-- cargo feature を追加する
-  - 例: `precompile-profile-admin`
-- この feature が有効なときだけ以下を公開する
-  - `get_precompile_profile`
-  - `clear_precompile_profile`
-  - `profile_precompile_call`
-- PocketIC / local build では feature を ON
-- mainnet build では feature を OFF
+## Implementation Policy
 
-### B. さらに締める場合
-- profile 集計本体も feature gate する
-  - 例: `precompile-profile`
-- mainnet で runtime overhead を完全に消したいならこの形
-- ただし、本番で再計測したくなったときは再デプロイ前提になる
+Use a cargo feature such as `precompile-profile-admin`.
 
-### C. 非推奨
-- 本番 canister に `profile_precompile_call` を残し続ける
-- controller-only でも、計測専用 update 面を増やす価値は小さい
+- When enabled, expose `get_precompile_profile`, `clear_precompile_profile`, and `profile_precompile_call`.
+- Enable it for PocketIC/local measurement builds.
+- Keep it disabled for mainnet/default builds.
 
-## 判断メモ
-- `profile_precompile_call` は本番に不要
-- `get_precompile_profile` / `clear_precompile_profile` も本番不要なら一緒に閉じる
-- 課金ロジック自体は本番で必要なので残す
-- profile と ratio 判断は wall-clock ではなく instruction counter を正とする
-- `scripts/measure_precompile_ratio.sh` は計測開始前に `clear_precompile_profile` の成功を確認し、権限不足などで失敗した場合は古い profile を混ぜずに停止する
-- `get_precompile_profile` は計測 build でも controller query 前提とし、匿名 caller には公開しない
-- ratio は runtime API で切り替えず、PocketIC/local で再計測して再デプロイで変える
+If production runtime overhead must be removed entirely, add a separate feature for the aggregation core as well. That makes production re-measurement require redeploy.
 
-## 次回やること
-1. `profile_precompile_call` を feature gate に移す
-2. DID 生成を feature ごとに確認する
-3. `scripts/run_precompile_profile_e2e.sh` を feature 有効 build 前提に合わせる
-4. mainnet build で計測 API が露出していないことを CI で検証する
+## Notes
+
+- `profile_precompile_call` is not needed in production.
+- `get_precompile_profile` and `clear_precompile_profile` should be closed in production when not needed.
+- Charging logic remains in production.
+- Ratio decisions use the IC instruction counter, not wall-clock timing.
+- `scripts/measure_precompile_ratio.sh` must stop if `clear_precompile_profile` fails before measurement.
+- `get_precompile_profile` should require a controller caller even in measurement builds.
+- Ratio changes are code changes followed by redeploy, not runtime API changes.
+
+## Follow-up
+
+1. Move `profile_precompile_call` behind the feature gate.
+2. Verify DID generation per feature set.
+3. Align `scripts/run_precompile_profile_e2e.sh` with feature-enabled builds.
+4. Add CI coverage proving default builds do not expose measurement APIs.

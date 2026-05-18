@@ -1,0 +1,126 @@
+{
+  "target": "classify_nonce",
+  "target_id": "ee78b7e5fd713b7a6cb00e75e1f2234f131220723b4ad3bb9ffb3380a17c5efd",
+  "slug": "classify_nonce-3dada50d",
+  "git_commit": "703d7df1dcdc48c6f15be3733c6da4ec5c6a8dad",
+  "worktree_dirty": false,
+  "source_hash": "3dada50dbfbec3c3991a06ad15fca6be5687c8c58a8a3a825fb8ed419d5afc2b",
+  "semantic_hash": "fa9487ba51d96176707f328ef5a7921718815d559e995dab958c1269eb12930b",
+  "tool_version": "0.1.0",
+  "scenarios": [
+    {
+      "id": "classify_nonce-too-low",
+      "kind": "boundary",
+      "executable": true,
+      "inputs": {
+        "expected_nonce": 10,
+        "incoming_effective_gas_price": 1,
+        "incoming_nonce": 9,
+        "pending_effective_gas_price": null
+      },
+      "expected": {
+        "result": "NonceDecision::TooLow"
+      },
+      "review_status": "accepted",
+      "status_note": "Matches intended low nonce rejection before replacement checks",
+      "reviewed_by": "0xhude",
+      "reviewed_at": "2026-05-14T03:46:01Z",
+      "rationale": "Incoming nonce below expected nonce is rejected before replacement logic."
+    },
+    {
+      "id": "classify_nonce-gap",
+      "kind": "boundary",
+      "executable": true,
+      "inputs": {
+        "expected_nonce": 10,
+        "incoming_effective_gas_price": 1000,
+        "incoming_nonce": 11,
+        "pending_effective_gas_price": 100
+      },
+      "expected": {
+        "result": "NonceDecision::Gap"
+      },
+      "review_status": "accepted",
+      "status_note": "Matches intended nonce gap rejection before replacement checks",
+      "reviewed_by": "0xhude",
+      "reviewed_at": "2026-05-14T03:46:01Z",
+      "rationale": "Incoming nonce above expected nonce is a gap even when a pending transaction price exists."
+    },
+    {
+      "id": "classify_nonce-accept-no-pending",
+      "kind": "nominal",
+      "executable": true,
+      "inputs": {
+        "expected_nonce": 10,
+        "incoming_effective_gas_price": 1,
+        "incoming_nonce": 10,
+        "pending_effective_gas_price": null
+      },
+      "expected": {
+        "result": "NonceDecision::Accept"
+      },
+      "review_status": "accepted",
+      "status_note": "Matching expected nonce with no pending current tx is accepted",
+      "reviewed_by": "0xhude",
+      "reviewed_at": "2026-05-14T03:46:01Z",
+      "rationale": "Matching nonce without pending transaction accepts the incoming transaction."
+    },
+    {
+      "id": "classify_nonce-conflict-equal-price",
+      "kind": "boundary",
+      "executable": true,
+      "inputs": {
+        "expected_nonce": 10,
+        "incoming_effective_gas_price": 100,
+        "incoming_nonce": 10,
+        "pending_effective_gas_price": 100
+      },
+      "expected": {
+        "result": "NonceDecision::Conflict"
+      },
+      "review_status": "accepted",
+      "status_note": "Equal effective gas price is not a replacement",
+      "reviewed_by": "0xhude",
+      "reviewed_at": "2026-05-14T03:46:01Z",
+      "rationale": "Equal effective gas price does not satisfy the strict replacement rule."
+    },
+    {
+      "id": "classify_nonce-conflict-lower-price",
+      "kind": "failure",
+      "executable": true,
+      "inputs": {
+        "expected_nonce": 10,
+        "incoming_effective_gas_price": 99,
+        "incoming_nonce": 10,
+        "pending_effective_gas_price": 100
+      },
+      "expected": {
+        "result": "NonceDecision::Conflict"
+      },
+      "review_status": "accepted",
+      "status_note": "Lower effective gas price is not a replacement",
+      "reviewed_by": "0xhude",
+      "reviewed_at": "2026-05-14T03:46:01Z",
+      "rationale": "Lower effective gas price cannot replace the pending transaction."
+    },
+    {
+      "id": "classify_nonce-replace-higher-price",
+      "kind": "nominal",
+      "executable": true,
+      "inputs": {
+        "expected_nonce": 10,
+        "incoming_effective_gas_price": 101,
+        "incoming_nonce": 10,
+        "pending_effective_gas_price": 100
+      },
+      "expected": {
+        "result": "NonceDecision::Replace"
+      },
+      "review_status": "accepted",
+      "status_note": "Strictly higher effective gas price replaces pending current tx",
+      "reviewed_by": "0xhude",
+      "reviewed_at": "2026-05-14T03:46:01Z",
+      "rationale": "Strictly higher effective gas price replaces the pending transaction."
+    }
+  ]
+}

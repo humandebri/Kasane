@@ -1,7 +1,5 @@
 # RPC Gateway Ops
 
-Japanese version: [./README.ja.md](./README.ja.md)
-
 `eth_sendRawTransaction` return values do not guarantee execution success. Integrate `eth_getTransactionReceipt.status` monitoring in production.
 
 This systemd flow is legacy / rollback operation after Cloudflare Workers migration. Primary production gateway traffic should use `wrangler.jsonc` and Cloudflare routes.

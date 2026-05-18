@@ -2905,16 +2905,46 @@ fn submit_ic_tx_internal(
     code: &'static str,
     tx: evm_core::tx_decode::IcSyntheticTxInput,
 ) -> Result<Vec<u8>, SubmitTxError> {
+    submit_ic_tx_internal_with_canister(
+        caller_principal,
+        ic_cdk::api::canister_self().as_slice().to_vec(),
+        code,
+        tx,
+    )
+}
+
+fn submit_ic_tx_internal_with_canister(
+    caller_principal: Vec<u8>,
+    canister_id: Vec<u8>,
+    code: &'static str,
+    tx: evm_core::tx_decode::IcSyntheticTxInput,
+) -> Result<Vec<u8>, SubmitTxError> {
+    submit_ic_tx_internal_with_canister_and_scheduler(
+        caller_principal,
+        canister_id,
+        code,
+        tx,
+        schedule_mining,
+    )
+}
+
+fn submit_ic_tx_internal_with_canister_and_scheduler(
+    caller_principal: Vec<u8>,
+    canister_id: Vec<u8>,
+    code: &'static str,
+    tx: evm_core::tx_decode::IcSyntheticTxInput,
+    schedule_after_submit: fn(),
+) -> Result<Vec<u8>, SubmitTxError> {
     let out = ic_evm_rpc::submit_tx_in_with_code(
         chain::TxIn::IcSynthetic {
             caller_principal,
-            canister_id: ic_cdk::api::canister_self().as_slice().to_vec(),
+            canister_id,
             tx,
         },
         code,
     );
     if out.is_ok() {
-        schedule_mining();
+        schedule_after_submit();
     }
     out
 }

@@ -1,0 +1,1 @@
+Implementation review: accepted after strengthening `Accept` to require no old transaction removal. The predicate now matches the intended adapter evidence split between normal accept and replacement.

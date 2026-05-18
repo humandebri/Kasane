@@ -3,7 +3,7 @@
 use evm_core::chain::{self, ChainError, TxIn};
 use evm_core::hash;
 use evm_db::chain_data::constants::DROP_CODE_REPLACED;
-use evm_db::chain_data::TxLocKind;
+use evm_db::chain_data::{SenderKey, TxId, TxLocKind};
 use evm_db::stable_state::{init_stable_state, with_state_mut};
 
 mod common;
@@ -141,4 +141,41 @@ fn replacement_requires_higher_effective_fee() {
     let block = outcome.block;
     assert_eq!(block.tx_ids.len(), 1);
     assert_eq!(block.tx_ids[0], high_id);
+}
+
+#[test]
+fn nonce_order_errors_do_not_read_dangling_current_tx() {
+    init_stable_state();
+
+    with_state_mut(|state| {
+        let mut chain_state = *state.chain_state.get();
+        chain_state.base_fee = 1_000_000_000;
+        chain_state.min_priority_fee = 1_000_000_000;
+        state.chain_state.set(chain_state);
+
+        let sender = hash::derive_evm_address_from_principal(&[0xbb]).expect("must derive");
+        let sender_key = SenderKey::new(sender);
+        state.sender_expected_nonce.insert(sender_key, 1);
+        state
+            .pending_current_by_sender
+            .insert(sender_key, TxId([0xbb; 32]));
+    });
+
+    let low = common::build_zero_to_ic_tx_input(0, 2_000_000_000, 1_000_000_000);
+    let err = chain::submit_tx_in(TxIn::IcSynthetic {
+        caller_principal: vec![0xbb],
+        canister_id: vec![0x0b],
+        tx: low,
+    })
+    .expect_err("nonce too low should win over dangling current");
+    assert_eq!(err, ChainError::NonceTooLow);
+
+    let gap = common::build_zero_to_ic_tx_input(2, 2_000_000_000, 1_000_000_000);
+    let err = chain::submit_tx_in(TxIn::IcSynthetic {
+        caller_principal: vec![0xbb],
+        canister_id: vec![0x0b],
+        tx: gap,
+    })
+    .expect_err("nonce gap should win over dangling current");
+    assert_eq!(err, ChainError::NonceGap);
 }

@@ -1,0 +1,24 @@
+{
+  "target": "block_is_prunable",
+  "target_id": "69d990fce9d0d3f10ce894eabc7961b6b0f9330eb2fa48d5ecd6ff3f3b3dc7b6",
+  "slug": "block_is_prunable-04224fd7",
+  "git_commit": "a3bc9781ec94f42ff9edf5612aebd4f4532e69f0",
+  "worktree_dirty": false,
+  "source_hash": "04224fd721eb346c0179a3a897953c3f7f5bed4a2f5c8204cf15ddab000034cf",
+  "semantic_hash": "c76192f60877bd0b3b3fecf672e540724f0ef2b2a562bf86319e8b669fea139a",
+  "tool_version": "0.1.0",
+  "scenarios": [
+    {
+      "id": "block_is_prunable-nominal",
+      "kind": "example",
+      "executable": false,
+      "inputs": {},
+      "expected": {},
+      "review_status": "accepted",
+      "status_note": "Boundary cases cover disabled pruning, retained head range, threshold inclusion, threshold exclusion, and u64 edge behavior.",
+      "reviewed_by": "0xhude",
+      "reviewed_at": "2026-05-16T03:08:40Z",
+      "rationale": "シナリオ候補:\n\n| head | retain | block | 期待値 | 意図 |\n|---:|---:|---:|:---:|---|\n| 10 | 0 | 0 | false | `retain == 0` は常に保持 |\n| 0 | 0 | 0 | false | 両方0 |\n| 5 | 10 | 0 | false | `head < retain` |\n| 10 | 10 | 0 | false | `head == retain` |\n| 11 | 10 | 0 | true | 閾値 `head - retain == 1`、古いブロック |\n| 11 | 10 | 1 | true | 閾値ちょうど |\n| 11 | 10 | 2 | false | 閾値超過 |\n| 100 | 20 | 79 | true | 閾値未満 |\n| 100 | 20 | 80 | true | 閾値ちょうど |\n| 100 | 20 | 81 | false | 閾値超過 |\n| u64::MAX | 1 | u64::MAX - 1 | true | 最大値境界 |\n| u64::MAX | 1 | u64::MAX | false | 最大値かつ未prunable |\n\n性質ベース候補:\n\n- `retain == 0` なら `block` に関係なく `false`\n- `head <= retain` なら `block` に関係なく `false`\n- `retain > 0 && head > retain` のとき、`block <= head - retain` なら `true`\n- `retain > 0 && head > retain` のとき、`block > head - retain` なら `false`\n- `head - retain` はガード後のみ評価されるため underflow しない"
+    }
+  ]
+}

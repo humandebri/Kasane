@@ -1,0 +1,54 @@
+{
+  "target": "prune_tx_cleanup_complete",
+  "target_id": "33e4bb273c5710d470d292ddbcf0d5f7ee14081f2f80af1bfae4590bff191a54",
+  "slug": "prune_tx_cleanup_complete-171d1899",
+  "file": "crates/verified-core/src/prune_safety/cleanup.rs",
+  "function": "prune_tx_cleanup_complete",
+  "git_commit": "a3bc9781ec94f42ff9edf5612aebd4f4532e69f0",
+  "worktree_dirty": false,
+  "source_hash": "171d18990ad8a287d272c1ba86712b88ac8bb578ba35829fba9190a1c081b67b",
+  "semantic_hash": "40c4de421fdd22bb34024778e61718ac60846a9b1bb00c97570c0cee4ad93584",
+  "dependency_hash_inputs": [
+    {
+      "kind": "use",
+      "name": "cfg",
+      "file": "crates/verified-core/src/prune_safety/cleanup.rs",
+      "hash": "a5eb4157d5d32303032e3dc786e34f004ebe17f0ff1bb26f90ac9eb42478596c"
+    },
+    {
+      "kind": "type",
+      "name": "verus_keep_ghost",
+      "file": "crates/verified-core/src/prune_safety/cleanup.rs",
+      "hash": "659c793fa947ffca5a69fc0812b39e370dce83dbd04a05589da68ac7211726c3"
+    }
+  ],
+  "unresolved_dependencies": [],
+  "spec_source_of_truth": "accepted_json",
+  "tool_version": "0.1.0",
+  "preconditions": [
+    "true"
+  ],
+  "postconditions": [
+    "result == (!input.tx_store && !input.receipt && !input.tx_index && !input.internal_traces && !input.tx_loc && !input.seen_tx)"
+  ],
+  "acceptance_criteria": [
+    "A pruned transaction is cleanup-complete only when tx storage, receipt, tx index, internal traces, location, and seen-tx observations are all absent."
+  ],
+  "test_evidence": [
+    {
+      "scenario_id": "prune_tx_cleanup_complete-nominal",
+      "command": "cargo test -p verified-core prune && cargo test -p ic-evm-core prune && cargo test -p ic-evm-gateway pruned && cargo test -p ic-evm-gateway get_receipt_returns",
+      "test_name": "verified-core prune safety plus evm-core prune and gateway pruned/retained query adapter tests",
+      "recorded_at": "2026-05-16T03:09:03Z"
+    }
+  ],
+  "risk_level": "medium",
+  "verified_subject": "implementation",
+  "contract_hash": "eaa6fc361e08aa330d07782b3acb9f2ae27626ffe0c5cd251c7ed4bab3162321",
+  "applied_contract_hash": "eaa6fc361e08aa330d07782b3acb9f2ae27626ffe0c5cd251c7ed4bab3162321",
+  "applied_at": "2026-05-16T03:09:13Z",
+  "panic_behavior": "documented",
+  "overflow_behavior": "documented",
+  "rejected_behaviors": [],
+  "open_assumptions": []
+}

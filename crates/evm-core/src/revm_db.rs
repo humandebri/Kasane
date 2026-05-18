@@ -10,6 +10,10 @@ use revm::database_interface::{Database, DatabaseCommit, DatabaseRef};
 use revm::primitives::{Address, StorageKey, StorageValue, B256, KECCAK_EMPTY, U256};
 use revm::state::{Account, AccountInfo, Bytecode};
 use std::borrow::Cow;
+use verified_core::state_diff::{
+    account_commit_decision, code_commit_decision, storage_commit_decision, AccountCommitDecision,
+    CodeCommitDecision, StorageCommitDecision,
+};
 
 #[derive(Clone, Copy, Debug)]
 pub struct RevmStableDb;
@@ -122,9 +126,16 @@ impl DatabaseCommit for RevmStableDb {
     fn commit(&mut self, changes: revm::primitives::HashMap<Address, Account>) {
         for (address, account) in changes.into_iter() {
             let addr = try_address_to_bytes(address).expect("revm address must be 20 bytes");
-            if account.is_selfdestructed() || (account.is_empty() && account.is_touched()) {
-                selfdestruct_address(addr);
-                continue;
+            match account_commit_decision(
+                account.is_selfdestructed(),
+                account.is_empty(),
+                account.is_touched(),
+            ) {
+                AccountCommitDecision::Delete => {
+                    selfdestruct_address(addr);
+                    continue;
+                }
+                AccountCommitDecision::Upsert => {}
             }
 
             let info = account.info.clone();
@@ -137,23 +148,40 @@ impl DatabaseCommit for RevmStableDb {
                 for (slot, entry) in account.changed_storage_slots() {
                     let storage_key = make_storage_key(addr, u256_to_bytes(*slot));
                     let present = entry.present_value;
-                    if present.is_zero() {
-                        state.storage.remove(&storage_key);
-                    } else {
-                        state
-                            .storage
-                            .insert(storage_key, U256Val(u256_to_bytes(present)));
+                    match storage_commit_decision(present.is_zero()) {
+                        StorageCommitDecision::Remove => {
+                            state.storage.remove(&storage_key);
+                        }
+                        StorageCommitDecision::Insert => {
+                            state
+                                .storage
+                                .insert(storage_key, U256Val(u256_to_bytes(present)));
+                        }
                     }
                 }
 
-                if let Some(code) = info.code.clone() {
-                    let code_hash = b256_to_bytes(info.code_hash);
-                    let code_key = make_code_key(code_hash);
-                    let bytes = code.original_byte_slice().to_vec();
-                    if bytes.is_empty() {
-                        state.codes.remove(&code_key);
-                    } else {
-                        state.codes.insert(code_key, CodeVal(bytes));
+                let code = info.code.clone();
+                let code_decision = code_commit_decision(
+                    code.is_some(),
+                    code.as_ref()
+                        .is_some_and(|value| value.original_byte_slice().is_empty()),
+                );
+                match code_decision {
+                    CodeCommitDecision::Skip => {}
+                    CodeCommitDecision::Remove | CodeCommitDecision::Insert => {
+                        let code = code.expect("code must exist when decision is not skip");
+                        let code_hash = b256_to_bytes(info.code_hash);
+                        let code_key = make_code_key(code_hash);
+                        let bytes = code.original_byte_slice().to_vec();
+                        match code_decision {
+                            CodeCommitDecision::Skip => {}
+                            CodeCommitDecision::Remove => {
+                                state.codes.remove(&code_key);
+                            }
+                            CodeCommitDecision::Insert => {
+                                state.codes.insert(code_key, CodeVal(bytes));
+                            }
+                        }
                     }
                 }
             });

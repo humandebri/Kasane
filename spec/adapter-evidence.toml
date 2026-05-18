@@ -1,0 +1,76 @@
+[[coverage]]
+file = "crates/ic-evm-gateway/src/lib.rs"
+function = "submit_ic_tx_internal"
+covered_by = [
+  "submit_transition_safe_raw-3a7d7873",
+  "included_tx_safe_raw-8883376d",
+  "block_commit_safe_raw-318a0bf6",
+]
+
+[[coverage]]
+file = "crates/ic-evm-gateway/src/lib.rs"
+function = "submit_ic_tx_internal_with_canister"
+covered_by = [
+  "submit_transition_safe_raw-3a7d7873",
+  "included_tx_safe_raw-8883376d",
+  "block_commit_safe_raw-318a0bf6",
+]
+
+[[coverage]]
+file = "crates/ic-evm-gateway/src/lib.rs"
+function = "submit_ic_tx_internal_with_canister_and_scheduler"
+covered_by = [
+  "submit_transition_safe_raw-3a7d7873",
+  "included_tx_safe_raw-8883376d",
+  "block_commit_safe_raw-318a0bf6",
+]
+
+[[coverage]]
+file = "crates/evm-core/src/chain.rs"
+function = "prune_blocks"
+covered_by = [
+  "block_is_prunable-04224fd7",
+  "block_is_retained-9d9115e5",
+  "prune_boundary_safe-77bde266",
+  "prune_tx_cleanup_complete-171d1899",
+]
+
+[[coverage]]
+file = "crates/evm-core/src/chain.rs"
+function = "prune_tick"
+covered_by = [
+  "block_is_prunable-04224fd7",
+  "block_is_retained-9d9115e5",
+  "prune_boundary_safe-77bde266",
+  "prune_tx_cleanup_complete-171d1899",
+]
+
+[[coverage]]
+file = "crates/ic-evm-gateway/src/lib.rs"
+function = "prune_blocks"
+covered_by = [
+  "block_is_prunable-04224fd7",
+  "block_is_retained-9d9115e5",
+  "prune_boundary_safe-77bde266",
+  "prune_tx_cleanup_complete-171d1899",
+]
+
+[[coverage]]
+file = "crates/ic-evm-gateway/src/lib.rs"
+function = "get_receipt"
+covered_by = [
+  "block_is_prunable-04224fd7",
+  "block_is_retained-9d9115e5",
+  "prune_boundary_safe-77bde266",
+  "prune_tx_cleanup_complete-171d1899",
+]
+
+[[coverage]]
+file = "crates/ic-evm-gateway/src/lib.rs"
+function = "get_block"
+covered_by = [
+  "block_is_prunable-04224fd7",
+  "block_is_retained-9d9115e5",
+  "prune_boundary_safe-77bde266",
+  "prune_tx_cleanup_complete-171d1899",
+]

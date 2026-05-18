@@ -87,6 +87,7 @@ fn produce_block_selects_top_k_by_fee_then_submission_order() {
     let produced = chain::produce_block(5).expect("produce");
     let selected = produced.block.tx_ids;
     assert_eq!(selected.len(), 5);
+    common::assert_block_persist_invariants(produced.block.number, &selected);
 
     let mut expected = submitted;
     expected.sort_by(|left, right| {
@@ -130,6 +131,7 @@ fn submit_ic_tx_with_null_to_is_included_and_has_receipt() {
     let outcome = chain::produce_block(1).expect("produce");
     assert_eq!(outcome.block.tx_ids.len(), 1);
     assert_eq!(outcome.block.tx_ids[0], tx_id);
+    common::assert_block_persist_invariants(outcome.block.number, &outcome.block.tx_ids);
 
     let receipt = chain::get_receipt(&tx_id).expect("receipt");
     assert_eq!(receipt.status, 1);

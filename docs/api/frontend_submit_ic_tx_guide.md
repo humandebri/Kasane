@@ -1,45 +1,40 @@
-# Frontend実装ガイド: ICPウォレット起点でKasane(EVM canister)を実行する
+# Frontend Guide: Running Kasane from an ICP Wallet
 
-このドキュメントは、`submit_ic_tx -> (必要なら) auto-mine -> get_pending/get_receipt` の実装に絞って説明します。  
-前提: canister は `4c52m-aiaaa-aaaam-agwwa-cai`、API公開は `crates/ic-evm-gateway/evm_canister.did` に準拠。
+This guide covers the `submit_ic_tx -> block production -> get_pending/get_receipt` path.
 
-## 1. 実行モデル（最重要）
+Assumptions:
 
-- `submit_ic_tx` は **実行ではなくキュー投入**。
-- 実行確定は `auto-mine`（または auto mine 有効時のタイマー）で進む。
-- UIは最低でも次の状態を持つ。
-  - `Submitting`
-  - `Queued`
-  - `Included`
-  - `Dropped`
-  - `Failed`
+- Canister: `4c52m-aiaaa-aaaam-agwwa-cai`
+- Public API: `crates/ic-evm-gateway/evm_canister.did`
 
-## 2. フロントで使うAPI
+## Execution Model
+
+- `submit_ic_tx` enqueues a transaction; it does not execute the transaction immediately.
+- Execution finality is reached after automatic block production.
+- UI state should distinguish at least `Submitting`, `Queued`, `Included`, `Dropped`, and `Failed`.
+
+## Canister APIs
 
 - `submit_ic_tx(record) -> Result<blob, SubmitTxError>`
-- `get_pending(blob tx_id) -> PendingStatusView`（query）
-- `get_receipt(blob tx_id) -> Result<ReceiptView, LookupError>`（query）
+- `get_pending(blob tx_id) -> PendingStatusView` (query)
+- `get_receipt(blob tx_id) -> Result<ReceiptView, LookupError>` (query)
 
-補足: 匿名呼び出しは拒否されるため、ICPウォレットで認証した identity を使って update を呼びます。
+Anonymous update calls are rejected. Use an identity authenticated through an ICP wallet.
 
-## 3. Agent/Actor 初期化（TypeScript）
+## Agent and Actor Setup
 
 ```ts
-import { Actor, HttpAgent } from '@dfinity/agent';
-import { AuthClient } from '@dfinity/auth-client';
-import { idlFactory } from './evm_canister.did';
+import { Actor, HttpAgent } from "@dfinity/agent";
+import { AuthClient } from "@dfinity/auth-client";
+import { idlFactory } from "./evm_canister.did";
 
-const CANISTER_ID = '4c52m-aiaaa-aaaam-agwwa-cai';
-const HOST = 'https://icp-api.io';
+const CANISTER_ID = "4c52m-aiaaa-aaaam-agwwa-cai";
+const HOST = "https://icp-api.io";
 
 export async function createEvmActor() {
   const authClient = await AuthClient.create();
   const identity = await authClient.getIdentity();
-
-  const agent = new HttpAgent({
-    host: HOST,
-    identity,
-  });
+  const agent = new HttpAgent({ host: HOST, identity });
 
   return Actor.createActor(idlFactory, {
     agent,
@@ -48,23 +43,27 @@ export async function createEvmActor() {
 }
 ```
 
-## 4. `submit_ic_tx` の入力recordを作る
+## `submit_ic_tx` Record
 
-`submit_ic_tx` の payload は Candid record です。
+```ts
+export type SubmitIcTxArgs = {
+  to: [] | [Uint8Array];
+  value: bigint;
+  gas_limit: bigint;
+  nonce: bigint;
+  max_fee_per_gas: bigint;
+  max_priority_fee_per_gas: bigint;
+  data: Uint8Array;
+};
+```
 
-- `to: [] | [Uint8Array]`
-- `value: bigint`
-- `gas_limit: bigint`
-- `nonce: bigint`
-- `max_fee_per_gas: bigint`
-- `max_priority_fee_per_gas: bigint`
-- `data: Uint8Array`
+Helpers:
 
 ```ts
 function hexToBytes(hex: string): Uint8Array {
-  const normalized = hex.startsWith('0x') ? hex.slice(2) : hex;
+  const normalized = hex.startsWith("0x") ? hex.slice(2) : hex;
   if (normalized.length % 2 !== 0) {
-    throw new Error('hex length must be even');
+    throw new Error("hex length must be even");
   }
   const out = new Uint8Array(normalized.length / 2);
   for (let i = 0; i < out.length; i += 1) {
@@ -85,52 +84,26 @@ function beBytes(value: bigint, length: number): Uint8Array {
   }
   return out;
 }
-
-export type SubmitIcTxArgs = {
-  to: [] | [Uint8Array];
-  value: bigint;
-  gas_limit: bigint;
-  nonce: bigint;
-  max_fee_per_gas: bigint;
-  max_priority_fee_per_gas: bigint;
-  data: Uint8Array;
-};
 ```
 
-## 5. 送信前チェック（nonce / gas / fee）
+## Preflight
 
-`submit_ic_tx` は事前に以下を決めてから送るのが安全です。
+Before submitting, derive the sender address, fetch the nonce, estimate gas, and choose fee values.
 
-- `from` 相当アドレス（caller principal から導出）
-- `nonce`（`expected_nonce_by_address`）
-- `gas_limit`（`rpc_eth_estimate_gas_object`）
-- `max_fee_per_gas` / `max_priority_fee_per_gas`（見積り結果にバッファを加える）
-
-注意: ここで扱う `from` は **EVMアドレス(20 bytes)**。bytes32化した Principal データは address 引数に渡せません。
-導出失敗時は canister 側で reject され、`InvalidArgument`（`arg.principal_to_evm_derivation_failed`）が返ります。
+The `from` value is a 20-byte EVM address derived from the caller principal. Do not pass a bytes32 principal encoding as an address.
 
 ```ts
-import { Principal } from '@dfinity/principal';
-import { chainFusionSignerEthAddressFor } from '@dfinity/ic-pub-key/signer';
-
-function hexToBytes(hex: string): Uint8Array {
-  const normalized = hex.startsWith('0x') ? hex.slice(2) : hex;
-  if (normalized.length % 2 !== 0) throw new Error('invalid hex length');
-  const out = new Uint8Array(normalized.length / 2);
-  for (let i = 0; i < out.length; i += 1) {
-    out[i] = Number.parseInt(normalized.slice(i * 2, i * 2 + 2), 16);
-  }
-  return out;
-}
+import { Principal } from "@dfinity/principal";
+import { chainFusionSignerEthAddressFor } from "@dfinity/ic-pub-key/signer";
 
 export function deriveEvmAddressFromPrincipal(principal: Principal): Uint8Array {
   const { response } = chainFusionSignerEthAddressFor(principal);
-  return hexToBytes(response.eth_address); // 20 bytes
+  return hexToBytes(response.eth_address);
 }
 
 function u64ToNumber(n: bigint): number {
   if (n > BigInt(Number.MAX_SAFE_INTEGER)) {
-    throw new Error('u64 too large for JS number');
+    throw new Error("u64 too large for JS number");
   }
   return Number(n);
 }
@@ -143,36 +116,38 @@ type PreflightResult = {
   maxPriorityFeePerGas: bigint;
 };
 
+type EstimateCall = {
+  to: [] | [Uint8Array];
+  gas: [] | [bigint];
+  value: [] | [Uint8Array];
+  max_priority_fee_per_gas: [] | [bigint];
+  data: [] | [Uint8Array];
+  from: [] | [Uint8Array];
+  max_fee_per_gas: [] | [bigint];
+  chain_id: [] | [bigint];
+  nonce: [] | [bigint];
+  tx_type: [] | [bigint];
+  access_list: [] | [Array<{ address: Uint8Array; storage_keys: Uint8Array[] }>];
+  gas_price: [] | [bigint];
+};
+
 export async function preflightIcSynthetic(actor: {
   expected_nonce_by_address: (addr: Uint8Array) => Promise<{ Ok?: bigint; Err?: string }>;
-  rpc_eth_estimate_gas_object: (call: {
-    to: [] | [Uint8Array];
-    gas: [] | [bigint];
-    value: [] | [Uint8Array];
-    max_priority_fee_per_gas: [] | [bigint];
-    data: [] | [Uint8Array];
-    from: [] | [Uint8Array];
-    max_fee_per_gas: [] | [bigint];
-    chain_id: [] | [bigint];
-    nonce: [] | [bigint];
-    tx_type: [] | [bigint];
-    access_list: [] | [Array<{ address: Uint8Array; storage_keys: Uint8Array[] }>];
-    gas_price: [] | [bigint];
-  }) => Promise<{ Ok?: bigint; Err?: { code: number; message: string } }>;
+  rpc_eth_estimate_gas_object: (call: EstimateCall) => Promise<{ Ok?: bigint; Err?: { code: number; message: string } }>;
 }, input: {
   principal: Principal;
   to: Uint8Array;
   value32: Uint8Array;
   data: Uint8Array;
   chainId: bigint;
-  feeHintMaxFeePerGas: bigint; // 例: 2_000_000_000n
-  feeHintPriority: bigint; // 例: 1_000_000_000n
+  feeHintMaxFeePerGas: bigint;
+  feeHintPriority: bigint;
 }): Promise<PreflightResult> {
   const from20 = deriveEvmAddressFromPrincipal(input.principal);
 
   const nonceRes = await actor.expected_nonce_by_address(from20);
   if (nonceRes.Ok === undefined) {
-    throw new Error(`expected_nonce_by_address failed: ${nonceRes.Err ?? 'unknown'}`);
+    throw new Error(`expected_nonce_by_address failed: ${nonceRes.Err ?? "unknown"}`);
   }
 
   const estRes = await actor.rpc_eth_estimate_gas_object({
@@ -190,15 +165,10 @@ export async function preflightIcSynthetic(actor: {
     gas_price: [],
   });
   if (estRes.Ok === undefined) {
-    throw new Error(`estimateGas failed: ${estRes.Err?.message ?? 'unknown'}`);
+    throw new Error(`estimateGas failed: ${estRes.Err?.message ?? "unknown"}`);
   }
 
-  // 実運用では estimate に少し余裕を乗せる（例: +20%）。
   const gasLimit = (estRes.Ok * 12n) / 10n;
-  const maxPriorityFeePerGas = input.feeHintPriority;
-  const maxFeePerGas = input.feeHintMaxFeePerGas;
-
-  // Candid nat64/nat 変換のため number を要求するラッパを使う場合に備えて検証する。
   void u64ToNumber(nonceRes.Ok);
   void u64ToNumber(gasLimit);
 
@@ -206,40 +176,27 @@ export async function preflightIcSynthetic(actor: {
     from20,
     nonce: nonceRes.Ok,
     gasLimit,
-    maxFeePerGas,
-    maxPriorityFeePerGas,
+    maxFeePerGas: input.feeHintMaxFeePerGas,
+    maxPriorityFeePerGas: input.feeHintPriority,
   };
 }
 ```
 
-## 6. 送信から確定までの最小実装
+## Submit and Track
 
 ```ts
-// principal は `const principal = (await authClient.getIdentity()).getPrincipal();` で取得する。
 export async function submitAndTrack(actor: {
   submit_ic_tx: (arg: SubmitIcTxArgs) => Promise<{ Ok?: Uint8Array; Err?: unknown }>;
   expected_nonce_by_address: (addr: Uint8Array) => Promise<{ Ok?: bigint; Err?: string }>;
-  rpc_eth_estimate_gas_object: (call: {
-    to: [] | [Uint8Array];
-    gas: [] | [bigint];
-    value: [] | [Uint8Array];
-    max_priority_fee_per_gas: [] | [bigint];
-    data: [] | [Uint8Array];
-    from: [] | [Uint8Array];
-    max_fee_per_gas: [] | [bigint];
-    chain_id: [] | [bigint];
-    nonce: [] | [bigint];
-    tx_type: [] | [bigint];
-    access_list: [] | [Array<{ address: Uint8Array; storage_keys: Uint8Array[] }>];
-    gas_price: [] | [bigint];
-  }) => Promise<{ Ok?: bigint; Err?: { code: number; message: string } }>;
+  rpc_eth_estimate_gas_object: (call: EstimateCall) => Promise<{ Ok?: bigint; Err?: { code: number; message: string } }>;
+  rpc_eth_block_number: () => Promise<unknown>;
   get_pending: (txId: Uint8Array) => Promise<unknown>;
   get_receipt: (txId: Uint8Array) => Promise<{ Ok?: unknown; Err?: unknown }>;
-  auto-mine: (n: number) => Promise<{ Ok?: unknown; Err?: unknown }>;
 }, principal: Principal) {
+  const to = hexToBytes("0x0000000000000000000000000000000000000001");
   const preflight = await preflightIcSynthetic(actor, {
     principal,
-    to: hexToBytes('0x0000000000000000000000000000000000000001'),
+    to,
     value32: beBytes(0n, 32),
     data: new Uint8Array(),
     chainId: 4_801_360n,
@@ -247,72 +204,51 @@ export async function submitAndTrack(actor: {
     feeHintPriority: 1_000_000_000n,
   });
 
-  const payload: SubmitIcTxArgs = {
-    to: [hexToBytes('0x0000000000000000000000000000000000000001')],
+  const submit = await actor.submit_ic_tx({
+    to: [to],
     value: 0n,
     gas_limit: preflight.gasLimit,
     nonce: preflight.nonce,
     max_fee_per_gas: preflight.maxFeePerGas,
     max_priority_fee_per_gas: preflight.maxPriorityFeePerGas,
     data: new Uint8Array(),
-  };
-
-  const submit = await actor.submit_ic_tx(payload);
+  });
   if (!submit.Ok) {
     throw new Error(`submit failed: ${JSON.stringify(submit.Err)}`);
   }
 
   const txId = submit.Ok;
 
-  // 自動採掘を待つ（block number を監視）
   for (let i = 0; i < 20; i += 1) {
     await actor.rpc_eth_block_number();
-    await new Promise((r) => setTimeout(r, 1000));
+    await new Promise((resolve) => setTimeout(resolve, 1_000));
   }
 
   for (let i = 0; i < 20; i += 1) {
     const pending = await actor.get_pending(txId);
     const receipt = await actor.get_receipt(txId);
-
     if (receipt.Ok) {
-      return {
-        txId,
-        pending,
-        receipt: receipt.Ok,
-      };
+      return { txId, pending, receipt: receipt.Ok };
     }
-
     await new Promise((resolve) => setTimeout(resolve, 1_000));
   }
 
-  throw new Error('timeout: receipt not available');
+  throw new Error("timeout: receipt not available");
 }
 ```
 
-## 7. UX設計の推奨
+## UX Guidance
 
-- 1回目のボタン押下で `submit_ic_tx` のみ実行し、`tx_id` を即表示。
-- 「確定を待つ」段階で `get_pending` をポーリングし、`Queued/Included/Dropped` を明示。
-- `auto-mine` は運用モードで分岐。
-  - auto mine ON: フロントは呼ばない。
-  - auto mine OFF: 管理者UI/バックエンドworkerのみ呼ぶ。
-- `SubmitTxError.Rejected` の code はそのままUIに出さず、ユーザー向け文言に変換。
-  - 例: `submit.nonce_too_low` -> 「nonceが古いため再作成が必要です」
+- On the first click, run only `submit_ic_tx` and show `tx_id` immediately.
+- Poll `get_pending` and show `Queued`, `Included`, or `Dropped` explicitly.
+- In automatic mining mode, the frontend should not call administrative mining methods.
+- Map `SubmitTxError.Rejected.code` values to user-facing text instead of showing raw internal codes.
 
-## 8. 実装時の注意
+## Notes
 
-- `submit_ic_tx` と `rpc_eth_send_raw_transaction` は用途が異なる。
-  - ICPウォレット起点なら `submit_ic_tx` を使う。
-  - EVM署名済み raw tx を投げるなら `rpc_eth_send_raw_transaction`。
-- `nonce` は submit 前に `expected_nonce_by_address` で取得する。
-- `gas_limit` は submit 前に `rpc_eth_estimate_gas_object` で見積もる。
-- fee が低いと `submit.invalid_fee` で reject されるため、見積り時より高めの `max_fee_per_gas` を使う。
-- `tx_id` と `eth_tx_hash` は同一ではない。
-  - IcSynthetic の追跡キーは `tx_id`。
-- `auto-mine` は権限制御や運用状態で `NoOp`/`Err` になり得るため、UIで「採掘失敗」ではなく「未実行」を区別する。
-
-## 9. 参照
-
-- `README.md` の submit系入力仕様と運用方針
-- `crates/ic-evm-gateway/evm_canister.did` の service 定義
-- `docs/api/rpc_eth_send_raw_transaction_payload.md`（submit->produce->receipt の追跡パターン）
+- Use `submit_ic_tx` for ICP-wallet originated transactions.
+- Use `rpc_eth_send_raw_transaction` for signed Ethereum raw transactions.
+- Get nonce with `expected_nonce_by_address` before submit.
+- Estimate gas with `rpc_eth_estimate_gas_object` before submit.
+- Keep fee values above the estimate to avoid `submit.invalid_fee`.
+- `tx_id` and `eth_tx_hash` are different.

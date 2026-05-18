@@ -1,0 +1,695 @@
+{
+  "target": "produce_block",
+  "entry": {
+    "display_name": "produce_block",
+    "function": "produce_block",
+    "function_path": "produce_block",
+    "file": "crates/evm-core/src/chain.rs",
+    "target_id": "88179a265b956b7f3969a29f77539c37e9349f2606d07ba46be0de5a4b6c278f",
+    "slug": "produce_block-71d69281",
+    "source_hash": "71d692817b260c23c03029151499d7b6bcf96382382f86934f08e6cf14578699",
+    "semantic_hash": "12ab5a5954585cf9c56f80429bc72480de3eb545d49dea85f8a4600f604fa3ce",
+    "created_at": "2026-05-14T03:39:55Z"
+  },
+  "signature": "pub fn produce_block(max_txs: usize) -> Result<ProduceBlockOutcome, ChainError>",
+  "body": "{\n    // どこで: ブロック組成前の候補デコード段 / 何を: 無効Txデコード処理数を制限 / なぜ: 署名不正スパムで命令を使い切らないため\n    const MAX_DECODE_DROPS_PER_BLOCK: usize =\n        evm_db::chain_data::DEFAULT_MAX_DECODE_DROPS_PER_BLOCK;\n    if !verified_core::block::valid_block_limit(max_txs) {\n        return Err(ChainError::InvalidLimit);\n    }\n    let head = with_state(|state| *state.head.get());\n    let number = verified_core::block::next_block_number(head.number);\n    let timestamp =\n        verified_core::block::next_block_timestamp(head.timestamp, crate::time::now_sec());\n    let parent_hash = head.block_hash;\n    let exec_ctx = with_state(|state| BlockExecContext {\n        block_number: number,\n        timestamp,\n        base_fee: state.chain_state.get().base_fee,\n        block_gas_limit: state.chain_state.get().block_gas_limit,\n    });\n    let mut included_tx_ids: Vec<TxId> = Vec::new();\n    let mut dropped_total = 0u64;\n    let mut dropped_by_code = [0u64; evm_db::chain_data::metrics::DROP_CODE_SLOTS];\n    let (min_priority_fee, min_gas_price, update_instruction_soft_limit) = with_state(|state| {\n        let chain_state = state.chain_state.get();\n        (\n            chain_state.min_priority_fee,\n            chain_state.min_gas_price,\n            chain_state.update_instruction_soft_limit,\n        )\n    });\n    let mut tx_ids = Vec::new();\n    let mut prepared = Vec::new();\n    let mut touched_addrs: BTreeSet<[u8; 20]> = BTreeSet::new();\n    let mut touched_slots: u32 = 0;\n    let mut delta_digests: Vec<[u8; 32]> = Vec::new();\n    let mut staged_state_diffs: Vec<StateDiff> = Vec::new();\n    let mut staged_drops: Vec<QueuedDrop> = Vec::new();\n    let mut staged_included: Vec<StagedIncludedTx> = Vec::new();\n    let mut staged_txs: Vec<PreparedTx> = Vec::new();\n    let mut decode_drop_count = 0usize;\n    let mut decode_drops_by_principal: BTreeMap<Vec<u8>, u16> = BTreeMap::new();\n    with_state(|state| {\n        tx_ids = select_ready_candidates(state, state.chain_state.get().base_fee, max_txs);\n    });\n    if tx_ids.is_empty() {\n        return Err(ChainError::QueueEmpty);\n    }\n    let mut block_gas_used = 0u64;\n    let instruction_start = current_instruction_counter();\n    for tx_id in tx_ids {\n        if should_stop_block_execution(\n            block_gas_used,\n            exec_ctx.block_gas_limit,\n            update_instruction_soft_limit,\n            instruction_start,\n            current_instruction_counter(),\n        ) {\n            break;\n        }\n        let envelope = with_state(|state| state.tx_store.get(&tx_id));\n        let envelope = match envelope {\n            Some(value) => value,\n            None => {\n                prepared.push(PreparedItem::Drop(QueuedDrop {\n                    tx_id,\n                    drop_code: DROP_CODE_MISSING,\n                    sender_override: None,\n                    nonce_override: None,\n                }));\n                continue;\n            }\n        };\n        let stored = match StoredTx::try_from(envelope) {\n            Ok(value) => value,\n            Err(err) => {\n                let drop_code = match err {\n                    StoredTxError::MissingCaller => DROP_CODE_CALLER_MISSING,\n                    _ => DROP_CODE_DECODE,\n                };\n                prepared.push(PreparedItem::Drop(QueuedDrop {\n                    tx_id,\n                    drop_code,\n                    sender_override: None,\n                    nonce_override: None,\n                }));\n                if drop_code == DROP_CODE_DECODE || drop_code == DROP_CODE_CALLER_MISSING {\n                    decode_drop_count = decode_drop_count.saturating_add(1);\n                    if decode_drop_count >= MAX_DECODE_DROPS_PER_BLOCK {\n                        break;\n                    }\n                }\n                continue;\n            }\n        };\n        if is_principal_decode_suppressed(stored.caller_principal.as_slice(), timestamp) {\n            prepared.push(PreparedItem::Drop(QueuedDrop {\n                tx_id,\n                drop_code: DROP_CODE_DECODE,\n                sender_override: None,\n                nonce_override: None,\n            }));\n            continue;\n        }\n        let kind = stored.kind;\n        let caller = match kind {\n            TxKind::IcSynthetic => match stored.caller_evm {\n                Some(value) => value,\n                None => {\n                    prepared.push(PreparedItem::Drop(QueuedDrop {\n                        tx_id,\n                        drop_code: DROP_CODE_CALLER_MISSING,\n                        sender_override: None,\n                        nonce_override: None,\n                    }));\n                    decode_drop_count = decode_drop_count.saturating_add(1);\n                    note_decode_drop_for_principal(\n                        stored.caller_principal.as_slice(),\n                        timestamp,\n                        &mut decode_drops_by_principal,\n                    );\n                    if decode_drop_count >= MAX_DECODE_DROPS_PER_BLOCK {\n                        break;\n                    }\n                    continue;\n                }\n            },\n            TxKind::EthSigned => [0u8; 20],\n        };\n        let tx_env = match decode_tx(kind, Address::from(caller), &stored.raw) {\n            Ok(value) => value,\n            Err(_) => {\n                prepared.push(PreparedItem::Drop(QueuedDrop {\n                    tx_id,\n                    drop_code: DROP_CODE_DECODE,\n                    sender_override: Some(caller),\n                    nonce_override: None,\n                }));\n                decode_drop_count = decode_drop_count.saturating_add(1);\n                note_decode_drop_for_principal(\n                    stored.caller_principal.as_slice(),\n                    timestamp,\n                    &mut decode_drops_by_principal,\n                );\n                if decode_drop_count >= MAX_DECODE_DROPS_PER_BLOCK {\n                    break;\n                }\n                continue;\n            }\n        };\n        if !min_fee_satisfied(&tx_env, exec_ctx.base_fee, min_priority_fee, min_gas_price) {\n            let sender_bytes = try_address_to_bytes(tx_env.caller)\n                .map_err(|e| ChainError::InvariantViolation(e.to_string()))?;\n            prepared.push(PreparedItem::Drop(QueuedDrop {\n                tx_id,\n                drop_code: DROP_CODE_INVALID_FEE,\n                sender_override: Some(sender_bytes),\n                nonce_override: Some(tx_env.nonce),\n            }));\n            continue;\n        }\n        let effective = compute_effective_gas_price(\n            tx_env.gas_price,\n            tx_env.gas_priority_fee.unwrap_or(0),\n            exec_ctx.base_fee,\n        );\n        if effective.is_none() {\n            let sender_bytes = try_address_to_bytes(tx_env.caller)\n                .map_err(|e| ChainError::InvariantViolation(e.to_string()))?;\n            prepared.push(PreparedItem::Drop(QueuedDrop {\n                tx_id,\n                drop_code: DROP_CODE_INVALID_FEE,\n                sender_override: Some(sender_bytes),\n                nonce_override: Some(tx_env.nonce),\n            }));\n            continue;\n        }\n        let sender_bytes = try_address_to_bytes(tx_env.caller)\n            .map_err(|e| ChainError::InvariantViolation(e.to_string()))?;\n        let sender_nonce = tx_env.nonce;\n        prepared.push(PreparedItem::Tx(Box::new(PreparedTx {\n            tx_id,\n            tx_env,\n            sender_bytes,\n            sender_nonce,\n        })));\n        if should_stop_block_execution(\n            block_gas_used,\n            exec_ctx.block_gas_limit,\n            update_instruction_soft_limit,\n            instruction_start,\n            current_instruction_counter(),\n        ) {\n            break;\n        }\n    }\n\n    for item in prepared {\n        match item {\n            PreparedItem::Drop(drop) => {\n                staged_drops.push(drop);\n                track_drop(&mut dropped_total, &mut dropped_by_code, drop.drop_code);\n            }\n            PreparedItem::Tx(value) => staged_txs.push(*value),\n        }\n    }\n\n    fn apply_drops_only(\n        drops: &[QueuedDrop],\n        dropped_by_code: &[u64; evm_db::chain_data::metrics::DROP_CODE_SLOTS],\n    ) {\n        with_state_mut(|state| {\n            for drop in drops.iter() {\n                advance_sender_after_tx(\n                    state,\n                    drop.tx_id,\n                    drop.sender_override,\n                    drop.nonce_override,\n                    false,\n                );\n                mark_dropped_and_purge_payload(state, drop.tx_id, drop.drop_code);\n            }\n            let mut metrics = *state.metrics_state.get();\n            for (idx, count) in dropped_by_code.iter().enumerate() {\n                if *count > 0 {\n                    metrics.record_drop(idx as u16, *count);\n                }\n            }\n            state.metrics_state.set(metrics);\n        });\n    }\n\n    if staged_txs.is_empty() {\n        apply_drops_only(&staged_drops, &dropped_by_code);\n        return Err(ChainError::NoExecutableTx);\n    }\n\n    let mut exec_db = CacheDB::new(crate::revm_db::RevmStableDb);\n    for prepared_tx in staged_txs {\n        let instruction_now = current_instruction_counter();\n        if should_stop_block_execution(\n            block_gas_used,\n            exec_ctx.block_gas_limit,\n            update_instruction_soft_limit,\n            instruction_start,\n            instruction_now,\n        ) {\n            break;\n        }\n        let remaining_instruction_budget = remaining_instruction_budget(\n            update_instruction_soft_limit,\n            instruction_start,\n            instruction_now,\n        );\n        if remaining_instruction_budget == Some(0) {\n            break;\n        }\n        if !verified_core::block::tx_fits_block_gas(\n            block_gas_used,\n            exec_ctx.block_gas_limit,\n            prepared_tx.tx_env.gas_limit,\n        ) {\n            staged_drops.push(QueuedDrop {\n                tx_id: prepared_tx.tx_id,\n                drop_code: DROP_CODE_BLOCK_GAS_EXCEEDED,\n                sender_override: Some(prepared_tx.sender_bytes),\n                nonce_override: Some(prepared_tx.sender_nonce),\n            });\n            track_drop(\n                &mut dropped_total,\n                &mut dropped_by_code,\n                DROP_CODE_BLOCK_GAS_EXCEEDED,\n            );\n            continue;\n        }\n        let tx_index = verified_core::tx_index::next_included_index(included_tx_ids.len()).ok_or(\n            ChainError::InvariantViolation(\"tx_index.overflow\".to_string()),\n        )?;\n        let tx_id = prepared_tx.tx_id;\n        let execution = execute_tx_on(\n            &mut exec_db,\n            tx_id,\n            tx_index,\n            prepared_tx.tx_env,\n            &exec_ctx,\n            ExecPath::UserTx,\n            false,\n            remaining_instruction_budget,\n            true,\n        );\n        let outcome = match execution {\n            Ok((value, user_diff)) => {\n                collect_touched_addresses(\n                    &user_diff,\n                    &mut touched_addrs,\n                    &mut touched_slots,\n                    &mut delta_digests,\n                );\n                exec_db.commit(user_diff.clone());\n                staged_state_diffs.push(user_diff);\n                value\n            }\n            Err(err) => {\n                observe_exec_error(&err, timestamp);\n                if err == ExecError::InvalidGasFee {\n                    staged_drops.push(QueuedDrop {\n                        tx_id,\n                        drop_code: DROP_CODE_INVALID_FEE,\n                        sender_override: Some(prepared_tx.sender_bytes),\n                        nonce_override: Some(prepared_tx.sender_nonce),\n                    });\n                    track_drop(\n                        &mut dropped_total,\n                        &mut dropped_by_code,\n                        DROP_CODE_INVALID_FEE,\n                    );\n                    continue;\n                }\n                if err == ExecError::ResultTooLarge {\n                    staged_drops.push(QueuedDrop {\n                        tx_id,\n                        drop_code: DROP_CODE_RESULT_TOO_LARGE,\n                        sender_override: Some(prepared_tx.sender_bytes),\n                        nonce_override: Some(prepared_tx.sender_nonce),\n                    });\n                    track_drop(\n                        &mut dropped_total,\n                        &mut dropped_by_code,\n                        DROP_CODE_RESULT_TOO_LARGE,\n                    );\n                    continue;\n                }\n                if err == ExecError::InstructionBudgetExceeded {\n                    staged_drops.push(QueuedDrop {\n                        tx_id,\n                        drop_code: DROP_CODE_INSTRUCTION_BUDGET,\n                        sender_override: Some(prepared_tx.sender_bytes),\n                        nonce_override: Some(prepared_tx.sender_nonce),\n                    });\n                    track_drop(\n                        &mut dropped_total,\n                        &mut dropped_by_code,\n                        DROP_CODE_INSTRUCTION_BUDGET,\n                    );\n                    continue;\n                }\n                if err == ExecError::TxError(OpTransactionError::TxPrecheckFailed) {\n                    staged_drops.push(QueuedDrop {\n                        tx_id,\n                        drop_code: DROP_CODE_EXEC_PRECHECK,\n                        sender_override: Some(prepared_tx.sender_bytes),\n                        nonce_override: Some(prepared_tx.sender_nonce),\n                    });\n                    track_drop(\n                        &mut dropped_total,\n                        &mut dropped_by_code,\n                        DROP_CODE_EXEC_PRECHECK,\n                    );\n                    continue;\n                }\n                staged_drops.push(QueuedDrop {\n                    tx_id,\n                    drop_code: DROP_CODE_EXEC,\n                    sender_override: Some(prepared_tx.sender_bytes),\n                    nonce_override: Some(prepared_tx.sender_nonce),\n                });\n                track_drop(&mut dropped_total, &mut dropped_by_code, DROP_CODE_EXEC);\n                continue;\n            }\n        };\n        let gas_used = outcome.receipt.gas_used;\n        observe_exec_outcome(timestamp, &outcome);\n        block_gas_used = verified_core::block::add_block_gas_used(block_gas_used, gas_used);\n        staged_included.push(StagedIncludedTx::Success {\n            tx_id,\n            outcome,\n            sender_bytes: prepared_tx.sender_bytes,\n            sender_nonce: prepared_tx.sender_nonce,\n        });\n        included_tx_ids.push(tx_id);\n        if should_stop_block_execution(\n            block_gas_used,\n            exec_ctx.block_gas_limit,\n            update_instruction_soft_limit,\n            instruction_start,\n            current_instruction_counter(),\n        ) {\n            break;\n        }\n    }\n\n    if included_tx_ids.is_empty() {\n        apply_drops_only(&staged_drops, &dropped_by_code);\n        return Err(ChainError::NoExecutableTx);\n    }\n\n    let mut tx_id_bytes = Vec::with_capacity(included_tx_ids.len());\n    for tx_id in included_tx_ids.iter() {\n        tx_id_bytes.push(tx_id.0);\n    }\n    let tx_list_hash = hash::tx_list_hash(&tx_id_bytes);\n    let touched: Vec<[u8; 20]> = touched_addrs.into_iter().collect();\n    let summary = TouchedSummary {\n        accounts_count: u32::try_from(touched.len()).unwrap_or(u32::MAX),\n        slots_count: touched_slots,\n        delta_digest: hash::keccak256_concat_chunks(&delta_digests),\n    };\n    let prepared_root = match with_state_mut(|state| {\n        trie_commit::prepare(\n            state,\n            &staged_state_diffs,\n            &touched,\n            summary,\n            number,\n            parent_hash,\n            timestamp,\n        )\n    }) {\n        Ok(value) => value,\n        Err(reason) => return Err(ChainError::InvariantViolation(reason.to_string())),\n    };\n\n    for state_diff in staged_state_diffs {\n        commit_state_diff_to_db(state_diff);\n    }\n\n    let state_root = prepared_root.state_root;\n    let block_hash = hash::block_hash(parent_hash, number, timestamp, tx_list_hash, state_root);\n    let block = BlockData::new(\n        number,\n        parent_hash,\n        block_hash,\n        timestamp,\n        exec_ctx.base_fee,\n        exec_ctx.block_gas_limit,\n        block_gas_used,\n        crate::fee_recipient(),\n        included_tx_ids,\n        tx_list_hash,\n        state_root,\n    );\n\n    with_state_mut(|state| {\n        struct StagedPersist {\n            tx_id: TxId,\n            tx_index: u32,\n            tx_index_ptr: evm_db::blob_ptr::BlobPtr,\n            receipt_ptr: evm_db::blob_ptr::BlobPtr,\n            internal_traces_ptr: Option<evm_db::blob_ptr::BlobPtr>,\n            sender_bytes: [u8; 20],\n            sender_nonce: u64,\n        }\n\n        trie_commit::apply(state, prepared_root);\n        for drop in staged_drops.iter() {\n            advance_sender_after_tx(\n                state,\n                drop.tx_id,\n                drop.sender_override,\n                drop.nonce_override,\n                false,\n            );\n            mark_dropped_and_purge_payload(state, drop.tx_id, drop.drop_code);\n        }\n        let mut staged_persisted = Vec::with_capacity(staged_included.len());\n        for included in staged_included.iter() {\n            let StagedIncludedTx::Success {\n                tx_id,\n                outcome,\n                sender_bytes,\n                sender_nonce,\n            } = included;\n            let tx_index_ptr = store_tx_index_entry(\n                state,\n                TxIndexEntry {\n                    block_number: number,\n                    tx_index: outcome.tx_index,\n                },\n            );\n            let receipt_ptr = store_receipt(state, &outcome.receipt);\n            let internal_traces_ptr =\n                store_internal_traces(state, *tx_id, &outcome.internal_traces);\n            staged_persisted.push(StagedPersist {\n                tx_id: *tx_id,\n                tx_index: outcome.tx_index,\n                tx_index_ptr,\n                receipt_ptr,\n                internal_traces_ptr,\n                sender_bytes: *sender_bytes,\n                sender_nonce: *sender_nonce,\n            });\n        }\n        match verified_core::block_persist::classify_persist_batch(\n            staged_included.len(),\n            staged_persisted.len(),\n        ) {\n            verified_core::block_persist::PersistBatchDecision::Commit => {}\n            _ => {\n                trap_store_err(\n                    \"persist_included_batch\",\n                    Some(number),\n                    None,\n                    \"count_mismatch\",\n                );\n            }\n        }\n\n        let block_ptr = store_block(state, &block);\n        for persisted in staged_persisted {\n            state\n                .tx_index\n                .insert(persisted.tx_id, persisted.tx_index_ptr);\n            state\n                .receipts\n                .insert(persisted.tx_id, persisted.receipt_ptr);\n            if let Some(ptr) = persisted.internal_traces_ptr {\n                state.internal_traces.insert(persisted.tx_id, ptr);\n            }\n            tx_locs_insert(\n                state,\n                persisted.tx_id,\n                included_tx_loc(number, persisted.tx_index),\n            );\n            advance_sender_after_tx(\n                state,\n                persisted.tx_id,\n                Some(persisted.sender_bytes),\n                Some(persisted.sender_nonce),\n                true,\n            );\n            debug_assert_persisted_included_effects(\n                state,\n                persisted.tx_id,\n                number,\n                persisted.tx_index,\n            );\n        }\n        state.blocks.insert(number, block_ptr);\n        state.head.set(Head {\n            number,\n            block_hash,\n            timestamp,\n        });\n        let mut chain_state = *state.chain_state.get();\n        chain_state.last_block_number = number;\n        chain_state.last_block_time = timestamp;\n        chain_state.base_fee = compute_next_base_fee(\n            chain_state.base_fee,\n            block_gas_used,\n            chain_state.block_gas_limit,\n        );\n        state.chain_state.set(chain_state);\n        rebuild_pending_fee_index_for_base_fee(state, chain_state.base_fee);\n        let mut metrics = *state.metrics_state.get();\n        for (idx, count) in dropped_by_code.iter().enumerate() {\n            if *count > 0 {\n                metrics.record_drop(idx as u16, *count);\n            }\n        }\n        metrics.record_included(block.tx_ids.len() as u64);\n        metrics.record_block(number, timestamp, block.tx_ids.len() as u64, dropped_total);\n        state.metrics_state.set(metrics);\n    });\n\n    Ok(ProduceBlockOutcome {\n        block,\n        gas_used: block_gas_used,\n        dropped: dropped_total,\n    })\n}",
+  "span": {
+    "start_line": 1043,
+    "end_line": 1610
+  },
+  "git_commit": "703d7df1dcdc48c6f15be3733c6da4ec5c6a8dad",
+  "worktree_dirty": false,
+  "source_hash": "71d692817b260c23c03029151499d7b6bcf96382382f86934f08e6cf14578699",
+  "semantic_hash": "12ab5a5954585cf9c56f80429bc72480de3eb545d49dea85f8a4600f604fa3ce",
+  "dependency_hash_inputs": [
+    {
+      "kind": "use",
+      "name": "use",
+      "file": "crates/evm-core/src/chain.rs",
+      "hash": "e7ae3a4b4cf36c501434bf70e5eb383492b3182f84b547b3ba3b9c179dd479f0"
+    },
+    {
+      "kind": "use",
+      "name": "use",
+      "file": "crates/evm-core/src/chain.rs",
+      "hash": "c568d192c3aa4354800af16265713599dce85ab4c9e07278a7a7dc7d4880c100"
+    },
+    {
+      "kind": "use",
+      "name": "use",
+      "file": "crates/evm-core/src/chain.rs",
+      "hash": "b26d2428039c6f37848c6f2acf28813f7a33c639fea553ebc565ed51de8d454d"
+    },
+    {
+      "kind": "use",
+      "name": "use",
+      "file": "crates/evm-core/src/chain.rs",
+      "hash": "830fb1465e58e7fc7aec3f26779cd653658ce4cc5d9db9618e91abb3d2158c77"
+    },
+    {
+      "kind": "use",
+      "name": "use",
+      "file": "crates/evm-core/src/chain.rs",
+      "hash": "36688125e16eb6e6a4d131f4cd9c9eddedf6e060b84c7f0737d89c8b0c71128a"
+    },
+    {
+      "kind": "use",
+      "name": "use",
+      "file": "crates/evm-core/src/chain.rs",
+      "hash": "a270683413e4882685ce27faa34336dc53a61dfc89842c9e10f8242374e9c1ea"
+    },
+    {
+      "kind": "use",
+      "name": "use",
+      "file": "crates/evm-core/src/chain.rs",
+      "hash": "fb303882d044ddb33652ccca787eed8e0ef837ec36409e033b12b54ca0573e26"
+    },
+    {
+      "kind": "use",
+      "name": "use",
+      "file": "crates/evm-core/src/chain.rs",
+      "hash": "b6c9bdfa9353fc66b061f9f4f22797e47f6d28d89b9f8f741ad57bae96f8ae68"
+    },
+    {
+      "kind": "use",
+      "name": "use",
+      "file": "crates/evm-core/src/chain.rs",
+      "hash": "69f3747d6e8f25efa55b3889404286f18575e4a23e9affa6037626a3054074b8"
+    },
+    {
+      "kind": "use",
+      "name": "use",
+      "file": "crates/evm-core/src/chain.rs",
+      "hash": "20f12920b44b808af1bbab0c74e32d272d45ed15990bad065dee36333a31b804"
+    },
+    {
+      "kind": "use",
+      "name": "use",
+      "file": "crates/evm-core/src/chain.rs",
+      "hash": "9d824051ac822ca1d3a8ec2ae3d4031ca0325ecce3aa8db67aaa4472fce169bc"
+    },
+    {
+      "kind": "use",
+      "name": "use",
+      "file": "crates/evm-core/src/chain.rs",
+      "hash": "bd020c698818b3126d3a40e43d12c89e3bade3eaa6f0c0918b74bf3a622a6090"
+    },
+    {
+      "kind": "use",
+      "name": "use",
+      "file": "crates/evm-core/src/chain.rs",
+      "hash": "b38ffa70dff4a974c8c010f65b6e012bb5b50a87d18ab6453005e6cb42601213"
+    },
+    {
+      "kind": "use",
+      "name": "use",
+      "file": "crates/evm-core/src/chain.rs",
+      "hash": "8426e77a2fdaccfe404aa6571b5b0c8721aaaf89f8d6f4170105232f193d83ca"
+    },
+    {
+      "kind": "use",
+      "name": "use",
+      "file": "crates/evm-core/src/chain.rs",
+      "hash": "783b4337fa836c456b2ac473aa2247951fa03fb798f5035fc9828265ae1f94e3"
+    },
+    {
+      "kind": "use",
+      "name": "use",
+      "file": "crates/evm-core/src/chain.rs",
+      "hash": "5912970886e67d4194bc6d1d18e22b3643534e6384c936312c57f6c9a2c5fec5"
+    },
+    {
+      "kind": "use",
+      "name": "use",
+      "file": "crates/evm-core/src/chain.rs",
+      "hash": "9e5588e9617d4a0ac404b1db64499072327d7aaf30bf7689c8ab2f2c10486828"
+    },
+    {
+      "kind": "use",
+      "name": "use",
+      "file": "crates/evm-core/src/chain.rs",
+      "hash": "89d90a839388d15a23b90529dc361bff606b9482fea1274c4e982671465b71b4"
+    },
+    {
+      "kind": "use",
+      "name": "use",
+      "file": "crates/evm-core/src/chain.rs",
+      "hash": "a703974f16892e02e1b3356784feb802ae8888f490c72dc29b854918dc33a432"
+    },
+    {
+      "kind": "use",
+      "name": "use",
+      "file": "crates/evm-core/src/chain.rs",
+      "hash": "bef68d88e6aeb6a5638ebd9bdbe54608e3febc58ae1f1e038b91ac0a33d5c3d8"
+    },
+    {
+      "kind": "use",
+      "name": "use",
+      "file": "crates/evm-core/src/chain.rs",
+      "hash": "d740fb31f83ee7e6d6d918375551f1e32d533d3861455bc8cb2ec9a2f7e698c5"
+    },
+    {
+      "kind": "use",
+      "name": "use",
+      "file": "crates/evm-core/src/chain.rs",
+      "hash": "36d6d0a51181b3a59283f165f5cf2c4bb5072c26a75cc788476be2d9227ca581"
+    },
+    {
+      "kind": "use",
+      "name": "use",
+      "file": "crates/evm-core/src/chain.rs",
+      "hash": "938daee1e79d56ecd2de07a3e79e0401e2099f27b69296e8384e2375373a5f97"
+    },
+    {
+      "kind": "use",
+      "name": "use",
+      "file": "crates/evm-core/src/chain.rs",
+      "hash": "90af71e1203398ea2df5c4b97dd2f539c72a10e28a84ef25379568d3dcfde6b7"
+    },
+    {
+      "kind": "use",
+      "name": "use",
+      "file": "crates/evm-core/src/chain.rs",
+      "hash": "910749e827a3078d7a5ec584cf53f9511ff8b88ac441c977f15e3e182875d35c"
+    },
+    {
+      "kind": "use",
+      "name": "cfg",
+      "file": "crates/evm-core/src/chain.rs",
+      "hash": "d2bcf4ce6aa78e2056a36826c465b7539decde0a23b70951ec1e1e799fb549e4"
+    },
+    {
+      "kind": "use",
+      "name": "use",
+      "file": "crates/evm-core/src/chain.rs",
+      "hash": "1976cc35c6778b2ad879272521eaa993a14b6d3d178cdcf9f92ce3f062da07eb"
+    },
+    {
+      "kind": "use",
+      "name": "use",
+      "file": "crates/evm-core/src/chain.rs",
+      "hash": "3309b894e6a95d09d13030d40371613864c869fad184b3a3db9a1ab6d25accda"
+    },
+    {
+      "kind": "use",
+      "name": "use",
+      "file": "crates/evm-core/src/chain.rs",
+      "hash": "ded65dd08488727345f5fd8a96a19f6cfc02ed7df08613d9627400f09a4f9229"
+    },
+    {
+      "kind": "use",
+      "name": "use",
+      "file": "crates/evm-core/src/chain.rs",
+      "hash": "56a7f9de061a1b5ba0b61f4b4f7bc02fc5f66af7f36813482fa7dc234195a1a2"
+    },
+    {
+      "kind": "use",
+      "name": "use",
+      "file": "crates/evm-core/src/chain.rs",
+      "hash": "56a7f9de061a1b5ba0b61f4b4f7bc02fc5f66af7f36813482fa7dc234195a1a2"
+    },
+    {
+      "kind": "impl",
+      "name": "cfg",
+      "file": "crates/evm-core/src/chain.rs",
+      "hash": "a0a7ad4ecee1abcd96021a540c8a3ee9550c3491a67a7aeeedf472d4c4490eb7"
+    },
+    {
+      "kind": "impl",
+      "name": "cfg",
+      "file": "crates/evm-core/src/chain.rs",
+      "hash": "395bf10496d2863e14719226673104f558a6ea476515cac37cb60e05f8c81957"
+    },
+    {
+      "kind": "impl",
+      "name": "impl",
+      "file": "crates/evm-core/src/chain.rs",
+      "hash": "f2b8b3a39bdc819fefe8bf374180f1148e59e8d4eb4dba08065fb74fb972c52b"
+    },
+    {
+      "kind": "impl",
+      "name": "impl",
+      "file": "crates/evm-core/src/chain.rs",
+      "hash": "18f1e34b78d767168edfde4c5d8c3c66e9c4ece1d21a0590e90df465d08643f4"
+    },
+    {
+      "kind": "impl",
+      "name": "impl",
+      "file": "crates/evm-core/src/chain.rs",
+      "hash": "f1089b79edaa38d006bbd2543307498103c3c78ead37c64435c123d7c365535c"
+    },
+    {
+      "kind": "module",
+      "name": "cfg",
+      "file": "crates/evm-core/src/chain.rs",
+      "hash": "e4b8e1eb3292eca1cb1c0388606e96702254b41e528d17d0b806197b9c54d602"
+    },
+    {
+      "kind": "function",
+      "name": "BTreeMap::new",
+      "file": "crates/evm-core/src/chain.rs",
+      "hash": "3d4982f9c6d67200b28f99bc62dfd35330cbe396382dacd5da24fbb13082814e"
+    },
+    {
+      "kind": "function",
+      "name": "BTreeSet::new",
+      "file": "crates/evm-core/src/chain.rs",
+      "hash": "3d4982f9c6d67200b28f99bc62dfd35330cbe396382dacd5da24fbb13082814e"
+    },
+    {
+      "kind": "function",
+      "name": "BlockData::new",
+      "file": "crates/evm-core/src/chain.rs",
+      "hash": "3d4982f9c6d67200b28f99bc62dfd35330cbe396382dacd5da24fbb13082814e"
+    },
+    {
+      "kind": "function",
+      "name": "Box::new",
+      "file": "crates/evm-core/src/chain.rs",
+      "hash": "3d4982f9c6d67200b28f99bc62dfd35330cbe396382dacd5da24fbb13082814e"
+    },
+    {
+      "kind": "function",
+      "name": "CacheDB::new",
+      "file": "crates/evm-core/src/chain.rs",
+      "hash": "3d4982f9c6d67200b28f99bc62dfd35330cbe396382dacd5da24fbb13082814e"
+    },
+    {
+      "kind": "function",
+      "name": "Vec::new",
+      "file": "crates/evm-core/src/chain.rs",
+      "hash": "3d4982f9c6d67200b28f99bc62dfd35330cbe396382dacd5da24fbb13082814e"
+    },
+    {
+      "kind": "function",
+      "name": "advance_sender_after_tx",
+      "file": "crates/evm-core/src/chain.rs",
+      "hash": "d2ce0984dc001cc795052d55d149dae616dca4e6135a7b3e108070f139a4c0a7"
+    },
+    {
+      "kind": "function",
+      "name": "apply_drops_only",
+      "file": "crates/evm-core/src/chain.rs",
+      "hash": "6b81ca21fe536b937b78c750963db490347d311d3e9c266dd128281f5289cff0"
+    },
+    {
+      "kind": "function",
+      "name": "collect_touched_addresses",
+      "file": "crates/evm-core/src/chain.rs",
+      "hash": "1fa650c1aad8c723d93352235383d2c4c7d2587d612a6b83c4faffa40b0ff037"
+    },
+    {
+      "kind": "function",
+      "name": "current_instruction_counter",
+      "file": "crates/evm-core/src/chain.rs",
+      "hash": "91392a84d2b3c7939fa31d09160fe3f72d09d3effd9f655afd83fe759737b641"
+    },
+    {
+      "kind": "function",
+      "name": "debug_assert_persisted_included_effects",
+      "file": "crates/evm-core/src/chain.rs",
+      "hash": "fbbc28d27cb0967bf5f3ff79c050201552a2f75ed9403524948ef4cdb32d2ab8"
+    },
+    {
+      "kind": "function",
+      "name": "included_tx_loc",
+      "file": "crates/evm-core/src/chain.rs",
+      "hash": "417f04a7120ba37253c0b1d4f0869535a8ad268fde62496b6a419e1918a14f37"
+    },
+    {
+      "kind": "function",
+      "name": "is_principal_decode_suppressed",
+      "file": "crates/evm-core/src/chain.rs",
+      "hash": "b51748b12f89e1794f921b8a557072a981a47b908720a945f5ddf6f079db1ab6"
+    },
+    {
+      "kind": "function",
+      "name": "mark_dropped_and_purge_payload",
+      "file": "crates/evm-core/src/chain.rs",
+      "hash": "0c15fc1cadd390a9b8d2a7753307f7519b1771b3ac4e220b373f333898ee3778"
+    },
+    {
+      "kind": "function",
+      "name": "min_fee_satisfied",
+      "file": "crates/evm-core/src/chain.rs",
+      "hash": "97373ee9c8e8cb623a8a99dfed7c5e42808fef1ea76969a66b6b82027dca0b9d"
+    },
+    {
+      "kind": "function",
+      "name": "note_decode_drop_for_principal",
+      "file": "crates/evm-core/src/chain.rs",
+      "hash": "6db5f001f6a50fe2c0f68d9417acdf09e0e62c0f9ce8b20b4616e660c5a4c881"
+    },
+    {
+      "kind": "function",
+      "name": "observe_exec_error",
+      "file": "crates/evm-core/src/chain.rs",
+      "hash": "014a87988438cbb8bdfd3b2af10d36e1965eed413bd034f1f592c352ed680ff1"
+    },
+    {
+      "kind": "function",
+      "name": "observe_exec_outcome",
+      "file": "crates/evm-core/src/chain.rs",
+      "hash": "c7d884fec6febe5f23370a0c92cf8ffa024ed6e598b2085b2f54a8942411ad9c"
+    },
+    {
+      "kind": "function",
+      "name": "rebuild_pending_fee_index_for_base_fee",
+      "file": "crates/evm-core/src/chain.rs",
+      "hash": "67709c5b4be0661f6b97463f57dacf55ed8f8712724537ff9ab1e5c4cc664536"
+    },
+    {
+      "kind": "function",
+      "name": "remaining_instruction_budget",
+      "file": "crates/evm-core/src/chain.rs",
+      "hash": "8501cf7ff804028cfaea266c0dc4a196e54c330e8a411504e864e94f1b87226f"
+    },
+    {
+      "kind": "function",
+      "name": "select_ready_candidates",
+      "file": "crates/evm-core/src/chain.rs",
+      "hash": "daba89d19532929b285fcb25f70598124a8accb6bdd7a499a1cb3df75ef6e07c"
+    },
+    {
+      "kind": "function",
+      "name": "should_stop_block_execution",
+      "file": "crates/evm-core/src/chain.rs",
+      "hash": "823296b1e30e1b5ba8eff603728e6b9a0017c5b2f9e7d7888c6b117be239320b"
+    },
+    {
+      "kind": "function",
+      "name": "store_block",
+      "file": "crates/evm-core/src/chain.rs",
+      "hash": "881a32df682d6be055a2d0f37775a0187e0f8e88643549f502f704a260ec5c8a"
+    },
+    {
+      "kind": "function",
+      "name": "store_internal_traces",
+      "file": "crates/evm-core/src/chain.rs",
+      "hash": "1d04ef6e6bcd5df53f3d995f74e33a6d41c480635626256c2bc3b4d94b6d1a02"
+    },
+    {
+      "kind": "function",
+      "name": "store_receipt",
+      "file": "crates/evm-core/src/chain.rs",
+      "hash": "b002548938326e14e65dd7de31cec3bbbbb11cdaf04271684c41cd8eed40ebac"
+    },
+    {
+      "kind": "function",
+      "name": "store_tx_index_entry",
+      "file": "crates/evm-core/src/chain.rs",
+      "hash": "88f1d100f4f53c2cf63dbc7deb628bd603a5cf217b412a3b1d2d073bc99c2c9e"
+    },
+    {
+      "kind": "function",
+      "name": "track_drop",
+      "file": "crates/evm-core/src/chain.rs",
+      "hash": "8e5485d85f720e37ca3744d54e5a4d5a97d788f785c0fefb76a7e91399d9377a"
+    },
+    {
+      "kind": "function",
+      "name": "trap_store_err",
+      "file": "crates/evm-core/src/chain.rs",
+      "hash": "7f38d31a79c0f2bcc60d34d81f98fcf7af0ab4f2605112eaa3fc5e70004d4458"
+    },
+    {
+      "kind": "function",
+      "name": "tx_locs_insert",
+      "file": "crates/evm-core/src/chain.rs",
+      "hash": "397e2685cb22da0744aa84100fc8fbb6e9f8dea900d18a7e11cd7d0ea9503589"
+    },
+    {
+      "kind": "type",
+      "name": "Clone",
+      "file": "crates/evm-core/src/chain.rs",
+      "hash": "75a59fc14d056a05758ba3d8b46b043abb81ef08549e3449cda54ae46539f56e"
+    },
+    {
+      "kind": "type",
+      "name": "Clone",
+      "file": "crates/evm-core/src/chain.rs",
+      "hash": "6ab93e77d8d159ce5300ec901fcaf5fe32028fee4a2ade16a46595a4bdfa30e8"
+    },
+    {
+      "kind": "type",
+      "name": "Clone",
+      "file": "crates/evm-core/src/chain.rs",
+      "hash": "803679d20abdbea8ce7b405717dee66bd4d05dcc1408521c0513804f727b0c09"
+    },
+    {
+      "kind": "type",
+      "name": "struct",
+      "file": "crates/evm-core/src/chain.rs",
+      "hash": "6cd19eef4b00ad3ca3117327e5611a0b24a82d8b4e874066d6a31cb9b1d79a1f"
+    },
+    {
+      "kind": "type",
+      "name": "Clone",
+      "file": "crates/evm-core/src/chain.rs",
+      "hash": "c0531a15fc9c04309cfcbc6ce55f6d13c6688d330517305a8eca75ec5a00a088"
+    },
+    {
+      "kind": "type",
+      "name": "Clone",
+      "file": "crates/evm-core/src/chain.rs",
+      "hash": "d58dbd15d90f1357b112288266b172c27b1a2359b4979298bdb099c3fb7ef604"
+    },
+    {
+      "kind": "type",
+      "name": "struct",
+      "file": "crates/evm-core/src/chain.rs",
+      "hash": "04083d15a3eb1e5cd239dbb3672d581c2aefbc693e1d89fc78834a6efe2c9c5f"
+    },
+    {
+      "kind": "type",
+      "name": "Clone",
+      "file": "crates/evm-core/src/chain.rs",
+      "hash": "d27094c66133636e4283a699d4a5b952fd25c83d309f37ae747408bc1456d621"
+    },
+    {
+      "kind": "type",
+      "name": "StagedPersist",
+      "file": "crates/evm-core/src/chain.rs",
+      "hash": "201cd22e3fe16e66c9636ab30fbd9e5c1f3ebbef2236a77b9fdaa306adc9b511"
+    },
+    {
+      "kind": "type",
+      "name": "StagedIncludedTx",
+      "file": "crates/evm-core/src/chain.rs",
+      "hash": "1a9ed27e7e91b0c29362731609b1751f86ed52a223da691262c2ff56a7c81b6b"
+    },
+    {
+      "kind": "type",
+      "name": "PreparedTx",
+      "file": "crates/evm-core/src/chain.rs",
+      "hash": "2859aa90d8a9018a79ae54fe125ad727a353607e6730253d57bd25fb06d34ed2"
+    },
+    {
+      "kind": "type",
+      "name": "PreparedItem",
+      "file": "crates/evm-core/src/chain.rs",
+      "hash": "fea5f9a717f2f6e9fd4b6a18edd371f7d048f9b6f0e986dedfc5bfb389e942b5"
+    },
+    {
+      "kind": "type",
+      "name": "Clone",
+      "file": "crates/evm-core/src/chain.rs",
+      "hash": "f5d6c3837f71f048c2aad78924d5c9e5b91b873b12b17c16677a1e62edef07e0"
+    },
+    {
+      "kind": "type",
+      "name": "StagedSinglePersist",
+      "file": "crates/evm-core/src/chain.rs",
+      "hash": "d35dacb484b29502c162b53fe35eea2e0efb9695e317a7b3fac687f66594dbe6"
+    },
+    {
+      "kind": "type",
+      "name": "struct",
+      "file": "crates/evm-core/src/chain.rs",
+      "hash": "f13bf64ac390a876052e15352d1d7e5805d9fd42bdcd15c2282131d2686e6b02"
+    },
+    {
+      "kind": "type",
+      "name": "struct",
+      "file": "crates/evm-core/src/chain.rs",
+      "hash": "d67245ce5a9ccc3422ddf724de3d55485943f8b6b11f5c10e49fb4466ae53ef8"
+    },
+    {
+      "kind": "type",
+      "name": "not",
+      "file": "crates/evm-core/src/chain.rs",
+      "hash": "1bec4cd2957819d7378c055da05a7611ad773e172aafbd11bdf73e77a2828ba2"
+    },
+    {
+      "kind": "type",
+      "name": "Clone",
+      "file": "crates/evm-core/src/chain.rs",
+      "hash": "1d50dc54aed02921a82f388f567f5a038dbe806621f6f60baa1a009edee57488"
+    },
+    {
+      "kind": "type",
+      "name": "Clone",
+      "file": "crates/evm-core/src/chain.rs",
+      "hash": "87c54a78abf3e614d3959f4e6365590a530cd48df6080675b5de07b51586633e"
+    }
+  ],
+  "unresolved_dependencies": [
+    "Address::from",
+    "ChainError::InvariantViolation",
+    "ExecError::TxError",
+    "PreparedItem::Drop",
+    "PreparedItem::Tx",
+    "StoredTx::try_from",
+    "Vec::with_capacity",
+    "as_slice",
+    "clone",
+    "collect",
+    "commit",
+    "commit_state_diff_to_db",
+    "compute_effective_gas_price",
+    "compute_next_base_fee",
+    "crate::fee_recipient",
+    "crate::time::now_sec",
+    "decode_tx",
+    "enumerate",
+    "execute_tx_on",
+    "get",
+    "hash::block_hash",
+    "hash::keccak256_concat_chunks",
+    "hash::tx_list_hash",
+    "insert",
+    "into_iter",
+    "is_empty",
+    "is_none",
+    "iter",
+    "len",
+    "map_err",
+    "ok_or",
+    "push",
+    "record_block",
+    "record_drop",
+    "record_included",
+    "saturating_add",
+    "set",
+    "to_string",
+    "trie_commit::apply",
+    "trie_commit::prepare",
+    "try_address_to_bytes",
+    "u32::try_from",
+    "unwrap_or",
+    "verified_core::block::add_block_gas_used",
+    "verified_core::block::next_block_number",
+    "verified_core::block::next_block_timestamp",
+    "verified_core::block::tx_fits_block_gas",
+    "verified_core::block::valid_block_limit",
+    "verified_core::block_persist::classify_persist_batch",
+    "verified_core::tx_index::next_included_index",
+    "with_state",
+    "with_state_mut"
+  ],
+  "tool_version": "0.1.0",
+  "cfg": [],
+  "features": [],
+  "types": [],
+  "called_functions": [
+    "Address::from",
+    "BTreeMap::new",
+    "BTreeSet::new",
+    "BlockData::new",
+    "Box::new",
+    "CacheDB::new",
+    "ChainError::InvariantViolation",
+    "Err",
+    "ExecError::TxError",
+    "Ok",
+    "PreparedItem::Drop",
+    "PreparedItem::Tx",
+    "Some",
+    "StoredTx::try_from",
+    "Vec::new",
+    "Vec::with_capacity",
+    "advance_sender_after_tx",
+    "apply_drops_only",
+    "as_slice",
+    "clone",
+    "collect",
+    "collect_touched_addresses",
+    "commit",
+    "commit_state_diff_to_db",
+    "compute_effective_gas_price",
+    "compute_next_base_fee",
+    "crate::fee_recipient",
+    "crate::time::now_sec",
+    "current_instruction_counter",
+    "debug_assert_persisted_included_effects",
+    "decode_tx",
+    "enumerate",
+    "execute_tx_on",
+    "get",
+    "hash::block_hash",
+    "hash::keccak256_concat_chunks",
+    "hash::tx_list_hash",
+    "included_tx_loc",
+    "insert",
+    "into_iter",
+    "is_empty",
+    "is_none",
+    "is_principal_decode_suppressed",
+    "iter",
+    "len",
+    "map_err",
+    "mark_dropped_and_purge_payload",
+    "min_fee_satisfied",
+    "note_decode_drop_for_principal",
+    "observe_exec_error",
+    "observe_exec_outcome",
+    "ok_or",
+    "push",
+    "rebuild_pending_fee_index_for_base_fee",
+    "record_block",
+    "record_drop",
+    "record_included",
+    "remaining_instruction_budget",
+    "saturating_add",
+    "select_ready_candidates",
+    "set",
+    "should_stop_block_execution",
+    "store_block",
+    "store_internal_traces",
+    "store_receipt",
+    "store_tx_index_entry",
+    "to_string",
+    "track_drop",
+    "trap_store_err",
+    "trie_commit::apply",
+    "trie_commit::prepare",
+    "try_address_to_bytes",
+    "tx_locs_insert",
+    "u32::try_from",
+    "unwrap_or",
+    "verified_core::block::add_block_gas_used",
+    "verified_core::block::next_block_number",
+    "verified_core::block::next_block_timestamp",
+    "verified_core::block::tx_fits_block_gas",
+    "verified_core::block::valid_block_limit",
+    "verified_core::block_persist::classify_persist_batch",
+    "verified_core::tx_index::next_included_index",
+    "with_state",
+    "with_state_mut"
+  ],
+  "callers": [],
+  "tests": [],
+  "panic_sites": [
+    "unwrap"
+  ],
+  "overflow_sites": [
+    "*"
+  ],
+  "casts": [
+    " as "
+  ],
+  "division_sites": [
+    "/"
+  ],
+  "llm_context_files": []
+}

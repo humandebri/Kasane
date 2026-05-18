@@ -1,0 +1,15 @@
+{
+  "slug": "block_is_prunable-04224fd7",
+  "command": "verus /Users/0xhude/Desktop/ICP/Kasane/crates/verified-core/src/prune_safety/block_prunable.rs",
+  "exit_code": 0,
+  "git_commit": "a3bc9781ec94f42ff9edf5612aebd4f4532e69f0",
+  "worktree_dirty": false,
+  "semantic_hash": "c76192f60877bd0b3b3fecf672e540724f0ef2b2a562bf86319e8b669fea139a",
+  "spec_hash": "0e85a02c9a1d0a3c8ed50ffbfacbc2882fda011bada44c925416f2716b85da1c",
+  "target_hash": "b475de26bc2edd590c5c5440ebbee53314ee6e1176baa1aa3e3bbb4274afa0a7",
+  "contract_hash": "4c24bfecde7f3fe6b6c7e82b04837ff70c7f83f25ea60f001134083a43bc4a36",
+  "source_hash": "04224fd721eb346c0179a3a897953c3f7f5bed4a2f5c8204cf15ddab000034cf",
+  "verified_subject": "implementation",
+  "result": "success",
+  "output": "verification results:: 1 verified, 0 errors\n"
+}

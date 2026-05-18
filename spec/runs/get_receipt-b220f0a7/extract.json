@@ -1,0 +1,362 @@
+{
+  "target": "get_receipt",
+  "entry": {
+    "display_name": "get_receipt",
+    "function": "get_receipt",
+    "function_path": "get_receipt",
+    "file": "crates/evm-core/src/chain.rs",
+    "target_id": "8193da1a95e99d19afb4355b3cbb4ef8b61093fdb220b8fd575b0633c4fc00e0",
+    "slug": "get_receipt-b220f0a7",
+    "source_hash": "b220f0a7ff5389d869a161b691fd28d16cc9450fd7973a8c27bc73df951a8c71",
+    "semantic_hash": "22a01cfa6923b2cea71a7498be6ccf45dace537f54f75cd85c656cda008bb461",
+    "created_at": "2026-05-14T03:39:57Z"
+  },
+  "signature": "pub fn get_receipt(tx_id: &TxId) -> Option<ReceiptLike>",
+  "body": "{\n    with_state(|state| load_receipt(state, tx_id))\n}",
+  "span": {
+    "start_line": 1966,
+    "end_line": 1968
+  },
+  "git_commit": "703d7df1dcdc48c6f15be3733c6da4ec5c6a8dad",
+  "worktree_dirty": false,
+  "source_hash": "b220f0a7ff5389d869a161b691fd28d16cc9450fd7973a8c27bc73df951a8c71",
+  "semantic_hash": "22a01cfa6923b2cea71a7498be6ccf45dace537f54f75cd85c656cda008bb461",
+  "dependency_hash_inputs": [
+    {
+      "kind": "use",
+      "name": "use",
+      "file": "crates/evm-core/src/chain.rs",
+      "hash": "e7ae3a4b4cf36c501434bf70e5eb383492b3182f84b547b3ba3b9c179dd479f0"
+    },
+    {
+      "kind": "use",
+      "name": "use",
+      "file": "crates/evm-core/src/chain.rs",
+      "hash": "c568d192c3aa4354800af16265713599dce85ab4c9e07278a7a7dc7d4880c100"
+    },
+    {
+      "kind": "use",
+      "name": "use",
+      "file": "crates/evm-core/src/chain.rs",
+      "hash": "b26d2428039c6f37848c6f2acf28813f7a33c639fea553ebc565ed51de8d454d"
+    },
+    {
+      "kind": "use",
+      "name": "use",
+      "file": "crates/evm-core/src/chain.rs",
+      "hash": "830fb1465e58e7fc7aec3f26779cd653658ce4cc5d9db9618e91abb3d2158c77"
+    },
+    {
+      "kind": "use",
+      "name": "use",
+      "file": "crates/evm-core/src/chain.rs",
+      "hash": "36688125e16eb6e6a4d131f4cd9c9eddedf6e060b84c7f0737d89c8b0c71128a"
+    },
+    {
+      "kind": "use",
+      "name": "use",
+      "file": "crates/evm-core/src/chain.rs",
+      "hash": "a270683413e4882685ce27faa34336dc53a61dfc89842c9e10f8242374e9c1ea"
+    },
+    {
+      "kind": "use",
+      "name": "use",
+      "file": "crates/evm-core/src/chain.rs",
+      "hash": "fb303882d044ddb33652ccca787eed8e0ef837ec36409e033b12b54ca0573e26"
+    },
+    {
+      "kind": "use",
+      "name": "use",
+      "file": "crates/evm-core/src/chain.rs",
+      "hash": "b6c9bdfa9353fc66b061f9f4f22797e47f6d28d89b9f8f741ad57bae96f8ae68"
+    },
+    {
+      "kind": "use",
+      "name": "use",
+      "file": "crates/evm-core/src/chain.rs",
+      "hash": "69f3747d6e8f25efa55b3889404286f18575e4a23e9affa6037626a3054074b8"
+    },
+    {
+      "kind": "use",
+      "name": "use",
+      "file": "crates/evm-core/src/chain.rs",
+      "hash": "20f12920b44b808af1bbab0c74e32d272d45ed15990bad065dee36333a31b804"
+    },
+    {
+      "kind": "use",
+      "name": "use",
+      "file": "crates/evm-core/src/chain.rs",
+      "hash": "9d824051ac822ca1d3a8ec2ae3d4031ca0325ecce3aa8db67aaa4472fce169bc"
+    },
+    {
+      "kind": "use",
+      "name": "use",
+      "file": "crates/evm-core/src/chain.rs",
+      "hash": "bd020c698818b3126d3a40e43d12c89e3bade3eaa6f0c0918b74bf3a622a6090"
+    },
+    {
+      "kind": "use",
+      "name": "use",
+      "file": "crates/evm-core/src/chain.rs",
+      "hash": "b38ffa70dff4a974c8c010f65b6e012bb5b50a87d18ab6453005e6cb42601213"
+    },
+    {
+      "kind": "use",
+      "name": "use",
+      "file": "crates/evm-core/src/chain.rs",
+      "hash": "8426e77a2fdaccfe404aa6571b5b0c8721aaaf89f8d6f4170105232f193d83ca"
+    },
+    {
+      "kind": "use",
+      "name": "use",
+      "file": "crates/evm-core/src/chain.rs",
+      "hash": "783b4337fa836c456b2ac473aa2247951fa03fb798f5035fc9828265ae1f94e3"
+    },
+    {
+      "kind": "use",
+      "name": "use",
+      "file": "crates/evm-core/src/chain.rs",
+      "hash": "5912970886e67d4194bc6d1d18e22b3643534e6384c936312c57f6c9a2c5fec5"
+    },
+    {
+      "kind": "use",
+      "name": "use",
+      "file": "crates/evm-core/src/chain.rs",
+      "hash": "9e5588e9617d4a0ac404b1db64499072327d7aaf30bf7689c8ab2f2c10486828"
+    },
+    {
+      "kind": "use",
+      "name": "use",
+      "file": "crates/evm-core/src/chain.rs",
+      "hash": "89d90a839388d15a23b90529dc361bff606b9482fea1274c4e982671465b71b4"
+    },
+    {
+      "kind": "use",
+      "name": "use",
+      "file": "crates/evm-core/src/chain.rs",
+      "hash": "a703974f16892e02e1b3356784feb802ae8888f490c72dc29b854918dc33a432"
+    },
+    {
+      "kind": "use",
+      "name": "use",
+      "file": "crates/evm-core/src/chain.rs",
+      "hash": "bef68d88e6aeb6a5638ebd9bdbe54608e3febc58ae1f1e038b91ac0a33d5c3d8"
+    },
+    {
+      "kind": "use",
+      "name": "use",
+      "file": "crates/evm-core/src/chain.rs",
+      "hash": "d740fb31f83ee7e6d6d918375551f1e32d533d3861455bc8cb2ec9a2f7e698c5"
+    },
+    {
+      "kind": "use",
+      "name": "use",
+      "file": "crates/evm-core/src/chain.rs",
+      "hash": "36d6d0a51181b3a59283f165f5cf2c4bb5072c26a75cc788476be2d9227ca581"
+    },
+    {
+      "kind": "use",
+      "name": "use",
+      "file": "crates/evm-core/src/chain.rs",
+      "hash": "938daee1e79d56ecd2de07a3e79e0401e2099f27b69296e8384e2375373a5f97"
+    },
+    {
+      "kind": "use",
+      "name": "use",
+      "file": "crates/evm-core/src/chain.rs",
+      "hash": "90af71e1203398ea2df5c4b97dd2f539c72a10e28a84ef25379568d3dcfde6b7"
+    },
+    {
+      "kind": "use",
+      "name": "use",
+      "file": "crates/evm-core/src/chain.rs",
+      "hash": "910749e827a3078d7a5ec584cf53f9511ff8b88ac441c977f15e3e182875d35c"
+    },
+    {
+      "kind": "use",
+      "name": "cfg",
+      "file": "crates/evm-core/src/chain.rs",
+      "hash": "d2bcf4ce6aa78e2056a36826c465b7539decde0a23b70951ec1e1e799fb549e4"
+    },
+    {
+      "kind": "use",
+      "name": "use",
+      "file": "crates/evm-core/src/chain.rs",
+      "hash": "1976cc35c6778b2ad879272521eaa993a14b6d3d178cdcf9f92ce3f062da07eb"
+    },
+    {
+      "kind": "use",
+      "name": "use",
+      "file": "crates/evm-core/src/chain.rs",
+      "hash": "3309b894e6a95d09d13030d40371613864c869fad184b3a3db9a1ab6d25accda"
+    },
+    {
+      "kind": "use",
+      "name": "use",
+      "file": "crates/evm-core/src/chain.rs",
+      "hash": "ded65dd08488727345f5fd8a96a19f6cfc02ed7df08613d9627400f09a4f9229"
+    },
+    {
+      "kind": "use",
+      "name": "use",
+      "file": "crates/evm-core/src/chain.rs",
+      "hash": "56a7f9de061a1b5ba0b61f4b4f7bc02fc5f66af7f36813482fa7dc234195a1a2"
+    },
+    {
+      "kind": "use",
+      "name": "use",
+      "file": "crates/evm-core/src/chain.rs",
+      "hash": "56a7f9de061a1b5ba0b61f4b4f7bc02fc5f66af7f36813482fa7dc234195a1a2"
+    },
+    {
+      "kind": "impl",
+      "name": "cfg",
+      "file": "crates/evm-core/src/chain.rs",
+      "hash": "a0a7ad4ecee1abcd96021a540c8a3ee9550c3491a67a7aeeedf472d4c4490eb7"
+    },
+    {
+      "kind": "impl",
+      "name": "cfg",
+      "file": "crates/evm-core/src/chain.rs",
+      "hash": "395bf10496d2863e14719226673104f558a6ea476515cac37cb60e05f8c81957"
+    },
+    {
+      "kind": "impl",
+      "name": "impl",
+      "file": "crates/evm-core/src/chain.rs",
+      "hash": "f2b8b3a39bdc819fefe8bf374180f1148e59e8d4eb4dba08065fb74fb972c52b"
+    },
+    {
+      "kind": "impl",
+      "name": "impl",
+      "file": "crates/evm-core/src/chain.rs",
+      "hash": "18f1e34b78d767168edfde4c5d8c3c66e9c4ece1d21a0590e90df465d08643f4"
+    },
+    {
+      "kind": "impl",
+      "name": "impl",
+      "file": "crates/evm-core/src/chain.rs",
+      "hash": "f1089b79edaa38d006bbd2543307498103c3c78ead37c64435c123d7c365535c"
+    },
+    {
+      "kind": "module",
+      "name": "cfg",
+      "file": "crates/evm-core/src/chain.rs",
+      "hash": "e4b8e1eb3292eca1cb1c0388606e96702254b41e528d17d0b806197b9c54d602"
+    },
+    {
+      "kind": "function",
+      "name": "load_receipt",
+      "file": "crates/evm-core/src/chain.rs",
+      "hash": "68418a2c0f34bd483b6c7e75402cf28aebbf3eef2d2e48d5104d7b8157192360"
+    },
+    {
+      "kind": "type",
+      "name": "Clone",
+      "file": "crates/evm-core/src/chain.rs",
+      "hash": "75a59fc14d056a05758ba3d8b46b043abb81ef08549e3449cda54ae46539f56e"
+    },
+    {
+      "kind": "type",
+      "name": "Clone",
+      "file": "crates/evm-core/src/chain.rs",
+      "hash": "6ab93e77d8d159ce5300ec901fcaf5fe32028fee4a2ade16a46595a4bdfa30e8"
+    },
+    {
+      "kind": "type",
+      "name": "struct",
+      "file": "crates/evm-core/src/chain.rs",
+      "hash": "6cd19eef4b00ad3ca3117327e5611a0b24a82d8b4e874066d6a31cb9b1d79a1f"
+    },
+    {
+      "kind": "type",
+      "name": "Clone",
+      "file": "crates/evm-core/src/chain.rs",
+      "hash": "c0531a15fc9c04309cfcbc6ce55f6d13c6688d330517305a8eca75ec5a00a088"
+    },
+    {
+      "kind": "type",
+      "name": "Clone",
+      "file": "crates/evm-core/src/chain.rs",
+      "hash": "d58dbd15d90f1357b112288266b172c27b1a2359b4979298bdb099c3fb7ef604"
+    },
+    {
+      "kind": "type",
+      "name": "struct",
+      "file": "crates/evm-core/src/chain.rs",
+      "hash": "04083d15a3eb1e5cd239dbb3672d581c2aefbc693e1d89fc78834a6efe2c9c5f"
+    },
+    {
+      "kind": "type",
+      "name": "StagedPersist",
+      "file": "crates/evm-core/src/chain.rs",
+      "hash": "201cd22e3fe16e66c9636ab30fbd9e5c1f3ebbef2236a77b9fdaa306adc9b511"
+    },
+    {
+      "kind": "type",
+      "name": "StagedIncludedTx",
+      "file": "crates/evm-core/src/chain.rs",
+      "hash": "1a9ed27e7e91b0c29362731609b1751f86ed52a223da691262c2ff56a7c81b6b"
+    },
+    {
+      "kind": "type",
+      "name": "PreparedTx",
+      "file": "crates/evm-core/src/chain.rs",
+      "hash": "2859aa90d8a9018a79ae54fe125ad727a353607e6730253d57bd25fb06d34ed2"
+    },
+    {
+      "kind": "type",
+      "name": "Clone",
+      "file": "crates/evm-core/src/chain.rs",
+      "hash": "f5d6c3837f71f048c2aad78924d5c9e5b91b873b12b17c16677a1e62edef07e0"
+    },
+    {
+      "kind": "type",
+      "name": "StagedSinglePersist",
+      "file": "crates/evm-core/src/chain.rs",
+      "hash": "d35dacb484b29502c162b53fe35eea2e0efb9695e317a7b3fac687f66594dbe6"
+    },
+    {
+      "kind": "type",
+      "name": "struct",
+      "file": "crates/evm-core/src/chain.rs",
+      "hash": "f13bf64ac390a876052e15352d1d7e5805d9fd42bdcd15c2282131d2686e6b02"
+    },
+    {
+      "kind": "type",
+      "name": "struct",
+      "file": "crates/evm-core/src/chain.rs",
+      "hash": "d67245ce5a9ccc3422ddf724de3d55485943f8b6b11f5c10e49fb4466ae53ef8"
+    },
+    {
+      "kind": "type",
+      "name": "not",
+      "file": "crates/evm-core/src/chain.rs",
+      "hash": "1bec4cd2957819d7378c055da05a7611ad773e172aafbd11bdf73e77a2828ba2"
+    },
+    {
+      "kind": "type",
+      "name": "Clone",
+      "file": "crates/evm-core/src/chain.rs",
+      "hash": "1d50dc54aed02921a82f388f567f5a038dbe806621f6f60baa1a009edee57488"
+    }
+  ],
+  "unresolved_dependencies": [
+    "with_state"
+  ],
+  "tool_version": "0.1.0",
+  "cfg": [],
+  "features": [],
+  "types": [],
+  "called_functions": [
+    "load_receipt",
+    "with_state"
+  ],
+  "callers": [],
+  "tests": [],
+  "panic_sites": [],
+  "overflow_sites": [],
+  "casts": [],
+  "division_sites": [],
+  "llm_context_files": []
+}
