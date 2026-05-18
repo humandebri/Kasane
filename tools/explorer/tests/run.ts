@@ -685,7 +685,7 @@ async function runVerifyTokenBuildTests(): Promise<void> {
   const token = buildVerifyAuthToken({
     kid: "kid-a",
     secret: "secret-a",
-    sub: "deployer",
+    sub: "verify-bot",
     scope: "verify.submit",
     expSec: 1_900_000_000,
     jti: "jti-a",
@@ -698,7 +698,7 @@ async function runVerifyTokenBuildTests(): Promise<void> {
   const payload = JSON.parse(payloadJson) as { sub: string; scope: string; exp: number; jti: string };
   assert.equal(header.alg, "HS256");
   assert.equal(header.kid, "kid-a");
-  assert.equal(payload.sub, "deployer");
+  assert.equal(payload.sub, "verify-bot");
   assert.equal(payload.scope, "verify.submit");
   assert.equal(payload.exp, 1_900_000_000);
   assert.equal(payload.jti, "jti-a");

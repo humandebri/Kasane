@@ -1,7 +1,5 @@
 # Gateway API Compatibility Baseline
 
-Japanese version: [./README.ja.md](./README.ja.md)
-
 This directory is the canonical source for the gateway API compatibility baseline.
 
 ## Included Files
