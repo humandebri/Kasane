@@ -151,7 +151,33 @@ pub fn wrap_idempotent_response_safe_raw(
 
 #[cfg_attr(verus_keep_ghost, verus_spec(result => ensures
     result == (
-        (previous_stage < WRAP_STAGE_SUCCEEDED && previous_stage <= next_stage)
+        (previous_stage == WRAP_STAGE_FEE_PENDING
+            && (next_stage == WRAP_STAGE_FEE_PENDING
+                || next_stage == WRAP_STAGE_FEE_COLLECTED
+                || next_stage == WRAP_STAGE_FAILED))
+        || (previous_stage == WRAP_STAGE_FEE_COLLECTED
+            && (next_stage == WRAP_STAGE_FEE_COLLECTED
+                || next_stage == WRAP_STAGE_PULL_PENDING
+                || next_stage == WRAP_STAGE_PULLED
+                || next_stage == WRAP_STAGE_MINT_SUBMITTING
+                || next_stage == WRAP_STAGE_FAILED))
+        || (previous_stage == WRAP_STAGE_PULL_PENDING
+            && (next_stage == WRAP_STAGE_PULL_PENDING
+                || next_stage == WRAP_STAGE_PULLED
+                || next_stage == WRAP_STAGE_FAILED))
+        || (previous_stage == WRAP_STAGE_PULLED
+            && (next_stage == WRAP_STAGE_PULLED
+                || next_stage == WRAP_STAGE_MINT_SUBMITTING
+                || next_stage == WRAP_STAGE_FAILED))
+        || (previous_stage == WRAP_STAGE_MINT_SUBMITTING
+            && (next_stage == WRAP_STAGE_MINT_SUBMITTING
+                || next_stage == WRAP_STAGE_MINT_SUBMITTED
+                || next_stage == WRAP_STAGE_SUCCEEDED
+                || next_stage == WRAP_STAGE_FAILED))
+        || (previous_stage == WRAP_STAGE_MINT_SUBMITTED
+            && (next_stage == WRAP_STAGE_MINT_SUBMITTED
+                || next_stage == WRAP_STAGE_SUCCEEDED
+                || next_stage == WRAP_STAGE_FAILED))
         || (previous_stage == WRAP_STAGE_FAILED
             && ((next_stage == WRAP_STAGE_FAILED)
                 || (recovering == 1 && next_stage == WRAP_STAGE_REFUNDING)))
@@ -166,7 +192,33 @@ pub fn wrap_stage_transition_safe_raw(
     next_stage: u64,
     recovering: u64,
 ) -> bool {
-    (previous_stage < WRAP_STAGE_SUCCEEDED && previous_stage <= next_stage)
+    (previous_stage == WRAP_STAGE_FEE_PENDING
+        && (next_stage == WRAP_STAGE_FEE_PENDING
+            || next_stage == WRAP_STAGE_FEE_COLLECTED
+            || next_stage == WRAP_STAGE_FAILED))
+        || (previous_stage == WRAP_STAGE_FEE_COLLECTED
+            && (next_stage == WRAP_STAGE_FEE_COLLECTED
+                || next_stage == WRAP_STAGE_PULL_PENDING
+                || next_stage == WRAP_STAGE_PULLED
+                || next_stage == WRAP_STAGE_MINT_SUBMITTING
+                || next_stage == WRAP_STAGE_FAILED))
+        || (previous_stage == WRAP_STAGE_PULL_PENDING
+            && (next_stage == WRAP_STAGE_PULL_PENDING
+                || next_stage == WRAP_STAGE_PULLED
+                || next_stage == WRAP_STAGE_FAILED))
+        || (previous_stage == WRAP_STAGE_PULLED
+            && (next_stage == WRAP_STAGE_PULLED
+                || next_stage == WRAP_STAGE_MINT_SUBMITTING
+                || next_stage == WRAP_STAGE_FAILED))
+        || (previous_stage == WRAP_STAGE_MINT_SUBMITTING
+            && (next_stage == WRAP_STAGE_MINT_SUBMITTING
+                || next_stage == WRAP_STAGE_MINT_SUBMITTED
+                || next_stage == WRAP_STAGE_SUCCEEDED
+                || next_stage == WRAP_STAGE_FAILED))
+        || (previous_stage == WRAP_STAGE_MINT_SUBMITTED
+            && (next_stage == WRAP_STAGE_MINT_SUBMITTED
+                || next_stage == WRAP_STAGE_SUCCEEDED
+                || next_stage == WRAP_STAGE_FAILED))
         || (previous_stage == WRAP_STAGE_FAILED
             && ((next_stage == WRAP_STAGE_FAILED)
                 || (recovering == 1 && next_stage == WRAP_STAGE_REFUNDING)))

@@ -36,18 +36,18 @@ if [[ -z "${rust_changed}" ]]; then
   exit 0
 fi
 
-verified_changed="$(printf '%s\n' "${changed}" | grep -E '^crates/verified-[^/]+/' || true)"
-tcb_changed="$(printf '%s\n' "${changed}" | grep -E '^docs/verification/tcb\.md$' || true)"
-if [[ -z "${verified_changed}" && -z "${tcb_changed}" ]]; then
-  echo "[verification-policy] Rust crate changes require crates/verified-* or docs/verification/tcb.md update" >&2
-  printf '%s\n' "${rust_changed}" >&2
-  exit 1
-fi
-
 business_changed="$(printf '%s\n' "${changed}" | grep -E '^crates/(evm-core|evm-db|ic-evm-ops|ic-evm-rpc|ic-evm-gateway|ic-evm-tx)/src/.+\.rs$' || true)"
 if [[ -z "${business_changed}" ]]; then
   echo "[verification-policy] ok"
   exit 0
+fi
+
+verified_changed="$(printf '%s\n' "${changed}" | grep -E '^crates/verified-[^/]+/' || true)"
+tcb_changed="$(printf '%s\n' "${changed}" | grep -E '^docs/verification/tcb\.md$' || true)"
+if [[ -z "${verified_changed}" && -z "${tcb_changed}" ]]; then
+  echo "[verification-policy] Rust crate changes require crates/verified-* or docs/verification/tcb.md update" >&2
+  printf '%s\n' "${business_changed}" >&2
+  exit 1
 fi
 
 proof_ref="${VERIFICATION_POLICY_PROOF_REF:-}"

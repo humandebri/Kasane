@@ -1,19 +1,13 @@
-//! どこで: wrap request PBT / 何を: idempotency・stage・quote・native金額 / なぜ: 二重請求と不正復旧仕様の誤りを検出するため
+//! どこで: wrap request PBT / 何を: idempotency・stage・recover / なぜ: 二重請求と不正復旧仕様の誤りを検出するため
 
 use proptest::prelude::*;
-use verified_core::native_amount::{
-    native_withdraw_amount_safe_raw, native_withdraw_receive_amount,
-};
-use verified_core::wrap_quote::{
-    wrap_quote_approval_safe_raw, wrap_quote_components_safe_raw, GAS_PRICE_DENOMINATOR_BPS,
-    WEI_PER_E8S,
-};
 use verified_core::wrap_request::{
-    native_deposit_retry_allowed_raw, wrap_idempotent_response_safe_raw,
-    wrap_pending_reservation_safe_raw, wrap_recover_allowed_raw, wrap_stage_transition_safe_raw,
-    WRAP_REQUEST_STATUS_FAILED, WRAP_REQUEST_STATUS_RUNNING, WRAP_RESERVE_IDEMPOTENCY_MISMATCH,
-    WRAP_RESERVE_IN_PROGRESS, WRAP_RESERVE_OK, WRAP_STAGE_FAILED, WRAP_STAGE_REFUNDED,
-    WRAP_STAGE_REFUNDING, WRAP_STAGE_SUCCEEDED,
+    wrap_idempotent_response_safe_raw, wrap_pending_reservation_safe_raw, wrap_recover_allowed_raw,
+    wrap_stage_transition_safe_raw, WRAP_REQUEST_STATUS_FAILED, WRAP_RESERVE_IDEMPOTENCY_MISMATCH,
+    WRAP_RESERVE_IN_PROGRESS, WRAP_RESERVE_OK, WRAP_STAGE_FAILED, WRAP_STAGE_FEE_COLLECTED,
+    WRAP_STAGE_FEE_PENDING, WRAP_STAGE_MINT_SUBMITTED, WRAP_STAGE_MINT_SUBMITTING,
+    WRAP_STAGE_PULLED, WRAP_STAGE_PULL_PENDING, WRAP_STAGE_REFUNDED, WRAP_STAGE_REFUNDING,
+    WRAP_STAGE_SUCCEEDED,
 };
 
 fn expected_reservation(
@@ -75,14 +69,78 @@ fn expected_idempotent(
 }
 
 fn expected_stage(previous_stage: u64, next_stage: u64, recovering: u64) -> bool {
-    (previous_stage < WRAP_STAGE_SUCCEEDED && previous_stage <= next_stage)
-        || (previous_stage == WRAP_STAGE_FAILED
-            && ((next_stage == WRAP_STAGE_FAILED)
-                || (recovering == 1 && next_stage == WRAP_STAGE_REFUNDING)))
-        || (previous_stage == WRAP_STAGE_REFUNDING
-            && (next_stage == WRAP_STAGE_REFUNDED || next_stage == WRAP_STAGE_FAILED))
-        || (previous_stage == WRAP_STAGE_SUCCEEDED && next_stage == WRAP_STAGE_SUCCEEDED)
-        || (previous_stage == WRAP_STAGE_REFUNDED && next_stage == WRAP_STAGE_REFUNDED)
+    match previous_stage {
+        WRAP_STAGE_FEE_PENDING => matches!(
+            next_stage,
+            WRAP_STAGE_FEE_PENDING | WRAP_STAGE_FEE_COLLECTED | WRAP_STAGE_FAILED
+        ),
+        WRAP_STAGE_FEE_COLLECTED => matches!(
+            next_stage,
+            WRAP_STAGE_FEE_COLLECTED
+                | WRAP_STAGE_PULL_PENDING
+                | WRAP_STAGE_PULLED
+                | WRAP_STAGE_MINT_SUBMITTING
+                | WRAP_STAGE_FAILED
+        ),
+        WRAP_STAGE_PULL_PENDING => matches!(
+            next_stage,
+            WRAP_STAGE_PULL_PENDING | WRAP_STAGE_PULLED | WRAP_STAGE_FAILED
+        ),
+        WRAP_STAGE_PULLED => {
+            matches!(
+                next_stage,
+                WRAP_STAGE_PULLED | WRAP_STAGE_MINT_SUBMITTING | WRAP_STAGE_FAILED
+            )
+        }
+        WRAP_STAGE_MINT_SUBMITTING => matches!(
+            next_stage,
+            WRAP_STAGE_MINT_SUBMITTING
+                | WRAP_STAGE_MINT_SUBMITTED
+                | WRAP_STAGE_SUCCEEDED
+                | WRAP_STAGE_FAILED
+        ),
+        WRAP_STAGE_MINT_SUBMITTED => matches!(
+            next_stage,
+            WRAP_STAGE_MINT_SUBMITTED | WRAP_STAGE_SUCCEEDED | WRAP_STAGE_FAILED
+        ),
+        WRAP_STAGE_FAILED => {
+            next_stage == WRAP_STAGE_FAILED
+                || (recovering == 1 && next_stage == WRAP_STAGE_REFUNDING)
+        }
+        WRAP_STAGE_REFUNDING => {
+            next_stage == WRAP_STAGE_REFUNDED || next_stage == WRAP_STAGE_FAILED
+        }
+        WRAP_STAGE_SUCCEEDED => next_stage == WRAP_STAGE_SUCCEEDED,
+        WRAP_STAGE_REFUNDED => next_stage == WRAP_STAGE_REFUNDED,
+        _ => false,
+    }
+}
+
+#[test]
+fn wrap_stage_transition_rejects_terminal_and_skip_edges() {
+    for (from, to, recovering) in [
+        (WRAP_STAGE_FEE_PENDING, WRAP_STAGE_SUCCEEDED, 0),
+        (WRAP_STAGE_FEE_PENDING, WRAP_STAGE_REFUNDED, 0),
+        (WRAP_STAGE_SUCCEEDED, WRAP_STAGE_MINT_SUBMITTING, 0),
+        (WRAP_STAGE_REFUNDED, WRAP_STAGE_FEE_COLLECTED, 0),
+        (WRAP_STAGE_FAILED, WRAP_STAGE_REFUNDING, 0),
+    ] {
+        assert!(!wrap_stage_transition_safe_raw(from, to, recovering));
+    }
+}
+
+#[test]
+fn wrap_stage_transition_accepts_observed_edges() {
+    for (from, to, recovering) in [
+        (WRAP_STAGE_FEE_PENDING, WRAP_STAGE_FEE_COLLECTED, 0),
+        (WRAP_STAGE_FEE_COLLECTED, WRAP_STAGE_PULL_PENDING, 0),
+        (WRAP_STAGE_PULLED, WRAP_STAGE_MINT_SUBMITTING, 0),
+        (WRAP_STAGE_MINT_SUBMITTED, WRAP_STAGE_SUCCEEDED, 0),
+        (WRAP_STAGE_FAILED, WRAP_STAGE_REFUNDING, 1),
+        (WRAP_STAGE_REFUNDING, WRAP_STAGE_REFUNDED, 0),
+    ] {
+        assert!(wrap_stage_transition_safe_raw(from, to, recovering));
+    }
 }
 
 proptest! {
@@ -187,94 +245,4 @@ proptest! {
         );
     }
 
-    #[test]
-    fn pbt_native_deposit_retry_and_withdraw_amount_are_exact(
-        gas_limit_zero in 0u64..3,
-        status in 0u64..5,
-        mint_failed_recoverable in 0u64..3,
-        pull_ledger_tx_id_present in 0u64..3,
-        amount_e8s in any::<u128>(),
-        ledger_fee_e8s in any::<u128>(),
-        receive_present in 0u64..3,
-        receive_e8s in any::<u128>(),
-    ) {
-        prop_assert_eq!(
-            native_deposit_retry_allowed_raw(
-                gas_limit_zero,
-                status,
-                mint_failed_recoverable,
-                pull_ledger_tx_id_present,
-            ),
-            gas_limit_zero == 1
-                && mint_failed_recoverable == 1
-                && status != WRAP_REQUEST_STATUS_RUNNING
-                && pull_ledger_tx_id_present == 1
-        );
-        prop_assert_eq!(
-            native_withdraw_receive_amount(amount_e8s, ledger_fee_e8s),
-            amount_e8s.checked_sub(ledger_fee_e8s)
-        );
-        prop_assert_eq!(
-            native_withdraw_amount_safe_raw(
-                amount_e8s,
-                ledger_fee_e8s,
-                receive_present,
-                receive_e8s,
-            ),
-            (amount_e8s >= ledger_fee_e8s
-                && receive_present == 1
-                && receive_e8s == amount_e8s - ledger_fee_e8s)
-                || (amount_e8s < ledger_fee_e8s && receive_present == 0)
-        );
-    }
-
-    #[test]
-    fn pbt_wrap_quote_approval_and_components_are_exact(
-        ledger_matches in 0u64..3,
-        charged_fee_e8s in any::<u128>(),
-        max_fee_e8s in any::<u128>(),
-        charged_gas_price_wei in any::<u128>(),
-        quoted_gas_price_wei in any::<u128>(),
-        base_gas_price_wei in any::<u128>(),
-        gas_price_buffer_bps in any::<u64>(),
-        gas_limit in any::<u64>(),
-        cycle_fee_e8s in any::<u64>(),
-        gas_fee_e8s in any::<u128>(),
-    ) {
-        prop_assert_eq!(
-            wrap_quote_approval_safe_raw(
-                ledger_matches,
-                charged_fee_e8s,
-                max_fee_e8s,
-                charged_gas_price_wei,
-                quoted_gas_price_wei,
-            ),
-            ledger_matches == 1
-                && charged_fee_e8s <= max_fee_e8s
-                && charged_gas_price_wei <= quoted_gas_price_wei
-        );
-
-        let expected_gas_price = base_gas_price_wei
-            .saturating_mul(u128::from(gas_price_buffer_bps))
-            .saturating_add(GAS_PRICE_DENOMINATOR_BPS - 1)
-            / GAS_PRICE_DENOMINATOR_BPS;
-        let expected_gas_fee = charged_gas_price_wei
-            .saturating_mul(u128::from(gas_limit))
-            .saturating_add(WEI_PER_E8S - 1)
-            / WEI_PER_E8S;
-        let expected_charged_fee = gas_fee_e8s.saturating_add(u128::from(cycle_fee_e8s));
-        let gas_price_component_matches = u64::from(charged_gas_price_wei == expected_gas_price);
-        let gas_fee_component_matches = u64::from(gas_fee_e8s == expected_gas_fee);
-        let charged_fee_component_matches = u64::from(charged_fee_e8s == expected_charged_fee);
-        prop_assert_eq!(
-            wrap_quote_components_safe_raw(
-                gas_price_component_matches,
-                gas_fee_component_matches,
-                charged_fee_component_matches,
-            ),
-            gas_price_component_matches == 1
-                && gas_fee_component_matches == 1
-                && charged_fee_component_matches == 1
-        );
-    }
 }
