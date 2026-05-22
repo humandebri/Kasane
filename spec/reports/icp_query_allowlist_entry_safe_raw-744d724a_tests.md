@@ -1,0 +1,13 @@
+# test evidence: icp_query_allowlist_entry_safe_raw-744d724a
+
+- git_commit: f4f6f494d8be02b8375b85c1b1cfb768376f6dff
+- worktree_dirty: false
+- semantic_hash: 0b6b4cea57f29b85514b0aea66d697fd2e3f041a1e3918ce19d3d182c39a70f7
+- spec_hash: 12259fd5268f4509eb41f9611a6095ac14af830124eceb34eeedcd03954fc0f7
+- target_hash: f3ca3186a5d91a6eb5d0089eb142572e2d604ed540f4f9083c316bf32c0e9960
+- source_hash: 744d724ab51703c74b38bfa31261e65bbc8b99e0335effaf53e81ab499a5ec9c
+- evidence_hash: 82107d962f9ae5f45219a89ceec5315ca27252f41142a468e296ff729fbc7345
+- result: success
+
+## cases
+- icp_query_allowlist_entry_safe_raw-nominal gateway allowlist validation uses verified model for target and method boundaries exit_code=0 result=success
