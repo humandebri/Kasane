@@ -9,15 +9,33 @@ pub const WRAP_PRECOMPILE_ADDRESS_CODE: u64 = 1;
 #[cfg_attr(verus_keep_ghost, verus_verify)]
 pub const NATIVE_WITHDRAW_PRECOMPILE_ADDRESS_CODE: u64 = 2;
 #[cfg_attr(verus_keep_ghost, verus_verify)]
+pub const ICP_QUERY_PRECOMPILE_ADDRESS_CODE: u64 = 3;
+#[cfg_attr(verus_keep_ghost, verus_verify)]
 pub const COMPACT_FORMAT_VERSION: u64 = 1;
 #[cfg_attr(verus_keep_ghost, verus_verify)]
 pub const MAX_PRINCIPAL_LEN: u64 = 29;
+#[cfg_attr(verus_keep_ghost, verus_verify)]
+pub const MAX_QUERY_METHOD_LEN: u64 = 64;
 #[cfg_attr(verus_keep_ghost, verus_verify)]
 pub const COMPACT_UNWRAP_INPUT_LEN: u64 = 93;
 #[cfg_attr(verus_keep_ghost, verus_verify)]
 pub const COMPACT_NATIVE_WITHDRAW_INPUT_LEN: u64 = 31;
 #[cfg_attr(verus_keep_ghost, verus_verify)]
 pub const UNWRAP_BURN_GAS_SURCHARGE: u64 = 45_000;
+#[cfg_attr(verus_keep_ghost, verus_verify)]
+pub const ICP_QUERY_KIND_QUERY: u64 = 0;
+#[cfg_attr(verus_keep_ghost, verus_verify)]
+pub const ICP_QUERY_KIND_UPDATE_RESERVED: u64 = 1;
+#[cfg_attr(verus_keep_ghost, verus_verify)]
+pub const ICP_QUERY_BASE_GAS: u64 = 50_000;
+#[cfg_attr(verus_keep_ghost, verus_verify)]
+pub const ICP_QUERY_INPUT_BYTE_GAS: u64 = 16;
+#[cfg_attr(verus_keep_ghost, verus_verify)]
+pub const ICP_QUERY_REPLY_BYTE_GAS: u64 = 8;
+#[cfg_attr(verus_keep_ghost, verus_verify)]
+pub const MAX_ICP_QUERY_INPUT_LEN_WITH_EXACT_GAS: u64 = 1_152_921_504_606_846_975;
+#[cfg_attr(verus_keep_ghost, verus_verify)]
+pub const MAX_ICP_QUERY_REPLY_LEN_WITH_EXACT_GAS: u64 = 2_305_843_009_213_693_951;
 
 #[cfg_attr(verus_keep_ghost, verus_spec(valid => ensures
     valid == (
@@ -100,6 +118,52 @@ pub fn compact_native_withdraw_input_safe_raw(
 
 #[cfg_attr(verus_keep_ghost, verus_spec(valid => ensures
     valid == (
+        version == COMPACT_FORMAT_VERSION
+        && kind == ICP_QUERY_KIND_QUERY
+        && target_len >= 1
+        && target_len <= MAX_PRINCIPAL_LEN
+        && target_present == 1
+        && method_len >= 1
+        && method_len <= MAX_QUERY_METHOD_LEN
+        && method_present == 1
+        && method_utf8 == 1
+        && arg_present == 1
+        && consumed_exact == 1
+    ),
+))]
+pub fn compact_icp_query_input_safe_raw(
+    version: u64,
+    kind: u64,
+    target_len: u64,
+    target_present: u64,
+    method_len: u64,
+    method_present: u64,
+    method_utf8: u64,
+    arg_present: u64,
+    consumed_exact: u64,
+) -> bool {
+    version == COMPACT_FORMAT_VERSION
+        && kind == ICP_QUERY_KIND_QUERY
+        && target_len >= 1
+        && target_len <= MAX_PRINCIPAL_LEN
+        && target_present == 1
+        && method_len >= 1
+        && method_len <= MAX_QUERY_METHOD_LEN
+        && method_present == 1
+        && method_utf8 == 1
+        && arg_present == 1
+        && consumed_exact == 1
+}
+
+#[cfg_attr(verus_keep_ghost, verus_spec(rejected => ensures
+    rejected == (kind == ICP_QUERY_KIND_UPDATE_RESERVED),
+))]
+pub fn icp_query_update_kind_rejected_raw(kind: u64) -> bool {
+    kind == ICP_QUERY_KIND_UPDATE_RESERVED
+}
+
+#[cfg_attr(verus_keep_ghost, verus_spec(valid => ensures
+    valid == (
         address_code == expected_address_code
         && topic_count == 1
         && topic_matches == 1
@@ -164,4 +228,51 @@ pub fn wrap_precompile_gas_observation_safe_raw(
             || log_data_len_a > log_data_len_b
             || field_count_a > field_count_b)
             || gas_a <= gas_b)
+}
+
+#[cfg_attr(verus_keep_ghost, verus_spec(valid => ensures
+    valid == (
+        observed_address_code == ICP_QUERY_PRECOMPILE_ADDRESS_CODE
+        && charged_gas >= ICP_QUERY_BASE_GAS
+        && (input_len <= MAX_ICP_QUERY_INPUT_LEN_WITH_EXACT_GAS
+            ==> charged_gas >= input_len * ICP_QUERY_INPUT_BYTE_GAS)
+        && (reply_len <= MAX_ICP_QUERY_REPLY_LEN_WITH_EXACT_GAS
+            ==> charged_gas >= reply_len * ICP_QUERY_REPLY_BYTE_GAS)
+        && (returned_success == 1 ==> gas_limit >= charged_gas)
+        && (returned_success == 0 ==> gas_limit < charged_gas)
+    ),
+))]
+pub fn icp_query_gas_observation_safe_raw(
+    observed_address_code: u64,
+    input_len: u64,
+    reply_len: u64,
+    charged_gas: u64,
+    gas_limit: u64,
+    returned_success: u64,
+) -> bool {
+    observed_address_code == ICP_QUERY_PRECOMPILE_ADDRESS_CODE
+        && charged_gas >= ICP_QUERY_BASE_GAS
+        && (input_len > MAX_ICP_QUERY_INPUT_LEN_WITH_EXACT_GAS
+            || charged_gas >= input_len * ICP_QUERY_INPUT_BYTE_GAS)
+        && (reply_len > MAX_ICP_QUERY_REPLY_LEN_WITH_EXACT_GAS
+            || charged_gas >= reply_len * ICP_QUERY_REPLY_BYTE_GAS)
+        && (returned_success != 1 || gas_limit >= charged_gas)
+        && (returned_success != 0 || gas_limit < charged_gas)
+}
+
+#[cfg_attr(verus_keep_ghost, verus_spec(valid => ensures
+    valid == (
+        calls_before == 0
+        && mode_allows_external == 1
+        && value_is_zero == 1
+        && parsed_input == 1
+    ),
+))]
+pub fn icp_query_execution_gate_safe_raw(
+    calls_before: u64,
+    mode_allows_external: u64,
+    value_is_zero: u64,
+    parsed_input: u64,
+) -> bool {
+    calls_before == 0 && mode_allows_external == 1 && value_is_zero == 1 && parsed_input == 1
 }

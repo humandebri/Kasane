@@ -2,12 +2,17 @@
 
 use proptest::prelude::*;
 use verified_core::wrap_precompile::{
-    compact_native_withdraw_input_safe_raw, compact_principal_slot_safe_raw,
-    compact_unwrap_input_safe_raw, precompile_extra_gas_policy_safe_raw,
+    compact_icp_query_input_safe_raw, compact_native_withdraw_input_safe_raw,
+    compact_principal_slot_safe_raw, compact_unwrap_input_safe_raw,
+    icp_query_execution_gate_safe_raw, icp_query_gas_observation_safe_raw,
+    icp_query_update_kind_rejected_raw, precompile_extra_gas_policy_safe_raw,
     precompile_log_shape_safe_raw, wrap_precompile_gas_observation_safe_raw,
     COMPACT_FORMAT_VERSION, COMPACT_NATIVE_WITHDRAW_INPUT_LEN, COMPACT_UNWRAP_INPUT_LEN,
-    MAX_PRINCIPAL_LEN, NATIVE_WITHDRAW_PRECOMPILE_ADDRESS_CODE, UNWRAP_BURN_GAS_SURCHARGE,
-    WRAP_PRECOMPILE_ADDRESS_CODE,
+    ICP_QUERY_BASE_GAS, ICP_QUERY_INPUT_BYTE_GAS, ICP_QUERY_KIND_QUERY,
+    ICP_QUERY_KIND_UPDATE_RESERVED, ICP_QUERY_PRECOMPILE_ADDRESS_CODE, ICP_QUERY_REPLY_BYTE_GAS,
+    MAX_ICP_QUERY_INPUT_LEN_WITH_EXACT_GAS, MAX_ICP_QUERY_REPLY_LEN_WITH_EXACT_GAS,
+    MAX_PRINCIPAL_LEN, MAX_QUERY_METHOD_LEN, NATIVE_WITHDRAW_PRECOMPILE_ADDRESS_CODE,
+    UNWRAP_BURN_GAS_SURCHARGE, WRAP_PRECOMPILE_ADDRESS_CODE,
 };
 
 fn expected_principal(len: u64, slot_present: u64, padding_zero: u64) -> bool {
@@ -96,6 +101,52 @@ proptest! {
     }
 
     #[test]
+    fn pbt_icp_query_input_accepts_only_query_with_valid_target_method_and_full_arg(
+        version in 0u64..4,
+        kind in 0u64..4,
+        target_len in 0u64..40,
+        target_present in 0u64..3,
+        method_len in 0u64..80,
+        method_present in 0u64..3,
+        method_utf8 in 0u64..3,
+        arg_present in 0u64..3,
+        consumed_exact in 0u64..3,
+    ) {
+        prop_assert_eq!(
+            compact_icp_query_input_safe_raw(
+                version,
+                kind,
+                target_len,
+                target_present,
+                method_len,
+                method_present,
+                method_utf8,
+                arg_present,
+                consumed_exact,
+            ),
+            version == COMPACT_FORMAT_VERSION
+                && kind == ICP_QUERY_KIND_QUERY
+                && (1..=MAX_PRINCIPAL_LEN).contains(&target_len)
+                && target_present == 1
+                && (1..=MAX_QUERY_METHOD_LEN).contains(&method_len)
+                && method_present == 1
+                && method_utf8 == 1
+                && arg_present == 1
+                && consumed_exact == 1
+        );
+    }
+
+    #[test]
+    fn pbt_icp_query_update_kind_stays_reserved(
+        kind in 0u64..4,
+    ) {
+        prop_assert_eq!(
+            icp_query_update_kind_rejected_raw(kind),
+            kind == ICP_QUERY_KIND_UPDATE_RESERVED
+        );
+    }
+
+    #[test]
     fn pbt_precompile_log_shape_requires_address_topic_and_complete_data(
         address_code in 0u64..4,
         expected_address_code in prop_oneof![
@@ -172,6 +223,56 @@ proptest! {
                     || log_data_len_a > log_data_len_b
                     || field_count_a > field_count_b)
                     || gas_a <= gas_b)
+        );
+    }
+
+    #[test]
+    fn pbt_icp_query_gas_observation_matches_base_byte_cost_and_oog_split(
+        observed_address_code in 0u64..5,
+        input_len in any::<u64>(),
+        reply_len in any::<u64>(),
+        charged_gas in any::<u64>(),
+        gas_limit in any::<u64>(),
+        returned_success in 0u64..3,
+    ) {
+        prop_assert_eq!(
+            icp_query_gas_observation_safe_raw(
+                observed_address_code,
+                input_len,
+                reply_len,
+                charged_gas,
+                gas_limit,
+                returned_success,
+            ),
+            observed_address_code == ICP_QUERY_PRECOMPILE_ADDRESS_CODE
+                && charged_gas >= ICP_QUERY_BASE_GAS
+                && (input_len > MAX_ICP_QUERY_INPUT_LEN_WITH_EXACT_GAS
+                    || charged_gas >= input_len * ICP_QUERY_INPUT_BYTE_GAS)
+                && (reply_len > MAX_ICP_QUERY_REPLY_LEN_WITH_EXACT_GAS
+                    || charged_gas >= reply_len * ICP_QUERY_REPLY_BYTE_GAS)
+                && (returned_success != 1 || gas_limit >= charged_gas)
+                && (returned_success != 0 || gas_limit < charged_gas)
+        );
+    }
+
+    #[test]
+    fn pbt_icp_query_execution_gate_requires_single_external_value_free_parsed_call(
+        calls_before in 0u64..3,
+        mode_allows_external in 0u64..3,
+        value_is_zero in 0u64..3,
+        parsed_input in 0u64..3,
+    ) {
+        prop_assert_eq!(
+            icp_query_execution_gate_safe_raw(
+                calls_before,
+                mode_allows_external,
+                value_is_zero,
+                parsed_input,
+            ),
+            calls_before == 0
+                && mode_allows_external == 1
+                && value_is_zero == 1
+                && parsed_input == 1
         );
     }
 }
