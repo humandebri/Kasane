@@ -57,6 +57,8 @@ scripts/measure_precompile_ratio.sh
 - `scripts/check_gateway_api_compat_baseline.sh`: Gateway API compatibility baseline の破壊変更を検知（`--update` でベースライン更新）
 - `scripts/check_gateway_matrix_sync.sh`: `tools/rpc-gateway/README.md` の互換マトリクス行が `tools/rpc-gateway/package.json` のバージョン系列と一致するか検証
 - `scripts/check_precompile_feature_isolation.sh`: `ic-evm-core` の既定 wasm build に BLS/KZG backend crate（`ark-bls12-381`, `c-kzg`, `blst`）が流入していないか検証
+- `scripts/check_icp_query_precompile_verification.sh`: PR #81 ICP query precompile 用gate。Verus、PBT/async/allowlist test、workspace check、対象rustfmt、PR内specgen成果物を検証する
+  - PR #81のmerge判定はこのscriptを正とする。現行 `specgen gate --base origin/main` は async adapter、method、test helperを含む全変更Rust関数にtargetを要求するため、このPRでは診断用として扱う。
 - `scripts/predeploy_smoke.sh`: `cargo check` + wasm build + PocketIC RPC互換E2E（任意で indexer smoke）
 - `scripts/run_rpc_compat_e2e.sh`: RPC互換E2Eテスト（`cargo test --test rpc_compat_e2e`）
   - Rust の E2E テストは `tools/wrapper-vite/contracts/out/` の Foundry artifact をコンパイル時に読むため、この script は先に `forge build` を実行する
