@@ -1,0 +1,45 @@
+{
+  "target": "compact_icp_query_input_safe_raw",
+  "entry": {
+    "display_name": "compact_icp_query_input_safe_raw",
+    "function": "compact_icp_query_input_safe_raw",
+    "function_path": "compact_icp_query_input_safe_raw",
+    "file": "crates/verified-core/src/wrap_precompile.rs",
+    "target_id": "23403bcabfd90156a41bce1681bcd829143973268f67578c891500030cd15a78",
+    "slug": "compact_icp_query_input_safe_raw-8482ca59",
+    "source_hash": "8482ca59317370ee896eb92d00727b456dd012c5508548d625deb1a86d97129c",
+    "semantic_hash": "f883212fd840dab907aa4572153c87a087ed775c8c2a06e79d079e4382a1ec4c",
+    "created_at": "2026-05-22T07:10:11Z"
+  },
+  "signature": "#[cfg_attr(verus_keep_ghost, verus_spec(valid => ensures\n    valid == (\n        version == COMPACT_FORMAT_VERSION\n        && kind == ICP_QUERY_KIND_QUERY\n        && target_len >= 1\n        && target_len <= MAX_PRINCIPAL_LEN\n        && target_present == 1\n        && method_len >= 1\n        && method_len <= MAX_QUERY_METHOD_LEN\n        && method_present == 1\n        && method_utf8 == 1\n        && arg_present == 1\n        && consumed_exact == 1\n    ),\n))]\npub fn compact_icp_query_input_safe_raw(\n    version: u64,\n    kind: u64,\n    target_len: u64,\n    target_present: u64,\n    method_len: u64,\n    method_present: u64,\n    method_utf8: u64,\n    arg_present: u64,\n    consumed_exact: u64,\n) -> bool",
+  "body": "{\n    version == COMPACT_FORMAT_VERSION\n        && kind == ICP_QUERY_KIND_QUERY\n        && target_len >= 1\n        && target_len <= MAX_PRINCIPAL_LEN\n        && target_present == 1\n        && method_len >= 1\n        && method_len <= MAX_QUERY_METHOD_LEN\n        && method_present == 1\n        && method_utf8 == 1\n        && arg_present == 1\n        && consumed_exact == 1\n}",
+  "span": {
+    "start_line": 121,
+    "end_line": 158
+  },
+  "git_commit": "99e52aaefad61f61c45b8900e6011bd9194ff502",
+  "worktree_dirty": false,
+  "source_hash": "8482ca59317370ee896eb92d00727b456dd012c5508548d625deb1a86d97129c",
+  "semantic_hash": "f883212fd840dab907aa4572153c87a087ed775c8c2a06e79d079e4382a1ec4c",
+  "dependency_hash_inputs": [
+    {
+      "kind": "use",
+      "name": "cfg",
+      "file": "crates/verified-core/src/wrap_precompile.rs",
+      "hash": "a5eb4157d5d32303032e3dc786e34f004ebe17f0ff1bb26f90ac9eb42478596c"
+    }
+  ],
+  "unresolved_dependencies": [],
+  "tool_version": "0.1.0",
+  "cfg": [],
+  "features": [],
+  "types": [],
+  "called_functions": [],
+  "callers": [],
+  "tests": [],
+  "panic_sites": [],
+  "overflow_sites": [],
+  "casts": [],
+  "division_sites": [],
+  "llm_context_files": []
+}

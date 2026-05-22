@@ -1,0 +1,45 @@
+{
+  "target": "icp_query_update_kind_rejected_raw",
+  "entry": {
+    "display_name": "icp_query_update_kind_rejected_raw",
+    "function": "icp_query_update_kind_rejected_raw",
+    "function_path": "icp_query_update_kind_rejected_raw",
+    "file": "crates/verified-core/src/wrap_precompile.rs",
+    "target_id": "fdc0b1b02fde154daf9609f2fdf58af66430b2703536c54236e0cc33b4806e4d",
+    "slug": "icp_query_update_kind_rejected_raw-4de9db5f",
+    "source_hash": "4de9db5f9a80647d86118783b6d903c928b9f3b1395fb025e0cecb6f93c10c17",
+    "semantic_hash": "a8ddb97d337ebf1eee99dbf008dafc4e3f2817925518eef25009600d997b6d5d",
+    "created_at": "2026-05-22T07:10:11Z"
+  },
+  "signature": "#[cfg_attr(verus_keep_ghost, verus_spec(rejected => ensures\n    rejected == (kind == ICP_QUERY_KIND_UPDATE_RESERVED),\n))]\npub fn icp_query_update_kind_rejected_raw(kind: u64) -> bool",
+  "body": "{\n    kind == ICP_QUERY_KIND_UPDATE_RESERVED\n}",
+  "span": {
+    "start_line": 160,
+    "end_line": 165
+  },
+  "git_commit": "99e52aaefad61f61c45b8900e6011bd9194ff502",
+  "worktree_dirty": false,
+  "source_hash": "4de9db5f9a80647d86118783b6d903c928b9f3b1395fb025e0cecb6f93c10c17",
+  "semantic_hash": "a8ddb97d337ebf1eee99dbf008dafc4e3f2817925518eef25009600d997b6d5d",
+  "dependency_hash_inputs": [
+    {
+      "kind": "use",
+      "name": "cfg",
+      "file": "crates/verified-core/src/wrap_precompile.rs",
+      "hash": "a5eb4157d5d32303032e3dc786e34f004ebe17f0ff1bb26f90ac9eb42478596c"
+    }
+  ],
+  "unresolved_dependencies": [],
+  "tool_version": "0.1.0",
+  "cfg": [],
+  "features": [],
+  "types": [],
+  "called_functions": [],
+  "callers": [],
+  "tests": [],
+  "panic_sites": [],
+  "overflow_sites": [],
+  "casts": [],
+  "division_sites": [],
+  "llm_context_files": []
+}

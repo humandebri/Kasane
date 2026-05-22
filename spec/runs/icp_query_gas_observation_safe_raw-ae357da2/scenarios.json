@@ -1,0 +1,24 @@
+{
+  "target": "icp_query_gas_observation_safe_raw",
+  "target_id": "34e07cd26beee811f5d8ad1a32969846869a01bc43fded747a765f0fd531b7e5",
+  "slug": "icp_query_gas_observation_safe_raw-ae357da2",
+  "git_commit": "99e52aaefad61f61c45b8900e6011bd9194ff502",
+  "worktree_dirty": false,
+  "source_hash": "ae357da24440cc96cd803023854a33e2ef814e9b53db9b2fcbd8eb036802a2ae",
+  "semantic_hash": "18e4342ead1acdbd2d672efcd2aab4913b2b8ee7904adc8dab1a8d60765c39bd",
+  "tool_version": "0.1.0",
+  "scenarios": [
+    {
+      "id": "icp_query_gas_observation_safe_raw-nominal",
+      "kind": "example",
+      "executable": false,
+      "inputs": {},
+      "expected": {},
+      "review_status": "accepted",
+      "status_note": "Gas observation requires the ICP query address, 0/1 success flag, exact combined byte-gas lower bound in the non-overflow range, and success/failure relation to gas limit.",
+      "reviewed_by": "0xhude",
+      "reviewed_at": "2026-05-22T07:17:43Z",
+      "rationale": "前提定数:\n\n- `ADDR = 3`\n- `BASE = 50_000`\n- `IN = 16`\n- `OUT = 8`\n- `M = 768_614_336_404_562_567`\n- `required = BASE + input_len * IN + reply_len * OUT`\n\n**Scenario Candidates**\n\n| id | 入力 | 期待 | 狙い |\n|---|---|---:|---|\n| `valid_success_exact_min` | `addr=3, input=0, reply=0, charged=50_000, gas_limit=50_000, success=1` | `true` | 最小exact gas、成功、limit同値 |\n| `valid_failure_exact_oog` | `addr=3, input=1, reply=1, charged=50_024, gas_limit=50_023, success=0` | `true` | 失敗時は `gas_limit < charged_gas` |\n| `reject_wrong_address` | `addr=2, input=0, reply=0, charged=50_000, gas_limit=50_000, success=1` | `false` | precompile address不一致 |\n| `reject_success_flag_out_of_range` | `addr=3, input=0, reply=0, charged=50_000, gas_limit=50_000, success=2` | `false` | `returned_success <= 1` 違反 |\n| `reject_undercharged_exact` | `addr=3, input=1, reply=1, charged=50_023, gas_limit=50_023, success=1` | `false` | exact範囲内の最低gas不足 |\n| `reject_success_without_gas_limit` | `addr=3, input=0, reply=0, charged=50_000, gas_limit=49_999, success=1` | `false` | 成功なのにlimit不足 |\n| `reject_failure_with_enough_gas` | `addr=3, input=0, reply=0, charged=50_000, gas_limit=50_000, success=0` | `false` | 失敗なのにlimit十分 |\n| `valid_exact_upper_bound_success` | `addr=3, input=M, reply=M, charged=u64::MAX - 7, gas_limit=u64::MAX - 7, success=1` | `true` | exact gas計算の最大安全境界 |\n| `reject_exact_upper_bound_undercharged` | `addr=3, input=M, reply=M, charged=u64::MAX - 8, gas_limit=u64::MAX - 8, success=1` | `false` | 最大境界で1 gas不足 |\n| `valid_input_above_exact_skips_charge_check` | `addr=3, input=M+1, reply=0, charged=0, gas_limit=0, success=1` | `true` | input超過時は最低gas検証を無効化 |\n| `valid_reply_above_exact_skips_charge_check` | `addr=3, input=0, reply=M+1, charged=1, gas_limit=0, success=0` | `true` | reply超過時も最低gas検証を無効化し、失敗条件だけ見る |\n| `reject_skipped_charge_still_checks_success_limit` | `addr=3, input=M+1, reply=M+1, charged=10, gas_limit=9, success=1` | `false` | exact外でも成功時limit条件は残る |\n\n優先採用は `valid_success_exact_min`, `valid_failure_exact_oog`, `reject_undercharged_exact`, `reject_success_without_gas_limit`, `reject_failure_with_enough_gas`, `valid_exact_upper_bound_success`, `valid_input_above_exact_skips_charge_check`。"
+    }
+  ]
+}
