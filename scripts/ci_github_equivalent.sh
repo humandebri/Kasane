@@ -125,6 +125,7 @@ find vendor/ark-relations -type f -print0 | sort -z | xargs -0 sha256sum > "${sn
 # before compiling the Rust tests in clean CI environments.
 (cd tools/wrapper-vite/contracts && forge build)
 
+cargo test -p verified-core --locked --lib --tests
 cargo test -p evm-db -p ic-evm-core -p ic-evm-gateway --locked --lib --tests
 cargo test --manifest-path crates/evm-rpc-e2e/Cargo.toml --no-run --locked
 cargo build --release --target wasm32-unknown-unknown -p ic-evm-gateway --locked
