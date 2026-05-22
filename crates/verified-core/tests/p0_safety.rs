@@ -1,7 +1,10 @@
 //! どこで: verified-core P0 safety / 何を: append-only・staging・bidirectional index の public API / なぜ: adapter evidence の純粋境界を固定するため
 
 use verified_core::no_reorg::no_reorg_append_only_raw;
-use verified_core::receipt_index::{receipt_index_location_bidirectional, ReceiptIndexObservation};
+use verified_core::receipt_index::{
+    receipt_index_location_bidirectional, receipt_index_target_observation_safe,
+    ReceiptIndexObservation,
+};
 use verified_core::staging::staged_tx_is_current_pending_raw;
 
 #[test]
@@ -60,4 +63,30 @@ fn receipt_index_location_bidirectional_requires_all_reverse_links() {
             ..ok
         }
     ));
+}
+
+#[test]
+fn receipt_index_target_observation_separates_included_and_absent_targets() {
+    let linked = ReceiptIndexObservation {
+        tx_index_present: true,
+        receipt_present: true,
+        included_loc_present: true,
+        index_matches_loc: true,
+        receipt_matches_loc: true,
+        loc_points_to_block_tx: true,
+    };
+    assert!(receipt_index_target_observation_safe(true, linked));
+    assert!(!receipt_index_target_observation_safe(false, linked));
+
+    let absent = ReceiptIndexObservation {
+        tx_index_present: false,
+        receipt_present: false,
+        included_loc_present: false,
+        index_matches_loc: false,
+        receipt_matches_loc: false,
+        loc_points_to_block_tx: false,
+    };
+    assert!(receipt_index_location_bidirectional(absent));
+    assert!(receipt_index_target_observation_safe(false, absent));
+    assert!(!receipt_index_target_observation_safe(true, absent));
 }

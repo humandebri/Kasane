@@ -22,8 +22,7 @@ pub struct ReceiptIndexObservation {
         result == ((!input.tx_index_present || (input.receipt_present && input.included_loc_present && input.index_matches_loc)) && (!input.receipt_present || (input.tx_index_present && input.included_loc_present && input.receipt_matches_loc)) && (!input.included_loc_present || (input.tx_index_present && input.receipt_present && input.index_matches_loc && input.receipt_matches_loc && input.loc_points_to_block_tx))),
 ))]
 #[allow(clippy::nonminimal_bool)]
-pub fn receipt_index_location_bidirectional(input: ReceiptIndexObservation) -> bool
-{
+pub fn receipt_index_location_bidirectional(input: ReceiptIndexObservation) -> bool {
     (!input.tx_index_present
         || (input.receipt_present && input.included_loc_present && input.index_matches_loc))
         && (!input.receipt_present
@@ -34,4 +33,29 @@ pub fn receipt_index_location_bidirectional(input: ReceiptIndexObservation) -> b
                 && input.index_matches_loc
                 && input.receipt_matches_loc
                 && input.loc_points_to_block_tx))
+}
+
+#[cfg_attr(verus_keep_ghost, verus_spec(result =>
+    requires
+        true,
+    ensures
+        result == (((!input.tx_index_present || (input.receipt_present && input.included_loc_present && input.index_matches_loc)) && (!input.receipt_present || (input.tx_index_present && input.included_loc_present && input.receipt_matches_loc)) && (!input.included_loc_present || (input.tx_index_present && input.receipt_present && input.index_matches_loc && input.receipt_matches_loc && input.loc_points_to_block_tx))) && ((target_included && input.tx_index_present && input.receipt_present && input.included_loc_present && input.index_matches_loc && input.receipt_matches_loc && input.loc_points_to_block_tx) || (!target_included && !input.tx_index_present && !input.receipt_present && !input.included_loc_present))),
+))]
+#[allow(clippy::nonminimal_bool)]
+pub fn receipt_index_target_observation_safe(
+    target_included: bool,
+    input: ReceiptIndexObservation,
+) -> bool {
+    receipt_index_location_bidirectional(input)
+        && ((target_included
+            && input.tx_index_present
+            && input.receipt_present
+            && input.included_loc_present
+            && input.index_matches_loc
+            && input.receipt_matches_loc
+            && input.loc_points_to_block_tx)
+            || (!target_included
+                && !input.tx_index_present
+                && !input.receipt_present
+                && !input.included_loc_present))
 }

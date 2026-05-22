@@ -10,7 +10,10 @@ use verified_core::core_safety_included::included_tx_safe_raw;
 use verified_core::no_reorg::no_reorg_append_only_raw;
 use verified_core::nonce::{classify_nonce, NonceDecision};
 use verified_core::prune_safety::{prune_tx_cleanup_complete, PruneTxCleanupInput};
-use verified_core::receipt_index::{receipt_index_location_bidirectional, ReceiptIndexObservation};
+use verified_core::receipt_index::{
+    receipt_index_location_bidirectional, receipt_index_target_observation_safe,
+    ReceiptIndexObservation,
+};
 use verified_core::stable_namespace::stable_tx_namespace_disjoint_raw;
 use verified_core::staging::staged_tx_is_current_pending_raw;
 use verified_core::upgrade_safety::upgrade_core_observation_preserved_raw;
@@ -35,6 +38,24 @@ fn expected_receipt_index(observation: ReceiptIndexObservation) -> bool {
                 && observation.index_matches_loc
                 && observation.receipt_matches_loc
                 && observation.loc_points_to_block_tx))
+}
+
+fn expected_target_receipt_index(
+    target_included: bool,
+    observation: ReceiptIndexObservation,
+) -> bool {
+    expected_receipt_index(observation)
+        && ((target_included
+            && observation.tx_index_present
+            && observation.receipt_present
+            && observation.included_loc_present
+            && observation.index_matches_loc
+            && observation.receipt_matches_loc
+            && observation.loc_points_to_block_tx)
+            || (!target_included
+                && !observation.tx_index_present
+                && !observation.receipt_present
+                && !observation.included_loc_present))
 }
 
 proptest! {
@@ -218,6 +239,7 @@ proptest! {
 
     #[test]
     fn pbt_receipt_and_cleanup_observations_require_all_links_or_no_links(
+        target_included in any::<bool>(),
         tx_index_present in any::<bool>(),
         receipt_present in any::<bool>(),
         included_loc_present in any::<bool>(),
@@ -236,6 +258,10 @@ proptest! {
         prop_assert_eq!(
             receipt_index_location_bidirectional(observation),
             expected_receipt_index(observation)
+        );
+        prop_assert_eq!(
+            receipt_index_target_observation_safe(target_included, observation),
+            expected_target_receipt_index(target_included, observation)
         );
 
         let cleanup = PruneTxCleanupInput {
