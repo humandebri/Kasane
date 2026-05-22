@@ -1,8 +1,6 @@
 //! どこで: Phase0テスト / 何を: StableStateの初期化とupgrade相当再接続 / なぜ: 結線の健全性確認
 
-use evm_db::chain_data::{
-    Head, PruneStateV1, ReceiptLike, SenderKey, TxId, TxIndexEntry, TxLoc,
-};
+use evm_db::chain_data::{Head, PruneStateV1, ReceiptLike, SenderKey, TxId, TxIndexEntry, TxLoc};
 use evm_db::stable_state::{init_stable_state, with_state, with_state_mut};
 use evm_db::types::keys::make_account_key;
 use evm_db::types::values::AccountVal;
@@ -73,8 +71,13 @@ fn stable_state_reinit_preserves_core_upgrade_observations() {
 
     with_state(|state| {
         let restored_tx_index_ptr = state.tx_index.get(&tx_id).expect("tx index pointer");
-        let restored_tx_index =
-            TxIndexEntry::from_bytes(state.blob_store.read(&restored_tx_index_ptr).unwrap().into());
+        let restored_tx_index = TxIndexEntry::from_bytes(
+            state
+                .blob_store
+                .read(&restored_tx_index_ptr)
+                .unwrap()
+                .into(),
+        );
         let restored_receipt_ptr = state.receipts.get(&tx_id).expect("receipt pointer");
         let restored_receipt =
             ReceiptLike::from_bytes(state.blob_store.read(&restored_receipt_ptr).unwrap().into());
