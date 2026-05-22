@@ -1,0 +1,146 @@
+[[coverage]]
+file = "crates/ic-evm-gateway/src/lib.rs"
+function = "submit_ic_tx_internal"
+covered_by = [
+  "submit_transition_safe_raw-3a7d7873",
+  "staged_tx_is_current_pending_raw-8f305091",
+  "included_tx_safe_raw-8883376d",
+  "receipt_index_location_bidirectional-7f362e2c",
+  "block_commit_safe_raw-318a0bf6",
+  "no_reorg_append_only_raw-f8bac44c",
+]
+
+[[coverage]]
+file = "crates/ic-evm-gateway/src/lib.rs"
+function = "submit_ic_tx_internal_with_canister"
+covered_by = [
+  "submit_transition_safe_raw-3a7d7873",
+  "staged_tx_is_current_pending_raw-8f305091",
+  "included_tx_safe_raw-8883376d",
+  "receipt_index_location_bidirectional-7f362e2c",
+  "block_commit_safe_raw-318a0bf6",
+  "no_reorg_append_only_raw-f8bac44c",
+]
+
+[[coverage]]
+file = "crates/ic-evm-gateway/src/lib.rs"
+function = "submit_ic_tx_internal_with_canister_and_scheduler"
+covered_by = [
+  "submit_transition_safe_raw-3a7d7873",
+  "staged_tx_is_current_pending_raw-8f305091",
+  "included_tx_safe_raw-8883376d",
+  "receipt_index_location_bidirectional-7f362e2c",
+  "block_commit_safe_raw-318a0bf6",
+  "no_reorg_append_only_raw-f8bac44c",
+]
+
+[[coverage]]
+file = "crates/evm-core/src/chain.rs"
+function = "produce_block"
+covered_by = [
+  "staged_tx_is_current_pending_raw-8f305091",
+  "receipt_index_location_bidirectional-7f362e2c",
+  "block_commit_safe_raw-318a0bf6",
+  "no_reorg_append_only_raw-f8bac44c",
+]
+
+[[coverage]]
+file = "crates/evm-core/src/chain.rs"
+function = "prune_blocks"
+covered_by = [
+  "block_is_prunable-04224fd7",
+  "block_is_retained-9d9115e5",
+  "prune_boundary_safe-77bde266",
+  "prune_partial_progress_safe_raw-7591aae9",
+  "prune_query_observation_safe_raw-cb39bc8e",
+  "prune_tx_cleanup_complete-171d1899",
+]
+
+[[coverage]]
+file = "crates/evm-core/src/chain.rs"
+function = "prune_tick"
+covered_by = [
+  "block_is_prunable-04224fd7",
+  "block_is_retained-9d9115e5",
+  "prune_boundary_safe-77bde266",
+  "prune_partial_progress_safe_raw-7591aae9",
+  "prune_query_observation_safe_raw-cb39bc8e",
+  "prune_tx_cleanup_complete-171d1899",
+]
+
+[[coverage]]
+file = "crates/ic-evm-gateway/src/lib.rs"
+function = "prune_blocks"
+covered_by = [
+  "block_is_prunable-04224fd7",
+  "block_is_retained-9d9115e5",
+  "prune_boundary_safe-77bde266",
+  "prune_partial_progress_safe_raw-7591aae9",
+  "prune_query_observation_safe_raw-cb39bc8e",
+  "prune_tx_cleanup_complete-171d1899",
+]
+
+[[coverage]]
+file = "crates/ic-evm-gateway/src/lib.rs"
+function = "get_receipt"
+covered_by = [
+  "block_is_prunable-04224fd7",
+  "block_is_retained-9d9115e5",
+  "prune_boundary_safe-77bde266",
+  "prune_query_observation_safe_raw-cb39bc8e",
+  "prune_tx_cleanup_complete-171d1899",
+]
+
+[[coverage]]
+file = "crates/ic-evm-gateway/src/lib.rs"
+function = "get_block"
+covered_by = [
+  "block_is_prunable-04224fd7",
+  "block_is_retained-9d9115e5",
+  "prune_boundary_safe-77bde266",
+  "prune_query_observation_safe_raw-cb39bc8e",
+  "prune_tx_cleanup_complete-171d1899",
+]
+
+[[coverage]]
+file = "crates/evm-db/src/memory.rs"
+function = "get_memory"
+covered_by = [
+  "stable_tx_namespace_disjoint_raw-edcca87a",
+]
+
+[[coverage]]
+file = "crates/evm-db/src/stable_state.rs"
+function = "init_stable_state"
+covered_by = [
+  "stable_tx_namespace_disjoint_raw-edcca87a",
+  "upgrade_core_observation_preserved_raw-191130e4",
+]
+
+[[coverage]]
+file = "crates/evm-db/src/upgrade.rs"
+function = "pre_upgrade"
+covered_by = [
+  "upgrade_core_observation_preserved_raw-191130e4",
+]
+
+[[coverage]]
+file = "crates/evm-db/src/upgrade.rs"
+function = "post_upgrade"
+covered_by = [
+  "upgrade_core_observation_preserved_raw-191130e4",
+]
+
+[[coverage]]
+file = "crates/ic-evm-gateway/src/lib.rs"
+function = "pre_upgrade"
+covered_by = [
+  "upgrade_core_observation_preserved_raw-191130e4",
+]
+
+[[coverage]]
+file = "crates/ic-evm-gateway/src/lib.rs"
+function = "post_upgrade"
+covered_by = [
+  "upgrade_core_observation_preserved_raw-191130e4",
+]

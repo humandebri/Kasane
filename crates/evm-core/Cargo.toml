@@ -44,6 +44,10 @@ path = "../ic-evm-tx"
 package = "ic-evm-address"
 path = "../ic-evm-address"
 
+[dependencies.verified_core]
+package = "verified-core"
+path = "../verified-core"
+
 [features]
 full_state_root = []
 local-signer-bin = ["dep:alloy-signer", "dep:alloy-signer-local", "dep:alloy-consensus"]

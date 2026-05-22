@@ -1,0 +1,14 @@
+{
+  "target": "block_is_retained",
+  "target_id": "dacedafac12dccb1b861f00170efa9bc84ed1a6f42cce3e96f7b1a2e20e5477d",
+  "slug": "block_is_retained-9d9115e5",
+  "git_commit": "e7c4bd6deef99685a57a519fa4643f44b1ee134b",
+  "worktree_dirty": false,
+  "source_hash": "9d9115e5f68e8345ecdf9b116dc5efd5cb5860d1fcf943769e0eb6de9e55bbcd",
+  "semantic_hash": "e4af40e6fe1aa259aaabaaa386b6780157b0e07a3d8ec08a9c1babe2055bad9f",
+  "tool_version": "0.1.0",
+  "blocking_issues": [],
+  "human_questions": [],
+  "auto_safe_edits": [],
+  "risk": "medium"
+}

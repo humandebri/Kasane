@@ -1,0 +1,17 @@
+# verify: block_is_retained-9d9115e5
+
+- command: verus /Users/0xhude/Desktop/ICP/Kasane/crates/verified-core/src/prune_safety/block_retained.rs
+- exit_code: 0
+- git_commit: e7c4bd6deef99685a57a519fa4643f44b1ee134b
+- worktree_dirty: false
+- semantic_hash: e4af40e6fe1aa259aaabaaa386b6780157b0e07a3d8ec08a9c1babe2055bad9f
+- spec_hash: b5761f59417c8d137ac7b22e2a687b0e110874a222735c3280ae41527d333916
+- target_hash: 94c0ff8265c7902ecc98d5cfb6ad362dd6e1a77672f9f36d8e2e54266171ffa9
+- contract_hash: ae5731987844b9ac331a6c90aa5a176bc5b8d059281e0aac360d60c1cc4f5302
+- source_hash: 9d9115e5f68e8345ecdf9b116dc5efd5cb5860d1fcf943769e0eb6de9e55bbcd
+- verified_subject: implementation
+- result: success
+
+## output
+verification results:: 1 verified, 0 errors
+

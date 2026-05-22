@@ -1,0 +1,54 @@
+{
+  "target": "receipt_index_location_bidirectional",
+  "target_id": "6de7b322c0489b139fbc6f46e0464c3c00f56f10d22203cab9d4b8027ae87353",
+  "slug": "receipt_index_location_bidirectional-7f362e2c",
+  "file": "crates/verified-core/src/receipt_index.rs",
+  "function": "receipt_index_location_bidirectional",
+  "git_commit": "2ff47cf9ec949b314adc26f94ad9e340cbda4cbb",
+  "worktree_dirty": false,
+  "source_hash": "7f362e2c26ea1e9b56eda044aaac97c8e7ea546c2e33dee844350504411674bb",
+  "semantic_hash": "65653aa7145cdbf01e5bba597b116f13697d9431c2ce49dcfd4b2965fe50b52e",
+  "dependency_hash_inputs": [
+    {
+      "kind": "use",
+      "name": "cfg",
+      "file": "crates/verified-core/src/receipt_index.rs",
+      "hash": "a5eb4157d5d32303032e3dc786e34f004ebe17f0ff1bb26f90ac9eb42478596c"
+    },
+    {
+      "kind": "type",
+      "name": "verus_keep_ghost",
+      "file": "crates/verified-core/src/receipt_index.rs",
+      "hash": "f6e4f76a88cbc3b52f9126079ef05773e08145ffa085cc02a89f5a447b7d30ab"
+    }
+  ],
+  "unresolved_dependencies": [],
+  "spec_source_of_truth": "accepted_json",
+  "tool_version": "0.1.0",
+  "preconditions": [
+    "true"
+  ],
+  "postconditions": [
+    "result == ((!input.tx_index_present || (input.receipt_present && input.included_loc_present && input.index_matches_loc)) && (!input.receipt_present || (input.tx_index_present && input.included_loc_present && input.receipt_matches_loc)) && (!input.included_loc_present || (input.tx_index_present && input.receipt_present && input.index_matches_loc && input.receipt_matches_loc && input.loc_points_to_block_tx)))"
+  ],
+  "acceptance_criteria": [
+    "For an included tx, tx_index implies receipt and included location, receipt implies tx_index and included location, and included location implies tx_index, receipt, matching positions, and the block slot containing the same tx."
+  ],
+  "test_evidence": [
+    {
+      "scenario_id": "receipt_index_location_bidirectional-nominal",
+      "command": "cargo test -p verified-core --test p0_safety && cargo test -p ic-evm-gateway gateway_submit_ic_tx_adapter_preserves_queue_and_receipt_invariants && cargo test -p ic-evm-gateway replacement_old_tx_is_not_staged_or_included",
+      "test_name": "verified-core bidirectional pure tests plus gateway receipt/index/location adapter evidence",
+      "recorded_at": "2026-05-16T08:21:03Z"
+    }
+  ],
+  "risk_level": "medium",
+  "verified_subject": "implementation",
+  "contract_hash": "075accd33b10181d1a2abecfa98ebbde6583902282a1ac2bd3e3e8fcf9fb9679",
+  "applied_contract_hash": "075accd33b10181d1a2abecfa98ebbde6583902282a1ac2bd3e3e8fcf9fb9679",
+  "applied_at": "2026-05-16T08:34:11Z",
+  "panic_behavior": "documented",
+  "overflow_behavior": "documented",
+  "rejected_behaviors": [],
+  "open_assumptions": []
+}

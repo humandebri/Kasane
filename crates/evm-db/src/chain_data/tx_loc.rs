@@ -151,7 +151,7 @@ fn encode_fixed_tx_loc(loc: &TxLoc, encoded: &[u8]) -> Option<[u8; TX_LOC_SIZE_U
 }
 
 fn decode_fixed_tx_loc(data: &[u8]) -> TxLoc {
-    if data.len() != TX_LOC_SIZE_U32 as usize {
+    if !verified_core::stable_codec::fixed_len_matches(data.len(), TX_LOC_SIZE_U32 as usize) {
         mark_decode_failure(b"tx_loc", true);
         return TxLoc::decode_failure_placeholder();
     }
@@ -187,7 +187,7 @@ fn decode_fixed_tx_loc(data: &[u8]) -> TxLoc {
 // NOTE: 旧形式デコードは移行ウィンドウのための例外経路。
 // 通常経路に旧decodeを増やさない方針を維持し、v3安定化後に削除する。
 fn decode_legacy_tx_loc(data: &[u8]) -> TxLoc {
-    if data.len() != 24 {
+    if !verified_core::stable_codec::fixed_len_matches(data.len(), 24) {
         mark_decode_failure(b"tx_loc", true);
         return TxLoc::decode_failure_placeholder();
     }

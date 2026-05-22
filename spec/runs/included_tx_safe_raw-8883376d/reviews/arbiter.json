@@ -1,0 +1,14 @@
+{
+  "target": "included_tx_safe_raw",
+  "target_id": "224c160e61755ee6272563ea6dab57a1fa0c100d4d673b442182059bedf4d3ae",
+  "slug": "included_tx_safe_raw-8883376d",
+  "git_commit": "4aed4c6b20d169ba2d31ba9c585394470dc69edf",
+  "worktree_dirty": true,
+  "source_hash": "8883376d72032a1c2763639c9b66be22fb0d0b0fd41ea54619d9bb82a98c9763",
+  "semantic_hash": "f36a3e08a6f5fa9775fe08df81966740e65bdee2c1c624a20a3fe7c771f4f0e9",
+  "tool_version": "0.1.0",
+  "blocking_issues": [],
+  "human_questions": [],
+  "auto_safe_edits": [],
+  "risk": "medium"
+}

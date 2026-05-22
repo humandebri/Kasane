@@ -1,0 +1,20 @@
+{
+  "preconditions": [
+    "true"
+  ],
+  "postconditions": [
+    "result == (retained <= 1 && returned_ok <= 1 && returned_pruned <= 1 && ((block_number <= pruned_through && retained == 0 && returned_ok == 0 && returned_pruned == 1) || (pruned_through < block_number && returned_pruned == 0 && retained == returned_ok)))"
+  ],
+  "acceptance_criteria": [
+    "Active pruning query observation safety: canonical query flags only; a block at or below the inclusive pruned-through boundary must return Pruned and never Ok; above the boundary, Pruned is not returned and retained observations are exactly Ok observations."
+  ],
+  "test_evidence": [
+    {
+      "scenario_id": "prune_query_observation_safe_raw-nominal",
+      "command": "cargo test -p verified-core --test prune_safety prune_query_observation && cargo test -p ic-evm-gateway get_block_returns_pruned_for_pruned_boundary && cargo test -p ic-evm-gateway get_block_returns_ok_when_prune_boundary_is_absent && cargo test -p ic-evm-gateway get_block_returns_ok_for_retained_block && cargo test -p ic-evm-gateway get_receipt_returns_pruned_when_location_is_before_boundary && cargo test -p ic-evm-gateway get_receipt_returns_ok_for_retained_receipt",
+      "test_name": "verified-core pruning query pure tests plus gateway pruned/retained/absent-boundary block and receipt adapter evidence",
+      "recorded_at": "2026-05-16T08:58:14Z"
+    }
+  ],
+  "risk_level": "medium"
+}

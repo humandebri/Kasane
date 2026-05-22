@@ -1,0 +1,14 @@
+{
+  "target": "block_commit_safe",
+  "target_id": "f78b627b3c50b2b537b6c9b3c3e421616567b590d46c11621c781e99c5aec562",
+  "slug": "block_commit_safe-9ce347ac",
+  "git_commit": "84ed97b3f912fbc69a4c4c65ae48889e1240e63a",
+  "worktree_dirty": false,
+  "source_hash": "9ce347ac9e0c4f7f51bc344f0f3e6e70a86210a46865b67862551dd106555c0f",
+  "semantic_hash": "5faabe5ff1b9ce811054fe93bfb04e7cd61f3fb74bd18a081bfb35d8a3fbe9eb",
+  "tool_version": "0.1.0",
+  "blocking_issues": [],
+  "human_questions": [],
+  "auto_safe_edits": [],
+  "risk": "medium"
+}

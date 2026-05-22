@@ -1,0 +1,20 @@
+{
+  "preconditions": [
+    "true"
+  ],
+  "postconditions": [
+    "result == (previous_present <= 1 && next_present <= 1 && did_work <= 1 && stopped_for_budget <= 1 && ops_used <= max_ops && (did_work == 0 || next_present == 1) && (previous_present == 0 || next_present == 1) && (did_work == 0 || previous_present == 0 || previous_boundary < next_boundary) && (previous_present == 0 || next_present == 0 || previous_boundary == next_boundary || did_work == 1) && (previous_present == 0 || next_present == 0 || previous_boundary <= next_boundary) && (next_present == 0 || next_boundary < next_cursor) && (stopped_for_budget == 0 || next_present == 1) && (stopped_for_budget == 0 || max_ops < next_ops_needed || (next_ops_needed <= max_ops && max_ops - next_ops_needed < ops_used)))"
+  ],
+  "acceptance_criteria": [
+    "Partial pruning progress safety: flags are canonical; ops_used never exceeds max_ops; budget-stop observations prove remaining budget is insufficient for the next block; existing pruned boundary remains present and never regresses; did_work implies first progress or boundary advance; next cursor stays strictly after the current boundary."
+  ],
+  "test_evidence": [
+    {
+      "scenario_id": "prune_partial_progress_safe_raw-nominal",
+      "command": "cargo test -p verified-core --test prune_safety prune_partial_progress && cargo test -p ic-evm-core prune_blocks_respects_max_ops && cargo test -p ic-evm-core prune_blocks_resumes_after_max_ops_stop && cargo test -p ic-evm-core prune_is_idempotent && cargo test -p ic-evm-core recover_without_journal_advances_next_prune_block_to_boundary",
+      "test_name": "verified-core partial progress pure tests plus evm-core max_ops resume/idempotency/recovery adapter evidence",
+      "recorded_at": "2026-05-16T10:15:16Z"
+    }
+  ],
+  "risk_level": "medium"
+}

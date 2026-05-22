@@ -19,9 +19,9 @@ use evm_db::chain_data::constants::MAX_RETURN_DATA;
 use evm_db::chain_data::receipt::log_entry_from_parts;
 use evm_db::chain_data::{
     BlockData, MigrationPhase, MintSubmitStatus, OpsMode, ReceiptLike, RequestStatus,
-    RuntimeConfigV1, StoredTxBytes, TxId, TxKind, TxLoc, UnwrapDispatchRequest,
-    UnwrapRequestStatus, WrapPendingSubmission, WrapRequestResult, WrapRequestStage,
-    WrapStoredRequest, WRAP_DECODE_FAILURE_CODE,
+    RuntimeConfigV1, StoredTxBytes, TxId, TxIndexEntry, TxKind, TxLoc, TxLocKind,
+    UnwrapDispatchRequest, UnwrapRequestStatus, WrapPendingSubmission, WrapRequestResult,
+    WrapRequestStage, WrapStoredRequest, WRAP_DECODE_FAILURE_CODE,
 };
 use evm_db::memory::{get_memory, AppMemoryId, WASM_PAGE_SIZE_BYTES};
 use evm_db::meta::{
@@ -1206,6 +1206,186 @@ fn no_timer_for_test(_interval_ms: u64) {}
 
 fn no_reject_for_test() -> Option<String> {
     None
+}
+
+fn no_schedule_for_test() {}
+
+fn assert_included_receipt_index_location_links(tx_id: TxId, block_number: u64, tx_index: u32) {
+    let loc = chain::get_tx_loc(&tx_id).expect("included tx loc");
+    assert_eq!(loc.kind, TxLocKind::Included);
+    assert_eq!(loc.block_number, block_number);
+    assert_eq!(loc.tx_index, tx_index);
+
+    let block = chain::get_block(block_number).expect("included block");
+    assert_eq!(block.tx_ids.get(tx_index as usize), Some(&tx_id));
+
+    evm_db::stable_state::with_state(|state| {
+        let index_ptr = state.tx_index.get(&tx_id).expect("tx index ptr");
+        let index_bytes = state.blob_store.read(&index_ptr).expect("tx index bytes");
+        let index = TxIndexEntry::from_bytes(Cow::Owned(index_bytes));
+        assert_eq!(index.block_number, block_number);
+        assert_eq!(index.tx_index, tx_index);
+
+        let receipt_ptr = state.receipts.get(&tx_id).expect("receipt ptr");
+        let receipt_bytes = state.blob_store.read(&receipt_ptr).expect("receipt bytes");
+        let receipt = ReceiptLike::from_bytes(Cow::Owned(receipt_bytes));
+        assert_eq!(receipt.tx_id, tx_id);
+        assert_eq!(receipt.block_number, block_number);
+        assert_eq!(receipt.tx_index, tx_index);
+    });
+}
+
+#[test]
+fn gateway_submit_ic_tx_adapter_preserves_queue_and_receipt_invariants() {
+    init_stable_state();
+    set_migration_not_pending_for_test();
+
+    let caller = Principal::self_authenticating(b"gateway-submit-caller");
+    let canister = Principal::self_authenticating(b"gateway-submit-canister");
+    let (max_fee_per_gas, max_priority_fee_per_gas) = evm_db::stable_state::with_state(|state| {
+        let chain_state = *state.chain_state.get();
+        let min_priority = u128::from(chain_state.min_priority_fee);
+        let required_max_fee = u128::from(chain_state.base_fee)
+            .saturating_add(min_priority)
+            .max(u128::from(chain_state.min_gas_price));
+        (required_max_fee, min_priority)
+    });
+    let args = SubmitIcTxArgsDto {
+        to: Some(vec![0x11; 20]),
+        from: None,
+        value: Nat::from(0u8),
+        gas_limit: 50_000,
+        nonce: 0,
+        max_fee_per_gas: Nat::from(max_fee_per_gas),
+        max_priority_fee_per_gas: Nat::from(max_priority_fee_per_gas),
+        data: Vec::new(),
+    };
+    let tx = parse_submit_ic_tx_args(args).expect("parse submit_ic_tx args");
+    let caller_evm =
+        hash::derive_evm_address_from_principal(caller.as_slice()).expect("caller evm");
+    chain::credit_balance(caller_evm, 1_000_000_000_000_000_000).expect("fund caller");
+    let expected_tx_id =
+        super::derive_ic_synthetic_tx_id(caller.as_slice(), canister.as_slice(), &tx, caller_evm);
+
+    let returned_tx_id = super::submit_ic_tx_internal_with_canister_and_scheduler(
+        caller.as_slice().to_vec(),
+        canister.as_slice().to_vec(),
+        "submit_ic_tx",
+        tx,
+        no_schedule_for_test,
+    )
+    .expect("submit_ic_tx adapter");
+    assert_eq!(returned_tx_id, expected_tx_id.0.to_vec());
+
+    let queued_loc = chain::get_tx_loc(&expected_tx_id).expect("queued tx loc");
+    assert_eq!(queued_loc.kind, evm_db::chain_data::TxLocKind::Queued);
+    assert!(matches!(
+        super::get_receipt(returned_tx_id.clone()),
+        Err(super::LookupError::Pending)
+    ));
+    evm_db::stable_state::with_state(|state| {
+        assert!(state.tx_store.get(&expected_tx_id).is_some());
+        assert!(state.receipts.get(&expected_tx_id).is_none());
+    });
+
+    let previous_head = chain::get_head_number();
+    let outcome = chain::produce_block(1).expect("produce block");
+    assert_eq!(outcome.block.tx_ids, vec![expected_tx_id]);
+    assert_eq!(chain::get_head_number(), previous_head + 1);
+
+    let included_loc = chain::get_tx_loc(&expected_tx_id).expect("included tx loc");
+    assert_eq!(included_loc.kind, evm_db::chain_data::TxLocKind::Included);
+    assert_eq!(included_loc.block_number, outcome.block.number);
+    assert_eq!(included_loc.tx_index, 0);
+    let receipt = super::get_receipt(returned_tx_id).expect("receipt view");
+    assert_eq!(receipt.tx_id, expected_tx_id.0.to_vec());
+    assert_eq!(receipt.block_number, outcome.block.number);
+    assert_eq!(receipt.tx_index, 0);
+    assert_included_receipt_index_location_links(expected_tx_id, outcome.block.number, 0);
+}
+
+#[test]
+fn replacement_old_tx_is_not_staged_or_included() {
+    init_stable_state();
+    set_migration_not_pending_for_test();
+
+    let caller = Principal::self_authenticating(b"gateway-replacement-caller");
+    let canister = Principal::self_authenticating(b"gateway-replacement-canister");
+    let (max_fee_per_gas, max_priority_fee_per_gas) = evm_db::stable_state::with_state(|state| {
+        let chain_state = *state.chain_state.get();
+        let min_priority = u128::from(chain_state.min_priority_fee);
+        let required_max_fee = u128::from(chain_state.base_fee)
+            .saturating_add(min_priority)
+            .max(u128::from(chain_state.min_gas_price));
+        (required_max_fee, min_priority)
+    });
+    let caller_evm =
+        hash::derive_evm_address_from_principal(caller.as_slice()).expect("caller evm");
+    chain::credit_balance(caller_evm, 1_000_000_000_000_000_000).expect("fund caller");
+
+    let first_tx =
+        build_ic_synthetic_tx_input_for_test(0, max_fee_per_gas, max_priority_fee_per_gas);
+    let first_tx_id = super::derive_ic_synthetic_tx_id(
+        caller.as_slice(),
+        canister.as_slice(),
+        &first_tx,
+        caller_evm,
+    );
+    super::submit_ic_tx_internal_with_canister_and_scheduler(
+        caller.as_slice().to_vec(),
+        canister.as_slice().to_vec(),
+        "submit_ic_tx",
+        first_tx,
+        no_schedule_for_test,
+    )
+    .expect("first submit");
+
+    let replacement_tx = build_ic_synthetic_tx_input_for_test(
+        0,
+        max_fee_per_gas.saturating_add(10_000),
+        max_priority_fee_per_gas.saturating_add(10_000),
+    );
+    let replacement_tx_id = super::derive_ic_synthetic_tx_id(
+        caller.as_slice(),
+        canister.as_slice(),
+        &replacement_tx,
+        caller_evm,
+    );
+    super::submit_ic_tx_internal_with_canister_and_scheduler(
+        caller.as_slice().to_vec(),
+        canister.as_slice().to_vec(),
+        "submit_ic_tx",
+        replacement_tx,
+        no_schedule_for_test,
+    )
+    .expect("replacement submit");
+
+    evm_db::stable_state::with_state(|state| {
+        assert_eq!(state.pending_current_by_sender.len(), 1);
+        assert!(state.tx_store.get(&first_tx_id).is_none());
+        assert!(state
+            .ready_queue
+            .iter()
+            .all(|entry| entry.value() != first_tx_id));
+        assert!(state
+            .ready_by_seq
+            .iter()
+            .all(|entry| entry.value() != first_tx_id));
+        assert!(state
+            .pending_by_sender_nonce
+            .iter()
+            .all(|entry| { entry.value() == replacement_tx_id && entry.value() != first_tx_id }));
+    });
+    assert_eq!(
+        chain::get_tx_loc(&first_tx_id).map(|loc| loc.kind),
+        Some(TxLocKind::Dropped)
+    );
+
+    let outcome = chain::produce_block(1).expect("produce replacement block");
+    assert_eq!(outcome.block.tx_ids, vec![replacement_tx_id]);
+    assert!(!outcome.block.tx_ids.contains(&first_tx_id));
+    assert!(chain::get_receipt(&first_tx_id).is_none());
+    assert_included_receipt_index_location_links(replacement_tx_id, outcome.block.number, 0);
 }
 
 #[test]
@@ -2405,6 +2585,83 @@ fn get_block_returns_not_found_for_corrupt_block_payload() {
 }
 
 #[test]
+fn get_block_returns_pruned_for_pruned_boundary() {
+    init_stable_state();
+    with_state_mut(|state| {
+        let mut prune_state = *state.prune_state.get();
+        prune_state.set_pruned_before(8);
+        state.prune_state.set(prune_state);
+    });
+
+    let out = super::get_block(8);
+    assert!(matches!(
+        out,
+        Err(super::LookupError::Pruned {
+            pruned_before_block: 8
+        })
+    ));
+}
+
+#[test]
+fn get_block_returns_ok_when_prune_boundary_is_absent() {
+    init_stable_state();
+    with_state_mut(|state| {
+        let block = BlockData::new(
+            0,
+            [0x20; 32],
+            [0x21; 32],
+            123,
+            1,
+            DEFAULT_BLOCK_GAS_LIMIT,
+            0,
+            [0x22; 20],
+            Vec::new(),
+            [0x23; 32],
+            [0x24; 32],
+        );
+        let ptr = state
+            .blob_store
+            .store_bytes(block.to_bytes().as_ref())
+            .expect("store unpruned block");
+        state.blocks.insert(0, ptr);
+    });
+
+    let out = super::get_block(0).expect("block without prune boundary");
+    assert_eq!(out.number, 0);
+}
+
+#[test]
+fn get_block_returns_ok_for_retained_block() {
+    init_stable_state();
+    with_state_mut(|state| {
+        let block = BlockData::new(
+            9,
+            [0x10; 32],
+            [0x11; 32],
+            123,
+            1,
+            DEFAULT_BLOCK_GAS_LIMIT,
+            0,
+            [0x12; 20],
+            Vec::new(),
+            [0x13; 32],
+            [0x14; 32],
+        );
+        let ptr = state
+            .blob_store
+            .store_bytes(block.to_bytes().as_ref())
+            .expect("store retained block");
+        state.blocks.insert(9, ptr);
+        let mut prune_state = *state.prune_state.get();
+        prune_state.set_pruned_before(5);
+        state.prune_state.set(prune_state);
+    });
+
+    let out = super::get_block(9).expect("retained block");
+    assert_eq!(out.number, 9);
+}
+
+#[test]
 fn get_receipt_returns_not_found_for_corrupt_receipt_payload() {
     init_stable_state();
     let tx_id = TxId([0x81u8; 32]);
@@ -2419,6 +2676,66 @@ fn get_receipt_returns_not_found_for_corrupt_receipt_payload() {
 
     let out = super::get_receipt(tx_id.0.to_vec());
     assert!(matches!(out, Err(super::LookupError::NotFound)));
+}
+
+#[test]
+fn get_receipt_returns_ok_for_retained_receipt() {
+    init_stable_state();
+    let tx_id = TxId([0x82u8; 32]);
+    with_state_mut(|state| {
+        let receipt = fake_receipt_for_lookup(tx_id, 9);
+        let ptr = state
+            .blob_store
+            .store_bytes(receipt.to_bytes().as_ref())
+            .expect("store receipt");
+        state.receipts.insert(tx_id, ptr);
+        state.tx_locs.insert(tx_id, TxLoc::included(9, 0));
+        let mut prune_state = *state.prune_state.get();
+        prune_state.set_pruned_before(5);
+        state.prune_state.set(prune_state);
+    });
+
+    let out = super::get_receipt(tx_id.0.to_vec()).expect("retained receipt");
+    assert_eq!(out.tx_id, tx_id.0.to_vec());
+    assert_eq!(out.block_number, 9);
+}
+
+#[test]
+fn get_receipt_returns_pruned_when_location_is_before_boundary() {
+    init_stable_state();
+    let tx_id = TxId([0x83u8; 32]);
+    with_state_mut(|state| {
+        state.tx_locs.insert(tx_id, TxLoc::included(4, 0));
+        let mut prune_state = *state.prune_state.get();
+        prune_state.set_pruned_before(5);
+        state.prune_state.set(prune_state);
+    });
+
+    let out = super::get_receipt(tx_id.0.to_vec());
+    assert!(matches!(
+        out,
+        Err(super::LookupError::Pruned {
+            pruned_before_block: 5
+        })
+    ));
+}
+
+fn fake_receipt_for_lookup(tx_id: TxId, block_number: u64) -> ReceiptLike {
+    ReceiptLike {
+        tx_id,
+        block_number,
+        tx_index: 0,
+        status: 1,
+        gas_used: 0,
+        effective_gas_price: 0,
+        l1_data_fee: 0,
+        operator_fee: 0,
+        total_fee: 0,
+        return_data_hash: [0u8; 32],
+        return_data: Vec::new(),
+        contract_address: None,
+        logs: Vec::new(),
+    }
 }
 
 #[test]

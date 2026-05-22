@@ -1,0 +1,20 @@
+{
+  "preconditions": [
+    "true"
+  ],
+  "postconditions": [
+    "result == (ready_points_to_tx == 1 && pending_meta_points_to_tx == 1 && current_pending_points_to_tx == 1 && tx_payload_present == 1 && tx_not_marked_dropped == 1)"
+  ],
+  "acceptance_criteria": [
+    "A tx may be staged for produce_block only when ready_queue, pending metadata, current pending slot, live payload, and non-dropped location all point to the same tx."
+  ],
+  "test_evidence": [
+    {
+      "scenario_id": "staged_tx_is_current_pending_raw-nominal",
+      "command": "cargo test -p verified-core --test p0_safety && cargo test -p ic-evm-gateway replacement_old_tx_is_not_staged_or_included",
+      "test_name": "verified-core staging pure tests plus gateway replacement stale-tx exclusion evidence",
+      "recorded_at": "2026-05-16T08:20:34Z"
+    }
+  ],
+  "risk_level": "medium"
+}

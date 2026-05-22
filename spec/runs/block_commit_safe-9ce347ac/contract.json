@@ -1,0 +1,20 @@
+{
+  "preconditions": [
+    "true"
+  ],
+  "postconditions": [
+    "result == (facts.committed_head >= facts.previous_head && (facts.block_gas_limit == 0 || facts.block_gas_used <= facts.block_gas_limit) && facts.included_count != 0 && facts.included_count == facts.staged_count && facts.safe_included_count == facts.included_count)"
+  ],
+  "acceptance_criteria": [
+    "block commit is safe exactly when head is monotonic, gas evidence respects the configured limit, and included/staged/safe counts match for a nonempty batch"
+  ],
+  "test_evidence": [
+    {
+      "scenario_id": "block_commit_safe-nominal",
+      "command": "cargo test -p verified-core block_commit_requires_head_gas_and_batch_evidence && cargo test -p ic-evm-core produce_block_selects_top_k_by_fee_then_submission_order",
+      "test_name": "core_safety::tests::block_commit_requires_head_gas_and_batch_evidence; phase1_chain_behavior::produce_block_selects_top_k_by_fee_then_submission_order",
+      "recorded_at": "2026-05-15T11:49:39Z"
+    }
+  ],
+  "risk_level": "medium"
+}

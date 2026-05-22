@@ -1,0 +1,92 @@
+{
+  "target": "should_stop_execution",
+  "target_id": "bb5b677c76635020eb395881a17f57db79f6d5373325ffcbaaa7a20044ac695c",
+  "slug": "should_stop_execution-207b8917",
+  "git_commit": "703d7df1dcdc48c6f15be3733c6da4ec5c6a8dad",
+  "worktree_dirty": false,
+  "source_hash": "207b8917aba05a0e57fdbfa90be39c0e28e586fee3db5a9e1ba3ca68e4f6408e",
+  "semantic_hash": "3b26bd46cb29deee1b1b0351d0b169ada91df7214b1a471dafe653286e306225",
+  "tool_version": "0.1.0",
+  "scenarios": [
+    {
+      "id": "should-stop-gas-limit-reached",
+      "kind": "boundary",
+      "executable": true,
+      "inputs": {
+        "block_gas_used": 10,
+        "block_gas_limit": 10,
+        "instruction_soft_limit": 0,
+        "instruction_start": 0,
+        "instruction_current": 0
+      },
+      "expected": {
+        "result": true
+      },
+      "review_status": "accepted",
+      "status_note": "Gas limit is enabled and reached.",
+      "reviewed_by": "codex",
+      "reviewed_at": "2026-05-14T03:55:00Z",
+      "rationale": "Block gas boundary alone stops execution."
+    },
+    {
+      "id": "should-stop-gas-limit-disabled",
+      "kind": "boundary",
+      "executable": true,
+      "inputs": {
+        "block_gas_used": 100,
+        "block_gas_limit": 0,
+        "instruction_soft_limit": 0,
+        "instruction_start": 0,
+        "instruction_current": 100
+      },
+      "expected": {
+        "result": false
+      },
+      "review_status": "accepted",
+      "status_note": "Zero gas and instruction limits disable both stop conditions.",
+      "reviewed_by": "codex",
+      "reviewed_at": "2026-05-14T03:55:00Z",
+      "rationale": "Disabled limits do not stop execution."
+    },
+    {
+      "id": "should-stop-instruction-limit-reached",
+      "kind": "boundary",
+      "executable": true,
+      "inputs": {
+        "block_gas_used": 0,
+        "block_gas_limit": 0,
+        "instruction_soft_limit": 50,
+        "instruction_start": 10,
+        "instruction_current": 60
+      },
+      "expected": {
+        "result": true
+      },
+      "review_status": "accepted",
+      "status_note": "Consumed instruction count reaches the soft limit.",
+      "reviewed_by": "codex",
+      "reviewed_at": "2026-05-14T03:55:00Z",
+      "rationale": "Instruction budget alone stops execution."
+    },
+    {
+      "id": "should-continue-instruction-counter-underflow",
+      "kind": "boundary",
+      "executable": true,
+      "inputs": {
+        "block_gas_used": 0,
+        "block_gas_limit": 0,
+        "instruction_soft_limit": 50,
+        "instruction_start": 100,
+        "instruction_current": 40
+      },
+      "expected": {
+        "result": false
+      },
+      "review_status": "accepted",
+      "status_note": "Counter regression is treated as zero consumed instructions.",
+      "reviewed_by": "codex",
+      "reviewed_at": "2026-05-14T03:55:00Z",
+      "rationale": "Saturating consumed-instruction behavior avoids underflow."
+    }
+  ]
+}

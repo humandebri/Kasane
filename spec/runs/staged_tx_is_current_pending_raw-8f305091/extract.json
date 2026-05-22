@@ -1,0 +1,45 @@
+{
+  "target": "staged_tx_is_current_pending_raw",
+  "entry": {
+    "display_name": "staged_tx_is_current_pending_raw",
+    "function": "staged_tx_is_current_pending_raw",
+    "function_path": "staged_tx_is_current_pending_raw",
+    "file": "crates/verified-core/src/staging.rs",
+    "target_id": "b11a174ada55a5da874578cd663871c2ff89a9e016f96f35a5ada71fdc9d339f",
+    "slug": "staged_tx_is_current_pending_raw-8f305091",
+    "source_hash": "8f3050911d0e6e3e05e12e96739a545c70d0c0c8a35e7098ea55c3984a12602c",
+    "semantic_hash": "01e3253152d39ab3884ccbcaae345bfb0276e2f35d25346253301e0ba55ddc6d",
+    "created_at": "2026-05-16T08:13:56Z"
+  },
+  "signature": "pub fn staged_tx_is_current_pending_raw(ready_points_to_tx: u64, pending_meta_points_to_tx: u64, current_pending_points_to_tx: u64, tx_payload_present: u64, tx_not_marked_dropped: u64) -> bool",
+  "body": "{\n    ready_points_to_tx == 1\n        && pending_meta_points_to_tx == 1\n        && current_pending_points_to_tx == 1\n        && tx_payload_present == 1\n        && tx_not_marked_dropped == 1\n}",
+  "span": {
+    "start_line": 6,
+    "end_line": 13
+  },
+  "git_commit": "0570339f56a81732819c12f7e07f79a58a609f91",
+  "worktree_dirty": false,
+  "source_hash": "86845648a950705fef350c93d451fe27e728e5402ca00a28417d1f37ae15a063",
+  "semantic_hash": "0aaf3eafa2dcf641996e9aa709a1537b158e106a527c267a3235736c950b2155",
+  "dependency_hash_inputs": [
+    {
+      "kind": "use",
+      "name": "cfg",
+      "file": "crates/verified-core/src/staging.rs",
+      "hash": "a5eb4157d5d32303032e3dc786e34f004ebe17f0ff1bb26f90ac9eb42478596c"
+    }
+  ],
+  "unresolved_dependencies": [],
+  "tool_version": "0.1.0",
+  "cfg": [],
+  "features": [],
+  "types": [],
+  "called_functions": [],
+  "callers": [],
+  "tests": [],
+  "panic_sites": [],
+  "overflow_sites": [],
+  "casts": [],
+  "division_sites": [],
+  "llm_context_files": []
+}

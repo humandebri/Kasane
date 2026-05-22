@@ -1,0 +1,104 @@
+{
+  "target": "apply_nonce_and_replacement",
+  "entry": {
+    "display_name": "apply_nonce_and_replacement",
+    "function": "apply_nonce_and_replacement",
+    "function_path": "apply_nonce_and_replacement",
+    "file": "crates/evm-core/src/tx_submit.rs",
+    "target_id": "b63485ef888d0048c3bdefecadba1f5702e9da822b882463c30c008a80174f2e",
+    "slug": "apply_nonce_and_replacement-9ee01bf0",
+    "source_hash": "9ee01bf073888eb328ac33a9a41ae826cc76e234ca034863596604972ca78992",
+    "semantic_hash": "b9634009da84428d025889b11bc1572187949d6b7c0a3b9c478260bd1d865449",
+    "created_at": "2026-05-14T03:39:58Z"
+  },
+  "signature": "pub fn apply_nonce_and_replacement(\n    state: &mut StableState,\n    sender: SenderKey,\n    nonce: u64,\n    effective_gas_price: u64,\n    base_fee: u64,\n) -> Result<Option<TxId>, NonceRuleError>",
+  "body": "{\n    let expected_nonce = expected_nonce_for_sender(state, sender);\n    if nonce < expected_nonce {\n        return Err(NonceRuleError::TooLow);\n    }\n    if nonce > expected_nonce {\n        return Err(NonceRuleError::Gap);\n    }\n\n    let current = state.pending_current_by_sender.get(&sender);\n    let old_effective = match current {\n        Some(old_tx_id) => Some(effective_gas_price_for_tx(state, old_tx_id, base_fee)?),\n        None => None,\n    };\n    match classify_nonce(expected_nonce, nonce, old_effective, effective_gas_price) {\n        NonceDecision::Accept => Ok(None),\n        NonceDecision::TooLow => Err(NonceRuleError::TooLow),\n        NonceDecision::Gap => Err(NonceRuleError::Gap),\n        NonceDecision::Conflict => Err(NonceRuleError::Conflict),\n        NonceDecision::Replace => current.ok_or(NonceRuleError::Conflict).map(Some),\n    }\n}",
+  "span": {
+    "start_line": 42,
+    "end_line": 69
+  },
+  "git_commit": "703d7df1dcdc48c6f15be3733c6da4ec5c6a8dad",
+  "worktree_dirty": false,
+  "source_hash": "9ee01bf073888eb328ac33a9a41ae826cc76e234ca034863596604972ca78992",
+  "semantic_hash": "b9634009da84428d025889b11bc1572187949d6b7c0a3b9c478260bd1d865449",
+  "dependency_hash_inputs": [
+    {
+      "kind": "use",
+      "name": "use",
+      "file": "crates/evm-core/src/tx_submit.rs",
+      "hash": "782e0be8b36f23434e16dba2953deb4d7cc618752ae87bef65553ed9404ddda2"
+    },
+    {
+      "kind": "use",
+      "name": "use",
+      "file": "crates/evm-core/src/tx_submit.rs",
+      "hash": "218240656942d68436dfb87dda6b66f62b9ff616fd49a90a9dc94cbf26f945e6"
+    },
+    {
+      "kind": "use",
+      "name": "use",
+      "file": "crates/evm-core/src/tx_submit.rs",
+      "hash": "3c5e7dc016f64471c24ddee8bf80bea9b1dfaa3a79893d16b64c451ec64324ff"
+    },
+    {
+      "kind": "use",
+      "name": "use",
+      "file": "crates/evm-core/src/tx_submit.rs",
+      "hash": "8426e77a2fdaccfe404aa6571b5b0c8721aaaf89f8d6f4170105232f193d83ca"
+    },
+    {
+      "kind": "use",
+      "name": "use",
+      "file": "crates/evm-core/src/tx_submit.rs",
+      "hash": "79a1138cead027bf04ecbbff3ea784d893479810489c3cfad6e4b5f4b7e1e080"
+    },
+    {
+      "kind": "function",
+      "name": "effective_gas_price_for_tx",
+      "file": "crates/evm-core/src/tx_submit.rs",
+      "hash": "fc4f62fa990b3d9cca8e56e2a60b104e316c229241dfa035717a8c572947d560"
+    },
+    {
+      "kind": "function",
+      "name": "expected_nonce_for_sender",
+      "file": "crates/evm-core/src/tx_submit.rs",
+      "hash": "eafdf8bcec7a3db633d3c60c911bf5247d7560b299b1d5f677a3084f97f2a50f"
+    },
+    {
+      "kind": "type",
+      "name": "Clone",
+      "file": "crates/evm-core/src/tx_submit.rs",
+      "hash": "0bbe475b8ccdbca862234438aa000e92e475756f68604fef11f7d654a2eba3b7"
+    }
+  ],
+  "unresolved_dependencies": [
+    "classify_nonce",
+    "get",
+    "map",
+    "ok_or"
+  ],
+  "tool_version": "0.1.0",
+  "cfg": [],
+  "features": [],
+  "types": [],
+  "called_functions": [
+    "Err",
+    "Ok",
+    "Some",
+    "classify_nonce",
+    "effective_gas_price_for_tx",
+    "expected_nonce_for_sender",
+    "get",
+    "map",
+    "ok_or"
+  ],
+  "callers": [],
+  "tests": [],
+  "panic_sites": [
+    "expect"
+  ],
+  "overflow_sites": [],
+  "casts": [],
+  "division_sites": [],
+  "llm_context_files": []
+}

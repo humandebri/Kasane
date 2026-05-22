@@ -1,0 +1,52 @@
+{
+  "target": "classify_nonce",
+  "target_id": "ee78b7e5fd713b7a6cb00e75e1f2234f131220723b4ad3bb9ffb3380a17c5efd",
+  "slug": "classify_nonce-3dada50d",
+  "file": "crates/verified-core/src/nonce.rs",
+  "function": "classify_nonce",
+  "git_commit": "703d7df1dcdc48c6f15be3733c6da4ec5c6a8dad",
+  "worktree_dirty": false,
+  "source_hash": "3dada50dbfbec3c3991a06ad15fca6be5687c8c58a8a3a825fb8ed419d5afc2b",
+  "semantic_hash": "fa9487ba51d96176707f328ef5a7921718815d559e995dab958c1269eb12930b",
+  "dependency_hash_inputs": [
+    {
+      "kind": "use",
+      "name": "cfg",
+      "file": "crates/verified-core/src/nonce.rs",
+      "hash": "a5eb4157d5d32303032e3dc786e34f004ebe17f0ff1bb26f90ac9eb42478596c"
+    },
+    {
+      "kind": "module",
+      "name": "cfg",
+      "file": "crates/verified-core/src/nonce.rs",
+      "hash": "d07ab7d6f3ab4aa7ca1647fff45e23553f46d15049c0ff0c89392084e27beee8"
+    },
+    {
+      "kind": "use",
+      "name": "use",
+      "file": "crates/verified-core/src/nonce.rs",
+      "hash": "f6ffe1421135716ecdc50f1ab9cefe7e90aa8cac1b479147459cbdbf72150be6"
+    },
+    {
+      "kind": "type",
+      "name": "verus_keep_ghost",
+      "file": "crates/verified-core/src/nonce.rs",
+      "hash": "d527e55bb77cd12eca54ccdf8763427c6bc52cc3f08f8b9109a59bacf8ec36e7"
+    }
+  ],
+  "unresolved_dependencies": [],
+  "spec_source_of_truth": "accepted_json",
+  "tool_version": "0.1.0",
+  "preconditions": [],
+  "postconditions": [
+    "incoming_nonce < expected_nonce ==> result == NonceDecision::TooLow",
+    "incoming_nonce > expected_nonce ==> result == NonceDecision::Gap",
+    "incoming_nonce == expected_nonce && pending_effective_gas_price == None ==> result == NonceDecision::Accept",
+    "incoming_nonce == expected_nonce && pending_effective_gas_price == Some(old) && incoming_effective_gas_price <= old ==> result == NonceDecision::Conflict",
+    "incoming_nonce == expected_nonce && pending_effective_gas_price == Some(old) && incoming_effective_gas_price > old ==> result == NonceDecision::Replace"
+  ],
+  "panic_behavior": "documented",
+  "overflow_behavior": "documented",
+  "rejected_behaviors": [],
+  "open_assumptions": []
+}

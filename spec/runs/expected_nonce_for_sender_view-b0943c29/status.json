@@ -1,0 +1,11 @@
+{
+  "target": "expected_nonce_for_sender_view-b0943c29",
+  "check_result": "fail",
+  "stale_reasons": [
+    "unresolved dependencies: get, make_account_key, map, nonce, unwrap_or, with_state"
+  ],
+  "drift_reasons": [
+    "unresolved dependencies"
+  ],
+  "dirty_paths": []
+}

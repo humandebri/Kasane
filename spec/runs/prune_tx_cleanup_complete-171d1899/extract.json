@@ -1,0 +1,51 @@
+{
+  "target": "prune_tx_cleanup_complete",
+  "entry": {
+    "display_name": "prune_tx_cleanup_complete",
+    "function": "prune_tx_cleanup_complete",
+    "function_path": "prune_tx_cleanup_complete",
+    "file": "crates/verified-core/src/prune_safety/cleanup.rs",
+    "target_id": "33e4bb273c5710d470d292ddbcf0d5f7ee14081f2f80af1bfae4590bff191a54",
+    "slug": "prune_tx_cleanup_complete-171d1899",
+    "source_hash": "171d18990ad8a287d272c1ba86712b88ac8bb578ba35829fba9190a1c081b67b",
+    "semantic_hash": "40c4de421fdd22bb34024778e61718ac60846a9b1bb00c97570c0cee4ad93584",
+    "created_at": "2026-05-16T03:05:40Z"
+  },
+  "signature": "pub fn prune_tx_cleanup_complete(input: PruneTxCleanupInput) -> bool",
+  "body": "{\n    !input.tx_store\n        && !input.receipt\n        && !input.tx_index\n        && !input.internal_traces\n        && !input.tx_loc\n        && !input.seen_tx\n}",
+  "span": {
+    "start_line": 17,
+    "end_line": 22
+  },
+  "git_commit": "2494728d3e151686867749c4250f3e946ee51d17",
+  "worktree_dirty": false,
+  "source_hash": "171d18990ad8a287d272c1ba86712b88ac8bb578ba35829fba9190a1c081b67b",
+  "semantic_hash": "40c4de421fdd22bb34024778e61718ac60846a9b1bb00c97570c0cee4ad93584",
+  "dependency_hash_inputs": [
+    {
+      "kind": "use",
+      "name": "cfg",
+      "file": "crates/verified-core/src/prune_safety/cleanup.rs",
+      "hash": "a5eb4157d5d32303032e3dc786e34f004ebe17f0ff1bb26f90ac9eb42478596c"
+    },
+    {
+      "kind": "type",
+      "name": "verus_keep_ghost",
+      "file": "crates/verified-core/src/prune_safety/cleanup.rs",
+      "hash": "659c793fa947ffca5a69fc0812b39e370dce83dbd04a05589da68ac7211726c3"
+    }
+  ],
+  "unresolved_dependencies": [],
+  "tool_version": "0.1.0",
+  "cfg": [],
+  "features": [],
+  "types": [],
+  "called_functions": [],
+  "callers": [],
+  "tests": [],
+  "panic_sites": [],
+  "overflow_sites": [],
+  "casts": [],
+  "division_sites": [],
+  "llm_context_files": []
+}

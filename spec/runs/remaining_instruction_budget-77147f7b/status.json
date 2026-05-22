@@ -1,0 +1,11 @@
+{
+  "target": "remaining_instruction_budget-77147f7b",
+  "check_result": "fail",
+  "stale_reasons": [
+    "unresolved dependencies: saturating_sub"
+  ],
+  "drift_reasons": [
+    "unresolved dependencies"
+  ],
+  "dirty_paths": []
+}

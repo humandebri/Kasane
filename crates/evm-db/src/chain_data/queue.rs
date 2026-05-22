@@ -37,22 +37,22 @@ impl QueueMeta {
     }
 
     pub fn is_empty(&self) -> bool {
-        self.head == self.tail
+        verified_core::queue::queue_is_empty(self.head, self.tail)
     }
 
     pub fn push(&mut self) -> u64 {
-        let idx = self.tail;
-        self.tail = self.tail.saturating_add(1);
+        let (idx, tail) = verified_core::queue::queue_push(self.tail);
+        self.tail = tail;
         idx
     }
 
     pub fn pop(&mut self) -> Option<u64> {
-        if self.is_empty() {
-            None
-        } else {
-            let idx = self.head;
-            self.head = self.head.saturating_add(1);
-            Some(idx)
+        match verified_core::queue::queue_pop(self.head, self.tail) {
+            Some((idx, head)) => {
+                self.head = head;
+                Some(idx)
+            }
+            None => None,
         }
     }
 }
@@ -79,7 +79,7 @@ impl Storable for QueueMeta {
 
     fn from_bytes(bytes: Cow<'_, [u8]>) -> Self {
         let data = bytes.as_ref();
-        if data.len() != 16 {
+        if !verified_core::stable_codec::fixed_len_matches(data.len(), 16) {
             mark_decode_failure(b"queue_meta", false);
             return QueueMeta::new();
         }

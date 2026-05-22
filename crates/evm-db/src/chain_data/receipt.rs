@@ -57,7 +57,7 @@ impl Storable for ReceiptLike {
 
     fn from_bytes(bytes: Cow<'_, [u8]>) -> Self {
         let data = bytes.as_ref();
-        if data.len() > RECEIPT_MAX_SIZE_U32 as usize {
+        if !verified_core::stable_codec::bounded_len(data.len(), RECEIPT_MAX_SIZE_U32 as usize) {
             return corrupt_receipt();
         }
         let mut offset = 0usize;
@@ -81,7 +81,7 @@ impl Storable for ReceiptLike {
             Some(value) => value,
             None => return corrupt_receipt(),
         };
-        if status > 1 {
+        if !verified_core::stable_codec::valid_receipt_status(status) {
             return corrupt_receipt();
         }
         let gas_used = match read_u64(data, &mut offset) {
@@ -117,7 +117,7 @@ impl Storable for ReceiptLike {
             Some(value) => value,
             None => return corrupt_receipt(),
         };
-        if return_data_len as usize > MAX_RETURN_DATA {
+        if !verified_core::stable_codec::bounded_len(return_data_len as usize, MAX_RETURN_DATA) {
             return corrupt_receipt();
         }
         let return_data = match read_vec(data, &mut offset, return_data_len as usize) {
@@ -144,7 +144,7 @@ impl Storable for ReceiptLike {
             Some(value) => value,
             None => return corrupt_receipt(),
         };
-        if logs_len as usize > MAX_LOGS_PER_TX {
+        if !verified_core::stable_codec::bounded_len(logs_len as usize, MAX_LOGS_PER_TX) {
             return corrupt_receipt();
         }
         let mut logs = Vec::with_capacity(logs_len as usize);
@@ -157,7 +157,7 @@ impl Storable for ReceiptLike {
                 Some(value) => value,
                 None => return corrupt_receipt(),
             };
-            if topics_len as usize > MAX_LOG_TOPICS {
+            if !verified_core::stable_codec::bounded_len(topics_len as usize, MAX_LOG_TOPICS) {
                 return corrupt_receipt();
             }
             let mut topics = Vec::with_capacity(topics_len as usize);
@@ -172,7 +172,7 @@ impl Storable for ReceiptLike {
                 Some(value) => value,
                 None => return corrupt_receipt(),
             };
-            if data_len as usize > MAX_LOG_DATA {
+            if !verified_core::stable_codec::bounded_len(data_len as usize, MAX_LOG_DATA) {
                 return corrupt_receipt();
             }
             let data = match read_vec(data, &mut offset, data_len as usize) {
@@ -214,13 +214,13 @@ impl Storable for ReceiptLike {
 
 impl ReceiptLike {
     fn encode_checked(&self) -> Result<Vec<u8>, ReceiptEncodeError> {
-        if self.status > 1 {
+        if !verified_core::stable_codec::valid_receipt_status(self.status) {
             return Err(ReceiptEncodeError::InvalidStatus);
         }
-        if self.return_data.len() > MAX_RETURN_DATA {
+        if !verified_core::stable_codec::bounded_len(self.return_data.len(), MAX_RETURN_DATA) {
             return Err(ReceiptEncodeError::ReturnDataTooLarge);
         }
-        if self.logs.len() > MAX_LOGS_PER_TX {
+        if !verified_core::stable_codec::bounded_len(self.logs.len(), MAX_LOGS_PER_TX) {
             return Err(ReceiptEncodeError::TooManyLogs);
         }
         let mut out = Vec::with_capacity(96);
@@ -254,11 +254,11 @@ impl ReceiptLike {
         out.extend_from_slice(&logs_len.to_be_bytes());
         for log in self.logs.iter() {
             let topics = log.data.topics();
-            if topics.len() > MAX_LOG_TOPICS {
+            if !verified_core::stable_codec::bounded_len(topics.len(), MAX_LOG_TOPICS) {
                 return Err(ReceiptEncodeError::TooManyTopics);
             }
             let data = log.data.data.as_ref();
-            if data.len() > MAX_LOG_DATA {
+            if !verified_core::stable_codec::bounded_len(data.len(), MAX_LOG_DATA) {
                 return Err(ReceiptEncodeError::LogDataTooLarge);
             }
             out.extend_from_slice(log.address.as_ref());

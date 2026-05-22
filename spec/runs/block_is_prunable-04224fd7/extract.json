@@ -1,0 +1,47 @@
+{
+  "target": "block_is_prunable",
+  "entry": {
+    "display_name": "block_is_prunable",
+    "function": "block_is_prunable",
+    "function_path": "block_is_prunable",
+    "file": "crates/verified-core/src/prune_safety/block_prunable.rs",
+    "target_id": "69d990fce9d0d3f10ce894eabc7961b6b0f9330eb2fa48d5ecd6ff3f3b3dc7b6",
+    "slug": "block_is_prunable-04224fd7",
+    "source_hash": "04224fd721eb346c0179a3a897953c3f7f5bed4a2f5c8204cf15ddab000034cf",
+    "semantic_hash": "c76192f60877bd0b3b3fecf672e540724f0ef2b2a562bf86319e8b669fea139a",
+    "created_at": "2026-05-16T03:05:40Z"
+  },
+  "signature": "pub fn block_is_prunable(head: u64, retain: u64, block: u64) -> bool",
+  "body": "{\n    if retain == 0 || head <= retain {\n        return false;\n    }\n    block <= head - retain\n}",
+  "span": {
+    "start_line": 6,
+    "end_line": 11
+  },
+  "git_commit": "a3bc9781ec94f42ff9edf5612aebd4f4532e69f0",
+  "worktree_dirty": false,
+  "source_hash": "04224fd721eb346c0179a3a897953c3f7f5bed4a2f5c8204cf15ddab000034cf",
+  "semantic_hash": "c76192f60877bd0b3b3fecf672e540724f0ef2b2a562bf86319e8b669fea139a",
+  "dependency_hash_inputs": [
+    {
+      "kind": "use",
+      "name": "cfg",
+      "file": "crates/verified-core/src/prune_safety/block_prunable.rs",
+      "hash": "a5eb4157d5d32303032e3dc786e34f004ebe17f0ff1bb26f90ac9eb42478596c"
+    }
+  ],
+  "unresolved_dependencies": [],
+  "tool_version": "0.1.0",
+  "cfg": [],
+  "features": [],
+  "types": [],
+  "called_functions": [],
+  "callers": [],
+  "tests": [],
+  "panic_sites": [],
+  "overflow_sites": [
+    "-"
+  ],
+  "casts": [],
+  "division_sites": [],
+  "llm_context_files": []
+}

@@ -1,0 +1,48 @@
+{
+  "target": "block_is_retained",
+  "target_id": "dacedafac12dccb1b861f00170efa9bc84ed1a6f42cce3e96f7b1a2e20e5477d",
+  "slug": "block_is_retained-9d9115e5",
+  "file": "crates/verified-core/src/prune_safety/block_retained.rs",
+  "function": "block_is_retained",
+  "git_commit": "e7c4bd6deef99685a57a519fa4643f44b1ee134b",
+  "worktree_dirty": false,
+  "source_hash": "9d9115e5f68e8345ecdf9b116dc5efd5cb5860d1fcf943769e0eb6de9e55bbcd",
+  "semantic_hash": "e4af40e6fe1aa259aaabaaa386b6780157b0e07a3d8ec08a9c1babe2055bad9f",
+  "dependency_hash_inputs": [
+    {
+      "kind": "use",
+      "name": "cfg",
+      "file": "crates/verified-core/src/prune_safety/block_retained.rs",
+      "hash": "a5eb4157d5d32303032e3dc786e34f004ebe17f0ff1bb26f90ac9eb42478596c"
+    }
+  ],
+  "unresolved_dependencies": [],
+  "spec_source_of_truth": "accepted_json",
+  "tool_version": "0.1.0",
+  "preconditions": [
+    "true"
+  ],
+  "postconditions": [
+    "result == (block <= head && (retain == 0 || head <= retain || block > head - retain))"
+  ],
+  "acceptance_criteria": [
+    "A block is retained only when it is not in the future and pruning is disabled, head is within retain, or the block is above head - retain."
+  ],
+  "test_evidence": [
+    {
+      "scenario_id": "block_is_retained-nominal",
+      "command": "cargo test -p verified-core prune && cargo test -p ic-evm-core prune && cargo test -p ic-evm-gateway pruned && cargo test -p ic-evm-gateway get_receipt_returns",
+      "test_name": "verified-core prune safety plus evm-core prune and gateway pruned/retained query adapter tests",
+      "recorded_at": "2026-05-16T03:33:02Z"
+    }
+  ],
+  "risk_level": "medium",
+  "verified_subject": "implementation",
+  "contract_hash": "ae5731987844b9ac331a6c90aa5a176bc5b8d059281e0aac360d60c1cc4f5302",
+  "applied_contract_hash": "ae5731987844b9ac331a6c90aa5a176bc5b8d059281e0aac360d60c1cc4f5302",
+  "applied_at": "2026-05-16T03:33:12Z",
+  "panic_behavior": "documented",
+  "overflow_behavior": "documented",
+  "rejected_behaviors": [],
+  "open_assumptions": []
+}
