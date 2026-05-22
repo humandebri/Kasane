@@ -1,0 +1,14 @@
+{
+  "target": "compact_icp_query_input_safe_raw",
+  "target_id": "23403bcabfd90156a41bce1681bcd829143973268f67578c891500030cd15a78",
+  "slug": "compact_icp_query_input_safe_raw-8482ca59",
+  "git_commit": "99e52aaefad61f61c45b8900e6011bd9194ff502",
+  "worktree_dirty": false,
+  "source_hash": "8482ca59317370ee896eb92d00727b456dd012c5508548d625deb1a86d97129c",
+  "semantic_hash": "f883212fd840dab907aa4572153c87a087ed775c8c2a06e79d079e4382a1ec4c",
+  "tool_version": "0.1.0",
+  "blocking_issues": [],
+  "human_questions": [],
+  "auto_safe_edits": [],
+  "risk": "medium"
+}
