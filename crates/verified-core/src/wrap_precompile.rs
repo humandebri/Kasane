@@ -118,12 +118,8 @@ pub fn compact_native_withdraw_input_safe_raw(
         && recipient_is_anonymous == 0
 }
 
-// specgen:contract compact_icp_query_input_safe_raw-8482ca59 86775b1d73eeb73d50c5860c6b589453b1b23ee16a309d82313acb827d541db8
-#[cfg_attr(verus_keep_ghost, verus_spec(result =>
-    requires
-        true,
-    ensures
-    result == (
+#[cfg_attr(verus_keep_ghost, verus_spec(valid => ensures
+    valid == (
         version == COMPACT_FORMAT_VERSION
         && kind == ICP_QUERY_KIND_QUERY
         && target_len >= 1
@@ -161,23 +157,15 @@ pub fn compact_icp_query_input_safe_raw(
         && consumed_exact == 1
 }
 
-// specgen:contract icp_query_update_kind_rejected_raw-4de9db5f 4f1b86638b2a7510980089564426db894874f4c5c7c19910a96b7a4d323cc082
-#[cfg_attr(verus_keep_ghost, verus_spec(result =>
-    requires
-        true,
-    ensures
-        result == (kind == ICP_QUERY_KIND_UPDATE_RESERVED),
+#[cfg_attr(verus_keep_ghost, verus_spec(rejected => ensures
+    rejected == (kind == ICP_QUERY_KIND_UPDATE_RESERVED),
 ))]
 pub fn icp_query_update_kind_rejected_raw(kind: u64) -> bool {
     kind == ICP_QUERY_KIND_UPDATE_RESERVED
 }
 
-// specgen:contract icp_query_allowlist_entry_safe_raw-744d724a b8488649e47758272a7530ea1e3f7629a29183917132b4ebfb8d725a4155d42a
-#[cfg_attr(verus_keep_ghost, verus_spec(result =>
-    requires
-        true,
-    ensures
-    result == (
+#[cfg_attr(verus_keep_ghost, verus_spec(valid => ensures
+    valid == (
         target_len >= 1
         && target_len <= MAX_PRINCIPAL_LEN
         && target_non_anonymous == 1
@@ -268,12 +256,8 @@ pub fn wrap_precompile_gas_observation_safe_raw(
             || gas_a <= gas_b)
 }
 
-// specgen:contract icp_query_gas_observation_safe_raw-ae357da2 4d5f383464f697dbf26345a491a894d9e7c71526a63e7d994f1cb610cc2d20fd
-#[cfg_attr(verus_keep_ghost, verus_spec(result =>
-    requires
-        true,
-    ensures
-    result == (
+#[cfg_attr(verus_keep_ghost, verus_spec(valid => ensures
+    valid == (
         observed_address_code == ICP_QUERY_PRECOMPILE_ADDRESS_CODE
         && returned_success <= 1
         && (input_len > MAX_ICP_QUERY_COMBINED_LEN_WITH_EXACT_GAS
@@ -309,12 +293,8 @@ pub fn icp_query_gas_observation_safe_raw(
         && (returned_success != 0 || gas_limit < charged_gas)
 }
 
-// specgen:contract icp_query_execution_gate_safe_raw-c8c66378 1a8be935b0cb6f718b9a43789f66c2e5618caea84cddf06dd190d47094f50956
-#[cfg_attr(verus_keep_ghost, verus_spec(result =>
-    requires
-        true,
-    ensures
-    result == (
+#[cfg_attr(verus_keep_ghost, verus_spec(valid => ensures
+    valid == (
         calls_before == 0
         && mode_allows_external == 1
         && value_is_zero == 1
