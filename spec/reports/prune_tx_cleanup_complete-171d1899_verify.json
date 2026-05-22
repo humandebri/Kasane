@@ -1,0 +1,15 @@
+{
+  "slug": "prune_tx_cleanup_complete-171d1899",
+  "command": "verus /Users/0xhude/Desktop/ICP/Kasane/crates/verified-core/src/prune_safety/cleanup.rs",
+  "exit_code": 0,
+  "git_commit": "a3bc9781ec94f42ff9edf5612aebd4f4532e69f0",
+  "worktree_dirty": false,
+  "semantic_hash": "40c4de421fdd22bb34024778e61718ac60846a9b1bb00c97570c0cee4ad93584",
+  "spec_hash": "064f47395daf98d749b9683bbce75b136c865103449fa77473887e74e6b1dd66",
+  "target_hash": "ce345d7bf29507e07af797890475d094ea13cd6c830270f1d97387f5a30c515e",
+  "contract_hash": "eaa6fc361e08aa330d07782b3acb9f2ae27626ffe0c5cd251c7ed4bab3162321",
+  "source_hash": "171d18990ad8a287d272c1ba86712b88ac8bb578ba35829fba9190a1c081b67b",
+  "verified_subject": "implementation",
+  "result": "success",
+  "output": "verification results:: 2 verified, 0 errors\n"
+}

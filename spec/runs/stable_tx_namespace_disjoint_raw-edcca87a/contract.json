@@ -1,0 +1,20 @@
+{
+  "preconditions": [
+    "true"
+  ],
+  "postconditions": [
+    "result == (seen_tx < tx_store && tx_store < tx_index && tx_index < receipts && receipts < tx_locs && tx_locs < tx_locs_v3 && tx_locs_v3 < internal_traces)"
+  ],
+  "acceptance_criteria": [
+    "Stable tx namespace safety: tx-related StableBTreeMap memory ids are in strict ascending order, which is sufficient evidence that seen_tx, tx_store, tx_index, receipts, tx_locs, tx_locs_v3, and internal_traces cannot share the same stable memory namespace."
+  ],
+  "test_evidence": [
+    {
+      "scenario_id": "stable_tx_namespace_disjoint_raw-nominal",
+      "command": "cargo test -p verified-core --test prune_safety stable_tx_namespace && cargo test -p evm-db --test chain_data_memory_layout tx_related_memory_ids_are_disjoint",
+      "test_name": "verified-core pure namespace tests plus evm-db AppMemoryId adapter evidence",
+      "recorded_at": "2026-05-16T10:25:03Z"
+    }
+  ],
+  "risk_level": "medium"
+}

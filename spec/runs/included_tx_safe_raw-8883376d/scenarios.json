@@ -1,0 +1,24 @@
+{
+  "target": "included_tx_safe_raw",
+  "target_id": "224c160e61755ee6272563ea6dab57a1fa0c100d4d673b442182059bedf4d3ae",
+  "slug": "included_tx_safe_raw-8883376d",
+  "git_commit": "4aed4c6b20d169ba2d31ba9c585394470dc69edf",
+  "worktree_dirty": true,
+  "source_hash": "8883376d72032a1c2763639c9b66be22fb0d0b0fd41ea54619d9bb82a98c9763",
+  "semantic_hash": "200dc7e13579af9bb069bfa545c6cbd32dd681daffcd07dcf07ca103ae440c2b",
+  "tool_version": "0.1.0",
+  "scenarios": [
+    {
+      "id": "included_tx_safe_raw-nominal",
+      "kind": "example",
+      "executable": false,
+      "inputs": {},
+      "expected": {},
+      "review_status": "accepted",
+      "status_note": "pure included transaction safety requires matching index receipt location and position evidence",
+      "reviewed_by": "0xhude",
+      "reviewed_at": "2026-05-15T12:09:39Z",
+      "rationale": "`included_tx_safe_raw` のscenario candidates:\n\n| id | has_tx_index | has_receipt | receipt_tx_id_matches | index_key_matches_tx_id | loc_matches_position | receipt_matches_position | index_matches_position | block_number | expected | 目的 |\n|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|\n| S1 | true | true | true | true | true | true | true | 1 | true | 全条件成立 |\n| S2 | false | true | true | true | true | true | true | 1 | false | tx index欠落 |\n| S3 | true | false | true | true | true | true | true | 1 | false | receipt欠落 |\n| S4 | true | true | false | true | true | true | true | 1 | false | receipt tx id不一致 |\n| S5 | true | true | true | false | true | true | true | 1 | false | index key不一致 |\n| S6 | true | true | true | true | false | true | true | 1 | false | loc位置不一致 |\n| S7 | true | true | true | true | true | false | true | 1 | false | receipt位置不一致 |\n| S8 | true | true | true | true | true | true | false | 1 | false | index位置不一致 |\n| S9 | true | true | true | true | true | true | true | 0 | false | block_number境界 |\n| S10 | true | true | true | true | true | true | true | u64::MAX | true | block_number上限非ゼロ |\n\n最小MC/DCなら `S1-S9` で十分。`S10` は境界補強として追加候補。"
+    }
+  ]
+}

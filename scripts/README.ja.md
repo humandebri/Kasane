@@ -53,7 +53,7 @@ scripts/measure_precompile_ratio.sh
 ### 事前確認・品質ゲート
 - `scripts/ci-local.sh`: `CI_LOCAL_MODE=<mode>` で `github|smoke|all` の3モードを切り替える
 - `scripts/ci_github_equivalent.sh`: `.github/workflows/ci.yml` と `scripts/ci-local.sh` が共有する GitHub 相当チェックの単一ソース
-  - Rust の標準品質ゲートとして `cargo fmt --all -- --check` と `cargo clippy --workspace --all-targets --all-features -- -D warnings` を含む
+  - Rust の標準品質ゲートとして、specgen 管理の Verus contract target を除く workspace Rust file の `rustfmt --check` と、specgen evidence 多引数関数向けに `too_many_arguments` だけ例外化した clippy を含む
 - `scripts/check_gateway_api_compat_baseline.sh`: Gateway API compatibility baseline の破壊変更を検知（`--update` でベースライン更新）
 - `scripts/check_gateway_matrix_sync.sh`: `tools/rpc-gateway/README.md` の互換マトリクス行が `tools/rpc-gateway/package.json` のバージョン系列と一致するか検証
 - `scripts/check_precompile_feature_isolation.sh`: `ic-evm-core` の既定 wasm build に BLS/KZG backend crate（`ark-bls12-381`, `c-kzg`, `blst`）が流入していないか検証
@@ -136,6 +136,8 @@ scripts/measure_precompile_ratio.sh
 - `scripts/mainnet/ic_mainnet_preflight.sh`: 本番前の最小チェック
   - `CANISTER_NAME` は既定で `evm_canister`
   - 既定の cycles 下限は `MIN_CYCLES=2000000000000`
+  - 旧 standalone wrap canister がある場合は `LEGACY_WRAP_CANISTER_ID` と `LEGACY_WRAP_REQUEST_IDS_FILE` で残件drainを確認する
+  - request id が存在しない場合も `ALLOW_EMPTY_LEGACY_WRAP_REQUESTS=1` の明示が必要
 - `scripts/mainnet/ic_mainnet_deploy.sh`: 本番デプロイ本体
   - 既定 build では `precompile-profile-admin` feature を有効化しない
   - precompile ratio の計測は deploy 前に `scripts/run_precompile_profile_e2e.sh` / `scripts/measure_precompile_ratio.sh` で実施し、既定の fixed ratio `1/100` を見直す場合は再デプロイする
@@ -167,6 +169,10 @@ scripts/measure_precompile_ratio.sh
 - `CANISTER_NAME` / `CANISTER_ID`
 - `WRAP_CANISTER_ID`
   - 統合版wrapでは `evm_canister` principal を使用
+- `LEGACY_WRAP_CANISTER_ID`
+  - 旧 standalone wrap canister の残件drain確認用。`EVM_CANISTER_ID` と異なる場合だけ preflight gate が有効
+- `LEGACY_WRAP_REQUEST_IDS_FILE`
+  - 旧 wrap request id manifest。空の場合は `ALLOW_EMPTY_LEGACY_WRAP_REQUESTS=1` が必須
 - `EVM_WRAP_FACTORY`
   - `scripts/mainnet/ic_mainnet_deploy.sh` の必須値。20-byte EVM factory address を `0x...` 形式で渡す
 - `QUERY_INSTRUCTION_SOFT_LIMIT`

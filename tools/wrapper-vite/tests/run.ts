@@ -82,12 +82,6 @@ import {
 } from "../lib/asset-catalog";
 import { configTestHooks, loadConfig } from "../lib/config";
 import { applySelectedAsset, normalizeIcpTokenList, toManageTokenOptions } from "../lib/icp-token-list";
-import { recentRequestsClientTestHooks } from "../lib/canister/recent-requests-client";
-import {
-  createRecentRequestKey,
-  mergeRecentRequestHistory,
-  RecentRequestDocSchema,
-} from "../lib/recent-requests";
 import {
   decodeAddressReturnData,
   decodeUint256ReturnData,
@@ -96,16 +90,10 @@ import {
   encodeFactoryGetTokenAddressCall,
 } from "../lib/erc20";
 import { icrcClientTestHooks } from "../lib/canister/icrc2-client";
-import {
-  createRecentRequestsScopeKey,
-  shouldApplyRecentRequestsResult,
-} from "../lib/hooks/use-recent-requests";
 import { refreshWrapNonceState } from "../lib/hooks/use-wrapper-forms";
 import { wrapperActionsTestHooks } from "../lib/hooks/use-wrapper-actions";
 import { walletProviderTestHooks } from "../lib/wallet/provider";
 import { metaMaskTestHooks } from "../lib/wallet/metamask";
-import type { HistoryEntry } from "../components/dashboard-ui/types";
-import { junoConfigTestHooks } from "../juno.config";
 
 const TEST_CONFIG = {
   icHost: "https://icp-api.io",
@@ -206,11 +194,16 @@ async function runExecutionBranchTests(): Promise<void> {
       kind: { Unwrap: null },
       request_id: requestId,
       status: { Succeeded: null },
+      recoverable: false,
       error: [],
+      stage: [],
       fee_ledger_tx_id: [],
       pull_ledger_tx_id: [],
       mint_tx_id: [],
       withdraw_ledger_tx_id: [],
+      withdrawn: false,
+      withdraw_in_progress: false,
+      withdraw_error: [],
       ledger_tx_id: [Uint8Array.from([0xaa, 0xbb])],
       dispatch_status: [],
       dispatch_error: [],
@@ -227,11 +220,16 @@ async function runExecutionBranchTests(): Promise<void> {
       kind: { Wrap: null },
       request_id: requestId,
       status: { Failed: null },
+      recoverable: true,
       error: [{ code: "wrap_failed", message: "wrap_failed" }],
+      stage: [{ Failed: null }],
       fee_ledger_tx_id: [],
       pull_ledger_tx_id: [Uint8Array.from([0x01])],
       mint_tx_id: [],
       withdraw_ledger_tx_id: [],
+      withdrawn: false,
+      withdraw_in_progress: false,
+      withdraw_error: [{ code: "withdraw_failed", message: "withdraw_failed" }],
       ledger_tx_id: [],
       dispatch_status: [],
       dispatch_error: [],
@@ -242,7 +240,7 @@ async function runExecutionBranchTests(): Promise<void> {
   });
   assert.equal(wrapPreferred?.errorCode, "wrap_failed");
   assert.equal(wrapPreferred?.mintFailedRecoverable, true);
-  assert.equal(wrapPreferred?.withdrawErrorCode, null);
+  assert.equal(wrapPreferred?.withdrawErrorCode, "withdraw_failed");
 
   const missingWithdrawErrorCode = await getExecutionResult(requestId, {
     readRequest: async () => {
@@ -256,11 +254,16 @@ async function runExecutionBranchTests(): Promise<void> {
         kind: { Wrap: null },
         request_id: requestId,
         status: { Failed: null },
+        recoverable: true,
         error: noError,
+        stage: noDispatchStatus,
         fee_ledger_tx_id: noBytes,
         pull_ledger_tx_id: pullLedgerTxId,
         mint_tx_id: noBytes,
         withdraw_ledger_tx_id: noBytes,
+        withdrawn: false,
+        withdraw_in_progress: false,
+        withdraw_error: noError,
         withdraw_error_code: noBytes,
         ledger_tx_id: noBytes,
         dispatch_status: noDispatchStatus,
@@ -268,7 +271,7 @@ async function runExecutionBranchTests(): Promise<void> {
         charged_fee_e8s: noNat,
         charged_gas_price_wei: noNat,
       };
-      Reflect.deleteProperty(value, "withdraw_error_code");
+      Reflect.deleteProperty(value, "withdraw_error");
       return [value];
     },
   });
@@ -385,32 +388,8 @@ async function runMetaMaskHelperTests(): Promise<void> {
   );
 }
 
-async function runPersistSubmittedRequestTests(): Promise<void> {
-  const calls: string[] = [];
-  wrapperActionsTestHooks.persistSubmittedRequest(async (entry) => {
-    calls.push(entry.requestId);
-    await Promise.resolve();
-  }, {
-    requestId: `0x${"56".repeat(32)}`,
-    kind: "wrap",
-    submittedAt: "2026-03-21T00:00:00.000Z",
-  });
-  await Promise.resolve();
-  assert.deepEqual(calls, [`0x${"56".repeat(32)}`]);
-
-  wrapperActionsTestHooks.persistSubmittedRequest(async () => {
-    throw new Error("history.save_failed");
-  }, {
-    requestId: `0x${"78".repeat(32)}`,
-    kind: "unwrap",
-    submittedAt: "2026-03-21T00:00:00.000Z",
-  });
-  await Promise.resolve();
-}
-
 async function runFinishSubmittedUnwrapRequestTests(): Promise<void> {
   const requestIds: string[] = [];
-  const saved: HistoryEntry[] = [];
   const messages: Array<string | null> = [];
   let resetCount = 0;
   let polledRequestId: string | null = null;
@@ -419,9 +398,6 @@ async function runFinishSubmittedUnwrapRequestTests(): Promise<void> {
     requestIdHex: `0x${"34".repeat(32)}`,
     onRequestIdInput: (requestId) => {
       requestIds.push(requestId);
-    },
-    onRequestSubmitted: (entry) => {
-      saved.push(entry);
     },
     startPollingSubmittedRequest: async (requestIdHex) => {
       polledRequestId = requestIdHex;
@@ -436,8 +412,6 @@ async function runFinishSubmittedUnwrapRequestTests(): Promise<void> {
 
   assert.deepEqual(requestIds, [`0x${"34".repeat(32)}`]);
   assert.equal(polledRequestId, `0x${"34".repeat(32)}`);
-  assert.equal(saved.length, 1);
-  assert.equal(saved[0]?.kind, "unwrap");
   assert.deepEqual(messages, ["submit.success"]);
   assert.equal(resetCount, 1);
 }
@@ -474,6 +448,85 @@ async function runNativeDepositDraftTests(): Promise<void> {
   } finally {
     Reflect.deleteProperty(globalThis, "window");
   }
+}
+
+async function runFinishSubmittedWrapRequestTests(): Promise<void> {
+  const store = new Map<string, string>();
+  const localStorage = {
+    getItem(key: string): string | null {
+      return store.get(key) ?? null;
+    },
+    setItem(key: string, value: string): void {
+      store.set(key, value);
+    },
+  };
+  Reflect.defineProperty(globalThis, "window", {
+    configurable: true,
+    value: { localStorage },
+  });
+  try {
+    const draftArgs = {
+      assetId: "2vxsx-fae",
+      amountE8s: 10n,
+      evmRecipient: hexToBytes("0x1111111111111111111111111111111111111111"),
+      principalText: "4c52m-aiaaa-aaaam-agwwa-cai",
+    };
+    const draft = wrapperActionsTestHooks.reserveNativeDepositDraft(draftArgs);
+    const requestIdHex = `0x${"45".repeat(32)}`;
+    const requestIds: string[] = [];
+    const lastSubmitted: string[] = [];
+    let polledRequestId: string | null = null;
+
+    let thrown: unknown = null;
+    try {
+      await wrapperActionsTestHooks.finishSubmittedWrapRequest({
+        requestIdHex,
+        nativeDepositDraftKey: draft.key,
+        clearNativeDepositDraft: wrapperActionsTestHooks.clearNativeDepositDraft,
+        setLastSubmittedWrapRequestId: (requestId) => {
+          lastSubmitted.push(requestId);
+        },
+        onRequestIdInput: (requestId) => {
+          requestIds.push(requestId);
+        },
+        startPollingSubmittedRequest: async (requestId) => {
+          polledRequestId = requestId;
+          throw new Error("status.poll_failed");
+        },
+      });
+    } catch (error) {
+      thrown = error;
+    }
+
+    assert.equal(thrown instanceof Error ? thrown.message : null, "status.poll_failed");
+    assert.deepEqual(lastSubmitted, [requestIdHex]);
+    assert.deepEqual(requestIds, [requestIdHex]);
+    assert.equal(polledRequestId, requestIdHex);
+    const nextDraft = wrapperActionsTestHooks.reserveNativeDepositDraft(draftArgs);
+    assert.notEqual(bytesToHex(nextDraft.depositId), bytesToHex(draft.depositId));
+    wrapperActionsTestHooks.clearNativeDepositDraft(nextDraft.key);
+  } finally {
+    Reflect.deleteProperty(globalThis, "window");
+  }
+}
+
+async function runWrapperActionAssetRoutingTests(): Promise<void> {
+  assert.equal(
+    wrapperActionsTestHooks.isNativeWithdrawalAssetId(DEFAULT_ASSET_ID, DEFAULT_ASSET_ID),
+    true,
+  );
+  assert.equal(
+    wrapperActionsTestHooks.isNativeWithdrawalAssetId(LOCAL_TEST_ASSET_ID, LOCAL_TEST_ASSET_ID),
+    true,
+  );
+  assert.equal(
+    wrapperActionsTestHooks.isNativeWithdrawalAssetId("mxzaz-hqaaa-aaaar-qaada-cai", DEFAULT_ASSET_ID),
+    false,
+  );
+  assert.equal(
+    wrapperActionsTestHooks.isNativeWithdrawalAssetId("ss2fx-dyaaa-aaaar-qacoq-cai", DEFAULT_ASSET_ID),
+    false,
+  );
 }
 
 function buildStubIdentity(principal: Principal): Identity {
@@ -907,6 +960,9 @@ async function runUnwrapRequirementsTests(): Promise<void> {
     get_fee_policy: async () => {
       throw new Error("unused get_fee_policy");
     },
+    get_wrap_runtime_config: async () => {
+      throw new Error("unused get_wrap_runtime_config");
+    },
     get_unwrap_requirements: async () => ({
       Ok: {
         factory_address: hexToBytes("0x2222222222222222222222222222222222222222"),
@@ -944,6 +1000,9 @@ async function runUnwrapRequirementsTests(): Promise<void> {
     },
     get_fee_policy: async () => {
       throw new Error("unused get_fee_policy");
+    },
+    get_wrap_runtime_config: async () => {
+      throw new Error("unused get_wrap_runtime_config");
     },
     get_unwrap_requirements: async () => ({
       Ok: {
@@ -994,6 +1053,9 @@ async function runNativeWithdrawClientTests(): Promise<void> {
     },
     get_fee_policy: async () => {
       throw new Error("unused get_fee_policy");
+    },
+    get_wrap_runtime_config: async () => {
+      throw new Error("unused get_wrap_runtime_config");
     },
     get_unwrap_requirements: async () => {
       throw new Error("unused get_unwrap_requirements");
@@ -1323,7 +1385,7 @@ async function runDevelopmentTokenListFixtureTests(): Promise<void> {
   );
 }
 
-async function runInternetIdentityConfigTests(): Promise<void> {
+async function runConfigTests(): Promise<void> {
   const testEnvBase: NodeJS.ProcessEnv = {
     NODE_ENV: "test",
   };
@@ -1381,147 +1443,11 @@ async function runInternetIdentityConfigTests(): Promise<void> {
       kasaneBlockExplorerUrl: "https://explorer-testnet.kasane.network",
     },
   );
-  assert.equal(
-    configTestHooks.resolveConfiguredIdentityProviderFromEnv({
-      ...process.env,
-      VITE_INTERNET_IDENTITY_URL: "",
-    }),
-    null,
-  );
-  assert.equal(
-    configTestHooks.resolveConfiguredIdentityProviderFromEnv({
-      ...process.env,
-      VITE_INTERNET_IDENTITY_URL: "http://rdmx6-jaaaa-aaaaa-aaadq-cai.localhost:8000",
-    }),
-    "http://rdmx6-jaaaa-aaaaa-aaadq-cai.localhost:8000",
-  );
-  assert.equal(
-    configTestHooks.resolveConfiguredInternetIdentityDomainFromEnv({
-      VITE_INTERNET_IDENTITY_URL: "https://identity.ic0.app",
-    }),
-    "ic0.app",
-  );
-  assert.equal(
-    configTestHooks.resolveConfiguredInternetIdentityDomainFromEnv({
-      VITE_INTERNET_IDENTITY_URL: "https://identity.internetcomputer.org",
-    }),
-    "internetcomputer.org",
-  );
-  assert.equal(
-    configTestHooks.resolveConfiguredInternetIdentityDomainFromEnv({
-      VITE_INTERNET_IDENTITY_URL: "https://identity.id.ai",
-    }),
-    "id.ai",
-  );
-  assert.equal(
-    configTestHooks.resolveConfiguredInternetIdentityDomainFromEnv({
-      VITE_INTERNET_IDENTITY_URL: "http://127.0.0.1:4943",
-    }),
-    null,
-  );
-  assert.equal(
-    configTestHooks.resolveConfiguredDerivationOriginFromEnv({
-      ...process.env,
-      VITE_II_DERIVATION_ORIGIN: "",
-    }),
-    null,
-  );
-  assert.equal(
-    configTestHooks.resolveConfiguredDerivationOriginFromEnv({
-      ...process.env,
-      VITE_II_DERIVATION_ORIGIN: "https://wrap.example.com",
-    }),
-    "https://wrap.example.com",
-  );
   assert.equal(configTestHooks.shouldFetchRootKey("http://127.0.0.1:8000"), true);
   assert.equal(configTestHooks.shouldFetchRootKey("http://localhost:8000"), true);
   assert.equal(configTestHooks.shouldFetchRootKey("https://icp-api.io"), false);
   assert.equal(configTestHooks.parseChainId("4801360"), 4_801_360n);
-  assert.equal(
-    configTestHooks.resolveJunoSatelliteIdFromEnv({
-      ...process.env,
-      VITE_JUNO_SATELLITE_ID: "",
-    }),
-    null,
-  );
-  assert.equal(
-    configTestHooks.resolveJunoSatelliteIdFromEnv({
-      ...process.env,
-      VITE_JUNO_SATELLITE_ID: "mxzaz-hqaaa-aaaal-qsdoa-cai",
-    }),
-    "mxzaz-hqaaa-aaaal-qsdoa-cai",
-  );
   assert.equal(typeof loadConfig, "function");
-}
-
-async function runJunoConfigTests(): Promise<void> {
-  assert.deepEqual(
-    junoConfigTestHooks.parseConfiguredAllowedTargets(undefined),
-    [],
-  );
-  assert.deepEqual(
-    junoConfigTestHooks.parseConfiguredAllowedTargets(" ,  mxzaz-hqaaa-aaaar-qaada-cai ,, xevnm-gaaaa-aaaar-qafnq-cai  "),
-    ["mxzaz-hqaaa-aaaar-qaada-cai", "xevnm-gaaaa-aaaar-qafnq-cai"],
-  );
-  assert.deepEqual(
-    junoConfigTestHooks.parseConfiguredAllowedTargets("mxzaz-hqaaa-aaaar-qaada-cai, mxzaz-hqaaa-aaaar-qaada-cai"),
-    ["mxzaz-hqaaa-aaaar-qaada-cai"],
-  );
-  assert.throws(
-    () => junoConfigTestHooks.parseConfiguredAllowedTargets("not-a-principal"),
-  );
-  assert.equal(junoConfigTestHooks.usesLocalIcHost({ VITE_IC_HOST: "https://icp-api.io" }), false);
-  assert.equal(junoConfigTestHooks.usesLocalIcHost({ VITE_IC_HOST: "http://127.0.0.1:8000" }), true);
-
-  assert.deepEqual(
-    junoConfigTestHooks.resolveAllowedTargets({
-      VITE_IC_HOST: "https://icp-api.io",
-      VITE_WRAP_CANISTER_ID: "t63gs-up777-77776-aaaba-cai",
-      VITE_KASANE_EVM_CANISTER_ID: "4c52m-aiaaa-aaaam-agwwa-cai",
-    }),
-    [
-      "t63gs-up777-77776-aaaba-cai",
-      "4c52m-aiaaa-aaaam-agwwa-cai",
-      "ryjl3-tyaaa-aaaaa-aaaba-cai",
-      "mxzaz-hqaaa-aaaar-qaada-cai",
-      "ss2fx-dyaaa-aaaar-qacoq-cai",
-      "xevnm-gaaaa-aaaar-qafnq-cai",
-    ],
-  );
-  assert.deepEqual(
-    junoConfigTestHooks.resolveAllowedTargets({
-      VITE_IC_HOST: "http://127.0.0.1:8000",
-      VITE_WRAP_CANISTER_ID: "t63gs-up777-77776-aaaba-cai",
-      VITE_KASANE_EVM_CANISTER_ID: "4c52m-aiaaa-aaaam-agwwa-cai",
-    }),
-    [
-      "t63gs-up777-77776-aaaba-cai",
-      "4c52m-aiaaa-aaaam-agwwa-cai",
-      "ryjl3-tyaaa-aaaaa-aaaba-cai",
-      "mxzaz-hqaaa-aaaar-qaada-cai",
-      "ss2fx-dyaaa-aaaar-qacoq-cai",
-      "xevnm-gaaaa-aaaar-qafnq-cai",
-      "xafvr-biaaa-aaaai-aql5q-cai",
-    ],
-  );
-  assert.deepEqual(
-    junoConfigTestHooks.resolveAllowedTargets({
-      VITE_IC_HOST: "https://icp-api.io",
-      VITE_WRAP_CANISTER_ID: "t63gs-up777-77776-aaaba-cai",
-      VITE_KASANE_EVM_CANISTER_ID: "4c52m-aiaaa-aaaam-agwwa-cai",
-      JUNO_AUTH_ALLOWED_TARGETS:
-        " xevnm-gaaaa-aaaar-qafnq-cai, 2vxsx-fae , t63gs-up777-77776-aaaba-cai ",
-    }),
-    [
-      "t63gs-up777-77776-aaaba-cai",
-      "4c52m-aiaaa-aaaam-agwwa-cai",
-      "ryjl3-tyaaa-aaaaa-aaaba-cai",
-      "mxzaz-hqaaa-aaaar-qaada-cai",
-      "ss2fx-dyaaa-aaaar-qacoq-cai",
-      "xevnm-gaaaa-aaaar-qafnq-cai",
-      "2vxsx-fae",
-    ],
-  );
 }
 
 async function runAgentConfigInjectionTests(): Promise<void> {
@@ -1537,144 +1463,6 @@ async function runAgentConfigInjectionTests(): Promise<void> {
   });
   assert.equal(identityAgent.config.host, "https://icp-api.io");
   resetAgentCache();
-}
-
-async function runRecentRequestsTests(): Promise<void> {
-  const principalText = "aaaaa-aa";
-  const first: HistoryEntry = {
-    requestId: `0x${"11".repeat(32)}`,
-    kind: "wrap",
-    submittedAt: "2026-03-18T12:00:00.000Z",
-  };
-  const second: HistoryEntry = {
-    requestId: `0x${"22".repeat(32)}`,
-    kind: "unwrap",
-    submittedAt: "2026-03-18T12:01:00.000Z",
-  };
-
-  assert.equal(
-    createRecentRequestKey(principalText, first.requestId),
-    `${principalText}:${first.requestId}`,
-  );
-  assert.throws(
-    () => createRecentRequestKey(principalText, "0x1234"),
-    /history\.request_id_invalid/,
-  );
-
-  assert.deepEqual(
-    RecentRequestDocSchema.parse({
-      principalText,
-      requestId: first.requestId,
-      kind: "wrap",
-      submittedAt: first.submittedAt,
-    }),
-    {
-      principalText,
-      requestId: first.requestId,
-      kind: "wrap",
-      submittedAt: first.submittedAt,
-    },
-  );
-  assert.throws(
-    () => RecentRequestDocSchema.parse({
-      principalText,
-      requestId: first.requestId,
-      kind: "invalid",
-      submittedAt: "",
-    }),
-    /history\./,
-  );
-
-  const deduped = mergeRecentRequestHistory([first, second], {
-    ...first,
-    submittedAt: "2026-03-18T12:02:00.000Z",
-  });
-  assert.deepEqual(deduped, [
-    {
-      ...first,
-      submittedAt: "2026-03-18T12:02:00.000Z",
-    },
-    second,
-  ]);
-
-  const limited = mergeRecentRequestHistory([first, second], {
-    requestId: `0x${"33".repeat(32)}`,
-    kind: "wrap",
-    submittedAt: "2026-03-18T12:03:00.000Z",
-  }, 2);
-  assert.deepEqual(limited, [
-    {
-      requestId: `0x${"33".repeat(32)}`,
-      kind: "wrap",
-      submittedAt: "2026-03-18T12:03:00.000Z",
-    },
-    first,
-  ]);
-
-  const satelliteId = "mxzaz-hqaaa-aaaal-qsdoa-cai";
-  const actorKey = recentRequestsClientTestHooks.createRecentRequestsActorCacheKey(
-    {
-      principalText: "2vxsx-fae",
-      identity: new AnonymousIdentity(),
-    },
-    satelliteId,
-  );
-  assert.equal(actorKey, `2vxsx-fae:${satelliteId}`);
-
-  const scopeA = createRecentRequestsScopeKey({
-    principalText,
-    satelliteId,
-  });
-  const scopeB = createRecentRequestsScopeKey({
-    principalText: "bbbbb-bb",
-    satelliteId,
-  });
-  const signedOutScope = createRecentRequestsScopeKey({
-    principalText: null,
-    satelliteId,
-  });
-  assert.equal(
-    shouldApplyRecentRequestsResult({
-      startedScopeKey: scopeA,
-      currentScopeKey: scopeA,
-      startedRefreshSeq: 4,
-      currentRefreshSeq: 4,
-    }),
-    true,
-  );
-  assert.equal(
-    shouldApplyRecentRequestsResult({
-      startedScopeKey: scopeA,
-      currentScopeKey: scopeB,
-      startedRefreshSeq: 4,
-      currentRefreshSeq: 4,
-    }),
-    false,
-  );
-  assert.equal(
-    shouldApplyRecentRequestsResult({
-      startedScopeKey: scopeA,
-      currentScopeKey: signedOutScope,
-      startedRefreshSeq: 4,
-      currentRefreshSeq: 5,
-    }),
-    false,
-  );
-  assert.equal(
-    shouldApplyRecentRequestsResult({
-      startedScopeKey: scopeA,
-      currentScopeKey: scopeA,
-    }),
-    true,
-  );
-  assert.equal(
-    shouldApplyRecentRequestsResult({
-      startedScopeKey: scopeA,
-      currentScopeKey: scopeB,
-    }),
-    false,
-  );
-  recentRequestsClientTestHooks.reset();
 }
 
 async function runClientDepsResetTests(): Promise<void> {
@@ -1981,9 +1769,10 @@ async function main(): Promise<void> {
   await runAllowanceTests();
   await runWrapInputValidationTests();
   await runMetaMaskHelperTests();
-  await runPersistSubmittedRequestTests();
   await runFinishSubmittedUnwrapRequestTests();
   await runNativeDepositDraftTests();
+  await runFinishSubmittedWrapRequestTests();
+  await runWrapperActionAssetRoutingTests();
   await runActorCacheTests();
   await runWrapEstimateEncodingTests();
   await runErc20EncodingTests();
@@ -2000,10 +1789,8 @@ async function main(): Promise<void> {
   await runAssetCatalogTests();
   await runManageTokenListTests();
   await runDevelopmentTokenListFixtureTests();
-  await runInternetIdentityConfigTests();
-  await runJunoConfigTests();
+  await runConfigTests();
   await runAgentConfigInjectionTests();
-  await runRecentRequestsTests();
   await runClientDepsResetTests();
   await runStatusPhaseTests();
   await runStatusPollingRegressionTests();

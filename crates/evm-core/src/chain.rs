@@ -141,13 +141,13 @@ fn should_stop_block_execution(
     instruction_start: u64,
     instruction_current: u64,
 ) -> bool {
-    if block_gas_limit > 0 && block_gas_used >= block_gas_limit {
-        return true;
-    }
-    if instruction_soft_limit == 0 {
-        return false;
-    }
-    instruction_current.saturating_sub(instruction_start) >= instruction_soft_limit
+    verified_core::block::should_stop_execution(
+        block_gas_used,
+        block_gas_limit,
+        instruction_soft_limit,
+        instruction_start,
+        instruction_current,
+    )
 }
 
 fn derive_caller_evm_cached(caller_principal: &[u8]) -> Result<[u8; 20], ChainError> {
@@ -175,11 +175,11 @@ fn remaining_instruction_budget(
     instruction_start: u64,
     instruction_current: u64,
 ) -> Option<u64> {
-    if instruction_soft_limit == 0 {
-        return None;
-    }
-    let consumed = instruction_current.saturating_sub(instruction_start);
-    Some(instruction_soft_limit.saturating_sub(consumed))
+    verified_core::block::remaining_instruction_budget(
+        instruction_soft_limit,
+        instruction_start,
+        instruction_current,
+    )
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -333,24 +333,22 @@ pub fn migrate_tx_locs_batch(start_key: Option<TxId>, max_items: u32) -> (Option
                 .range((Bound::Excluded(key), Bound::Unbounded)),
             None => state.tx_locs.range(..),
         };
-        let mut done = false;
+        let mut iterator_exhausted = false;
         for _ in 0..max_items {
             match iter.next() {
                 Some(entry) => {
                     let key = *entry.key();
                     state.tx_locs_v3.insert(key, entry.value());
                     last_key = Some(key);
-                    copied = copied.saturating_add(1);
+                    copied = verified_core::batch::increment_processed(copied);
                 }
                 None => {
-                    done = true;
+                    iterator_exhausted = true;
                     break;
                 }
             }
         }
-        if copied < u64::from(max_items) {
-            done = true;
-        }
+        let done = verified_core::batch::batch_done(copied, max_items, iterator_exhausted);
         (last_key, copied, done)
     })
 }
@@ -391,14 +389,17 @@ pub fn rebuild_pending_runtime_indexes() {
                     continue;
                 }
             };
-            if state.pending_meta_by_tx_id.get(&tx_id).is_none() {
-                continue;
+            match verified_core::pending::rebuild_pending_decision(
+                state.pending_meta_by_tx_id.get(&tx_id).is_some(),
+            ) {
+                verified_core::pending::RebuildPendingDecision::CountPrincipal => {}
+                verified_core::pending::RebuildPendingDecision::Skip => continue,
             }
             let principal = CallerKey::from_principal_bytes(stored.caller_principal.as_slice());
             let count = state.principal_pending_count.get(&principal).unwrap_or(0);
             state
                 .principal_pending_count
-                .insert(principal, count.saturating_add(1));
+                .insert(principal, verified_core::pending::increment_count(count));
         }
         let base_fee = state.chain_state.get().base_fee;
         rebuild_pending_fee_index_for_base_fee(state, base_fee);
@@ -435,7 +436,7 @@ pub fn rebuild_eth_tx_hash_index_batch(
                 .range((Bound::Excluded(key), Bound::Unbounded)),
             None => state.tx_store.range(..),
         };
-        let mut done = false;
+        let mut iterator_exhausted = false;
         for _ in 0..max_items {
             match iter.next() {
                 Some(entry) => {
@@ -448,17 +449,15 @@ pub fn rebuild_eth_tx_hash_index_batch(
                         }
                     }
                     last_key = Some(tx_id);
-                    rebuilt = rebuilt.saturating_add(1);
+                    rebuilt = verified_core::batch::increment_processed(rebuilt);
                 }
                 None => {
-                    done = true;
+                    iterator_exhausted = true;
                     break;
                 }
             }
         }
-        if rebuilt < u64::from(max_items) {
-            done = true;
-        }
+        let done = verified_core::batch::batch_done(rebuilt, max_items, iterator_exhausted);
         (last_key, rebuilt, done)
     })
 }
@@ -559,6 +558,86 @@ fn tx_locs_remove(state: &mut StableState, tx_id: &TxId) {
     }
 }
 
+#[cfg(debug_assertions)]
+fn debug_assert_queued_adapter_effects(
+    state: &StableState,
+    tx_id: TxId,
+    pending_key: SenderNonceKey,
+    seq: u64,
+) {
+    debug_assert_eq!(state.seen_tx.get(&tx_id), Some(1));
+    debug_assert!(state.tx_store.get(&tx_id).is_some());
+    debug_assert_eq!(state.pending_by_sender_nonce.get(&pending_key), Some(tx_id));
+    debug_assert_eq!(state.pending_meta_by_tx_id.get(&tx_id), Some(pending_key));
+    debug_assert!(state.pending_fee_key_by_tx_id.get(&tx_id).is_some());
+    let loc = tx_locs_get(state, &tx_id).expect("queued tx_loc must exist after submit");
+    debug_assert_eq!(loc.kind, TxLocKind::Queued);
+    debug_assert_eq!(loc.seq, seq);
+    if let Some(ready_key) = state.ready_key_by_tx_id.get(&tx_id) {
+        debug_assert_eq!(state.ready_queue.get(&ready_key), Some(tx_id));
+        debug_assert_eq!(
+            state
+                .ready_by_seq
+                .get(&ReadySeqKey::new(ready_key.seq(), tx_id.0)),
+            Some(tx_id)
+        );
+    }
+}
+
+#[cfg(debug_assertions)]
+fn debug_assert_persisted_included_effects(
+    state: &StableState,
+    tx_id: TxId,
+    block_number: u64,
+    tx_index: u32,
+) {
+    debug_assert!(state.tx_index.get(&tx_id).is_some());
+    debug_assert!(state.receipts.get(&tx_id).is_some());
+    let loc = tx_locs_get(state, &tx_id).expect("included tx_loc must exist after persist");
+    debug_assert_eq!(loc.kind, TxLocKind::Included);
+    debug_assert_eq!(loc.block_number, block_number);
+    debug_assert_eq!(loc.tx_index, tx_index);
+    debug_assert!(state.pending_meta_by_tx_id.get(&tx_id).is_none());
+    debug_assert!(state.pending_fee_key_by_tx_id.get(&tx_id).is_none());
+    debug_assert!(state.ready_key_by_tx_id.get(&tx_id).is_none());
+    debug_assert!(state
+        .pending_by_sender_nonce
+        .iter()
+        .all(|entry| entry.value() != tx_id));
+    debug_assert!(state.ready_queue.iter().all(|entry| entry.value() != tx_id));
+    debug_assert!(state
+        .ready_by_seq
+        .iter()
+        .all(|entry| entry.value() != tx_id));
+    debug_assert!(state
+        .pending_fee_index
+        .iter()
+        .all(|entry| entry.value() != tx_id));
+}
+
+#[cfg(debug_assertions)]
+fn debug_assert_dropped_payload_effects(state: &StableState, tx_id: TxId, drop_code: u16) {
+    debug_assert!(state.tx_store.get(&tx_id).is_none());
+    debug_assert!(state.pending_fee_key_by_tx_id.get(&tx_id).is_none());
+    let loc = tx_locs_get(state, &tx_id).expect("dropped tx_loc must exist after purge");
+    debug_assert_eq!(loc.kind, TxLocKind::Dropped);
+    debug_assert_eq!(loc.drop_code, drop_code);
+}
+
+fn included_tx_loc(block_number: u64, tx_index: u32) -> TxLoc {
+    let loc = TxLoc::included(block_number, tx_index);
+    debug_assert!(verified_core::tx_index::tx_index_entry_matches_loc(
+        verified_core::tx_index::IncludedTxPosition {
+            block_number,
+            tx_index,
+        },
+        loc.kind as u8,
+        loc.block_number,
+        loc.tx_index,
+    ));
+    loc
+}
+
 pub fn get_prune_status() -> PruneStatus {
     with_state(|state| {
         let config = *state.prune_config.get();
@@ -628,19 +707,14 @@ pub fn prune_tick() -> Result<PruneResult, ChainError> {
 
 fn need_prune_internal(state: &StableState, estimated_kept_bytes: u64) -> bool {
     let config = *state.prune_config.get();
-    let now = state.head.get().timestamp;
-    let time_trigger = if config.retain_days > 0 {
-        if let Some(oldest_ts) = config.oldest_timestamp() {
-            let retain_secs = config.retain_days.saturating_mul(86_400);
-            oldest_ts < now.saturating_sub(retain_secs)
-        } else {
-            false
-        }
-    } else {
-        false
-    };
-    let cap_trigger = config.target_bytes > 0 && estimated_kept_bytes > config.high_water_bytes;
-    time_trigger || cap_trigger
+    verified_core::prune::need_prune(
+        config.retain_days,
+        config.oldest_timestamp(),
+        state.head.get().timestamp,
+        config.target_bytes,
+        estimated_kept_bytes,
+        config.high_water_bytes,
+    )
 }
 
 fn compute_retain_count(
@@ -650,34 +724,23 @@ fn compute_retain_count(
 ) -> u64 {
     let head = state.head.get().number;
     let config = state.prune_config.get();
-    let emergency = policy.target_bytes > 0 && estimated_kept_bytes > config.hard_emergency_bytes;
-    let cap_trigger = policy.target_bytes > 0 && estimated_kept_bytes > config.high_water_bytes;
-    if emergency || cap_trigger {
-        // 容量トリガ発動時は retain を無視して古い方から削る
-        return 1;
-    }
-    let mut retain_min_block = 0u64;
-    if policy.retain_blocks > 0 {
-        let oldest = head.saturating_sub(policy.retain_blocks.saturating_sub(1));
-        if oldest > retain_min_block {
-            retain_min_block = oldest;
-        }
-    }
-    if policy.retain_days > 0 {
+    let cutoff_block = if policy.retain_days > 0 {
         let retain_secs = policy.retain_days.saturating_mul(86_400);
         let cutoff = state.head.get().timestamp.saturating_sub(retain_secs);
-        if let Some((block, _)) = find_block_at_timestamp(state, cutoff) {
-            if block > retain_min_block {
-                retain_min_block = block;
-            }
-        }
-    }
-    let retain = head.saturating_sub(retain_min_block).saturating_add(1);
-    if retain == 0 {
-        1
+        find_block_at_timestamp(state, cutoff).map(|(block, _)| block)
     } else {
-        retain
-    }
+        None
+    };
+    verified_core::prune::retain_count(verified_core::prune::RetainCountInput {
+        head_block: head,
+        target_bytes: policy.target_bytes,
+        estimated_kept_bytes,
+        high_water_bytes: config.high_water_bytes,
+        hard_emergency_bytes: config.hard_emergency_bytes,
+        retain_blocks: policy.retain_blocks,
+        retain_days: policy.retain_days,
+        cutoff_block,
+    })
 }
 
 fn find_block_at_timestamp(state: &StableState, cutoff_ts: u64) -> Option<(u64, u64)> {
@@ -797,6 +860,10 @@ pub fn submit_tx(
             is_dynamic_fee,
             seq,
         )?;
+        #[cfg(debug_assertions)]
+        {
+            debug_assert_queued_adapter_effects(state, tx_id, pending_key, seq);
+        }
         Ok(tx_id)
     })
 }
@@ -904,6 +971,10 @@ pub fn submit_ic_tx_input(
             is_dynamic_fee,
             seq,
         )?;
+        #[cfg(debug_assertions)]
+        {
+            debug_assert_queued_adapter_effects(state, tx_id, pending_key, seq);
+        }
         Ok(tx_id)
     })
 }
@@ -984,12 +1055,13 @@ pub fn produce_block(max_txs: usize) -> Result<ProduceBlockOutcome, ChainError> 
     // どこで: ブロック組成前の候補デコード段 / 何を: 無効Txデコード処理数を制限 / なぜ: 署名不正スパムで命令を使い切らないため
     const MAX_DECODE_DROPS_PER_BLOCK: usize =
         evm_db::chain_data::DEFAULT_MAX_DECODE_DROPS_PER_BLOCK;
-    if max_txs == 0 {
+    if !verified_core::block::valid_block_limit(max_txs) {
         return Err(ChainError::InvalidLimit);
     }
     let head = with_state(|state| *state.head.get());
-    let number = head.number.saturating_add(1);
-    let timestamp = std::cmp::max(head.timestamp.saturating_add(1), crate::time::now_sec());
+    let number = verified_core::block::next_block_number(head.number);
+    let timestamp =
+        verified_core::block::next_block_timestamp(head.timestamp, crate::time::now_sec());
     let parent_hash = head.block_hash;
     let exec_ctx = with_state(|state| BlockExecContext {
         block_number: number,
@@ -1234,24 +1306,27 @@ pub fn produce_block(max_txs: usize) -> Result<ProduceBlockOutcome, ChainError> 
         if remaining_instruction_budget == Some(0) {
             break;
         }
-        if exec_ctx.block_gas_limit > 0 {
-            let remaining_block_gas = exec_ctx.block_gas_limit.saturating_sub(block_gas_used);
-            if prepared_tx.tx_env.gas_limit > remaining_block_gas {
-                staged_drops.push(QueuedDrop {
-                    tx_id: prepared_tx.tx_id,
-                    drop_code: DROP_CODE_BLOCK_GAS_EXCEEDED,
-                    sender_override: Some(prepared_tx.sender_bytes),
-                    nonce_override: Some(prepared_tx.sender_nonce),
-                });
-                track_drop(
-                    &mut dropped_total,
-                    &mut dropped_by_code,
-                    DROP_CODE_BLOCK_GAS_EXCEEDED,
-                );
-                continue;
-            }
+        if !verified_core::block::tx_fits_block_gas(
+            block_gas_used,
+            exec_ctx.block_gas_limit,
+            prepared_tx.tx_env.gas_limit,
+        ) {
+            staged_drops.push(QueuedDrop {
+                tx_id: prepared_tx.tx_id,
+                drop_code: DROP_CODE_BLOCK_GAS_EXCEEDED,
+                sender_override: Some(prepared_tx.sender_bytes),
+                nonce_override: Some(prepared_tx.sender_nonce),
+            });
+            track_drop(
+                &mut dropped_total,
+                &mut dropped_by_code,
+                DROP_CODE_BLOCK_GAS_EXCEEDED,
+            );
+            continue;
         }
-        let tx_index = u32::try_from(included_tx_ids.len()).unwrap_or(u32::MAX);
+        let tx_index = verified_core::tx_index::next_included_index(included_tx_ids.len()).ok_or(
+            ChainError::InvariantViolation("tx_index.overflow".to_string()),
+        )?;
         let tx_id = prepared_tx.tx_id;
         let execution = execute_tx_on(
             &mut exec_db,
@@ -1346,7 +1421,7 @@ pub fn produce_block(max_txs: usize) -> Result<ProduceBlockOutcome, ChainError> 
         };
         let gas_used = outcome.receipt.gas_used;
         observe_exec_outcome(timestamp, &outcome);
-        block_gas_used = block_gas_used.saturating_add(gas_used);
+        block_gas_used = verified_core::block::add_block_gas_used(block_gas_used, gas_used);
         staged_included.push(StagedIncludedTx::Success {
             tx_id,
             outcome,
@@ -1466,6 +1541,20 @@ pub fn produce_block(max_txs: usize) -> Result<ProduceBlockOutcome, ChainError> 
                 sender_nonce: *sender_nonce,
             });
         }
+        match verified_core::block_persist::classify_persist_batch(
+            staged_included.len(),
+            staged_persisted.len(),
+        ) {
+            verified_core::block_persist::PersistBatchDecision::Commit => {}
+            _ => {
+                trap_store_err(
+                    "persist_included_batch",
+                    Some(number),
+                    None,
+                    "count_mismatch",
+                );
+            }
+        }
 
         let block_ptr = store_block(state, &block);
         for persisted in staged_persisted {
@@ -1481,7 +1570,7 @@ pub fn produce_block(max_txs: usize) -> Result<ProduceBlockOutcome, ChainError> 
             tx_locs_insert(
                 state,
                 persisted.tx_id,
-                TxLoc::included(number, persisted.tx_index),
+                included_tx_loc(number, persisted.tx_index),
             );
             advance_sender_after_tx(
                 state,
@@ -1490,6 +1579,15 @@ pub fn produce_block(max_txs: usize) -> Result<ProduceBlockOutcome, ChainError> 
                 Some(persisted.sender_nonce),
                 true,
             );
+            #[cfg(debug_assertions)]
+            {
+                debug_assert_persisted_included_effects(
+                    state,
+                    persisted.tx_id,
+                    number,
+                    persisted.tx_index,
+                );
+            }
         }
         state.blocks.insert(number, block_ptr);
         state.head.set(Head {
@@ -1636,8 +1734,9 @@ pub fn eth_call(raw_tx: Vec<u8>) -> Result<Vec<u8>, ChainError> {
     let tx_env = decode_tx(TxKind::EthSigned, Address::ZERO, &raw_tx)
         .map_err(|_| ChainError::DecodeFailed)?;
     let head = with_state(|state| *state.head.get());
-    let number = head.number.saturating_add(1);
-    let timestamp = std::cmp::max(head.timestamp.saturating_add(1), crate::time::now_sec());
+    let number = verified_core::block::next_block_number(head.number);
+    let timestamp =
+        verified_core::block::next_block_timestamp(head.timestamp, crate::time::now_sec());
     let exec_ctx = with_state(|state| BlockExecContext {
         block_number: number,
         timestamp,
@@ -1673,8 +1772,9 @@ pub fn eth_call_object(input: CallObjectInput) -> Result<CallObjectResult, Chain
         return Err(ChainError::TxTooLarge);
     }
     let head = with_state(|state| *state.head.get());
-    let number = head.number.saturating_add(1);
-    let timestamp = std::cmp::max(head.timestamp.saturating_add(1), crate::time::now_sec());
+    let number = verified_core::block::next_block_number(head.number);
+    let timestamp =
+        verified_core::block::next_block_timestamp(head.timestamp, crate::time::now_sec());
     let (base_fee, block_gas_limit) = with_state(|state| {
         let chain = *state.chain_state.get();
         (chain.base_fee, chain.block_gas_limit)
@@ -2121,8 +2221,8 @@ fn execute_and_seal_with_caller(
     let stored = StoredTx::try_from(envelope).map_err(|_| ChainError::DecodeFailed)?;
 
     let head = with_state(|state| *state.head.get());
-    let number = head.number.saturating_add(1);
-    let timestamp = head.timestamp.saturating_add(1);
+    let number = verified_core::block::next_block_number(head.number);
+    let timestamp = verified_core::block::next_block_timestamp(head.timestamp, 0);
     let parent_hash = head.block_hash;
     let exec_ctx = with_state(|state| BlockExecContext {
         block_number: number,
@@ -2231,13 +2331,21 @@ fn execute_and_seal_with_caller(
             receipt_ptr: store_receipt(state, &outcome.receipt),
             internal_traces_ptr: store_internal_traces(state, tx_id, &outcome.internal_traces),
         };
+        if !verified_core::block_persist::can_commit_single(true, true, number) {
+            trap_store_err(
+                "persist_single_tx",
+                Some(number),
+                Some(tx_id),
+                "invalid_plan",
+            );
+        }
         state.blocks.insert(number, staged.block_ptr);
         state.tx_index.insert(tx_id, staged.tx_index_ptr);
         state.receipts.insert(tx_id, staged.receipt_ptr);
         if let Some(ptr) = staged.internal_traces_ptr {
             state.internal_traces.insert(tx_id, ptr);
         }
-        tx_locs_insert(state, tx_id, TxLoc::included(number, outcome.tx_index));
+        tx_locs_insert(state, tx_id, included_tx_loc(number, outcome.tx_index));
         state.head.set(Head {
             number,
             block_hash,
@@ -2291,14 +2399,23 @@ pub fn prune_blocks(retain: u64, max_ops: u32) -> Result<PruneResult, ChainError
                 pruned_before_block: pruned_before,
             });
         }
-        let prune_before = head_number.saturating_sub(retain);
-        let mut prune_state = *state.prune_state.get();
-        let mut next = prune_state.next_prune_block;
-        if let Some(pruned) = prune_state.pruned_before() {
-            if next <= pruned {
-                next = pruned.saturating_add(1);
+        let prune_before = match verified_core::prune::prune_before_block(head_number, retain) {
+            Some(value) => value,
+            None => {
+                let pruned_before = state.prune_state.get().pruned_before();
+                return Ok(PruneResult {
+                    did_work: false,
+                    remaining: 0,
+                    pruned_before_block: pruned_before,
+                });
             }
-        }
+        };
+        let mut prune_state = *state.prune_state.get();
+        let mut next =
+            verified_core::prune::normalize_next_prune_block(verified_core::prune::PruneCursor {
+                next_prune_block: prune_state.next_prune_block,
+                pruned_before_block: prune_state.pruned_before(),
+            });
         let mut did_work = false;
         let mut ops_used: u64 = 0;
         let max_ops = u64::from(max_ops);
@@ -2306,8 +2423,9 @@ pub fn prune_blocks(retain: u64, max_ops: u32) -> Result<PruneResult, ChainError
             let block = match load_block(state, next) {
                 Some(value) => value,
                 None => {
-                    prune_state.set_pruned_before(next);
-                    next = next.saturating_add(1);
+                    let cursor = verified_core::prune::advance_after_pruned_block(next);
+                    prune_state.set_pruned_before(cursor.pruned_before_block.unwrap_or(next));
+                    next = cursor.next_prune_block;
                     did_work = true;
                     continue;
                 }
@@ -2337,8 +2455,9 @@ pub fn prune_blocks(retain: u64, max_ops: u32) -> Result<PruneResult, ChainError
                 state.seen_tx.remove(tx_id);
             }
             ops_used = ops_used.saturating_add(needed);
-            prune_state.set_pruned_before(next);
-            next = next.saturating_add(1);
+            let cursor = verified_core::prune::advance_after_pruned_block(next);
+            prune_state.set_pruned_before(cursor.pruned_before_block.unwrap_or(next));
+            next = cursor.next_prune_block;
             did_work = true;
 
             for ptr in ptrs.drain(..) {
@@ -2354,11 +2473,7 @@ pub fn prune_blocks(retain: u64, max_ops: u32) -> Result<PruneResult, ChainError
         prune_state.next_prune_block = next;
         state.prune_state.set(prune_state);
         refresh_oldest(state);
-        let remaining = if next > prune_before {
-            0
-        } else {
-            prune_before.saturating_sub(next).saturating_add(1)
-        };
+        let remaining = verified_core::prune::remaining_blocks(next, prune_before);
         Ok(PruneResult {
             did_work,
             remaining,
@@ -2383,41 +2498,31 @@ fn prune_ops_needed_for_block(
 }
 
 fn prune_ops_needed_for_tx(state: &evm_db::stable_state::StableState, tx_id: TxId) -> u64 {
-    let mut needed = 0u64;
-    if state.pending_fee_key_by_tx_id.get(&tx_id).is_some() {
-        needed = needed.saturating_add(1);
-    }
-    if let Some(envelope) = state.tx_store.get(&tx_id) {
+    let pending_fee_index = state.pending_fee_key_by_tx_id.get(&tx_id).is_some();
+    let mut principal_pending_count = false;
+    let mut eth_tx_hash_index = false;
+    let tx_store = state.tx_store.get(&tx_id);
+    if let Some(envelope) = tx_store.clone() {
         if let Ok(stored) = StoredTx::try_from(envelope.clone()) {
             let principal_key = CallerKey::from_principal_bytes(stored.caller_principal.as_slice());
-            if state.principal_pending_count.get(&principal_key).is_some() {
-                needed = needed.saturating_add(1);
-            }
+            principal_pending_count = state.principal_pending_count.get(&principal_key).is_some();
             if stored.kind == TxKind::EthSigned {
                 let eth_hash = TxId(hash::keccak256(&stored.raw));
-                if state.eth_tx_hash_index.get(&eth_hash).is_some() {
-                    needed = needed.saturating_add(1);
-                }
+                eth_tx_hash_index = state.eth_tx_hash_index.get(&eth_hash).is_some();
             }
         }
-        needed = needed.saturating_add(1);
     }
-    if state.receipts.get(&tx_id).is_some() {
-        needed = needed.saturating_add(1);
-    }
-    if state.tx_index.get(&tx_id).is_some() {
-        needed = needed.saturating_add(1);
-    }
-    if state.internal_traces.get(&tx_id).is_some() {
-        needed = needed.saturating_add(1);
-    }
-    if tx_locs_get(state, &tx_id).is_some() {
-        needed = needed.saturating_add(1);
-    }
-    if state.seen_tx.get(&tx_id).is_some() {
-        needed = needed.saturating_add(1);
-    }
-    needed
+    verified_core::prune::prune_ops_needed_for_tx(verified_core::prune::PruneTxPresence {
+        pending_fee_index,
+        principal_pending_count,
+        eth_tx_hash_index,
+        tx_store: tx_store.is_some(),
+        receipt: state.receipts.get(&tx_id).is_some(),
+        tx_index: state.tx_index.get(&tx_id).is_some(),
+        internal_traces: state.internal_traces.get(&tx_id).is_some(),
+        tx_loc: tx_locs_get(state, &tx_id).is_some(),
+        seen_tx: state.seen_tx.get(&tx_id).is_some(),
+    })
 }
 
 fn recover_prune_journal(state: &mut evm_db::stable_state::StableState) -> Result<(), ChainError> {
@@ -2433,13 +2538,13 @@ fn recover_prune_journal(state: &mut evm_db::stable_state::StableState) -> Resul
                 value
             }
             None => {
-                if let Some(pruned) = prune_state.pruned_before() {
-                    let min_next = pruned.saturating_add(1);
-                    if prune_state.next_prune_block < min_next {
-                        prune_state.next_prune_block = min_next;
-                        state.prune_state.set(prune_state);
-                    }
-                }
+                prune_state.next_prune_block = verified_core::prune::normalize_next_prune_block(
+                    verified_core::prune::PruneCursor {
+                        next_prune_block: prune_state.next_prune_block,
+                        pruned_before_block: prune_state.pruned_before(),
+                    },
+                );
+                state.prune_state.set(prune_state);
                 return Ok(());
             }
         },
@@ -2458,12 +2563,11 @@ fn recover_prune_journal(state: &mut evm_db::stable_state::StableState) -> Resul
                 state.tx_store.remove(tx_id);
                 state.seen_tx.remove(tx_id);
             }
-            if let Some(pruned) = prune_state.pruned_before() {
-                if pruned < journal_block {
-                    prune_state.set_pruned_before(journal_block);
-                }
-            } else {
-                prune_state.set_pruned_before(journal_block);
+            if let Some(pruned) = verified_core::prune::recover_pruned_before(
+                prune_state.pruned_before(),
+                journal_block,
+            ) {
+                prune_state.set_pruned_before(pruned);
             }
         }
         for ptr in journal.ptrs.iter() {
@@ -2475,12 +2579,11 @@ fn recover_prune_journal(state: &mut evm_db::stable_state::StableState) -> Resul
         state.prune_journal.remove(&journal_block);
     }
     prune_state.clear_journal();
-    if let Some(pruned) = prune_state.pruned_before() {
-        let min_next = pruned.saturating_add(1);
-        if prune_state.next_prune_block < min_next {
-            prune_state.next_prune_block = min_next;
-        }
-    }
+    prune_state.next_prune_block =
+        verified_core::prune::normalize_next_prune_block(verified_core::prune::PruneCursor {
+            next_prune_block: prune_state.next_prune_block,
+            pruned_before_block: prune_state.pruned_before(),
+        });
     state.prune_state.set(prune_state);
     refresh_oldest(state);
     Ok(())
@@ -2580,8 +2683,8 @@ pub fn get_queue_snapshot(limit: usize, cursor: Option<u64>) -> QueueSnapshot {
         let start_seq = cursor.unwrap_or(0);
         let start_key = ReadySeqKey::new(start_seq, [0u8; 32]);
         for entry in state.ready_by_seq.range(start_key..) {
-            if items.len() >= limit {
-                next_cursor = last_seq.map(|seq: u64| seq.saturating_add(1));
+            if verified_core::batch::snapshot_limit_reached(items.len(), limit) {
+                next_cursor = last_seq.map(verified_core::batch::next_exclusive_cursor);
                 break;
             }
             let tx_id = entry.value();
@@ -2658,8 +2761,8 @@ fn promote_if_next_nonce(
     is_dynamic_fee: bool,
     seq: u64,
 ) -> Result<(), ChainError> {
-    match state.pending_min_nonce.get(&sender) {
-        None => {
+    match verified_core::pending::classify_promote(state.pending_min_nonce.get(&sender), nonce) {
+        verified_core::pending::PromoteDecision::InsertFirst => {
             state.pending_min_nonce.insert(sender, nonce);
             insert_ready(
                 state,
@@ -2670,23 +2773,24 @@ fn promote_if_next_nonce(
                 seq,
             )?;
         }
-        Some(current) => {
-            if nonce < current {
+        verified_core::pending::PromoteDecision::ReplaceMin => {
+            if let Some(current) = state.pending_min_nonce.get(&sender) {
                 let old_key = SenderNonceKey::new(sender.0, current);
                 if let Some(old_tx_id) = state.pending_by_sender_nonce.get(&old_key) {
                     remove_ready_by_tx_id(state, old_tx_id);
                 }
-                state.pending_min_nonce.insert(sender, nonce);
-                insert_ready(
-                    state,
-                    tx_id,
-                    max_fee_per_gas,
-                    max_priority_fee_per_gas,
-                    is_dynamic_fee,
-                    seq,
-                )?;
             }
+            state.pending_min_nonce.insert(sender, nonce);
+            insert_ready(
+                state,
+                tx_id,
+                max_fee_per_gas,
+                max_priority_fee_per_gas,
+                is_dynamic_fee,
+                seq,
+            )?;
         }
+        verified_core::pending::PromoteDecision::KeepCurrent => {}
     }
     Ok(())
 }
@@ -2697,16 +2801,33 @@ fn enforce_pending_caps(
     caller_principal: &[u8],
     incoming_effective_gas_price: u64,
 ) -> Result<(), ChainError> {
-    if count_pending_for_sender(state, sender) >= MAX_PENDING_PER_SENDER {
-        return Err(ChainError::SenderQueueFull);
+    let lowest_effective_gas_price = state.pending_fee_index.range(..).next().map(|entry| {
+        let mut fee = [0u8; 8];
+        fee.copy_from_slice(&entry.key().0[0..8]);
+        u64::from_be_bytes(fee)
+    });
+    let decision =
+        verified_core::queue::classify_pending_caps(verified_core::queue::PendingCapInput {
+            sender_count: count_pending_for_sender(state, sender),
+            principal_count: count_pending_for_principal(state, caller_principal),
+            global_count: state.pending_by_sender_nonce.len(),
+            max_per_sender: MAX_PENDING_PER_SENDER,
+            max_per_principal: MAX_PENDING_PER_PRINCIPAL,
+            max_global: MAX_PENDING_GLOBAL as u64,
+            incoming_effective_gas_price,
+            lowest_effective_gas_price,
+        });
+    match decision {
+        verified_core::queue::PendingCapDecision::Accept => Ok(()),
+        verified_core::queue::PendingCapDecision::SenderFull => Err(ChainError::SenderQueueFull),
+        verified_core::queue::PendingCapDecision::PrincipalFull => {
+            Err(ChainError::PrincipalQueueFull)
+        }
+        verified_core::queue::PendingCapDecision::GlobalFull => Err(ChainError::QueueFull),
+        verified_core::queue::PendingCapDecision::EvictLowest => {
+            evict_lowest_fee_pending(state, incoming_effective_gas_price)
+        }
     }
-    if count_pending_for_principal(state, caller_principal) >= MAX_PENDING_PER_PRINCIPAL {
-        return Err(ChainError::PrincipalQueueFull);
-    }
-    if state.pending_by_sender_nonce.len() >= MAX_PENDING_GLOBAL as u64 {
-        evict_lowest_fee_pending(state, incoming_effective_gas_price)?;
-    }
-    Ok(())
 }
 
 fn count_pending_for_principal(
@@ -2828,10 +2949,13 @@ fn decrement_principal_pending_count_for_tx(
     };
     let key = CallerKey::from_principal_bytes(stored.caller_principal.as_slice());
     let current = state.principal_pending_count.get(&key).unwrap_or(0);
-    if current <= 1 {
-        state.principal_pending_count.remove(&key);
-    } else {
-        state.principal_pending_count.insert(key, current - 1);
+    match verified_core::pending::decrement_count(current) {
+        verified_core::pending::CountAfterDecrement::Remove => {
+            state.principal_pending_count.remove(&key);
+        }
+        verified_core::pending::CountAfterDecrement::Set(next) => {
+            state.principal_pending_count.insert(key, next);
+        }
     }
 }
 
@@ -2886,14 +3010,24 @@ fn advance_sender_after_tx(
     decrement_principal_pending_count_for_tx(state, tx_id);
     finalize_pending_for_sender(state, pending_key.sender, tx_id, bump_expected_nonce);
     let sender = pending_key.sender;
-    if state.pending_min_nonce.get(&sender) != Some(pending_key.nonce) {
+    if !verified_core::pending::should_refresh_pending_min(
+        state.pending_min_nonce.get(&sender),
+        pending_key.nonce,
+    ) {
         return;
     }
     let mut cursor_nonce = pending_key.nonce;
     loop {
         match next_pending_for_sender(state, sender, cursor_nonce) {
             Some((next_nonce, next_tx_id)) => {
-                state.pending_min_nonce.insert(sender, next_nonce);
+                match verified_core::pending::pending_min_after_advance(Some(next_nonce)) {
+                    verified_core::pending::PendingMinAfterAdvance::Set(nonce) => {
+                        state.pending_min_nonce.insert(sender, nonce);
+                    }
+                    verified_core::pending::PendingMinAfterAdvance::Remove => {
+                        state.pending_min_nonce.remove(&sender);
+                    }
+                }
                 match load_fee_fields_and_seq(state, next_tx_id) {
                     Ok(Some((max_fee_per_gas, max_priority_fee_per_gas, is_dynamic_fee, seq))) => {
                         let _ = insert_ready(
@@ -2916,7 +3050,14 @@ fn advance_sender_after_tx(
                 cursor_nonce = next_nonce;
             }
             None => {
-                state.pending_min_nonce.remove(&sender);
+                match verified_core::pending::pending_min_after_advance(None) {
+                    verified_core::pending::PendingMinAfterAdvance::Set(nonce) => {
+                        state.pending_min_nonce.insert(sender, nonce);
+                    }
+                    verified_core::pending::PendingMinAfterAdvance::Remove => {
+                        state.pending_min_nonce.remove(&sender);
+                    }
+                }
                 return;
             }
         }
@@ -3012,7 +3153,10 @@ fn next_pending_for_sender(
     sender: SenderKey,
     after_nonce: u64,
 ) -> Option<(u64, TxId)> {
-    let start = SenderNonceKey::new(sender.0, after_nonce.saturating_add(1));
+    let start = SenderNonceKey::new(
+        sender.0,
+        verified_core::pending::next_pending_start_nonce(after_nonce),
+    );
     if let Some(entry) = state.pending_by_sender_nonce.range(start..).next() {
         let key = *entry.key();
         if key.sender != sender {
@@ -3115,24 +3259,25 @@ fn mark_dropped_and_purge_payload(
     state.tx_store.remove(&tx_id);
     tx_locs_insert(state, tx_id, TxLoc::dropped(drop_code));
     push_dropped_ring(state, tx_id);
+    #[cfg(debug_assertions)]
+    {
+        debug_assert_dropped_payload_effects(state, tx_id, drop_code);
+    }
 }
 
 fn push_dropped_ring(state: &mut evm_db::stable_state::StableState, tx_id: TxId) {
     let mut ring = *state.dropped_ring_state.get();
-    let seq = ring.next_seq;
-    state.dropped_ring.insert(seq, tx_id);
-    ring.next_seq = ring.next_seq.saturating_add(1);
-    if u64::from(ring.len) < DROPPED_RING_CAPACITY {
-        ring.len = ring.len.saturating_add(1);
-        state.dropped_ring_state.set(ring);
-        return;
-    }
-
-    let evict_seq = seq.saturating_sub(DROPPED_RING_CAPACITY);
-    if let Some(evicted_tx_id) = state.dropped_ring.remove(&evict_seq) {
-        if let Some(loc) = tx_locs_get(state, &evicted_tx_id) {
-            if loc.kind == TxLocKind::Dropped {
-                tx_locs_remove(state, &evicted_tx_id);
+    let transition =
+        verified_core::dropped_ring::push(ring.next_seq, ring.len, DROPPED_RING_CAPACITY);
+    state.dropped_ring.insert(transition.insert_seq, tx_id);
+    ring.next_seq = transition.next_seq;
+    ring.len = transition.len;
+    if let Some(evict_seq) = transition.evict_seq {
+        if let Some(evicted_tx_id) = state.dropped_ring.remove(&evict_seq) {
+            if let Some(loc) = tx_locs_get(state, &evicted_tx_id) {
+                if loc.kind == TxLocKind::Dropped {
+                    tx_locs_remove(state, &evicted_tx_id);
+                }
             }
         }
     }
@@ -3184,17 +3329,13 @@ fn min_fee_satisfied_fields(
     min_priority_fee: u64,
     min_gas_price: u64,
 ) -> bool {
-    if let Some(priority) = gas_priority_fee {
-        let min_priority_fee = u128::from(min_priority_fee);
-        if priority < min_priority_fee {
-            return false;
-        }
-        let base_fee = u128::from(base_fee);
-        let base_plus_min = base_fee.saturating_add(min_priority_fee);
-        gas_price >= base_fee && gas_price >= base_plus_min
-    } else {
-        gas_price >= u128::from(min_gas_price)
-    }
+    verified_core::fee::min_fee_satisfied(
+        gas_price,
+        gas_priority_fee,
+        base_fee,
+        min_priority_fee,
+        min_gas_price,
+    )
 }
 
 // V2に保存するため、TxEnvから確定済みのfee値を抽出する。

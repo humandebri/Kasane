@@ -175,43 +175,14 @@ impl Storable for BlockData {
         let mut len_bytes = [0u8; 4];
         len_bytes.copy_from_slice(&data[offset..offset + 4]);
         offset += 4;
-        let tx_len = match usize::try_from(u32::from_be_bytes(len_bytes)) {
-            Ok(value) => value,
-            Err(_) => {
-                mark_decode_failure(b"block_data", true);
-                return BlockData {
-                    number: 0,
-                    parent_hash: [0u8; HASH_LEN],
-                    block_hash: [0u8; HASH_LEN],
-                    timestamp: 0,
-                    base_fee_per_gas: 0,
-                    block_gas_limit: 0,
-                    gas_used: 0,
-                    beneficiary: [0u8; BLOCK_BENEFICIARY_LEN],
-                    tx_ids: Vec::new(),
-                    tx_list_hash: [0u8; HASH_LEN],
-                    state_root: [0u8; HASH_LEN],
-                };
-            }
-        };
-        if tx_len > MAX_TXS_PER_BLOCK {
-            mark_decode_failure(b"block_data", true);
-            return BlockData {
-                number: 0,
-                parent_hash: [0u8; HASH_LEN],
-                block_hash: [0u8; HASH_LEN],
-                timestamp: 0,
-                base_fee_per_gas: 0,
-                block_gas_limit: 0,
-                gas_used: 0,
-                beneficiary: [0u8; BLOCK_BENEFICIARY_LEN],
-                tx_ids: Vec::new(),
-                tx_list_hash: [0u8; HASH_LEN],
-                state_root: [0u8; HASH_LEN],
-            };
-        }
-        let expected = base_len + tx_len * HASH_LEN;
-        if expected != data.len() {
+        let tx_len = u32::from_be_bytes(len_bytes) as usize;
+        if !verified_core::stable_codec::variable_items_len_matches(
+            data.len(),
+            base_len,
+            tx_len,
+            HASH_LEN,
+            MAX_TXS_PER_BLOCK,
+        ) {
             mark_decode_failure(b"block_data", true);
             return BlockData {
                 number: 0,
@@ -302,7 +273,7 @@ impl Storable for Head {
 
     fn from_bytes(bytes: Cow<'_, [u8]>) -> Self {
         let data = bytes.as_ref();
-        if data.len() != 8 + HASH_LEN + 8 {
+        if !verified_core::stable_codec::fixed_len_matches(data.len(), 8 + HASH_LEN + 8) {
             mark_decode_failure(b"head", true);
             return Head {
                 number: 0,
@@ -335,9 +306,9 @@ impl Storable for Head {
 }
 
 fn len_to_u32(len: usize) -> Option<u32> {
-    match u32::try_from(len) {
-        Ok(value) => Some(value),
-        Err(_) => {
+    match verified_core::stable_codec::len_to_u32(len) {
+        Some(value) => Some(value),
+        None => {
             record_corrupt(b"block_len");
             None
         }

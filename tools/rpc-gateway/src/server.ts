@@ -2,18 +2,11 @@
 
 import http from "node:http";
 import { CONFIG } from "./config.js";
-import {
-  ERR_INVALID_REQUEST,
-  ERR_PARSE,
-  JsonRpcRequest,
-  JsonRpcResponse,
-  makeError,
-  parseJsonWithDepthLimit,
-  validateRequest,
-} from "./jsonrpc.js";
-import { handleRpc } from "./handlers.js";
+import { configureGateway } from "./config.js";
+import { handleRpcHttp, resolveCorsAllowOrigin } from "./http.js";
 
 export function startServer(): http.Server {
+  configureGateway(process.env, { requireCanisterId: true });
   const server = http.createServer((req, res) => {
     void handleHttp(req, res);
   });
@@ -22,92 +15,20 @@ export function startServer(): http.Server {
 }
 
 async function handleHttp(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
-  setCors(req, res);
-
-  if (req.method === "OPTIONS") {
-    res.statusCode = 204;
+  const response = await handleRpcHttp({
+    method: req.method ?? "",
+    origin: req.headers.origin,
+    readBodyText: () => readBody(req, CONFIG.maxHttpBodySize),
+  });
+  res.statusCode = response.status;
+  for (const [key, value] of Object.entries(response.headers)) {
+    res.setHeader(key, value);
+  }
+  if (response.body === null) {
     res.end();
     return;
   }
-
-  if (req.method !== "POST") {
-    res.statusCode = 405;
-    writeJson(res, { error: "method not allowed" });
-    return;
-  }
-
-  let bodyText: string;
-  try {
-    bodyText = await readBody(req, CONFIG.maxHttpBodySize);
-  } catch (err) {
-    res.statusCode = 413;
-    writeJson(res, { error: err instanceof Error ? err.message : String(err) });
-    return;
-  }
-
-  let parsed: unknown;
-  try {
-    parsed = parseJsonWithDepthLimit(bodyText, CONFIG.maxJsonDepth);
-  } catch {
-    writeRpc(res, makeError(null, ERR_PARSE, "parse error"));
-    return;
-  }
-
-  if (Array.isArray(parsed)) {
-    if (parsed.length === 0) {
-      writeRpc(res, makeError(null, ERR_INVALID_REQUEST, "invalid request"));
-      return;
-    }
-    if (parsed.length > CONFIG.maxBatchLen) {
-      writeRpc(res, makeError(null, ERR_INVALID_REQUEST, "batch length exceeds limit"));
-      return;
-    }
-    const out = await handleBatch(parsed);
-    if (out.length === 0) {
-      res.statusCode = 204;
-      res.end();
-      return;
-    }
-    writeRpc(res, out);
-    return;
-  }
-
-  const maybeReq = validateRequest(parsed);
-  if (!maybeReq) {
-    writeRpc(res, makeError(null, ERR_INVALID_REQUEST, "invalid request"));
-    return;
-  }
-  const single = await handleSingle(maybeReq);
-  if (single === null) {
-    res.statusCode = 204;
-    res.end();
-    return;
-  }
-  writeRpc(res, single);
-}
-
-async function handleBatch(items: unknown[]): Promise<JsonRpcResponse[]> {
-  const out: JsonRpcResponse[] = [];
-  for (const item of items) {
-    const maybeReq = validateRequest(item);
-    if (!maybeReq) {
-      out.push(makeError(null, ERR_INVALID_REQUEST, "invalid request"));
-      continue;
-    }
-    const maybeResp = await handleSingle(maybeReq);
-    if (maybeResp) {
-      out.push(maybeResp);
-    }
-  }
-  return out;
-}
-
-async function handleSingle(req: JsonRpcRequest): Promise<JsonRpcResponse | null> {
-  const out = await handleRpc(req);
-  if (!("id" in req)) {
-    return null;
-  }
-  return out;
+  res.end(response.body);
 }
 
 function readBody(req: http.IncomingMessage, maxBytes: number): Promise<string> {
@@ -135,43 +56,4 @@ function readBody(req: http.IncomingMessage, maxBytes: number): Promise<string> 
   });
 }
 
-function setCors(req: http.IncomingMessage, res: http.ServerResponse): void {
-  const allowOrigin = resolveCorsAllowOrigin(req.headers.origin, CONFIG.corsOrigins);
-  if (allowOrigin) {
-    res.setHeader("access-control-allow-origin", allowOrigin);
-    res.setHeader("vary", "origin");
-  }
-  res.setHeader("access-control-allow-methods", "POST, OPTIONS");
-  res.setHeader("access-control-allow-headers", "content-type");
-}
-
-function resolveCorsAllowOrigin(requestOrigin: string | undefined, allowedOrigins: string[]): string | null {
-  if (allowedOrigins.includes("*")) {
-    return "*";
-  }
-  if (!requestOrigin) {
-    return null;
-  }
-  return allowedOrigins.includes(requestOrigin) ? requestOrigin : null;
-}
-
 export const __test_resolve_cors_allow_origin = resolveCorsAllowOrigin;
-
-function writeRpc(res: http.ServerResponse, payload: JsonRpcResponse | JsonRpcResponse[]): void {
-  res.setHeader("content-type", "application/json");
-  res.end(stringifyJson(payload));
-}
-
-function writeJson(res: http.ServerResponse, payload: unknown): void {
-  res.setHeader("content-type", "application/json");
-  res.end(stringifyJson(payload));
-}
-
-function stringifyJson(payload: unknown): string {
-  return JSON.stringify(payload, (_key: string, value: unknown) => {
-    if (typeof value === "bigint") {
-      return value.toString(10);
-    }
-    return value;
-  });
-}

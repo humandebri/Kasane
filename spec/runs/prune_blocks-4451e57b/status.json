@@ -1,0 +1,11 @@
+{
+  "target": "prune_blocks-4451e57b",
+  "check_result": "fail",
+  "stale_reasons": [
+    "unresolved dependencies: ChainError::ExecFailed, clear_journal, clone, drain, get, insert, iter, map_err, pruned_before, reclaim_for_prune, remove, saturating_add, saturating_sub, set, set_journal_block, set_pruned_before, u64::from, unwrap_or, verified_core::prune::advance_after_pruned_block, verified_core::prune::normalize_next_prune_block, verified_core::prune::prune_before_block, verified_core::prune::remaining_blocks, with_state_mut"
+  ],
+  "drift_reasons": [
+    "unresolved dependencies"
+  ],
+  "dirty_paths": []
+}

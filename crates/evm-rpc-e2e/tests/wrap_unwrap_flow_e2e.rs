@@ -147,7 +147,9 @@ enum RequestDispatchStatusView {
 #[derive(Clone, Copy, Debug, CandidType, Deserialize, Eq, PartialEq)]
 enum RequestKind {
     Wrap,
+    NativeDeposit,
     Unwrap,
+    NativeWithdrawal,
 }
 
 #[derive(Clone, Copy, Debug, CandidType, Deserialize, Eq, PartialEq)]
@@ -209,13 +211,6 @@ struct DispatchUnwrapRequestArgs {
 #[derive(Clone, Debug, CandidType, Deserialize, Eq, PartialEq)]
 struct DispatchUnwrapRequestOk {
     request_id: Vec<u8>,
-}
-
-#[derive(Clone, Debug, CandidType, Deserialize, Eq, PartialEq)]
-struct DispatchNativeWithdrawalRequestArgs {
-    request_id: Vec<u8>,
-    amount_e8s: Nat,
-    recipient: Principal,
 }
 
 #[derive(Clone, Debug, CandidType, Deserialize, Eq, PartialEq)]
@@ -441,8 +436,7 @@ fn install_integrated_pair_with_native(pic: &PocketIc) -> (Principal, Principal,
         .expect("derive integrated gateway evm address");
     let factory = predict_create_address(caller_evm, 0);
     let fee_ledger_init = build_ledger_init(gateway_id, gateway_id, caller, TEST_LEDGER_BALANCE);
-    let native_ledger_init =
-        build_ledger_init(gateway_id, gateway_id, caller, TEST_LEDGER_BALANCE);
+    let native_ledger_init = build_ledger_init(gateway_id, gateway_id, caller, TEST_LEDGER_BALANCE);
     let gateway_init = Some(GatewayInitArgs {
         genesis_balances: vec![
             GenesisBalanceView {
@@ -643,6 +637,14 @@ fn gateway_unwrap_request_ids_by_tx_id(
     Decode!(&out, Vec<Vec<u8>>).expect("decode unwrap ids")
 }
 
+fn derive_unwrap_request_id(tx_id: &[u8], log_index: usize) -> Vec<u8> {
+    let log_index = u32::try_from(log_index).expect("log index fits u32");
+    let mut payload = Vec::with_capacity(36);
+    payload.extend_from_slice(tx_id);
+    payload.extend_from_slice(&log_index.to_be_bytes());
+    hash::keccak256(&payload).to_vec()
+}
+
 fn gateway_expected_nonce(pic: &PocketIc, gateway_id: Principal, address: [u8; 20]) -> u64 {
     let out = pic
         .query_call(
@@ -657,31 +659,49 @@ fn gateway_expected_nonce(pic: &PocketIc, gateway_id: Principal, address: [u8; 2
 }
 
 fn gateway_gas_price(pic: &PocketIc, gateway_id: Principal) -> u128 {
-    let out = pic
-        .query_call(
-            gateway_id,
-            Principal::anonymous(),
-            "rpc_eth_gas_price",
-            Encode!().unwrap(),
-        )
-        .unwrap();
-    let result: Result<Nat, RpcErrorView> =
-        Decode!(&out, Result<Nat, RpcErrorView>).expect("decode gas price");
-    nat_to_u128(&result.expect("gas price"))
+    for _ in 0..6 {
+        let out = pic
+            .query_call(
+                gateway_id,
+                Principal::anonymous(),
+                "rpc_eth_gas_price",
+                Encode!().unwrap(),
+            )
+            .unwrap();
+        let result: Result<Nat, RpcErrorView> =
+            Decode!(&out, Result<Nat, RpcErrorView>).expect("decode gas price");
+        match result {
+            Ok(price) => return nat_to_u128(&price),
+            Err(err) if err.error_prefix.as_deref() == Some("exec.state.unavailable") => {
+                settle(pic, 1);
+            }
+            Err(err) => panic!("gas price: {err:?}"),
+        }
+    }
+    panic!("gas price stayed unavailable");
 }
 
 fn gateway_priority_fee(pic: &PocketIc, gateway_id: Principal) -> u128 {
-    let out = pic
-        .query_call(
-            gateway_id,
-            Principal::anonymous(),
-            "rpc_eth_max_priority_fee_per_gas",
-            Encode!().unwrap(),
-        )
-        .unwrap();
-    let result: Result<Nat, RpcErrorView> =
-        Decode!(&out, Result<Nat, RpcErrorView>).expect("decode priority fee");
-    nat_to_u128(&result.expect("priority fee"))
+    for _ in 0..6 {
+        let out = pic
+            .query_call(
+                gateway_id,
+                Principal::anonymous(),
+                "rpc_eth_max_priority_fee_per_gas",
+                Encode!().unwrap(),
+            )
+            .unwrap();
+        let result: Result<Nat, RpcErrorView> =
+            Decode!(&out, Result<Nat, RpcErrorView>).expect("decode priority fee");
+        match result {
+            Ok(fee) => return nat_to_u128(&fee),
+            Err(err) if err.error_prefix.as_deref() == Some("exec.state.unavailable") => {
+                settle(pic, 1);
+            }
+            Err(err) => panic!("priority fee: {err:?}"),
+        }
+    }
+    panic!("priority fee stayed unavailable");
 }
 
 fn gateway_estimate_gas(pic: &PocketIc, gateway_id: Principal, call: RpcCallObjectView) -> u64 {
@@ -872,15 +892,21 @@ fn wait_for_unwrap_status(
     request_id: &[u8],
     expected: WrapRequestStatus,
 ) -> RequestOverview {
+    let mut last = None;
     for _ in 0..20 {
         settle(pic, 1);
         if let Some(overview) = wrap_get_request(pic, wrap_id, request_id) {
-            if overview.kind == RequestKind::Unwrap && overview.status == expected {
+            last = Some(overview.clone());
+            if matches!(
+                overview.kind,
+                RequestKind::Unwrap | RequestKind::NativeWithdrawal
+            ) && overview.status == expected
+            {
                 return overview;
             }
         }
     }
-    panic!("unwrap request did not reach expected status");
+    panic!("unwrap request did not reach expected status; last={last:?}");
 }
 
 fn wrap_get_unwrap_requirements(
@@ -1304,6 +1330,7 @@ fn integrated_gateway_native_deposit_and_withdrawal_paths_work() {
     let deposit_ok = deposit_result.expect("native deposit should succeed");
     let deposit_overview = wrap_get_request(&pic, gateway_id, &deposit_ok.request_id)
         .expect("native deposit overview");
+    assert_eq!(deposit_overview.kind, RequestKind::NativeDeposit);
     assert_eq!(deposit_overview.status, WrapRequestStatus::Succeeded);
     assert!(deposit_overview.pull_ledger_tx_id.is_some());
     assert_eq!(
@@ -1329,10 +1356,7 @@ fn integrated_gateway_native_deposit_and_withdrawal_paths_work() {
     let quote = quote_result.expect("native withdrawal quote should succeed");
     assert_eq!(quote.native_ledger_canister, native_ledger_id);
     assert_eq!(nat_to_u128(&quote.ledger_fee_e8s), 10);
-    assert_eq!(
-        nat_to_u128(&quote.receive_amount_e8s),
-        WRAP_AMOUNT_E8S - 10
-    );
+    assert_eq!(nat_to_u128(&quote.receive_amount_e8s), WRAP_AMOUNT_E8S - 10);
 
     let recipient_before = ledger_balance_of(&pic, native_ledger_id, recipient);
     let withdraw_nonce = gateway_expected_nonce(&pic, gateway_id, caller_evm);
@@ -1370,20 +1394,24 @@ fn integrated_gateway_native_deposit_and_withdrawal_paths_work() {
             gas_limit: withdraw_gas.saturating_mul(12) / 10,
         },
     );
-
-    let mut request_id = None;
-    for _ in 0..12 {
-        settle(&pic, 1);
-        let request_ids = gateway_unwrap_request_ids_by_tx_id(&pic, gateway_id, &withdraw_tx_id);
-        if request_ids.len() == 1 {
-            request_id = request_ids.into_iter().next();
-            break;
-        }
-    }
-    let request_id = request_id.expect("native withdrawal request id must resolve");
+    let withdraw_receipt = wait_for_receipt(&pic, gateway_id, &withdraw_tx_id);
+    assert_eq!(withdraw_receipt.status, 1, "native withdraw tx failed");
+    assert!(
+        withdraw_receipt
+            .logs
+            .iter()
+            .any(|log| log.address == NATIVE_WITHDRAW_PRECOMPILE_ADDRESS.into_array().to_vec()),
+        "native withdraw log missing"
+    );
+    let log_index = withdraw_receipt
+        .logs
+        .iter()
+        .position(|log| log.address == NATIVE_WITHDRAW_PRECOMPILE_ADDRESS.into_array().to_vec())
+        .expect("native withdraw log index");
+    let request_id = derive_unwrap_request_id(&withdraw_receipt.tx_id, log_index);
     let withdrawal =
         wait_for_unwrap_status(&pic, gateway_id, &request_id, WrapRequestStatus::Succeeded);
-    assert_eq!(withdrawal.kind, RequestKind::Unwrap);
+    assert_eq!(withdrawal.kind, RequestKind::NativeWithdrawal);
     assert!(withdrawal.ledger_tx_id.is_some());
     assert_eq!(
         ledger_balance_of(&pic, native_ledger_id, recipient) - recipient_before,

@@ -29,8 +29,65 @@ scripts/check_gateway_api_compat_baseline.sh
 scripts/check_gateway_matrix_sync.sh
 scripts/check_alloy_isolation.sh
 scripts/check_precompile_feature_isolation.sh
+scripts/check_verification_policy.sh
 
-cargo fmt --all -- --check
+cargo check --workspace
+scripts/verify-verus.sh
+
+# specgen injects Verus contract attributes into these pure target files.
+# rustfmt currently rewrites that layout into a shape specgen cannot parse, so
+# CI checks formatting for the rest of the Rust workspace and leaves these files
+# under the specgen gate instead.
+specgen_rustfmt_skip=(
+  "crates/verified-core/src/core_safety.rs"
+  "crates/verified-core/src/core_safety_block.rs"
+  "crates/verified-core/src/core_safety_included.rs"
+  "crates/verified-core/src/no_reorg.rs"
+  "crates/verified-core/src/prune_safety/block_prunable.rs"
+  "crates/verified-core/src/prune_safety/block_retained.rs"
+  "crates/verified-core/src/prune_safety/boundary.rs"
+  "crates/verified-core/src/prune_safety/cleanup.rs"
+  "crates/verified-core/src/prune_safety/progress.rs"
+  "crates/verified-core/src/prune_safety/query.rs"
+  "crates/verified-core/src/receipt_index.rs"
+  "crates/verified-core/src/staging.rs"
+  "crates/verified-core/src/stable_namespace.rs"
+  "crates/verified-core/src/upgrade_safety.rs"
+)
+
+workspace_rustfmt_dirs=(
+  "crates/verified-core"
+  "crates/ic-evm-address"
+  "crates/evm-db"
+  "crates/ic-evm-tx"
+  "crates/evm-core"
+  "crates/ic-evm-gateway"
+  "crates/ic-evm-rpc-types"
+  "crates/ic-evm-metrics"
+  "crates/ic-evm-ops"
+  "crates/ic-evm-rpc"
+)
+
+is_specgen_rustfmt_skipped() {
+  local rust_file="$1"
+  local skipped
+  for skipped in "${specgen_rustfmt_skip[@]}"; do
+    if [[ "${rust_file}" == "${skipped}" ]]; then
+      return 0
+    fi
+  done
+  return 1
+}
+
+rustfmt_inputs=()
+while IFS= read -r -d '' rust_file; do
+  if is_specgen_rustfmt_skipped "${rust_file}"; then
+    continue
+  fi
+  rustfmt_inputs+=("${rust_file}")
+done < <(find "${workspace_rustfmt_dirs[@]}" -name '*.rs' -print0)
+
+rustfmt --check --edition 2021 --config skip_children=true "${rustfmt_inputs[@]}"
 cargo clippy --workspace --all-targets --all-features -- -D warnings
 
 echo "[ci-github-equivalent] deny OP stack references"
@@ -68,6 +125,7 @@ find vendor/ark-relations -type f -print0 | sort -z | xargs -0 sha256sum > "${sn
 # before compiling the Rust tests in clean CI environments.
 (cd tools/wrapper-vite/contracts && forge build)
 
+cargo test -p verified-core --locked --lib --tests
 cargo test -p evm-db -p ic-evm-core -p ic-evm-gateway --locked --lib --tests
 cargo test --manifest-path crates/evm-rpc-e2e/Cargo.toml --no-run --locked
 cargo build --release --target wasm32-unknown-unknown -p ic-evm-gateway --locked

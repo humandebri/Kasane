@@ -1,0 +1,48 @@
+{
+  "target": "block_is_prunable",
+  "target_id": "69d990fce9d0d3f10ce894eabc7961b6b0f9330eb2fa48d5ecd6ff3f3b3dc7b6",
+  "slug": "block_is_prunable-04224fd7",
+  "file": "crates/verified-core/src/prune_safety/block_prunable.rs",
+  "function": "block_is_prunable",
+  "git_commit": "a3bc9781ec94f42ff9edf5612aebd4f4532e69f0",
+  "worktree_dirty": false,
+  "source_hash": "04224fd721eb346c0179a3a897953c3f7f5bed4a2f5c8204cf15ddab000034cf",
+  "semantic_hash": "c76192f60877bd0b3b3fecf672e540724f0ef2b2a562bf86319e8b669fea139a",
+  "dependency_hash_inputs": [
+    {
+      "kind": "use",
+      "name": "cfg",
+      "file": "crates/verified-core/src/prune_safety/block_prunable.rs",
+      "hash": "a5eb4157d5d32303032e3dc786e34f004ebe17f0ff1bb26f90ac9eb42478596c"
+    }
+  ],
+  "unresolved_dependencies": [],
+  "spec_source_of_truth": "accepted_json",
+  "tool_version": "0.1.0",
+  "preconditions": [
+    "true"
+  ],
+  "postconditions": [
+    "result == (retain > 0 && head > retain && block <= head - retain)"
+  ],
+  "acceptance_criteria": [
+    "A block is prunable only when retain is positive, head is beyond the retained count, and the block is at or before head - retain."
+  ],
+  "test_evidence": [
+    {
+      "scenario_id": "block_is_prunable-nominal",
+      "command": "cargo test -p verified-core prune && cargo test -p ic-evm-core prune && cargo test -p ic-evm-gateway pruned && cargo test -p ic-evm-gateway get_receipt_returns",
+      "test_name": "verified-core prune safety plus evm-core prune and gateway pruned/retained query adapter tests",
+      "recorded_at": "2026-05-16T03:08:48Z"
+    }
+  ],
+  "risk_level": "medium",
+  "verified_subject": "implementation",
+  "contract_hash": "4c24bfecde7f3fe6b6c7e82b04837ff70c7f83f25ea60f001134083a43bc4a36",
+  "applied_contract_hash": "4c24bfecde7f3fe6b6c7e82b04837ff70c7f83f25ea60f001134083a43bc4a36",
+  "applied_at": "2026-05-16T03:09:13Z",
+  "panic_behavior": "documented",
+  "overflow_behavior": "documented",
+  "rejected_behaviors": [],
+  "open_assumptions": []
+}

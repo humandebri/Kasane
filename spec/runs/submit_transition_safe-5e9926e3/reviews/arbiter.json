@@ -1,0 +1,14 @@
+{
+  "target": "submit_transition_safe",
+  "target_id": "baec1f1271718c50969143a912a7bbe24b8c2fbe800d975b302fde9b6d9c8f02",
+  "slug": "submit_transition_safe-5e9926e3",
+  "git_commit": "0e1cc96bcf8c44bcd8209096be775abafd9ae137",
+  "worktree_dirty": true,
+  "source_hash": "5e9926e385ee27de688cf107e99eccd13e8f2757b8a744c830a289080e6ed65c",
+  "semantic_hash": "7100c28757c0fd9171871615827268bf49a87efed9ba4d7bd532f84067ec568d",
+  "tool_version": "0.1.0",
+  "blocking_issues": [],
+  "human_questions": [],
+  "auto_safe_edits": [],
+  "risk": "medium"
+}

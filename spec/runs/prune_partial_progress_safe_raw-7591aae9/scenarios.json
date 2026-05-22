@@ -1,0 +1,24 @@
+{
+  "target": "prune_partial_progress_safe_raw",
+  "target_id": "46ffe8cfd2154bfbb251e536fd928bbeb0e87b0037486491a90d763237de0787",
+  "slug": "prune_partial_progress_safe_raw-7591aae9",
+  "git_commit": "e352489ad3eea17d8af4d095ff0a9b33803abc51",
+  "worktree_dirty": true,
+  "source_hash": "c6ab22f8e8e9f187fcdd99485ae56548b5945a0a6daaf6a8f0c86fb907b4951c",
+  "semantic_hash": "ced03b5267e4b198fbe6bc0ac83caaed2b77abbb4c68bace0d109aff3f435aa0",
+  "tool_version": "0.1.0",
+  "scenarios": [
+    {
+      "id": "prune_partial_progress_safe_raw-nominal",
+      "kind": "example",
+      "executable": false,
+      "inputs": {},
+      "expected": {},
+      "review_status": "accepted",
+      "status_note": "covers partial prune progress: max_ops is not exceeded, budget stop proves insufficient remaining budget, existing pruned boundary never disappears or regresses, did_work implies first progress or boundary advance, and next cursor remains after boundary",
+      "reviewed_by": "0xhude",
+      "reviewed_at": "2026-05-16T10:15:00Z",
+      "rationale": "候補:\n\n| name | args | expected | 狙い |\n|---|---:|---:|---|\n| empty_no_work | `(0,0,0,0,0,10,0,1,0,0)` | `true` | 状態なし、作業なし |\n| next_created_no_work | `(0,0,1,5,6,10,0,1,0,0)` | `true` | next あり、cursor 境界成立 |\n| initial_work | `(0,0,1,0,1,10,3,4,1,0)` | `true` | previous なしで作業発生 |\n| same_boundary_no_work | `(1,5,1,5,6,10,2,4,0,0)` | `true` | previous 継続、境界不変 |\n| advanced_with_work | `(1,5,1,6,7,10,6,4,1,0)` | `true` | previous あり、作業で境界前進 |\n| stopped_needed_gt_max | `(0,0,1,5,6,10,2,11,0,1)` | `true` | 次操作が max 超過 |\n| stopped_remaining_lt_used | `(1,5,1,5,6,10,3,8,0,1)` | `true` | 予約後残量 `< ops_used` |\n\n偽ケース:\n\n| name | args | expected | 違反条件 |\n|---|---:|---:|---|\n| invalid_flag | `(2,0,0,0,0,10,0,1,0,0)` | `false` | present flag が 0/1 外 |\n| ops_over_budget | `(0,0,0,0,0,10,11,1,0,0)` | `false` | `ops_used > max_ops` |\n| work_without_next | `(0,0,0,0,0,10,1,1,1,0)` | `false` | `did_work` なのに next なし |\n| previous_without_next | `(1,5,0,0,0,10,1,1,0,0)` | `false` | previous あり、next なし |\n| work_without_advance | `(1,5,1,5,6,10,1,1,1,0)` | `false` | 作業したが境界前進なし |\n| changed_without_work | `(1,5,1,6,7,10,1,1,0,0)` | `false` | 境界変更だが `did_work == 0` |\n| boundary_regressed | `(1,5,1,4,6,10,1,1,1,0)` | `false` | 境界後退 |\n| cursor_not_after_boundary | `(0,0,1,5,5,10,1,1,0,0)` | `false` | `next_boundary < next_cursor` 不成立 |\n| stopped_without_next | `(0,0,0,0,0,10,1,11,0,1)` | `false` | budget stop だが next なし |\n| stopped_budget_not_exhausted | `(1,5,1,5,6,10,2,8,0,1)` | `false` | `10 - 8 < 2` が偽 |"
+    }
+  ]
+}

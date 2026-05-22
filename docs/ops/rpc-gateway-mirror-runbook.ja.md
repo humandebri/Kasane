@@ -70,6 +70,8 @@ git branch -D gateway-split
 注:
 - `KASANE_MIRROR_PAT` が未設定だと workflow は失敗する。
 - org権限不足で repo 作成に失敗する場合は、先に手動で repo を作成する。
+- `tools/rpc-gateway/.github/workflows/*` は subtree 配下に置く。split 後は `kasane-network/rpc-gateway` の root workflow になる。
+- Cloudflare deploy workflow を monorepo root へ移動しない。ミラー先の deploy workflow が消え、monorepo 側から重複 deploy するリスクがある。
 
 ## 失敗時リカバリ
 - push 拒否/履歴衝突時:

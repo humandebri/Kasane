@@ -50,6 +50,7 @@ pub struct UnwrapDispatchRequest {
     pub ledger_tx_id: Option<Vec<u8>>,
     pub error_code: Option<String>,
     pub updated_at: u64,
+    pub transfer_created_at_time: u64,
 }
 
 impl Storable for UnwrapDispatchRequest {
@@ -88,6 +89,7 @@ impl UnwrapDispatchRequest {
             ledger_tx_id: None,
             error_code: Some(UNWRAP_DECODE_FAILURE_CODE.to_string()),
             updated_at: 0,
+            transfer_created_at_time: 0,
         }
     }
 
@@ -114,7 +116,7 @@ impl UnwrapDispatchRequest {
             return None;
         }
         let mut out = Vec::with_capacity(256);
-        out.push(1u8);
+        out.push(2u8);
         write_bytes(&mut out, &self.asset_id)?;
         out.extend_from_slice(&self.amount);
         write_bytes(&mut out, &self.recipient)?;
@@ -134,6 +136,7 @@ impl UnwrapDispatchRequest {
             None => out.push(0u8),
         }
         out.extend_from_slice(&self.updated_at.to_be_bytes());
+        out.extend_from_slice(&self.transfer_created_at_time.to_be_bytes());
         let checksum = crc32_ieee(&out);
         out.extend_from_slice(&checksum.to_be_bytes());
         Some(out)
@@ -143,7 +146,7 @@ impl UnwrapDispatchRequest {
         let mut offset = 0usize;
         let version = *data.get(offset)?;
         offset += 1;
-        if version != 1 {
+        if version != 1 && version != 2 {
             return None;
         }
         let asset_id = read_bytes(data, &mut offset, MAX_BLOB_LEN)?;
@@ -174,6 +177,11 @@ impl UnwrapDispatchRequest {
             _ => return None,
         };
         let updated_at = read_u64(data, &mut offset)?;
+        let transfer_created_at_time = if version == 2 {
+            read_u64(data, &mut offset)?
+        } else {
+            0
+        };
         let remaining = data.len().checked_sub(offset)?;
         if remaining != CHECKSUM_LEN {
             return None;
@@ -193,6 +201,7 @@ impl UnwrapDispatchRequest {
             ledger_tx_id,
             error_code,
             updated_at,
+            transfer_created_at_time,
         })
     }
 }
@@ -263,6 +272,7 @@ mod tests {
             ledger_tx_id: Some(vec![0x55u8; 8]),
             error_code: Some("wrap.sample".to_string()),
             updated_at: 11,
+            transfer_created_at_time: 12,
         }
     }
 

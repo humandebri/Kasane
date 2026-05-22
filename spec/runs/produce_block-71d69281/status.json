@@ -1,0 +1,11 @@
+{
+  "target": "produce_block-71d69281",
+  "check_result": "fail",
+  "stale_reasons": [
+    "unresolved dependencies: Address::from, ChainError::InvariantViolation, ExecError::TxError, PreparedItem::Drop, PreparedItem::Tx, StoredTx::try_from, Vec::with_capacity, as_slice, clone, collect, commit, commit_state_diff_to_db, compute_effective_gas_price, compute_next_base_fee, crate::fee_recipient, crate::time::now_sec, decode_tx, enumerate, execute_tx_on, get, hash::block_hash, hash::keccak256_concat_chunks, hash::tx_list_hash, insert, into_iter, is_empty, is_none, iter, len, map_err, ok_or, push, record_block, record_drop, record_included, saturating_add, set, to_string, trie_commit::apply, trie_commit::prepare, try_address_to_bytes, u32::try_from, unwrap_or, verified_core::block::add_block_gas_used, verified_core::block::next_block_number, verified_core::block::next_block_timestamp, verified_core::block::tx_fits_block_gas, verified_core::block::valid_block_limit, verified_core::block_persist::classify_persist_batch, verified_core::tx_index::next_included_index, with_state, with_state_mut"
+  ],
+  "drift_reasons": [
+    "unresolved dependencies"
+  ],
+  "dirty_paths": []
+}

@@ -2,6 +2,8 @@
 
 import assert from "node:assert/strict";
 import { generateKeyPairSync } from "node:crypto";
+import { IDL } from "@icp-sdk/core/candid";
+import { idlFactory } from "../src/candid.js";
 import { bytesToQuantity, parseDataHex, parseQuantityHex, toDataHex, toQuantityHex } from "../src/hex.js";
 import { handleRpc } from "../src/handlers.js";
 import { computeDepth, validateRequest } from "../src/jsonrpc.js";
@@ -31,10 +33,15 @@ import {
   __test_to_candid_call_object,
   __test_map_tx,
 } from "../src/handlers.js";
-import { loadConfig } from "../src/config.js";
-import { __test_assert_canister_compatibility, __test_create_retryable_promise_cache } from "../src/client.js";
+import { configureGateway, loadConfig } from "../src/config.js";
+import {
+  __test_assert_canister_compatibility,
+  __test_create_retryable_promise_cache,
+  __test_identity_from_current_config,
+} from "../src/client.js";
 import { identityFromPem } from "../src/identity.js";
 import { __test_resolve_cors_allow_origin } from "../src/server.js";
+import worker from "../src/worker.js";
 
 function testHex(): void {
   assert.equal(toDataHex(Uint8Array.from([0, 1, 255])), "0x0001ff");
@@ -55,18 +62,93 @@ function testJsonRpc(): void {
   assert.equal(depth, 5);
 }
 
-function testConfigIdentityPemPath(): void {
+async function testParamShapeErrorsReturnInvalidParams(): Promise<void> {
+  const out = await handleRpc({ jsonrpc: "2.0", id: 1, method: "eth_getBalance", params: [] });
+  assert.equal(jsonRpcErrorCode(out), -32602);
+}
+
+function testOpsStatusCandidProjection(): void {
+  const service = idlFactory({ IDL }).display();
+  assert.match(
+    service,
+    /get_ops_status:\(\) -> \(record \{needs_migration:bool; critical_corrupt:bool; schema_version:nat32\}\) query/
+  );
+
+  const fullOpsStatus = IDL.Record({
+    needs_migration: IDL.Bool,
+    critical_corrupt: IDL.Bool,
+    decode_failure_last_ts: IDL.Nat64,
+    log_filter_override: IDL.Opt(IDL.Text),
+    last_cycle_balance: IDL.Nat,
+    mode: IDL.Variant({ Normal: IDL.Null }),
+    last_check_ts: IDL.Nat64,
+    mining_error_count: IDL.Nat64,
+    log_truncated_count: IDL.Nat64,
+    query_instruction_soft_limit: IDL.Nat64,
+    schema_version: IDL.Nat32,
+    update_instruction_soft_limit: IDL.Nat64,
+    safe_stop_latched: IDL.Bool,
+    decode_failure_last_label: IDL.Opt(IDL.Text),
+    prune_error_count: IDL.Nat64,
+    block_gas_limit: IDL.Nat64,
+    config: IDL.Record({
+      low_watermark: IDL.Nat,
+      critical: IDL.Nat,
+      freeze_on_critical: IDL.Bool,
+    }),
+    decode_failure_count: IDL.Nat64,
+  });
+  const gatewayProjection = IDL.Record({
+    needs_migration: IDL.Bool,
+    critical_corrupt: IDL.Bool,
+    schema_version: IDL.Nat32,
+  });
+  const encoded = IDL.encode([fullOpsStatus], [
+    {
+      needs_migration: false,
+      critical_corrupt: false,
+      decode_failure_last_ts: 1n,
+      log_filter_override: [],
+      last_cycle_balance: 2n,
+      mode: { Normal: null },
+      last_check_ts: 3n,
+      mining_error_count: 0n,
+      log_truncated_count: 0n,
+      query_instruction_soft_limit: 10_000_000n,
+      schema_version: 6,
+      update_instruction_soft_limit: 4_000_000_000n,
+      safe_stop_latched: false,
+      decode_failure_last_label: ["unwrap_request"],
+      prune_error_count: 0n,
+      block_gas_limit: 12_000_000n,
+      config: {
+        low_watermark: 2_000_000_000_000n,
+        critical: 1_000_000_000_000n,
+        freeze_on_critical: true,
+      },
+      decode_failure_count: 1n,
+    },
+  ]);
+  const [decoded] = IDL.decode([gatewayProjection], encoded);
+  assert.deepEqual(decoded, {
+    needs_migration: false,
+    critical_corrupt: false,
+    schema_version: 6,
+  });
+}
+
+function testConfigIdentityPem(): void {
   const withPem = loadConfig({
     EVM_CANISTER_ID: "aaaaa-aa",
-    RPC_GATEWAY_IDENTITY_PEM_PATH: " /tmp/rpc-gateway.pem ",
+    RPC_GATEWAY_IDENTITY_PEM: " pem-body ",
   });
-  assert.equal(withPem.identityPemPath, "/tmp/rpc-gateway.pem");
+  assert.equal(withPem.identityPem, "pem-body");
 
   const withoutPem = loadConfig({
     EVM_CANISTER_ID: "aaaaa-aa",
-    RPC_GATEWAY_IDENTITY_PEM_PATH: "   ",
+    RPC_GATEWAY_IDENTITY_PEM: "   ",
   });
-  assert.equal(withoutPem.identityPemPath, null);
+  assert.equal(withoutPem.identityPem, null);
 }
 
 function testConfigCorsOrigins(): void {
@@ -130,6 +212,17 @@ function testIdentityFromEd25519Pem(): void {
   assert.notEqual(identity.getPrincipal().toText(), "2vxsx-fae");
 }
 
+function testIdentityFromSecretPem(): void {
+  const pair = generateKeyPairSync("ed25519");
+  const pem = pair.privateKey.export({ format: "pem", type: "pkcs8" }).toString();
+  configureGateway({
+    EVM_CANISTER_ID: "aaaaa-aa",
+    RPC_GATEWAY_IDENTITY_PEM: pem,
+  });
+  const withSecret = __test_identity_from_current_config();
+  assert.notEqual(withSecret?.getPrincipal().toText(), "2vxsx-fae");
+}
+
 function testCallParamsDefaultBlockTag(): void {
   const [callOnly, defaultTag] = __test_as_call_params([{ to: "0x0000000000000000000000000000000000000000" }]);
   assert.equal(typeof callOnly, "object");
@@ -190,6 +283,10 @@ function testPriorityFeeComputation(): void {
       gas_price: [],
       max_fee_per_gas: [100n],
       max_priority_fee_per_gas: [5n],
+      tx_type: [2],
+      signature_v: [],
+      signature_r: [],
+      signature_s: [],
     },
     97n
   );
@@ -207,6 +304,10 @@ function testPriorityFeeComputation(): void {
       gas_price: [120n],
       max_fee_per_gas: [],
       max_priority_fee_per_gas: [],
+      tx_type: [0],
+      signature_v: [],
+      signature_r: [],
+      signature_s: [],
     },
     100n
   );
@@ -379,7 +480,9 @@ function testReceiptLogMapping(): void {
       operator_fee: 0n,
       eth_tx_hash: [Uint8Array.from(Buffer.from("33".repeat(32), "hex"))],
       gas_used: 21_000n,
+      cumulative_gas_used: [42_000n],
       contract_address: [],
+      tx_type: [2],
       tx_hash: Uint8Array.from(Buffer.from("44".repeat(32), "hex")),
     },
     Uint8Array.from(Buffer.from("55".repeat(32), "hex"))
@@ -387,6 +490,8 @@ function testReceiptLogMapping(): void {
   assert.equal(mapped.blockHash, `0x${"88".repeat(32)}`);
   assert.equal(mapped.from, `0x${"66".repeat(20)}`);
   assert.equal(mapped.to, `0x${"77".repeat(20)}`);
+  assert.equal(mapped.cumulativeGasUsed, "0xa410");
+  assert.equal(mapped.type, "0x2");
   const logs = mapped.logs as Array<Record<string, unknown>>;
   assert.equal(logs.length, 1);
   const log0 = logs[0];
@@ -396,6 +501,31 @@ function testReceiptLogMapping(): void {
   assert.equal(log0.blockHash, `0x${"88".repeat(32)}`);
   assert.equal(log0.transactionIndex, "0x2");
   assert.equal(log0.logIndex, "0x7");
+
+  const legacyCompatible = __test_map_receipt(
+    {
+      to: [],
+      effective_gas_price: 1n,
+      status: 1,
+      l1_data_fee: 0n,
+      tx_index: 0,
+      block_hash: [],
+      from: [],
+      logs: [],
+      total_fee: 0n,
+      block_number: 5n,
+      operator_fee: 0n,
+      eth_tx_hash: [],
+      gas_used: 21_000n,
+      cumulative_gas_used: [],
+      contract_address: [],
+      tx_type: [],
+      tx_hash: Uint8Array.from(Buffer.from("44".repeat(32), "hex")),
+    },
+    Uint8Array.from(Buffer.from("55".repeat(32), "hex"))
+  );
+  assert.equal(legacyCompatible.cumulativeGasUsed, "0x5208");
+  assert.equal(legacyCompatible.type, "0x0");
 }
 
 function testReceiptHashStrictMatch(): void {
@@ -415,7 +545,9 @@ function testReceiptHashStrictMatch(): void {
       operator_fee: 0n,
       eth_tx_hash: [requested],
       gas_used: 21_000n,
+      cumulative_gas_used: [21_000n],
       contract_address: [],
+      tx_type: [0],
       tx_hash: Uint8Array.from(Buffer.from("44".repeat(32), "hex")),
     },
     Uint8Array.from(Buffer.from("55".repeat(32), "hex"))
@@ -437,7 +569,9 @@ function testReceiptHashStrictMatch(): void {
       operator_fee: 0n,
       eth_tx_hash: [Uint8Array.from(Buffer.from("bb".repeat(32), "hex"))],
       gas_used: 21_000n,
+      cumulative_gas_used: [21_000n],
       contract_address: [],
+      tx_type: [0],
       tx_hash: Uint8Array.from(Buffer.from("44".repeat(32), "hex")),
     },
     Uint8Array.from(Buffer.from("55".repeat(32), "hex"))
@@ -513,12 +647,51 @@ function testEip1559GasPriceFallback(): void {
         max_fee_per_gas: [16n],
         max_priority_fee_per_gas: [1n],
         chain_id: [1n],
+        tx_type: [2],
+        signature_v: [1n],
+        signature_r: [Uint8Array.from(Buffer.from("01".padStart(64, "0"), "hex"))],
+        signature_s: [Uint8Array.from(Buffer.from("02".padStart(64, "0"), "hex"))],
       },
     ],
   });
   assert.equal(mapped.gasPrice, "0x10");
   assert.equal(mapped.maxFeePerGas, "0x10");
   assert.equal(mapped.maxPriorityFeePerGas, "0x1");
+  assert.equal(mapped.type, "0x2");
+  assert.equal(mapped.v, "0x1");
+  assert.equal(mapped.r, "0x1");
+  assert.equal(mapped.s, "0x2");
+
+  const legacyCompatible = __test_map_tx({
+    raw: Uint8Array.from([]),
+    tx_index: [],
+    block_hash: [],
+    decode_ok: true,
+    hash: Uint8Array.from(Buffer.from("11".repeat(32), "hex")),
+    kind: { EthSigned: null },
+    block_number: [],
+    eth_tx_hash: [],
+    decoded: [
+      {
+        from: Uint8Array.from(Buffer.from("33".repeat(20), "hex")),
+        to: [],
+        nonce: 1n,
+        value: Uint8Array.from(new Array(32).fill(0)),
+        input: Uint8Array.from([]),
+        gas_limit: 21_000n,
+        gas_price: [1n],
+        max_fee_per_gas: [],
+        max_priority_fee_per_gas: [],
+        chain_id: [1n],
+        tx_type: [],
+        signature_v: [],
+        signature_r: [],
+        signature_s: [],
+      },
+    ],
+  });
+  assert.equal(legacyCompatible.type, "0x0");
+  assert.equal(legacyCompatible.v, "0x0");
 }
 
 function testSubmitEthHashResolutionPolicy(): void {
@@ -694,6 +867,64 @@ async function testGetLogsFilterParsing(): Promise<void> {
     assert.equal(withOrTopic.value.candidFilters.length, 2);
     assert.equal(withOrTopic.value.candidFilters[0]?.topic0.length, 1);
     assert.equal(withOrTopic.value.candidFilters[1]?.topic0.length, 1);
+    assert.deepEqual(withOrTopic.value.candidFilters[0]?.from_block, [1n]);
+    assert.deepEqual(withOrTopic.value.candidFilters[0]?.to_block, [1n]);
+  }
+
+  const withAddressArray = await __test_parse_logs_filter(
+    {
+      address: [
+        "0x0000000000000000000000000000000000000001",
+        "0x0000000000000000000000000000000000000002",
+      ],
+    },
+    7n
+  );
+  assert.ok(!("error" in withAddressArray));
+  if (!("error" in withAddressArray)) {
+    assert.equal(withAddressArray.value.candidFilters.length, 2);
+    assert.deepEqual(withAddressArray.value.candidFilters[0]?.from_block, [7n]);
+    assert.deepEqual(withAddressArray.value.candidFilters[0]?.to_block, [7n]);
+  }
+
+  const withinFilterLimit = await __test_parse_logs_filter(
+    {
+      address: Array.from(
+        { length: 4 },
+        (_, index) => `0x${(index + 1).toString(16).padStart(40, "0")}`
+      ),
+      topics: [
+        Array.from(
+          { length: 4 },
+          (_, index) => `0x${(index + 1).toString(16).padStart(64, "0")}`
+        ),
+      ],
+    },
+    7n
+  );
+  assert.ok(!("error" in withinFilterLimit));
+  if (!("error" in withinFilterLimit)) {
+    assert.equal(withinFilterLimit.value.candidFilters.length, 16);
+  }
+
+  const overFilterLimit = await __test_parse_logs_filter(
+    {
+      address: Array.from(
+        { length: 5 },
+        (_, index) => `0x${(index + 1).toString(16).padStart(40, "0")}`
+      ),
+      topics: [
+        Array.from(
+          { length: 4 },
+          (_, index) => `0x${(index + 1).toString(16).padStart(64, "0")}`
+        ),
+      ],
+    },
+    7n
+  );
+  assert.ok("error" in overFilterLimit);
+  if ("error" in overFilterLimit) {
+    assert.equal(overFilterLimit.error, "address/topics OR combinations are limited to 16");
   }
 }
 
@@ -713,6 +944,7 @@ function testLogSortOrder(): void {
       log_index: 1,
       data: Uint8Array.from([0x02]),
       block_number: 10n,
+      block_hash: [],
       topics: [],
       address: Uint8Array.from(new Array(20).fill(0x11)),
       eth_tx_hash: [],
@@ -723,6 +955,7 @@ function testLogSortOrder(): void {
       log_index: 0,
       data: Uint8Array.from([0x00]),
       block_number: 9n,
+      block_hash: [],
       topics: [],
       address: Uint8Array.from(new Array(20).fill(0x11)),
       eth_tx_hash: [],
@@ -733,6 +966,7 @@ function testLogSortOrder(): void {
       log_index: 0,
       data: Uint8Array.from([0x01]),
       block_number: 10n,
+      block_hash: [],
       topics: [],
       address: Uint8Array.from(new Array(20).fill(0x11)),
       eth_tx_hash: [],
@@ -817,6 +1051,71 @@ async function testRetryablePromiseCache(): Promise<void> {
   assert.equal(attempts, 2);
 }
 
+async function testWorkerPostSingleAndBatch(): Promise<void> {
+  const env = { EVM_CANISTER_ID: "aaaaa-aa" };
+  const single = await worker.fetch(
+    new Request("https://rpc-staging.kasane.network", {
+      method: "POST",
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "unknown_method" }),
+    }),
+    env
+  );
+  assert.equal(single.status, 200);
+  const singleBody: unknown = await single.json();
+  assert.equal(jsonRpcErrorCode(singleBody), -32601);
+
+  const batch = await worker.fetch(
+    new Request("https://rpc-staging.kasane.network", {
+      method: "POST",
+      body: JSON.stringify([
+        { jsonrpc: "2.0", id: 1, method: "unknown_method" },
+        { jsonrpc: "2.0", id: 2, method: "unknown_method" },
+      ]),
+    }),
+    env
+  );
+  assert.equal(batch.status, 200);
+  const batchBody: unknown = await batch.json();
+  assert.equal(Array.isArray(batchBody) ? batchBody.length : 0, 2);
+}
+
+async function testWorkerOptionsGetAndNotification(): Promise<void> {
+  const env = { EVM_CANISTER_ID: "aaaaa-aa", RPC_GATEWAY_CORS_ORIGIN: "https://kasane.network" };
+  const options = await worker.fetch(
+    new Request("https://rpc-staging.kasane.network", {
+      method: "OPTIONS",
+      headers: { origin: "https://kasane.network" },
+    }),
+    env
+  );
+  assert.equal(options.status, 204);
+  assert.equal(options.headers.get("access-control-allow-origin"), "https://kasane.network");
+
+  const get = await worker.fetch(new Request("https://rpc-staging.kasane.network"), env);
+  assert.equal(get.status, 405);
+
+  const notification = await worker.fetch(
+    new Request("https://rpc-staging.kasane.network", {
+      method: "POST",
+      body: JSON.stringify({ jsonrpc: "2.0", method: "web3_clientVersion" }),
+    }),
+    env
+  );
+  assert.equal(notification.status, 204);
+  assert.equal(await notification.text(), "");
+}
+
+async function testWorkerBodyLimit(): Promise<void> {
+  const res = await worker.fetch(
+    new Request("https://rpc-staging.kasane.network", {
+      method: "POST",
+      body: "x".repeat(1025),
+    }),
+    { EVM_CANISTER_ID: "aaaaa-aa", RPC_GATEWAY_MAX_HTTP_BODY_SIZE: "1024" }
+  );
+  assert.equal(res.status, 413);
+}
+
 function testRpcErrorPrefixPassthrough(): void {
   const mapped = __test_map_rpc_error(
     1,
@@ -840,13 +1139,26 @@ function testRpcErrorPrefixPassthrough(): void {
   });
 }
 
+function jsonRpcErrorCode(value: unknown): number | undefined {
+  if (typeof value !== "object" || value === null || !("error" in value)) {
+    return undefined;
+  }
+  const error = value.error;
+  if (typeof error !== "object" || error === null || !("code" in error)) {
+    return undefined;
+  }
+  return typeof error.code === "number" ? error.code : undefined;
+}
+
 testHex();
 testJsonRpc();
-testConfigIdentityPemPath();
+testOpsStatusCandidProjection();
+testConfigIdentityPem();
 testConfigCorsOrigins();
 testConfigLogsBlockhashScanLimit();
 testCorsAllowOriginResolution();
 testIdentityFromEd25519Pem();
+testIdentityFromSecretPem();
 testCallParamsDefaultBlockTag();
 testTxCountParamsDefaultBlockTag();
 testLatestTagNormalization();
@@ -871,10 +1183,14 @@ testGetLogsErrorMapping();
 testLogSortOrder();
 
 async function main(): Promise<void> {
+  await testParamShapeErrorsReturnInvalidParams();
   await testInvalidTxHashReturnsInvalidParams();
   await testGetLogsFilterParsing();
   await testCanisterCompatibilityProbe();
   await testRetryablePromiseCache();
+  await testWorkerPostSingleAndBatch();
+  await testWorkerOptionsGetAndNotification();
+  await testWorkerBodyLimit();
   console.log("ok");
 }
 

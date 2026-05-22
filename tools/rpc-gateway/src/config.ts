@@ -8,7 +8,7 @@ export type GatewayConfig = {
   canisterId: string;
   icHost: string;
   fetchRootKey: boolean;
-  identityPemPath: string | null;
+  identityPem: string | null;
   host: string;
   port: number;
   clientVersion: string;
@@ -20,14 +20,18 @@ export type GatewayConfig = {
   corsOrigins: string[];
 };
 
-export function loadConfig(env: Record<string, string | undefined>): GatewayConfig {
+type LoadConfigOptions = {
+  requireCanisterId?: boolean;
+};
+
+export function loadConfig(env: Record<string, string | undefined>, options: LoadConfigOptions = {}): GatewayConfig {
   const rpcSemanticsVersion = parseOptionalNonEmpty(env.RPC_SEMANTICS_VERSION) ?? "kasane-rpc-semantics/v1";
   const baseClientVersion = env.RPC_GATEWAY_CLIENT_VERSION ?? "kasane/phase2-gateway/v0.1.0";
   return {
-    canisterId: required(env.EVM_CANISTER_ID, "EVM_CANISTER_ID is required"),
+    canisterId: parseCanisterId(env.EVM_CANISTER_ID, options.requireCanisterId === true),
     icHost: env.RPC_GATEWAY_IC_HOST ?? "https://icp-api.io",
     fetchRootKey: parseBool(env.RPC_GATEWAY_FETCH_ROOT_KEY),
-    identityPemPath: parseOptionalNonEmpty(env.RPC_GATEWAY_IDENTITY_PEM_PATH),
+    identityPem: parseOptionalNonEmpty(env.RPC_GATEWAY_IDENTITY_PEM),
     host: env.RPC_GATEWAY_HOST ?? "127.0.0.1",
     port: parseRangeInt(env.RPC_GATEWAY_PORT, 8545, 1, 65535),
     clientVersion: `${baseClientVersion} ${rpcSemanticsVersion}`,
@@ -40,9 +44,17 @@ export function loadConfig(env: Record<string, string | undefined>): GatewayConf
   };
 }
 
-function required(value: string | undefined, message: string): string {
+export function configureGateway(env: Record<string, string | undefined>, options: LoadConfigOptions = {}): void {
+  const next = loadConfig(env, options);
+  Object.assign(CONFIG, next);
+}
+
+function parseCanisterId(value: string | undefined, required: boolean): string {
   if (!value) {
-    throw new Error(message);
+    if (required) {
+      throw new Error("EVM_CANISTER_ID is required");
+    }
+    return "";
   }
   return value;
 }

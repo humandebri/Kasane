@@ -1,0 +1,99 @@
+{
+  "target": "block_commit_safe",
+  "entry": {
+    "display_name": "block_commit_safe",
+    "function": "block_commit_safe",
+    "function_path": "block_commit_safe",
+    "file": "crates/verified-core/src/core_safety.rs",
+    "target_id": "f78b627b3c50b2b537b6c9b3c3e421616567b590d46c11621c781e99c5aec562",
+    "slug": "block_commit_safe-9ce347ac",
+    "source_hash": "9ce347ac9e0c4f7f51bc344f0f3e6e70a86210a46865b67862551dd106555c0f",
+    "semantic_hash": "5faabe5ff1b9ce811054fe93bfb04e7cd61f3fb74bd18a081bfb35d8a3fbe9eb",
+    "created_at": "2026-05-15T11:47:15Z"
+  },
+  "signature": "#[cfg_attr(verus_keep_ghost, verus_spec(safe => ensures\n    safe == (\n        facts.committed_head >= facts.previous_head\n        && (facts.block_gas_limit == 0 || facts.block_gas_used <= facts.block_gas_limit)\n        &&\n        facts.included_count != 0\n        && facts.included_count == facts.staged_count\n        && facts.safe_included_count == facts.included_count\n    ),\n))]\npub fn block_commit_safe(facts: BlockCommitFacts) -> bool",
+  "body": "{\n    facts.committed_head >= facts.previous_head\n        && (facts.block_gas_limit == 0 || facts.block_gas_used <= facts.block_gas_limit)\n        && facts.included_count != 0\n        && facts.included_count == facts.staged_count\n        && facts.safe_included_count == facts.included_count\n}",
+  "span": {
+    "start_line": 139,
+    "end_line": 155
+  },
+  "git_commit": "a848c3ce3ac0221f613064663c95db4fb6c796ea",
+  "worktree_dirty": false,
+  "source_hash": "9ce347ac9e0c4f7f51bc344f0f3e6e70a86210a46865b67862551dd106555c0f",
+  "semantic_hash": "4bd83c9c41b97ec2e4485d03356a8b305fb17f79f3a8ab44fc50b894e77a0f51",
+  "dependency_hash_inputs": [
+    {
+      "kind": "use",
+      "name": "use",
+      "file": "crates/verified-core/src/core_safety.rs",
+      "hash": "7d5ba143c5463479efa65da4c687814f3185962004647e24fff03819c505216e"
+    },
+    {
+      "kind": "use",
+      "name": "use",
+      "file": "crates/verified-core/src/core_safety.rs",
+      "hash": "ae81f640ac5190ea34120ae3a4959cd38e408805f28539c0aeafd5ffe3540c10"
+    },
+    {
+      "kind": "use",
+      "name": "use",
+      "file": "crates/verified-core/src/core_safety.rs",
+      "hash": "4ed438ef59124f357e377fc68ce5f536f819c97fd6769da007e39fc524ac75e9"
+    },
+    {
+      "kind": "use",
+      "name": "use",
+      "file": "crates/verified-core/src/core_safety.rs",
+      "hash": "55bf30758ecee0b45c1fcf2a1f3ab3bb4b903ef4549f6e81be6fbb693a3eaa7c"
+    },
+    {
+      "kind": "use",
+      "name": "cfg",
+      "file": "crates/verified-core/src/core_safety.rs",
+      "hash": "a5eb4157d5d32303032e3dc786e34f004ebe17f0ff1bb26f90ac9eb42478596c"
+    },
+    {
+      "kind": "use",
+      "name": "cfg",
+      "file": "crates/verified-core/src/core_safety.rs",
+      "hash": "ce570c90acdfbe9d33584f69ac5118659d5f4d695e5a81cee75bc720bae2e0cf"
+    },
+    {
+      "kind": "module",
+      "name": "cfg",
+      "file": "crates/verified-core/src/core_safety.rs",
+      "hash": "9b368b9979d7aa03db6a617147d0181b4275b5734bb26fd88db24e6eef8701ca"
+    },
+    {
+      "kind": "use",
+      "name": "use",
+      "file": "crates/verified-core/src/core_safety.rs",
+      "hash": "27decd0018094b643137c437830742f4ab13ca2de9cdfe9848b61e26f6cdb2a4"
+    },
+    {
+      "kind": "use",
+      "name": "use",
+      "file": "crates/verified-core/src/core_safety.rs",
+      "hash": "4ed438ef59124f357e377fc68ce5f536f819c97fd6769da007e39fc524ac75e9"
+    },
+    {
+      "kind": "type",
+      "name": "verus_keep_ghost",
+      "file": "crates/verified-core/src/core_safety.rs",
+      "hash": "06549d15b3917158c87f19dca304898b01f7ba146bb553cc446d65186e0a0316"
+    }
+  ],
+  "unresolved_dependencies": [],
+  "tool_version": "0.1.0",
+  "cfg": [],
+  "features": [],
+  "types": [],
+  "called_functions": [],
+  "callers": [],
+  "tests": [],
+  "panic_sites": [],
+  "overflow_sites": [],
+  "casts": [],
+  "division_sites": [],
+  "llm_context_files": []
+}

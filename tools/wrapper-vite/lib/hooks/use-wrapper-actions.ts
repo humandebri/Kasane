@@ -2,7 +2,6 @@
 
 import { useCallback, useEffect, useState } from "react";
 import type {
-  HistoryEntry,
   UnwrapFormState,
   WrapActionStep,
   WrapFormState,
@@ -14,6 +13,7 @@ import {
 } from "@/lib/canister/wrapper-client";
 import {
   getUnwrapRequirements,
+  getWrapRuntimeConfig,
   quoteNativeDeposit,
   quoteNativeWithdrawal,
   quoteWrapRequest,
@@ -91,13 +91,6 @@ type WrapperFormsState = {
   resetUnwrapNonceDeadline: () => void;
   refreshWrapNonce: () => Promise<void>;
 };
-
-function persistSubmittedRequest(
-  onRequestSubmitted: (entry: HistoryEntry) => Promise<void> | void,
-  entry: HistoryEntry,
-): void {
-  void Promise.resolve(onRequestSubmitted(entry)).catch(() => undefined);
-}
 
 async function sleep(ms: number): Promise<void> {
   await new Promise((resolve) => {
@@ -188,6 +181,10 @@ function clearNativeDepositDraft(key: string): void {
   saveNativeDepositDrafts(drafts);
 }
 
+function isNativeWithdrawalAssetId(assetId: string, nativeLedgerCanister: string): boolean {
+  return assetId === nativeLedgerCanister;
+}
+
 async function waitForTransactionFinal(args: {
   rpcUrl: string;
   explorerBaseUrl: string | null;
@@ -213,20 +210,30 @@ async function waitForTransactionFinal(args: {
 async function finishSubmittedUnwrapRequest(args: {
   requestIdHex: string;
   onRequestIdInput: (requestId: string) => void;
-  onRequestSubmitted: (entry: HistoryEntry) => Promise<void> | void;
   startPollingSubmittedRequest: (requestIdHex: string) => Promise<void>;
   setMessage: (value: string | null) => void;
   resetUnwrapNonceDeadline: () => void;
 }): Promise<void> {
   args.onRequestIdInput(args.requestIdHex);
   await args.startPollingSubmittedRequest(args.requestIdHex);
-  persistSubmittedRequest(args.onRequestSubmitted, {
-    requestId: args.requestIdHex,
-    kind: "unwrap",
-    submittedAt: new Date().toISOString(),
-  });
   args.setMessage("submit.success");
   args.resetUnwrapNonceDeadline();
+}
+
+async function finishSubmittedWrapRequest(args: {
+  requestIdHex: string;
+  nativeDepositDraftKey: string | null;
+  clearNativeDepositDraft: (key: string) => void;
+  setLastSubmittedWrapRequestId: (requestId: string) => void;
+  onRequestIdInput: (requestId: string) => void;
+  startPollingSubmittedRequest: (requestIdHex: string) => Promise<void>;
+}): Promise<void> {
+  if (args.nativeDepositDraftKey !== null) {
+    args.clearNativeDepositDraft(args.nativeDepositDraftKey);
+  }
+  args.setLastSubmittedWrapRequestId(args.requestIdHex);
+  args.onRequestIdInput(args.requestIdHex);
+  await args.startPollingSubmittedRequest(args.requestIdHex);
 }
 
 export function useWrapperActions(params: {
@@ -238,7 +245,6 @@ export function useWrapperActions(params: {
   getCaller: () => Promise<AuthenticatedCaller | null>;
   forms: WrapperFormsState;
   tracker: StatusTrackerState;
-  onRequestSubmitted: (entry: HistoryEntry) => Promise<void> | void;
   onRequestIdInput: (requestId: string) => void;
   onMetaMaskTransactionSubmitted: (transactionHash: string) => void;
   onWrapActionStepChange: (step: WrapActionStep) => void;
@@ -373,15 +379,15 @@ export function useWrapperActions(params: {
       blockExplorerUrl: params.cfg.kasaneBlockExplorerUrl,
     };
     await ensureMetaMaskChain(provider, chainConfig);
-    const nativeQuote = await quoteNativeWithdrawal({
-      amountE8s: amount,
-      recipient,
-    });
-    const isNativeWithdrawal = assetId === nativeQuote.nativeLedgerCanister;
     let unwrapTarget: string;
     let unwrapData: string;
     let valueWei = 0n;
-    if (isNativeWithdrawal) {
+    const runtimeConfig = await getWrapRuntimeConfig();
+    if (isNativeWithdrawalAssetId(assetId, runtimeConfig.nativeLedgerCanister)) {
+      const nativeQuote = await quoteNativeWithdrawal({
+        amountE8s: amount,
+        recipient,
+      });
       const tx = await prepareNativeWithdrawTransaction({
         amountE8s: amount,
         recipient,
@@ -465,7 +471,6 @@ export function useWrapperActions(params: {
     await finishSubmittedUnwrapRequest({
       requestIdHex,
       onRequestIdInput: params.onRequestIdInput,
-      onRequestSubmitted: params.onRequestSubmitted,
       startPollingSubmittedRequest,
       setMessage: params.tracker.setMessage,
       resetUnwrapNonceDeadline: params.forms.resetUnwrapNonceDeadline,
@@ -634,16 +639,13 @@ export function useWrapperActions(params: {
           feeLedgerCanister: quote.feeLedgerCanister,
         }, caller);
       const requestIdHex = bytesToHex(submitResult.requestId);
-      if (nativeDepositDraft !== null) {
-        clearNativeDepositDraft(nativeDepositDraft.key);
-      }
-      setLastSubmittedWrapRequestId(requestIdHex);
-      params.onRequestIdInput(requestIdHex);
-      await startPollingSubmittedRequest(requestIdHex);
-      persistSubmittedRequest(params.onRequestSubmitted, {
-        requestId: requestIdHex,
-        kind: "wrap",
-        submittedAt: new Date().toISOString(),
+      await finishSubmittedWrapRequest({
+        requestIdHex,
+        nativeDepositDraftKey: nativeDepositDraft?.key ?? null,
+        clearNativeDepositDraft,
+        setLastSubmittedWrapRequestId,
+        onRequestIdInput: params.onRequestIdInput,
+        startPollingSubmittedRequest,
       });
       if (!isNativeDeposit) {
         await params.forms.refreshWrapNonce().catch(() => undefined);
@@ -855,7 +857,8 @@ export function useWrapperActions(params: {
 
 export const wrapperActionsTestHooks = {
   clearNativeDepositDraft,
+  finishSubmittedWrapRequest,
   finishSubmittedUnwrapRequest,
+  isNativeWithdrawalAssetId,
   reserveNativeDepositDraft,
-  persistSubmittedRequest,
 };

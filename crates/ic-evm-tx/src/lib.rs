@@ -24,6 +24,12 @@ pub enum RecoveryError {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RecoveredAccessListItem {
+    pub address: [u8; 20],
+    pub storage_keys: Vec<[u8; 32]>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RecoveredTx {
     pub from: AlloyAddress,
     pub to: Option<AlloyAddress>,
@@ -36,6 +42,10 @@ pub struct RecoveredTx {
     pub max_priority_fee_per_gas: Option<u128>,
     pub chain_id: Option<u64>,
     pub tx_type: u8,
+    pub access_list: Vec<RecoveredAccessListItem>,
+    pub signature_v: u64,
+    pub signature_r: [u8; 32],
+    pub signature_s: [u8; 32],
 }
 
 pub fn recover_eth_tx(bytes: &[u8]) -> Result<RecoveredTx, RecoveryError> {
@@ -57,7 +67,12 @@ pub fn recover_eth_tx(bytes: &[u8]) -> Result<RecoveredTx, RecoveryError> {
     }
 }
 
-fn recovered_from_tx<T: Transaction>(tx: &T, from: AlloyAddress, tx_type: u8) -> RecoveredTx {
+fn recovered_from_tx<T: Transaction>(
+    tx: &T,
+    from: AlloyAddress,
+    tx_type: u8,
+    signature: &alloy_primitives::Signature,
+) -> RecoveredTx {
     let to = match tx.kind() {
         AlloyTxKind::Call(addr) => Some(addr),
         AlloyTxKind::Create => None,
@@ -74,6 +89,16 @@ fn recovered_from_tx<T: Transaction>(tx: &T, from: AlloyAddress, tx_type: u8) ->
     } else {
         None
     };
+    let chain_id = tx.chain_id();
+    let signature_v = match tx_type {
+        TX_TYPE_LEGACY_ENVELOPE => chain_id
+            .map(|id| {
+                id.saturating_mul(2)
+                    .saturating_add(35 + u64::from(signature.v()))
+            })
+            .unwrap_or(27 + u64::from(signature.v())),
+        _ => u64::from(signature.v()),
+    };
     RecoveredTx {
         from,
         to,
@@ -84,8 +109,35 @@ fn recovered_from_tx<T: Transaction>(tx: &T, from: AlloyAddress, tx_type: u8) ->
         gas_price,
         max_fee_per_gas,
         max_priority_fee_per_gas,
-        chain_id: tx.chain_id(),
+        chain_id,
         tx_type,
+        access_list: tx
+            .access_list()
+            .map(|list| {
+                list.iter()
+                    .map(|item| {
+                        let mut address = [0u8; 20];
+                        address.copy_from_slice(item.address.as_ref());
+                        let storage_keys = item
+                            .storage_keys
+                            .iter()
+                            .map(|key| {
+                                let mut out = [0u8; 32];
+                                out.copy_from_slice(key.as_ref());
+                                out
+                            })
+                            .collect();
+                        RecoveredAccessListItem {
+                            address,
+                            storage_keys,
+                        }
+                    })
+                    .collect()
+            })
+            .unwrap_or_default(),
+        signature_v,
+        signature_r: signature.r().to_be_bytes(),
+        signature_s: signature.s().to_be_bytes(),
     }
 }
 
@@ -124,7 +176,12 @@ where
     let from = signed
         .recover_signer()
         .map_err(|_| RecoveryError::InvalidSignature)?;
-    Ok(recovered_from_tx(signed.tx(), from, tx_type))
+    Ok(recovered_from_tx(
+        signed.tx(),
+        from,
+        tx_type,
+        signed.signature(),
+    ))
 }
 
 fn validate_chain_id(chain_id: Option<u64>) -> Result<(), RecoveryError> {

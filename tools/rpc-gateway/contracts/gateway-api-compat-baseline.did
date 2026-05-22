@@ -2,35 +2,35 @@ service : (opt InitArgs) -> {
   get_ops_status : () -> (OpsStatusView) query;
   rpc_eth_block_number : () -> (nat64) query;
   rpc_eth_call_object_at : (RpcCallObjectView, RpcBlockTagView) -> (
-      Result_17,
+      Result_19,
     ) query;
   rpc_eth_chain_id : () -> (nat64) query;
   rpc_eth_estimate_gas_object_at : (RpcCallObjectView, RpcBlockTagView) -> (
-      Result_19,
+      Result_21,
     ) query;
   rpc_eth_fee_history : (nat64, RpcBlockTagView, opt vec float64) -> (
-      Result_20,
+      Result_22,
     ) query;
-  rpc_eth_gas_price : () -> (Result_21) query;
-  rpc_eth_get_balance : (blob, RpcBlockTagView) -> (Result_22) query;
+  rpc_eth_gas_price : () -> (Result_23) query;
+  rpc_eth_get_balance : (blob, RpcBlockTagView) -> (Result_24) query;
   rpc_eth_get_block_by_number_with_status : (nat64, bool) -> (
       RpcBlockLookupView,
     ) query;
-  rpc_eth_get_block_number_by_hash : (blob, nat32) -> (Result_23) query;
-  rpc_eth_get_code : (blob, RpcBlockTagView) -> (Result_22) query;
+  rpc_eth_get_block_number_by_hash : (blob, nat32) -> (Result_25) query;
+  rpc_eth_get_code : (blob, RpcBlockTagView) -> (Result_24) query;
   rpc_eth_get_logs_paged : (EthLogFilterView, opt EthLogsCursorView, nat32) -> (
-      Result_24,
+      Result_26,
     ) query;
-  rpc_eth_get_storage_at : (blob, blob, RpcBlockTagView) -> (Result_22) query;
+  rpc_eth_get_storage_at : (blob, blob, RpcBlockTagView) -> (Result_24) query;
   rpc_eth_get_transaction_by_eth_hash : (blob) -> (opt EthTxView) query;
   rpc_eth_get_transaction_by_tx_id : (blob) -> (opt EthTxView) query;
   rpc_eth_get_transaction_count_at : (blob, RpcBlockTagView) -> (
-      Result_19,
+      Result_21,
     ) query;
   rpc_eth_get_transaction_receipt_with_status_by_eth_hash : (blob) -> (
       RpcReceiptLookupView,
     ) query;
   rpc_eth_history_window : () -> (RpcHistoryWindowView) query;
-  rpc_eth_max_priority_fee_per_gas : () -> (Result_21) query;
-  rpc_eth_send_raw_transaction : (blob) -> (Result_25);
+  rpc_eth_max_priority_fee_per_gas : () -> (Result_23) query;
+  rpc_eth_send_raw_transaction : (blob) -> (Result_27);
 }

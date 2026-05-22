@@ -1,0 +1,21 @@
+{
+  "slug": "receipt_index_location_bidirectional-7f362e2c",
+  "git_commit": "2ff47cf9ec949b314adc26f94ad9e340cbda4cbb",
+  "worktree_dirty": false,
+  "semantic_hash": "65653aa7145cdbf01e5bba597b116f13697d9431c2ce49dcfd4b2965fe50b52e",
+  "spec_hash": "d9dda87cd1bfaf3a1a2e8cd2dfc73f4dbe19a758004a165b6501331c423c09fb",
+  "target_hash": "557e8ee73456be120951d4e03f033ad946851643e2e001a80d814f5ab87b9123",
+  "source_hash": "7f362e2c26ea1e9b56eda044aaac97c8e7ea546c2e33dee844350504411674bb",
+  "evidence_hash": "0fd6fae8de5b185630ab0c0f045284409be46f55bd3f0149e860601168e1d450",
+  "result": "success",
+  "cases": [
+    {
+      "scenario_id": "receipt_index_location_bidirectional-nominal",
+      "command": "cargo test -p verified-core --test p0_safety && cargo test -p ic-evm-gateway gateway_submit_ic_tx_adapter_preserves_queue_and_receipt_invariants && cargo test -p ic-evm-gateway replacement_old_tx_is_not_staged_or_included",
+      "test_name": "verified-core bidirectional pure tests plus gateway receipt/index/location adapter evidence",
+      "exit_code": 0,
+      "result": "success",
+      "output": "\nrunning 3 tests\ntest no_reorg_append_only_requires_next_head_and_old_observations_unchanged ... ok\ntest receipt_index_location_bidirectional_requires_all_reverse_links ... ok\ntest staged_tx_requires_current_pending_and_live_payload ... ok\n\ntest result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n\n\nrunning 1 test\ntest tests::gateway_submit_ic_tx_adapter_preserves_queue_and_receipt_invariants ... ok\n\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 114 filtered out; finished in 1.51s\n\n\nrunning 0 tests\n\ntest result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 0.00s\n\n\nrunning 1 test\ntest tests::replacement_old_tx_is_not_staged_or_included ... ok\n\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 114 filtered out; finished in 5.48s\n\n\nrunning 0 tests\n\ntest result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 0.00s\n\n    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.03s\n     Running tests/p0_safety.rs (target/debug/deps/p0_safety-e40acc0737b79126)\n    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.11s\n     Running unittests src/lib.rs (target/debug/deps/ic_evm_gateway-69361869154b31cf)\n     Running tests/canbench_init_args.rs (target/debug/deps/canbench_init_args-764adada704d54eb)\n    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.16s\n     Running unittests src/lib.rs (target/debug/deps/ic_evm_gateway-69361869154b31cf)\n     Running tests/canbench_init_args.rs (target/debug/deps/canbench_init_args-764adada704d54eb)\n"
+    }
+  ]
+}

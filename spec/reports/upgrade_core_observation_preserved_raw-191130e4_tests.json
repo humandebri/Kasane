@@ -1,0 +1,21 @@
+{
+  "slug": "upgrade_core_observation_preserved_raw-191130e4",
+  "git_commit": "1a13c8ac89218b6489fb0ee15ed5e9f7f5793c7b",
+  "worktree_dirty": false,
+  "semantic_hash": "7dea973b8bd70f123edd509a26aea84e43cc7c3f136c1bebdfdb5883999d9489",
+  "spec_hash": "7849895061cd3686f45f68df31c7716df94b381cf42a0bd279120741123c4dd5",
+  "target_hash": "0f9176d33d7554040624517ce1ff9a435b95e2148ffafcf556b864986aee5679",
+  "source_hash": "191130e4b8b76d4409ea2457fd792448803236c01a7acc1f282fcf3cb7df6b93",
+  "evidence_hash": "ae557c79d699126c146627a8a51e42952e782a8a42df93c5c68a7430724aa39a",
+  "result": "success",
+  "cases": [
+    {
+      "scenario_id": "upgrade_core_observation_preserved_raw-nominal",
+      "command": "cargo test -p verified-core --test upgrade_safety upgrade_observation && cargo test -p evm-db --test phase0_stable_state stable_state_reinit_preserves_core_upgrade_observations",
+      "test_name": "verified-core pure upgrade observation tests plus evm-db stable-state reinit adapter evidence",
+      "exit_code": 0,
+      "result": "success",
+      "output": "\nrunning 1 test\ntest upgrade_observation_requires_all_core_fields_preserved ... ok\n\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n\n\nrunning 1 test\ntest stable_state_reinit_preserves_core_upgrade_observations ... ok\n\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 1.42s\n\n   Compiling verified-core v0.1.0 (/Users/0xhude/Desktop/ICP/Kasane/crates/verified-core)\n    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.51s\n     Running tests/upgrade_safety.rs (target/debug/deps/upgrade_safety-e098937fcb57d60c)\n   Compiling evm-db v0.1.0 (/Users/0xhude/Desktop/ICP/Kasane/crates/evm-db)\n    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.54s\n     Running tests/phase0_stable_state.rs (target/debug/deps/phase0_stable_state-c6e70628f24d9707)\n"
+    }
+  ]
+}

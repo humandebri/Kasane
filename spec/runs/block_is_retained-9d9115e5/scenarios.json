@@ -1,0 +1,24 @@
+{
+  "target": "block_is_retained",
+  "target_id": "dacedafac12dccb1b861f00170efa9bc84ed1a6f42cce3e96f7b1a2e20e5477d",
+  "slug": "block_is_retained-9d9115e5",
+  "git_commit": "e7c4bd6deef99685a57a519fa4643f44b1ee134b",
+  "worktree_dirty": false,
+  "source_hash": "9d9115e5f68e8345ecdf9b116dc5efd5cb5860d1fcf943769e0eb6de9e55bbcd",
+  "semantic_hash": "e4af40e6fe1aa259aaabaaa386b6780157b0e07a3d8ec08a9c1babe2055bad9f",
+  "tool_version": "0.1.0",
+  "scenarios": [
+    {
+      "id": "block_is_retained-nominal",
+      "kind": "example",
+      "executable": false,
+      "inputs": {},
+      "expected": {},
+      "review_status": "accepted",
+      "status_note": "Boundary cases cover future blocks, disabled pruning, head within retain, threshold exclusion, and retained range inclusion.",
+      "reviewed_by": "0xhude",
+      "reviewed_at": "2026-05-16T03:32:38Z",
+      "rationale": "`block_is_retained` のシナリオ候補:\n\n| scenario | head | retain | block | expected | 意図 |\n|---|---:|---:|---:|---|---|\n| future block | 10 | 3 | 11 | `false` | `block > head` は常に未保持 |\n| retain zero keeps existing block | 10 | 0 | 10 | `true` | `retain == 0` 分岐 |\n| retain zero keeps old block | 10 | 0 | 0 | `true` | `retain == 0` は全既存ブロック保持 |\n| head within retain | 3 | 5 | 0 | `true` | `head <= retain` なら全既存ブロック保持 |\n| head equals retain | 5 | 5 | 0 | `true` | 境界 `head == retain` |\n| latest block retained | 10 | 3 | 10 | `true` | head 自身は保持 |\n| inside retained window | 10 | 3 | 8 | `true` | `block > head - retain` |\n| cutoff block not retained | 10 | 3 | 7 | `false` | 厳密比較なので cutoff は除外 |\n| below cutoff not retained | 10 | 3 | 6 | `false` | 保持範囲外 |\n| u64 underflow guard | 2 | 5 | 1 | `true` | `head <= retain` により `head - retain` 回避 |\n\n性質候補:\n\n- `block > head` なら常に `false`\n- `retain == 0 && block <= head` なら常に `true`\n- `head <= retain && block <= head` なら常に `true`\n- `retain > 0 && head > retain` なら、保持条件は `block > head - retain`\n- `retain > 0 && head > retain` の保持数は最大 `retain` 個"
+    }
+  ]
+}

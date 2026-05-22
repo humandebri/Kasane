@@ -5,13 +5,14 @@ use evm_db::chain_data::constants::{
     MAX_LOGS_PER_TX, MAX_RETURN_DATA, MAX_TXS_PER_BLOCK, MAX_TXS_PER_BLOCK_U32,
 };
 use evm_db::chain_data::receipt::LogEntry;
+use evm_db::chain_data::wrap_request::WRAP_STORED_REQUEST_MAX_BYTES;
 use evm_db::chain_data::{
     BlockData, CallerKey, ChainStateV1, FeePolicyStored, Head, InternalTrace,
-    InternalTraceActionKind, InternalTraceSet, OpsMetricsV1, PruneJournal, QueueMeta, ReceiptLike,
-    RequestStatus, RuntimeConfigV1, StoredTx, StoredTxBytes, TxId, TxIndexEntry, TxKind, TxLoc,
-    UnwrapDispatchRequest, UnwrapRequestStatus, WrapEvmConfigStored, WrapPendingSubmission,
-    WrapRequestResult, WrapStoredRequest, MAX_INTERNAL_TRACES_PER_TX_U32,
-    UNWRAP_DECODE_FAILURE_CODE,
+    InternalTraceActionKind, InternalTraceSet, MintSubmitStatus, OpsMetricsV1, PruneJournal,
+    QueueMeta, ReceiptLike, RequestStatus, RuntimeConfigV1, StoredTx, StoredTxBytes, TxId,
+    TxIndexEntry, TxKind, TxLoc, UnwrapDispatchRequest, UnwrapRequestStatus, WrapEvmConfigStored,
+    WrapPendingSubmission, WrapRequestResult, WrapRequestStage, WrapStoredRequest,
+    MAX_INTERNAL_TRACES_PER_TX_U32, UNWRAP_DECODE_FAILURE_CODE, WRAP_DECODE_FAILURE_CODE,
 };
 use evm_db::chain_data::{LogConfigV1, LOG_CONFIG_FILTER_MAX};
 use evm_db::chain_data::{
@@ -25,6 +26,7 @@ use evm_db::types::keys::{
 };
 use ic_stable_structures::Storable;
 use std::borrow::Cow;
+use std::panic::{catch_unwind, AssertUnwindSafe};
 
 #[test]
 fn tx_envelope_roundtrip() {
@@ -749,6 +751,11 @@ fn wrap_stored_request_roundtrip() {
             fee_ledger_tx_id: Some(vec![11]),
             charged_fee_e8s: Some(12),
             charged_gas_price_wei: Some(13),
+            stage: WrapRequestStage::Failed,
+            updated_at: 14,
+            mint_nonce: Some(15),
+            mint_submitted_at_time: 16,
+            mint_submit_status: MintSubmitStatus::Submitted,
         },
     };
 
@@ -759,8 +766,66 @@ fn wrap_stored_request_roundtrip() {
     assert_eq!(decoded.max_fee_e8s, 17);
     assert_eq!(decoded.quoted_gas_price_wei, 18);
     assert_eq!(decoded.result.status, RequestStatus::Failed);
+    assert_eq!(decoded.result.stage, WrapRequestStage::Failed);
+    assert_eq!(decoded.result.mint_nonce, Some(15));
     assert!(decoded.result.withdrawn);
     assert!(decoded.result.mint_failed_recoverable);
+}
+
+#[test]
+fn wrap_stored_request_decode_failure_returns_failed_record_without_global_freeze() {
+    init_stable_state();
+    clear_needs_migration();
+    let out = catch_unwind(AssertUnwindSafe(|| {
+        WrapStoredRequest::from_bytes(Cow::Owned(vec![0xffu8]))
+    }));
+    assert!(out.is_ok(), "decode failure must not panic");
+    let decoded = out.expect("decode should not panic");
+    assert_eq!(decoded.result.status, RequestStatus::Failed);
+    assert_eq!(
+        decoded.result.error_code.as_deref(),
+        Some(WRAP_DECODE_FAILURE_CODE)
+    );
+    assert_eq!(decoded.result.stage, WrapRequestStage::Failed);
+    assert!(!needs_migration());
+}
+
+#[test]
+fn wrap_stored_request_worst_case_fits_stable_bound() {
+    let request = WrapStoredRequest {
+        caller: vec![0x11; 29],
+        asset_id: vec![0x22; 29],
+        amount: vec![0xff; 32],
+        evm_recipient: vec![0x33; 20],
+        gas_limit: u64::MAX,
+        fee_ledger_canister: vec![0x44; 29],
+        max_fee_e8s: u128::MAX,
+        quoted_gas_price_wei: u128::MAX,
+        fee_created_at_time: u64::MAX,
+        pull_created_at_time: u64::MAX,
+        withdraw_created_at_time: u64::MAX,
+        result: WrapRequestResult {
+            status: RequestStatus::Failed,
+            pull_ledger_tx_id: Some(vec![0x55; 128]),
+            mint_tx_id: Some(vec![0x66; 128]),
+            error_code: Some("e".repeat(160)),
+            withdrawn: true,
+            withdraw_ledger_tx_id: Some(vec![0x77; 128]),
+            withdraw_error_code: Some("w".repeat(160)),
+            withdraw_in_progress: true,
+            mint_failed_recoverable: true,
+            fee_ledger_tx_id: Some(vec![0x88; 128]),
+            charged_fee_e8s: Some(u128::MAX),
+            charged_gas_price_wei: Some(u128::MAX),
+            stage: WrapRequestStage::Refunded,
+            updated_at: u64::MAX,
+            mint_nonce: Some(u64::MAX),
+            mint_submitted_at_time: u64::MAX,
+            mint_submit_status: MintSubmitStatus::Submitted,
+        },
+    };
+
+    assert!(request.to_bytes().len() <= WRAP_STORED_REQUEST_MAX_BYTES as usize);
 }
 
 #[test]
@@ -797,6 +862,39 @@ fn wrap_config_stored_roundtrip() {
     let decoded_pending = WrapPendingSubmission::from_bytes(pending.to_bytes());
     assert_eq!(decoded_pending.caller, pending.caller);
     assert_eq!(decoded_pending.request_id, pending.request_id);
+}
+
+#[test]
+fn wrap_config_decode_failures_do_not_panic() {
+    init_stable_state();
+    clear_needs_migration();
+
+    let fee = catch_unwind(AssertUnwindSafe(|| {
+        FeePolicyStored::from_bytes(Cow::Owned(vec![0xffu8]))
+    }));
+    assert!(fee.is_ok(), "fee policy decode failure must not panic");
+    assert!(fee.expect("fee decode").fee_ledger_canister.is_empty());
+
+    let evm = catch_unwind(AssertUnwindSafe(|| {
+        WrapEvmConfigStored::from_bytes(Cow::Owned(vec![0xffu8]))
+    }));
+    assert!(evm.is_ok(), "evm config decode failure must not panic");
+    assert!(evm
+        .expect("evm config decode")
+        .wrap_factory_address
+        .is_empty());
+
+    let pending = catch_unwind(AssertUnwindSafe(|| {
+        WrapPendingSubmission::from_bytes(Cow::Owned(vec![0xffu8]))
+    }));
+    assert!(
+        pending.is_ok(),
+        "pending submission decode failure must not panic"
+    );
+    assert!(pending
+        .expect("pending decode")
+        .is_decode_failure_placeholder());
+    assert!(!needs_migration());
 }
 
 fn test_log(address: [u8; 20], topics: Vec<[u8; 32]>, data: Vec<u8>) -> LogEntry {

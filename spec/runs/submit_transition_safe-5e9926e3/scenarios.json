@@ -1,0 +1,24 @@
+{
+  "target": "submit_transition_safe",
+  "target_id": "baec1f1271718c50969143a912a7bbe24b8c2fbe800d975b302fde9b6d9c8f02",
+  "slug": "submit_transition_safe-5e9926e3",
+  "git_commit": "0e1cc96bcf8c44bcd8209096be775abafd9ae137",
+  "worktree_dirty": true,
+  "source_hash": "5e9926e385ee27de688cf107e99eccd13e8f2757b8a744c830a289080e6ed65c",
+  "semantic_hash": "7100c28757c0fd9171871615827268bf49a87efed9ba4d7bd532f84067ec568d",
+  "tool_version": "0.1.0",
+  "scenarios": [
+    {
+      "id": "submit_transition_safe-nominal",
+      "kind": "example",
+      "executable": false,
+      "inputs": {},
+      "expected": {},
+      "review_status": "accepted",
+      "status_note": "covers accept without old removal, replace with old removal, and low/gap/conflict rejection against the submit transition predicate",
+      "reviewed_by": "0xhude",
+      "reviewed_at": "2026-05-15T11:59:54Z",
+      "rationale": "シナリオ候補。条件単独否定まで覆うなら13件。\n\n```rust\n// Accept: 全条件成立\nAccept_AllWritesNoOldRemoved => SubmitTransitionFacts {\n    decision: NonceDecision::Accept,\n    pending_slot_points_to_new: true,\n    new_current_written: true,\n    queued_loc_written: true,\n    replacement_old_removed: false,\n} => true\n\n// Accept: pending slot が新txを指さない\nAccept_PendingSlotMissing => SubmitTransitionFacts {\n    decision: NonceDecision::Accept,\n    pending_slot_points_to_new: false,\n    new_current_written: true,\n    queued_loc_written: true,\n    replacement_old_removed: false,\n} => false\n\n// Accept: current 未書込\nAccept_CurrentNotWritten => SubmitTransitionFacts {\n    decision: NonceDecision::Accept,\n    pending_slot_points_to_new: true,\n    new_current_written: false,\n    queued_loc_written: true,\n    replacement_old_removed: false,\n} => false\n\n// Accept: queued loc 未書込\nAccept_QueuedLocNotWritten => SubmitTransitionFacts {\n    decision: NonceDecision::Accept,\n    pending_slot_points_to_new: true,\n    new_current_written: true,\n    queued_loc_written: false,\n    replacement_old_removed: false,\n} => false\n\n// Accept: 通常acceptで old removal が発生している\nAccept_OldRemoved => SubmitTransitionFacts {\n    decision: NonceDecision::Accept,\n    pending_slot_points_to_new: true,\n    new_current_written: true,\n    queued_loc_written: true,\n    replacement_old_removed: true,\n} => false\n\n// Replace: 全条件成立\nReplace_AllWritesOldRemoved => SubmitTransitionFacts {\n    decision: NonceDecision::Replace,\n    pending_slot_points_to_new: true,\n    new_current_written: true,\n    queued_loc_written: true,\n    replacement_old_removed: true,\n} => true\n\n// Replace: pending slot が新txを指さない\nReplace_PendingSlotMissing => SubmitTransitionFacts {\n    decision: NonceDecision::Replace,\n    pending_slot_points_to_new: false,\n    new_current_written: true,\n    queued_loc_written: true,\n    replacement_old_removed: true,\n} => false\n\n// Replace: current 未書込\nReplace_CurrentNotWritten => SubmitTransitionFacts {\n    decision: NonceDecision::Replace,\n    pending_slot_points_to_new: true,\n    new_current_written: false,\n    queued_loc_written: true,\n    replacement_old_removed: true,\n} => false\n\n// Replace: queued loc 未書込\nReplace_QueuedLocNotWritten => SubmitTransitionFacts {\n    decision: NonceDecision::Replace,\n    pending_slot_points_to_new: true,\n    new_current_written: true,\n    queued_loc_written: false,\n    replacement_old_removed: true,\n} => false\n\n// Replace: old entry 未削除\nReplace_OldNotRemoved => SubmitTransitionFacts {\n    decision: NonceDecision::Replace,\n    pending_slot_points_to_new: true,\n    new_current_written: true,\n    queued_loc_written: true,\n    replacement_old_removed: false,\n} => false\n\n// Reject 系: flags に関係なく false\nTooLow_Rejected => SubmitTransitionFacts {\n    decision: NonceDecision::TooLow,\n    pending_slot_points_to_new: true,\n    new_current_written: true,\n    queued_loc_written: true,\n    replacement_old_removed: true,\n} => false\n\nGap_Rejected => SubmitTransitionFacts {\n    decision: NonceDecision::Gap,\n    pending_slot_points_to_new: true,\n    new_current_written: true,\n    queued_loc_written: true,\n    replacement_old_removed: true,\n} => false\n\nConflict_Rejected => SubmitTransitionFacts {\n    decision: NonceDecision::Conflict,\n    pending_slot_points_to_new: true,\n    new_current_written: true,\n    queued_loc_written: true,\n    replacement_old_removed: true,\n} => false\n```\n\n既存テスト相当に縮約するなら、`Accept`/`Replace` の成功・`replacement_old_removed` 逆条件・reject 1件で最低5件。仕様候補としては上の13件が分岐と各ブール条件を明確に覆う。"
+    }
+  ]
+}

@@ -577,11 +577,22 @@ pub fn rpc_eth_get_logs_paged(
         } else {
             0
         };
+        let mut block_log_offset = 0u32;
+        for tx_id in block.tx_ids.iter().take(tx_start) {
+            if let Some(prev_receipt) = chain::get_receipt(tx_id) {
+                block_log_offset = block_log_offset
+                    .saturating_add(u32::try_from(prev_receipt.logs.len()).unwrap_or(u32::MAX));
+            }
+        }
         for (tx_pos, tx_id) in block.tx_ids.iter().enumerate().skip(tx_start) {
             if scanned_receipts >= MAX_SCANNED_RECEIPTS {
                 return Ok(EthLogsPageView {
                     items: out,
-                    next_cursor: cursor_after_scan_limit(number, tx_pos, block.tx_ids.len(), to),
+                    next_cursor: Some(EthLogsCursorView {
+                        block_number: number,
+                        tx_index: u32::try_from(tx_pos).unwrap_or(u32::MAX),
+                        log_index: 0,
+                    }),
                 });
             }
             let Some(receipt) = chain::get_receipt(tx_id) else {
@@ -602,6 +613,7 @@ pub fn rpc_eth_get_logs_paged(
             } else {
                 0
             };
+            let block_hash = Some(block.block_hash.to_vec());
             for (log_index, log) in receipt.logs.iter().enumerate().skip(log_start) {
                 let address = log.address.as_slice();
                 if let Some(filter_addr) = address_filter {
@@ -615,21 +627,13 @@ pub fn rpc_eth_get_logs_paged(
                         continue;
                     }
                 }
-                if out.len() == requested_limit {
-                    return Ok(EthLogsPageView {
-                        items: out,
-                        next_cursor: Some(EthLogsCursorView {
-                            block_number: number,
-                            tx_index: u32::try_from(tx_pos).unwrap_or(u32::MAX),
-                            log_index: u32::try_from(log_index.saturating_add(1))
-                                .unwrap_or(u32::MAX),
-                        }),
-                    });
-                }
+                let block_log_index =
+                    block_log_offset.saturating_add(u32::try_from(log_index).unwrap_or(u32::MAX));
                 out.push(EthLogItemView {
                     block_number: receipt.block_number,
+                    block_hash: block_hash.clone(),
                     tx_index: receipt.tx_index,
-                    log_index: u32::try_from(log_index).unwrap_or(u32::MAX),
+                    log_index: block_log_index,
                     tx_hash: receipt.tx_id.0.to_vec(),
                     eth_tx_hash: eth_tx_hash.clone(),
                     address: address.to_vec(),
@@ -641,38 +645,26 @@ pub fn rpc_eth_get_logs_paged(
                         .collect(),
                     data: log.data.data.to_vec(),
                 });
+                if out.len() == requested_limit {
+                    return Ok(EthLogsPageView {
+                        items: out,
+                        next_cursor: Some(EthLogsCursorView {
+                            block_number: number,
+                            tx_index: u32::try_from(tx_pos).unwrap_or(u32::MAX),
+                            log_index: u32::try_from(log_index.saturating_add(1))
+                                .unwrap_or(u32::MAX),
+                        }),
+                    });
+                }
             }
+            block_log_offset = block_log_offset
+                .saturating_add(u32::try_from(receipt.logs.len()).unwrap_or(u32::MAX));
         }
     }
     Ok(EthLogsPageView {
         items: out,
         next_cursor: None,
     })
-}
-
-fn cursor_after_scan_limit(
-    block_number: u64,
-    tx_index: usize,
-    tx_len: usize,
-    to_block: u64,
-) -> Option<EthLogsCursorView> {
-    let next_tx = tx_index.saturating_add(1);
-    if next_tx < tx_len {
-        return Some(EthLogsCursorView {
-            block_number,
-            tx_index: u32::try_from(next_tx).unwrap_or(u32::MAX),
-            log_index: 0,
-        });
-    }
-    let next_block = block_number.saturating_add(1);
-    if next_block <= to_block {
-        return Some(EthLogsCursorView {
-            block_number: next_block,
-            tx_index: 0,
-            log_index: 0,
-        });
-    }
-    None
 }
 
 fn chain_submit_error_to_code(err: &chain::ChainError) -> Option<(TxApiErrorKind, &'static str)> {
@@ -933,6 +925,10 @@ fn envelope_to_eth_view(
                 max_fee_per_gas: decoded.max_fee_per_gas,
                 max_priority_fee_per_gas: decoded.max_priority_fee_per_gas,
                 chain_id: decoded.chain_id,
+                tx_type: Some(decoded.tx_type),
+                signature_v: decoded.signature_v,
+                signature_r: decoded.signature_r.map(|v| v.to_vec()),
+                signature_s: decoded.signature_s.map(|v| v.to_vec()),
             })
         } else {
             None
@@ -961,7 +957,7 @@ fn envelope_to_eth_view(
 }
 
 fn receipt_to_eth_view(receipt: ReceiptLike) -> EthReceiptView {
-    let (eth_tx_hash, from, to) = chain::get_tx_envelope(&receipt.tx_id)
+    let (eth_tx_hash, from, to, tx_type) = chain::get_tx_envelope(&receipt.tx_id)
         .and_then(|envelope| StoredTx::try_from(envelope).ok())
         .map(|stored| {
             let kind = stored.kind;
@@ -979,11 +975,13 @@ fn receipt_to_eth_view(receipt: ReceiptLike) -> EthReceiptView {
             let to = decoded
                 .as_ref()
                 .and_then(|v| v.to.map(|addr| addr.to_vec()));
-            (eth_hash, from, to)
+            let tx_type = decoded.as_ref().map(|v| v.tx_type);
+            (eth_hash, from, to, tx_type)
         })
-        .unwrap_or((None, None, None));
+        .unwrap_or((None, None, None, None));
     let block_hash = chain::get_block(receipt.block_number).map(|block| block.block_hash.to_vec());
     let base_log_index = base_log_index_for_receipt(&receipt);
+    let cumulative_gas_used = cumulative_gas_used_for_receipt(&receipt);
     EthReceiptView {
         tx_hash: receipt.tx_id.0.to_vec(),
         eth_tx_hash,
@@ -994,11 +992,13 @@ fn receipt_to_eth_view(receipt: ReceiptLike) -> EthReceiptView {
         to,
         status: receipt.status,
         gas_used: receipt.gas_used,
+        cumulative_gas_used: Some(cumulative_gas_used),
         effective_gas_price: receipt.effective_gas_price,
         l1_data_fee: receipt.l1_data_fee,
         operator_fee: receipt.operator_fee,
         total_fee: receipt.total_fee,
         contract_address: receipt.contract_address.map(|v| v.to_vec()),
+        tx_type,
         logs: receipt
             .logs
             .into_iter()
@@ -1016,6 +1016,31 @@ fn receipt_to_eth_view(receipt: ReceiptLike) -> EthReceiptView {
             })
             .collect(),
     }
+}
+
+fn cumulative_gas_used_for_receipt(receipt: &ReceiptLike) -> u64 {
+    let Some(block) = chain::get_block(receipt.block_number) else {
+        warn!(
+            block_number = receipt.block_number,
+            "missing block for cumulative gas"
+        );
+        return receipt.gas_used;
+    };
+    let mut total = 0u64;
+    for tx_id in &block.tx_ids {
+        if let Some(prev_receipt) = chain::get_receipt(tx_id) {
+            total = total.saturating_add(prev_receipt.gas_used);
+            if *tx_id == receipt.tx_id {
+                return total;
+            }
+        }
+    }
+    warn!(
+        block_number = receipt.block_number,
+        tx_id = ?receipt.tx_id,
+        "tx not found in block while computing cumulative gas"
+    );
+    receipt.gas_used
 }
 
 fn base_log_index_for_receipt(receipt: &ReceiptLike) -> u32 {
@@ -1443,36 +1468,14 @@ fn receipt_lookup_status(tx_id: TxId) -> RpcReceiptLookupView {
 #[cfg(test)]
 mod tests {
     use super::{
-        clamp_block_hash_scan, cursor_after_scan_limit, parse_access_list,
-        validate_reward_percentiles, MAX_ACCESS_LIST_ITEMS, MAX_ACCESS_LIST_STORAGE_KEYS_PER_ITEM,
-        MAX_BLOCK_HASH_SCAN, MAX_FEE_HISTORY_PERCENTILES,
+        clamp_block_hash_scan, parse_access_list, validate_reward_percentiles,
+        MAX_ACCESS_LIST_ITEMS, MAX_ACCESS_LIST_STORAGE_KEYS_PER_ITEM, MAX_BLOCK_HASH_SCAN,
+        MAX_FEE_HISTORY_PERCENTILES,
     };
     use evm_db::chain_data::{StoredTxBytes, TxId, TxLoc};
     use evm_db::stable_state::{init_stable_state, with_state_mut};
     use evm_db::Storable;
     use ic_evm_rpc_types::RpcAccessListItemView;
-
-    #[test]
-    fn cursor_after_scan_limit_stays_in_block_when_txs_remain() {
-        let out = cursor_after_scan_limit(10, 3, 8, 20).expect("cursor");
-        assert_eq!(out.block_number, 10);
-        assert_eq!(out.tx_index, 4);
-        assert_eq!(out.log_index, 0);
-    }
-
-    #[test]
-    fn cursor_after_scan_limit_moves_to_next_block_at_tx_end() {
-        let out = cursor_after_scan_limit(10, 7, 8, 20).expect("cursor");
-        assert_eq!(out.block_number, 11);
-        assert_eq!(out.tx_index, 0);
-        assert_eq!(out.log_index, 0);
-    }
-
-    #[test]
-    fn cursor_after_scan_limit_returns_none_at_query_end() {
-        let out = cursor_after_scan_limit(20, 7, 8, 20);
-        assert!(out.is_none());
-    }
 
     #[test]
     fn block_hash_scan_is_clamped() {

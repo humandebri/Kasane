@@ -2,7 +2,7 @@
 
 use alloy_consensus::{SignableTransaction, TxEip1559, TxEip2930, TxEip4844, TxEip7702, TxLegacy};
 use alloy_eips::eip2718::Encodable2718;
-use alloy_eips::eip2930::AccessList;
+use alloy_eips::eip2930::{AccessList, AccessListItem};
 use alloy_eips::eip7702::Authorization;
 use alloy_primitives::{Address, Bytes, Signature, TxKind, B256, U256};
 use alloy_signer::SignerSync;
@@ -52,6 +52,24 @@ fn decode_accepts_legacy_2930_1559() {
     let eip1559 = decode_eth_raw_tx(&sign_encoded(tx_1559(CHAIN_ID, 2), &signer)).unwrap();
     assert_eq!(eip1559.caller, expected);
     assert_eq!(eip1559.tx_type, 2);
+}
+
+#[test]
+fn decode_preserves_access_list() {
+    let signer = test_signer();
+    let mut tx = tx_1559(CHAIN_ID, 3);
+    tx.access_list = AccessList(vec![AccessListItem {
+        address: Address::from([0x44; 20]),
+        storage_keys: vec![B256::from([0x55; 32])],
+    }]);
+
+    let decoded = decode_eth_raw_tx(&sign_encoded(tx, &signer)).expect("decode");
+    assert_eq!(decoded.access_list.0.len(), 1);
+    assert_eq!(decoded.access_list.0[0].address, Address::from([0x44; 20]));
+    assert_eq!(
+        decoded.access_list.0[0].storage_keys,
+        vec![B256::from([0x55; 32])]
+    );
 }
 
 #[test]

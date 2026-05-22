@@ -1,0 +1,65 @@
+{
+  "target": "classify_nonce",
+  "entry": {
+    "display_name": "classify_nonce",
+    "function": "classify_nonce",
+    "function_path": "classify_nonce",
+    "file": "crates/verified-core/src/nonce.rs",
+    "target_id": "ee78b7e5fd713b7a6cb00e75e1f2234f131220723b4ad3bb9ffb3380a17c5efd",
+    "slug": "classify_nonce-3dada50d",
+    "source_hash": "3dada50dbfbec3c3991a06ad15fca6be5687c8c58a8a3a825fb8ed419d5afc2b",
+    "semantic_hash": "fa9487ba51d96176707f328ef5a7921718815d559e995dab958c1269eb12930b",
+    "created_at": "2026-05-14T03:28:40Z"
+  },
+  "signature": "#[cfg_attr(verus_keep_ghost, verus_spec(decision => ensures\n    incoming_nonce < expected_nonce ==> decision == NonceDecision::TooLow,\n    incoming_nonce > expected_nonce ==> decision == NonceDecision::Gap,\n    incoming_nonce == expected_nonce && matches!(pending_effective_gas_price, None)\n        ==> decision == NonceDecision::Accept,\n    incoming_nonce == expected_nonce && matches!(pending_effective_gas_price, Some(_))\n        && incoming_effective_gas_price <= pending_effective_gas_price.unwrap()\n        ==> decision == NonceDecision::Conflict,\n    incoming_nonce == expected_nonce && matches!(pending_effective_gas_price, Some(_))\n        && incoming_effective_gas_price > pending_effective_gas_price.unwrap()\n        ==> decision == NonceDecision::Replace,\n))]\npub fn classify_nonce(\n    expected_nonce: u64,\n    incoming_nonce: u64,\n    pending_effective_gas_price: Option<u64>,\n    incoming_effective_gas_price: u64,\n) -> NonceDecision",
+  "body": "{\n    if incoming_nonce < expected_nonce {\n        return NonceDecision::TooLow;\n    }\n    if incoming_nonce > expected_nonce {\n        return NonceDecision::Gap;\n    }\n    match pending_effective_gas_price {\n        Some(old_effective) if incoming_effective_gas_price <= old_effective => {\n            NonceDecision::Conflict\n        }\n        Some(_) => NonceDecision::Replace,\n        None => NonceDecision::Accept,\n    }\n}",
+  "span": {
+    "start_line": 16,
+    "end_line": 47
+  },
+  "git_commit": "703d7df1dcdc48c6f15be3733c6da4ec5c6a8dad",
+  "worktree_dirty": false,
+  "source_hash": "3dada50dbfbec3c3991a06ad15fca6be5687c8c58a8a3a825fb8ed419d5afc2b",
+  "semantic_hash": "fa9487ba51d96176707f328ef5a7921718815d559e995dab958c1269eb12930b",
+  "dependency_hash_inputs": [
+    {
+      "kind": "use",
+      "name": "cfg",
+      "file": "crates/verified-core/src/nonce.rs",
+      "hash": "a5eb4157d5d32303032e3dc786e34f004ebe17f0ff1bb26f90ac9eb42478596c"
+    },
+    {
+      "kind": "module",
+      "name": "cfg",
+      "file": "crates/verified-core/src/nonce.rs",
+      "hash": "d07ab7d6f3ab4aa7ca1647fff45e23553f46d15049c0ff0c89392084e27beee8"
+    },
+    {
+      "kind": "use",
+      "name": "use",
+      "file": "crates/verified-core/src/nonce.rs",
+      "hash": "f6ffe1421135716ecdc50f1ab9cefe7e90aa8cac1b479147459cbdbf72150be6"
+    },
+    {
+      "kind": "type",
+      "name": "verus_keep_ghost",
+      "file": "crates/verified-core/src/nonce.rs",
+      "hash": "d527e55bb77cd12eca54ccdf8763427c6bc52cc3f08f8b9109a59bacf8ec36e7"
+    }
+  ],
+  "unresolved_dependencies": [],
+  "tool_version": "0.1.0",
+  "cfg": [],
+  "features": [],
+  "types": [],
+  "called_functions": [],
+  "callers": [],
+  "tests": [],
+  "panic_sites": [
+    "expect"
+  ],
+  "overflow_sites": [],
+  "casts": [],
+  "division_sites": [],
+  "llm_context_files": []
+}

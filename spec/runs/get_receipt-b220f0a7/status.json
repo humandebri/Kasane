@@ -1,0 +1,11 @@
+{
+  "target": "get_receipt-b220f0a7",
+  "check_result": "fail",
+  "stale_reasons": [
+    "unresolved dependencies: with_state"
+  ],
+  "drift_reasons": [
+    "unresolved dependencies"
+  ],
+  "dirty_paths": []
+}

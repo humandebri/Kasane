@@ -7,10 +7,8 @@ import { WrapperDashboard, type WrapperDashboardConfigState } from "@/components
 export function DashboardRoute(
   {
     configState,
-    view,
   }: {
     configState: WrapperDashboardConfigState;
-    view: "console" | "history";
   },
 ): ReactElement {
   const navigate = useNavigate();
@@ -21,9 +19,8 @@ export function DashboardRoute(
       {...configState}
       activeRequestId={requestId ?? null}
       statusModalOpen={requestId !== undefined}
-      view={view}
-      onOpenRequest={(nextRequestId) => navigate(view === "history" ? `/history/requests/${nextRequestId}` : `/requests/${nextRequestId}`)}
-      onCloseRequest={() => navigate(view === "history" ? "/history" : "/")}
+      onOpenRequest={(nextRequestId) => navigate(`/requests/${nextRequestId}`)}
+      onCloseRequest={() => navigate("/")}
     />
   );
 }

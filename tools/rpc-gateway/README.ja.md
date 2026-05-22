@@ -14,11 +14,11 @@ cp .env.example .env.local
 
 `.env.local` で最低限 `EVM_CANISTER_ID` を設定してください。
 
-`eth_sendRawTransaction` など update call を使う場合は、署名用identityのPEMも設定してください。
+`eth_sendRawTransaction` など update call を使う場合は、署名用identityのPEMも設定する。
 
 ```env
 EVM_CANISTER_ID=aaaaa-aa
-RPC_GATEWAY_IDENTITY_PEM_PATH=/path/to/secrets/rpc-gateway-identity.pem
+RPC_GATEWAY_IDENTITY_PEM="-----BEGIN PRIVATE KEY-----..."
 ```
 
 対応PEM形式は `secp256k1` と `ed25519(PKCS#8)` です。`icp identity export` が出力する鍵種が `ec` の場合は使えないため、Gateway専用に `secp256k1` 鍵を作成してください。
@@ -211,12 +211,23 @@ npm run dev
 npm run test
 npm run lint
 npm run build
+npm run typecheck:worker
 ```
+
+Cloudflare Workers deploy は `wrangler.jsonc` を使う。
+
+```bash
+npm run dev:worker
+npm run deploy:staging
+```
+
+`RPC_GATEWAY_IDENTITY_PEM` は Cloudflare Secrets に設定し、`vars` に入れない。
+staging は本番canisterをread接続するため、staging smoke は read-only に限定する。production deploy は Cloudflare Deploy workflow の `deploy_production=true` 入力で手動実行する。
 
 実接続スモーク（任意）:
 
 ```bash
-npm run smoke:all
+npm run smoke:read
 
 # 送信後の実行成否監視（status=0x1 で成功）
 npm run smoke:watch-receipt -- 0x<tx_hash> 120 1500
@@ -225,16 +236,22 @@ npm run smoke:watch-receipt -- 0x<tx_hash> 120 1500
 ## receipt.status 監視の本番運用
 
 最小構成（推奨）:
-1. 送信側で `eth_sendRawTransaction` 直後に tx hash を保存
-2. 同じ tx hash を `smoke:watch-receipt` に渡して監視
-3. `status!=0x1` / timeout / rpc error をアラート化
+1. `https://rpc.kasane.network` に read-only smoke を実行
+2. cutover後、運用者が許可した低リスクtxを1件だけ送信
+3. `eth_sendRawTransaction` 直後に tx hash を保存
+4. 同じ tx hash を `smoke:watch-receipt` に渡して監視
+5. `status!=0x1` / timeout / rpc error をアラート化
+
+rollback: read/write検証に失敗したら、Cloudflare route/DNS を旧Contabo RPCへ戻す。
 
 実行例:
 
 ```bash
 cd tools/rpc-gateway
+EVM_RPC_URL="https://rpc.kasane.network" npm run smoke:read
+
 EVM_RPC_URL="https://rpc.example.com" \
   npm run smoke:watch-receipt -- 0x<tx_hash> 180 1500
 ```
 
-systemd による常設運用は `ops/README.md` を参照してください。
+`ops/README.md` の systemd receipt watcher は旧運用/rollback用。本番gateway通信は Cloudflare Workers 経由を前提にする。

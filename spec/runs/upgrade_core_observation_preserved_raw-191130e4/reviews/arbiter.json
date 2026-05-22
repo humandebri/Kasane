@@ -1,0 +1,14 @@
+{
+  "target": "upgrade_core_observation_preserved_raw",
+  "target_id": "cef70d19cee8d3c0ae8a13b09d7968c6eed59c0990b926abe75dcb6794b56c10",
+  "slug": "upgrade_core_observation_preserved_raw-191130e4",
+  "git_commit": "2d344b0fd7f9384a0aa23cb9683b0a9c62aa9ef3",
+  "worktree_dirty": true,
+  "source_hash": "191130e4b8b76d4409ea2457fd792448803236c01a7acc1f282fcf3cb7df6b93",
+  "semantic_hash": "7dea973b8bd70f123edd509a26aea84e43cc7c3f136c1bebdfdb5883999d9489",
+  "tool_version": "0.1.0",
+  "blocking_issues": [],
+  "human_questions": [],
+  "auto_safe_edits": [],
+  "risk": "medium"
+}

@@ -100,10 +100,12 @@ struct FeeBreakdown {
 
 impl FeeBreakdown {
     fn total_fee(self, effective_gas_price: u64, gas_used: u64) -> u128 {
-        let l2_fee = u128::from(gas_used).saturating_mul(u128::from(effective_gas_price));
-        l2_fee
-            .saturating_add(self.l1_data_fee)
-            .saturating_add(self.operator_fee)
+        verified_core::fee::total_fee(
+            gas_used,
+            effective_gas_price,
+            self.l1_data_fee,
+            self.operator_fee,
+        )
     }
 }
 
@@ -671,7 +673,7 @@ fn add_base_fee_portion_to_recipient(state: &mut StateDiff, gas_used: u64, base_
     if gas_used == 0 || base_fee == 0 {
         return;
     }
-    let reward = u128::from(gas_used).saturating_mul(u128::from(base_fee));
+    let reward = verified_core::fee::base_fee_reward(gas_used, base_fee);
     if reward == 0 {
         return;
     }
@@ -761,16 +763,7 @@ pub(crate) fn compute_effective_gas_price(
     max_priority: u128,
     base_fee: u64,
 ) -> Option<u64> {
-    if max_priority > max_fee {
-        return None;
-    }
-    let base_fee = base_fee as u128;
-    if max_fee < base_fee {
-        return None;
-    }
-    let sum = base_fee.saturating_add(max_priority);
-    let effective = if max_fee < sum { max_fee } else { sum };
-    u64::try_from(effective).ok()
+    verified_core::fee::effective_gas_price(max_fee, max_priority, base_fee)
 }
 
 fn revm_log_to_receipt_log(log: revm::primitives::Log) -> LogEntry {
