@@ -10,9 +10,9 @@ use verified_core::wrap_precompile::{
     COMPACT_FORMAT_VERSION, COMPACT_NATIVE_WITHDRAW_INPUT_LEN, COMPACT_UNWRAP_INPUT_LEN,
     ICP_QUERY_BASE_GAS, ICP_QUERY_INPUT_BYTE_GAS, ICP_QUERY_KIND_QUERY,
     ICP_QUERY_KIND_UPDATE_RESERVED, ICP_QUERY_PRECOMPILE_ADDRESS_CODE, ICP_QUERY_REPLY_BYTE_GAS,
-    MAX_ICP_QUERY_INPUT_LEN_WITH_EXACT_GAS, MAX_ICP_QUERY_REPLY_LEN_WITH_EXACT_GAS,
-    MAX_PRINCIPAL_LEN, MAX_QUERY_METHOD_LEN, NATIVE_WITHDRAW_PRECOMPILE_ADDRESS_CODE,
-    UNWRAP_BURN_GAS_SURCHARGE, WRAP_PRECOMPILE_ADDRESS_CODE,
+    MAX_ICP_QUERY_COMBINED_LEN_WITH_EXACT_GAS, MAX_PRINCIPAL_LEN, MAX_QUERY_METHOD_LEN,
+    NATIVE_WITHDRAW_PRECOMPILE_ADDRESS_CODE, UNWRAP_BURN_GAS_SURCHARGE,
+    WRAP_PRECOMPILE_ADDRESS_CODE,
 };
 
 fn expected_principal(len: u64, slot_present: u64, padding_zero: u64) -> bool {
@@ -245,11 +245,13 @@ proptest! {
                 returned_success,
             ),
             observed_address_code == ICP_QUERY_PRECOMPILE_ADDRESS_CODE
-                && charged_gas >= ICP_QUERY_BASE_GAS
-                && (input_len > MAX_ICP_QUERY_INPUT_LEN_WITH_EXACT_GAS
-                    || charged_gas >= input_len * ICP_QUERY_INPUT_BYTE_GAS)
-                && (reply_len > MAX_ICP_QUERY_REPLY_LEN_WITH_EXACT_GAS
-                    || charged_gas >= reply_len * ICP_QUERY_REPLY_BYTE_GAS)
+                && returned_success <= 1
+                && ((input_len > MAX_ICP_QUERY_COMBINED_LEN_WITH_EXACT_GAS
+                    || reply_len > MAX_ICP_QUERY_COMBINED_LEN_WITH_EXACT_GAS)
+                    || charged_gas
+                        >= ICP_QUERY_BASE_GAS
+                            + input_len * ICP_QUERY_INPUT_BYTE_GAS
+                            + reply_len * ICP_QUERY_REPLY_BYTE_GAS)
                 && (returned_success != 1 || gas_limit >= charged_gas)
                 && (returned_success != 0 || gas_limit < charged_gas)
         );
@@ -273,6 +275,27 @@ proptest! {
                 && mode_allows_external == 1
                 && value_is_zero == 1
                 && parsed_input == 1
+        );
+    }
+
+    #[test]
+    fn pbt_icp_query_allowlist_entry_requires_bounded_target_and_ascii_method(
+        target_len in 0u64..40,
+        target_non_anonymous in 0u64..3,
+        method_len in 0u64..80,
+        method_ascii in 0u64..3,
+    ) {
+        prop_assert_eq!(
+            verified_core::wrap_precompile::icp_query_allowlist_entry_safe_raw(
+                target_len,
+                target_non_anonymous,
+                method_len,
+                method_ascii,
+            ),
+            (1..=MAX_PRINCIPAL_LEN).contains(&target_len)
+                && target_non_anonymous == 1
+                && (1..=MAX_QUERY_METHOD_LEN).contains(&method_len)
+                && method_ascii == 1
         );
     }
 }

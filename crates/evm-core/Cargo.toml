@@ -57,3 +57,4 @@ alloy-consensus = { version = "1.5.2", default-features = false, features = ["k2
 alloy-eips = { version = "1.5.2", default-features = false, features = ["kzg-sidecar"] }
 alloy-signer = { version = "1.5.2", default-features = false }
 alloy-signer-local = { version = "1.5.2", default-features = false }
+proptest = "1.6"

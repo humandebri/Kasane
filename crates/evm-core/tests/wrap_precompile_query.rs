@@ -2,10 +2,11 @@
 //! 何を: wrap precompile が eth_call / estimateGas で利用可能かを固定
 //! なぜ: 実送信だけ成功して query 見積もりが壊れる回帰を防ぐため
 
-use evm_core::chain::{self, CallObjectInput};
+use evm_core::chain::{self, CallObjectInput, ChainError};
 use evm_core::hash;
+use evm_core::revm_exec::ExecError;
 use evm_core::tx_decode::IcSyntheticTxInput;
-use evm_core::wrap_precompile::WRAP_PRECOMPILE_ADDRESS;
+use evm_core::wrap_precompile::{ICP_QUERY_PRECOMPILE_ADDRESS, WRAP_PRECOMPILE_ADDRESS};
 use evm_db::chain_data::{constants::CHAIN_ID, RuntimeConfigV1};
 use evm_db::stable_state::{init_stable_state, set_runtime_config, with_state, with_state_mut};
 use evm_db::types::keys::{make_account_key, make_storage_key};
@@ -41,8 +42,12 @@ fn encode_unwrap_input() -> Vec<u8> {
 }
 
 fn build_call_input(data: Vec<u8>) -> CallObjectInput {
+    build_call_input_to(WRAP_PRECOMPILE_ADDRESS.into_array(), data, [0u8; 32])
+}
+
+fn build_call_input_to(to: [u8; 20], data: Vec<u8>, value: [u8; 32]) -> CallObjectInput {
     CallObjectInput {
-        to: Some(WRAP_PRECOMPILE_ADDRESS.into_array()),
+        to: Some(to),
         from: [0x31u8; 20],
         gas_limit: Some(300_000),
         gas_price: Some(500_000_000_000),
@@ -52,9 +57,24 @@ fn build_call_input(data: Vec<u8>) -> CallObjectInput {
         chain_id: None,
         tx_type: Some(0),
         access_list: Vec::new(),
-        value: [0u8; 32],
+        value,
         data,
     }
+}
+
+fn encode_icp_query_input(method: &str, arg: &[u8]) -> Vec<u8> {
+    let target = candid::Principal::self_authenticating(b"query-target");
+    let target_bytes = target.as_slice();
+    let mut out = Vec::new();
+    out.push(1);
+    out.push(0);
+    out.push(target_bytes.len() as u8);
+    out.extend_from_slice(target_bytes);
+    out.push(method.len() as u8);
+    out.extend_from_slice(method.as_bytes());
+    out.extend_from_slice(&(arg.len() as u32).to_be_bytes());
+    out.extend_from_slice(arg);
+    out
 }
 
 fn seed_unwrap_burn_state(caller: [u8; 20]) {
@@ -137,6 +157,16 @@ fn relax_fee_floor_for_tests() {
     });
 }
 
+fn setup_query_precompile_call_context() {
+    init_stable_state();
+    set_runtime_config(RuntimeConfigV1::new(
+        candid::Principal::self_authenticating(b"wrap-precompile-query"),
+        TEST_FACTORY_ADDRESS,
+    ));
+    relax_fee_floor_for_tests();
+    chain::credit_balance([0x31u8; 20], 1_000_000_000_000_000_000u128).expect("fund caller");
+}
+
 fn mapping_slot(key: B256, slot: U256) -> U256 {
     let mut input = [0u8; 64];
     input[..32].copy_from_slice(key.as_slice());
@@ -194,6 +224,89 @@ fn wrap_precompile_eth_estimate_gas_succeeds_in_query_path() {
 
     assert!(gas > 0);
     assert!(gas <= 300_000);
+}
+
+#[test]
+fn wrap_precompile_query_icp_query_precompile_async_returns_resolver_reply() {
+    setup_query_precompile_call_context();
+    let request_arg = vec![0x44, 0x49, 0x44, 0x4c];
+    let input = encode_icp_query_input("read_state", &request_arg);
+    let expected_reply = vec![0xaa, 0xbb, 0xcc];
+    let mut resolver_called = false;
+
+    let out = common::run_ready_future(chain::eth_call_object_async(
+        build_call_input_to(ICP_QUERY_PRECOMPILE_ADDRESS.into_array(), input, [0u8; 32]),
+        |request| {
+            resolver_called = true;
+            assert_eq!(request.method, "read_state");
+            assert_eq!(request.arg, request_arg);
+            let reply = expected_reply.clone();
+            async move { Ok(reply) }
+        },
+    ))
+    .expect("async call");
+
+    assert!(resolver_called);
+    assert_eq!(out.status, 1);
+    assert_eq!(out.return_data, expected_reply);
+    assert!(out.revert_data.is_none());
+}
+
+#[test]
+fn wrap_precompile_query_icp_query_precompile_async_reverts_on_resolver_error() {
+    setup_query_precompile_call_context();
+    let input = encode_icp_query_input("read_state", &[]);
+
+    let out = common::run_ready_future(chain::eth_call_object_async(
+        build_call_input_to(ICP_QUERY_PRECOMPILE_ADDRESS.into_array(), input, [0u8; 32]),
+        |_| async { Err("ic_query.test_error".to_string()) },
+    ))
+    .expect("async call");
+
+    assert_eq!(out.status, 0);
+    assert!(out.return_data.is_empty());
+    assert!(out.revert_data.is_none());
+}
+
+#[test]
+fn wrap_precompile_query_icp_query_precompile_requires_async_context() {
+    setup_query_precompile_call_context();
+    let input = encode_icp_query_input("read_state", &[]);
+    let err = chain::eth_call_object(build_call_input_to(
+        ICP_QUERY_PRECOMPILE_ADDRESS.into_array(),
+        input,
+        [0u8; 32],
+    ))
+    .unwrap_err();
+
+    let ChainError::ExecFailed(Some(ExecError::ExternalQuery(request))) = err else {
+        panic!("expected external query context failure");
+    };
+    assert_eq!(request.method, "read_state");
+    assert!(request.arg.is_empty());
+}
+
+#[test]
+fn wrap_precompile_query_icp_query_precompile_async_rejects_value() {
+    setup_query_precompile_call_context();
+    let input = encode_icp_query_input("read_state", &[]);
+    let mut value = [0u8; 32];
+    value[31] = 1;
+    let mut resolver_called = false;
+
+    let out = common::run_ready_future(chain::eth_call_object_async(
+        build_call_input_to(ICP_QUERY_PRECOMPILE_ADDRESS.into_array(), input, value),
+        |_| {
+            resolver_called = true;
+            async { Ok(Vec::new()) }
+        },
+    ))
+    .expect("async call");
+
+    assert!(!resolver_called);
+    assert_eq!(out.status, 0);
+    assert!(out.return_data.is_empty());
+    assert!(out.revert_data.is_none());
 }
 
 #[test]

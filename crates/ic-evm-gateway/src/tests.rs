@@ -1,12 +1,14 @@
 use super::{
-    clamp_return_data, inspect_lightweight_tx_guard, inspect_payload_limit_for_method,
-    inspect_policy_for_method, migration_pending, parse_submit_ic_tx_args,
-    pop_next_dispatch_request, reject_anonymous_principal, reject_write_reason,
-    should_run_cycle_observer_migration_tick, should_schedule_mining_after_cycle_observer,
-    tx_id_from_bytes, validate_prune_policy_input, ApiError, EthLogFilterView, ExecuteTxError,
-    GenesisBalanceView, GetLogsErrorView, InitArgs, PrunePolicyView, QuoteNativeDepositArgs,
-    QuoteWrapRequestArgs, SubmitIcTxArgsDto, WrapConfigArgs, DEFAULT_BLOCK_GAS_LIMIT,
-    DEFAULT_MIN_FEE_FLOOR, INSPECT_METHOD_POLICIES, MINING_ERROR_COUNT, PRUNE_ERROR_COUNT,
+    clamp_return_data, decode_query_precompile_allow_key, inspect_lightweight_tx_guard,
+    inspect_payload_limit_for_method, inspect_policy_for_method, migration_pending,
+    parse_submit_ic_tx_args, pop_next_dispatch_request, query_precompile_allow_key,
+    reject_anonymous_principal, reject_write_reason, should_run_cycle_observer_migration_tick,
+    should_schedule_mining_after_cycle_observer, tx_id_from_bytes, validate_prune_policy_input,
+    validate_query_precompile_allow_args, ApiError, EthLogFilterView, ExecuteTxError,
+    GenesisBalanceView, GetLogsErrorView, InitArgs, PrunePolicyView, QueryPrecompileAllowArgs,
+    QuoteNativeDepositArgs, QuoteWrapRequestArgs, SubmitIcTxArgsDto, WrapConfigArgs,
+    DEFAULT_BLOCK_GAS_LIMIT, DEFAULT_MIN_FEE_FLOOR, INSPECT_METHOD_POLICIES, MINING_ERROR_COUNT,
+    PRUNE_ERROR_COUNT,
 };
 use candid::{encode_one, Nat, Principal};
 use evm_core::chain;
@@ -132,6 +134,7 @@ fn exec_error_to_code(err: Option<&evm_core::revm_exec::ExecError>) -> &'static 
         Some(ExecError::InvalidGasFee) => "exec.gas_fee.invalid",
         Some(ExecError::ResultTooLarge) => "exec.result.too_large",
         Some(ExecError::InstructionBudgetExceeded) => "exec.budget.instruction_exceeded",
+        Some(ExecError::ExternalQuery(_)) => "exec.external_query",
         Some(ExecError::ExecutionFailed) => "exec.execution.failed",
     }
 }
@@ -168,6 +171,61 @@ fn encode_unwrap_payload(asset: Principal, amount: [u8; 32], recipient: Principa
 fn icrc10_supported_standards_advertise_icrc21() {
     let standards = super::icrc21::supported_standards();
     assert!(standards.iter().any(|item| item.name == "ICRC-21"));
+}
+
+#[test]
+fn query_precompile_allow_args_follow_verified_model() {
+    let valid = QueryPrecompileAllowArgs {
+        target: Principal::self_authenticating(b"query-allow-target"),
+        method: "read_state".to_string(),
+    };
+    assert!(validate_query_precompile_allow_args(&valid).is_ok());
+
+    let anonymous = QueryPrecompileAllowArgs {
+        target: Principal::anonymous(),
+        method: "read_state".to_string(),
+    };
+    assert_eq!(
+        validate_query_precompile_allow_args(&anonymous).unwrap_err(),
+        "arg.target_anonymous"
+    );
+
+    let empty_method = QueryPrecompileAllowArgs {
+        target: valid.target,
+        method: String::new(),
+    };
+    assert_eq!(
+        validate_query_precompile_allow_args(&empty_method).unwrap_err(),
+        "arg.method_invalid"
+    );
+
+    let long_method = QueryPrecompileAllowArgs {
+        target: valid.target,
+        method: "x".repeat(65),
+    };
+    assert_eq!(
+        validate_query_precompile_allow_args(&long_method).unwrap_err(),
+        "arg.method_invalid"
+    );
+
+    let non_ascii_method = QueryPrecompileAllowArgs {
+        target: valid.target,
+        method: "状態".to_string(),
+    };
+    assert_eq!(
+        validate_query_precompile_allow_args(&non_ascii_method).unwrap_err(),
+        "arg.method_invalid"
+    );
+}
+
+#[test]
+fn query_precompile_allow_key_decodes_valid_boundary() {
+    let target = Principal::self_authenticating(b"query-allow-target");
+    let key = query_precompile_allow_key(target, "read_state");
+    let decoded = decode_query_precompile_allow_key(&key).expect("decode allowlist key");
+
+    assert_eq!(decoded.target, target);
+    assert_eq!(decoded.method, "read_state");
 }
 
 #[test]

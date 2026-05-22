@@ -522,11 +522,17 @@ fn validate_allowed_assets(assets: &[Principal]) -> Result<(), String> {
 }
 
 fn validate_query_precompile_allow_args(args: &QueryPrecompileAllowArgs) -> Result<(), String> {
-    validate_non_anonymous_principal(&args.target, "arg.target_anonymous")?;
-    if args.method.is_empty() || args.method.len() > 64 {
-        return Err("arg.method_invalid".to_string());
+    let target_non_anonymous = args.target != Principal::anonymous();
+    let valid = verified_core::wrap_precompile::icp_query_allowlist_entry_safe_raw(
+        args.target.as_slice().len() as u64,
+        target_non_anonymous as u64,
+        args.method.len() as u64,
+        args.method.is_ascii() as u64,
+    );
+    if !valid && !target_non_anonymous {
+        return Err("arg.target_anonymous".to_string());
     }
-    if !args.method.is_ascii() {
+    if !valid {
         return Err("arg.method_invalid".to_string());
     }
     Ok(())

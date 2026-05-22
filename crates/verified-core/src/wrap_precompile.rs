@@ -36,6 +36,8 @@ pub const ICP_QUERY_REPLY_BYTE_GAS: u64 = 8;
 pub const MAX_ICP_QUERY_INPUT_LEN_WITH_EXACT_GAS: u64 = 1_152_921_504_606_846_975;
 #[cfg_attr(verus_keep_ghost, verus_verify)]
 pub const MAX_ICP_QUERY_REPLY_LEN_WITH_EXACT_GAS: u64 = 2_305_843_009_213_693_951;
+#[cfg_attr(verus_keep_ghost, verus_verify)]
+pub const MAX_ICP_QUERY_COMBINED_LEN_WITH_EXACT_GAS: u64 = 768_614_336_404_562_567;
 
 #[cfg_attr(verus_keep_ghost, verus_spec(valid => ensures
     valid == (
@@ -164,6 +166,30 @@ pub fn icp_query_update_kind_rejected_raw(kind: u64) -> bool {
 
 #[cfg_attr(verus_keep_ghost, verus_spec(valid => ensures
     valid == (
+        target_len >= 1
+        && target_len <= MAX_PRINCIPAL_LEN
+        && target_non_anonymous == 1
+        && method_len >= 1
+        && method_len <= MAX_QUERY_METHOD_LEN
+        && method_ascii == 1
+    ),
+))]
+pub fn icp_query_allowlist_entry_safe_raw(
+    target_len: u64,
+    target_non_anonymous: u64,
+    method_len: u64,
+    method_ascii: u64,
+) -> bool {
+    target_len >= 1
+        && target_len <= MAX_PRINCIPAL_LEN
+        && target_non_anonymous == 1
+        && method_len >= 1
+        && method_len <= MAX_QUERY_METHOD_LEN
+        && method_ascii == 1
+}
+
+#[cfg_attr(verus_keep_ghost, verus_spec(valid => ensures
+    valid == (
         address_code == expected_address_code
         && topic_count == 1
         && topic_matches == 1
@@ -233,11 +259,12 @@ pub fn wrap_precompile_gas_observation_safe_raw(
 #[cfg_attr(verus_keep_ghost, verus_spec(valid => ensures
     valid == (
         observed_address_code == ICP_QUERY_PRECOMPILE_ADDRESS_CODE
-        && charged_gas >= ICP_QUERY_BASE_GAS
-        && (input_len <= MAX_ICP_QUERY_INPUT_LEN_WITH_EXACT_GAS
-            ==> charged_gas >= input_len * ICP_QUERY_INPUT_BYTE_GAS)
-        && (reply_len <= MAX_ICP_QUERY_REPLY_LEN_WITH_EXACT_GAS
-            ==> charged_gas >= reply_len * ICP_QUERY_REPLY_BYTE_GAS)
+        && returned_success <= 1
+        && (input_len <= MAX_ICP_QUERY_COMBINED_LEN_WITH_EXACT_GAS
+            && reply_len <= MAX_ICP_QUERY_COMBINED_LEN_WITH_EXACT_GAS
+            ==> charged_gas >= ICP_QUERY_BASE_GAS
+                + input_len * ICP_QUERY_INPUT_BYTE_GAS
+                + reply_len * ICP_QUERY_REPLY_BYTE_GAS)
         && (returned_success == 1 ==> gas_limit >= charged_gas)
         && (returned_success == 0 ==> gas_limit < charged_gas)
     ),
@@ -250,12 +277,18 @@ pub fn icp_query_gas_observation_safe_raw(
     gas_limit: u64,
     returned_success: u64,
 ) -> bool {
+    let exact_combined_len = input_len <= MAX_ICP_QUERY_COMBINED_LEN_WITH_EXACT_GAS
+        && reply_len <= MAX_ICP_QUERY_COMBINED_LEN_WITH_EXACT_GAS;
+    let exact_charged_gas = if exact_combined_len {
+        let input_gas = input_len * ICP_QUERY_INPUT_BYTE_GAS;
+        let reply_gas = reply_len * ICP_QUERY_REPLY_BYTE_GAS;
+        charged_gas >= ICP_QUERY_BASE_GAS + input_gas + reply_gas
+    } else {
+        true
+    };
     observed_address_code == ICP_QUERY_PRECOMPILE_ADDRESS_CODE
-        && charged_gas >= ICP_QUERY_BASE_GAS
-        && (input_len > MAX_ICP_QUERY_INPUT_LEN_WITH_EXACT_GAS
-            || charged_gas >= input_len * ICP_QUERY_INPUT_BYTE_GAS)
-        && (reply_len > MAX_ICP_QUERY_REPLY_LEN_WITH_EXACT_GAS
-            || charged_gas >= reply_len * ICP_QUERY_REPLY_BYTE_GAS)
+        && returned_success <= 1
+        && exact_charged_gas
         && (returned_success != 1 || gas_limit >= charged_gas)
         && (returned_success != 0 || gas_limit < charged_gas)
 }
