@@ -25,7 +25,7 @@ pub fn icp_query_update_kind_rejected_raw(kind: u64) -> bool {
 - `rejected` 名を使うなら、specgen標準の postcondition ではなく手書き属性向け。
 
 ## anchor
-- git_commit: 99e52aaefad61f61c45b8900e6011bd9194ff502
+- git_commit: f4f6f494d8be02b8375b85c1b1cfb768376f6dff
 - worktree_dirty: false
 - source_hash: 4de9db5f9a80647d86118783b6d903c928b9f3b1395fb025e0cecb6f93c10c17
 - semantic_hash: a8ddb97d337ebf1eee99dbf008dafc4e3f2817925518eef25009600d997b6d5d

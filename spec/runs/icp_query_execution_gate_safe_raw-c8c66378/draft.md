@@ -33,7 +33,7 @@ pub fn icp_query_execution_gate_safe_raw(
 意味: 戻り値 `valid` は、外部呼び出し前で、外部実行許可・ゼロ値・入力解析済みの全フラグが成立する場合だけ `true`。範囲制約は不要。`1` 以外の値はすべて不成立として扱う。
 
 ## anchor
-- git_commit: 99e52aaefad61f61c45b8900e6011bd9194ff502
+- git_commit: f4f6f494d8be02b8375b85c1b1cfb768376f6dff
 - worktree_dirty: false
 - source_hash: c8c66378a334edaa890f62987b18dc9d89116acd795898f195e2b891ee1710f3
 - semantic_hash: 8204207021ba904b1a7feb073aba9a6903f7674a6a197baa080817f53f3cca1a

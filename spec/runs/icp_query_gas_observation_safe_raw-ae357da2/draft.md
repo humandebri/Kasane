@@ -54,7 +54,7 @@ pub fn icp_query_gas_observation_safe_raw(
 注意: `u64` 乗算・加算のoverflowをVerus側で厳密化するなら、別途 `requires` か上限条件を追加する。
 
 ## anchor
-- git_commit: 99e52aaefad61f61c45b8900e6011bd9194ff502
+- git_commit: f4f6f494d8be02b8375b85c1b1cfb768376f6dff
 - worktree_dirty: false
 - source_hash: ae357da24440cc96cd803023854a33e2ef814e9b53db9b2fcbd8eb036802a2ae
 - semantic_hash: 18e4342ead1acdbd2d672efcd2aab4913b2b8ee7904adc8dab1a8d60765c39bd

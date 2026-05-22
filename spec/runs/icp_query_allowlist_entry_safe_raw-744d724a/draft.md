@@ -43,7 +43,7 @@ pub fn icp_query_allowlist_entry_safe_raw(
 - `u64` フラグは `1` のみ真として許可
 
 ## anchor
-- git_commit: 99e52aaefad61f61c45b8900e6011bd9194ff502
+- git_commit: f4f6f494d8be02b8375b85c1b1cfb768376f6dff
 - worktree_dirty: false
 - source_hash: 744d724ab51703c74b38bfa31261e65bbc8b99e0335effaf53e81ab499a5ec9c
 - semantic_hash: 0b6b4cea57f29b85514b0aea66d697fd2e3f041a1e3918ce19d3d182c39a70f7

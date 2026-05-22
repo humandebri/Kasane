@@ -54,7 +54,7 @@ pub fn compact_icp_query_input_safe_raw(
 要点: 戻り値 `valid` は関数本体の判定式と完全一致。入力の妥当性は形式バージョン、query種別、target/methodの存在と長さ、method UTF-8、arg存在、完全消費で定義する。
 
 ## anchor
-- git_commit: 99e52aaefad61f61c45b8900e6011bd9194ff502
+- git_commit: f4f6f494d8be02b8375b85c1b1cfb768376f6dff
 - worktree_dirty: false
 - source_hash: 8482ca59317370ee896eb92d00727b456dd012c5508548d625deb1a86d97129c
 - semantic_hash: f883212fd840dab907aa4572153c87a087ed775c8c2a06e79d079e4382a1ec4c
