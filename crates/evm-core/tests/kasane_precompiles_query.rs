@@ -1,12 +1,15 @@
 //! どこで: evm-core query系テスト
-//! 何を: wrap precompile が eth_call / estimateGas で利用可能かを固定
+//! 何を: Kasane precompile 群が eth_call / estimateGas で利用可能かを固定
 //! なぜ: 実送信だけ成功して query 見積もりが壊れる回帰を防ぐため
 
 use evm_core::chain::{self, CallObjectInput, ChainError};
 use evm_core::hash;
+use evm_core::kasane_precompiles::{
+    precompile_allow_key, ICP_QUERY_PRECOMPILE_ADDRESS, ICP_UPDATE_INTENT_PRECOMPILE_ADDRESS,
+    WRAP_PRECOMPILE_ADDRESS,
+};
 use evm_core::revm_exec::ExecError;
 use evm_core::tx_decode::IcSyntheticTxInput;
-use evm_core::wrap_precompile::{ICP_QUERY_PRECOMPILE_ADDRESS, WRAP_PRECOMPILE_ADDRESS};
 use evm_db::chain_data::{constants::CHAIN_ID, RuntimeConfigV1};
 use evm_db::stable_state::{init_stable_state, set_runtime_config, with_state, with_state_mut};
 use evm_db::types::keys::{make_account_key, make_storage_key};
@@ -63,11 +66,28 @@ fn build_call_input_to(to: [u8; 20], data: Vec<u8>, value: [u8; 32]) -> CallObje
 }
 
 fn encode_icp_query_input(method: &str, arg: &[u8]) -> Vec<u8> {
+    encode_icp_precompile_input(0, method, arg)
+}
+
+fn encode_icp_update_input(method: &str, arg: &[u8]) -> Vec<u8> {
+    encode_icp_precompile_input(1, method, arg)
+}
+
+fn allow_icp_update_method(method: &str) {
+    let target = candid::Principal::self_authenticating(b"query-target");
+    with_state_mut(|state| {
+        state
+            .icp_update_precompile_allowlist
+            .insert(precompile_allow_key(target.as_slice(), method), 1);
+    });
+}
+
+fn encode_icp_precompile_input(kind: u8, method: &str, arg: &[u8]) -> Vec<u8> {
     let target = candid::Principal::self_authenticating(b"query-target");
     let target_bytes = target.as_slice();
     let mut out = Vec::new();
     out.push(1);
-    out.push(0);
+    out.push(kind);
     out.push(target_bytes.len() as u8);
     out.extend_from_slice(target_bytes);
     out.push(method.len() as u8);
@@ -141,8 +161,12 @@ fn read_token_storage(slot: U256) -> U256 {
 }
 
 fn forwarder_runtime_bytecode() -> Vec<u8> {
+    forwarder_runtime_bytecode_to(WRAP_PRECOMPILE_ADDRESS.into_array())
+}
+
+fn forwarder_runtime_bytecode_to(target: [u8; 20]) -> Vec<u8> {
     let mut code = vec![0x36, 0x3d, 0x3d, 0x37, 0x3d, 0x3d, 0x36, 0x3d, 0x3d, 0x73];
-    code.extend_from_slice(WRAP_PRECOMPILE_ADDRESS.as_slice());
+    code.extend_from_slice(&target);
     code.extend_from_slice(&[0x5a, 0xf1, 0x60, 0x26, 0x57, 0x3d, 0x3d, 0xfd, 0x5b, 0x00]);
     code
 }
@@ -192,7 +216,7 @@ fn keccak(data: &[u8]) -> [u8; 32] {
 }
 
 #[test]
-fn wrap_precompile_eth_call_object_succeeds_in_query_path() {
+fn kasane_precompiles_eth_call_object_succeeds_in_query_path() {
     init_stable_state();
     set_runtime_config(RuntimeConfigV1::new(
         candid::Principal::self_authenticating(b"wrap-precompile-query"),
@@ -210,7 +234,7 @@ fn wrap_precompile_eth_call_object_succeeds_in_query_path() {
 }
 
 #[test]
-fn wrap_precompile_eth_estimate_gas_succeeds_in_query_path() {
+fn kasane_precompiles_eth_estimate_gas_succeeds_in_query_path() {
     init_stable_state();
     set_runtime_config(RuntimeConfigV1::new(
         candid::Principal::self_authenticating(b"wrap-precompile-query"),
@@ -227,7 +251,7 @@ fn wrap_precompile_eth_estimate_gas_succeeds_in_query_path() {
 }
 
 #[test]
-fn wrap_precompile_query_icp_query_precompile_async_returns_resolver_reply() {
+fn kasane_precompiles_query_icp_query_precompile_async_returns_resolver_reply() {
     setup_query_precompile_call_context();
     let request_arg = vec![0x44, 0x49, 0x44, 0x4c];
     let input = encode_icp_query_input("read_state", &request_arg);
@@ -253,7 +277,7 @@ fn wrap_precompile_query_icp_query_precompile_async_returns_resolver_reply() {
 }
 
 #[test]
-fn wrap_precompile_query_icp_query_precompile_async_reverts_on_resolver_error() {
+fn kasane_precompiles_query_icp_query_precompile_async_reverts_on_resolver_error() {
     setup_query_precompile_call_context();
     let input = encode_icp_query_input("read_state", &[]);
 
@@ -269,7 +293,7 @@ fn wrap_precompile_query_icp_query_precompile_async_reverts_on_resolver_error() 
 }
 
 #[test]
-fn wrap_precompile_query_icp_query_precompile_requires_async_context() {
+fn kasane_precompiles_query_icp_query_precompile_requires_async_context() {
     setup_query_precompile_call_context();
     let input = encode_icp_query_input("read_state", &[]);
     let err = chain::eth_call_object(build_call_input_to(
@@ -287,7 +311,7 @@ fn wrap_precompile_query_icp_query_precompile_requires_async_context() {
 }
 
 #[test]
-fn wrap_precompile_query_icp_query_precompile_async_rejects_value() {
+fn kasane_precompiles_query_icp_query_precompile_async_rejects_value() {
     setup_query_precompile_call_context();
     let input = encode_icp_query_input("read_state", &[]);
     let mut value = [0u8; 32];
@@ -359,4 +383,85 @@ fn wrap_precompile_burns_contract_balance_when_called_through_forwarder() {
     assert_eq!(read_token_storage(caller_allowance_slot), U256::ZERO);
     assert_eq!(read_token_storage(contract_balance_slot), U256::ZERO);
     assert_eq!(read_token_storage(contract_allowance_slot), U256::ZERO);
+}
+
+#[test]
+fn icp_update_intent_precompile_emits_log_when_called_through_forwarder() {
+    setup_query_precompile_call_context();
+    allow_icp_update_method("write_state");
+    common::install_contract(
+        FORWARDER_ADDRESS,
+        &forwarder_runtime_bytecode_to(ICP_UPDATE_INTENT_PRECOMPILE_ADDRESS.into_array()),
+    );
+
+    let caller_principal = vec![0x32u8];
+    let caller = hash::derive_evm_address_from_principal(&caller_principal).expect("must derive");
+    common::fund_account(caller, 1_000_000_000_000_000_000u128);
+    let arg = vec![0x44, 0x49, 0x44, 0x4c];
+    let tx_id = chain::submit_ic_tx_input(
+        caller_principal,
+        vec![0xa1],
+        IcSyntheticTxInput {
+            to: Some(FORWARDER_ADDRESS),
+            value: [0u8; 32],
+            gas_limit: 300_000,
+            nonce: 0,
+            max_fee_per_gas: 2_000_000_000,
+            max_priority_fee_per_gas: 1_000_000_000,
+            data: encode_icp_update_input("write_state", &arg),
+        },
+    )
+    .expect("submit");
+
+    let produced = chain::produce_block(1).expect("produce");
+    assert_eq!(produced.block.tx_ids, vec![tx_id]);
+
+    let receipt = chain::get_receipt(&tx_id).expect("receipt");
+    assert_eq!(receipt.status, 1);
+    assert_eq!(receipt.logs.len(), 1);
+    let log = &receipt.logs[0];
+    assert_eq!(
+        log.address.into_array(),
+        ICP_UPDATE_INTENT_PRECOMPILE_ADDRESS.into_array()
+    );
+    assert_eq!(log.topics().len(), 1);
+    assert_eq!(
+        log.topics()[0].0,
+        hash::keccak256(b"KasaneIcpUpdateIntent(bytes)")
+    );
+    assert!(!log.data.data.is_empty());
+}
+
+#[test]
+fn icp_update_intent_precompile_allowlist_miss_fails_without_log() {
+    setup_query_precompile_call_context();
+    common::install_contract(
+        FORWARDER_ADDRESS,
+        &forwarder_runtime_bytecode_to(ICP_UPDATE_INTENT_PRECOMPILE_ADDRESS.into_array()),
+    );
+
+    let caller_principal = vec![0x33u8];
+    let caller = hash::derive_evm_address_from_principal(&caller_principal).expect("must derive");
+    common::fund_account(caller, 1_000_000_000_000_000_000u128);
+    let tx_id = chain::submit_ic_tx_input(
+        caller_principal,
+        vec![0xa1],
+        IcSyntheticTxInput {
+            to: Some(FORWARDER_ADDRESS),
+            value: [0u8; 32],
+            gas_limit: 300_000,
+            nonce: 0,
+            max_fee_per_gas: 2_000_000_000,
+            max_priority_fee_per_gas: 1_000_000_000,
+            data: encode_icp_update_input("write_state", &[0x44]),
+        },
+    )
+    .expect("submit");
+
+    let produced = chain::produce_block(1).expect("produce");
+    assert_eq!(produced.block.tx_ids, vec![tx_id]);
+
+    let receipt = chain::get_receipt(&tx_id).expect("receipt");
+    assert_eq!(receipt.status, 0);
+    assert!(receipt.logs.is_empty());
 }

@@ -6,6 +6,7 @@ pub mod chain_state;
 pub(crate) mod codec;
 pub mod constants;
 pub mod dropped_ring;
+pub mod icp_update_request;
 pub mod internal_trace;
 pub mod log_config;
 pub mod metrics;
@@ -35,6 +36,9 @@ pub use constants::{
     MAX_TX_SIZE, RECEIPT_CONTRACT_ADDR_LEN, TX_ID_LEN,
 };
 pub use dropped_ring::{DroppedRingStateV1, DROPPED_RING_STATE_SIZE_U32};
+pub use icp_update_request::{
+    IcpUpdateDispatchRequest, IcpUpdateRequestStatus, ICP_UPDATE_DECODE_FAILURE_CODE,
+};
 pub use internal_trace::{
     InternalTrace, InternalTraceActionKind, InternalTraceSet, MAX_INTERNAL_TRACES_PER_TX_U32,
 };

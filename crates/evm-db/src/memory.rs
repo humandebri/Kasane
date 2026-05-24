@@ -80,6 +80,10 @@ pub enum AppMemoryId {
     WrapNativeLedgerCanister = 66,
     WrapPendingSubmissions = 67,
     QueryPrecompileAllowlist = 68,
+    IcpUpdateRequests = 69,
+    IcpUpdateDispatchQueue = 70,
+    IcpUpdateDispatchMeta = 71,
+    IcpUpdatePrecompileAllowlist = 72,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -89,7 +93,7 @@ pub struct MemoryRegionInfo {
     pub include_in_estimate: bool,
 }
 
-const ALL_MEMORY_REGIONS: [MemoryRegionInfo; 69] = [
+const ALL_MEMORY_REGIONS: [MemoryRegionInfo; 73] = [
     MemoryRegionInfo {
         id: AppMemoryId::Upgrades,
         name: "Upgrades",
@@ -435,6 +439,26 @@ const ALL_MEMORY_REGIONS: [MemoryRegionInfo; 69] = [
         name: "QueryPrecompileAllowlist",
         include_in_estimate: false,
     },
+    MemoryRegionInfo {
+        id: AppMemoryId::IcpUpdateRequests,
+        name: "IcpUpdateRequests",
+        include_in_estimate: true,
+    },
+    MemoryRegionInfo {
+        id: AppMemoryId::IcpUpdateDispatchQueue,
+        name: "IcpUpdateDispatchQueue",
+        include_in_estimate: true,
+    },
+    MemoryRegionInfo {
+        id: AppMemoryId::IcpUpdateDispatchMeta,
+        name: "IcpUpdateDispatchMeta",
+        include_in_estimate: true,
+    },
+    MemoryRegionInfo {
+        id: AppMemoryId::IcpUpdatePrecompileAllowlist,
+        name: "IcpUpdatePrecompileAllowlist",
+        include_in_estimate: false,
+    },
 ];
 
 impl AppMemoryId {
@@ -509,6 +533,10 @@ impl AppMemoryId {
             AppMemoryId::WrapNativeLedgerCanister => 66,
             AppMemoryId::WrapPendingSubmissions => 67,
             AppMemoryId::QueryPrecompileAllowlist => 68,
+            AppMemoryId::IcpUpdateRequests => 69,
+            AppMemoryId::IcpUpdateDispatchQueue => 70,
+            AppMemoryId::IcpUpdateDispatchMeta => 71,
+            AppMemoryId::IcpUpdatePrecompileAllowlist => 72,
         }
     }
 

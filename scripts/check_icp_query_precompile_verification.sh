@@ -95,7 +95,7 @@ run_rust_checks() {
   cargo test -p ic-evm-core icp_query_precompile
 
   log "run ICP query async precompile tests"
-  cargo test -p ic-evm-core wrap_precompile_query
+  cargo test -p ic-evm-core kasane_precompiles_query
 
   log "run gateway allowlist boundary tests"
   cargo test -p ic-evm-gateway query_precompile_allow
@@ -105,11 +105,11 @@ run_rust_checks() {
 
   log "run rustfmt check for PR #81 Rust files"
   rustfmt --edition 2021 --check \
-    crates/verified-core/src/wrap_precompile.rs \
-    crates/evm-core/src/wrap_precompile.rs \
-    crates/evm-core/src/wrap_precompile_tests.rs \
+    crates/verified-core/src/kasane_precompiles.rs \
+    crates/evm-core/src/kasane_precompiles.rs \
+    crates/evm-core/src/kasane_precompiles_tests.rs \
     crates/evm-core/tests/common/mod.rs \
-    crates/evm-core/tests/wrap_precompile_query.rs \
+    crates/evm-core/tests/kasane_precompiles_query.rs \
     crates/ic-evm-gateway/src/lib.rs \
     crates/ic-evm-gateway/src/tests.rs
 

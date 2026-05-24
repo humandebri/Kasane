@@ -5,11 +5,11 @@ use crate::blob_store::BlobStore;
 use crate::chain_data::constants::CHAIN_ID;
 use crate::chain_data::{
     CallerKey, ChainStateV1, DroppedRingStateV1, FeePolicyStored, GcStateV1, HashKey, Head,
-    LogConfigV1, MetricsStateV1, MigrationStateV1, MismatchRecordV1, NativeCreditRecord,
-    NodeRecord, OpsConfigV1, OpsMetricsV1, OpsStateV1, PendingFeeKey, PruneConfigV1, PruneJournal,
-    PruneStateV1, QueueMeta, ReadyKey, ReadySeqKey, RuntimeConfigV1, SenderKey, SenderNonceKey,
-    StateRootMetaV1, StateRootMetricsV1, StoredTxBytes, TxId, UnwrapDispatchRequest,
-    WrapEvmConfigStored, WrapPendingSubmission, WrapStoredRequest,
+    IcpUpdateDispatchRequest, LogConfigV1, MetricsStateV1, MigrationStateV1, MismatchRecordV1,
+    NativeCreditRecord, NodeRecord, OpsConfigV1, OpsMetricsV1, OpsStateV1, PendingFeeKey,
+    PruneConfigV1, PruneJournal, PruneStateV1, QueueMeta, ReadyKey, ReadySeqKey, RuntimeConfigV1,
+    SenderKey, SenderNonceKey, StateRootMetaV1, StateRootMetricsV1, StoredTxBytes, TxId,
+    UnwrapDispatchRequest, WrapEvmConfigStored, WrapPendingSubmission, WrapStoredRequest,
 };
 use crate::memory::{get_memory, AppMemoryId, VMem};
 use crate::types::keys::{AccountKey, CodeKey, StorageKey};
@@ -48,6 +48,9 @@ pub type WrapQueue = StableBTreeMap<u64, TxId, VMem>;
 pub type WrapAllowedAssets = StableBTreeMap<Vec<u8>, u8, VMem>;
 pub type WrapPendingSubmissions = StableBTreeMap<TxId, WrapPendingSubmission, VMem>;
 pub type QueryPrecompileAllowlist = StableBTreeMap<Vec<u8>, u8, VMem>;
+pub type IcpUpdateRequests = StableBTreeMap<TxId, IcpUpdateDispatchRequest, VMem>;
+pub type IcpUpdateDispatchQueue = StableBTreeMap<u64, TxId, VMem>;
+pub type IcpUpdatePrecompileAllowlist = StableBTreeMap<Vec<u8>, u8, VMem>;
 pub type PruneJournalMap = StableBTreeMap<u64, PruneJournal, VMem>;
 pub type DroppedRing = StableBTreeMap<u64, TxId, VMem>;
 pub type StateStorageRoots = StableBTreeMap<AccountKey, U256Val, VMem>;
@@ -107,6 +110,10 @@ pub struct StableState {
     pub wrap_evm_config: StableCell<WrapEvmConfigStored, VMem>,
     pub wrap_native_ledger_canister: StableCell<Vec<u8>, VMem>,
     pub wrap_pending_submissions: WrapPendingSubmissions,
+    pub icp_update_requests: IcpUpdateRequests,
+    pub icp_update_dispatch_queue: IcpUpdateDispatchQueue,
+    pub icp_update_dispatch_meta: StableCell<QueueMeta, VMem>,
+    pub icp_update_precompile_allowlist: IcpUpdatePrecompileAllowlist,
     pub runtime_config: StableCell<RuntimeConfigV1, VMem>,
     pub dropped_ring_state: StableCell<DroppedRingStateV1, VMem>,
     pub dropped_ring: DroppedRing,
@@ -226,6 +233,15 @@ pub fn init_stable_state() {
     );
     let wrap_pending_submissions =
         StableBTreeMap::init(get_memory(AppMemoryId::WrapPendingSubmissions));
+    let icp_update_requests = StableBTreeMap::init(get_memory(AppMemoryId::IcpUpdateRequests));
+    let icp_update_dispatch_queue =
+        StableBTreeMap::init(get_memory(AppMemoryId::IcpUpdateDispatchQueue));
+    let icp_update_dispatch_meta = StableCell::init(
+        get_memory(AppMemoryId::IcpUpdateDispatchMeta),
+        QueueMeta::new(),
+    );
+    let icp_update_precompile_allowlist =
+        StableBTreeMap::init(get_memory(AppMemoryId::IcpUpdatePrecompileAllowlist));
     let runtime_config = StableCell::init(
         get_memory(AppMemoryId::RuntimeConfig),
         RuntimeConfigV1::new_unconfigured(),
@@ -307,6 +323,10 @@ pub fn init_stable_state() {
             wrap_evm_config,
             wrap_native_ledger_canister,
             wrap_pending_submissions,
+            icp_update_requests,
+            icp_update_dispatch_queue,
+            icp_update_dispatch_meta,
+            icp_update_precompile_allowlist,
             runtime_config,
             dropped_ring_state,
             dropped_ring,

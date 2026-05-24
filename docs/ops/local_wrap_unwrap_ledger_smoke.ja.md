@@ -101,7 +101,7 @@ scripts/local_wrap_unwrap_ledger_smoke.sh
 - query path の `rpc_eth_call_object` / `rpc_eth_estimate_gas_object` は既存の
   [local_wrap_unwrap_smoke.ja.md](/Users/0xhude/Desktop/ICP/Kasane/docs/ops/local_wrap_unwrap_smoke.ja.md)
   と
-  `cargo test -p ic-evm-core --test wrap_precompile_query -- --nocapture`
+  `cargo test -p ic-evm-core --test kasane_precompiles_query -- --nocapture`
   で継続確認します。
 - `icp network stop local` の後でも `127.0.0.1:8000` が埋まっていると local start は失敗する。
   その場合は stale な `pocket-ic` / replica process を止めてから再実行する。

@@ -4,7 +4,7 @@
 
 use candid::{CandidType, Decode, Deserialize, Encode, Nat, Principal};
 use evm_core::hash;
-use evm_core::wrap_precompile::{NATIVE_WITHDRAW_PRECOMPILE_ADDRESS, WRAP_PRECOMPILE_ADDRESS};
+use evm_core::kasane_precompiles::{NATIVE_WITHDRAW_PRECOMPILE_ADDRESS, WRAP_PRECOMPILE_ADDRESS};
 use pocket_ic::PocketIc;
 use serde_json::Value;
 use std::path::PathBuf;
@@ -637,7 +637,7 @@ fn gateway_unwrap_request_ids_by_tx_id(
     Decode!(&out, Vec<Vec<u8>>).expect("decode unwrap ids")
 }
 
-fn derive_unwrap_request_id(tx_id: &[u8], log_index: usize) -> Vec<u8> {
+fn derive_log_request_id(tx_id: &[u8], log_index: usize) -> Vec<u8> {
     let log_index = u32::try_from(log_index).expect("log index fits u32");
     let mut payload = Vec::with_capacity(36);
     payload.extend_from_slice(tx_id);
@@ -1408,7 +1408,7 @@ fn integrated_gateway_native_deposit_and_withdrawal_paths_work() {
         .iter()
         .position(|log| log.address == NATIVE_WITHDRAW_PRECOMPILE_ADDRESS.into_array().to_vec())
         .expect("native withdraw log index");
-    let request_id = derive_unwrap_request_id(&withdraw_receipt.tx_id, log_index);
+    let request_id = derive_log_request_id(&withdraw_receipt.tx_id, log_index);
     let withdrawal =
         wait_for_unwrap_status(&pic, gateway_id, &request_id, WrapRequestStatus::Succeeded);
     assert_eq!(withdrawal.kind, RequestKind::NativeWithdrawal);

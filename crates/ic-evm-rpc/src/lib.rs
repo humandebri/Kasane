@@ -230,7 +230,7 @@ pub async fn rpc_eth_call_object_async<R, Fut>(
     resolver: R,
 ) -> Result<RpcCallResultView, RpcErrorView>
 where
-    R: FnMut(evm_core::wrap_precompile::IcpQueryRequest) -> Fut,
+    R: FnMut(evm_core::kasane_precompiles::IcpQueryRequest) -> Fut,
     Fut: core::future::Future<Output = Result<Vec<u8>, String>>,
 {
     let input = call_object_to_input(call)
