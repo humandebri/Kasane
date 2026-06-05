@@ -1,16 +1,20 @@
 use super::{
     allowance_slot, approval_event_topic0, compute_asset_key, compute_extra_gas,
     estimate_wrap_precompile_gas, extra_gas_by_instruction_ratio, extra_gas_for_precompile,
-    native_value_to_e8s, native_withdraw_event_topic0, native_withdraw_intent_from_log,
-    parse_input, topic_from_address, transfer_event_topic0, unwrap_intent_from_log, unwrap_owner,
-    wrap_event_topic0, COMPACT_UNWRAP_FORMAT_VERSION, MAX_PRINCIPAL_LEN,
-    NATIVE_WITHDRAW_PRECOMPILE_ADDRESS, WEI_PER_E8S, WRAP_PRECOMPILE_ADDRESS,
+    icp_update_intent_event_topic0, icp_update_intent_from_log, native_value_to_e8s,
+    native_withdraw_event_topic0, native_withdraw_intent_from_log, parse_icp_query_input,
+    parse_icp_update_intent_input, parse_input, topic_from_address, transfer_event_topic0,
+    unwrap_intent_from_log, unwrap_owner, wrap_event_topic0, COMPACT_ICP_PRECOMPILE_FORMAT_VERSION,
+    COMPACT_UNWRAP_FORMAT_VERSION, ICP_PRECOMPILE_KIND_UPDATE, ICP_QUERY_KIND_QUERY,
+    ICP_UPDATE_INTENT_PRECOMPILE_ADDRESS, MAX_PRINCIPAL_LEN, NATIVE_WITHDRAW_PRECOMPILE_ADDRESS,
+    WEI_PER_E8S, WRAP_PRECOMPILE_ADDRESS,
 };
 use crate::hash;
 use evm_db::chain_data::receipt::log_entry_from_parts;
 use evm_db::chain_data::RuntimeConfigV1;
 use evm_db::stable_state::{init_stable_state, set_runtime_config};
 use evm_db::Storable;
+use proptest::prelude::*;
 use revm::interpreter::{CallInput, CallInputs, CallScheme, CallValue};
 use revm::primitives::{Address, Bytes, U256};
 use std::borrow::Cow;
@@ -25,6 +29,182 @@ fn configure_runtime(factory: [u8; 20]) {
     bytes[2..2 + raw.len()].copy_from_slice(raw);
     bytes[32..52].copy_from_slice(&factory);
     set_runtime_config(RuntimeConfigV1::from_bytes(Cow::Owned(bytes.to_vec())));
+}
+
+fn encode_query_precompile_input(kind: u8, method: &str, arg: &[u8]) -> Vec<u8> {
+    let target = candid::Principal::self_authenticating(b"query-target");
+    encode_query_precompile_input_raw(kind, target.as_slice(), method.as_bytes(), arg)
+}
+
+fn encode_query_precompile_input_raw(
+    kind: u8,
+    target_bytes: &[u8],
+    method_bytes: &[u8],
+    arg: &[u8],
+) -> Vec<u8> {
+    let mut out = Vec::new();
+    out.push(COMPACT_ICP_PRECOMPILE_FORMAT_VERSION);
+    out.push(kind);
+    out.push(target_bytes.len() as u8);
+    out.extend_from_slice(target_bytes);
+    out.push(method_bytes.len() as u8);
+    out.extend_from_slice(method_bytes);
+    out.extend_from_slice(&(arg.len() as u32).to_be_bytes());
+    out.extend_from_slice(arg);
+    out
+}
+
+#[test]
+fn icp_query_precompile_compact_input_decodes() {
+    let arg = vec![0x44, 0x49, 0x44, 0x4c, 0x00, 0x00];
+    let input = encode_query_precompile_input(ICP_QUERY_KIND_QUERY, "read_state", &arg);
+    let parsed = parse_icp_query_input(&input).expect("must decode");
+    assert_eq!(parsed.method, "read_state");
+    assert_eq!(parsed.arg, arg);
+    assert!(!parsed.target.is_empty());
+}
+
+#[test]
+fn icp_query_precompile_rejects_update_kind() {
+    let input = encode_query_precompile_input(ICP_PRECOMPILE_KIND_UPDATE, "write_state", &[]);
+    assert_eq!(
+        parse_icp_query_input(&input).unwrap_err(),
+        "ic_query.update_unimplemented"
+    );
+}
+
+#[test]
+fn icp_update_intent_precompile_accepts_update_kind() {
+    let arg = vec![0x44, 0x49, 0x44, 0x4c];
+    let input = encode_query_precompile_input(ICP_PRECOMPILE_KIND_UPDATE, "write_state", &arg);
+    let parsed = parse_icp_update_intent_input(&input).expect("must decode update intent");
+
+    assert_eq!(parsed.method, "write_state");
+    assert_eq!(parsed.arg, arg);
+    assert!(!parsed.target.is_empty());
+}
+
+#[test]
+fn icp_update_intent_precompile_rejects_query_kind() {
+    let input = encode_query_precompile_input(ICP_QUERY_KIND_QUERY, "read_state", &[]);
+    assert_eq!(
+        parse_icp_update_intent_input(&input).unwrap_err(),
+        "ic_update.kind_invalid"
+    );
+}
+
+#[test]
+fn icp_query_precompile_rejects_long_method() {
+    let method = "x".repeat(65);
+    let input = encode_query_precompile_input(ICP_QUERY_KIND_QUERY, &method, &[]);
+    assert_eq!(
+        parse_icp_query_input(&input).unwrap_err(),
+        "ic_query.method_invalid"
+    );
+}
+
+proptest! {
+    #[test]
+    fn icp_query_precompile_parser_matches_verified_model_for_complete_frames(
+        version in any::<u8>(),
+        kind in any::<u8>(),
+        target_len in 0usize..=40,
+        method_len in 0usize..=80,
+        method_is_utf8 in any::<bool>(),
+        arg in proptest::collection::vec(any::<u8>(), 0..32),
+    ) {
+        let mut input = Vec::new();
+        let target = vec![0x2au8; target_len];
+        let method = if method_is_utf8 {
+            vec![b'm'; method_len]
+        } else {
+            vec![0xff; method_len]
+        };
+        input.push(version);
+        input.push(kind);
+        input.push(target_len as u8);
+        input.extend_from_slice(&target);
+        input.push(method_len as u8);
+        input.extend_from_slice(&method);
+        input.extend_from_slice(&(arg.len() as u32).to_be_bytes());
+        input.extend_from_slice(&arg);
+
+        let model = verified_core::kasane_precompiles::compact_icp_query_input_safe_raw(
+            u64::from(version),
+            u64::from(kind),
+            target_len as u64,
+            1,
+            method_len as u64,
+            1,
+            u64::from(method_is_utf8),
+            1,
+            1,
+        );
+        let parsed = parse_icp_query_input(&input);
+
+        prop_assert_eq!(parsed.is_ok(), model);
+        if model {
+            let parsed = parsed.expect("model accepted frame");
+            prop_assert_eq!(parsed.target, target);
+            prop_assert_eq!(parsed.method.as_bytes(), method.as_slice());
+            prop_assert_eq!(parsed.arg, arg);
+        }
+        if kind == ICP_PRECOMPILE_KIND_UPDATE {
+            prop_assert!(verified_core::kasane_precompiles::icp_query_update_kind_rejected_raw(
+                u64::from(kind),
+            ));
+        }
+    }
+}
+
+#[test]
+fn icp_query_parser_rejects_truncated_arg_against_verified_model() {
+    let mut input = encode_query_precompile_input(ICP_QUERY_KIND_QUERY, "read_state", &[1, 2, 3]);
+    input.pop();
+    assert_eq!(
+        parse_icp_query_input(&input).unwrap_err(),
+        "ic_query.arg.abi_invalid"
+    );
+    assert!(
+        !verified_core::kasane_precompiles::compact_icp_query_input_safe_raw(
+            COMPACT_ICP_PRECOMPILE_FORMAT_VERSION as u64,
+            ICP_QUERY_KIND_QUERY as u64,
+            candid::Principal::self_authenticating(b"query-target")
+                .as_slice()
+                .len() as u64,
+            1,
+            "read_state".len() as u64,
+            1,
+            1,
+            0,
+            1,
+        )
+    );
+}
+
+#[test]
+fn icp_query_parser_rejects_trailing_data_against_verified_model() {
+    let mut input = encode_query_precompile_input(ICP_QUERY_KIND_QUERY, "read_state", &[1, 2, 3]);
+    input.push(0);
+    assert_eq!(
+        parse_icp_query_input(&input).unwrap_err(),
+        "ic_query.arg.abi_invalid"
+    );
+    assert!(
+        !verified_core::kasane_precompiles::compact_icp_query_input_safe_raw(
+            COMPACT_ICP_PRECOMPILE_FORMAT_VERSION as u64,
+            ICP_QUERY_KIND_QUERY as u64,
+            candid::Principal::self_authenticating(b"query-target")
+                .as_slice()
+                .len() as u64,
+            1,
+            "read_state".len() as u64,
+            1,
+            1,
+            1,
+            0,
+        )
+    );
 }
 
 #[test]
@@ -65,6 +245,29 @@ fn native_withdraw_intent_log_roundtrip_decodes() {
     let parsed = native_withdraw_intent_from_log(&log).expect("must decode");
     assert_eq!(parsed.amount_e8s, amount);
     assert_eq!(parsed.recipient, recipient);
+}
+
+#[test]
+fn icp_update_intent_log_roundtrip_decodes() {
+    let target = vec![1, 2, 3];
+    let method = "write_state";
+    let arg = vec![4, 5, 6];
+    let mut data = Vec::new();
+    data.push(target.len() as u8);
+    data.extend_from_slice(&target);
+    data.push(method.len() as u8);
+    data.extend_from_slice(method.as_bytes());
+    data.extend_from_slice(&(arg.len() as u32).to_be_bytes());
+    data.extend_from_slice(&arg);
+    let log = log_entry_from_parts(
+        ICP_UPDATE_INTENT_PRECOMPILE_ADDRESS.into_array(),
+        vec![icp_update_intent_event_topic0()],
+        data,
+    );
+    let parsed = icp_update_intent_from_log(&log).expect("must decode");
+    assert_eq!(parsed.target, target);
+    assert_eq!(parsed.method, method);
+    assert_eq!(parsed.arg, arg);
 }
 
 #[test]

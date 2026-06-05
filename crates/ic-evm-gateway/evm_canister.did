@@ -183,6 +183,23 @@ type HealthView = record {
   last_block_time : nat64;
   queue_len : nat64;
 };
+type IcpUpdateRequestView = record {
+  request_id : blob;
+  status : RequestDispatchStatusView;
+  method : text;
+  updated_at : nat64;
+  tx_id : blob;
+  tx_index : nat32;
+  log_index : nat32;
+  evm_sender : blob;
+  error : opt text;
+  block_number : nat64;
+  target : principal;
+  ic_caller : opt principal;
+  tx_kind : IcpUpdateTxKindView;
+  reply : opt blob;
+};
+type IcpUpdateTxKindView = variant { EthSigned; IcSynthetic };
 type Icrc21ConsentInfo = record {
   metadata : Icrc21ConsentMessageMetadata;
   consent_message : Icrc21ConsentMessage;
@@ -300,6 +317,7 @@ type PendingStatusView = variant {
   Unknown;
   Dropped : record { code : nat16 };
 };
+type PrecompileAllowArgs = record { method : text; target : principal };
 type ProduceBlockError = variant { Internal : text; InvalidArgument : text };
 type PrunePolicyView = record {
   headroom_ratio_bps : nat32;
@@ -379,6 +397,7 @@ type RequestDispatchStatusView = variant {
   Queued;
   Dispatching;
   Dispatched;
+  DispatchUncertain;
   DispatchFailed;
 };
 type RequestKind = variant { Wrap; NativeDeposit; Unwrap; NativeWithdrawal };
@@ -419,19 +438,19 @@ type RequestStageView = variant {
   FeeCollected;
 };
 type RequestStatus = variant { Queued; Failed; Succeeded; Running };
-type Result = variant { Ok; Err : ApiError };
-type Result_1 = variant { Ok : DispatchUnwrapRequestOk; Err : ApiError };
-type Result_10 = variant { Ok : WrapRuntimeConfigView; Err : text };
-type Result_11 = variant { Ok : Icrc21ConsentInfo; Err : Icrc21Error };
-type Result_12 = variant { Ok : text; Err : text };
-type Result_13 = variant { Ok : PruneResultView; Err : ProduceBlockError };
-type Result_14 = variant { Ok : QuoteNativeDepositOk; Err : ApiError };
-type Result_15 = variant { Ok : QuoteNativeWithdrawalOk; Err : ApiError };
-type Result_16 = variant { Ok : QuoteWrapRequestOk; Err : ApiError };
-type Result_17 = variant { Ok : RequestOverview; Err : ApiError };
-type Result_18 = variant { Ok; Err : text };
+type Result = variant { Ok; Err : text };
+type Result_1 = variant { Ok; Err : ApiError };
+type Result_10 = variant { Ok : GetUnwrapRequirementsOk; Err : ApiError };
+type Result_11 = variant { Ok : WrapRuntimeConfigView; Err : text };
+type Result_12 = variant { Ok : Icrc21ConsentInfo; Err : Icrc21Error };
+type Result_13 = variant { Ok : text; Err : text };
+type Result_14 = variant { Ok : PruneResultView; Err : ProduceBlockError };
+type Result_15 = variant { Ok : QuoteNativeDepositOk; Err : ApiError };
+type Result_16 = variant { Ok : QuoteNativeWithdrawalOk; Err : ApiError };
+type Result_17 = variant { Ok : QuoteWrapRequestOk; Err : ApiError };
+type Result_18 = variant { Ok : RequestOverview; Err : ApiError };
 type Result_19 = variant { Ok : RpcCallResultView; Err : RpcErrorView };
-type Result_2 = variant { Ok : EstimateIcTxOk; Err : ApiError };
+type Result_2 = variant { Ok : DispatchUnwrapRequestOk; Err : ApiError };
 type Result_20 = variant { Ok : blob; Err : text };
 type Result_21 = variant { Ok : nat64; Err : RpcErrorView };
 type Result_22 = variant { Ok : RpcFeeHistoryView; Err : RpcErrorView };
@@ -442,13 +461,13 @@ type Result_26 = variant { Ok : EthLogsPageView; Err : GetLogsErrorView };
 type Result_27 = variant { Ok : blob; Err : SubmitTxError };
 type Result_28 = variant { Ok : SubmitNativeDepositOk; Err : ApiError };
 type Result_29 = variant { Ok : SubmitWrapRequestOk; Err : ApiError };
-type Result_3 = variant { Ok : nat64; Err : text };
-type Result_4 = variant { Ok : ExportResponseView; Err : ExportErrorView };
-type Result_5 = variant { Ok : vec principal; Err : text };
-type Result_6 = variant { Ok : BlockView; Err : LookupError };
-type Result_7 = variant { Ok : FeePolicyView; Err : text };
-type Result_8 = variant { Ok : ReceiptView; Err : LookupError };
-type Result_9 = variant { Ok : GetUnwrapRequirementsOk; Err : ApiError };
+type Result_3 = variant { Ok : EstimateIcTxOk; Err : ApiError };
+type Result_4 = variant { Ok : nat64; Err : text };
+type Result_5 = variant { Ok : ExportResponseView; Err : ExportErrorView };
+type Result_6 = variant { Ok : vec principal; Err : text };
+type Result_7 = variant { Ok : BlockView; Err : LookupError };
+type Result_8 = variant { Ok : FeePolicyView; Err : text };
+type Result_9 = variant { Ok : ReceiptView; Err : LookupError };
 type RetryRequestArgs = record { request_id : blob };
 type RpcAccessListItemView = record { storage_keys : vec blob; address : blob };
 type RpcBlockLookupView = variant {
@@ -572,56 +591,66 @@ type WrapRuntimeConfigView = record {
   wrap_factory_address : blob;
 };
 service : (opt InitArgs) -> {
-  credit_native_deposit : (blob, blob, nat) -> (Result);
+  add_query_precompile_allowed_method : (PrecompileAllowArgs) -> (Result);
+  add_update_precompile_allowed_method : (PrecompileAllowArgs) -> (Result);
+  credit_native_deposit : (blob, blob, nat) -> (Result_1);
   dispatch_native_withdrawal_request : (
       DispatchNativeWithdrawalRequestArgs,
-    ) -> (Result_1);
-  dispatch_unwrap_request : (DispatchUnwrapRequestArgs) -> (Result_1);
-  estimate_ic_tx : (SubmitIcTxArgsDto) -> (Result_2) query;
-  expected_nonce_by_address : (blob) -> (Result_3) query;
-  export_blocks : (opt ExportCursorView, nat32) -> (Result_4) query;
-  get_allowed_assets : () -> (Result_5) query;
-  get_block : (nat64) -> (Result_6) query;
+    ) -> (Result_2);
+  dispatch_unwrap_request : (DispatchUnwrapRequestArgs) -> (Result_2);
+  estimate_ic_tx : (SubmitIcTxArgsDto) -> (Result_3) query;
+  expected_nonce_by_address : (blob) -> (Result_4) query;
+  export_blocks : (opt ExportCursorView, nat32) -> (Result_5) query;
+  get_allowed_assets : () -> (Result_6) query;
+  get_block : (nat64) -> (Result_7) query;
   get_cycle_balance : () -> (nat) query;
-  get_fee_policy : () -> (Result_7) query;
+  get_fee_policy : () -> (Result_8) query;
+  get_icp_update_request : (blob) -> (opt IcpUpdateRequestView) query;
   get_native_deposit_result : (blob) -> (opt RequestOverview) query;
   get_ops_status : () -> (OpsStatusView) query;
   get_pending : (blob) -> (PendingStatusView) query;
   get_prune_status : () -> (PruneStatusView) query;
+  get_query_precompile_allowlist : () -> (vec PrecompileAllowArgs) query;
   get_queue_snapshot : (nat32, opt nat64) -> (QueueSnapshotView) query;
-  get_receipt : (blob) -> (Result_8) query;
+  get_receipt : (blob) -> (Result_9) query;
   get_request : (blob) -> (opt RequestOverview) query;
   get_unwrap_dispatch_overview : (blob) -> (
       opt UnwrapDispatchOverviewView,
     ) query;
   get_unwrap_request_ids_by_eth_tx_hash : (blob) -> (vec blob) query;
   get_unwrap_request_ids_by_tx_id : (blob) -> (vec blob) query;
-  get_unwrap_requirements : (GetUnwrapRequirementsArgs) -> (Result_9) query;
-  get_wrap_runtime_config : () -> (Result_10) query;
+  get_unwrap_requirements : (GetUnwrapRequirementsArgs) -> (Result_10) query;
+  get_update_precompile_allowlist : () -> (vec PrecompileAllowArgs) query;
+  get_wrap_runtime_config : () -> (Result_11) query;
   health : () -> (HealthView) query;
   icrc10_supported_standards : () -> (vec StandardRecord) query;
   icrc21_canister_call_consent_message : (Icrc21ConsentMessageRequest) -> (
-      Result_11,
+      Result_12,
     );
   memory_breakdown : () -> (MemoryBreakdownView) query;
   metrics : (nat64) -> (MetricsView) query;
-  metrics_prometheus : () -> (Result_12) query;
-  prune_blocks : (nat64, nat32) -> (Result_13);
-  quote_native_deposit : (QuoteNativeDepositArgs) -> (Result_14) query;
+  metrics_prometheus : () -> (Result_13) query;
+  prune_blocks : (nat64, nat32) -> (Result_14);
+  quote_native_deposit : (QuoteNativeDepositArgs) -> (Result_15) query;
   quote_native_withdrawal : (QuoteNativeWithdrawalArgs) -> (
-      Result_15,
+      Result_16,
     ) composite_query;
-  quote_wrap_request : (QuoteWrapRequestArgs) -> (Result_16) query;
-  recover_failed_wrap : (RecoverFailedWrapArgs) -> (Result_17);
-  repair_stale_wrap_operations : () -> (Result_18);
-  retry_native_deposit : (RetryRequestArgs) -> (Result_17);
-  retry_native_withdrawal : (RetryRequestArgs) -> (Result_17);
-  retry_request : (RetryRequestArgs) -> (Result_17);
+  quote_wrap_request : (QuoteWrapRequestArgs) -> (Result_17) query;
+  recover_failed_wrap : (RecoverFailedWrapArgs) -> (Result_18);
+  remove_query_precompile_allowed_method : (PrecompileAllowArgs) -> (Result);
+  remove_update_precompile_allowed_method : (PrecompileAllowArgs) -> (Result);
+  repair_stale_wrap_operations : () -> (Result);
+  retry_native_deposit : (RetryRequestArgs) -> (Result_18);
+  retry_native_withdrawal : (RetryRequestArgs) -> (Result_18);
+  retry_request : (RetryRequestArgs) -> (Result_18);
   rpc_eth_block_number : () -> (nat64) query;
   rpc_eth_call_object : (RpcCallObjectView) -> (Result_19) query;
   rpc_eth_call_object_at : (RpcCallObjectView, RpcBlockTagView) -> (
       Result_19,
     ) query;
+  rpc_eth_call_object_with_query_precompile : (RpcCallObjectView) -> (
+      Result_19,
+    ) composite_query;
   rpc_eth_call_rawtx : (blob) -> (Result_20) query;
   rpc_eth_chain_id : () -> (nat64) query;
   rpc_eth_estimate_gas_object : (RpcCallObjectView) -> (Result_21) query;
@@ -660,11 +689,11 @@ service : (opt InitArgs) -> {
   rpc_eth_history_window : () -> (RpcHistoryWindowView) query;
   rpc_eth_max_priority_fee_per_gas : () -> (Result_23) query;
   rpc_eth_send_raw_transaction : (blob) -> (Result_27);
-  set_allowed_assets : (vec principal) -> (Result_18);
-  set_fee_policy : (FeePolicyView) -> (Result_18);
-  set_log_filter : (opt text) -> (Result_18);
-  set_prune_policy : (PrunePolicyView) -> (Result_18);
-  set_pruning_enabled : (bool) -> (Result_18);
+  set_allowed_assets : (vec principal) -> (Result);
+  set_fee_policy : (FeePolicyView) -> (Result);
+  set_log_filter : (opt text) -> (Result);
+  set_prune_policy : (PrunePolicyView) -> (Result);
+  set_pruning_enabled : (bool) -> (Result);
   submit_ic_tx : (SubmitIcTxArgsDto) -> (Result_27);
   submit_native_deposit : (SubmitNativeDepositArgs) -> (Result_28);
   submit_wrap_request : (SubmitWrapRequestArgs) -> (Result_29);

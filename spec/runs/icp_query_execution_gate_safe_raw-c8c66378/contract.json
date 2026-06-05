@@ -1,0 +1,20 @@
+{
+  "preconditions": [
+    "true"
+  ],
+  "postconditions": [
+    "result == (calls_before == 0 && mode_allows_external == 1 && value_is_zero == 1 && parsed_input == 1)"
+  ],
+  "acceptance_criteria": [
+    "Allow execution only for the first parsed zero-value ICP query call in an external-query-capable context."
+  ],
+  "test_evidence": [
+    {
+      "scenario_id": "icp_query_execution_gate_safe_raw-nominal",
+      "command": "cargo test -p ic-evm-core wrap_precompile_query",
+      "test_name": "async resolver success/error, sync ExternalQuery failure, and value rejection tests",
+      "recorded_at": "2026-05-22T07:18:33Z"
+    }
+  ],
+  "risk_level": "medium"
+}

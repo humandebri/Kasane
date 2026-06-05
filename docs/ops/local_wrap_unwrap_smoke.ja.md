@@ -104,13 +104,13 @@ cargo test -p ic-evm-gateway resolve_wrap_submit_ok -- --nocapture
 ### 6. query 経路の wrap precompile 回帰
 
 ```bash
-cargo test -p ic-evm-core --test wrap_precompile_query -- --nocapture
+cargo test -p ic-evm-core --test kasane_precompiles_query -- --nocapture
 ```
 
 期待:
 
-- `wrap_precompile_eth_call_object_succeeds_in_query_path ... ok`
-- `wrap_precompile_eth_estimate_gas_succeeds_in_query_path ... ok`
+- `kasane_precompiles_eth_call_object_succeeds_in_query_path ... ok`
+- `kasane_precompiles_eth_estimate_gas_succeeds_in_query_path ... ok`
 
 ### 7. 必要なら local query smoke
 

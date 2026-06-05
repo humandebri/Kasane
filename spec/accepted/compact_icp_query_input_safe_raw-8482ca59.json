@@ -1,0 +1,48 @@
+{
+  "target": "compact_icp_query_input_safe_raw",
+  "target_id": "23403bcabfd90156a41bce1681bcd829143973268f67578c891500030cd15a78",
+  "slug": "compact_icp_query_input_safe_raw-8482ca59",
+  "file": "crates/verified-core/src/wrap_precompile.rs",
+  "function": "compact_icp_query_input_safe_raw",
+  "git_commit": "f4f6f494d8be02b8375b85c1b1cfb768376f6dff",
+  "worktree_dirty": false,
+  "source_hash": "8482ca59317370ee896eb92d00727b456dd012c5508548d625deb1a86d97129c",
+  "semantic_hash": "f883212fd840dab907aa4572153c87a087ed775c8c2a06e79d079e4382a1ec4c",
+  "dependency_hash_inputs": [
+    {
+      "kind": "use",
+      "name": "cfg",
+      "file": "crates/verified-core/src/wrap_precompile.rs",
+      "hash": "a5eb4157d5d32303032e3dc786e34f004ebe17f0ff1bb26f90ac9eb42478596c"
+    }
+  ],
+  "unresolved_dependencies": [],
+  "spec_source_of_truth": "accepted_json",
+  "tool_version": "0.1.0",
+  "preconditions": [
+    "true"
+  ],
+  "postconditions": [
+    "result == (version == COMPACT_FORMAT_VERSION && kind == ICP_QUERY_KIND_QUERY && target_len >= 1 && target_len <= MAX_PRINCIPAL_LEN && target_present == 1 && method_len >= 1 && method_len <= MAX_QUERY_METHOD_LEN && method_present == 1 && method_utf8 == 1 && arg_present == 1 && consumed_exact == 1)"
+  ],
+  "acceptance_criteria": [
+    "Accept only compact query inputs with version 1, query kind, bounded target and method, UTF-8 method bytes, present argument bytes, and no trailing data."
+  ],
+  "test_evidence": [
+    {
+      "scenario_id": "compact_icp_query_input_safe_raw-nominal",
+      "command": "cargo test -p ic-evm-core icp_query_precompile",
+      "test_name": "icp_query_precompile parser/model PBT and compact parser boundary tests",
+      "recorded_at": "2026-05-22T07:18:32Z"
+    }
+  ],
+  "risk_level": "medium",
+  "verified_subject": "implementation",
+  "contract_hash": "86775b1d73eeb73d50c5860c6b589453b1b23ee16a309d82313acb827d541db8",
+  "applied_contract_hash": "86775b1d73eeb73d50c5860c6b589453b1b23ee16a309d82313acb827d541db8",
+  "applied_at": "2026-05-22T07:25:00Z",
+  "panic_behavior": "documented",
+  "overflow_behavior": "documented",
+  "rejected_behaviors": [],
+  "open_assumptions": []
+}

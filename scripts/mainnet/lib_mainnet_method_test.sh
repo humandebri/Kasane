@@ -136,7 +136,7 @@ run_icp_query_call() {
   local method="$1"
   local args="${2-}"
   local timeout_sec="${ICP_CALL_TIMEOUT_SEC:-120}"
-  local cmd=(icp canister call -e "${ICP_ENV}" --identity "${ICP_IDENTITY_NAME}" --query "${CANISTER_ID}" "${method}")
+  local cmd=(dfx canister call --query --network "${ICP_ENV}" --identity "${ICP_IDENTITY_NAME}" "${CANISTER_ID}" "${method}")
   if [[ -n "${args}" ]]; then
     cmd+=("${args}")
   fi
@@ -157,7 +157,7 @@ run_icp_query_call() {
       kill -9 "${pid}" >/dev/null 2>&1 || true
       cat "${out_file}"
       rm -f "${out_file}"
-      echo "[mainnet-test] icp query timeout: method=${method} timeout_sec=${timeout_sec}" >&2
+      echo "[mainnet-test] dfx query timeout: method=${method} timeout_sec=${timeout_sec}" >&2
       return 124
     fi
     sleep 1

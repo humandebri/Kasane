@@ -225,6 +225,32 @@ pub fn rpc_eth_call_object(call: RpcCallObjectView) -> Result<RpcCallResultView,
     })
 }
 
+pub async fn rpc_eth_call_object_async<R, Fut>(
+    call: RpcCallObjectView,
+    resolver: R,
+) -> Result<RpcCallResultView, RpcErrorView>
+where
+    R: FnMut(evm_core::kasane_precompiles::IcpQueryRequest) -> Fut,
+    Fut: core::future::Future<Output = Result<Vec<u8>, String>>,
+{
+    let input = call_object_to_input(call)
+        .map_err(|message| invalid_error("invalid.call_object", message))?;
+    let out = chain::eth_call_object_async(input, resolver)
+        .await
+        .map_err(|err| {
+            execution_error(
+                "exec.eth_call_object.failed",
+                format!("eth_call_object failed: {err:?}"),
+            )
+        })?;
+    Ok(RpcCallResultView {
+        status: out.status,
+        gas_used: out.gas_used,
+        return_data: out.return_data,
+        revert_data: out.revert_data,
+    })
+}
+
 pub fn rpc_eth_estimate_gas_object(call: RpcCallObjectView) -> Result<u64, RpcErrorView> {
     let input = call_object_to_input(call)
         .map_err(|message| invalid_error("invalid.call_object", message))?;

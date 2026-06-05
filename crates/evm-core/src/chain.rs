@@ -3,9 +3,11 @@
 use crate::base_fee::compute_next_base_fee;
 use crate::bytes::try_address_to_bytes;
 use crate::hash;
+use crate::kasane_precompiles::IcpQueryRequest;
 use crate::revm_exec::{
-    commit_state_diff_to_db, compute_effective_gas_price, execute_tx_on, BlockExecContext,
-    ExecError, ExecOutcome, ExecPath, OpHaltReason, OpTransactionError, StateDiff,
+    commit_state_diff_to_db, compute_effective_gas_price, execute_tx_on, execute_tx_on_async,
+    BlockExecContext, ExecError, ExecOutcome, ExecPath, OpHaltReason, OpTransactionError,
+    StateDiff,
 };
 use crate::state_root::TouchedSummary;
 use crate::trie_commit;
@@ -1855,6 +1857,118 @@ pub fn eth_call_object(input: CallObjectInput) -> Result<CallObjectResult, Chain
         instruction_soft_limit,
         true,
     )
+    .map_err(|err| ChainError::ExecFailed(Some(err)))?;
+    let revert_data = if outcome.receipt.status == 0 && !outcome.return_data.is_empty() {
+        Some(outcome.return_data.clone())
+    } else {
+        None
+    };
+    Ok(CallObjectResult {
+        status: outcome.receipt.status,
+        gas_used: outcome.receipt.gas_used,
+        return_data: outcome.return_data,
+        revert_data,
+    })
+}
+
+pub async fn eth_call_object_async<R, Fut>(
+    input: CallObjectInput,
+    mut resolver: R,
+) -> Result<CallObjectResult, ChainError>
+where
+    R: FnMut(IcpQueryRequest) -> Fut,
+    Fut: core::future::Future<Output = Result<Vec<u8>, String>>,
+{
+    if input.data.len() > MAX_TX_SIZE {
+        return Err(ChainError::TxTooLarge);
+    }
+    let head = with_state(|state| *state.head.get());
+    let number = head.number.saturating_add(1);
+    let timestamp = std::cmp::max(head.timestamp.saturating_add(1), crate::time::now_sec());
+    let (base_fee, block_gas_limit) = with_state(|state| {
+        let chain = *state.chain_state.get();
+        (chain.base_fee, chain.block_gas_limit)
+    });
+    let gas_limit = input.gas_limit.unwrap_or(block_gas_limit);
+    let tx_type = input.tx_type.unwrap_or(
+        if input.max_fee_per_gas.is_some() || input.max_priority_fee_per_gas.is_some() {
+            2
+        } else {
+            0
+        },
+    );
+    let (gas_price, gas_priority_fee) = if tx_type == 2 {
+        (
+            input.max_fee_per_gas.unwrap_or(u128::from(base_fee)),
+            Some(input.max_priority_fee_per_gas.unwrap_or(0)),
+        )
+    } else {
+        (input.gas_price.unwrap_or(u128::from(base_fee)), None)
+    };
+    let chain_id = input
+        .chain_id
+        .unwrap_or(evm_db::chain_data::constants::CHAIN_ID);
+    let tx_id = call_object_tx_id(&input);
+    let access_list = AccessList(
+        input
+            .access_list
+            .into_iter()
+            .map(|(address, storage_keys)| AccessListItem {
+                address: Address::from(address),
+                storage_keys: storage_keys.into_iter().map(B256::from).collect(),
+            })
+            .collect(),
+    );
+    let caller = Address::from(input.from);
+    let nonce = input.nonce.unwrap_or_else(|| {
+        with_state(|state| {
+            state
+                .accounts
+                .get(&make_account_key(input.from))
+                .map(|account| account.nonce())
+                .unwrap_or(0)
+        })
+    });
+    let tx_env = revm::context::TxEnv {
+        caller,
+        gas_limit,
+        gas_price,
+        kind: match input.to {
+            Some(to) => RevmTxKind::Call(Address::from(to)),
+            None => RevmTxKind::Create,
+        },
+        value: U256::from_be_bytes(input.value),
+        data: RevmBytes::from(input.data.clone()),
+        nonce,
+        chain_id: Some(chain_id),
+        access_list,
+        gas_priority_fee,
+        blob_hashes: Default::default(),
+        max_fee_per_blob_gas: 0,
+        authorization_list: Default::default(),
+        tx_type,
+    };
+    let exec_ctx = BlockExecContext {
+        block_number: number,
+        timestamp,
+        base_fee,
+        block_gas_limit,
+    };
+    let instruction_soft_limit = query_instruction_soft_limit();
+    let mut db = CacheDB::new(crate::revm_db::RevmStableDb);
+    let (outcome, _) = execute_tx_on_async(
+        &mut db,
+        tx_id,
+        0,
+        tx_env,
+        &exec_ctx,
+        ExecPath::UserTx,
+        false,
+        instruction_soft_limit,
+        true,
+        &mut resolver,
+    )
+    .await
     .map_err(|err| ChainError::ExecFailed(Some(err)))?;
     let revert_data = if outcome.receipt.status == 0 && !outcome.return_data.is_empty() {
         Some(outcome.return_data.clone())

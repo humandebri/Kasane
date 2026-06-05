@@ -471,6 +471,7 @@ pub enum RequestDispatchStatusView {
     Dispatching,
     Dispatched,
     DispatchFailed,
+    DispatchUncertain,
 }
 
 #[derive(Clone, Debug, CandidType, Deserialize, Eq, PartialEq)]

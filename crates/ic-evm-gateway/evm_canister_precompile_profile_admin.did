@@ -183,6 +183,23 @@ type HealthView = record {
   last_block_time : nat64;
   queue_len : nat64;
 };
+type IcpUpdateRequestView = record {
+  request_id : blob;
+  status : RequestDispatchStatusView;
+  method : text;
+  updated_at : nat64;
+  tx_id : blob;
+  tx_index : nat32;
+  log_index : nat32;
+  evm_sender : blob;
+  error : opt text;
+  block_number : nat64;
+  target : principal;
+  ic_caller : opt principal;
+  tx_kind : IcpUpdateTxKindView;
+  reply : opt blob;
+};
+type IcpUpdateTxKindView = variant { EthSigned; IcSynthetic };
 type Icrc21ConsentInfo = record {
   metadata : Icrc21ConsentMessageMetadata;
   consent_message : Icrc21ConsentMessage;
@@ -300,6 +317,7 @@ type PendingStatusView = variant {
   Unknown;
   Dropped : record { code : nat16 };
 };
+type PrecompileAllowArgs = record { method : text; target : principal };
 type PrecompileProfileView = record {
   calls : nat64;
   total_instructions : nat;
@@ -389,6 +407,7 @@ type RequestDispatchStatusView = variant {
   Queued;
   Dispatching;
   Dispatched;
+  DispatchUncertain;
   DispatchFailed;
 };
 type RequestKind = variant { Wrap; NativeDeposit; Unwrap; NativeWithdrawal };
@@ -582,6 +601,8 @@ type WrapRuntimeConfigView = record {
   wrap_factory_address : blob;
 };
 service : (opt InitArgs) -> {
+  add_query_precompile_allowed_method : (PrecompileAllowArgs) -> (Result);
+  add_update_precompile_allowed_method : (PrecompileAllowArgs) -> (Result);
   clear_precompile_profile : () -> (Result);
   credit_native_deposit : (blob, blob, nat) -> (Result_1);
   dispatch_native_withdrawal_request : (
@@ -595,11 +616,13 @@ service : (opt InitArgs) -> {
   get_block : (nat64) -> (Result_7) query;
   get_cycle_balance : () -> (nat) query;
   get_fee_policy : () -> (Result_8) query;
+  get_icp_update_request : (blob) -> (opt IcpUpdateRequestView) query;
   get_native_deposit_result : (blob) -> (opt RequestOverview) query;
   get_ops_status : () -> (OpsStatusView) query;
   get_pending : (blob) -> (PendingStatusView) query;
   get_precompile_profile : () -> (vec PrecompileProfileView) query;
   get_prune_status : () -> (PruneStatusView) query;
+  get_query_precompile_allowlist : () -> (vec PrecompileAllowArgs) query;
   get_queue_snapshot : (nat32, opt nat64) -> (QueueSnapshotView) query;
   get_receipt : (blob) -> (Result_9) query;
   get_request : (blob) -> (opt RequestOverview) query;
@@ -609,6 +632,7 @@ service : (opt InitArgs) -> {
   get_unwrap_request_ids_by_eth_tx_hash : (blob) -> (vec blob) query;
   get_unwrap_request_ids_by_tx_id : (blob) -> (vec blob) query;
   get_unwrap_requirements : (GetUnwrapRequirementsArgs) -> (Result_10) query;
+  get_update_precompile_allowlist : () -> (vec PrecompileAllowArgs) query;
   get_wrap_runtime_config : () -> (Result_11) query;
   health : () -> (HealthView) query;
   icrc10_supported_standards : () -> (vec StandardRecord) query;
@@ -626,6 +650,8 @@ service : (opt InitArgs) -> {
     ) composite_query;
   quote_wrap_request : (QuoteWrapRequestArgs) -> (Result_18) query;
   recover_failed_wrap : (RecoverFailedWrapArgs) -> (Result_19);
+  remove_query_precompile_allowed_method : (PrecompileAllowArgs) -> (Result);
+  remove_update_precompile_allowed_method : (PrecompileAllowArgs) -> (Result);
   repair_stale_wrap_operations : () -> (Result);
   retry_native_deposit : (RetryRequestArgs) -> (Result_19);
   retry_native_withdrawal : (RetryRequestArgs) -> (Result_19);
@@ -635,6 +661,9 @@ service : (opt InitArgs) -> {
   rpc_eth_call_object_at : (RpcCallObjectView, RpcBlockTagView) -> (
       Result_14,
     ) query;
+  rpc_eth_call_object_with_query_precompile : (RpcCallObjectView) -> (
+      Result_14,
+    ) composite_query;
   rpc_eth_call_rawtx : (blob) -> (Result_20) query;
   rpc_eth_chain_id : () -> (nat64) query;
   rpc_eth_estimate_gas_object : (RpcCallObjectView) -> (Result_21) query;

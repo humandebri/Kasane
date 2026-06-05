@@ -1,0 +1,48 @@
+{
+  "target": "icp_query_update_kind_rejected_raw",
+  "target_id": "fdc0b1b02fde154daf9609f2fdf58af66430b2703536c54236e0cc33b4806e4d",
+  "slug": "icp_query_update_kind_rejected_raw-4de9db5f",
+  "file": "crates/verified-core/src/wrap_precompile.rs",
+  "function": "icp_query_update_kind_rejected_raw",
+  "git_commit": "f4f6f494d8be02b8375b85c1b1cfb768376f6dff",
+  "worktree_dirty": false,
+  "source_hash": "4de9db5f9a80647d86118783b6d903c928b9f3b1395fb025e0cecb6f93c10c17",
+  "semantic_hash": "a8ddb97d337ebf1eee99dbf008dafc4e3f2817925518eef25009600d997b6d5d",
+  "dependency_hash_inputs": [
+    {
+      "kind": "use",
+      "name": "cfg",
+      "file": "crates/verified-core/src/wrap_precompile.rs",
+      "hash": "a5eb4157d5d32303032e3dc786e34f004ebe17f0ff1bb26f90ac9eb42478596c"
+    }
+  ],
+  "unresolved_dependencies": [],
+  "spec_source_of_truth": "accepted_json",
+  "tool_version": "0.1.0",
+  "preconditions": [
+    "true"
+  ],
+  "postconditions": [
+    "result == (kind == ICP_QUERY_KIND_UPDATE_RESERVED)"
+  ],
+  "acceptance_criteria": [
+    "Reject exactly the reserved update kind and no other kind value."
+  ],
+  "test_evidence": [
+    {
+      "scenario_id": "icp_query_update_kind_rejected_raw-nominal",
+      "command": "cargo test -p ic-evm-core icp_query_precompile",
+      "test_name": "icp_query_precompile rejects reserved update kind and PBT checks update kind predicate",
+      "recorded_at": "2026-05-22T07:18:33Z"
+    }
+  ],
+  "risk_level": "medium",
+  "verified_subject": "implementation",
+  "contract_hash": "4f1b86638b2a7510980089564426db894874f4c5c7c19910a96b7a4d323cc082",
+  "applied_contract_hash": "4f1b86638b2a7510980089564426db894874f4c5c7c19910a96b7a4d323cc082",
+  "applied_at": "2026-05-22T07:25:00Z",
+  "panic_behavior": "documented",
+  "overflow_behavior": "documented",
+  "rejected_behaviors": [],
+  "open_assumptions": []
+}

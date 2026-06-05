@@ -77,6 +77,13 @@ scripts/mainnet/ic_mainnet_deploy.sh
 - `query_instruction_soft_limit`: optional。指定した場合だけ install / upgrade 時に query 側 soft limit を上書きする。未指定なら既定値または既存 state を維持する。
 - `update_instruction_soft_limit`: optional。指定した場合だけ install / upgrade 時に update 側 soft limit を上書きする。未指定なら既定値または既存 state を維持する。
 
+ICP update intent 運用:
+- `add_update_precompile_allowed_method` で許可した target/method だけが precompile 実行時に update intent log を出す。未許可は tx 失敗で、intent は記録されない。
+- target method は raw arg ではなく `IcpUpdateEnvelopeV1` の Candid record を受け取る。権限判断は IC caller ではなく envelope 内の `evm_sender` と tx 証跡で行う。
+- `ic_caller` は `IcSynthetic` のみ設定される。`EthSigned` は `null` となる。
+- dispatch は 30秒 bounded wait 固定。bounded wait timeout は `SysUnknown` として返るため `DispatchUncertain` として記録し、自動再試行しない。upgrade 中断復旧で `Dispatching` のまま残った request も `DispatchUncertain` に寄せる。
+- 完了済み update request は最大 10,000 件保持する。`Queued` / `Dispatching` は削除対象外。
+
 upgrade 時の扱い:
 - `MODE=upgrade` でも `scripts/mainnet/ic_mainnet_deploy.sh` は `build_init_args_for_current_identity(...)` を呼び、`--args` 付きで canister upgrade を実行する。
 - この `--args` が Rust 側の `post_upgrade(args: Option<InitArgs>)` に渡る。
