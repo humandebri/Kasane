@@ -43,6 +43,8 @@ const TEST_GENESIS_BALANCE_WEI: u128 = 10_000_000_000_000_000_000_000_000u128;
 const TEST_CHAIN_ID: u64 = 4_801_360;
 const TEST_WRAP_GAS_LIMIT: u64 = 3_000_000;
 const WEI_PER_E8S: u128 = 10_000_000_000;
+const TEST_MAX_PRIORITY_FEE_PER_GAS: u64 = 300_000_000_000;
+const TEST_MAX_FEE_PER_GAS: u64 = 600_000_000_000;
 
 #[derive(Clone, Debug, CandidType, Deserialize, Eq, PartialEq)]
 struct SubmitIcTxArgsDto {
@@ -560,9 +562,9 @@ fn build_contract_create_args(nonce: u64, data: Vec<u8>, gas_limit: u64) -> Subm
         to: None,
         from: None,
         value: Nat::from(0u8),
-        max_priority_fee_per_gas: Nat::from(300_000_000_000u64),
+        max_priority_fee_per_gas: Nat::from(TEST_MAX_PRIORITY_FEE_PER_GAS),
         data,
-        max_fee_per_gas: Nat::from(600_000_000_000u64),
+        max_fee_per_gas: Nat::from(TEST_MAX_FEE_PER_GAS),
         nonce,
         gas_limit,
     }
@@ -1387,9 +1389,9 @@ fn integrated_gateway_native_deposit_and_withdrawal_paths_work() {
             to: Some(NATIVE_WITHDRAW_PRECOMPILE_ADDRESS.into_array().to_vec()),
             from: None,
             value: Nat::from(withdraw_value),
-            max_priority_fee_per_gas: Nat::from(gateway_priority_fee(&pic, gateway_id)),
+            max_priority_fee_per_gas: Nat::from(TEST_MAX_PRIORITY_FEE_PER_GAS),
             data: withdraw_data,
-            max_fee_per_gas: Nat::from(gateway_gas_price(&pic, gateway_id)),
+            max_fee_per_gas: Nat::from(TEST_MAX_FEE_PER_GAS),
             nonce: withdraw_nonce,
             gas_limit: withdraw_gas.saturating_mul(12) / 10,
         },
