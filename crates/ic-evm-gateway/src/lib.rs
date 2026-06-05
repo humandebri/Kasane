@@ -2355,9 +2355,9 @@ fn get_native_deposit_result(request_id: Vec<u8>) -> Option<RequestOverview> {
 fn get_icp_update_request(request_id: Vec<u8>) -> Option<IcpUpdateRequestView> {
     let request_id = tx_id_from_bytes(request_id)?;
     with_state(|state| {
-        state.icp_update_requests.get(&request_id).and_then(|req| {
+        state.icp_update_requests.get(&request_id).map(|req| {
             let target = Principal::from_slice(&req.target);
-            Some(IcpUpdateRequestView {
+            IcpUpdateRequestView {
                 request_id: request_id.0.to_vec(),
                 tx_id: req.tx_id.0.to_vec(),
                 block_number: req.block_number,
@@ -2375,7 +2375,7 @@ fn get_icp_update_request(request_id: Vec<u8>) -> Option<IcpUpdateRequestView> {
                 reply: req.reply,
                 error: req.error_code,
                 updated_at: req.updated_at,
-            })
+            }
         })
     })
 }
@@ -2802,17 +2802,15 @@ fn repair_stale_operations(now: u64) {
                 }
                 if req.result.status == StoredRequestStatus::Running
                     && req.result.updated_at <= cutoff
+                    && req.result.mint_tx_id.is_none()
+                    && req.result.mint_submit_status != MintSubmitStatus::Submitted
                 {
-                    if req.result.mint_tx_id.is_none()
-                        && req.result.mint_submit_status != MintSubmitStatus::Submitted
-                    {
-                        req.result.status = StoredRequestStatus::Queued;
-                        req.result.updated_at = now;
-                        let _ = sanitize_wrap_request(req.clone()).map(|clean| {
-                            state.wrap_requests.insert(request_id, clean);
-                        });
-                        wrap_requeue.push(request_id);
-                    }
+                    req.result.status = StoredRequestStatus::Queued;
+                    req.result.updated_at = now;
+                    let _ = sanitize_wrap_request(req.clone()).map(|clean| {
+                        state.wrap_requests.insert(request_id, clean);
+                    });
+                    wrap_requeue.push(request_id);
                 }
             }
 
