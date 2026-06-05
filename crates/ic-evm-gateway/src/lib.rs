@@ -3115,10 +3115,6 @@ const INSPECT_METHOD_POLICIES: &[InspectMethodPolicy] = &[
         payload_limit: INSPECT_TX_PAYLOAD_LIMIT,
     },
     InspectMethodPolicy {
-        method: "rpc_eth_call_object_with_query_precompile",
-        payload_limit: INSPECT_TX_PAYLOAD_LIMIT,
-    },
-    InspectMethodPolicy {
         method: "credit_native_deposit",
         payload_limit: INSPECT_MANAGE_PAYLOAD_LIMIT,
     },
@@ -3708,7 +3704,7 @@ fn rpc_eth_call_object(call: RpcCallObjectView) -> Result<RpcCallResultView, Rpc
     ic_evm_rpc::rpc_eth_call_object(call)
 }
 
-#[ic_cdk::update]
+#[ic_cdk::query(composite = true)]
 async fn rpc_eth_call_object_with_query_precompile(
     call: RpcCallObjectView,
 ) -> Result<RpcCallResultView, RpcErrorView> {

@@ -650,7 +650,7 @@ service : (opt InitArgs) -> {
     ) query;
   rpc_eth_call_object_with_query_precompile : (RpcCallObjectView) -> (
       Result_19,
-    );
+    ) composite_query;
   rpc_eth_call_rawtx : (blob) -> (Result_20) query;
   rpc_eth_chain_id : () -> (nat64) query;
   rpc_eth_estimate_gas_object : (RpcCallObjectView) -> (Result_21) query;
