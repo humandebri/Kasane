@@ -1061,6 +1061,22 @@ fn cycle_observer_schedule_mining_condition_is_explicit() {
 }
 
 #[test]
+fn cycle_observer_uses_same_gate_for_repair_and_mining() {
+    assert!(should_schedule_mining_after_cycle_observer(
+        OpsMode::Normal,
+        false
+    ));
+    assert!(!should_schedule_mining_after_cycle_observer(
+        OpsMode::Critical,
+        false
+    ));
+    assert!(!should_schedule_mining_after_cycle_observer(
+        OpsMode::Normal,
+        true
+    ));
+}
+
+#[test]
 fn reset_mining_schedule_after_upgrade_clears_stale_flag() {
     init_stable_state();
     evm_db::stable_state::with_state_mut(|state| {
@@ -1244,6 +1260,160 @@ fn recover_wrap_worker_after_upgrade_requeues_active_requests_without_duplicates
                 .status,
             RequestStatus::Queued
         );
+    });
+}
+
+#[test]
+fn recover_wrap_worker_after_upgrade_leaves_submitted_mint_running() {
+    init_stable_state();
+    let request_id = TxId([0x7au8; 32]);
+    let mint_tx_id = TxId([0x7bu8; 32]);
+    let mut req = sample_wrap_request(RequestStatus::Running);
+    req.result.stage = WrapRequestStage::MintSubmitted;
+    req.result.mint_submit_status = MintSubmitStatus::Submitted;
+    req.result.mint_tx_id = Some(mint_tx_id.0.to_vec());
+
+    with_state_mut(|state| {
+        state.wrap_requests.insert(request_id, req);
+    });
+
+    assert!(!super::recover_wrap_worker_state_after_upgrade());
+    with_state(|state| {
+        let stored = state.wrap_requests.get(&request_id).expect("request");
+        assert_eq!(stored.result.status, RequestStatus::Running);
+        assert_eq!(stored.result.stage, WrapRequestStage::MintSubmitted);
+        assert_eq!(state.wrap_queue.len(), 0);
+    });
+}
+
+#[test]
+fn recover_wrap_worker_after_upgrade_does_not_queue_native_deposit() {
+    init_stable_state();
+    let request_id = TxId([0x7cu8; 32]);
+    let mut req = sample_wrap_request(RequestStatus::Queued);
+    req.gas_limit = 0;
+
+    with_state_mut(|state| {
+        state.wrap_requests.insert(request_id, req);
+    });
+
+    assert!(!super::recover_wrap_worker_state_after_upgrade());
+    with_state(|state| {
+        assert_eq!(state.wrap_queue.len(), 0);
+        assert_eq!(
+            state
+                .wrap_requests
+                .get(&request_id)
+                .expect("request")
+                .result
+                .status,
+            RequestStatus::Queued
+        );
+    });
+}
+
+#[test]
+fn wrap_mint_submit_outcome_waits_for_receipt() {
+    init_stable_state();
+    let request_id = TxId([0x7du8; 32]);
+    let mint_tx_id = TxId([0x7eu8; 32]);
+    with_state_mut(|state| {
+        state
+            .wrap_requests
+            .insert(request_id, sample_wrap_request(RequestStatus::Running));
+    });
+
+    super::apply_wrap_execution_outcome(
+        request_id,
+        super::WrapExecutionOutcome {
+            status: RequestStatus::Running,
+            pull_ledger_tx_id: Some(vec![0x01]),
+            mint_tx_id: Some(mint_tx_id.0.to_vec()),
+            error_code: None,
+            mint_failed_recoverable: false,
+        },
+    );
+
+    with_state(|state| {
+        let req = state.wrap_requests.get(&request_id).expect("request");
+        assert_eq!(req.result.status, RequestStatus::Running);
+        assert_eq!(req.result.stage, WrapRequestStage::MintSubmitted);
+        assert_eq!(req.result.mint_tx_id, Some(mint_tx_id.0.to_vec()));
+        assert!(!req.result.mint_failed_recoverable);
+    });
+}
+
+#[test]
+fn settle_submitted_wrap_mint_receipts_updates_terminal_status() {
+    init_stable_state();
+    let success_request = TxId([0x80u8; 32]);
+    let success_mint = TxId([0x81u8; 32]);
+    let failed_request = TxId([0x82u8; 32]);
+    let failed_mint = TxId([0x83u8; 32]);
+    let pending_request = TxId([0x84u8; 32]);
+    let pending_mint = TxId([0x85u8; 32]);
+
+    with_state_mut(|state| {
+        for (request_id, mint_tx_id) in [
+            (success_request, success_mint),
+            (failed_request, failed_mint),
+            (pending_request, pending_mint),
+        ] {
+            let mut req = sample_wrap_request(RequestStatus::Running);
+            req.result.stage = WrapRequestStage::MintSubmitted;
+            req.result.mint_submit_status = MintSubmitStatus::Submitted;
+            req.result.mint_tx_id = Some(mint_tx_id.0.to_vec());
+            state.wrap_requests.insert(request_id, req);
+        }
+    });
+    store_fake_receipt(success_mint, 1);
+    store_fake_receipt(failed_mint, 0);
+
+    assert_eq!(super::settle_submitted_wrap_mint_receipts(123), 2);
+
+    with_state(|state| {
+        let success = state.wrap_requests.get(&success_request).expect("success");
+        assert_eq!(success.result.status, RequestStatus::Succeeded);
+        assert_eq!(success.result.stage, WrapRequestStage::Succeeded);
+        assert!(!success.result.mint_failed_recoverable);
+
+        let failed = state.wrap_requests.get(&failed_request).expect("failed");
+        assert_eq!(failed.result.status, RequestStatus::Failed);
+        assert_eq!(failed.result.stage, WrapRequestStage::Failed);
+        assert!(failed.result.mint_failed_recoverable);
+        assert_eq!(
+            failed.result.error_code,
+            Some("wrap.mint_receipt_failed".to_string())
+        );
+
+        let pending = state.wrap_requests.get(&pending_request).expect("pending");
+        assert_eq!(pending.result.status, RequestStatus::Running);
+        assert_eq!(pending.result.stage, WrapRequestStage::MintSubmitted);
+    });
+}
+
+#[test]
+fn repair_stale_operations_does_not_succeed_submitted_mint_without_receipt() {
+    init_stable_state();
+    let request_id = TxId([0x86u8; 32]);
+    let mint_tx_id = TxId([0x87u8; 32]);
+    let mut req = sample_wrap_request(RequestStatus::Running);
+    req.result.stage = WrapRequestStage::MintSubmitted;
+    req.result.updated_at = 1;
+    req.result.mint_submit_status = MintSubmitStatus::Submitted;
+    req.result.mint_tx_id = Some(mint_tx_id.0.to_vec());
+
+    with_state_mut(|state| {
+        state.wrap_requests.insert(request_id, req);
+    });
+
+    super::repair_stale_operations(super::STALE_OPERATION_NANOS + 2);
+
+    with_state(|state| {
+        let req = state.wrap_requests.get(&request_id).expect("request");
+        assert_eq!(req.result.status, RequestStatus::Running);
+        assert_eq!(req.result.stage, WrapRequestStage::MintSubmitted);
+        assert_eq!(state.wrap_queue.len(), 0);
     });
 }
 
@@ -2060,6 +2230,19 @@ fn quote_native_deposit_uses_integrated_fee_policy() {
 }
 
 #[test]
+fn native_deposit_amount_wei_rejects_overflow_before_pull() {
+    let max_ok = Nat::from(u128::MAX / super::WEI_PER_E8S);
+    let too_large = Nat::from((u128::MAX / super::WEI_PER_E8S) + 1);
+
+    assert!(super::native_deposit_amount_wei_bytes(&max_ok).is_ok());
+    let err = super::native_deposit_amount_wei_bytes(&too_large).expect_err("overflow");
+    match err {
+        ApiError::InvalidArgument(detail) => assert_eq!(detail.code, "arg.amount_out_of_range"),
+        other => panic!("unexpected error: {other:?}"),
+    }
+}
+
+#[test]
 fn native_deposit_funding_validation_stops_before_pending_when_native_unconfigured() {
     init_stable_state();
     let fee_ledger = Principal::self_authenticating(b"fee-ledger");
@@ -2865,6 +3048,18 @@ fn fake_receipt_for_lookup(tx_id: TxId, block_number: u64) -> ReceiptLike {
     }
 }
 
+fn store_fake_receipt(tx_id: TxId, status: u8) {
+    with_state_mut(|state| {
+        let mut receipt = fake_receipt_for_lookup(tx_id, 7);
+        receipt.status = status;
+        let ptr = state
+            .blob_store
+            .store_bytes(receipt.to_bytes().as_ref())
+            .expect("store receipt");
+        state.receipts.insert(tx_id, ptr);
+    });
+}
+
 #[test]
 fn memory_breakdown_reports_consistent_totals_and_known_regions() {
     init_stable_state();
@@ -3280,6 +3475,31 @@ fn with_state_mut_blocks_avoid_async_and_timer_side_effects() {
         assert!(
             !segment.contains(".await"),
             "await must not appear inside with_state_mut block"
+        );
+    }
+}
+
+#[test]
+fn data_plane_update_methods_check_write_gate() {
+    let source = include_str!("lib.rs");
+    for name in [
+        "dispatch_unwrap_request",
+        "dispatch_native_withdrawal_request",
+        "retry_request",
+        "retry_native_withdrawal",
+        "retry_native_deposit",
+        "recover_failed_wrap",
+        "credit_native_deposit",
+    ] {
+        let start = source
+            .find(&format!("fn {name}"))
+            .or_else(|| source.find(&format!("async fn {name}")))
+            .unwrap_or_else(|| panic!("missing function: {name}"));
+        let end = (start + 900).min(source.len());
+        let body_head = &source[start..end];
+        assert!(
+            body_head.contains("reject_data_plane_write()?"),
+            "{name} must check reject_data_plane_write before mutating state"
         );
     }
 }

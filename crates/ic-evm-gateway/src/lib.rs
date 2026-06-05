@@ -1384,6 +1384,16 @@ fn u256_from_u128(value: u128) -> [u8; 32] {
     out
 }
 
+fn native_deposit_amount_wei_bytes(amount_e8s: &Nat) -> Result<[u8; 32], ApiError> {
+    let amount_e8s = nat_to_u128(amount_e8s).ok_or_else(|| {
+        api_invalid_argument("arg.amount_out_of_range", "arg.amount_out_of_range")
+    })?;
+    let amount_wei = amount_e8s.checked_mul(WEI_PER_E8S).ok_or_else(|| {
+        api_invalid_argument("arg.amount_out_of_range", "arg.amount_out_of_range")
+    })?;
+    Ok(u256_from_u128(amount_wei))
+}
+
 fn selector(signature: &[u8]) -> [u8; 4] {
     let mut keccak = Keccak::v256();
     keccak.update(signature);
@@ -1586,6 +1596,7 @@ async fn submit_native_deposit(
     if amount.iter().all(|&byte| byte == 0) {
         return Err(api_invalid_argument("arg.amount_zero", "arg.amount_zero"));
     }
+    let amount_wei = native_deposit_amount_wei_bytes(&args.amount_e8s)?;
     let max_fee_e8s = nat_to_u128(&args.max_fee_e8s).ok_or_else(|| {
         api_invalid_argument("arg.max_fee_out_of_range", "arg.max_fee_out_of_range")
     })?;
@@ -1667,7 +1678,7 @@ async fn submit_native_deposit(
     }
 
     if req.result.mint_tx_id.is_none() || req.result.status != StoredRequestStatus::Succeeded {
-        finalize_native_deposit_credit(request_id, &req, &args.evm_recipient)?;
+        finalize_native_deposit_credit(request_id, &args.evm_recipient, amount_wei)?;
     }
     clear_wrap_pending_submission(request_id);
     let fee_ledger_tx_id = with_state(|state| {
@@ -1825,17 +1836,14 @@ fn record_native_deposit_pulled(
 
 fn finalize_native_deposit_credit(
     request_id: TxId,
-    req: &evm_db::chain_data::WrapStoredRequest,
     evm_recipient: &[u8],
+    amount_wei: [u8; 32],
 ) -> Result<(), ApiError> {
-    let amount_wei = Nat(BigUint::from_bytes_be(&req.amount) * BigUint::from(WEI_PER_E8S));
-    let outcome = nat_to_fixed_be::<32>(&amount_wei)
-        .ok_or_else(|| api_rejected("arg.amount_out_of_range", "arg.amount_out_of_range"))
-        .and_then(|amount_wei| {
-            let mut recipient = [0u8; 20];
-            recipient.copy_from_slice(evm_recipient);
-            credit_native_deposit_internal(request_id.0, recipient, amount_wei)
-        });
+    let outcome = {
+        let mut recipient = [0u8; 20];
+        recipient.copy_from_slice(evm_recipient);
+        credit_native_deposit_internal(request_id.0, recipient, amount_wei)
+    };
     with_state_mut(|state| {
         let Some(mut req) = state.wrap_requests.get(&request_id) else {
             return;
@@ -1873,6 +1881,7 @@ fn dispatch_unwrap_request(
     if let Some(reason) = reject_anonymous_update() {
         return Err(api_rejected(&reason, &reason));
     }
+    reject_data_plane_write()?;
     require_wrap_canister_caller(msg_caller()).map_err(|err| api_rejected(&err, &err))?;
     let request_id = tx_id_from_bytes(args.request_id.clone())
         .ok_or_else(|| api_invalid_argument("arg.request_id_invalid", "arg.request_id_invalid"))?;
@@ -1905,6 +1914,7 @@ async fn dispatch_native_withdrawal_request(
     if let Some(reason) = reject_anonymous_update() {
         return Err(api_rejected(&reason, &reason));
     }
+    reject_data_plane_write()?;
     require_wrap_canister_caller(msg_caller()).map_err(|err| api_rejected(&err, &err))?;
     let request_id = tx_id_from_bytes(args.request_id.clone())
         .ok_or_else(|| api_invalid_argument("arg.request_id_invalid", "arg.request_id_invalid"))?;
@@ -2372,16 +2382,19 @@ fn get_icp_update_request(request_id: Vec<u8>) -> Option<IcpUpdateRequestView> {
 
 #[ic_cdk::update]
 fn retry_request(args: RetryRequestArgs) -> Result<RequestOverview, ApiError> {
+    reject_data_plane_write()?;
     retry_unwrap_dispatch(args.request_id)
 }
 
 #[ic_cdk::update]
 fn retry_native_withdrawal(args: RetryRequestArgs) -> Result<RequestOverview, ApiError> {
+    reject_data_plane_write()?;
     retry_unwrap_dispatch(args.request_id)
 }
 
 #[ic_cdk::update]
 fn retry_native_deposit(args: RetryRequestArgs) -> Result<RequestOverview, ApiError> {
+    reject_data_plane_write()?;
     let request_id = tx_id_from_bytes(args.request_id)
         .ok_or_else(|| api_invalid_argument("arg.request_id_invalid", "arg.request_id_invalid"))?;
     let req_result = with_state_mut(|state| {
@@ -2403,14 +2416,12 @@ fn retry_native_deposit(args: RetryRequestArgs) -> Result<RequestOverview, ApiEr
     });
     let req = req_result.map_err(|err| api_rejected(&err, &err))?;
 
-    let amount_wei = Nat(BigUint::from_bytes_be(&req.amount) * BigUint::from(WEI_PER_E8S));
-    let outcome = nat_to_fixed_be::<32>(&amount_wei)
-        .ok_or_else(|| api_rejected("arg.amount_out_of_range", "arg.amount_out_of_range"))
-        .and_then(|amount_wei| {
-            let mut recipient = [0u8; 20];
-            recipient.copy_from_slice(&req.evm_recipient);
-            credit_native_deposit_internal(request_id.0, recipient, amount_wei)
-        });
+    let amount_e8s = Nat(BigUint::from_bytes_be(&req.amount));
+    let outcome = native_deposit_amount_wei_bytes(&amount_e8s).and_then(|amount_wei| {
+        let mut recipient = [0u8; 20];
+        recipient.copy_from_slice(&req.evm_recipient);
+        credit_native_deposit_internal(request_id.0, recipient, amount_wei)
+    });
     with_state_mut(|state| {
         let Some(mut req) = state.wrap_requests.get(&request_id) else {
             return;
@@ -2437,6 +2448,7 @@ fn retry_native_deposit(args: RetryRequestArgs) -> Result<RequestOverview, ApiEr
 
 #[ic_cdk::update]
 async fn recover_failed_wrap(args: RecoverFailedWrapArgs) -> Result<RequestOverview, ApiError> {
+    reject_data_plane_write()?;
     let request_id = tx_id_from_bytes(args.request_id)
         .ok_or_else(|| api_invalid_argument("arg.request_id_invalid", "arg.request_id_invalid"))?;
     let req_result = with_state_mut(|state| {
@@ -2447,7 +2459,6 @@ async fn recover_failed_wrap(args: RecoverFailedWrapArgs) -> Result<RequestOverv
             || req.result.status != StoredRequestStatus::Failed
             || !req.result.mint_failed_recoverable
             || req.result.pull_ledger_tx_id.is_none()
-            || req.result.mint_tx_id.is_some()
         {
             return Err("wrap.recover_invalid_state".to_string());
         }
@@ -2715,11 +2726,14 @@ fn post_upgrade(args: Option<InitArgs>) {
         );
     }
     observe_cycles();
+    let data_plane_enabled = reject_write_reason().is_none();
     reset_mining_schedule_after_upgrade();
-    restore_unwrap_dispatch_after_upgrade();
-    restore_icp_update_dispatch_after_upgrade();
-    restore_wrap_worker_after_upgrade();
-    schedule_mining();
+    restore_unwrap_dispatch_after_upgrade(data_plane_enabled);
+    restore_icp_update_dispatch_after_upgrade(data_plane_enabled);
+    restore_wrap_worker_after_upgrade(data_plane_enabled);
+    if data_plane_enabled {
+        schedule_mining();
+    }
     schedule_cycle_observer();
 }
 
@@ -2732,23 +2746,23 @@ fn reset_mining_schedule_after_upgrade() {
     });
 }
 
-fn restore_unwrap_dispatch_after_upgrade() {
+fn restore_unwrap_dispatch_after_upgrade(schedule_workers: bool) {
     // upgrade後は timer 実体が失われるため、永続化済みの unwrap queue を再接続する。
-    if recover_unwrap_dispatch_state_after_upgrade(current_time_nanos()) {
+    if recover_unwrap_dispatch_state_after_upgrade(current_time_nanos()) && schedule_workers {
         schedule_unwrap_dispatch();
     }
 }
 
-fn restore_icp_update_dispatch_after_upgrade() {
+fn restore_icp_update_dispatch_after_upgrade(schedule_workers: bool) {
     // update intentもpost-commit副作用なので、upgrade後は永続queueを再接続する。
-    if recover_icp_update_dispatch_state_after_upgrade(current_time_nanos()) {
+    if recover_icp_update_dispatch_state_after_upgrade(current_time_nanos()) && schedule_workers {
         schedule_icp_update_dispatch();
     }
 }
 
-fn restore_wrap_worker_after_upgrade() {
+fn restore_wrap_worker_after_upgrade(schedule_workers: bool) {
     // upgrade後は timer 実体が失われるため、永続化済みの wrap queue を再接続する。
-    if recover_wrap_worker_state_after_upgrade() {
+    if recover_wrap_worker_state_after_upgrade() && schedule_workers {
         schedule_wrap_worker();
     }
 }
@@ -2764,6 +2778,7 @@ fn repair_stale_wrap_operations() -> Result<(), String> {
 }
 
 fn repair_stale_operations(now: u64) {
+    settle_submitted_wrap_mint_receipts(now);
     let (wrap_needs_schedule, unwrap_needs_schedule, icp_update_needs_schedule) =
         with_state_mut(|state| {
             let cutoff = now.saturating_sub(STALE_OPERATION_NANOS);
@@ -2788,16 +2803,9 @@ fn repair_stale_operations(now: u64) {
                 if req.result.status == StoredRequestStatus::Running
                     && req.result.updated_at <= cutoff
                 {
-                    if req.result.mint_tx_id.is_some()
-                        || req.result.mint_submit_status == MintSubmitStatus::Submitted
+                    if req.result.mint_tx_id.is_none()
+                        && req.result.mint_submit_status != MintSubmitStatus::Submitted
                     {
-                        req.result.status = StoredRequestStatus::Succeeded;
-                        req.result.stage = WrapRequestStage::Succeeded;
-                        req.result.updated_at = now;
-                        let _ = sanitize_wrap_request(req.clone()).map(|clean| {
-                            state.wrap_requests.insert(request_id, clean);
-                        });
-                    } else {
                         req.result.status = StoredRequestStatus::Queued;
                         req.result.updated_at = now;
                         let _ = sanitize_wrap_request(req.clone()).map(|clean| {
@@ -2903,10 +2911,13 @@ fn recover_wrap_worker_state_after_upgrade() -> bool {
         let mut candidates = Vec::new();
         for item in state.wrap_requests.range(..) {
             let request_id = *item.key();
-            if matches!(
-                item.value().result.status,
-                StoredRequestStatus::Queued | StoredRequestStatus::Running
-            ) {
+            let req = item.value();
+            if req.gas_limit != 0
+                && matches!(
+                    item.value().result.status,
+                    StoredRequestStatus::Queued | StoredRequestStatus::Running
+                )
+            {
                 candidates.push(request_id);
             }
         }
@@ -2919,8 +2930,6 @@ fn recover_wrap_worker_state_after_upgrade() -> bool {
                     if req.result.mint_tx_id.is_some()
                         || req.result.mint_submit_status == MintSubmitStatus::Submitted
                     {
-                        req.result.status = StoredRequestStatus::Succeeded;
-                        req.result.stage = WrapRequestStage::Succeeded;
                         should_queue = false;
                     } else {
                         req.result.status = StoredRequestStatus::Queued;
@@ -3086,6 +3095,14 @@ struct InspectMethodPolicy {
 
 const INSPECT_METHOD_POLICIES: &[InspectMethodPolicy] = &[
     InspectMethodPolicy {
+        method: "add_query_precompile_allowed_method",
+        payload_limit: INSPECT_MANAGE_PAYLOAD_LIMIT,
+    },
+    InspectMethodPolicy {
+        method: "add_update_precompile_allowed_method",
+        payload_limit: INSPECT_MANAGE_PAYLOAD_LIMIT,
+    },
+    InspectMethodPolicy {
         method: "icrc21_canister_call_consent_message",
         payload_limit: INSPECT_MANAGE_PAYLOAD_LIMIT,
     },
@@ -3095,6 +3112,10 @@ const INSPECT_METHOD_POLICIES: &[InspectMethodPolicy] = &[
     },
     InspectMethodPolicy {
         method: "rpc_eth_send_raw_transaction",
+        payload_limit: INSPECT_TX_PAYLOAD_LIMIT,
+    },
+    InspectMethodPolicy {
+        method: "rpc_eth_call_object_with_query_precompile",
         payload_limit: INSPECT_TX_PAYLOAD_LIMIT,
     },
     InspectMethodPolicy {
@@ -3111,6 +3132,14 @@ const INSPECT_METHOD_POLICIES: &[InspectMethodPolicy] = &[
     },
     InspectMethodPolicy {
         method: "quote_native_withdrawal",
+        payload_limit: INSPECT_MANAGE_PAYLOAD_LIMIT,
+    },
+    InspectMethodPolicy {
+        method: "remove_query_precompile_allowed_method",
+        payload_limit: INSPECT_MANAGE_PAYLOAD_LIMIT,
+    },
+    InspectMethodPolicy {
+        method: "remove_update_precompile_allowed_method",
         payload_limit: INSPECT_MANAGE_PAYLOAD_LIMIT,
     },
     InspectMethodPolicy {
@@ -3287,6 +3316,7 @@ fn credit_native_deposit(
     if let Some(reason) = reject_anonymous_update() {
         return Err(api_rejected(&reason, &reason));
     }
+    reject_data_plane_write()?;
     let caller = msg_caller();
     if caller != current_wrap_canister_id() {
         return Err(api_rejected(
@@ -4451,6 +4481,13 @@ fn reject_write_reason() -> Option<String> {
     ic_evm_ops::reject_write_reason_with_mode_provider(migration_pending(), cycle_mode)
 }
 
+fn reject_data_plane_write() -> Result<(), ApiError> {
+    if let Some(reason) = reject_write_reason() {
+        return Err(api_rejected(&reason, &reason));
+    }
+    Ok(())
+}
+
 fn reject_anonymous_update() -> Option<String> {
     reject_anonymous_principal(msg_caller())
 }
@@ -4708,6 +4745,7 @@ struct CycleObserverTickOutcome {
     migration_tick_ran: bool,
     migration_pending: bool,
     mode: OpsMode,
+    repair_stale_called: bool,
     schedule_mining_called: bool,
 }
 
@@ -4719,9 +4757,12 @@ fn run_cycle_observer_once() -> CycleObserverTickOutcome {
     }
     let migration_pending = migration_pending();
     let mode = observe_cycles();
-    repair_stale_operations(current_time_nanos());
     let schedule_mining_called =
         should_schedule_mining_after_cycle_observer(mode, migration_pending);
+    let repair_stale_called = schedule_mining_called;
+    if repair_stale_called {
+        repair_stale_operations(current_time_nanos());
+    }
     if schedule_mining_called {
         schedule_mining();
     }
@@ -4735,6 +4776,7 @@ fn run_cycle_observer_once() -> CycleObserverTickOutcome {
         migration_tick_ran,
         migration_pending,
         mode,
+        repair_stale_called,
         schedule_mining_called,
     }
 }
@@ -4839,6 +4881,7 @@ fn mining_tick_with_timer(timer_scheduler: fn(u64), reject_provider: fn() -> Opt
             Ok(outcome) => {
                 record_unwrap_requests_from_block(&outcome.block.tx_ids);
                 record_icp_update_requests_from_block(&outcome.block.tx_ids);
+                settle_submitted_wrap_mint_receipts(current_time_nanos());
                 schedule_unwrap_dispatch();
                 schedule_icp_update_dispatch();
                 maybe_prune_on_block_event(outcome.block.number);
@@ -5345,6 +5388,82 @@ fn finish_icp_update_dispatch_tick() {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum WrapMintReceiptSettlement {
+    Succeeded,
+    Failed,
+}
+
+fn submitted_wrap_mint_receipt_candidates() -> Vec<(TxId, TxId)> {
+    with_state(|state| {
+        state
+            .wrap_requests
+            .iter()
+            .filter_map(|entry| {
+                let req = entry.value();
+                if req.gas_limit == 0
+                    || req.result.status != StoredRequestStatus::Running
+                    || req.result.mint_submit_status != MintSubmitStatus::Submitted
+                {
+                    return None;
+                }
+                let mint_tx_id = tx_id_from_bytes(req.result.mint_tx_id.clone()?)?;
+                Some((*entry.key(), mint_tx_id))
+            })
+            .collect()
+    })
+}
+
+fn settle_submitted_wrap_mint_receipts(now: u64) -> u64 {
+    let settlements = submitted_wrap_mint_receipt_candidates()
+        .into_iter()
+        .filter_map(|(request_id, mint_tx_id)| {
+            let receipt = chain::get_receipt(&mint_tx_id)?;
+            let settlement = if receipt.status == 1 {
+                WrapMintReceiptSettlement::Succeeded
+            } else {
+                WrapMintReceiptSettlement::Failed
+            };
+            Some((request_id, settlement))
+        })
+        .collect::<Vec<_>>();
+    let settled = u64::try_from(settlements.len()).unwrap_or(u64::MAX);
+    if settlements.is_empty() {
+        return 0;
+    }
+    with_state_mut(|state| {
+        for (request_id, settlement) in settlements {
+            let Some(mut req) = state.wrap_requests.get(&request_id) else {
+                continue;
+            };
+            if req.result.status != StoredRequestStatus::Running
+                || req.result.mint_submit_status != MintSubmitStatus::Submitted
+            {
+                continue;
+            }
+            req.result.updated_at = now;
+            match settlement {
+                WrapMintReceiptSettlement::Succeeded => {
+                    req.result.status = StoredRequestStatus::Succeeded;
+                    req.result.stage = WrapRequestStage::Succeeded;
+                    req.result.error_code = None;
+                    req.result.mint_failed_recoverable = false;
+                }
+                WrapMintReceiptSettlement::Failed => {
+                    req.result.status = StoredRequestStatus::Failed;
+                    req.result.stage = WrapRequestStage::Failed;
+                    req.result.error_code = Some("wrap.mint_receipt_failed".to_string());
+                    req.result.mint_failed_recoverable = true;
+                }
+            }
+            if let Ok(req) = sanitize_wrap_request(req) {
+                state.wrap_requests.insert(request_id, req);
+            }
+        }
+    });
+    settled
+}
+
 #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
 async fn wrap_worker_tick() {
     WRAP_WORKER_SCHEDULED.store(false, Ordering::SeqCst);
@@ -5420,7 +5539,7 @@ async fn execute_wrap_request(
     let mint = submit_mint_tx_internal(request_id, &req).await;
     match mint {
         Ok(mint_tx_id) => WrapExecutionOutcome {
-            status: StoredRequestStatus::Succeeded,
+            status: StoredRequestStatus::Running,
             pull_ledger_tx_id: Some(pull_ledger_tx_id),
             mint_tx_id: Some(mint_tx_id),
             error_code: None,
@@ -5640,6 +5759,9 @@ fn apply_wrap_execution_outcome(request_id: TxId, outcome: WrapExecutionOutcome)
         req.result.stage = match outcome.status {
             StoredRequestStatus::Succeeded => WrapRequestStage::Succeeded,
             StoredRequestStatus::Failed => WrapRequestStage::Failed,
+            StoredRequestStatus::Running if req.result.mint_tx_id.is_some() => {
+                WrapRequestStage::MintSubmitted
+            }
             StoredRequestStatus::Running => WrapRequestStage::MintSubmitting,
             StoredRequestStatus::Queued => WrapRequestStage::FeeCollected,
         };
@@ -5654,11 +5776,22 @@ fn is_native_withdraw_dispatch_request(req: &UnwrapDispatchRequest) -> bool {
     req.asset_id.as_slice() == NATIVE_WITHDRAW_ASSET_MARKER
 }
 
-fn native_withdraw_gross_transfer_amount(amount: &Nat, fee: u128) -> Result<Nat, String> {
+fn gross_transfer_receive_amount(
+    amount: &Nat,
+    fee: u128,
+    code_prefix: &str,
+) -> Result<Nat, String> {
     let gross_amount =
-        nat_to_u128(amount).ok_or_else(|| "native_withdraw.amount_out_of_range".to_string())?;
-    let receive_amount = native_withdraw_receive_amount(gross_amount, fee)?;
+        nat_to_u128(amount).ok_or_else(|| format!("{code_prefix}.amount_out_of_range"))?;
+    let receive_amount = gross_amount
+        .checked_sub(fee)
+        .filter(|value| *value > 0)
+        .ok_or_else(|| format!("{code_prefix}.amount_not_above_fee"))?;
     Ok(Nat(BigUint::from(receive_amount)))
+}
+
+fn native_withdraw_gross_transfer_amount(amount: &Nat, fee: u128) -> Result<Nat, String> {
+    gross_transfer_receive_amount(amount, fee, "native_withdraw")
 }
 
 async fn dispatch_unwrap_request_internal(
@@ -5698,8 +5831,8 @@ async fn dispatch_unwrap_request_internal(
             };
         }
     };
-    let mut amount = Nat(BigUint::from_bytes_be(&req.amount));
-    if is_native_withdraw_dispatch_request(&req) {
+    let gross_amount = Nat(BigUint::from_bytes_be(&req.amount));
+    let amount = if is_native_withdraw_dispatch_request(&req) {
         let fee = match fetch_icrc1_fee(ledger).await {
             Ok(fee) => fee,
             Err(code) => {
@@ -5710,7 +5843,7 @@ async fn dispatch_unwrap_request_internal(
                 };
             }
         };
-        amount = match native_withdraw_gross_transfer_amount(&amount, fee) {
+        match native_withdraw_gross_transfer_amount(&gross_amount, fee) {
             Ok(amount) => amount,
             Err(code) => {
                 return AppliedUnwrapDispatchOutcome {
@@ -5719,8 +5852,10 @@ async fn dispatch_unwrap_request_internal(
                     error_code: Some(code),
                 };
             }
-        };
-    }
+        }
+    } else {
+        gross_amount
+    };
     match attempt_icrc1_transfer(
         ledger,
         recipient,
