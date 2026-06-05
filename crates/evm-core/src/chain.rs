@@ -273,6 +273,48 @@ pub struct CallObjectResult {
     pub revert_data: Option<Vec<u8>>,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct QueryChainStateSnapshot {
+    base_fee: u64,
+    block_gas_limit: u64,
+    query_instruction_soft_limit: u64,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct QueryCallSnapshot {
+    head: Head,
+    chain: QueryChainStateSnapshot,
+    allowlist_fingerprint: [u8; 32],
+}
+
+impl QueryCallSnapshot {
+    fn capture() -> Self {
+        with_state(|state| {
+            let chain = *state.chain_state.get();
+            Self {
+                head: *state.head.get(),
+                chain: QueryChainStateSnapshot {
+                    base_fee: chain.base_fee,
+                    block_gas_limit: chain.block_gas_limit,
+                    query_instruction_soft_limit: chain.query_instruction_soft_limit,
+                },
+                allowlist_fingerprint: query_precompile_allowlist_fingerprint(state),
+            }
+        })
+    }
+}
+
+fn query_precompile_allowlist_fingerprint(state: &StableState) -> [u8; 32] {
+    let mut bytes = Vec::new();
+    for entry in state.query_precompile_allowlist.iter() {
+        let key = entry.key();
+        bytes.extend_from_slice(&(key.len() as u32).to_be_bytes());
+        bytes.extend_from_slice(key);
+        bytes.push(entry.value());
+    }
+    hash::keccak256(&bytes)
+}
+
 pub struct PruneStatus {
     pub pruning_enabled: bool,
     pub prune_running: bool,
@@ -1956,6 +1998,7 @@ where
     };
     let instruction_soft_limit = query_instruction_soft_limit();
     let mut db = CacheDB::new(crate::revm_db::RevmStableDb);
+    let query_snapshot = QueryCallSnapshot::capture();
     let (outcome, _) = execute_tx_on_async(
         &mut db,
         tx_id,
@@ -1967,6 +2010,13 @@ where
         instruction_soft_limit,
         true,
         &mut resolver,
+        || {
+            if QueryCallSnapshot::capture() == query_snapshot {
+                Ok(())
+            } else {
+                Err(ExecError::SnapshotChanged)
+            }
+        },
     )
     .await
     .map_err(|err| ChainError::ExecFailed(Some(err)))?;

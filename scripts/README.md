@@ -56,7 +56,7 @@ scripts/measure_precompile_ratio.sh
 - `scripts/check_gateway_api_compat_baseline.sh`: detects breaking changes in gateway API compatibility baseline (`--update` updates baseline)
 - `scripts/check_gateway_matrix_sync.sh`: verifies compatibility matrix row in `tools/rpc-gateway/README.md` matches `tools/rpc-gateway/package.json` version line
 - `scripts/check_precompile_feature_isolation.sh`: verifies the default wasm build of `ic-evm-core` does not pull BLS/KZG backend crates (`ark-bls12-381`, `c-kzg`, `blst`)
-- `scripts/check_icp_query_precompile_verification.sh`: PR #81 ICP query precompile gate; runs Verus, PBT/async/allowlist tests, workspace check, targeted rustfmt, and checks the PR-local specgen artifacts
+- `scripts/check_icp_query_precompile_verification.sh`: PR #81 ICP query precompile gate; runs Verus, PBT/async/allowlist/PocketIC tests, Bidi control checks, workspace check, targeted rustfmt, and checks the PR-local specgen artifacts
   - Use this script as the PR #81 merge gate. `specgen gate --base origin/main` remains diagnostic for this PR because the current CLI requires targets for every changed Rust function, including async adapters, methods, and test helpers outside the five pure spec targets.
 - `scripts/predeploy_smoke.sh`: `cargo check` + wasm build + PocketIC RPC compatibility E2E (optional indexer smoke)
 - `scripts/run_rpc_compat_e2e.sh`: RPC compatibility E2E test (`cargo test --test rpc_compat_e2e`)

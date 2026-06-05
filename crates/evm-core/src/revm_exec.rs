@@ -32,6 +32,15 @@ use revm::interpreter::{
 };
 use revm::primitives::{Address, U256};
 use revm::state::Account;
+#[cfg(not(target_arch = "wasm32"))]
+use std::cell::Cell;
+
+#[cfg(not(target_arch = "wasm32"))]
+thread_local! {
+    static INSTRUCTION_COUNTER_FOR_TEST: Cell<u64> = const { Cell::new(0) };
+    static INSTRUCTION_COUNTER_STEP_FOR_TEST: Cell<u64> = const { Cell::new(0) };
+    static INSTRUCTION_BUDGET_TRIPPED_FOR_TEST: Cell<bool> = const { Cell::new(false) };
+}
 
 pub(crate) type StateDiff = revm::primitives::HashMap<Address, revm::state::Account>;
 
@@ -45,6 +54,7 @@ pub enum ExecError {
     InvalidGasFee,
     ResultTooLarge,
     InstructionBudgetExceeded,
+    SnapshotChanged,
     ExternalQuery(IcpQueryRequest),
 }
 
@@ -144,6 +154,7 @@ pub async fn execute_tx_on_async<DB, R, Fut>(
     instruction_soft_limit: Option<u64>,
     allow_external_precompile: bool,
     mut resolver: R,
+    validate_after_resolve: impl FnOnce() -> Result<(), ExecError>,
 ) -> Result<(ExecOutcome, StateDiff), ExecError>
 where
     for<'a> &'a mut DB:
@@ -170,6 +181,7 @@ where
         Ok(bytes) => IcpQueryReply::Ok(bytes),
         Err(code) => IcpQueryReply::Err(code),
     };
+    validate_after_resolve()?;
     with_icp_query_reply(reply, || {
         execute_tx_on(
             &mut *db,
@@ -229,13 +241,13 @@ where
 
     let (result, pending_query) =
         with_icp_query_detection(|| evm.inspect_tx(tx_env).map_err(map_tx_error_stage));
+    if evm.inspector.budget.tripped {
+        return Err(ExecError::InstructionBudgetExceeded);
+    }
     if let Some(request) = pending_query {
         return Err(ExecError::ExternalQuery(request));
     }
     let result = result?;
-    if evm.inspector.budget.tripped {
-        return Err(ExecError::InstructionBudgetExceeded);
-    }
     let (status, gas_used, output, contract_address, logs, final_status, halt_reason) =
         match result.result {
             ExecutionResult::Success {
@@ -353,7 +365,7 @@ impl InstructionBudgetInspector {
         Self {
             start: current_instruction_counter(),
             limit,
-            tripped: false,
+            tripped: instruction_budget_tripped_for_test(),
         }
     }
 }
@@ -636,7 +648,34 @@ fn current_instruction_counter() -> u64 {
     }
     #[cfg(not(target_arch = "wasm32"))]
     {
-        0
+        INSTRUCTION_COUNTER_FOR_TEST.with(|counter| {
+            let value = counter.get();
+            let step = INSTRUCTION_COUNTER_STEP_FOR_TEST.with(|step| step.get());
+            counter.set(value.saturating_add(step));
+            value
+        })
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub fn configure_instruction_counter_for_test(start: u64, step: u64) {
+    INSTRUCTION_COUNTER_FOR_TEST.with(|counter| counter.set(start));
+    INSTRUCTION_COUNTER_STEP_FOR_TEST.with(|counter| counter.set(step));
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub fn configure_instruction_budget_tripped_for_test(tripped: bool) {
+    INSTRUCTION_BUDGET_TRIPPED_FOR_TEST.with(|value| value.set(tripped));
+}
+
+fn instruction_budget_tripped_for_test() -> bool {
+    #[cfg(target_arch = "wasm32")]
+    {
+        false
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        INSTRUCTION_BUDGET_TRIPPED_FOR_TEST.with(|value| value.get())
     }
 }
 

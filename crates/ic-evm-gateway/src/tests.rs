@@ -134,6 +134,7 @@ fn exec_error_to_code(err: Option<&evm_core::revm_exec::ExecError>) -> &'static 
         Some(ExecError::InvalidGasFee) => "exec.gas_fee.invalid",
         Some(ExecError::ResultTooLarge) => "exec.result.too_large",
         Some(ExecError::InstructionBudgetExceeded) => "exec.budget.instruction_exceeded",
+        Some(ExecError::SnapshotChanged) => "exec.snapshot.changed",
         Some(ExecError::ExternalQuery(_)) => "exec.external_query",
         Some(ExecError::ExecutionFailed) => "exec.execution.failed",
     }
@@ -719,6 +720,7 @@ fn exec_error_codes_match_fixed_pattern() {
         Some(ExecError::InvalidGasFee),
         Some(ExecError::ResultTooLarge),
         Some(ExecError::InstructionBudgetExceeded),
+        Some(ExecError::SnapshotChanged),
         Some(ExecError::ExecutionFailed),
         None,
     ];
@@ -799,6 +801,11 @@ fn exec_error_to_code_matches_expected_set() {
             "instruction_budget",
             Some(ExecError::InstructionBudgetExceeded),
             "exec.budget.instruction_exceeded",
+        ),
+        (
+            "snapshot_changed",
+            Some(ExecError::SnapshotChanged),
+            "exec.snapshot.changed",
         ),
     ];
     for (case, err, expected) in cases {
