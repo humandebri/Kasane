@@ -932,6 +932,9 @@ fn chain_error_mapping_covers_expected_api_shapes() {
 fn inspect_allowlist_accepts_known_methods() {
     assert!(inspect_payload_limit_for_method("submit_ic_tx").is_some());
     assert!(inspect_payload_limit_for_method("set_pruning_enabled").is_some());
+    assert!(
+        inspect_payload_limit_for_method("rpc_eth_call_object_with_query_precompile").is_none()
+    );
     assert!(inspect_payload_limit_for_method("set_query_instruction_soft_limit").is_none());
     assert!(inspect_payload_limit_for_method("set_update_instruction_soft_limit").is_none());
     assert!(inspect_payload_limit_for_method("set_precompile_gas_ratio").is_none());
@@ -954,6 +957,9 @@ fn inspect_allowlist_rejects_unknown_methods() {
 fn inspect_allowlist_matches_did_updates() {
     let did_methods = did_update_methods();
     for method in did_methods.iter() {
+        if method == "rpc_eth_call_object_with_query_precompile" {
+            continue;
+        }
         assert!(
             inspect_payload_limit_for_method(method).is_some(),
             "did update method is missing in inspect allowlist: {method}"
