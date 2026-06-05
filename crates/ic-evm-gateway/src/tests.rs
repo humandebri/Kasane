@@ -3980,8 +3980,8 @@ fn did_contains_dispatch_result_contract_shape() {
     assert!(did.contains("retry_native_deposit : (RetryRequestArgs) -> (Result_"));
     assert!(did.contains("retry_native_withdrawal : (RetryRequestArgs) -> (Result_"));
     assert!(did.contains("recover_failed_wrap : (RecoverFailedWrapArgs) -> (Result_"));
-    assert!(did.contains("set_fee_policy : (FeePolicyView) -> (Result_"));
-    assert!(did.contains("set_allowed_assets : (vec principal) -> (Result_"));
+    assert!(did.contains("set_fee_policy : (FeePolicyView) -> (Result);"));
+    assert!(did.contains("set_allowed_assets : (vec principal) -> (Result);"));
     assert!(!did.contains("get_request_dispatch_result"));
     assert!(did.contains("get_unwrap_request_ids_by_tx_id"));
     assert!(did.contains("get_unwrap_request_ids_by_eth_tx_hash"));

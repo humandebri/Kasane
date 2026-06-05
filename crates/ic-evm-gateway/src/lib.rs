@@ -2866,6 +2866,10 @@ const INSPECT_METHOD_POLICIES: &[InspectMethodPolicy] = &[
         payload_limit: INSPECT_TX_PAYLOAD_LIMIT,
     },
     InspectMethodPolicy {
+        method: "rpc_eth_call_object_with_query_precompile",
+        payload_limit: INSPECT_MANAGE_PAYLOAD_LIMIT,
+    },
+    InspectMethodPolicy {
         method: "credit_native_deposit",
         payload_limit: INSPECT_MANAGE_PAYLOAD_LIMIT,
     },
@@ -2907,6 +2911,14 @@ const INSPECT_METHOD_POLICIES: &[InspectMethodPolicy] = &[
     },
     InspectMethodPolicy {
         method: "set_fee_policy",
+        payload_limit: INSPECT_MANAGE_PAYLOAD_LIMIT,
+    },
+    InspectMethodPolicy {
+        method: "add_query_precompile_allowed_method",
+        payload_limit: INSPECT_MANAGE_PAYLOAD_LIMIT,
+    },
+    InspectMethodPolicy {
+        method: "remove_query_precompile_allowed_method",
         payload_limit: INSPECT_MANAGE_PAYLOAD_LIMIT,
     },
     InspectMethodPolicy {
