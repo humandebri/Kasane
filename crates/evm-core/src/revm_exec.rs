@@ -8,7 +8,7 @@ use crate::revm_db::RevmStableDb;
 use crate::tx_decode::DecodeError;
 use crate::wrap_precompile::{
     with_icp_query_detection, with_icp_query_reply, IcpQueryReply, IcpQueryRequest,
-    WrapPrecompileProvider,
+    PrecompileAccess, WrapPrecompileProvider,
 };
 use evm_db::chain_data::constants::{
     CHAIN_ID, MAX_LOGS_PER_TX, MAX_LOG_DATA, MAX_LOG_TOPICS, MAX_RETURN_DATA,
@@ -137,7 +137,7 @@ pub fn execute_tx(
         exec_path,
         true,
         None,
-        true,
+        PrecompileAccess::wrap_side_effects(),
     )?;
     Ok(outcome)
 }
@@ -152,7 +152,7 @@ pub async fn execute_tx_on_async<DB, R, Fut>(
     exec_path: ExecPath,
     persist_receipt_index: bool,
     instruction_soft_limit: Option<u64>,
-    allow_external_precompile: bool,
+    precompile_access: PrecompileAccess,
     mut resolver: R,
     validate_after_resolve: impl FnOnce() -> Result<(), ExecError>,
 ) -> Result<(ExecOutcome, StateDiff), ExecError>
@@ -171,18 +171,18 @@ where
         exec_path,
         persist_receipt_index,
         instruction_soft_limit,
-        allow_external_precompile,
+        precompile_access,
     );
     let request = match first {
         Err(ExecError::ExternalQuery(request)) => request,
         other => return other,
     };
-    let reply = match resolver(request).await {
+    let reply = match resolver(request.clone()).await {
         Ok(bytes) => IcpQueryReply::Ok(bytes),
         Err(code) => IcpQueryReply::Err(code),
     };
     validate_after_resolve()?;
-    with_icp_query_reply(reply, || {
+    with_icp_query_reply(request, reply, || {
         execute_tx_on(
             &mut *db,
             tx_id,
@@ -192,7 +192,7 @@ where
             exec_path,
             persist_receipt_index,
             instruction_soft_limit,
-            allow_external_precompile,
+            precompile_access,
         )
     })
 }
@@ -207,7 +207,7 @@ pub(crate) fn execute_tx_on<DB>(
     exec_path: ExecPath,
     persist_receipt_index: bool,
     instruction_soft_limit: Option<u64>,
-    allow_external_precompile: bool,
+    precompile_access: PrecompileAccess,
 ) -> Result<(ExecOutcome, StateDiff), ExecError>
 where
     DB: revm::database_interface::Database<Error = core::convert::Infallible> + DatabaseCommit,
@@ -237,7 +237,7 @@ where
             block.beneficiary = FEE_RECIPIENT;
         })
         .build_mainnet_with_inspector(inspector)
-        .with_precompiles(WrapPrecompileProvider::new(allow_external_precompile));
+        .with_precompiles(WrapPrecompileProvider::new(precompile_access));
 
     let (result, pending_query) =
         with_icp_query_detection(|| evm.inspect_tx(tx_env).map_err(map_tx_error_stage));

@@ -2,8 +2,9 @@ use super::{
     allowance_slot, approval_event_topic0, compute_asset_key, compute_extra_gas,
     estimate_wrap_precompile_gas, extra_gas_by_instruction_ratio, extra_gas_for_precompile,
     native_value_to_e8s, native_withdraw_event_topic0, native_withdraw_intent_from_log,
-    parse_icp_query_input, parse_input, topic_from_address, transfer_event_topic0,
-    unwrap_intent_from_log, unwrap_owner, wrap_event_topic0, COMPACT_ICP_QUERY_FORMAT_VERSION,
+    parse_icp_query_input, parse_input, resolve_icp_query_reply, topic_from_address,
+    transfer_event_topic0, unwrap_intent_from_log, unwrap_owner, with_icp_query_reply,
+    wrap_event_topic0, IcpQueryReply, COMPACT_ICP_QUERY_FORMAT_VERSION,
     COMPACT_UNWRAP_FORMAT_VERSION, ICP_QUERY_KIND_QUERY, ICP_QUERY_KIND_UPDATE_RESERVED,
     MAX_PRINCIPAL_LEN, NATIVE_WITHDRAW_PRECOMPILE_ADDRESS, WEI_PER_E8S, WRAP_PRECOMPILE_ADDRESS,
 };
@@ -183,6 +184,28 @@ fn icp_query_parser_rejects_trailing_data_against_verified_model() {
             0,
         )
     );
+}
+
+#[test]
+fn icp_query_reply_rejects_request_mismatch() {
+    let expected = parse_icp_query_input(&encode_query_precompile_input(
+        ICP_QUERY_KIND_QUERY,
+        "read_state",
+        &[1],
+    ))
+    .expect("expected request");
+    let actual = parse_icp_query_input(&encode_query_precompile_input(
+        ICP_QUERY_KIND_QUERY,
+        "other_state",
+        &[1],
+    ))
+    .expect("actual request");
+
+    let result = with_icp_query_reply(expected, IcpQueryReply::Ok(vec![0xaa]), || {
+        resolve_icp_query_reply(actual)
+    });
+
+    assert_eq!(result.unwrap_err(), "ic_query.request_mismatch");
 }
 
 #[test]

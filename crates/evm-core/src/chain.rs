@@ -13,6 +13,7 @@ use crate::trie_commit;
 use crate::tx_decode::{decode_tx, encode_ic_synthetic_input, IcSyntheticTxInput};
 use crate::tx_submit;
 use crate::wrap_precompile::IcpQueryRequest;
+use crate::wrap_precompile::PrecompileAccess;
 use evm_db::chain_data::constants::{
     DROPPED_RING_CAPACITY, DROP_CODE_BLOCK_GAS_EXCEEDED, DROP_CODE_CALLER_MISSING,
     DROP_CODE_DECODE, DROP_CODE_EXEC, DROP_CODE_EXEC_PRECHECK, DROP_CODE_INSTRUCTION_BUDGET,
@@ -285,9 +286,12 @@ struct QueryCallSnapshot {
     head: Head,
     chain: QueryChainStateSnapshot,
     allowlist_fingerprint: [u8; 32],
+    runtime_config_fingerprint: [u8; 32],
 }
 
 impl QueryCallSnapshot {
+    // await 中に変わると async eth_call 結果へ影響する mutable input は、
+    // この snapshot に含めるか、PrecompileAccess で実行経路から無効化する。
     fn capture() -> Self {
         with_state(|state| {
             let chain = *state.chain_state.get();
@@ -299,6 +303,9 @@ impl QueryCallSnapshot {
                     query_instruction_soft_limit: chain.query_instruction_soft_limit,
                 },
                 allowlist_fingerprint: query_precompile_allowlist_fingerprint(state),
+                runtime_config_fingerprint: hash::keccak256(
+                    &state.runtime_config.get().into_bytes(),
+                ),
             }
         })
     }
@@ -1379,7 +1386,7 @@ pub fn produce_block(max_txs: usize) -> Result<ProduceBlockOutcome, ChainError> 
             ExecPath::UserTx,
             false,
             remaining_instruction_budget,
-            true,
+            PrecompileAccess::wrap_side_effects(),
         );
         let outcome = match execution {
             Ok((value, user_diff)) => {
@@ -1803,7 +1810,7 @@ pub fn eth_call(raw_tx: Vec<u8>) -> Result<Vec<u8>, ChainError> {
         ExecPath::UserTx,
         false,
         instruction_soft_limit,
-        true,
+        PrecompileAccess::wrap_side_effects(),
     )
     .map_err(|err| ChainError::ExecFailed(Some(err)))?;
     Ok(outcome.return_data)
@@ -1897,7 +1904,7 @@ pub fn eth_call_object(input: CallObjectInput) -> Result<CallObjectResult, Chain
         ExecPath::UserTx,
         false,
         instruction_soft_limit,
-        true,
+        PrecompileAccess::wrap_side_effects(),
     )
     .map_err(|err| ChainError::ExecFailed(Some(err)))?;
     let revert_data = if outcome.receipt.status == 0 && !outcome.return_data.is_empty() {
@@ -2008,7 +2015,7 @@ where
         ExecPath::UserTx,
         false,
         instruction_soft_limit,
-        true,
+        PrecompileAccess::icp_query(),
         &mut resolver,
         || {
             if QueryCallSnapshot::capture() == query_snapshot {
@@ -2300,7 +2307,7 @@ fn execute_and_seal_with_caller(
         ExecPath::UserTx,
         false,
         None,
-        true,
+        PrecompileAccess::wrap_side_effects(),
     ) {
         Ok(value) => value,
         Err(err) => {

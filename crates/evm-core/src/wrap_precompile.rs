@@ -112,7 +112,10 @@ pub enum IcpQueryReply {
 enum IcpQueryMode {
     Disabled,
     Detect,
-    Reply(IcpQueryReply),
+    Reply {
+        expected: IcpQueryRequest,
+        reply: IcpQueryReply,
+    },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -135,14 +138,43 @@ impl IcpQueryExecutionContext {
 #[derive(Clone, Debug)]
 pub struct WrapPrecompileProvider {
     inner: EthPrecompiles,
-    allow_external: bool,
+    access: PrecompileAccess,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct PrecompileAccess {
+    pub wrap_side_effects: bool,
+    pub icp_query: bool,
+}
+
+impl PrecompileAccess {
+    pub const fn disabled() -> Self {
+        Self {
+            wrap_side_effects: false,
+            icp_query: false,
+        }
+    }
+
+    pub const fn wrap_side_effects() -> Self {
+        Self {
+            wrap_side_effects: true,
+            icp_query: false,
+        }
+    }
+
+    pub const fn icp_query() -> Self {
+        Self {
+            wrap_side_effects: false,
+            icp_query: true,
+        }
+    }
 }
 
 impl WrapPrecompileProvider {
-    pub fn new(allow_external: bool) -> Self {
+    pub fn new(access: PrecompileAccess) -> Self {
         Self {
             inner: EthPrecompiles::default(),
-            allow_external,
+            access,
         }
     }
 }
@@ -167,18 +199,20 @@ where
         let address = inputs.bytecode_address.into_array();
 
         let output = match inputs.bytecode_address {
-            WRAP_PRECOMPILE_ADDRESS => {
-                Some(run_wrap_precompile(context, inputs, self.allow_external))
-            }
+            WRAP_PRECOMPILE_ADDRESS => Some(run_wrap_precompile(
+                context,
+                inputs,
+                self.access.wrap_side_effects,
+            )),
             NATIVE_WITHDRAW_PRECOMPILE_ADDRESS => Some(run_native_withdraw_precompile(
                 context,
                 inputs,
-                self.allow_external,
+                self.access.wrap_side_effects,
             )),
             ICP_QUERY_PRECOMPILE_ADDRESS => Some(run_icp_query_precompile(
                 context,
                 inputs,
-                self.allow_external,
+                self.access.icp_query,
             )),
             _ => self.inner.run(context, inputs)?,
         };
@@ -241,12 +275,16 @@ pub fn with_icp_query_detection<T>(f: impl FnOnce() -> T) -> (T, Option<IcpQuery
     (out, pending)
 }
 
-pub fn with_icp_query_reply<T>(reply: IcpQueryReply, f: impl FnOnce() -> T) -> T {
+pub fn with_icp_query_reply<T>(
+    expected: IcpQueryRequest,
+    reply: IcpQueryReply,
+    f: impl FnOnce() -> T,
+) -> T {
     let prior = ICP_QUERY_CONTEXT.with(|cell| {
         let mut ctx = cell.borrow_mut();
         let prior = ctx.clone();
         *ctx = IcpQueryExecutionContext {
-            mode: IcpQueryMode::Reply(reply),
+            mode: IcpQueryMode::Reply { expected, reply },
             calls: 0,
             pending: None,
         };
@@ -388,7 +426,20 @@ fn run_icp_query_precompile<CTX: ContextTr>(
         Ok(value) => value,
         Err(code) => return precompile_fail(context, gas_limit, code),
     };
-    let reply = match ICP_QUERY_CONTEXT.with(|cell| {
+    let reply = match resolve_icp_query_reply(request) {
+        Ok(value) => value,
+        Err("ic_query.pending") => return precompile_fail(context, gas_limit, "ic_query.pending"),
+        Err(code) => return precompile_fail(context, gas_limit, code),
+    };
+
+    match reply {
+        IcpQueryReply::Ok(bytes) => icp_query_return(input.len(), bytes, gas_limit),
+        IcpQueryReply::Err(code) => precompile_fail(context, gas_limit, &code),
+    }
+}
+
+fn resolve_icp_query_reply(request: IcpQueryRequest) -> Result<IcpQueryReply, &'static str> {
+    ICP_QUERY_CONTEXT.with(|cell| {
         let mut ctx = cell.borrow_mut();
         if ctx.calls != 0 {
             return Err("ic_query.call_limit");
@@ -400,18 +451,14 @@ fn run_icp_query_precompile<CTX: ContextTr>(
                 ctx.pending = Some(request);
                 Err("ic_query.pending")
             }
-            IcpQueryMode::Reply(reply) => Ok(reply.clone()),
+            IcpQueryMode::Reply { expected, reply } => {
+                if request != *expected {
+                    return Err("ic_query.request_mismatch");
+                }
+                Ok(reply.clone())
+            }
         }
-    }) {
-        Ok(value) => value,
-        Err("ic_query.pending") => return precompile_fail(context, gas_limit, "ic_query.pending"),
-        Err(code) => return precompile_fail(context, gas_limit, code),
-    };
-
-    match reply {
-        IcpQueryReply::Ok(bytes) => icp_query_return(input.len(), bytes, gas_limit),
-        IcpQueryReply::Err(code) => precompile_fail(context, gas_limit, &code),
-    }
+    })
 }
 
 fn icp_query_return(input_len: usize, output: Vec<u8>, gas_limit: u64) -> InterpreterResult {

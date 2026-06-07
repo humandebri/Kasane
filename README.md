@@ -54,9 +54,10 @@ Explorer の実装詳細（ルート一覧・lib層責務）は `tools/explorer/
   - v1 は読取限定。入口 `rpc_eth_call_object_with_query_precompile` は `composite_query` で、target/method は controller-only API `add_query_precompile_allowed_method` / `remove_query_precompile_allowed_method` で allowlist 管理する。
   - allowlist は method selection の TCB であり、target は query / composite query method だけを登録する。update method は IC の composite query 実行経路で成功しない前提にする。
   - `rpc_eth_call_object_with_query_precompile` は allowlist 済み query method を `Call::bounded_wait(...).change_timeout(1)` で呼び、raw Candid reply bytes を返す。引数は `take_raw_args`、返却は `into_bytes` で処理し、Candid bytes を `vec nat8` として再エンコードしない。
+  - v1 は 1 `eth_call` につき ICP query precompile 最大1回。2回目以降は `ic_query.call_limit` として EVM revert する。
   - canister間 call の timeout は ic-cdk API 上秒単位のため、v1 は 1秒を採用する。250ms timeout は使わない。
   - `SysUnknown` / timeout 相当は retryable failure として EVM 側では安定した revert を返す。bounded wait なので callee の実行有無が不明な失敗は upstream で再試行判断する。
-  - await をまたぐ 2-pass 実行は開始時 snapshot と resolver 後 snapshot を比較し、head / eth_call 実行に関わる chain state / allowlist fingerprint が変わった場合は `exec.snapshot.changed` を返す。
+  - await をまたぐ 2-pass 実行は開始時 snapshot と resolver 後 snapshot を比較し、head / eth_call 実行に関わる chain state / runtime config / allowlist fingerprint が変わった場合は `exec.snapshot.changed` を返す。
   - update_call は v1 未実装。EVM tx revert と外部副作用の原子性が一致しないため、kind=1 は明示的に precompile error とする。
 - 既定ビルドでは `0x0A KZG_POINT_EVALUATION` は無効化している。
 - `EIP-4844` raw tx は decode 段階で reject し、`0x0A` を直接 call しても既定ビルドでは precompile 不在として失敗する。
