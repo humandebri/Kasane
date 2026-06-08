@@ -47,7 +47,6 @@ dist/
 # private/internal operations assets
 ops/systemd/
 scripts/ops/[c]ontabo_*.sh
-**/*.ja.md
 
 # ops reports
 docs/ops/reports/

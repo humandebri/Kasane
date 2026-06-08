@@ -1,7 +1,5 @@
 # RPC Gateway Mirror Runbook
 
-Japanese version: [./rpc-gateway-mirror-runbook.ja.md](./rpc-gateway-mirror-runbook.ja.md)
-
 ## Purpose
 - keep monorepo as the canonical source
 - publish `tools/rpc-gateway` to `kasane-network/rpc-gateway` as mirror
@@ -37,8 +35,8 @@ Japanese version: [./rpc-gateway-mirror-runbook.ja.md](./rpc-gateway-mirror-runb
 - unexpected split: verify that changes are under `tools/rpc-gateway`
 
 ## Language Policy
-- `tools/rpc-gateway/README.md` is English canonical
-- Japanese supplements are `*.ja.md`
+- `tools/rpc-gateway/README.md` is the English canonical document.
+- Public localized documents may be added explicitly when they are sanitized for publication.
 
 ## Compatibility Guards
 Run before mirroring:
