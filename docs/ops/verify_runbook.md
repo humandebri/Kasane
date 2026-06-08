@@ -1,7 +1,5 @@
 # Verify Runbook
 
-Japanese version: [./verify_runbook.ja.md](./verify_runbook.ja.md)
-
 ## Purpose
 Operational runbook for verify pipeline readiness, key rotation, and incident triage.
 
@@ -16,4 +14,3 @@ Operational runbook for verify pipeline readiness, key rotation, and incident tr
 
 ## Usage
 Use this file as the operational index.
-For concrete command examples and parameter details, follow the Japanese version.

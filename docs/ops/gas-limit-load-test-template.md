@@ -1,7 +1,5 @@
 # BLOCK_GAS_LIMIT Load Test Template
 
-Japanese version: [./gas-limit-load-test-template.ja.md](./gas-limit-load-test-template.ja.md)
-
 ## Purpose
 Template for selecting `BLOCK_GAS_LIMIT` based on measured load behavior.
 
@@ -15,4 +13,3 @@ Template for selecting `BLOCK_GAS_LIMIT` based on measured load behavior.
 
 ## Usage
 Copy this template into your test report and fill it with measured numbers only.
-For detailed fields and examples, refer to the Japanese version.

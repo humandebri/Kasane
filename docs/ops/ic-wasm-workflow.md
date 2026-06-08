@@ -1,7 +1,5 @@
 # ICP-EVM ic-wasm Workflow
 
-Japanese version: [./ic-wasm-workflow.ja.md](./ic-wasm-workflow.ja.md)
-
 ## Where/What/Why
 Operational workflow for wasm post-processing and profiling in ICP-EVM deployments.
 
@@ -18,4 +16,3 @@ Operational workflow for wasm post-processing and profiling in ICP-EVM deploymen
 
 ## Usage
 Follow this as the canonical process for build artifact handling and performance measurement.
-For concrete command-level details, see the Japanese version.

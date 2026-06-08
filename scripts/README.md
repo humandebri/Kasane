@@ -1,7 +1,5 @@
 # scripts/README.md
 
-Japanese version: [./README.ja.md](./README.ja.md)
-
 Shortest guide for operational scripts in this directory.
 If unsure, run the commands in the order below.
 
@@ -66,10 +64,6 @@ scripts/measure_precompile_ratio.sh
 - `scripts/profile_wasm_deps.sh`: dependency-size profiling for wasm (`twiggy top/dominators`, optional `cargo +nightly bloat -Z build-std`, and `cargo tree -e features -i <crate>` snapshots)
   - output default: `docs/ops/reports/wasm-deps-<package>-<timestamp>/`
   - optional: `--compare <previous_output_dir>` to generate before/after table (bytes + instruction estimate)
-
-### rpc-gateway Documentation Language Policy
-- `tools/rpc-gateway/README.md` is the English canonical document
-- Japanese supplement is `tools/rpc-gateway/README.ja.md` (same for `ops/`, `smoke/`, and `contracts/`)
 
 ### Local Operations
 - `scripts/icp_local_clean_start.sh`: clean start helper for managed local network (`icp network`)
@@ -156,10 +150,6 @@ scripts/measure_precompile_ratio.sh
 - `scripts/ops/apply_prune_policy.sh`: apply policy + enable pruning + status check
 - `scripts/ops/tune_prune_max_ops.sh`: staged tuning based on need_prune/error counters
 - `scripts/ops/test_prune_ops_scripts.sh`: mock tests for the two scripts above
-- `scripts/ops/contabo_deploy_tools.sh`: sync `tools/indexer` / `tools/explorer` from git worktree on Contabo, then build+restart (git ref based)
-- `scripts/ops/contabo_deploy_gateway.sh`: sync `tools/rpc-gateway` from git worktree on Contabo, then build+restart (git ref based)
-  - when Contabo cannot use GitHub HTTPS auth, pass `REPO_URL=git@github.com:<owner>/<repo>.git` and give the remote `deployer` user a read-only SSH deploy key
-  - remote clone/fetch is expected to run as `deployer`; avoid provisioning the deploy key only for `root`
 
 ## Key Environment Variables
 - `CANISTER_NAME` / `CANISTER_ID`

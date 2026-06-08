@@ -1,34 +1,30 @@
-## rpc_eth_send_raw_transaction の `blob` 仕様
+# `rpc_eth_send_raw_transaction` Blob Payload
 
-このドキュメントは、`rpc_eth_send_raw_transaction` に渡す `blob`（Ethereum signed raw transaction）の作り方と、
-`submit -> auto-mine -> get_receipt` までの確認手順を示します。  
-正本実装は `/Users/0xhude/Desktop/ICP/Kasane/crates/evm-core/src/tx_decode.rs` と
-`/Users/0xhude/Desktop/ICP/Kasane/crates/ic-evm-gateway/src/lib.rs` です。
+This guide shows how to build the `blob` argument for `rpc_eth_send_raw_transaction` and how to follow the transaction from submit to receipt.
 
-### 1) 入力仕様
+Canonical implementation references:
 
-`rpc_eth_send_raw_transaction(raw_tx: blob)` の `raw_tx` は、署名済み Ethereum transaction の生バイト列です。
+- `crates/evm-core/src/tx_decode.rs`
+- `crates/ic-evm-gateway/src/lib.rs`
 
-- 形式: RLP（Legacy）または Typed Tx（EIP-2930 / EIP-1559）
-- 署名: 必須
-- 非対応: EIP-4844（type=0x03）, EIP-7702（type=0x04）
-- 戻り値: `tx_id`（32 bytes, internal id）
-- ガス単位運用: `1 ICP = 10^18` を前提に `gas_price` / `max_fee_per_gas` を解釈する
+## Input Contract
 
-### 2) 実行例（mainnet）
+`rpc_eth_send_raw_transaction(raw_tx: blob)` accepts raw bytes for a signed Ethereum transaction.
 
-以下は `icp` での実行例です。  
-`ic-evm-core` の `eth_raw_tx` ヘルパーで raw tx を作り、`rpc_eth_send_raw_transaction` に渡します。
+- Format: Legacy RLP or typed transaction (`EIP-2930`, `EIP-1559`).
+- Signature: required.
+- Unsupported: `EIP-4844` (`type=0x03`) and `EIP-7702` (`type=0x04`).
+- Return value: internal `tx_id` (`32` bytes).
+- Gas unit policy: `gas_price` and `max_fee_per_gas` are interpreted with `1 ICP = 10^18` base units.
+
+## Submit Example
 
 ```bash
 CANISTER_ID=4c52m-aiaaa-aaaam-agwwa-cai
 IDENTITY=ci-local
 CHAIN_ID=4801360
-
-# 送信に使う秘密鍵（32-byte hex, 0xなし）
 PRIVKEY="<YOUR_PRIVKEY_HEX>"
 
-# 署名済み raw tx を vec nat8 形式（"1; 2; 3; ..."）で生成
 RAW_TX_BYTES=$(cargo run -q -p ic-evm-core --features local-signer-bin --bin eth_raw_tx -- \
   --mode raw \
   --privkey "$PRIVKEY" \
@@ -39,14 +35,11 @@ RAW_TX_BYTES=$(cargo run -q -p ic-evm-core --features local-signer-bin --bin eth
   --nonce "0" \
   --chain-id "$CHAIN_ID")
 
-# rpc_eth_send_raw_transaction 実行（戻り値は tx_id: blob）
 SUBMIT_OUT=$(icp canister call -e ic --identity "$IDENTITY" "$CANISTER_ID" rpc_eth_send_raw_transaction "(vec { $RAW_TX_BYTES })")
 echo "$SUBMIT_OUT"
 ```
 
-### 3) tx_id を取り出して receipt を確認
-
-`rpc_eth_send_raw_transaction` の戻り値 `Ok : blob` から `tx_id` を抽出し、`get_receipt` に渡します。
+## Extract `tx_id` and Read Receipt
 
 ```bash
 TX_ID_BYTES=$(python - "$SUBMIT_OUT" <<'PY'
@@ -74,16 +67,12 @@ print('; '.join(str(b) for b in out))
 PY
 )
 
-# 自動採掘の進行確認（必要なら head を観測）
-icp canister call -e ic --identity "$IDENTITY" --query "$CANISTER_ID" rpc_eth_block_number '( )'
-
-# receipt 取得
-icp canister call -e ic --identity "$IDENTITY" "$CANISTER_ID" get_receipt "(vec { $TX_ID_BYTES })"
+dfx canister call --query "$CANISTER_ID" rpc_eth_block_number '( )' --network=ic
+dfx canister call --query "$CANISTER_ID" get_receipt "(vec { $TX_ID_BYTES })" --network=ic
 ```
 
-### 4) 注意点
+## Notes
 
-- `rpc_eth_send_raw_transaction` はキュー投入のみで、実行確定は自動採掘後です。
-- `nonce` は送信元アドレスごとに整合させてください。  
-  必要なら `expected_nonce_by_address(blob_address_20bytes)` で事前確認します。
-- `eth_tx_hash` は `rpc_eth_send_raw_transaction` の戻り値ではなく、必要に応じて参照系RPCで取得してください。
+- `rpc_eth_send_raw_transaction` only enqueues the transaction. Final execution happens after block production.
+- Keep `nonce` consistent for the sender address. Use `expected_nonce_by_address(blob_address_20bytes)` before submit when needed.
+- `eth_tx_hash` is not returned directly by `rpc_eth_send_raw_transaction`; use the hash-oriented RPC methods when Ethereum-compatible lookup is needed.

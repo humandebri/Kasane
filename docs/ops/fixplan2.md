@@ -1,7 +1,5 @@
 # Ethereum Compatibility Fix Plan (PR0-PR9)
 
-Japanese version: [./fixplan2.ja.md](./fixplan2.ja.md)
-
 ## Purpose
 Roadmap/checklist for staged implementation to harden Ethereum compatibility while minimizing regressions.
 
@@ -25,4 +23,3 @@ Roadmap/checklist for staged implementation to harden Ethereum compatibility whi
 
 ## Usage
 Use this file as a tracking checklist for implementation and review sequencing.
-For normative details, constraints, and exact acceptance points, refer to the Japanese version.

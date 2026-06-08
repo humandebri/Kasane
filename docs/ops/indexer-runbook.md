@@ -1,7 +1,5 @@
 # Indexer Runbook v2.1 (TS + Postgres + local zstd archive)
 
-Japanese version: [./indexer-runbook.ja.md](./indexer-runbook.ja.md)
-
 ## Purpose
 Operational runbook for indexer setup, recovery, migration, archive, pruning, and production checks.
 
@@ -21,4 +19,3 @@ Operational runbook for indexer setup, recovery, migration, archive, pruning, an
 
 ## Usage
 This English file is the canonical high-level guide.
-For full step-by-step command procedures and operational thresholds, use the Japanese version.
