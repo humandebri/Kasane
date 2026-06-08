@@ -57,7 +57,7 @@ Explorer の実装詳細（ルート一覧・lib層責務）は `tools/explorer/
   - v1 は 1 `eth_call` につき ICP query precompile 最大1回。2回目以降は `ic_query.call_limit` として EVM revert する。
   - canister間 call の timeout は ic-cdk API 上秒単位のため、v1 は 1秒を採用する。250ms timeout は使わない。
   - `SysUnknown` / timeout 相当は retryable failure として EVM 側では安定した revert を返す。bounded wait なので callee の実行有無が不明な失敗は upstream で再試行判断する。
-  - await をまたぐ 2-pass 実行は開始時 snapshot と resolver 後 snapshot を比較し、head / eth_call 実行に関わる chain state / runtime config / allowlist fingerprint が変わった場合は `exec.snapshot.changed` を返す。
+  - await をまたぐ 2-pass 実行は開始時 snapshot と resolver 後 snapshot を比較し、head / eth_call 実行に関わる chain state / runtime config / allowlist fingerprint / `evm_state_epoch` が変わった場合は `exec.snapshot.changed` を返す。`evm_state_epoch` は account / storage / code の永続変異を表す。
   - update_call は v1 未実装。EVM tx revert と外部副作用の原子性が一致しないため、kind=1 は明示的に precompile error とする。
 - 既定ビルドでは `0x0A KZG_POINT_EVALUATION` は無効化している。
 - `EIP-4844` raw tx は decode 段階で reject し、`0x0A` を直接 call しても既定ビルドでは precompile 不在として失敗する。

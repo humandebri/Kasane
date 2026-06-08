@@ -29,7 +29,8 @@ use evm_db::chain_data::{
 use evm_db::memory::{chain_data_memory_ids_for_estimate, memory_size_pages, WASM_PAGE_SIZE_BYTES};
 use evm_db::meta::tx_locs_v3_active;
 use evm_db::stable_state::{
-    clear_map as clear_stable_map, with_state, with_state_mut, StableState,
+    bump_evm_state_epoch, clear_map as clear_stable_map, current_evm_state_epoch, with_state,
+    with_state_mut, StableState,
 };
 use evm_db::types::keys::make_account_key;
 use evm_db::types::values::AccountVal;
@@ -287,11 +288,12 @@ struct QueryCallSnapshot {
     chain: QueryChainStateSnapshot,
     allowlist_fingerprint: [u8; 32],
     runtime_config_fingerprint: [u8; 32],
+    evm_state_epoch: u64,
 }
 
 impl QueryCallSnapshot {
-    // await 中に変わると async eth_call 結果へ影響する mutable input は、
-    // この snapshot に含めるか、PrecompileAccess で実行経路から無効化する。
+    // account/storage/code は evm_state_epoch で検出する。await中に変わる mutable input は、
+    // snapshot に含めるか、PrecompileAccess で実行経路から無効化する。
     fn capture() -> Self {
         with_state(|state| {
             let chain = *state.chain_state.get();
@@ -306,6 +308,7 @@ impl QueryCallSnapshot {
                 runtime_config_fingerprint: hash::keccak256(
                     &state.runtime_config.get().into_bytes(),
                 ),
+                evm_state_epoch: current_evm_state_epoch(),
             }
         })
     }
@@ -1030,8 +1033,9 @@ pub fn submit_ic_tx_input(
 
 pub fn credit_balance(address: [u8; 20], amount: u128) -> Result<(), ChainError> {
     let key = make_account_key(address);
-    with_state_mut(|state| {
+    let changed = with_state_mut(|state| {
         let existing = state.accounts.get(&key);
+        let materialized = existing.is_none();
         let (nonce, balance, code_hash) = match existing {
             Some(value) => (value.nonce(), value.balance(), value.code_hash()),
             None => (0u64, [0u8; 32], [0u8; 32]),
@@ -1041,8 +1045,12 @@ pub fn credit_balance(address: [u8; 20], amount: u128) -> Result<(), ChainError>
         let next = current.checked_add(add).ok_or(ChainError::MintOverflow)?;
         let updated = AccountVal::from_parts(nonce, next.to_be_bytes(), code_hash);
         state.accounts.insert(key, updated);
-        Ok(())
-    })
+        Ok(materialized || next != current)
+    })?;
+    if changed {
+        bump_evm_state_epoch();
+    }
+    Ok(())
 }
 
 pub fn credit_native_deposit(
@@ -1053,15 +1061,16 @@ pub fn credit_native_deposit(
     let key = TxId(request_id);
     let record = NativeCreditRecord::new(recipient, amount_wei);
     let amount = u128_from_u256_bytes(amount_wei).ok_or(ChainError::MintOverflow)?;
-    with_state_mut(|state| {
+    let changed = with_state_mut(|state| {
         if let Some(existing) = state.native_credit_records.get(&key) {
             if existing == record {
-                return Ok(());
+                return Ok(false);
             }
             return Err(ChainError::TxAlreadySeen);
         }
         let account_key = make_account_key(recipient);
         let existing = state.accounts.get(&account_key);
+        let materialized = existing.is_none();
         let (nonce, balance, code_hash) = match existing {
             Some(value) => (value.nonce(), value.balance(), value.code_hash()),
             None => (0u64, [0u8; 32], [0u8; 32]),
@@ -1072,8 +1081,12 @@ pub fn credit_native_deposit(
         let updated = AccountVal::from_parts(nonce, next.to_be_bytes(), code_hash);
         state.accounts.insert(account_key, updated);
         state.native_credit_records.insert(key, record);
-        Ok(())
-    })
+        Ok(materialized || next != current)
+    })?;
+    if changed {
+        bump_evm_state_epoch();
+    }
+    Ok(())
 }
 
 fn u128_from_u256_bytes(bytes: [u8; 32]) -> Option<u128> {

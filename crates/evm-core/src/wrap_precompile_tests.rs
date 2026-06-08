@@ -17,6 +17,7 @@ use proptest::prelude::*;
 use revm::interpreter::{CallInput, CallInputs, CallScheme, CallValue};
 use revm::primitives::{Address, Bytes, U256};
 use std::borrow::Cow;
+use std::panic::{catch_unwind, AssertUnwindSafe};
 
 fn configure_runtime(factory: [u8; 20]) {
     init_stable_state();
@@ -206,6 +207,47 @@ fn icp_query_reply_rejects_request_mismatch() {
     });
 
     assert_eq!(result.unwrap_err(), "ic_query.request_mismatch");
+}
+
+#[test]
+fn icp_query_detection_restores_context_after_panic() {
+    let result = catch_unwind(AssertUnwindSafe(|| {
+        super::with_icp_query_detection(|| panic!("test panic"))
+    }));
+    assert!(result.is_err());
+
+    let request = parse_icp_query_input(&encode_query_precompile_input(
+        ICP_QUERY_KIND_QUERY,
+        "read_state",
+        &[],
+    ))
+    .expect("request");
+    assert_eq!(
+        resolve_icp_query_reply(request).unwrap_err(),
+        "ic_query.async_context_required"
+    );
+}
+
+#[test]
+fn icp_query_reply_restores_context_after_panic() {
+    let request = parse_icp_query_input(&encode_query_precompile_input(
+        ICP_QUERY_KIND_QUERY,
+        "read_state",
+        &[],
+    ))
+    .expect("request");
+
+    let result = catch_unwind(AssertUnwindSafe(|| {
+        with_icp_query_reply(request.clone(), IcpQueryReply::Ok(vec![0xaa]), || {
+            panic!("test panic")
+        })
+    }));
+    assert!(result.is_err());
+
+    assert_eq!(
+        resolve_icp_query_reply(request).unwrap_err(),
+        "ic_query.async_context_required"
+    );
 }
 
 #[test]

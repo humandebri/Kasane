@@ -135,6 +135,53 @@ impl IcpQueryExecutionContext {
     }
 }
 
+struct IcpQueryContextGuard {
+    prior: Option<IcpQueryExecutionContext>,
+}
+
+impl IcpQueryContextGuard {
+    fn enter_detection() -> Self {
+        let prior = ICP_QUERY_CONTEXT.with(|cell| {
+            let mut ctx = cell.borrow_mut();
+            let prior = ctx.clone();
+            if matches!(ctx.mode, IcpQueryMode::Disabled) {
+                *ctx = IcpQueryExecutionContext {
+                    mode: IcpQueryMode::Detect,
+                    calls: 0,
+                    pending: None,
+                };
+            }
+            prior
+        });
+        Self { prior: Some(prior) }
+    }
+
+    fn enter_reply(expected: IcpQueryRequest, reply: IcpQueryReply) -> Self {
+        let prior = ICP_QUERY_CONTEXT.with(|cell| {
+            let mut ctx = cell.borrow_mut();
+            let prior = ctx.clone();
+            *ctx = IcpQueryExecutionContext {
+                mode: IcpQueryMode::Reply { expected, reply },
+                calls: 0,
+                pending: None,
+            };
+            prior
+        });
+        Self { prior: Some(prior) }
+    }
+}
+
+impl Drop for IcpQueryContextGuard {
+    fn drop(&mut self) {
+        let Some(prior) = self.prior.take() else {
+            return;
+        };
+        ICP_QUERY_CONTEXT.with(|cell| {
+            *cell.borrow_mut() = prior;
+        });
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct WrapPrecompileProvider {
     inner: EthPrecompiles,
@@ -253,25 +300,13 @@ where
 }
 
 pub fn with_icp_query_detection<T>(f: impl FnOnce() -> T) -> (T, Option<IcpQueryRequest>) {
-    let prior = ICP_QUERY_CONTEXT.with(|cell| {
-        let mut ctx = cell.borrow_mut();
-        let prior = ctx.clone();
-        if matches!(ctx.mode, IcpQueryMode::Disabled) {
-            *ctx = IcpQueryExecutionContext {
-                mode: IcpQueryMode::Detect,
-                calls: 0,
-                pending: None,
-            };
-        }
-        prior
-    });
+    let guard = IcpQueryContextGuard::enter_detection();
     let out = f();
     let pending = ICP_QUERY_CONTEXT.with(|cell| {
         let mut ctx = cell.borrow_mut();
-        let pending = ctx.pending.take();
-        *ctx = prior;
-        pending
+        ctx.pending.take()
     });
+    drop(guard);
     (out, pending)
 }
 
@@ -280,20 +315,9 @@ pub fn with_icp_query_reply<T>(
     reply: IcpQueryReply,
     f: impl FnOnce() -> T,
 ) -> T {
-    let prior = ICP_QUERY_CONTEXT.with(|cell| {
-        let mut ctx = cell.borrow_mut();
-        let prior = ctx.clone();
-        *ctx = IcpQueryExecutionContext {
-            mode: IcpQueryMode::Reply { expected, reply },
-            calls: 0,
-            pending: None,
-        };
-        prior
-    });
+    let guard = IcpQueryContextGuard::enter_reply(expected, reply);
     let out = f();
-    ICP_QUERY_CONTEXT.with(|cell| {
-        *cell.borrow_mut() = prior;
-    });
+    drop(guard);
     out
 }
 

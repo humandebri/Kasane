@@ -80,6 +80,7 @@ pub enum AppMemoryId {
     WrapNativeLedgerCanister = 66,
     WrapPendingSubmissions = 67,
     QueryPrecompileAllowlist = 68,
+    EvmStateEpoch = 69,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -89,7 +90,7 @@ pub struct MemoryRegionInfo {
     pub include_in_estimate: bool,
 }
 
-const ALL_MEMORY_REGIONS: [MemoryRegionInfo; 69] = [
+const ALL_MEMORY_REGIONS: [MemoryRegionInfo; 70] = [
     MemoryRegionInfo {
         id: AppMemoryId::Upgrades,
         name: "Upgrades",
@@ -435,6 +436,11 @@ const ALL_MEMORY_REGIONS: [MemoryRegionInfo; 69] = [
         name: "QueryPrecompileAllowlist",
         include_in_estimate: false,
     },
+    MemoryRegionInfo {
+        id: AppMemoryId::EvmStateEpoch,
+        name: "EvmStateEpoch",
+        include_in_estimate: false,
+    },
 ];
 
 impl AppMemoryId {
@@ -509,6 +515,7 @@ impl AppMemoryId {
             AppMemoryId::WrapNativeLedgerCanister => 66,
             AppMemoryId::WrapPendingSubmissions => 67,
             AppMemoryId::QueryPrecompileAllowlist => 68,
+            AppMemoryId::EvmStateEpoch => 69,
         }
     }
 

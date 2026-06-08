@@ -11,7 +11,9 @@ use evm_core::wrap_precompile::{
     ICP_QUERY_PRECOMPILE_ADDRESS, NATIVE_WITHDRAW_PRECOMPILE_ADDRESS, WRAP_PRECOMPILE_ADDRESS,
 };
 use evm_db::chain_data::{constants::CHAIN_ID, constants::MAX_RETURN_DATA, Head, RuntimeConfigV1};
-use evm_db::stable_state::{init_stable_state, set_runtime_config, with_state, with_state_mut};
+use evm_db::stable_state::{
+    current_evm_state_epoch, init_stable_state, set_runtime_config, with_state, with_state_mut,
+};
 use evm_db::types::keys::{make_account_key, make_storage_key};
 use evm_db::types::values::{AccountVal, U256Val};
 use revm::primitives::{Address, B256, U256};
@@ -340,6 +342,34 @@ fn wrap_precompile_query_icp_query_precompile_is_disabled_in_plain_eth_call() {
 }
 
 #[test]
+fn wrap_precompile_query_icp_query_precompile_reverts_in_block_tx_without_external_query() {
+    setup_query_precompile_call_context();
+    let caller_principal = vec![0x41u8];
+    let caller = hash::derive_evm_address_from_principal(&caller_principal).expect("must derive");
+    common::fund_account(caller, 1_000_000_000_000_000_000u128);
+
+    let tx_id = chain::submit_ic_tx_input(
+        caller_principal,
+        vec![0xa0],
+        IcSyntheticTxInput {
+            to: Some(ICP_QUERY_PRECOMPILE_ADDRESS.into_array()),
+            value: [0u8; 32],
+            gas_limit: 300_000,
+            nonce: 0,
+            max_fee_per_gas: 2_000_000_000,
+            max_priority_fee_per_gas: 1_000_000_000,
+            data: encode_icp_query_input("read_state", &[]),
+        },
+    )
+    .expect("submit");
+
+    let produced = chain::produce_block(1).expect("produce");
+    assert_eq!(produced.block.tx_ids, vec![tx_id]);
+    let receipt = chain::get_receipt(&tx_id).expect("receipt");
+    assert_eq!(receipt.status, 0);
+}
+
+#[test]
 fn wrap_precompile_query_async_rejects_wrap_precompile_access() {
     setup_query_precompile_call_context();
     let caller = [0x31u8; 20];
@@ -540,6 +570,55 @@ fn wrap_precompile_query_snapshot_guard_rejects_runtime_config_change() {
     ));
 
     expect_snapshot_changed(result);
+}
+
+#[test]
+fn wrap_precompile_query_snapshot_guard_rejects_credit_balance_epoch_change() {
+    setup_query_precompile_call_context();
+    let input = encode_icp_query_input("read_state", &[]);
+
+    let result = common::run_ready_future(chain::eth_call_object_async(
+        build_call_input_to(ICP_QUERY_PRECOMPILE_ADDRESS.into_array(), input, [0u8; 32]),
+        |_| {
+            chain::credit_balance([0x82u8; 20], 1).expect("credit");
+            async { Ok(Vec::new()) }
+        },
+    ));
+
+    expect_snapshot_changed(result);
+}
+
+#[test]
+fn wrap_precompile_query_snapshot_guard_rejects_native_credit_epoch_change() {
+    setup_query_precompile_call_context();
+    let input = encode_icp_query_input("read_state", &[]);
+
+    let result = common::run_ready_future(chain::eth_call_object_async(
+        build_call_input_to(ICP_QUERY_PRECOMPILE_ADDRESS.into_array(), input, [0u8; 32]),
+        |_| {
+            let mut amount = [0u8; 32];
+            amount[31] = 1;
+            chain::credit_native_deposit([0x83u8; 32], [0x84u8; 20], amount)
+                .expect("native credit");
+            async { Ok(Vec::new()) }
+        },
+    ));
+
+    expect_snapshot_changed(result);
+}
+
+#[test]
+fn wrap_precompile_query_native_credit_duplicate_does_not_bump_epoch() {
+    setup_query_precompile_call_context();
+    let mut amount = [0u8; 32];
+    amount[31] = 1;
+    chain::credit_native_deposit([0x85u8; 32], [0x86u8; 20], amount).expect("native credit");
+    let after_first = current_evm_state_epoch();
+
+    chain::credit_native_deposit([0x85u8; 32], [0x86u8; 20], amount)
+        .expect("duplicate native credit");
+
+    assert_eq!(current_evm_state_epoch(), after_first);
 }
 
 #[test]
