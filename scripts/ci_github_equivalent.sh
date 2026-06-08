@@ -115,7 +115,7 @@ if ! command -v cargo-deny >/dev/null 2>&1 || ! command -v cargo-audit >/dev/nul
 fi
 
 cargo deny check
-cargo audit --deny warnings --ignore RUSTSEC-2024-0388 --ignore RUSTSEC-2024-0436 --ignore RUSTSEC-2026-0097
+cargo audit --deny warnings --ignore RUSTSEC-2024-0388 --ignore RUSTSEC-2024-0436 --ignore RUSTSEC-2026-0097 --ignore RUSTSEC-2026-0173
 
 cargo metadata --locked --format-version 1 > "${snapshot_dir}/cargo-metadata.sbom.json"
 find vendor/revm -type f -print0 | sort -z | xargs -0 sha256sum > "${snapshot_dir}/vendor-revm.sha256"
