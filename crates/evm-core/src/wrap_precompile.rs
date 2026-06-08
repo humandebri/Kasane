@@ -20,17 +20,25 @@ use std::collections::BTreeMap;
 // 予約レンジ方針:
 // - 0x00000000000000000000000000000000ffff0001: ICRC wrapped token unwrap
 // - 0x00000000000000000000000000000000ffff0002: Kasane native ICP withdrawal
-// - 0x00000000000000000000000000000000ffff0003+: 将来拡張用の予約スロット
+// - 0x00000000000000000000000000000000ffff0003: ICP query precompile
+// - 0x00000000000000000000000000000000ffff0004+: 将来拡張用の予約スロット
 pub const WRAP_PRECOMPILE_ADDRESS: Address = Address::new([
     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xff, 0xff, 0x00, 0x01,
 ]);
 pub const NATIVE_WITHDRAW_PRECOMPILE_ADDRESS: Address = Address::new([
     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xff, 0xff, 0x00, 0x02,
 ]);
+pub const ICP_QUERY_PRECOMPILE_ADDRESS: Address = Address::new([
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xff, 0xff, 0x00, 0x03,
+]);
 const MAX_FIELD_LEN: usize = 120;
 const MAX_PRINCIPAL_LEN: usize = 29;
+const MAX_QUERY_METHOD_LEN: usize = 64;
 const COMPACT_UNWRAP_FORMAT_VERSION: u8 = 1;
 const COMPACT_NATIVE_WITHDRAW_FORMAT_VERSION: u8 = 1;
+const COMPACT_ICP_QUERY_FORMAT_VERSION: u8 = 1;
+const ICP_QUERY_KIND_QUERY: u8 = 0;
+const ICP_QUERY_KIND_UPDATE_RESERVED: u8 = 1;
 const COMPACT_PRINCIPAL_FIELD_LEN: usize = 1 + MAX_PRINCIPAL_LEN;
 const COMPACT_UNWRAP_INPUT_LEN: usize = 1 + COMPACT_PRINCIPAL_FIELD_LEN * 2 + 32;
 const COMPACT_NATIVE_WITHDRAW_INPUT_LEN: usize = 1 + COMPACT_PRINCIPAL_FIELD_LEN;
@@ -44,6 +52,9 @@ const UNWRAP_BURN_GAS_SURCHARGE: u64 = 45_000;
 pub const WEI_PER_E8S: u128 = 10_000_000_000;
 const FIXED_PRECOMPILE_GAS_RATIO_NUMERATOR: u32 = 1;
 const FIXED_PRECOMPILE_GAS_RATIO_DENOMINATOR: u32 = 100;
+const ICP_QUERY_BASE_GAS: u64 = 50_000;
+const ICP_QUERY_INPUT_BYTE_GAS: u64 = 16;
+const ICP_QUERY_REPLY_BYTE_GAS: u64 = 8;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PrecompileProfileEntry {
@@ -68,6 +79,7 @@ struct PrecompileProfileAccumulator {
 
 thread_local! {
     static PRECOMPILE_PROFILE_ACC: RefCell<BTreeMap<[u8; 20], PrecompileProfileAccumulator>> = const { RefCell::new(BTreeMap::new()) };
+    static ICP_QUERY_CONTEXT: RefCell<IcpQueryExecutionContext> = RefCell::new(IcpQueryExecutionContext::disabled());
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -83,17 +95,133 @@ pub struct NativeWithdrawIntent {
     pub recipient: Vec<u8>,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct IcpQueryRequest {
+    pub target: Vec<u8>,
+    pub method: String,
+    pub arg: Vec<u8>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum IcpQueryReply {
+    Ok(Vec<u8>),
+    Err(String),
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum IcpQueryMode {
+    Disabled,
+    Detect,
+    Reply {
+        expected: IcpQueryRequest,
+        reply: IcpQueryReply,
+    },
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct IcpQueryExecutionContext {
+    mode: IcpQueryMode,
+    calls: u8,
+    pending: Option<IcpQueryRequest>,
+}
+
+impl IcpQueryExecutionContext {
+    fn disabled() -> Self {
+        Self {
+            mode: IcpQueryMode::Disabled,
+            calls: 0,
+            pending: None,
+        }
+    }
+}
+
+struct IcpQueryContextGuard {
+    prior: Option<IcpQueryExecutionContext>,
+}
+
+impl IcpQueryContextGuard {
+    fn enter_detection() -> Self {
+        let prior = ICP_QUERY_CONTEXT.with(|cell| {
+            let mut ctx = cell.borrow_mut();
+            let prior = ctx.clone();
+            if matches!(ctx.mode, IcpQueryMode::Disabled) {
+                *ctx = IcpQueryExecutionContext {
+                    mode: IcpQueryMode::Detect,
+                    calls: 0,
+                    pending: None,
+                };
+            }
+            prior
+        });
+        Self { prior: Some(prior) }
+    }
+
+    fn enter_reply(expected: IcpQueryRequest, reply: IcpQueryReply) -> Self {
+        let prior = ICP_QUERY_CONTEXT.with(|cell| {
+            let mut ctx = cell.borrow_mut();
+            let prior = ctx.clone();
+            *ctx = IcpQueryExecutionContext {
+                mode: IcpQueryMode::Reply { expected, reply },
+                calls: 0,
+                pending: None,
+            };
+            prior
+        });
+        Self { prior: Some(prior) }
+    }
+}
+
+impl Drop for IcpQueryContextGuard {
+    fn drop(&mut self) {
+        let Some(prior) = self.prior.take() else {
+            return;
+        };
+        ICP_QUERY_CONTEXT.with(|cell| {
+            *cell.borrow_mut() = prior;
+        });
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct WrapPrecompileProvider {
     inner: EthPrecompiles,
-    allow_external: bool,
+    access: PrecompileAccess,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct PrecompileAccess {
+    pub wrap_side_effects: bool,
+    pub icp_query: bool,
+}
+
+impl PrecompileAccess {
+    pub const fn disabled() -> Self {
+        Self {
+            wrap_side_effects: false,
+            icp_query: false,
+        }
+    }
+
+    pub const fn wrap_side_effects() -> Self {
+        Self {
+            wrap_side_effects: true,
+            icp_query: false,
+        }
+    }
+
+    pub const fn icp_query() -> Self {
+        Self {
+            wrap_side_effects: false,
+            icp_query: true,
+        }
+    }
 }
 
 impl WrapPrecompileProvider {
-    pub fn new(allow_external: bool) -> Self {
+    pub fn new(access: PrecompileAccess) -> Self {
         Self {
             inner: EthPrecompiles::default(),
-            allow_external,
+            access,
         }
     }
 }
@@ -118,13 +246,20 @@ where
         let address = inputs.bytecode_address.into_array();
 
         let output = match inputs.bytecode_address {
-            WRAP_PRECOMPILE_ADDRESS => {
-                Some(run_wrap_precompile(context, inputs, self.allow_external))
-            }
+            WRAP_PRECOMPILE_ADDRESS => Some(run_wrap_precompile(
+                context,
+                inputs,
+                self.access.wrap_side_effects,
+            )),
             NATIVE_WITHDRAW_PRECOMPILE_ADDRESS => Some(run_native_withdraw_precompile(
                 context,
                 inputs,
-                self.allow_external,
+                self.access.wrap_side_effects,
+            )),
+            ICP_QUERY_PRECOMPILE_ADDRESS => Some(run_icp_query_precompile(
+                context,
+                inputs,
+                self.access.icp_query,
             )),
             _ => self.inner.run(context, inputs)?,
         };
@@ -147,7 +282,11 @@ where
     }
 
     fn warm_addresses(&self) -> Box<impl Iterator<Item = Address>> {
-        let mut addresses = vec![WRAP_PRECOMPILE_ADDRESS, NATIVE_WITHDRAW_PRECOMPILE_ADDRESS];
+        let mut addresses = vec![
+            WRAP_PRECOMPILE_ADDRESS,
+            NATIVE_WITHDRAW_PRECOMPILE_ADDRESS,
+            ICP_QUERY_PRECOMPILE_ADDRESS,
+        ];
         addresses.extend(self.inner.warm_addresses());
         Box::new(addresses.into_iter())
     }
@@ -155,8 +294,31 @@ where
     fn contains(&self, address: &Address) -> bool {
         *address == WRAP_PRECOMPILE_ADDRESS
             || *address == NATIVE_WITHDRAW_PRECOMPILE_ADDRESS
+            || *address == ICP_QUERY_PRECOMPILE_ADDRESS
             || self.inner.contains(address)
     }
+}
+
+pub fn with_icp_query_detection<T>(f: impl FnOnce() -> T) -> (T, Option<IcpQueryRequest>) {
+    let guard = IcpQueryContextGuard::enter_detection();
+    let out = f();
+    let pending = ICP_QUERY_CONTEXT.with(|cell| {
+        let mut ctx = cell.borrow_mut();
+        ctx.pending.take()
+    });
+    drop(guard);
+    (out, pending)
+}
+
+pub fn with_icp_query_reply<T>(
+    expected: IcpQueryRequest,
+    reply: IcpQueryReply,
+    f: impl FnOnce() -> T,
+) -> T {
+    let guard = IcpQueryContextGuard::enter_reply(expected, reply);
+    let out = f();
+    drop(guard);
+    out
 }
 
 fn run_wrap_precompile<CTX: ContextTr>(
@@ -270,6 +432,78 @@ fn run_native_withdraw_precompile<CTX: ContextTr>(
     out
 }
 
+fn run_icp_query_precompile<CTX: ContextTr>(
+    context: &mut CTX,
+    inputs: &CallInputs,
+    allow_external: bool,
+) -> InterpreterResult {
+    let gas_limit = inputs.gas_limit;
+    if !allow_external {
+        return precompile_fail(context, gas_limit, "ic_query.precompile.query_disallowed");
+    }
+    if !inputs.call_value().is_zero() {
+        return precompile_fail(context, gas_limit, "ic_query.value_disallowed");
+    }
+
+    let input = inputs.input.bytes(context);
+    let request = match parse_icp_query_input(&input) {
+        Ok(value) => value,
+        Err(code) => return precompile_fail(context, gas_limit, code),
+    };
+    let reply = match resolve_icp_query_reply(request) {
+        Ok(value) => value,
+        Err("ic_query.pending") => return precompile_fail(context, gas_limit, "ic_query.pending"),
+        Err(code) => return precompile_fail(context, gas_limit, code),
+    };
+
+    match reply {
+        IcpQueryReply::Ok(bytes) => icp_query_return(input.len(), bytes, gas_limit),
+        IcpQueryReply::Err(code) => precompile_fail(context, gas_limit, &code),
+    }
+}
+
+fn resolve_icp_query_reply(request: IcpQueryRequest) -> Result<IcpQueryReply, &'static str> {
+    ICP_QUERY_CONTEXT.with(|cell| {
+        let mut ctx = cell.borrow_mut();
+        if ctx.calls != 0 {
+            return Err("ic_query.call_limit");
+        }
+        ctx.calls = ctx.calls.saturating_add(1);
+        match &mut ctx.mode {
+            IcpQueryMode::Disabled => Err("ic_query.async_context_required"),
+            IcpQueryMode::Detect => {
+                ctx.pending = Some(request);
+                Err("ic_query.pending")
+            }
+            IcpQueryMode::Reply { expected, reply } => {
+                if request != *expected {
+                    return Err("ic_query.request_mismatch");
+                }
+                Ok(reply.clone())
+            }
+        }
+    })
+}
+
+fn icp_query_return(input_len: usize, output: Vec<u8>, gas_limit: u64) -> InterpreterResult {
+    let mut out = InterpreterResult {
+        result: InstructionResult::Return,
+        gas: Gas::new(gas_limit),
+        output: output.into(),
+    };
+    let estimated_gas = ICP_QUERY_BASE_GAS
+        .saturating_add(ICP_QUERY_INPUT_BYTE_GAS.saturating_mul(input_len as u64))
+        .saturating_add(ICP_QUERY_REPLY_BYTE_GAS.saturating_mul(out.output.len() as u64));
+    if !out.gas.record_cost(estimated_gas) {
+        return InterpreterResult {
+            result: InstructionResult::PrecompileOOG,
+            gas: Gas::new(gas_limit),
+            output: Bytes::new(),
+        };
+    }
+    out
+}
+
 fn precompile_fail<CTX: ContextTr>(
     context: &mut CTX,
     gas_limit: u64,
@@ -326,6 +560,46 @@ fn parse_native_withdraw_input(input: &[u8]) -> Result<Vec<u8>, &'static str> {
         return Err("native_withdraw.arg.abi_invalid");
     }
     Ok(recipient)
+}
+
+fn parse_icp_query_input(input: &[u8]) -> Result<IcpQueryRequest, &'static str> {
+    if input.len() < 8 {
+        return Err("ic_query.arg.abi_invalid");
+    }
+    let mut offset = 0usize;
+    let version = read_u8(input, &mut offset).ok_or("ic_query.arg.abi_invalid")?;
+    if version != COMPACT_ICP_QUERY_FORMAT_VERSION {
+        return Err("ic_query.arg.version_invalid");
+    }
+    let kind = read_u8(input, &mut offset).ok_or("ic_query.arg.abi_invalid")?;
+    if kind == ICP_QUERY_KIND_UPDATE_RESERVED {
+        return Err("ic_query.update_unimplemented");
+    }
+    if kind != ICP_QUERY_KIND_QUERY {
+        return Err("ic_query.kind_invalid");
+    }
+    let target = read_query_principal(input, &mut offset)?;
+    let method_len = read_u8(input, &mut offset).ok_or("ic_query.arg.abi_invalid")? as usize;
+    if method_len == 0 || method_len > MAX_QUERY_METHOD_LEN {
+        return Err("ic_query.method_invalid");
+    }
+    let method_bytes =
+        read_exact(input, &mut offset, method_len).ok_or("ic_query.method_invalid")?;
+    let method = std::str::from_utf8(method_bytes)
+        .map_err(|_| "ic_query.method_invalid")?
+        .to_string();
+    let arg_len = read_u32_be(input, &mut offset).ok_or("ic_query.arg.abi_invalid")? as usize;
+    let arg = read_exact(input, &mut offset, arg_len)
+        .ok_or("ic_query.arg.abi_invalid")?
+        .to_vec();
+    if offset != input.len() {
+        return Err("ic_query.arg.abi_invalid");
+    }
+    Ok(IcpQueryRequest {
+        target,
+        method,
+        arg,
+    })
 }
 
 fn native_value_to_e8s(value: U256) -> Option<U256> {
@@ -638,6 +912,34 @@ fn read_compact_principal(input: &[u8], offset: &mut usize) -> Result<Vec<u8>, &
     let bytes = slot[..len].to_vec();
     *offset = end;
     Ok(bytes)
+}
+
+fn read_query_principal(input: &[u8], offset: &mut usize) -> Result<Vec<u8>, &'static str> {
+    let len = read_u8(input, offset).ok_or("ic_query.arg.abi_invalid")? as usize;
+    if !is_valid_principal_bytes(len) {
+        return Err("ic_query.target_invalid");
+    }
+    read_exact(input, offset, len)
+        .map(|bytes| bytes.to_vec())
+        .ok_or("ic_query.arg.abi_invalid")
+}
+
+fn read_u8(data: &[u8], offset: &mut usize) -> Option<u8> {
+    let value = *data.get(*offset)?;
+    *offset = offset.saturating_add(1);
+    Some(value)
+}
+
+fn read_u32_be(data: &[u8], offset: &mut usize) -> Option<u32> {
+    let bytes = read_exact(data, offset, 4)?;
+    Some(u32::from_be_bytes(bytes.try_into().ok()?))
+}
+
+fn read_exact<'a>(data: &'a [u8], offset: &mut usize, len: usize) -> Option<&'a [u8]> {
+    let end = offset.checked_add(len)?;
+    let bytes = data.get(*offset..end)?;
+    *offset = end;
+    Some(bytes)
 }
 
 fn read_len_prefixed(data: &[u8], offset: &mut usize) -> Option<Vec<u8>> {

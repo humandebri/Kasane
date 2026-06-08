@@ -1,0 +1,14 @@
+{
+  "target": "icp_query_gas_observation_safe_raw",
+  "target_id": "34e07cd26beee811f5d8ad1a32969846869a01bc43fded747a765f0fd531b7e5",
+  "slug": "icp_query_gas_observation_safe_raw-ae357da2",
+  "git_commit": "f4f6f494d8be02b8375b85c1b1cfb768376f6dff",
+  "worktree_dirty": false,
+  "source_hash": "ae357da24440cc96cd803023854a33e2ef814e9b53db9b2fcbd8eb036802a2ae",
+  "semantic_hash": "18e4342ead1acdbd2d672efcd2aab4913b2b8ee7904adc8dab1a8d60765c39bd",
+  "tool_version": "0.1.0",
+  "blocking_issues": [],
+  "human_questions": [],
+  "auto_safe_edits": [],
+  "risk": "medium"
+}

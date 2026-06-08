@@ -13,6 +13,22 @@ use evm_db::types::values::{AccountVal, CodeVal};
 use evm_db::Storable;
 use std::borrow::Cow;
 use std::collections::BTreeMap;
+use std::future::Future;
+use std::pin::pin;
+use std::task::{Context, Poll, Waker};
+
+pub fn run_ready_future<F>(future: F) -> F::Output
+where
+    F: Future,
+{
+    let waker = Waker::noop();
+    let mut context = Context::from_waker(waker);
+    let mut future = pin!(future);
+    match future.as_mut().poll(&mut context) {
+        Poll::Ready(output) => output,
+        Poll::Pending => panic!("test future must complete without suspension"),
+    }
+}
 
 pub fn build_ic_tx_bytes(
     to: [u8; 20],

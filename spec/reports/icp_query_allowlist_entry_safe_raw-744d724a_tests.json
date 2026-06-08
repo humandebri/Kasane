@@ -1,0 +1,21 @@
+{
+  "slug": "icp_query_allowlist_entry_safe_raw-744d724a",
+  "git_commit": "f4f6f494d8be02b8375b85c1b1cfb768376f6dff",
+  "worktree_dirty": false,
+  "semantic_hash": "0b6b4cea57f29b85514b0aea66d697fd2e3f041a1e3918ce19d3d182c39a70f7",
+  "spec_hash": "12259fd5268f4509eb41f9611a6095ac14af830124eceb34eeedcd03954fc0f7",
+  "target_hash": "f3ca3186a5d91a6eb5d0089eb142572e2d604ed540f4f9083c316bf32c0e9960",
+  "source_hash": "744d724ab51703c74b38bfa31261e65bbc8b99e0335effaf53e81ab499a5ec9c",
+  "evidence_hash": "82107d962f9ae5f45219a89ceec5315ca27252f41142a468e296ff729fbc7345",
+  "result": "success",
+  "cases": [
+    {
+      "scenario_id": "icp_query_allowlist_entry_safe_raw-nominal",
+      "command": "cargo test -p ic-evm-gateway query_precompile_allow",
+      "test_name": "gateway allowlist validation uses verified model for target and method boundaries",
+      "exit_code": 0,
+      "result": "success",
+      "output": "\nrunning 2 tests\ntest tests::query_precompile_allow_args_follow_verified_model ... ok\ntest tests::query_precompile_allow_key_decodes_valid_boundary ... ok\n\ntest result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 117 filtered out; finished in 0.00s\n\n\nrunning 0 tests\n\ntest result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 0.00s\n\n   Compiling evm-db v0.1.0 (/Users/0xhude/Desktop/ICP/Kasane/crates/evm-db)\n   Compiling ic-evm-tx v0.1.0 (/Users/0xhude/Desktop/ICP/Kasane/crates/ic-evm-tx)\n   Compiling ic-evm-ops v0.1.0 (/Users/0xhude/Desktop/ICP/Kasane/crates/ic-evm-ops)\n   Compiling ic-evm-core v0.1.0 (/Users/0xhude/Desktop/ICP/Kasane/crates/evm-core)\n   Compiling ic-evm-rpc v0.1.0 (/Users/0xhude/Desktop/ICP/Kasane/crates/ic-evm-rpc)\n   Compiling ic-evm-gateway v0.1.0 (/Users/0xhude/Desktop/ICP/Kasane/crates/ic-evm-gateway)\n    Finished `test` profile [unoptimized + debuginfo] target(s) in 7.19s\n     Running unittests src/lib.rs (target/debug/deps/ic_evm_gateway-6879629f58bdbeb0)\n     Running tests/canbench_init_args.rs (target/debug/deps/canbench_init_args-54d9c7d6e8696667)\n"
+    }
+  ]
+}

@@ -1,0 +1,24 @@
+{
+  "target": "icp_query_update_kind_rejected_raw",
+  "target_id": "fdc0b1b02fde154daf9609f2fdf58af66430b2703536c54236e0cc33b4806e4d",
+  "slug": "icp_query_update_kind_rejected_raw-4de9db5f",
+  "git_commit": "f4f6f494d8be02b8375b85c1b1cfb768376f6dff",
+  "worktree_dirty": false,
+  "source_hash": "4de9db5f9a80647d86118783b6d903c928b9f3b1395fb025e0cecb6f93c10c17",
+  "semantic_hash": "a8ddb97d337ebf1eee99dbf008dafc4e3f2817925518eef25009600d997b6d5d",
+  "tool_version": "0.1.0",
+  "scenarios": [
+    {
+      "id": "icp_query_update_kind_rejected_raw-nominal",
+      "kind": "example",
+      "executable": false,
+      "inputs": {},
+      "expected": {},
+      "review_status": "accepted",
+      "status_note": "Reserved update kind rejection is the current boundary; future update execution remains documented outside this target.",
+      "reviewed_by": "0xhude",
+      "reviewed_at": "2026-05-22T07:17:43Z",
+      "rationale": "前提: `ICP_QUERY_KIND_UPDATE_RESERVED = 1`。\n\n| ID | kind | 期待値 | 狙い |\n|---|---:|---|---|\n| S1 | `1` | `true` | 予約済み update kind だけ拒否 |\n| S2 | `0` | `false` | 通常 query kind は拒否しない |\n| S3 | `2` | `false` | 予約値の隣接値を拒否しない |\n| S4 | `3` | `false` | 小さい未知 kind を拒否しない |\n| S5 | `u64::MAX` | `false` | 上限境界でも予約値以外を拒否しない |\n\n最小候補は `S1`, `S2`。  \n堅くするなら `S3`, `S5` も採用。  \nプロパティ候補は `forall kind: u64, result == (kind == ICP_QUERY_KIND_UPDATE_RESERVED)`。"
+    }
+  ]
+}

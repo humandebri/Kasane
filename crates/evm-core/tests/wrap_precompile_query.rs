@@ -2,12 +2,18 @@
 //! 何を: wrap precompile が eth_call / estimateGas で利用可能かを固定
 //! なぜ: 実送信だけ成功して query 見積もりが壊れる回帰を防ぐため
 
-use evm_core::chain::{self, CallObjectInput};
+use candid::Encode;
+use evm_core::chain::{self, CallObjectInput, ChainError};
 use evm_core::hash;
+use evm_core::revm_exec::{configure_instruction_budget_tripped_for_test, ExecError};
 use evm_core::tx_decode::IcSyntheticTxInput;
-use evm_core::wrap_precompile::WRAP_PRECOMPILE_ADDRESS;
-use evm_db::chain_data::{constants::CHAIN_ID, RuntimeConfigV1};
-use evm_db::stable_state::{init_stable_state, set_runtime_config, with_state, with_state_mut};
+use evm_core::wrap_precompile::{
+    ICP_QUERY_PRECOMPILE_ADDRESS, NATIVE_WITHDRAW_PRECOMPILE_ADDRESS, WRAP_PRECOMPILE_ADDRESS,
+};
+use evm_db::chain_data::{constants::CHAIN_ID, constants::MAX_RETURN_DATA, Head, RuntimeConfigV1};
+use evm_db::stable_state::{
+    current_evm_state_epoch, init_stable_state, set_runtime_config, with_state, with_state_mut,
+};
 use evm_db::types::keys::{make_account_key, make_storage_key};
 use evm_db::types::values::{AccountVal, U256Val};
 use revm::primitives::{Address, B256, U256};
@@ -16,6 +22,7 @@ mod common;
 
 const WRAPPED_TOKEN_ADDRESS: [u8; 20] = [0x42u8; 20];
 const FORWARDER_ADDRESS: [u8; 20] = [0x66u8; 20];
+const DOUBLE_QUERY_ADDRESS: [u8; 20] = [0x72u8; 20];
 const TEST_FACTORY_ADDRESS: [u8; 20] = [0x55u8; 20];
 const TEST_AMOUNT: u64 = 1_000_000_000_000;
 
@@ -40,9 +47,25 @@ fn encode_unwrap_input() -> Vec<u8> {
     out
 }
 
+fn encode_native_withdraw_input() -> Vec<u8> {
+    let recipient = vec![0x77u8, 0x88, 0x99];
+    let mut principal = vec![0u8; 30];
+    principal[0] = recipient.len() as u8;
+    principal[1..1 + recipient.len()].copy_from_slice(&recipient);
+
+    let mut out = Vec::with_capacity(31);
+    out.push(1);
+    out.extend_from_slice(&principal);
+    out
+}
+
 fn build_call_input(data: Vec<u8>) -> CallObjectInput {
+    build_call_input_to(WRAP_PRECOMPILE_ADDRESS.into_array(), data, [0u8; 32])
+}
+
+fn build_call_input_to(to: [u8; 20], data: Vec<u8>, value: [u8; 32]) -> CallObjectInput {
     CallObjectInput {
-        to: Some(WRAP_PRECOMPILE_ADDRESS.into_array()),
+        to: Some(to),
         from: [0x31u8; 20],
         gas_limit: Some(300_000),
         gas_price: Some(500_000_000_000),
@@ -52,9 +75,43 @@ fn build_call_input(data: Vec<u8>) -> CallObjectInput {
         chain_id: None,
         tx_type: Some(0),
         access_list: Vec::new(),
-        value: [0u8; 32],
+        value,
         data,
     }
+}
+
+fn query_target() -> candid::Principal {
+    candid::Principal::self_authenticating(b"query-target")
+}
+
+fn encode_icp_query_input(method: &str, arg: &[u8]) -> Vec<u8> {
+    let target = query_target();
+    let target_bytes = target.as_slice();
+    let mut out = Vec::new();
+    out.push(1);
+    out.push(0);
+    out.push(target_bytes.len() as u8);
+    out.extend_from_slice(target_bytes);
+    out.push(method.len() as u8);
+    out.extend_from_slice(method.as_bytes());
+    out.extend_from_slice(&(arg.len() as u32).to_be_bytes());
+    out.extend_from_slice(arg);
+    out
+}
+
+fn query_precompile_allow_key(target: candid::Principal, method: &str) -> Vec<u8> {
+    let target_bytes = target.as_slice();
+    let mut out = Vec::with_capacity(1 + target_bytes.len() + method.len());
+    out.push(target_bytes.len() as u8);
+    out.extend_from_slice(target_bytes);
+    out.extend_from_slice(method.as_bytes());
+    out
+}
+
+fn expect_snapshot_changed(result: Result<chain::CallObjectResult, ChainError>) {
+    let Err(ChainError::ExecFailed(Some(ExecError::SnapshotChanged))) = result else {
+        panic!("expected snapshot changed, got {result:?}");
+    };
 }
 
 fn seed_unwrap_burn_state(caller: [u8; 20]) {
@@ -127,6 +184,26 @@ fn forwarder_runtime_bytecode() -> Vec<u8> {
     code
 }
 
+fn double_icp_query_runtime_bytecode() -> Vec<u8> {
+    let mut code = vec![0x36, 0x3d, 0x3d, 0x37];
+    for is_first in [true, false] {
+        code.extend_from_slice(&[0x3d, 0x3d, 0x36, 0x3d, 0x3d, 0x73]);
+        code.extend_from_slice(ICP_QUERY_PRECOMPILE_ADDRESS.as_slice());
+        code.extend_from_slice(&[0x5a, 0xf1]);
+        if is_first {
+            code.push(0x50);
+        }
+    }
+    code.push(0x60);
+    let jumpdest_offset = code.len();
+    code.push(0x00);
+    code.extend_from_slice(&[0x57, 0x3d, 0x3d, 0xfd]);
+    let jumpdest = u8::try_from(code.len()).expect("test bytecode jumpdest fits u8");
+    code[jumpdest_offset] = jumpdest;
+    code.extend_from_slice(&[0x5b, 0x00]);
+    code
+}
+
 fn relax_fee_floor_for_tests() {
     with_state_mut(|state| {
         let mut chain_state = *state.chain_state.get();
@@ -135,6 +212,16 @@ fn relax_fee_floor_for_tests() {
         chain_state.min_priority_fee = 1;
         state.chain_state.set(chain_state);
     });
+}
+
+fn setup_query_precompile_call_context() {
+    init_stable_state();
+    set_runtime_config(RuntimeConfigV1::new(
+        candid::Principal::self_authenticating(b"wrap-precompile-query"),
+        TEST_FACTORY_ADDRESS,
+    ));
+    relax_fee_floor_for_tests();
+    chain::credit_balance([0x31u8; 20], 1_000_000_000_000_000_000u128).expect("fund caller");
 }
 
 fn mapping_slot(key: B256, slot: U256) -> U256 {
@@ -194,6 +281,408 @@ fn wrap_precompile_eth_estimate_gas_succeeds_in_query_path() {
 
     assert!(gas > 0);
     assert!(gas <= 300_000);
+}
+
+#[test]
+fn wrap_precompile_query_icp_query_precompile_async_returns_resolver_reply() {
+    setup_query_precompile_call_context();
+    let request_arg = vec![0x44, 0x49, 0x44, 0x4c];
+    let input = encode_icp_query_input("read_state", &request_arg);
+    let expected_reply = vec![0xaa, 0xbb, 0xcc];
+    let mut resolver_called = false;
+
+    let out = common::run_ready_future(chain::eth_call_object_async(
+        build_call_input_to(ICP_QUERY_PRECOMPILE_ADDRESS.into_array(), input, [0u8; 32]),
+        |request| {
+            resolver_called = true;
+            assert_eq!(request.method, "read_state");
+            assert_eq!(request.arg, request_arg);
+            let reply = expected_reply.clone();
+            async move { Ok(reply) }
+        },
+    ))
+    .expect("async call");
+
+    assert!(resolver_called);
+    assert_eq!(out.status, 1);
+    assert_eq!(out.return_data, expected_reply);
+    assert!(out.revert_data.is_none());
+}
+
+#[test]
+fn wrap_precompile_query_icp_query_precompile_async_reverts_on_resolver_error() {
+    setup_query_precompile_call_context();
+    let input = encode_icp_query_input("read_state", &[]);
+
+    let out = common::run_ready_future(chain::eth_call_object_async(
+        build_call_input_to(ICP_QUERY_PRECOMPILE_ADDRESS.into_array(), input, [0u8; 32]),
+        |_| async { Err("ic_query.test_error".to_string()) },
+    ))
+    .expect("async call");
+
+    assert_eq!(out.status, 0);
+    assert!(out.return_data.is_empty());
+    assert!(out.revert_data.is_none());
+}
+
+#[test]
+fn wrap_precompile_query_icp_query_precompile_is_disabled_in_plain_eth_call() {
+    setup_query_precompile_call_context();
+    let input = encode_icp_query_input("read_state", &[]);
+    let out = chain::eth_call_object(build_call_input_to(
+        ICP_QUERY_PRECOMPILE_ADDRESS.into_array(),
+        input,
+        [0u8; 32],
+    ))
+    .expect("eth_call_object");
+
+    assert_eq!(out.status, 0);
+    assert!(out.return_data.is_empty());
+    assert!(out.revert_data.is_none());
+}
+
+#[test]
+fn wrap_precompile_query_icp_query_precompile_reverts_in_block_tx_without_external_query() {
+    setup_query_precompile_call_context();
+    let caller_principal = vec![0x41u8];
+    let caller = hash::derive_evm_address_from_principal(&caller_principal).expect("must derive");
+    common::fund_account(caller, 1_000_000_000_000_000_000u128);
+
+    let tx_id = chain::submit_ic_tx_input(
+        caller_principal,
+        vec![0xa0],
+        IcSyntheticTxInput {
+            to: Some(ICP_QUERY_PRECOMPILE_ADDRESS.into_array()),
+            value: [0u8; 32],
+            gas_limit: 300_000,
+            nonce: 0,
+            max_fee_per_gas: 2_000_000_000,
+            max_priority_fee_per_gas: 1_000_000_000,
+            data: encode_icp_query_input("read_state", &[]),
+        },
+    )
+    .expect("submit");
+
+    let produced = chain::produce_block(1).expect("produce");
+    assert_eq!(produced.block.tx_ids, vec![tx_id]);
+    let receipt = chain::get_receipt(&tx_id).expect("receipt");
+    assert_eq!(receipt.status, 0);
+}
+
+#[test]
+fn wrap_precompile_query_async_rejects_wrap_precompile_access() {
+    setup_query_precompile_call_context();
+    let caller = [0x31u8; 20];
+    seed_unwrap_burn_state(caller);
+    let mut resolver_called = false;
+
+    let out = common::run_ready_future(chain::eth_call_object_async(
+        build_call_input(encode_unwrap_input()),
+        |_| {
+            resolver_called = true;
+            async { Ok(Vec::new()) }
+        },
+    ))
+    .expect("async call");
+
+    assert!(!resolver_called);
+    assert_eq!(out.status, 0);
+    assert!(out.return_data.is_empty());
+    assert!(out.revert_data.is_none());
+}
+
+#[test]
+fn wrap_precompile_query_async_rejects_native_withdraw_access() {
+    setup_query_precompile_call_context();
+    let mut resolver_called = false;
+
+    let out = common::run_ready_future(chain::eth_call_object_async(
+        build_call_input_to(
+            NATIVE_WITHDRAW_PRECOMPILE_ADDRESS.into_array(),
+            encode_native_withdraw_input(),
+            [0u8; 32],
+        ),
+        |_| {
+            resolver_called = true;
+            async { Ok(Vec::new()) }
+        },
+    ))
+    .expect("async call");
+
+    assert!(!resolver_called);
+    assert_eq!(out.status, 0);
+    assert!(out.return_data.is_empty());
+    assert!(out.revert_data.is_none());
+}
+
+#[test]
+fn wrap_precompile_query_icp_query_precompile_async_rejects_value() {
+    setup_query_precompile_call_context();
+    let input = encode_icp_query_input("read_state", &[]);
+    let mut value = [0u8; 32];
+    value[31] = 1;
+    let mut resolver_called = false;
+
+    let out = common::run_ready_future(chain::eth_call_object_async(
+        build_call_input_to(ICP_QUERY_PRECOMPILE_ADDRESS.into_array(), input, value),
+        |_| {
+            resolver_called = true;
+            async { Ok(Vec::new()) }
+        },
+    ))
+    .expect("async call");
+
+    assert!(!resolver_called);
+    assert_eq!(out.status, 0);
+    assert!(out.return_data.is_empty());
+    assert!(out.revert_data.is_none());
+}
+
+#[test]
+fn wrap_precompile_query_call_limit_reverts_second_call() {
+    setup_query_precompile_call_context();
+    common::install_contract(DOUBLE_QUERY_ADDRESS, &double_icp_query_runtime_bytecode());
+    let input = encode_icp_query_input("read_state", &[]);
+    let mut resolver_calls = 0u32;
+
+    let out = common::run_ready_future(chain::eth_call_object_async(
+        build_call_input_to(DOUBLE_QUERY_ADDRESS, input, [0u8; 32]),
+        |_| {
+            resolver_calls = resolver_calls.saturating_add(1);
+            async { Ok(vec![0xaa]) }
+        },
+    ))
+    .expect("async call");
+
+    assert_eq!(resolver_calls, 1);
+    assert_eq!(out.status, 0);
+    assert!(out.return_data.is_empty());
+    assert!(out.revert_data.is_none());
+}
+
+#[test]
+fn wrap_precompile_query_budget_exceeded_before_precompile_does_not_call_resolver() {
+    setup_query_precompile_call_context();
+    with_state_mut(|state| {
+        let mut chain_state = *state.chain_state.get();
+        chain_state.query_instruction_soft_limit = 1;
+        state.chain_state.set(chain_state);
+    });
+    configure_instruction_budget_tripped_for_test(true);
+    let input = encode_icp_query_input("read_state", &[]);
+    let mut resolver_called = false;
+
+    let result = common::run_ready_future(chain::eth_call_object_async(
+        build_call_input_to(ICP_QUERY_PRECOMPILE_ADDRESS.into_array(), input, [0u8; 32]),
+        |_| {
+            resolver_called = true;
+            async { Ok(Vec::new()) }
+        },
+    ));
+    configure_instruction_budget_tripped_for_test(false);
+
+    assert!(!resolver_called);
+    assert!(matches!(
+        result,
+        Err(ChainError::ExecFailed(Some(
+            ExecError::InstructionBudgetExceeded
+        )))
+    ));
+}
+
+#[test]
+fn wrap_precompile_query_snapshot_guard_rejects_head_change() {
+    setup_query_precompile_call_context();
+    let input = encode_icp_query_input("read_state", &[]);
+
+    let result = common::run_ready_future(chain::eth_call_object_async(
+        build_call_input_to(ICP_QUERY_PRECOMPILE_ADDRESS.into_array(), input, [0u8; 32]),
+        |_| {
+            with_state_mut(|state| {
+                let head = *state.head.get();
+                state.head.set(Head {
+                    number: head.number.saturating_add(1),
+                    block_hash: [0x77u8; 32],
+                    timestamp: head.timestamp.saturating_add(1),
+                });
+            });
+            async { Ok(Vec::new()) }
+        },
+    ));
+
+    expect_snapshot_changed(result);
+}
+
+#[test]
+fn wrap_precompile_query_snapshot_guard_rejects_chain_state_change() {
+    setup_query_precompile_call_context();
+    let input = encode_icp_query_input("read_state", &[]);
+
+    let result = common::run_ready_future(chain::eth_call_object_async(
+        build_call_input_to(ICP_QUERY_PRECOMPILE_ADDRESS.into_array(), input, [0u8; 32]),
+        |_| {
+            with_state_mut(|state| {
+                let mut chain_state = *state.chain_state.get();
+                chain_state.base_fee = chain_state.base_fee.saturating_add(1);
+                state.chain_state.set(chain_state);
+            });
+            async { Ok(Vec::new()) }
+        },
+    ));
+
+    expect_snapshot_changed(result);
+}
+
+#[test]
+fn wrap_precompile_query_snapshot_guard_rejects_allowlist_change() {
+    setup_query_precompile_call_context();
+    let input = encode_icp_query_input("read_state", &[]);
+
+    let result = common::run_ready_future(chain::eth_call_object_async(
+        build_call_input_to(ICP_QUERY_PRECOMPILE_ADDRESS.into_array(), input, [0u8; 32]),
+        |_| {
+            with_state_mut(|state| {
+                state
+                    .query_precompile_allowlist
+                    .insert(query_precompile_allow_key(query_target(), "read_state"), 1);
+            });
+            async { Ok(Vec::new()) }
+        },
+    ));
+
+    expect_snapshot_changed(result);
+}
+
+#[test]
+fn wrap_precompile_query_snapshot_guard_rejects_runtime_config_change() {
+    setup_query_precompile_call_context();
+    let input = encode_icp_query_input("read_state", &[]);
+
+    let result = common::run_ready_future(chain::eth_call_object_async(
+        build_call_input_to(ICP_QUERY_PRECOMPILE_ADDRESS.into_array(), input, [0u8; 32]),
+        |_| {
+            set_runtime_config(RuntimeConfigV1::new(
+                candid::Principal::self_authenticating(b"changed-runtime-config"),
+                [0x99u8; 20],
+            ));
+            async { Ok(Vec::new()) }
+        },
+    ));
+
+    expect_snapshot_changed(result);
+}
+
+#[test]
+fn wrap_precompile_query_snapshot_guard_rejects_credit_balance_epoch_change() {
+    setup_query_precompile_call_context();
+    let input = encode_icp_query_input("read_state", &[]);
+
+    let result = common::run_ready_future(chain::eth_call_object_async(
+        build_call_input_to(ICP_QUERY_PRECOMPILE_ADDRESS.into_array(), input, [0u8; 32]),
+        |_| {
+            chain::credit_balance([0x82u8; 20], 1).expect("credit");
+            async { Ok(Vec::new()) }
+        },
+    ));
+
+    expect_snapshot_changed(result);
+}
+
+#[test]
+fn wrap_precompile_query_snapshot_guard_rejects_native_credit_epoch_change() {
+    setup_query_precompile_call_context();
+    let input = encode_icp_query_input("read_state", &[]);
+
+    let result = common::run_ready_future(chain::eth_call_object_async(
+        build_call_input_to(ICP_QUERY_PRECOMPILE_ADDRESS.into_array(), input, [0u8; 32]),
+        |_| {
+            let mut amount = [0u8; 32];
+            amount[31] = 1;
+            chain::credit_native_deposit([0x83u8; 32], [0x84u8; 20], amount)
+                .expect("native credit");
+            async { Ok(Vec::new()) }
+        },
+    ));
+
+    expect_snapshot_changed(result);
+}
+
+#[test]
+fn wrap_precompile_query_native_credit_duplicate_does_not_bump_epoch() {
+    setup_query_precompile_call_context();
+    let mut amount = [0u8; 32];
+    amount[31] = 1;
+    chain::credit_native_deposit([0x85u8; 32], [0x86u8; 20], amount).expect("native credit");
+    let after_first = current_evm_state_epoch();
+
+    chain::credit_native_deposit([0x85u8; 32], [0x86u8; 20], amount)
+        .expect("duplicate native credit");
+
+    assert_eq!(current_evm_state_epoch(), after_first);
+}
+
+#[test]
+fn wrap_precompile_query_raw_candid_replies_are_not_reencoded() {
+    let replies: Vec<Vec<u8>> = vec![
+        b"DIDL\0\0".to_vec(),
+        candid::Encode!(&candid::Nat::from(42u64), &"ok").expect("encode tuple"),
+        vec![0xff, 0x00, 0x44],
+    ];
+
+    for reply in replies {
+        setup_query_precompile_call_context();
+        let input = encode_icp_query_input("read_state", &[]);
+        let expected = reply.clone();
+
+        let out = common::run_ready_future(chain::eth_call_object_async(
+            build_call_input_to(ICP_QUERY_PRECOMPILE_ADDRESS.into_array(), input, [0u8; 32]),
+            |_| {
+                let reply = reply.clone();
+                async move { Ok(reply) }
+            },
+        ))
+        .expect("async call");
+
+        assert_eq!(out.status, 1);
+        assert_eq!(out.return_data, expected);
+        assert!(out.revert_data.is_none());
+    }
+}
+
+#[test]
+fn wrap_precompile_query_large_raw_reply_is_rejected() {
+    setup_query_precompile_call_context();
+    let input = encode_icp_query_input("read_state", &[]);
+    let large_reply = vec![0u8; MAX_RETURN_DATA + 1];
+
+    let result = common::run_ready_future(chain::eth_call_object_async(
+        build_call_input_to(ICP_QUERY_PRECOMPILE_ADDRESS.into_array(), input, [0u8; 32]),
+        |_| {
+            let large_reply = large_reply.clone();
+            async move { Ok(large_reply) }
+        },
+    ));
+
+    let out = result.expect("large reply should become EVM-level failure");
+    assert_eq!(out.status, 0);
+    assert!(out.return_data.is_empty());
+    assert!(out.revert_data.is_none());
+}
+
+#[test]
+fn wrap_precompile_query_sys_unknown_resolver_error_is_stable_revert() {
+    setup_query_precompile_call_context();
+    let input = encode_icp_query_input("read_state", &[]);
+
+    let out = common::run_ready_future(chain::eth_call_object_async(
+        build_call_input_to(ICP_QUERY_PRECOMPILE_ADDRESS.into_array(), input, [0u8; 32]),
+        |_| async { Err("ic_query.call_failed:SysUnknown".to_string()) },
+    ))
+    .expect("async call");
+
+    assert_eq!(out.status, 0);
+    assert!(out.return_data.is_empty());
+    assert!(out.revert_data.is_none());
 }
 
 #[test]

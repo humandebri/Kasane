@@ -1,12 +1,14 @@
 use super::{
-    clamp_return_data, inspect_lightweight_tx_guard, inspect_payload_limit_for_method,
-    inspect_policy_for_method, migration_pending, parse_submit_ic_tx_args,
-    pop_next_dispatch_request, reject_anonymous_principal, reject_write_reason,
-    should_run_cycle_observer_migration_tick, should_schedule_mining_after_cycle_observer,
-    tx_id_from_bytes, validate_prune_policy_input, ApiError, EthLogFilterView, ExecuteTxError,
-    GenesisBalanceView, GetLogsErrorView, InitArgs, PrunePolicyView, QuoteNativeDepositArgs,
-    QuoteWrapRequestArgs, SubmitIcTxArgsDto, WrapConfigArgs, DEFAULT_BLOCK_GAS_LIMIT,
-    DEFAULT_MIN_FEE_FLOOR, INSPECT_METHOD_POLICIES, MINING_ERROR_COUNT, PRUNE_ERROR_COUNT,
+    clamp_return_data, decode_query_precompile_allow_key, inspect_lightweight_tx_guard,
+    inspect_payload_limit_for_method, inspect_policy_for_method, migration_pending,
+    parse_submit_ic_tx_args, pop_next_dispatch_request, query_precompile_allow_key,
+    reject_anonymous_principal, reject_write_reason, should_run_cycle_observer_migration_tick,
+    should_schedule_mining_after_cycle_observer, tx_id_from_bytes, validate_prune_policy_input,
+    validate_query_precompile_allow_args, ApiError, EthLogFilterView, ExecuteTxError,
+    GenesisBalanceView, GetLogsErrorView, InitArgs, PrunePolicyView, QueryPrecompileAllowArgs,
+    QuoteNativeDepositArgs, QuoteWrapRequestArgs, SubmitIcTxArgsDto, WrapConfigArgs,
+    DEFAULT_BLOCK_GAS_LIMIT, DEFAULT_MIN_FEE_FLOOR, INSPECT_METHOD_POLICIES, MINING_ERROR_COUNT,
+    PRUNE_ERROR_COUNT,
 };
 use candid::{encode_one, Nat, Principal};
 use evm_core::chain;
@@ -132,6 +134,8 @@ fn exec_error_to_code(err: Option<&evm_core::revm_exec::ExecError>) -> &'static 
         Some(ExecError::InvalidGasFee) => "exec.gas_fee.invalid",
         Some(ExecError::ResultTooLarge) => "exec.result.too_large",
         Some(ExecError::InstructionBudgetExceeded) => "exec.budget.instruction_exceeded",
+        Some(ExecError::SnapshotChanged) => "exec.snapshot.changed",
+        Some(ExecError::ExternalQuery(_)) => "exec.external_query",
         Some(ExecError::ExecutionFailed) => "exec.execution.failed",
     }
 }
@@ -168,6 +172,61 @@ fn encode_unwrap_payload(asset: Principal, amount: [u8; 32], recipient: Principa
 fn icrc10_supported_standards_advertise_icrc21() {
     let standards = super::icrc21::supported_standards();
     assert!(standards.iter().any(|item| item.name == "ICRC-21"));
+}
+
+#[test]
+fn query_precompile_allow_args_follow_verified_model() {
+    let valid = QueryPrecompileAllowArgs {
+        target: Principal::self_authenticating(b"query-allow-target"),
+        method: "read_state".to_string(),
+    };
+    assert!(validate_query_precompile_allow_args(&valid).is_ok());
+
+    let anonymous = QueryPrecompileAllowArgs {
+        target: Principal::anonymous(),
+        method: "read_state".to_string(),
+    };
+    assert_eq!(
+        validate_query_precompile_allow_args(&anonymous).unwrap_err(),
+        "arg.target_anonymous"
+    );
+
+    let empty_method = QueryPrecompileAllowArgs {
+        target: valid.target,
+        method: String::new(),
+    };
+    assert_eq!(
+        validate_query_precompile_allow_args(&empty_method).unwrap_err(),
+        "arg.method_invalid"
+    );
+
+    let long_method = QueryPrecompileAllowArgs {
+        target: valid.target,
+        method: "x".repeat(65),
+    };
+    assert_eq!(
+        validate_query_precompile_allow_args(&long_method).unwrap_err(),
+        "arg.method_invalid"
+    );
+
+    let non_ascii_method = QueryPrecompileAllowArgs {
+        target: valid.target,
+        method: "状態".to_string(),
+    };
+    assert_eq!(
+        validate_query_precompile_allow_args(&non_ascii_method).unwrap_err(),
+        "arg.method_invalid"
+    );
+}
+
+#[test]
+fn query_precompile_allow_key_decodes_valid_boundary() {
+    let target = Principal::self_authenticating(b"query-allow-target");
+    let key = query_precompile_allow_key(target, "read_state");
+    let decoded = decode_query_precompile_allow_key(&key).expect("decode allowlist key");
+
+    assert_eq!(decoded.target, target);
+    assert_eq!(decoded.method, "read_state");
 }
 
 #[test]
@@ -329,6 +388,20 @@ fn evm_did_does_not_export_fields_display_icrc21_shape() {
     let did = include_str!("../evm_canister.did");
     assert!(!did.contains("FieldsDisplay"));
     assert!(did.contains("LineDisplay"));
+}
+
+#[test]
+fn query_precompile_call_object_is_composite_query_in_dids() {
+    const METHOD: &str = "rpc_eth_call_object_with_query_precompile";
+    let default_did = include_str!("../evm_canister.did");
+    let admin_did = include_str!("../evm_canister_precompile_profile_admin.did");
+
+    let default_stmt = did_method_statement(default_did, METHOD).expect("default did method");
+    let admin_stmt = did_method_statement(admin_did, METHOD).expect("admin did method");
+
+    assert!(default_stmt.contains(" composite_query;"));
+    assert!(admin_stmt.contains(" composite_query;"));
+    assert!(!did_update_methods().contains(METHOD));
 }
 
 fn chain_submit_error_to_code(err: &ChainError) -> Option<(TxApiErrorKind, &'static str)> {
@@ -647,6 +720,7 @@ fn exec_error_codes_match_fixed_pattern() {
         Some(ExecError::InvalidGasFee),
         Some(ExecError::ResultTooLarge),
         Some(ExecError::InstructionBudgetExceeded),
+        Some(ExecError::SnapshotChanged),
         Some(ExecError::ExecutionFailed),
         None,
     ];
@@ -727,6 +801,11 @@ fn exec_error_to_code_matches_expected_set() {
             "instruction_budget",
             Some(ExecError::InstructionBudgetExceeded),
             "exec.budget.instruction_exceeded",
+        ),
+        (
+            "snapshot_changed",
+            Some(ExecError::SnapshotChanged),
+            "exec.snapshot.changed",
         ),
     ];
     for (case, err, expected) in cases {
@@ -3122,7 +3201,11 @@ fn did_update_methods() -> BTreeSet<String> {
         if !trimmed.ends_with(';') {
             continue;
         }
-        if stmt.contains(" : (") && stmt.contains("-> (") && !stmt.contains(" query") {
+        if stmt.contains(" : (")
+            && stmt.contains("-> (")
+            && !stmt.contains(" query")
+            && !stmt.contains(" composite_query")
+        {
             if let Some((name, _)) = stmt.split_once(" : (") {
                 out.insert(name.trim().to_string());
             }
@@ -3130,6 +3213,39 @@ fn did_update_methods() -> BTreeSet<String> {
         stmt.clear();
     }
     out
+}
+
+fn did_method_statement(did: &str, method: &str) -> Option<String> {
+    let prefix = format!("{method} : (");
+    let mut in_service = false;
+    let mut stmt = String::new();
+    for line in did.lines() {
+        let trimmed = line.trim();
+        if !in_service {
+            if trimmed.starts_with("service ") || trimmed.starts_with("service:") {
+                in_service = true;
+            }
+            continue;
+        }
+        if trimmed == "}" {
+            break;
+        }
+        if trimmed.is_empty() {
+            continue;
+        }
+        if !stmt.is_empty() {
+            stmt.push(' ');
+        }
+        stmt.push_str(trimmed);
+        if !trimmed.ends_with(';') {
+            continue;
+        }
+        if stmt.starts_with(&prefix) {
+            return Some(stmt);
+        }
+        stmt.clear();
+    }
+    None
 }
 
 #[test]
@@ -3922,8 +4038,8 @@ fn did_contains_dispatch_result_contract_shape() {
     assert!(did.contains("retry_native_deposit : (RetryRequestArgs) -> (Result_"));
     assert!(did.contains("retry_native_withdrawal : (RetryRequestArgs) -> (Result_"));
     assert!(did.contains("recover_failed_wrap : (RecoverFailedWrapArgs) -> (Result_"));
-    assert!(did.contains("set_fee_policy : (FeePolicyView) -> (Result_"));
-    assert!(did.contains("set_allowed_assets : (vec principal) -> (Result_"));
+    assert!(did.contains("set_fee_policy : (FeePolicyView) -> (Result);"));
+    assert!(did.contains("set_allowed_assets : (vec principal) -> (Result);"));
     assert!(!did.contains("get_request_dispatch_result"));
     assert!(did.contains("get_unwrap_request_ids_by_tx_id"));
     assert!(did.contains("get_unwrap_request_ids_by_eth_tx_hash"));

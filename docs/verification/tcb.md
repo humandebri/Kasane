@@ -18,6 +18,7 @@
 | TCB-state-root | state root/account state | pruning証明は履歴削除の観測整合だけを対象とし、current account state、trie、state root正当性は証明しない | state root migration/unit test、revm DB test、運用smoke |
 | TCB-dfinity | DFINITY crates | `ic-cdk`、`ic-stable-structures`、Candid、timerが公開契約どおり動く | PocketIC、upgrade/smoke |
 | TCB-ic-runtime | IC runtime | caller、time、cycles、performance counter、stable memoryがIC仕様どおりである | local/mainnet smoke、運用監視 |
+| TCB-ic-query-precompile | ICP query precompile 外部境界 | 入口は `composite_query` であり、target は query / composite query method だけを登録する。allowlist は method selection のTCBである。`Call::bounded_wait`、IC routing、remote canisterの応答正当性、`SysUnknown` / timeout、cross-subnet rejectはVerus対象外である。raw Candid bytes は `take_raw_args` / `into_bytes` で中継し、再エンコードしない。ローカル証明対象はallowlist済みquery requestを1回だけ発火し、2-pass snapshot guardとgas制約付きでEVMへ戻す境界までとする。account / storage / code の永続変異は `evm_state_epoch` で検出する。await中に変わると async eth_call 結果へ影響する mutable execution input は `QueryCallSnapshot` に含めるか、該当 `PrecompileAccess` profile で無効化する | allowlist adapter test、`eth_call_object_async` test、PocketIC composite query E2E、PBT、mainnet/local smoke |
 | TCB-typescript | TypeScript tools | explorer/indexer/gateway UIはVerus対象外である | TypeScript検査、npm test、E2E |
 | TCB-github-actions | GitHub Actions | 固定したVerus release assetとRust toolchain取得が成功する | `scripts/verify-verus.sh` とCIログ |
 
