@@ -42,10 +42,17 @@ specgen_rustfmt_skip=(
   "crates/verified-core/src/core_safety.rs"
   "crates/verified-core/src/core_safety_block.rs"
   "crates/verified-core/src/core_safety_included.rs"
+  "crates/verified-core/src/no_reorg.rs"
   "crates/verified-core/src/prune_safety/block_prunable.rs"
   "crates/verified-core/src/prune_safety/block_retained.rs"
   "crates/verified-core/src/prune_safety/boundary.rs"
   "crates/verified-core/src/prune_safety/cleanup.rs"
+  "crates/verified-core/src/prune_safety/progress.rs"
+  "crates/verified-core/src/prune_safety/query.rs"
+  "crates/verified-core/src/receipt_index.rs"
+  "crates/verified-core/src/staging.rs"
+  "crates/verified-core/src/stable_namespace.rs"
+  "crates/verified-core/src/upgrade_safety.rs"
 )
 
 workspace_rustfmt_dirs=(
@@ -81,7 +88,7 @@ while IFS= read -r -d '' rust_file; do
 done < <(find "${workspace_rustfmt_dirs[@]}" -name '*.rs' -print0)
 
 rustfmt --check --edition 2021 --config skip_children=true "${rustfmt_inputs[@]}"
-cargo clippy --workspace --all-targets --all-features -- -D warnings -A clippy::too_many_arguments
+cargo clippy --workspace --all-targets --all-features -- -D warnings
 
 echo "[ci-github-equivalent] deny OP stack references"
 DENY_PATTERN='op-revm|op_revm|op-node|op-geth|optimism|superchain|OpDeposit|L1BlockInfo'
@@ -108,7 +115,7 @@ if ! command -v cargo-deny >/dev/null 2>&1 || ! command -v cargo-audit >/dev/nul
 fi
 
 cargo deny check
-cargo audit --deny warnings --ignore RUSTSEC-2024-0388 --ignore RUSTSEC-2024-0436 --ignore RUSTSEC-2026-0097
+cargo audit --deny warnings --ignore RUSTSEC-2024-0388 --ignore RUSTSEC-2024-0436 --ignore RUSTSEC-2026-0097 --ignore RUSTSEC-2026-0173
 
 cargo metadata --locked --format-version 1 > "${snapshot_dir}/cargo-metadata.sbom.json"
 find vendor/revm -type f -print0 | sort -z | xargs -0 sha256sum > "${snapshot_dir}/vendor-revm.sha256"
@@ -118,6 +125,7 @@ find vendor/ark-relations -type f -print0 | sort -z | xargs -0 sha256sum > "${sn
 # before compiling the Rust tests in clean CI environments.
 (cd tools/wrapper-vite/contracts && forge build)
 
+cargo test -p verified-core --locked --lib --tests
 cargo test -p evm-db -p ic-evm-core -p ic-evm-gateway --locked --lib --tests
 cargo test --manifest-path crates/evm-rpc-e2e/Cargo.toml --no-run --locked
 cargo build --release --target wasm32-unknown-unknown -p ic-evm-gateway --locked

@@ -28,6 +28,7 @@ use evm_db::upgrade;
 use ic_cdk::api::{
     accept_message, canister_cycle_balance, is_controller, msg_caller, msg_method_name,
 };
+use ic_cdk::call::Call;
 use num_bigint::BigUint;
 use serde::Deserialize;
 use std::collections::BTreeSet;
@@ -111,6 +112,18 @@ pub struct SetFeePolicyArgs {
     pub fee_ledger_canister: Principal,
     pub cycle_fee_e8s: u64,
     pub gas_price_buffer_bps: u32,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize, Eq, PartialEq)]
+pub struct QueryPrecompileAllowArgs {
+    pub target: Principal,
+    pub method: String,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize, Eq, PartialEq)]
+pub struct QueryPrecompileAllowedView {
+    pub target: Principal,
+    pub method: String,
 }
 
 #[derive(Clone, Debug, CandidType, Deserialize)]
@@ -506,6 +519,51 @@ fn validate_allowed_assets(assets: &[Principal]) -> Result<(), String> {
         }
     }
     Ok(())
+}
+
+fn validate_query_precompile_allow_args(args: &QueryPrecompileAllowArgs) -> Result<(), String> {
+    let target_non_anonymous = args.target != Principal::anonymous();
+    let valid = verified_core::wrap_precompile::icp_query_allowlist_entry_safe_raw(
+        args.target.as_slice().len() as u64,
+        target_non_anonymous as u64,
+        args.method.len() as u64,
+        args.method.is_ascii() as u64,
+    );
+    if !valid && !target_non_anonymous {
+        return Err("arg.target_anonymous".to_string());
+    }
+    if !valid {
+        return Err("arg.method_invalid".to_string());
+    }
+    Ok(())
+}
+
+fn query_precompile_allow_key(target: Principal, method: &str) -> Vec<u8> {
+    let target_bytes = target.as_slice();
+    let mut out = Vec::with_capacity(1 + target_bytes.len() + method.len());
+    out.push(target_bytes.len() as u8);
+    out.extend_from_slice(target_bytes);
+    out.extend_from_slice(method.as_bytes());
+    out
+}
+
+fn decode_query_precompile_allow_key(key: &[u8]) -> Option<QueryPrecompileAllowedView> {
+    let len = usize::from(*key.first()?);
+    if len == 0 || len > 29 || key.len() <= 1 + len {
+        return None;
+    }
+    let target = Principal::from_slice(&key[1..1 + len]);
+    let method = std::str::from_utf8(&key[1 + len..]).ok()?.to_string();
+    Some(QueryPrecompileAllowedView { target, method })
+}
+
+fn is_query_precompile_allowed(target: &[u8], method: &str) -> bool {
+    if target.is_empty() || target.len() > 29 || method.is_empty() || method.len() > 64 {
+        return false;
+    }
+    let target = Principal::from_slice(target);
+    let key = query_precompile_allow_key(target, method);
+    with_state(|state| state.query_precompile_allowlist.get(&key).is_some())
 }
 
 fn validate_evm_address(bytes: &[u8], code: &str) -> Result<(), String> {
@@ -2101,6 +2159,17 @@ fn get_allowed_assets() -> Result<Vec<Principal>, String> {
 }
 
 #[ic_cdk::query]
+fn get_query_precompile_allowlist() -> Vec<QueryPrecompileAllowedView> {
+    with_state(|state| {
+        state
+            .query_precompile_allowlist
+            .iter()
+            .filter_map(|entry| decode_query_precompile_allow_key(entry.key()))
+            .collect()
+    })
+}
+
+#[ic_cdk::query]
 fn get_wrap_runtime_config() -> Result<WrapRuntimeConfigView, String> {
     let fee_policy = current_fee_policy()?;
     let native_ledger_canister = current_native_ledger_canister()?;
@@ -2445,6 +2514,34 @@ fn set_allowed_assets(assets: Vec<Principal>) -> Result<(), String> {
     Ok(())
 }
 
+#[ic_cdk::update]
+fn add_query_precompile_allowed_method(args: QueryPrecompileAllowArgs) -> Result<(), String> {
+    if let Some(reason) = reject_anonymous_update() {
+        return Err(reason);
+    }
+    require_control_plane_write()?;
+    validate_query_precompile_allow_args(&args)?;
+    let key = query_precompile_allow_key(args.target, &args.method);
+    with_state_mut(|state| {
+        state.query_precompile_allowlist.insert(key, 1);
+    });
+    Ok(())
+}
+
+#[ic_cdk::update]
+fn remove_query_precompile_allowed_method(args: QueryPrecompileAllowArgs) -> Result<(), String> {
+    if let Some(reason) = reject_anonymous_update() {
+        return Err(reason);
+    }
+    require_control_plane_write()?;
+    validate_query_precompile_allow_args(&args)?;
+    let key = query_precompile_allow_key(args.target, &args.method);
+    with_state_mut(|state| {
+        state.query_precompile_allowlist.remove(&key);
+    });
+    Ok(())
+}
+
 #[ic_cdk::post_upgrade]
 fn post_upgrade(args: Option<InitArgs>) {
     upgrade::post_upgrade();
@@ -2781,10 +2878,6 @@ const INSPECT_METHOD_POLICIES: &[InspectMethodPolicy] = &[
         payload_limit: INSPECT_MANAGE_PAYLOAD_LIMIT,
     },
     InspectMethodPolicy {
-        method: "quote_native_withdrawal",
-        payload_limit: INSPECT_MANAGE_PAYLOAD_LIMIT,
-    },
-    InspectMethodPolicy {
         method: "recover_failed_wrap",
         payload_limit: INSPECT_MANAGE_PAYLOAD_LIMIT,
     },
@@ -2810,6 +2903,14 @@ const INSPECT_METHOD_POLICIES: &[InspectMethodPolicy] = &[
     },
     InspectMethodPolicy {
         method: "set_fee_policy",
+        payload_limit: INSPECT_MANAGE_PAYLOAD_LIMIT,
+    },
+    InspectMethodPolicy {
+        method: "add_query_precompile_allowed_method",
+        payload_limit: INSPECT_MANAGE_PAYLOAD_LIMIT,
+    },
+    InspectMethodPolicy {
+        method: "remove_query_precompile_allowed_method",
         payload_limit: INSPECT_MANAGE_PAYLOAD_LIMIT,
     },
     InspectMethodPolicy {
@@ -2848,6 +2949,8 @@ const INSPECT_METHOD_POLICIES: &[InspectMethodPolicy] = &[
     },
 ];
 
+// inspect_message は ingress の事前拒否だけに使う。update body 側の
+// controller check を本来の access control として維持する。
 fn inspect_payload_limit_for_method(method: &str) -> Option<usize> {
     inspect_policy_for_method(method).map(|policy| policy.payload_limit)
 }
@@ -3349,6 +3452,13 @@ fn rpc_eth_call_object(call: RpcCallObjectView) -> Result<RpcCallResultView, Rpc
     ic_evm_rpc::rpc_eth_call_object(call)
 }
 
+#[ic_cdk::query(composite = true)]
+async fn rpc_eth_call_object_with_query_precompile(
+    call: RpcCallObjectView,
+) -> Result<RpcCallResultView, RpcErrorView> {
+    ic_evm_rpc::rpc_eth_call_object_async(call, resolve_icp_query_precompile).await
+}
+
 #[cfg(feature = "precompile-profile-admin")]
 #[ic_cdk::update]
 fn profile_precompile_call(call: RpcCallObjectView) -> Result<RpcCallResultView, RpcErrorView> {
@@ -3425,6 +3535,25 @@ fn rpc_eth_history_window() -> RpcHistoryWindowView {
 #[ic_cdk::query]
 fn rpc_eth_call_rawtx(raw_tx: Vec<u8>) -> Result<Vec<u8>, String> {
     ic_evm_rpc::rpc_eth_call_rawtx(raw_tx)
+}
+
+async fn resolve_icp_query_precompile(
+    request: evm_core::wrap_precompile::IcpQueryRequest,
+) -> Result<Vec<u8>, String> {
+    if !is_query_precompile_allowed(&request.target, &request.method) {
+        return Err("ic_query.allowlist_miss".to_string());
+    }
+    let target = Principal::from_slice(&request.target);
+    let response = Call::bounded_wait(target, &request.method)
+        .take_raw_args(request.arg)
+        .change_timeout(1)
+        .await
+        .map_err(|err| format!("ic_query.call_failed:{err}"))?;
+    let bytes = response.into_bytes();
+    if bytes.len() > MAX_RETURN_DATA {
+        return Err("ic_query.response_too_large".to_string());
+    }
+    Ok(bytes)
 }
 
 #[ic_cdk::query]

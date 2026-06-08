@@ -1,0 +1,48 @@
+{
+  "target": "staged_tx_is_current_pending_raw",
+  "target_id": "b11a174ada55a5da874578cd663871c2ff89a9e016f96f35a5ada71fdc9d339f",
+  "slug": "staged_tx_is_current_pending_raw-8f305091",
+  "file": "crates/verified-core/src/staging.rs",
+  "function": "staged_tx_is_current_pending_raw",
+  "git_commit": "0570339f56a81732819c12f7e07f79a58a609f91",
+  "worktree_dirty": false,
+  "source_hash": "86845648a950705fef350c93d451fe27e728e5402ca00a28417d1f37ae15a063",
+  "semantic_hash": "0aaf3eafa2dcf641996e9aa709a1537b158e106a527c267a3235736c950b2155",
+  "dependency_hash_inputs": [
+    {
+      "kind": "use",
+      "name": "cfg",
+      "file": "crates/verified-core/src/staging.rs",
+      "hash": "a5eb4157d5d32303032e3dc786e34f004ebe17f0ff1bb26f90ac9eb42478596c"
+    }
+  ],
+  "unresolved_dependencies": [],
+  "spec_source_of_truth": "accepted_json",
+  "tool_version": "0.1.0",
+  "preconditions": [
+    "true"
+  ],
+  "postconditions": [
+    "result == (ready_points_to_tx == 1 && pending_meta_points_to_tx == 1 && current_pending_points_to_tx == 1 && tx_payload_present == 1 && tx_not_marked_dropped == 1)"
+  ],
+  "acceptance_criteria": [
+    "A tx may be staged for produce_block only when ready_queue, pending metadata, current pending slot, live payload, and non-dropped location all point to the same tx."
+  ],
+  "test_evidence": [
+    {
+      "scenario_id": "staged_tx_is_current_pending_raw-nominal",
+      "command": "cargo test -p verified-core --test p0_safety && cargo test -p ic-evm-gateway replacement_old_tx_is_not_staged_or_included",
+      "test_name": "verified-core staging pure tests plus gateway replacement stale-tx exclusion evidence",
+      "recorded_at": "2026-05-16T08:20:34Z"
+    }
+  ],
+  "risk_level": "medium",
+  "verified_subject": "implementation",
+  "contract_hash": "c98810eab47004dbbbc5b2e20198358cfbd1eee9186d381e8b7f7add0f4efb40",
+  "applied_contract_hash": "c98810eab47004dbbbc5b2e20198358cfbd1eee9186d381e8b7f7add0f4efb40",
+  "applied_at": "2026-05-16T08:31:32Z",
+  "panic_behavior": "documented",
+  "overflow_behavior": "documented",
+  "rejected_behaviors": [],
+  "open_assumptions": []
+}

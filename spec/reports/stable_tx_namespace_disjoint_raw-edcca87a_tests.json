@@ -1,0 +1,21 @@
+{
+  "slug": "stable_tx_namespace_disjoint_raw-edcca87a",
+  "git_commit": "bdc412ff69ea98e3aa777a1b90e9f9c9d4b4fc64",
+  "worktree_dirty": false,
+  "semantic_hash": "fa398a53c3b9462e36a27f99a9162cdadb5bf55083bd94388b596ab41735666c",
+  "spec_hash": "9e5776ea1e8365aacbe678f0a63eb73392021a9409439b2f6f6b171a025dad98",
+  "target_hash": "ff219c593724896023846b7329820780d7d9554da6d6e7ac80b9ca726457e361",
+  "source_hash": "edcca87a73f1fc2393350930c833bf1f61ca2674e1dc15a3abd75213aa841567",
+  "evidence_hash": "e315255790ebf29358d64669978df2f8e0836209dab77c3d20b3c7690a162bdd",
+  "result": "success",
+  "cases": [
+    {
+      "scenario_id": "stable_tx_namespace_disjoint_raw-nominal",
+      "command": "cargo test -p verified-core --test prune_safety stable_tx_namespace && cargo test -p evm-db --test chain_data_memory_layout tx_related_memory_ids_are_disjoint",
+      "test_name": "verified-core pure namespace tests plus evm-db AppMemoryId adapter evidence",
+      "exit_code": 0,
+      "result": "success",
+      "output": "\nrunning 1 test\ntest stable_tx_namespace_requires_strict_memory_order ... ok\n\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 5 filtered out; finished in 0.00s\n\n\nrunning 1 test\ntest tx_related_memory_ids_are_disjoint ... ok\n\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 0.00s\n\n   Compiling verified-core v0.1.0 (/Users/0xhude/Desktop/ICP/Kasane/crates/verified-core)\n    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.84s\n     Running tests/prune_safety.rs (target/debug/deps/prune_safety-8d818e529675359d)\n   Compiling evm-db v0.1.0 (/Users/0xhude/Desktop/ICP/Kasane/crates/evm-db)\n    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.45s\n     Running tests/chain_data_memory_layout.rs (target/debug/deps/chain_data_memory_layout-6b77119ced14efbb)\n"
+    }
+  ]
+}

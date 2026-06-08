@@ -1,0 +1,24 @@
+{
+  "target": "no_reorg_append_only_raw",
+  "target_id": "437b3743e85de255ed69105022251db56728e14357597162ef26e17a118a786d",
+  "slug": "no_reorg_append_only_raw-f8bac44c",
+  "git_commit": "45c236f431ea13639e1ce09e51a6e84f7b627d28",
+  "worktree_dirty": true,
+  "source_hash": "f8bac44c1efdfa27b0b550c2955e02a134ecb3fd90e1d4a448b95c40520fde58",
+  "semantic_hash": "901f8070f0a2be75c95df3e3042c20ff116174a9e47cd1a0277fbe7812d4db5d",
+  "tool_version": "0.1.0",
+  "scenarios": [
+    {
+      "id": "no_reorg_append_only_raw-nominal",
+      "kind": "example",
+      "executable": false,
+      "inputs": {},
+      "expected": {},
+      "review_status": "accepted",
+      "status_note": "covers append-only head, parent continuity, and unchanged prior block/receipt/index observations",
+      "reviewed_by": "0xhude",
+      "reviewed_at": "2026-05-16T08:19:34Z",
+      "rationale": "シナリオ候補:\n\n| ID | previous_head | committed_head | parent | blocks | receipts | indexes | 期待値 | 目的 |\n|---|---:|---:|---:|---:|---:|---:|---|---|\n| S1 | 0 | 1 | 1 | 1 | 1 | 1 | true | 最小headで正常append |\n| S2 | 41 | 42 | 1 | 1 | 1 | 1 | true | 通常headで正常append |\n| S3 | u64::MAX | 0 | 1 | 1 | 1 | 1 | false | `previous_head < u64::MAX` 違反 |\n| S4 | 41 | 41 | 1 | 1 | 1 | 1 | false | committedが進んでいない |\n| S5 | 41 | 43 | 1 | 1 | 1 | 1 | false | committedが2以上進む |\n| S6 | 41 | 42 | 0 | 1 | 1 | 1 | false | parentがprevious_headを指さない |\n| S7 | 41 | 42 | 2 | 1 | 1 | 1 | false | parent flagは1のみ許可 |\n| S8 | 41 | 42 | 1 | 0 | 1 | 1 | false | 既存blocks変更あり |\n| S9 | 41 | 42 | 1 | 1 | 0 | 1 | false | 既存receipts変更あり |\n| S10 | 41 | 42 | 1 | 1 | 1 | 0 | false | 既存indexes変更あり |\n| S11 | 41 | 42 | 1 | 2 | 1 | 1 | false | unchanged flagは1のみ許可 |\n| S12 | u64::MAX - 1 | u64::MAX | 1 | 1 | 1 | 1 | true | 最大直前headで正常append |\n\n最小セットに絞るなら S2, S3, S4, S5, S6, S8, S9, S10, S12。"
+    }
+  ]
+}

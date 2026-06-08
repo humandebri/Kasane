@@ -1,0 +1,47 @@
+{
+  "target": "prune_partial_progress_safe_raw",
+  "entry": {
+    "display_name": "prune_partial_progress_safe_raw",
+    "function": "prune_partial_progress_safe_raw",
+    "function_path": "prune_partial_progress_safe_raw",
+    "file": "crates/verified-core/src/prune_safety/progress.rs",
+    "target_id": "46ffe8cfd2154bfbb251e536fd928bbeb0e87b0037486491a90d763237de0787",
+    "slug": "prune_partial_progress_safe_raw-7591aae9",
+    "source_hash": "7591aae993cf81b95b1444a9cf24be789a057ff802d53e50d781d9f71d042585",
+    "semantic_hash": "44d799a2c238ea23615caad62d36366469573c7ca3e1c9c352c0cc7833b76cf0",
+    "created_at": "2026-05-16T09:49:36Z"
+  },
+  "signature": "pub fn prune_partial_progress_safe_raw(previous_present: u64, previous_boundary: u64, next_present: u64, next_boundary: u64, next_cursor: u64, max_ops: u64, ops_used: u64, next_ops_needed: u64, did_work: u64, stopped_for_budget: u64) -> bool",
+  "body": "{\n    previous_present <= 1\n        && next_present <= 1\n        && did_work <= 1\n        && stopped_for_budget <= 1\n        && ops_used <= max_ops\n        && (did_work == 0 || next_present == 1)\n        && (previous_present == 0 || next_present == 1)\n        && (did_work == 0 || previous_present == 0 || previous_boundary < next_boundary)\n        && (previous_present == 0\n            || next_present == 0\n            || previous_boundary == next_boundary\n            || did_work == 1)\n        && (previous_present == 0 || next_present == 0 || previous_boundary <= next_boundary)\n        && (next_present == 0 || next_boundary < next_cursor)\n        && (stopped_for_budget == 0 || next_present == 1)\n        && (stopped_for_budget == 0\n            || max_ops < next_ops_needed\n            || (next_ops_needed <= max_ops && max_ops - next_ops_needed < ops_used))\n}",
+  "span": {
+    "start_line": 6,
+    "end_line": 13
+  },
+  "git_commit": "f5ff2056a794c5f420ea2c9bafed74610c6175f7",
+  "worktree_dirty": false,
+  "source_hash": "c491e58e0c461fea45ed041ac0f74a8d0a29f1a5aa7343ec398fb2f719e6ce38",
+  "semantic_hash": "1b99e5bb671295a876bfacad9c1660aeb4c265390fa65f17ef002511f906c153",
+  "dependency_hash_inputs": [
+    {
+      "kind": "use",
+      "name": "cfg",
+      "file": "crates/verified-core/src/prune_safety/progress.rs",
+      "hash": "a5eb4157d5d32303032e3dc786e34f004ebe17f0ff1bb26f90ac9eb42478596c"
+    }
+  ],
+  "unresolved_dependencies": [],
+  "tool_version": "0.1.0",
+  "cfg": [],
+  "features": [],
+  "types": [],
+  "called_functions": [],
+  "callers": [],
+  "tests": [],
+  "panic_sites": [],
+  "overflow_sites": [
+    "-"
+  ],
+  "casts": [],
+  "division_sites": [],
+  "llm_context_files": []
+}

@@ -340,6 +340,10 @@ export interface PruneStatusView {
   'prune_running' : boolean,
   'oldest_kept_block' : [] | [bigint],
 }
+export interface QueryPrecompileAllowArgs {
+  'method' : string,
+  'target' : Principal,
+}
 export interface QueueItemView {
   'seq' : bigint,
   'tx_id' : Uint8Array,
@@ -442,30 +446,30 @@ export type RequestStatus = { 'Queued' : null } |
   { 'Succeeded' : null } |
   { 'Running' : null };
 export type Result = { 'Ok' : null } |
-  { 'Err' : ApiError };
-export type Result_1 = { 'Ok' : DispatchUnwrapRequestOk } |
-  { 'Err' : ApiError };
-export type Result_10 = { 'Ok' : WrapRuntimeConfigView } |
   { 'Err' : string };
-export type Result_11 = { 'Ok' : Icrc21ConsentInfo } |
+export type Result_1 = { 'Ok' : null } |
+  { 'Err' : ApiError };
+export type Result_10 = { 'Ok' : GetUnwrapRequirementsOk } |
+  { 'Err' : ApiError };
+export type Result_11 = { 'Ok' : WrapRuntimeConfigView } |
+  { 'Err' : string };
+export type Result_12 = { 'Ok' : Icrc21ConsentInfo } |
   { 'Err' : Icrc21Error };
-export type Result_12 = { 'Ok' : string } |
+export type Result_13 = { 'Ok' : string } |
   { 'Err' : string };
-export type Result_13 = { 'Ok' : PruneResultView } |
+export type Result_14 = { 'Ok' : PruneResultView } |
   { 'Err' : ProduceBlockError };
-export type Result_14 = { 'Ok' : QuoteNativeDepositOk } |
+export type Result_15 = { 'Ok' : QuoteNativeDepositOk } |
   { 'Err' : ApiError };
-export type Result_15 = { 'Ok' : QuoteNativeWithdrawalOk } |
+export type Result_16 = { 'Ok' : QuoteNativeWithdrawalOk } |
   { 'Err' : ApiError };
-export type Result_16 = { 'Ok' : QuoteWrapRequestOk } |
+export type Result_17 = { 'Ok' : QuoteWrapRequestOk } |
   { 'Err' : ApiError };
-export type Result_17 = { 'Ok' : RequestOverview } |
+export type Result_18 = { 'Ok' : RequestOverview } |
   { 'Err' : ApiError };
-export type Result_18 = { 'Ok' : null } |
-  { 'Err' : string };
 export type Result_19 = { 'Ok' : RpcCallResultView } |
   { 'Err' : RpcErrorView };
-export type Result_2 = { 'Ok' : EstimateIcTxOk } |
+export type Result_2 = { 'Ok' : DispatchUnwrapRequestOk } |
   { 'Err' : ApiError };
 export type Result_20 = { 'Ok' : Uint8Array } |
   { 'Err' : string };
@@ -487,20 +491,20 @@ export type Result_28 = { 'Ok' : SubmitNativeDepositOk } |
   { 'Err' : ApiError };
 export type Result_29 = { 'Ok' : SubmitWrapRequestOk } |
   { 'Err' : ApiError };
-export type Result_3 = { 'Ok' : bigint } |
-  { 'Err' : string };
-export type Result_4 = { 'Ok' : ExportResponseView } |
-  { 'Err' : ExportErrorView };
-export type Result_5 = { 'Ok' : Array<Principal> } |
-  { 'Err' : string };
-export type Result_6 = { 'Ok' : BlockView } |
-  { 'Err' : LookupError };
-export type Result_7 = { 'Ok' : FeePolicyView } |
-  { 'Err' : string };
-export type Result_8 = { 'Ok' : ReceiptView } |
-  { 'Err' : LookupError };
-export type Result_9 = { 'Ok' : GetUnwrapRequirementsOk } |
+export type Result_3 = { 'Ok' : EstimateIcTxOk } |
   { 'Err' : ApiError };
+export type Result_4 = { 'Ok' : bigint } |
+  { 'Err' : string };
+export type Result_5 = { 'Ok' : ExportResponseView } |
+  { 'Err' : ExportErrorView };
+export type Result_6 = { 'Ok' : Array<Principal> } |
+  { 'Err' : string };
+export type Result_7 = { 'Ok' : BlockView } |
+  { 'Err' : LookupError };
+export type Result_8 = { 'Ok' : FeePolicyView } |
+  { 'Err' : string };
+export type Result_9 = { 'Ok' : ReceiptView } |
+  { 'Err' : LookupError };
 export interface RetryRequestArgs { 'request_id' : Uint8Array }
 export interface RpcAccessListItemView {
   'storage_keys' : Array<Uint8Array>,
@@ -621,25 +625,29 @@ export interface WrapRuntimeConfigView {
   'wrap_factory_address' : Uint8Array,
 }
 export interface _SERVICE {
+  'add_query_precompile_allowed_method' : ActorMethod<
+    [QueryPrecompileAllowArgs],
+    Result
+  >,
   'credit_native_deposit' : ActorMethod<
     [Uint8Array, Uint8Array, bigint],
-    Result
+    Result_1
   >,
   'dispatch_native_withdrawal_request' : ActorMethod<
     [DispatchNativeWithdrawalRequestArgs],
-    Result_1
+    Result_2
   >,
   'dispatch_unwrap_request' : ActorMethod<
     [DispatchUnwrapRequestArgs],
-    Result_1
+    Result_2
   >,
-  'estimate_ic_tx' : ActorMethod<[SubmitIcTxArgsDto], Result_2>,
-  'expected_nonce_by_address' : ActorMethod<[Uint8Array], Result_3>,
-  'export_blocks' : ActorMethod<[[] | [ExportCursorView], number], Result_4>,
-  'get_allowed_assets' : ActorMethod<[], Result_5>,
-  'get_block' : ActorMethod<[bigint], Result_6>,
+  'estimate_ic_tx' : ActorMethod<[SubmitIcTxArgsDto], Result_3>,
+  'expected_nonce_by_address' : ActorMethod<[Uint8Array], Result_4>,
+  'export_blocks' : ActorMethod<[[] | [ExportCursorView], number], Result_5>,
+  'get_allowed_assets' : ActorMethod<[], Result_6>,
+  'get_block' : ActorMethod<[bigint], Result_7>,
   'get_cycle_balance' : ActorMethod<[], bigint>,
-  'get_fee_policy' : ActorMethod<[], Result_7>,
+  'get_fee_policy' : ActorMethod<[], Result_8>,
   'get_native_deposit_result' : ActorMethod<
     [Uint8Array],
     [] | [RequestOverview]
@@ -647,11 +655,15 @@ export interface _SERVICE {
   'get_ops_status' : ActorMethod<[], OpsStatusView>,
   'get_pending' : ActorMethod<[Uint8Array], PendingStatusView>,
   'get_prune_status' : ActorMethod<[], PruneStatusView>,
+  'get_query_precompile_allowlist' : ActorMethod<
+    [],
+    Array<QueryPrecompileAllowArgs>
+  >,
   'get_queue_snapshot' : ActorMethod<
     [number, [] | [bigint]],
     QueueSnapshotView
   >,
-  'get_receipt' : ActorMethod<[Uint8Array], Result_8>,
+  'get_receipt' : ActorMethod<[Uint8Array], Result_9>,
   'get_request' : ActorMethod<[Uint8Array], [] | [RequestOverview]>,
   'get_unwrap_dispatch_overview' : ActorMethod<
     [Uint8Array],
@@ -667,34 +679,42 @@ export interface _SERVICE {
   >,
   'get_unwrap_requirements' : ActorMethod<
     [GetUnwrapRequirementsArgs],
-    Result_9
+    Result_10
   >,
-  'get_wrap_runtime_config' : ActorMethod<[], Result_10>,
+  'get_wrap_runtime_config' : ActorMethod<[], Result_11>,
   'health' : ActorMethod<[], HealthView>,
   'icrc10_supported_standards' : ActorMethod<[], Array<StandardRecord>>,
   'icrc21_canister_call_consent_message' : ActorMethod<
     [Icrc21ConsentMessageRequest],
-    Result_11
+    Result_12
   >,
   'memory_breakdown' : ActorMethod<[], MemoryBreakdownView>,
   'metrics' : ActorMethod<[bigint], MetricsView>,
-  'metrics_prometheus' : ActorMethod<[], Result_12>,
-  'prune_blocks' : ActorMethod<[bigint, number], Result_13>,
-  'quote_native_deposit' : ActorMethod<[QuoteNativeDepositArgs], Result_14>,
+  'metrics_prometheus' : ActorMethod<[], Result_13>,
+  'prune_blocks' : ActorMethod<[bigint, number], Result_14>,
+  'quote_native_deposit' : ActorMethod<[QuoteNativeDepositArgs], Result_15>,
   'quote_native_withdrawal' : ActorMethod<
     [QuoteNativeWithdrawalArgs],
-    Result_15
+    Result_16
   >,
-  'quote_wrap_request' : ActorMethod<[QuoteWrapRequestArgs], Result_16>,
-  'recover_failed_wrap' : ActorMethod<[RecoverFailedWrapArgs], Result_17>,
-  'repair_stale_wrap_operations' : ActorMethod<[], Result_18>,
-  'retry_native_deposit' : ActorMethod<[RetryRequestArgs], Result_17>,
-  'retry_native_withdrawal' : ActorMethod<[RetryRequestArgs], Result_17>,
-  'retry_request' : ActorMethod<[RetryRequestArgs], Result_17>,
+  'quote_wrap_request' : ActorMethod<[QuoteWrapRequestArgs], Result_17>,
+  'recover_failed_wrap' : ActorMethod<[RecoverFailedWrapArgs], Result_18>,
+  'remove_query_precompile_allowed_method' : ActorMethod<
+    [QueryPrecompileAllowArgs],
+    Result
+  >,
+  'repair_stale_wrap_operations' : ActorMethod<[], Result>,
+  'retry_native_deposit' : ActorMethod<[RetryRequestArgs], Result_18>,
+  'retry_native_withdrawal' : ActorMethod<[RetryRequestArgs], Result_18>,
+  'retry_request' : ActorMethod<[RetryRequestArgs], Result_18>,
   'rpc_eth_block_number' : ActorMethod<[], bigint>,
   'rpc_eth_call_object' : ActorMethod<[RpcCallObjectView], Result_19>,
   'rpc_eth_call_object_at' : ActorMethod<
     [RpcCallObjectView, RpcBlockTagView],
+    Result_19
+  >,
+  'rpc_eth_call_object_with_query_precompile' : ActorMethod<
+    [RpcCallObjectView],
     Result_19
   >,
   'rpc_eth_call_rawtx' : ActorMethod<[Uint8Array], Result_20>,
@@ -758,11 +778,11 @@ export interface _SERVICE {
   'rpc_eth_history_window' : ActorMethod<[], RpcHistoryWindowView>,
   'rpc_eth_max_priority_fee_per_gas' : ActorMethod<[], Result_23>,
   'rpc_eth_send_raw_transaction' : ActorMethod<[Uint8Array], Result_27>,
-  'set_allowed_assets' : ActorMethod<[Array<Principal>], Result_18>,
-  'set_fee_policy' : ActorMethod<[FeePolicyView], Result_18>,
-  'set_log_filter' : ActorMethod<[[] | [string]], Result_18>,
-  'set_prune_policy' : ActorMethod<[PrunePolicyView], Result_18>,
-  'set_pruning_enabled' : ActorMethod<[boolean], Result_18>,
+  'set_allowed_assets' : ActorMethod<[Array<Principal>], Result>,
+  'set_fee_policy' : ActorMethod<[FeePolicyView], Result>,
+  'set_log_filter' : ActorMethod<[[] | [string]], Result>,
+  'set_prune_policy' : ActorMethod<[PrunePolicyView], Result>,
+  'set_pruning_enabled' : ActorMethod<[boolean], Result>,
   'submit_ic_tx' : ActorMethod<[SubmitIcTxArgsDto], Result_27>,
   'submit_native_deposit' : ActorMethod<[SubmitNativeDepositArgs], Result_28>,
   'submit_wrap_request' : ActorMethod<[SubmitWrapRequestArgs], Result_29>,

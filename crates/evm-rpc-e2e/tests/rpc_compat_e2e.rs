@@ -3,6 +3,7 @@
 use candid::Deserialize;
 use candid::{CandidType, Decode, Encode, Principal};
 use evm_core::hash;
+use evm_core::wrap_precompile::ICP_QUERY_PRECOMPILE_ADDRESS;
 use pocket_ic::PocketIc;
 use serde_json::Value;
 use std::panic::{self, AssertUnwindSafe};
@@ -90,6 +91,49 @@ struct InitArgs {
     wrap_factory_address: Vec<u8>,
     query_instruction_soft_limit: Option<u64>,
     update_instruction_soft_limit: Option<u64>,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize, Eq, PartialEq)]
+struct QueryPrecompileAllowArgs {
+    target: Principal,
+    method: String,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize, Eq, PartialEq)]
+struct RpcAccessListItemView {
+    address: Vec<u8>,
+    storage_keys: Vec<Vec<u8>>,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize, Eq, PartialEq)]
+struct RpcCallObjectView {
+    to: Option<Vec<u8>>,
+    from: Option<Vec<u8>>,
+    gas: Option<u64>,
+    gas_price: Option<u128>,
+    nonce: Option<u64>,
+    max_fee_per_gas: Option<u128>,
+    max_priority_fee_per_gas: Option<u128>,
+    chain_id: Option<u64>,
+    tx_type: Option<u64>,
+    access_list: Option<Vec<RpcAccessListItemView>>,
+    value: Option<Vec<u8>>,
+    data: Option<Vec<u8>>,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize, Eq, PartialEq)]
+struct RpcCallResultView {
+    status: u8,
+    return_data: Vec<u8>,
+    gas_used: u64,
+    revert_data: Option<Vec<u8>>,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize, Eq, PartialEq)]
+struct RpcErrorView {
+    error_prefix: Option<String>,
+    code: u32,
+    message: String,
 }
 
 const TEST_WRAP_FACTORY_ADDRESS: [u8; 20] = [0x90u8; 20];
@@ -456,6 +500,83 @@ fn call_export_blocks(
     Decode!(&out, Result<ExportResponseView, ExportErrorView>).expect("decode export_blocks")
 }
 
+fn encode_icp_query_precompile_input(target: Principal, method: &str, arg: &[u8]) -> Vec<u8> {
+    let target_bytes = target.as_slice();
+    let mut out = Vec::new();
+    out.push(1);
+    out.push(0);
+    out.push(target_bytes.len() as u8);
+    out.extend_from_slice(target_bytes);
+    out.push(method.len() as u8);
+    out.extend_from_slice(method.as_bytes());
+    out.extend_from_slice(&(arg.len() as u32).to_be_bytes());
+    out.extend_from_slice(arg);
+    out
+}
+
+fn call_query_precompile(
+    pic: &PocketIc,
+    canister_id: Principal,
+    method: &str,
+    arg: Vec<u8>,
+) -> Result<RpcCallResultView, RpcErrorView> {
+    let caller = test_caller();
+    let caller_evm = hash::derive_evm_address_from_principal(caller.as_slice())
+        .expect("must derive caller evm address");
+    let call = RpcCallObjectView {
+        to: Some(ICP_QUERY_PRECOMPILE_ADDRESS.into_array().to_vec()),
+        from: Some(caller_evm.to_vec()),
+        gas: Some(300_000),
+        gas_price: Some(500_000_000_000),
+        nonce: Some(0),
+        max_fee_per_gas: None,
+        max_priority_fee_per_gas: None,
+        chain_id: None,
+        tx_type: Some(0),
+        access_list: Some(Vec::new()),
+        value: Some(vec![0u8; 32]),
+        data: Some(encode_icp_query_precompile_input(canister_id, method, &arg)),
+    };
+    let out = call_query(
+        pic,
+        canister_id,
+        "rpc_eth_call_object_with_query_precompile",
+        Encode!(&call).expect("encode rpc_eth_call_object_with_query_precompile"),
+    );
+    Decode!(&out, Result<RpcCallResultView, RpcErrorView>).expect("decode query precompile result")
+}
+
+fn add_query_precompile_allowed_method(
+    pic: &PocketIc,
+    canister_id: Principal,
+    method: &str,
+) -> Result<(), String> {
+    let args = QueryPrecompileAllowArgs {
+        target: canister_id,
+        method: method.to_string(),
+    };
+    let out = call_update(
+        pic,
+        canister_id,
+        "add_query_precompile_allowed_method",
+        Encode!(&args).expect("encode allow args"),
+    );
+    Decode!(&out, Result<(), String>).expect("decode allow result")
+}
+
+fn get_query_precompile_allowlist(
+    pic: &PocketIc,
+    canister_id: Principal,
+) -> Vec<QueryPrecompileAllowArgs> {
+    let out = call_query(
+        pic,
+        canister_id,
+        "get_query_precompile_allowlist",
+        Encode!(&()).expect("encode allowlist query"),
+    );
+    Decode!(&out, Vec<QueryPrecompileAllowArgs>).expect("decode allowlist")
+}
+
 #[test]
 fn rpc_chain_id_and_block_number_work() {
     let pic = PocketIc::new();
@@ -470,6 +591,50 @@ fn rpc_chain_id_and_block_number_work() {
 
     assert!(chain_id > 0);
     assert_eq!(block_number, 0);
+}
+
+#[test]
+fn query_precompile_calls_query_method_and_returns_raw_candid() {
+    let pic = PocketIc::new();
+    let canister_id = install_canister(&pic);
+    add_query_precompile_allowed_method(&pic, canister_id, "rpc_eth_chain_id")
+        .expect("allow query method");
+
+    let arg = Encode!(&()).expect("encode empty args");
+    let direct = call_query(&pic, canister_id, "rpc_eth_chain_id", arg.clone());
+    let out = call_query_precompile(&pic, canister_id, "rpc_eth_chain_id", arg)
+        .expect("query precompile call");
+
+    assert_eq!(out.status, 1);
+    assert_eq!(out.return_data, direct);
+    assert!(out.revert_data.is_none());
+}
+
+#[test]
+fn query_precompile_does_not_execute_allowlisted_update_method() {
+    let pic = PocketIc::new();
+    let canister_id = install_canister(&pic);
+    add_query_precompile_allowed_method(&pic, canister_id, "add_query_precompile_allowed_method")
+        .expect("allow update method name");
+    let before = get_query_precompile_allowlist(&pic, canister_id);
+    let attempted = QueryPrecompileAllowArgs {
+        target: canister_id,
+        method: "rpc_eth_block_number".to_string(),
+    };
+
+    let out = call_query_precompile(
+        &pic,
+        canister_id,
+        "add_query_precompile_allowed_method",
+        Encode!(&attempted).expect("encode attempted update args"),
+    )
+    .expect("query precompile call should return EVM result");
+    let after = get_query_precompile_allowlist(&pic, canister_id);
+
+    assert_eq!(out.status, 0);
+    assert!(out.return_data.is_empty());
+    assert_eq!(after, before);
+    assert!(!after.iter().any(|entry| entry.method == attempted.method));
 }
 
 #[test]

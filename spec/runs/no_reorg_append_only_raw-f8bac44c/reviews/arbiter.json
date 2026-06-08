@@ -1,0 +1,14 @@
+{
+  "target": "no_reorg_append_only_raw",
+  "target_id": "437b3743e85de255ed69105022251db56728e14357597162ef26e17a118a786d",
+  "slug": "no_reorg_append_only_raw-f8bac44c",
+  "git_commit": "8e028b2221e63e1f6bdb4260bfa80a5f3d4598ee",
+  "worktree_dirty": false,
+  "source_hash": "f8bac44c1efdfa27b0b550c2955e02a134ecb3fd90e1d4a448b95c40520fde58",
+  "semantic_hash": "901f8070f0a2be75c95df3e3042c20ff116174a9e47cd1a0277fbe7812d4db5d",
+  "tool_version": "0.1.0",
+  "blocking_issues": [],
+  "human_questions": [],
+  "auto_safe_edits": [],
+  "risk": "medium"
+}

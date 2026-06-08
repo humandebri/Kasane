@@ -127,6 +127,12 @@ Writes:
 - `prune_journal`
 - `blob_store`
 
+Not in scope:
+- `accounts`
+- `storage`
+- `codes`
+- state root/trie storage
+
 Detection:
 - `phase1_prune`
 - `prune_journal`

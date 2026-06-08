@@ -1,0 +1,24 @@
+{
+  "target": "staged_tx_is_current_pending_raw",
+  "target_id": "b11a174ada55a5da874578cd663871c2ff89a9e016f96f35a5ada71fdc9d339f",
+  "slug": "staged_tx_is_current_pending_raw-8f305091",
+  "git_commit": "45c236f431ea13639e1ce09e51a6e84f7b627d28",
+  "worktree_dirty": true,
+  "source_hash": "8f3050911d0e6e3e05e12e96739a545c70d0c0c8a35e7098ea55c3984a12602c",
+  "semantic_hash": "01e3253152d39ab3884ccbcaae345bfb0276e2f35d25346253301e0ba55ddc6d",
+  "tool_version": "0.1.0",
+  "scenarios": [
+    {
+      "id": "staged_tx_is_current_pending_raw-nominal",
+      "kind": "example",
+      "executable": false,
+      "inputs": {},
+      "expected": {},
+      "review_status": "accepted",
+      "status_note": "covers current pending source, live payload, and replacement-stale exclusion conditions",
+      "reviewed_by": "0xhude",
+      "reviewed_at": "2026-05-16T08:19:38Z",
+      "rationale": "候補:\n\n| id | ready | pending_meta | current_pending | payload | not_dropped | expected | 意図 |\n|---|---:|---:|---:|---:|---:|---|---|\n| current_pending_valid | 1 | 1 | 1 | 1 | 1 | true | 全条件成立 |\n| ready_missing | 0 | 1 | 1 | 1 | 1 | false | ready がtxを指さない |\n| pending_meta_missing | 1 | 0 | 1 | 1 | 1 | false | pending_meta がtxを指さない |\n| current_pending_missing | 1 | 1 | 0 | 1 | 1 | false | current_pending がtxを指さない |\n| payload_missing | 1 | 1 | 1 | 0 | 1 | false | tx payload 不在 |\n| tx_marked_dropped | 1 | 1 | 1 | 1 | 0 | false | tx が dropped 扱い |\n| non_binary_not_truthy | 2 | 1 | 1 | 1 | 1 | false | `1` 以外は真扱いしない |\n| all_absent | 0 | 0 | 0 | 0 | 0 | false | 全条件不成立 |\n\n補助候補:\n\n| id | ready | pending_meta | current_pending | payload | not_dropped | expected | 意図 |\n|---|---:|---:|---:|---:|---:|---|---|\n| max_value_not_truthy | 18446744073709551615 | 1 | 1 | 1 | 1 | false | u64最大値も `1` ではない |\n| multiple_missing | 1 | 0 | 1 | 0 | 1 | false | 複数条件欠落でも false |"
+    }
+  ]
+}

@@ -1803,6 +1803,7 @@ dependencies = [
  "ic-cdk",
  "ic-evm-address",
  "ic-evm-tx",
+ "proptest",
  "revm",
  "smallvec",
  "verified-core",
@@ -1828,6 +1829,7 @@ dependencies = [
  "tiny-keccak",
  "tracing",
  "tracing-subscriber",
+ "verified-core",
 ]
 
 [[package]]
@@ -3645,6 +3647,9 @@ checksum = "ba73ea9cf16a25df0c8caa16c51acb937d5712a8429db78a3ee29d5dcacd3a65"
 [[package]]
 name = "verified-core"
 version = "0.1.0"
+dependencies = [
+ "proptest",
+]
 
 [[package]]
 name = "version_check"

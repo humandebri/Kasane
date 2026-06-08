@@ -1,0 +1,45 @@
+{
+  "target": "icp_query_execution_gate_safe_raw",
+  "entry": {
+    "display_name": "icp_query_execution_gate_safe_raw",
+    "function": "icp_query_execution_gate_safe_raw",
+    "function_path": "icp_query_execution_gate_safe_raw",
+    "file": "crates/verified-core/src/wrap_precompile.rs",
+    "target_id": "f7b096ac5b912da84f00049b8483481de5b1ef0d23118850cf2547d11f5f0520",
+    "slug": "icp_query_execution_gate_safe_raw-c8c66378",
+    "source_hash": "c8c66378a334edaa890f62987b18dc9d89116acd795898f195e2b891ee1710f3",
+    "semantic_hash": "8204207021ba904b1a7feb073aba9a6903f7674a6a197baa080817f53f3cca1a",
+    "created_at": "2026-05-22T07:10:12Z"
+  },
+  "signature": "#[cfg_attr(verus_keep_ghost, verus_spec(valid => ensures\n    valid == (\n        calls_before == 0\n        && mode_allows_external == 1\n        && value_is_zero == 1\n        && parsed_input == 1\n    ),\n))]\npub fn icp_query_execution_gate_safe_raw(\n    calls_before: u64,\n    mode_allows_external: u64,\n    value_is_zero: u64,\n    parsed_input: u64,\n) -> bool",
+  "body": "{\n    calls_before == 0 && mode_allows_external == 1 && value_is_zero == 1 && parsed_input == 1\n}",
+  "span": {
+    "start_line": 296,
+    "end_line": 311
+  },
+  "git_commit": "f4f6f494d8be02b8375b85c1b1cfb768376f6dff",
+  "worktree_dirty": false,
+  "source_hash": "c8c66378a334edaa890f62987b18dc9d89116acd795898f195e2b891ee1710f3",
+  "semantic_hash": "8204207021ba904b1a7feb073aba9a6903f7674a6a197baa080817f53f3cca1a",
+  "dependency_hash_inputs": [
+    {
+      "kind": "use",
+      "name": "cfg",
+      "file": "crates/verified-core/src/wrap_precompile.rs",
+      "hash": "a5eb4157d5d32303032e3dc786e34f004ebe17f0ff1bb26f90ac9eb42478596c"
+    }
+  ],
+  "unresolved_dependencies": [],
+  "tool_version": "0.1.0",
+  "cfg": [],
+  "features": [],
+  "types": [],
+  "called_functions": [],
+  "callers": [],
+  "tests": [],
+  "panic_sites": [],
+  "overflow_sites": [],
+  "casts": [],
+  "division_sites": [],
+  "llm_context_files": []
+}

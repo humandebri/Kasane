@@ -37,6 +37,10 @@ path = "../evm-core"
 package = "evm-db"
 path = "../evm-db"
 
+[dependencies.verified_core]
+package = "verified-core"
+path = "../verified-core"
+
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 tracing-subscriber = { version = "0.3.20", features = ["fmt", "json", "env-filter"] }
 

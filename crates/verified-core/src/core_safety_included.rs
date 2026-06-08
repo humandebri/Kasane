@@ -10,6 +10,7 @@ use vstd::prelude::*;
     ensures
         result == (has_tx_index == 1 && has_receipt == 1 && receipt_tx_id_matches == 1 && index_key_matches_tx_id == 1 && loc_matches_position == 1 && receipt_matches_position == 1 && index_matches_position == 1 && block_number > 0),
 ))]
+#[allow(clippy::too_many_arguments)]
 pub fn included_tx_safe_raw(has_tx_index: u64, has_receipt: u64, receipt_tx_id_matches: u64, index_key_matches_tx_id: u64, loc_matches_position: u64, receipt_matches_position: u64, index_matches_position: u64, block_number: u64) -> bool
 {
     has_tx_index == 1

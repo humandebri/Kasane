@@ -1,0 +1,14 @@
+{
+  "target": "receipt_index_location_bidirectional",
+  "target_id": "6de7b322c0489b139fbc6f46e0464c3c00f56f10d22203cab9d4b8027ae87353",
+  "slug": "receipt_index_location_bidirectional-7f362e2c",
+  "git_commit": "2ff47cf9ec949b314adc26f94ad9e340cbda4cbb",
+  "worktree_dirty": false,
+  "source_hash": "7f362e2c26ea1e9b56eda044aaac97c8e7ea546c2e33dee844350504411674bb",
+  "semantic_hash": "65653aa7145cdbf01e5bba597b116f13697d9431c2ce49dcfd4b2965fe50b52e",
+  "tool_version": "0.1.0",
+  "blocking_issues": [],
+  "human_questions": [],
+  "auto_safe_edits": [],
+  "risk": "medium"
+}

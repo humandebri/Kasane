@@ -6,7 +6,10 @@ use crate::constants::FEE_RECIPIENT;
 use crate::hash::keccak256;
 use crate::revm_db::RevmStableDb;
 use crate::tx_decode::DecodeError;
-use crate::wrap_precompile::WrapPrecompileProvider;
+use crate::wrap_precompile::{
+    with_icp_query_detection, with_icp_query_reply, IcpQueryReply, IcpQueryRequest,
+    PrecompileAccess, WrapPrecompileProvider,
+};
 use evm_db::chain_data::constants::{
     CHAIN_ID, MAX_LOGS_PER_TX, MAX_LOG_DATA, MAX_LOG_TOPICS, MAX_RETURN_DATA,
 };
@@ -29,6 +32,15 @@ use revm::interpreter::{
 };
 use revm::primitives::{Address, U256};
 use revm::state::Account;
+#[cfg(not(target_arch = "wasm32"))]
+use std::cell::Cell;
+
+#[cfg(not(target_arch = "wasm32"))]
+thread_local! {
+    static INSTRUCTION_COUNTER_FOR_TEST: Cell<u64> = const { Cell::new(0) };
+    static INSTRUCTION_COUNTER_STEP_FOR_TEST: Cell<u64> = const { Cell::new(0) };
+    static INSTRUCTION_BUDGET_TRIPPED_FOR_TEST: Cell<bool> = const { Cell::new(false) };
+}
 
 pub(crate) type StateDiff = revm::primitives::HashMap<Address, revm::state::Account>;
 
@@ -42,6 +54,8 @@ pub enum ExecError {
     InvalidGasFee,
     ResultTooLarge,
     InstructionBudgetExceeded,
+    SnapshotChanged,
+    ExternalQuery(IcpQueryRequest),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -123,9 +137,64 @@ pub fn execute_tx(
         exec_path,
         true,
         None,
-        true,
+        PrecompileAccess::wrap_side_effects(),
     )?;
     Ok(outcome)
+}
+
+#[allow(clippy::too_many_arguments)]
+pub async fn execute_tx_on_async<DB, R, Fut>(
+    db: &mut DB,
+    tx_id: TxId,
+    tx_index: u32,
+    tx_env: TxEnv,
+    exec_ctx: &BlockExecContext,
+    exec_path: ExecPath,
+    persist_receipt_index: bool,
+    instruction_soft_limit: Option<u64>,
+    precompile_access: PrecompileAccess,
+    mut resolver: R,
+    validate_after_resolve: impl FnOnce() -> Result<(), ExecError>,
+) -> Result<(ExecOutcome, StateDiff), ExecError>
+where
+    for<'a> &'a mut DB:
+        revm::database_interface::Database<Error = core::convert::Infallible> + DatabaseCommit,
+    R: FnMut(IcpQueryRequest) -> Fut,
+    Fut: core::future::Future<Output = Result<Vec<u8>, String>>,
+{
+    let first = execute_tx_on(
+        &mut *db,
+        tx_id,
+        tx_index,
+        tx_env.clone(),
+        exec_ctx,
+        exec_path,
+        persist_receipt_index,
+        instruction_soft_limit,
+        precompile_access,
+    );
+    let request = match first {
+        Err(ExecError::ExternalQuery(request)) => request,
+        other => return other,
+    };
+    let reply = match resolver(request.clone()).await {
+        Ok(bytes) => IcpQueryReply::Ok(bytes),
+        Err(code) => IcpQueryReply::Err(code),
+    };
+    validate_after_resolve()?;
+    with_icp_query_reply(request, reply, || {
+        execute_tx_on(
+            &mut *db,
+            tx_id,
+            tx_index,
+            tx_env,
+            exec_ctx,
+            exec_path,
+            persist_receipt_index,
+            instruction_soft_limit,
+            precompile_access,
+        )
+    })
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -138,7 +207,7 @@ pub(crate) fn execute_tx_on<DB>(
     exec_path: ExecPath,
     persist_receipt_index: bool,
     instruction_soft_limit: Option<u64>,
-    allow_external_precompile: bool,
+    precompile_access: PrecompileAccess,
 ) -> Result<(ExecOutcome, StateDiff), ExecError>
 where
     DB: revm::database_interface::Database<Error = core::convert::Infallible> + DatabaseCommit,
@@ -168,12 +237,17 @@ where
             block.beneficiary = FEE_RECIPIENT;
         })
         .build_mainnet_with_inspector(inspector)
-        .with_precompiles(WrapPrecompileProvider::new(allow_external_precompile));
+        .with_precompiles(WrapPrecompileProvider::new(precompile_access));
 
-    let result = evm.inspect_tx(tx_env).map_err(map_tx_error_stage)?;
+    let (result, pending_query) =
+        with_icp_query_detection(|| evm.inspect_tx(tx_env).map_err(map_tx_error_stage));
     if evm.inspector.budget.tripped {
         return Err(ExecError::InstructionBudgetExceeded);
     }
+    if let Some(request) = pending_query {
+        return Err(ExecError::ExternalQuery(request));
+    }
+    let result = result?;
     let (status, gas_used, output, contract_address, logs, final_status, halt_reason) =
         match result.result {
             ExecutionResult::Success {
@@ -291,7 +365,7 @@ impl InstructionBudgetInspector {
         Self {
             start: current_instruction_counter(),
             limit,
-            tripped: false,
+            tripped: instruction_budget_tripped_for_test(),
         }
     }
 }
@@ -574,7 +648,34 @@ fn current_instruction_counter() -> u64 {
     }
     #[cfg(not(target_arch = "wasm32"))]
     {
-        0
+        INSTRUCTION_COUNTER_FOR_TEST.with(|counter| {
+            let value = counter.get();
+            let step = INSTRUCTION_COUNTER_STEP_FOR_TEST.with(|step| step.get());
+            counter.set(value.saturating_add(step));
+            value
+        })
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub fn configure_instruction_counter_for_test(start: u64, step: u64) {
+    INSTRUCTION_COUNTER_FOR_TEST.with(|counter| counter.set(start));
+    INSTRUCTION_COUNTER_STEP_FOR_TEST.with(|counter| counter.set(step));
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub fn configure_instruction_budget_tripped_for_test(tripped: bool) {
+    INSTRUCTION_BUDGET_TRIPPED_FOR_TEST.with(|value| value.set(tripped));
+}
+
+fn instruction_budget_tripped_for_test() -> bool {
+    #[cfg(target_arch = "wasm32")]
+    {
+        false
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        INSTRUCTION_BUDGET_TRIPPED_FOR_TEST.with(|value| value.get())
     }
 }
 

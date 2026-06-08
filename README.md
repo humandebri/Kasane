@@ -77,6 +77,15 @@ Filter APIs, subscriptions, mempool APIs, and block-hash indexed block lookups a
 
 ## Precompiles
 
+`0x00000000000000000000000000000000ffff0003` is reserved for the ICP query precompile.
+
+- The ABI is a compact binary payload: `version`, `kind`, `target_principal`, `method`, and raw Candid argument bytes.
+- v1 is query-only. `kind=1` update calls are rejected because EVM transaction revert semantics do not make external IC side effects atomic.
+- Allowed `(target, method)` pairs are controller-managed and must refer to query or composite query methods.
+- The composite query entrypoint calls allowlisted methods with bounded wait and a 1 second timeout, returning raw Candid reply bytes.
+- Each `eth_call` may invoke the ICP query precompile at most once. A second call reverts with `ic_query.call_limit`.
+- Two-pass execution compares the initial and post-query snapshots, including chain state, runtime config, allowlist fingerprint, and `evm_state_epoch`.
+
 The default build disables precompiles that require unsupported or intentionally excluded upstream feature sets:
 
 - EIP-4844 `KZG_POINT_EVALUATION` at `0x0a`.

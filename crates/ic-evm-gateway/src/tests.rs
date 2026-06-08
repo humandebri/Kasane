@@ -1,12 +1,14 @@
 use super::{
-    clamp_return_data, inspect_lightweight_tx_guard, inspect_payload_limit_for_method,
-    inspect_policy_for_method, migration_pending, parse_submit_ic_tx_args,
-    pop_next_dispatch_request, reject_anonymous_principal, reject_write_reason,
-    should_run_cycle_observer_migration_tick, should_schedule_mining_after_cycle_observer,
-    tx_id_from_bytes, validate_prune_policy_input, ApiError, EthLogFilterView, ExecuteTxError,
-    GenesisBalanceView, GetLogsErrorView, InitArgs, PrunePolicyView, QuoteNativeDepositArgs,
-    QuoteWrapRequestArgs, SubmitIcTxArgsDto, WrapConfigArgs, DEFAULT_BLOCK_GAS_LIMIT,
-    DEFAULT_MIN_FEE_FLOOR, INSPECT_METHOD_POLICIES, MINING_ERROR_COUNT, PRUNE_ERROR_COUNT,
+    clamp_return_data, decode_query_precompile_allow_key, inspect_lightweight_tx_guard,
+    inspect_payload_limit_for_method, inspect_policy_for_method, migration_pending,
+    parse_submit_ic_tx_args, pop_next_dispatch_request, query_precompile_allow_key,
+    reject_anonymous_principal, reject_write_reason, should_run_cycle_observer_migration_tick,
+    should_schedule_mining_after_cycle_observer, tx_id_from_bytes, validate_prune_policy_input,
+    validate_query_precompile_allow_args, ApiError, EthLogFilterView, ExecuteTxError,
+    GenesisBalanceView, GetLogsErrorView, InitArgs, PrunePolicyView, QueryPrecompileAllowArgs,
+    QuoteNativeDepositArgs, QuoteWrapRequestArgs, SubmitIcTxArgsDto, WrapConfigArgs,
+    DEFAULT_BLOCK_GAS_LIMIT, DEFAULT_MIN_FEE_FLOOR, INSPECT_METHOD_POLICIES, MINING_ERROR_COUNT,
+    PRUNE_ERROR_COUNT,
 };
 use candid::{encode_one, Nat, Principal};
 use evm_core::chain;
@@ -19,9 +21,9 @@ use evm_db::chain_data::constants::MAX_RETURN_DATA;
 use evm_db::chain_data::receipt::log_entry_from_parts;
 use evm_db::chain_data::{
     BlockData, MigrationPhase, MintSubmitStatus, OpsMode, ReceiptLike, RequestStatus,
-    RuntimeConfigV1, StoredTxBytes, TxId, TxKind, TxLoc, UnwrapDispatchRequest,
-    UnwrapRequestStatus, WrapPendingSubmission, WrapRequestResult, WrapRequestStage,
-    WrapStoredRequest, WRAP_DECODE_FAILURE_CODE,
+    RuntimeConfigV1, StoredTxBytes, TxId, TxIndexEntry, TxKind, TxLoc, TxLocKind,
+    UnwrapDispatchRequest, UnwrapRequestStatus, WrapPendingSubmission, WrapRequestResult,
+    WrapRequestStage, WrapStoredRequest, WRAP_DECODE_FAILURE_CODE,
 };
 use evm_db::memory::{get_memory, AppMemoryId, WASM_PAGE_SIZE_BYTES};
 use evm_db::meta::{
@@ -132,6 +134,8 @@ fn exec_error_to_code(err: Option<&evm_core::revm_exec::ExecError>) -> &'static 
         Some(ExecError::InvalidGasFee) => "exec.gas_fee.invalid",
         Some(ExecError::ResultTooLarge) => "exec.result.too_large",
         Some(ExecError::InstructionBudgetExceeded) => "exec.budget.instruction_exceeded",
+        Some(ExecError::SnapshotChanged) => "exec.snapshot.changed",
+        Some(ExecError::ExternalQuery(_)) => "exec.external_query",
         Some(ExecError::ExecutionFailed) => "exec.execution.failed",
     }
 }
@@ -168,6 +172,61 @@ fn encode_unwrap_payload(asset: Principal, amount: [u8; 32], recipient: Principa
 fn icrc10_supported_standards_advertise_icrc21() {
     let standards = super::icrc21::supported_standards();
     assert!(standards.iter().any(|item| item.name == "ICRC-21"));
+}
+
+#[test]
+fn query_precompile_allow_args_follow_verified_model() {
+    let valid = QueryPrecompileAllowArgs {
+        target: Principal::self_authenticating(b"query-allow-target"),
+        method: "read_state".to_string(),
+    };
+    assert!(validate_query_precompile_allow_args(&valid).is_ok());
+
+    let anonymous = QueryPrecompileAllowArgs {
+        target: Principal::anonymous(),
+        method: "read_state".to_string(),
+    };
+    assert_eq!(
+        validate_query_precompile_allow_args(&anonymous).unwrap_err(),
+        "arg.target_anonymous"
+    );
+
+    let empty_method = QueryPrecompileAllowArgs {
+        target: valid.target,
+        method: String::new(),
+    };
+    assert_eq!(
+        validate_query_precompile_allow_args(&empty_method).unwrap_err(),
+        "arg.method_invalid"
+    );
+
+    let long_method = QueryPrecompileAllowArgs {
+        target: valid.target,
+        method: "x".repeat(65),
+    };
+    assert_eq!(
+        validate_query_precompile_allow_args(&long_method).unwrap_err(),
+        "arg.method_invalid"
+    );
+
+    let non_ascii_method = QueryPrecompileAllowArgs {
+        target: valid.target,
+        method: "状態".to_string(),
+    };
+    assert_eq!(
+        validate_query_precompile_allow_args(&non_ascii_method).unwrap_err(),
+        "arg.method_invalid"
+    );
+}
+
+#[test]
+fn query_precompile_allow_key_decodes_valid_boundary() {
+    let target = Principal::self_authenticating(b"query-allow-target");
+    let key = query_precompile_allow_key(target, "read_state");
+    let decoded = decode_query_precompile_allow_key(&key).expect("decode allowlist key");
+
+    assert_eq!(decoded.target, target);
+    assert_eq!(decoded.method, "read_state");
 }
 
 #[test]
@@ -329,6 +388,20 @@ fn evm_did_does_not_export_fields_display_icrc21_shape() {
     let did = include_str!("../evm_canister.did");
     assert!(!did.contains("FieldsDisplay"));
     assert!(did.contains("LineDisplay"));
+}
+
+#[test]
+fn query_precompile_call_object_is_composite_query_in_dids() {
+    const METHOD: &str = "rpc_eth_call_object_with_query_precompile";
+    let default_did = include_str!("../evm_canister.did");
+    let admin_did = include_str!("../evm_canister_precompile_profile_admin.did");
+
+    let default_stmt = did_method_statement(default_did, METHOD).expect("default did method");
+    let admin_stmt = did_method_statement(admin_did, METHOD).expect("admin did method");
+
+    assert!(default_stmt.contains(" composite_query;"));
+    assert!(admin_stmt.contains(" composite_query;"));
+    assert!(!did_update_methods().contains(METHOD));
 }
 
 fn chain_submit_error_to_code(err: &ChainError) -> Option<(TxApiErrorKind, &'static str)> {
@@ -647,6 +720,7 @@ fn exec_error_codes_match_fixed_pattern() {
         Some(ExecError::InvalidGasFee),
         Some(ExecError::ResultTooLarge),
         Some(ExecError::InstructionBudgetExceeded),
+        Some(ExecError::SnapshotChanged),
         Some(ExecError::ExecutionFailed),
         None,
     ];
@@ -727,6 +801,11 @@ fn exec_error_to_code_matches_expected_set() {
             "instruction_budget",
             Some(ExecError::InstructionBudgetExceeded),
             "exec.budget.instruction_exceeded",
+        ),
+        (
+            "snapshot_changed",
+            Some(ExecError::SnapshotChanged),
+            "exec.snapshot.changed",
         ),
     ];
     for (case, err, expected) in cases {
@@ -1210,6 +1289,31 @@ fn no_reject_for_test() -> Option<String> {
 
 fn no_schedule_for_test() {}
 
+fn assert_included_receipt_index_location_links(tx_id: TxId, block_number: u64, tx_index: u32) {
+    let loc = chain::get_tx_loc(&tx_id).expect("included tx loc");
+    assert_eq!(loc.kind, TxLocKind::Included);
+    assert_eq!(loc.block_number, block_number);
+    assert_eq!(loc.tx_index, tx_index);
+
+    let block = chain::get_block(block_number).expect("included block");
+    assert_eq!(block.tx_ids.get(tx_index as usize), Some(&tx_id));
+
+    evm_db::stable_state::with_state(|state| {
+        let index_ptr = state.tx_index.get(&tx_id).expect("tx index ptr");
+        let index_bytes = state.blob_store.read(&index_ptr).expect("tx index bytes");
+        let index = TxIndexEntry::from_bytes(Cow::Owned(index_bytes));
+        assert_eq!(index.block_number, block_number);
+        assert_eq!(index.tx_index, tx_index);
+
+        let receipt_ptr = state.receipts.get(&tx_id).expect("receipt ptr");
+        let receipt_bytes = state.blob_store.read(&receipt_ptr).expect("receipt bytes");
+        let receipt = ReceiptLike::from_bytes(Cow::Owned(receipt_bytes));
+        assert_eq!(receipt.tx_id, tx_id);
+        assert_eq!(receipt.block_number, block_number);
+        assert_eq!(receipt.tx_index, tx_index);
+    });
+}
+
 #[test]
 fn gateway_submit_ic_tx_adapter_preserves_queue_and_receipt_invariants() {
     init_stable_state();
@@ -1276,10 +1380,91 @@ fn gateway_submit_ic_tx_adapter_preserves_queue_and_receipt_invariants() {
     assert_eq!(receipt.tx_id, expected_tx_id.0.to_vec());
     assert_eq!(receipt.block_number, outcome.block.number);
     assert_eq!(receipt.tx_index, 0);
-    evm_db::stable_state::with_state(|state| {
-        assert!(state.receipts.get(&expected_tx_id).is_some());
-        assert!(state.tx_index.get(&expected_tx_id).is_some());
+    assert_included_receipt_index_location_links(expected_tx_id, outcome.block.number, 0);
+}
+
+#[test]
+fn replacement_old_tx_is_not_staged_or_included() {
+    init_stable_state();
+    set_migration_not_pending_for_test();
+
+    let caller = Principal::self_authenticating(b"gateway-replacement-caller");
+    let canister = Principal::self_authenticating(b"gateway-replacement-canister");
+    let (max_fee_per_gas, max_priority_fee_per_gas) = evm_db::stable_state::with_state(|state| {
+        let chain_state = *state.chain_state.get();
+        let min_priority = u128::from(chain_state.min_priority_fee);
+        let required_max_fee = u128::from(chain_state.base_fee)
+            .saturating_add(min_priority)
+            .max(u128::from(chain_state.min_gas_price));
+        (required_max_fee, min_priority)
     });
+    let caller_evm =
+        hash::derive_evm_address_from_principal(caller.as_slice()).expect("caller evm");
+    chain::credit_balance(caller_evm, 1_000_000_000_000_000_000).expect("fund caller");
+
+    let first_tx =
+        build_ic_synthetic_tx_input_for_test(0, max_fee_per_gas, max_priority_fee_per_gas);
+    let first_tx_id = super::derive_ic_synthetic_tx_id(
+        caller.as_slice(),
+        canister.as_slice(),
+        &first_tx,
+        caller_evm,
+    );
+    super::submit_ic_tx_internal_with_canister_and_scheduler(
+        caller.as_slice().to_vec(),
+        canister.as_slice().to_vec(),
+        "submit_ic_tx",
+        first_tx,
+        no_schedule_for_test,
+    )
+    .expect("first submit");
+
+    let replacement_tx = build_ic_synthetic_tx_input_for_test(
+        0,
+        max_fee_per_gas.saturating_add(10_000),
+        max_priority_fee_per_gas.saturating_add(10_000),
+    );
+    let replacement_tx_id = super::derive_ic_synthetic_tx_id(
+        caller.as_slice(),
+        canister.as_slice(),
+        &replacement_tx,
+        caller_evm,
+    );
+    super::submit_ic_tx_internal_with_canister_and_scheduler(
+        caller.as_slice().to_vec(),
+        canister.as_slice().to_vec(),
+        "submit_ic_tx",
+        replacement_tx,
+        no_schedule_for_test,
+    )
+    .expect("replacement submit");
+
+    evm_db::stable_state::with_state(|state| {
+        assert_eq!(state.pending_current_by_sender.len(), 1);
+        assert!(state.tx_store.get(&first_tx_id).is_none());
+        assert!(state
+            .ready_queue
+            .iter()
+            .all(|entry| entry.value() != first_tx_id));
+        assert!(state
+            .ready_by_seq
+            .iter()
+            .all(|entry| entry.value() != first_tx_id));
+        assert!(state
+            .pending_by_sender_nonce
+            .iter()
+            .all(|entry| { entry.value() == replacement_tx_id && entry.value() != first_tx_id }));
+    });
+    assert_eq!(
+        chain::get_tx_loc(&first_tx_id).map(|loc| loc.kind),
+        Some(TxLocKind::Dropped)
+    );
+
+    let outcome = chain::produce_block(1).expect("produce replacement block");
+    assert_eq!(outcome.block.tx_ids, vec![replacement_tx_id]);
+    assert!(!outcome.block.tx_ids.contains(&first_tx_id));
+    assert!(chain::get_receipt(&first_tx_id).is_none());
+    assert_included_receipt_index_location_links(replacement_tx_id, outcome.block.number, 0);
 }
 
 #[test]
@@ -2497,6 +2682,65 @@ fn get_block_returns_pruned_for_pruned_boundary() {
 }
 
 #[test]
+fn get_block_returns_ok_when_prune_boundary_is_absent() {
+    init_stable_state();
+    with_state_mut(|state| {
+        let block = BlockData::new(
+            0,
+            [0x20; 32],
+            [0x21; 32],
+            123,
+            1,
+            DEFAULT_BLOCK_GAS_LIMIT,
+            0,
+            [0x22; 20],
+            Vec::new(),
+            [0x23; 32],
+            [0x24; 32],
+        );
+        let ptr = state
+            .blob_store
+            .store_bytes(block.to_bytes().as_ref())
+            .expect("store unpruned block");
+        state.blocks.insert(0, ptr);
+    });
+
+    let out = super::get_block(0).expect("block without prune boundary");
+    assert_eq!(out.number, 0);
+}
+
+#[test]
+fn get_block_returns_ok_for_retained_block() {
+    init_stable_state();
+    with_state_mut(|state| {
+        let block = BlockData::new(
+            9,
+            [0x10; 32],
+            [0x11; 32],
+            123,
+            1,
+            DEFAULT_BLOCK_GAS_LIMIT,
+            0,
+            [0x12; 20],
+            Vec::new(),
+            [0x13; 32],
+            [0x14; 32],
+        );
+        let ptr = state
+            .blob_store
+            .store_bytes(block.to_bytes().as_ref())
+            .expect("store retained block");
+        state.blocks.insert(9, ptr);
+        let mut prune_state = *state.prune_state.get();
+        prune_state.set_pruned_before(5);
+        state.prune_state.set(prune_state);
+    });
+
+    let out = super::get_block(9).expect("retained block");
+    assert_eq!(out.number, 9);
+}
+
+#[test]
 fn get_receipt_returns_not_found_for_corrupt_receipt_payload() {
     init_stable_state();
     let tx_id = TxId([0x81u8; 32]);
@@ -2957,7 +3201,11 @@ fn did_update_methods() -> BTreeSet<String> {
         if !trimmed.ends_with(';') {
             continue;
         }
-        if stmt.contains(" : (") && stmt.contains("-> (") && !stmt.contains(" query") {
+        if stmt.contains(" : (")
+            && stmt.contains("-> (")
+            && !stmt.contains(" query")
+            && !stmt.contains(" composite_query")
+        {
             if let Some((name, _)) = stmt.split_once(" : (") {
                 out.insert(name.trim().to_string());
             }
@@ -2965,6 +3213,39 @@ fn did_update_methods() -> BTreeSet<String> {
         stmt.clear();
     }
     out
+}
+
+fn did_method_statement(did: &str, method: &str) -> Option<String> {
+    let prefix = format!("{method} : (");
+    let mut in_service = false;
+    let mut stmt = String::new();
+    for line in did.lines() {
+        let trimmed = line.trim();
+        if !in_service {
+            if trimmed.starts_with("service ") || trimmed.starts_with("service:") {
+                in_service = true;
+            }
+            continue;
+        }
+        if trimmed == "}" {
+            break;
+        }
+        if trimmed.is_empty() {
+            continue;
+        }
+        if !stmt.is_empty() {
+            stmt.push(' ');
+        }
+        stmt.push_str(trimmed);
+        if !trimmed.ends_with(';') {
+            continue;
+        }
+        if stmt.starts_with(&prefix) {
+            return Some(stmt);
+        }
+        stmt.clear();
+    }
+    None
 }
 
 #[test]
@@ -3757,8 +4038,8 @@ fn did_contains_dispatch_result_contract_shape() {
     assert!(did.contains("retry_native_deposit : (RetryRequestArgs) -> (Result_"));
     assert!(did.contains("retry_native_withdrawal : (RetryRequestArgs) -> (Result_"));
     assert!(did.contains("recover_failed_wrap : (RecoverFailedWrapArgs) -> (Result_"));
-    assert!(did.contains("set_fee_policy : (FeePolicyView) -> (Result_"));
-    assert!(did.contains("set_allowed_assets : (vec principal) -> (Result_"));
+    assert!(did.contains("set_fee_policy : (FeePolicyView) -> (Result);"));
+    assert!(did.contains("set_allowed_assets : (vec principal) -> (Result);"));
     assert!(!did.contains("get_request_dispatch_result"));
     assert!(did.contains("get_unwrap_request_ids_by_tx_id"));
     assert!(did.contains("get_unwrap_request_ids_by_eth_tx_hash"));

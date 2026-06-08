@@ -337,6 +337,7 @@ type PruneStatusView = record {
   prune_running : bool;
   oldest_kept_block : opt nat64;
 };
+type QueryPrecompileAllowArgs = record { method : text; target : principal };
 type QueueItemView = record { seq : nat64; tx_id : blob; kind : TxKindView };
 type QueueSnapshotView = record {
   next_cursor : opt nat64;
@@ -582,6 +583,7 @@ type WrapRuntimeConfigView = record {
   wrap_factory_address : blob;
 };
 service : (opt InitArgs) -> {
+  add_query_precompile_allowed_method : (QueryPrecompileAllowArgs) -> (Result);
   clear_precompile_profile : () -> (Result);
   credit_native_deposit : (blob, blob, nat) -> (Result_1);
   dispatch_native_withdrawal_request : (
@@ -600,6 +602,7 @@ service : (opt InitArgs) -> {
   get_pending : (blob) -> (PendingStatusView) query;
   get_precompile_profile : () -> (vec PrecompileProfileView) query;
   get_prune_status : () -> (PruneStatusView) query;
+  get_query_precompile_allowlist : () -> (vec QueryPrecompileAllowArgs) query;
   get_queue_snapshot : (nat32, opt nat64) -> (QueueSnapshotView) query;
   get_receipt : (blob) -> (Result_9) query;
   get_request : (blob) -> (opt RequestOverview) query;
@@ -626,6 +629,9 @@ service : (opt InitArgs) -> {
     ) composite_query;
   quote_wrap_request : (QuoteWrapRequestArgs) -> (Result_18) query;
   recover_failed_wrap : (RecoverFailedWrapArgs) -> (Result_19);
+  remove_query_precompile_allowed_method : (QueryPrecompileAllowArgs) -> (
+      Result,
+    );
   repair_stale_wrap_operations : () -> (Result);
   retry_native_deposit : (RetryRequestArgs) -> (Result_19);
   retry_native_withdrawal : (RetryRequestArgs) -> (Result_19);
@@ -635,6 +641,9 @@ service : (opt InitArgs) -> {
   rpc_eth_call_object_at : (RpcCallObjectView, RpcBlockTagView) -> (
       Result_14,
     ) query;
+  rpc_eth_call_object_with_query_precompile : (RpcCallObjectView) -> (
+      Result_14,
+    ) composite_query;
   rpc_eth_call_rawtx : (blob) -> (Result_20) query;
   rpc_eth_chain_id : () -> (nat64) query;
   rpc_eth_estimate_gas_object : (RpcCallObjectView) -> (Result_21) query;
