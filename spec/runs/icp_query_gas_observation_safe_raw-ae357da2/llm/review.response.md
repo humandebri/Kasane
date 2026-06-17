@@ -293,27 +293,27 @@ exec
 ./spec/runs/block_commit_safe_raw-318a0bf6/llm/draft.prompt.md:2:#[cfg_attr(verus_keep_ghost, verus_spec(safe => ensures
 ./spec/runs/block_commit_safe_raw-318a0bf6/llm/draft.response.md:52:#[cfg_attr(verus_keep_ghost, verus_spec(safe => ensures
 ./spec/runs/block_commit_safe_raw-318a0bf6/llm/scenarios.response.md:72:#[cfg_attr(verus_keep_ghost, verus_spec(safe => ensures
-./spec/runs/icp_query_allowlist_entry_safe_raw-744d724a/reviews/edge-case.md:9:- `verus_spec(valid => ensures ...)` がこのリポの属性マクロで戻り値名 `valid` を正しく束縛すること。specgen 標準の固定戻り値名は `result` なので、通常の specgen 注入と混在するなら要確認。
-./spec/runs/icp_query_allowlist_entry_safe_raw-744d724a/reviews/adversarial.md:9:- `verus_spec(valid => ensures ...)` がこのリポの属性マクロで戻り値名 `valid` を正しく束縛すること。specgen 標準の固定戻り値名は `result` なので、通常の specgen 注入と混在するなら要確認。
-./spec/runs/icp_query_allowlist_entry_safe_raw-744d724a/reviews/verus.md:9:- `verus_spec(valid => ensures ...)` がこのリポの属性マクロで戻り値名 `valid` を正しく束縛すること。specgen 標準の固定戻り値名は `result` なので、通常の specgen 注入と混在するなら要確認。
-./spec/runs/icp_query_allowlist_entry_safe_raw-744d724a/reviews/implementation.md:9:- `verus_spec(valid => ensures ...)` がこのリポの属性マクロで戻り値名 `valid` を正しく束縛すること。specgen 標準の固定戻り値名は `result` なので、通常の specgen 注入と混在するなら要確認。
-./spec/runs/icp_query_allowlist_entry_safe_raw-744d724a/extract.json:14:  "signature": "#[cfg_attr(verus_keep_ghost, verus_spec(valid => ensures\n    valid == (\n        target_len >= 1\n        && target_len <= MAX_PRINCIPAL_LEN\n        && target_non_anonymous == 1\n        && method_len >= 1\n        && method_len <= MAX_QUERY_METHOD_LEN\n        && method_ascii == 1\n    ),\n))]\npub fn icp_query_allowlist_entry_safe_raw(\n    target_len: u64,\n    target_non_anonymous: u64,\n    method_len: u64,\n    method_ascii: u64,\n) -> bool",
-./spec/runs/icp_query_allowlist_entry_safe_raw-744d724a/draft.md:4:#[cfg_attr(verus_keep_ghost, verus_spec(valid => ensures
-./spec/runs/icp_query_allowlist_entry_safe_raw-744d724a/draft.md:25:#[cfg_attr(verus_keep_ghost, verus_spec(valid => ensures
-./spec/runs/icp_query_allowlist_entry_safe_raw-744d724a/llm/scenarios.prompt.md:2:#[cfg_attr(verus_keep_ghost, verus_spec(valid => ensures
-./spec/runs/icp_query_allowlist_entry_safe_raw-744d724a/llm/review.prompt.md:2:#[cfg_attr(verus_keep_ghost, verus_spec(valid => ensures
+./spec/runs/icp_precompile_allowlist_entry_safe_raw-744d724a/reviews/edge-case.md:9:- `verus_spec(valid => ensures ...)` がこのリポの属性マクロで戻り値名 `valid` を正しく束縛すること。specgen 標準の固定戻り値名は `result` なので、通常の specgen 注入と混在するなら要確認。
+./spec/runs/icp_precompile_allowlist_entry_safe_raw-744d724a/reviews/adversarial.md:9:- `verus_spec(valid => ensures ...)` がこのリポの属性マクロで戻り値名 `valid` を正しく束縛すること。specgen 標準の固定戻り値名は `result` なので、通常の specgen 注入と混在するなら要確認。
+./spec/runs/icp_precompile_allowlist_entry_safe_raw-744d724a/reviews/verus.md:9:- `verus_spec(valid => ensures ...)` がこのリポの属性マクロで戻り値名 `valid` を正しく束縛すること。specgen 標準の固定戻り値名は `result` なので、通常の specgen 注入と混在するなら要確認。
+./spec/runs/icp_precompile_allowlist_entry_safe_raw-744d724a/reviews/implementation.md:9:- `verus_spec(valid => ensures ...)` がこのリポの属性マクロで戻り値名 `valid` を正しく束縛すること。specgen 標準の固定戻り値名は `result` なので、通常の specgen 注入と混在するなら要確認。
+./spec/runs/icp_precompile_allowlist_entry_safe_raw-744d724a/extract.json:14:  "signature": "#[cfg_attr(verus_keep_ghost, verus_spec(valid => ensures\n    valid == (\n        target_len >= 1\n        && target_len <= MAX_PRINCIPAL_LEN\n        && target_non_anonymous == 1\n        && method_len >= 1\n        && method_len <= MAX_QUERY_METHOD_LEN\n        && method_ascii == 1\n    ),\n))]\npub fn icp_precompile_allowlist_entry_safe_raw(\n    target_len: u64,\n    target_non_anonymous: u64,\n    method_len: u64,\n    method_ascii: u64,\n) -> bool",
+./spec/runs/icp_precompile_allowlist_entry_safe_raw-744d724a/draft.md:4:#[cfg_attr(verus_keep_ghost, verus_spec(valid => ensures
+./spec/runs/icp_precompile_allowlist_entry_safe_raw-744d724a/draft.md:25:#[cfg_attr(verus_keep_ghost, verus_spec(valid => ensures
+./spec/runs/icp_precompile_allowlist_entry_safe_raw-744d724a/llm/scenarios.prompt.md:2:#[cfg_attr(verus_keep_ghost, verus_spec(valid => ensures
+./spec/runs/icp_precompile_allowlist_entry_safe_raw-744d724a/llm/review.prompt.md:2:#[cfg_attr(verus_keep_ghost, verus_spec(valid => ensures
 ./spec/runs/icp_query_gas_observation_safe_raw-ae357da2/extract.json:14:  "signature": "#[cfg_attr(verus_keep_ghost, verus_spec(valid => ensures\n    valid == (\n        observed_address_code == ICP_QUERY_PRECOMPILE_ADDRESS_CODE\n        && returned_success <= 1\n        && (input_len <= MAX_ICP_QUERY_COMBINED_LEN_WITH_EXACT_GAS\n            && reply_len <= MAX_ICP_QUERY_COMBINED_LEN_WITH_EXACT_GAS\n            ==> charged_gas >= ICP_QUERY_BASE_GAS\n                + input_len * ICP_QUERY_INPUT_BYTE_GAS\n                + reply_len * ICP_QUERY_REPLY_BYTE_GAS)\n        && (returned_success == 1 ==> gas_limit >= charged_gas)\n        && (returned_success == 0 ==> gas_limit < charged_gas)\n    ),\n))]\npub fn icp_query_gas_observation_safe_raw(\n    observed_address_code: u64,\n    input_len: u64,\n    reply_len: u64,\n    charged_gas: u64,\n    gas_limit: u64,\n    returned_success: u64,\n) -> bool",
-./spec/runs/icp_query_allowlist_entry_safe_raw-744d724a/llm/draft.prompt.md:2:#[cfg_attr(verus_keep_ghost, verus_spec(valid => ensures
+./spec/runs/icp_precompile_allowlist_entry_safe_raw-744d724a/llm/draft.prompt.md:2:#[cfg_attr(verus_keep_ghost, verus_spec(valid => ensures
 ./spec/runs/icp_query_gas_observation_safe_raw-ae357da2/draft.md:4:#[cfg_attr(verus_keep_ghost, verus_spec(valid => ensures
 ./spec/runs/icp_query_gas_observation_safe_raw-ae357da2/draft.md:30:#[cfg_attr(verus_keep_ghost, verus_spec(valid => ensures
-./spec/runs/icp_query_allowlist_entry_safe_raw-744d724a/llm/review.response.md:13:- `verus_spec(valid => ensures ...)` がこのリポの属性マクロで戻り値名 `valid` を正しく束縛すること。specgen 標準の固定戻り値名は `result` なので、通常の specgen 注入と混在するなら要確認。
-./spec/runs/icp_query_allowlist_entry_safe_raw-744d724a/llm/review.response.md:32:#[cfg_attr(verus_keep_ghost, verus_spec(valid => ensures
-./spec/runs/icp_query_allowlist_entry_safe_raw-744d724a/llm/review.response.md:225:- `verus_spec(valid => ensures ...)` がこのリポの属性マクロで戻り値名 `valid` を正しく束縛すること。specgen 標準の固定戻り値名は `result` なので、通常の specgen 注入と混在するなら要確認。
+./spec/runs/icp_precompile_allowlist_entry_safe_raw-744d724a/llm/review.response.md:13:- `verus_spec(valid => ensures ...)` がこのリポの属性マクロで戻り値名 `valid` を正しく束縛すること。specgen 標準の固定戻り値名は `result` なので、通常の specgen 注入と混在するなら要確認。
+./spec/runs/icp_precompile_allowlist_entry_safe_raw-744d724a/llm/review.response.md:32:#[cfg_attr(verus_keep_ghost, verus_spec(valid => ensures
+./spec/runs/icp_precompile_allowlist_entry_safe_raw-744d724a/llm/review.response.md:225:- `verus_spec(valid => ensures ...)` がこのリポの属性マクロで戻り値名 `valid` を正しく束縛すること。specgen 標準の固定戻り値名は `result` なので、通常の specgen 注入と混在するなら要確認。
 ./spec/runs/icp_query_gas_observation_safe_raw-ae357da2/llm/scenarios.prompt.md:2:#[cfg_attr(verus_keep_ghost, verus_spec(valid => ensures
-./spec/runs/icp_query_allowlist_entry_safe_raw-744d724a/llm/draft.response.md:10:#[cfg_attr(verus_keep_ghost, verus_spec(valid => ensures
-./spec/runs/icp_query_allowlist_entry_safe_raw-744d724a/llm/draft.response.md:46:#[cfg_attr(verus_keep_ghost, verus_spec(valid => ensures
-./spec/runs/icp_query_allowlist_entry_safe_raw-744d724a/llm/draft.response.md:196:#[cfg_attr(verus_keep_ghost, verus_spec(valid => ensures
-./spec/runs/icp_query_allowlist_entry_safe_raw-744d724a/llm/scenarios.response.md:42:#[cfg_attr(verus_keep_ghost, verus_spec(valid => ensures
+./spec/runs/icp_precompile_allowlist_entry_safe_raw-744d724a/llm/draft.response.md:10:#[cfg_attr(verus_keep_ghost, verus_spec(valid => ensures
+./spec/runs/icp_precompile_allowlist_entry_safe_raw-744d724a/llm/draft.response.md:46:#[cfg_attr(verus_keep_ghost, verus_spec(valid => ensures
+./spec/runs/icp_precompile_allowlist_entry_safe_raw-744d724a/llm/draft.response.md:196:#[cfg_attr(verus_keep_ghost, verus_spec(valid => ensures
+./spec/runs/icp_precompile_allowlist_entry_safe_raw-744d724a/llm/scenarios.response.md:42:#[cfg_attr(verus_keep_ghost, verus_spec(valid => ensures
 ./spec/runs/icp_query_gas_observation_safe_raw-ae357da2/llm/draft.prompt.md:2:#[cfg_attr(verus_keep_ghost, verus_spec(valid => ensures
 ./spec/runs/icp_query_gas_observation_safe_raw-ae357da2/llm/draft.response.md:10:#[cfg_attr(verus_keep_ghost, verus_spec(valid => ensures
 ./spec/runs/icp_query_gas_observation_safe_raw-ae357da2/llm/draft.response.md:80:#[cfg_attr(verus_keep_ghost, verus_spec(valid => ensures

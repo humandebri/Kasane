@@ -1,7 +1,7 @@
 //! どこで: EVM custom precompile / 何を: Kasane専用precompile群 / なぜ: EVM tx内でIC連携intentを確定するため
 
 use crate::hash;
-use evm_db::chain_data::constants::CHAIN_ID;
+use evm_db::chain_data::constants::{CHAIN_ID, MAX_LOG_DATA};
 use evm_db::chain_data::receipt::LogEntry;
 use evm_db::stable_state::current_runtime_config;
 use revm::{
@@ -39,6 +39,10 @@ const MAX_FIELD_LEN: usize = 120;
 const MAX_PRINCIPAL_LEN: usize = 29;
 const MAX_QUERY_METHOD_LEN: usize = 64;
 const MAX_ICP_UPDATE_ARG_LEN: usize = 3_997;
+const MAX_ICP_QUERY_ARG_LEN: usize = MAX_ICP_UPDATE_ARG_LEN;
+const _: () = assert!(
+    1 + MAX_PRINCIPAL_LEN + 1 + MAX_QUERY_METHOD_LEN + 4 + MAX_ICP_UPDATE_ARG_LEN <= MAX_LOG_DATA
+);
 const COMPACT_UNWRAP_FORMAT_VERSION: u8 = 1;
 const COMPACT_NATIVE_WITHDRAW_FORMAT_VERSION: u8 = 1;
 const COMPACT_ICP_PRECOMPILE_FORMAT_VERSION: u8 = 1;
@@ -689,6 +693,9 @@ fn parse_icp_query_input(input: &[u8]) -> Result<IcpQueryRequest, &'static str> 
         .map_err(|_| "ic_query.method_invalid")?
         .to_string();
     let arg_len = read_u32_be(input, &mut offset).ok_or("ic_query.arg.abi_invalid")? as usize;
+    if arg_len > MAX_ICP_QUERY_ARG_LEN {
+        return Err("ic_query.arg.too_large");
+    }
     let arg = read_exact(input, &mut offset, arg_len)
         .ok_or("ic_query.arg.abi_invalid")?
         .to_vec();

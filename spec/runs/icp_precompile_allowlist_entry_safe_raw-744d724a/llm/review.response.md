@@ -39,7 +39,7 @@ Review as implementation, edge-case, adversarial, Verus:
         && method_ascii == 1
     ),
 ))]
-pub fn icp_query_allowlist_entry_safe_raw(
+pub fn icp_precompile_allowlist_entry_safe_raw(
     target_len: u64,
     target_non_anonymous: u64,
     method_len: u64,

@@ -1,4 +1,4 @@
-# accepted: icp_query_allowlist_entry_safe_raw-744d724a
+# accepted: icp_precompile_allowlist_entry_safe_raw-744d724a
 
 <!-- generated from accepted json; do not edit by hand -->
 

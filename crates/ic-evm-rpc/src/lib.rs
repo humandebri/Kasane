@@ -331,6 +331,31 @@ pub fn rpc_eth_call_object_at(
     }
 }
 
+pub async fn rpc_eth_call_object_at_async<R, Fut>(
+    call: RpcCallObjectView,
+    tag: RpcBlockTagView,
+    resolver: R,
+) -> Result<RpcCallResultView, RpcErrorView>
+where
+    R: FnMut(evm_core::kasane_precompiles::IcpQueryRequest) -> Fut,
+    Fut: core::future::Future<Output = Result<Vec<u8>, String>>,
+{
+    match tag {
+        RpcBlockTagView::Latest
+        | RpcBlockTagView::Pending
+        | RpcBlockTagView::Safe
+        | RpcBlockTagView::Finalized => rpc_eth_call_object_async(call, resolver).await,
+        RpcBlockTagView::Earliest => unsupported_historical_exec_call(0),
+        RpcBlockTagView::Number(number) => {
+            let window = rpc_eth_history_window();
+            if number == window.latest {
+                return rpc_eth_call_object_async(call, resolver).await;
+            }
+            unsupported_historical_exec_call(number)
+        }
+    }
+}
+
 pub fn rpc_eth_estimate_gas_object_at(
     call: RpcCallObjectView,
     tag: RpcBlockTagView,

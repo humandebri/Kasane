@@ -4813,5 +4813,8 @@ fn did_contains_dispatch_result_contract_shape() {
     assert!(did.contains("get_update_precompile_allowlist : () -> (vec PrecompileAllowArgs) query"));
     assert!(did.contains("add_update_precompile_allowed_method : (PrecompileAllowArgs) -> (Result"));
     assert!(did.contains("remove_update_precompile_allowed_method : (PrecompileAllowArgs) -> ("));
+    assert!(did.contains(
+        "rpc_eth_call_object_at : (RpcCallObjectView, RpcBlockTagView) -> (\n      Result_19,\n    ) composite_query"
+    ));
     assert!(!did.contains("set_wrap_canister_id : (principal) -> (Result_15);"));
 }

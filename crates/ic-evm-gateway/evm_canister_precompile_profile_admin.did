@@ -660,7 +660,7 @@ service : (opt InitArgs) -> {
   rpc_eth_call_object : (RpcCallObjectView) -> (Result_14) query;
   rpc_eth_call_object_at : (RpcCallObjectView, RpcBlockTagView) -> (
       Result_14,
-    ) query;
+    ) composite_query;
   rpc_eth_call_object_with_query_precompile : (RpcCallObjectView) -> (
       Result_14,
     ) composite_query;

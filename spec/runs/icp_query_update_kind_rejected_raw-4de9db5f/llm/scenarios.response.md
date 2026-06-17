@@ -196,11 +196,11 @@ codex
 exec
 /bin/zsh -lc 'rg -n "ICP_QUERY_KIND_UPDATE_RESERVED|icp_query_update_kind_rejected_raw" .' in /Users/0xhude/Desktop/ICP/Kasane
  succeeded in 195ms:
-./spec/runs/icp_query_allowlist_entry_safe_raw-744d724a/llm/scenarios.response.md:350:spec/runs/icp_query_update_kind_rejected_raw-4de9db5f/status.json
-./spec/runs/icp_query_allowlist_entry_safe_raw-744d724a/llm/scenarios.response.md:351:spec/runs/icp_query_update_kind_rejected_raw-4de9db5f/extract.json
-./spec/runs/icp_query_allowlist_entry_safe_raw-744d724a/llm/scenarios.response.md:352:spec/runs/icp_query_update_kind_rejected_raw-4de9db5f/draft.md
-./spec/runs/icp_query_allowlist_entry_safe_raw-744d724a/llm/scenarios.response.md:353:spec/runs/icp_query_update_kind_rejected_raw-4de9db5f/llm/draft.prompt.md
-./spec/runs/icp_query_allowlist_entry_safe_raw-744d724a/llm/scenarios.response.md:354:spec/runs/icp_query_update_kind_rejected_raw-4de9db5f/llm/draft.response.md
+./spec/runs/icp_precompile_allowlist_entry_safe_raw-744d724a/llm/scenarios.response.md:350:spec/runs/icp_query_update_kind_rejected_raw-4de9db5f/status.json
+./spec/runs/icp_precompile_allowlist_entry_safe_raw-744d724a/llm/scenarios.response.md:351:spec/runs/icp_query_update_kind_rejected_raw-4de9db5f/extract.json
+./spec/runs/icp_precompile_allowlist_entry_safe_raw-744d724a/llm/scenarios.response.md:352:spec/runs/icp_query_update_kind_rejected_raw-4de9db5f/draft.md
+./spec/runs/icp_precompile_allowlist_entry_safe_raw-744d724a/llm/scenarios.response.md:353:spec/runs/icp_query_update_kind_rejected_raw-4de9db5f/llm/draft.prompt.md
+./spec/runs/icp_precompile_allowlist_entry_safe_raw-744d724a/llm/scenarios.response.md:354:spec/runs/icp_query_update_kind_rejected_raw-4de9db5f/llm/draft.response.md
 ./spec/targets.toml:332:display_name = "icp_query_update_kind_rejected_raw"
 ./spec/targets.toml:333:function = "icp_query_update_kind_rejected_raw"
 ./spec/targets.toml:334:function_path = "icp_query_update_kind_rejected_raw"

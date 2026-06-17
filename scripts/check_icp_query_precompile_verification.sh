@@ -35,7 +35,7 @@ check_specgen_targets() {
     "compact_icp_query_input_safe_raw-8482ca59"
     "icp_query_update_kind_rejected_raw-4de9db5f"
     "icp_query_gas_observation_safe_raw-ae357da2"
-    "icp_query_allowlist_entry_safe_raw-744d724a"
+    "icp_precompile_allowlist_entry_safe_raw-744d724a"
     "icp_query_execution_gate_safe_raw-c8c66378"
   )
 
@@ -54,7 +54,7 @@ check_specgen_test_evidence() {
   local evidence=(
     "spec/reports/compact_icp_query_input_safe_raw-8482ca59_tests.json"
     "spec/reports/icp_query_update_kind_rejected_raw-4de9db5f_tests.json"
-    "spec/reports/icp_query_allowlist_entry_safe_raw-744d724a_tests.json"
+    "spec/reports/icp_precompile_allowlist_entry_safe_raw-744d724a_tests.json"
     "spec/reports/icp_query_execution_gate_safe_raw-c8c66378_tests.json"
   )
 

@@ -1,9 +1,9 @@
 {
-  "target": "icp_query_allowlist_entry_safe_raw",
+  "target": "icp_precompile_allowlist_entry_safe_raw",
   "target_id": "ade0c024a054ab82f1e30df9909650950d6690deadf18e3328dbc2e380ab6bed",
-  "slug": "icp_query_allowlist_entry_safe_raw-744d724a",
+  "slug": "icp_precompile_allowlist_entry_safe_raw-744d724a",
   "file": "crates/verified-core/src/wrap_precompile.rs",
-  "function": "icp_query_allowlist_entry_safe_raw",
+  "function": "icp_precompile_allowlist_entry_safe_raw",
   "git_commit": "f4f6f494d8be02b8375b85c1b1cfb768376f6dff",
   "worktree_dirty": false,
   "source_hash": "744d724ab51703c74b38bfa31261e65bbc8b99e0335effaf53e81ab499a5ec9c",
@@ -30,7 +30,7 @@
   ],
   "test_evidence": [
     {
-      "scenario_id": "icp_query_allowlist_entry_safe_raw-nominal",
+      "scenario_id": "icp_precompile_allowlist_entry_safe_raw-nominal",
       "command": "cargo test -p ic-evm-gateway query_precompile_allow",
       "test_name": "gateway allowlist validation uses verified model for target and method boundaries",
       "recorded_at": "2026-05-22T07:18:33Z"

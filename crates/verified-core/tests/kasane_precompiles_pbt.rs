@@ -279,14 +279,14 @@ proptest! {
     }
 
     #[test]
-    fn pbt_icp_query_allowlist_entry_requires_bounded_target_and_ascii_method(
+    fn pbt_icp_precompile_allowlist_entry_requires_bounded_target_and_ascii_method(
         target_len in 0u64..40,
         target_non_anonymous in 0u64..3,
         method_len in 0u64..80,
         method_ascii in 0u64..3,
     ) {
         prop_assert_eq!(
-            verified_core::kasane_precompiles::icp_query_allowlist_entry_safe_raw(
+            verified_core::kasane_precompiles::icp_precompile_allowlist_entry_safe_raw(
                 target_len,
                 target_non_anonymous,
                 method_len,

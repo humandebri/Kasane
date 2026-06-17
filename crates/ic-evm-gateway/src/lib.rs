@@ -575,7 +575,7 @@ fn validate_allowed_assets(assets: &[Principal]) -> Result<(), String> {
 
 fn validate_query_precompile_allow_args(args: &PrecompileAllowArgs) -> Result<(), String> {
     let target_non_anonymous = args.target != Principal::anonymous();
-    let valid = verified_core::kasane_precompiles::icp_query_allowlist_entry_safe_raw(
+    let valid = verified_core::kasane_precompiles::icp_precompile_allowlist_entry_safe_raw(
         args.target.as_slice().len() as u64,
         target_non_anonymous as u64,
         args.method.len() as u64,
@@ -592,7 +592,7 @@ fn validate_query_precompile_allow_args(args: &PrecompileAllowArgs) -> Result<()
 
 fn validate_update_precompile_allow_args(args: &PrecompileAllowArgs) -> Result<(), String> {
     let target_non_anonymous = args.target != Principal::anonymous();
-    let valid = verified_core::kasane_precompiles::icp_query_allowlist_entry_safe_raw(
+    let valid = verified_core::kasane_precompiles::icp_precompile_allowlist_entry_safe_raw(
         args.target.as_slice().len() as u64,
         target_non_anonymous as u64,
         args.method.len() as u64,
@@ -3125,10 +3125,6 @@ const INSPECT_METHOD_POLICIES: &[InspectMethodPolicy] = &[
         payload_limit: INSPECT_MANAGE_PAYLOAD_LIMIT,
     },
     InspectMethodPolicy {
-        method: "quote_native_withdrawal",
-        payload_limit: INSPECT_MANAGE_PAYLOAD_LIMIT,
-    },
-    InspectMethodPolicy {
         method: "remove_query_precompile_allowed_method",
         payload_limit: INSPECT_MANAGE_PAYLOAD_LIMIT,
     },
@@ -3162,14 +3158,6 @@ const INSPECT_METHOD_POLICIES: &[InspectMethodPolicy] = &[
     },
     InspectMethodPolicy {
         method: "set_fee_policy",
-        payload_limit: INSPECT_MANAGE_PAYLOAD_LIMIT,
-    },
-    InspectMethodPolicy {
-        method: "add_query_precompile_allowed_method",
-        payload_limit: INSPECT_MANAGE_PAYLOAD_LIMIT,
-    },
-    InspectMethodPolicy {
-        method: "remove_query_precompile_allowed_method",
         payload_limit: INSPECT_MANAGE_PAYLOAD_LIMIT,
     },
     InspectMethodPolicy {
@@ -3739,12 +3727,12 @@ fn profile_precompile_call(call: RpcCallObjectView) -> Result<RpcCallResultView,
     ic_evm_rpc::rpc_eth_call_object(call)
 }
 
-#[ic_cdk::query]
-fn rpc_eth_call_object_at(
+#[ic_cdk::query(composite = true)]
+async fn rpc_eth_call_object_at(
     call: RpcCallObjectView,
     tag: RpcBlockTagView,
 ) -> Result<RpcCallResultView, RpcErrorView> {
-    ic_evm_rpc::rpc_eth_call_object_at(call, tag)
+    ic_evm_rpc::rpc_eth_call_object_at_async(call, tag, resolve_icp_query_precompile).await
 }
 
 #[ic_cdk::query]
