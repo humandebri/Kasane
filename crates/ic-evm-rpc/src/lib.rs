@@ -1,5 +1,6 @@
 //! どこで: wrapperのRPC補助層 / 何を: eth系参照ロジックを分離 / なぜ: canister entrypointの責務を薄くするため
 
+use evm_core::revm_exec::ExecError;
 use evm_core::{chain, hash};
 use evm_db::chain_data::constants::CHAIN_ID;
 use evm_db::chain_data::{
@@ -208,15 +209,19 @@ fn execution_error(prefix: &str, message: impl Into<String>) -> RpcErrorView {
     rpc_error(RPC_ERR_EXECUTION_FAILED, Some(prefix), message)
 }
 
+fn execution_error_for_chain_error(default_prefix: &str, err: chain::ChainError) -> RpcErrorView {
+    let prefix = match &err {
+        chain::ChainError::ExecFailed(Some(ExecError::SnapshotChanged)) => "exec.snapshot.changed",
+        _ => default_prefix,
+    };
+    execution_error(prefix, format!("eth_call_object failed: {err:?}"))
+}
+
 pub fn rpc_eth_call_object(call: RpcCallObjectView) -> Result<RpcCallResultView, RpcErrorView> {
     let input = call_object_to_input(call)
         .map_err(|message| invalid_error("invalid.call_object", message))?;
-    let out = chain::eth_call_object(input).map_err(|err| {
-        execution_error(
-            "exec.eth_call_object.failed",
-            format!("eth_call_object failed: {err:?}"),
-        )
-    })?;
+    let out = chain::eth_call_object(input)
+        .map_err(|err| execution_error_for_chain_error("exec.eth_call_object.failed", err))?;
     Ok(RpcCallResultView {
         status: out.status,
         gas_used: out.gas_used,
@@ -237,12 +242,7 @@ where
         .map_err(|message| invalid_error("invalid.call_object", message))?;
     let out = chain::eth_call_object_async(input, resolver)
         .await
-        .map_err(|err| {
-            execution_error(
-                "exec.eth_call_object.failed",
-                format!("eth_call_object failed: {err:?}"),
-            )
-        })?;
+        .map_err(|err| execution_error_for_chain_error("exec.eth_call_object.failed", err))?;
     Ok(RpcCallResultView {
         status: out.status,
         gas_used: out.gas_used,

@@ -84,6 +84,33 @@ check_specgen_artifacts() {
   check_specgen_gate_report
 }
 
+check_bidi_controls() {
+  log "check bidi control characters"
+  if rg -n -P '[\x{202A}-\x{202E}\x{2066}-\x{2069}]' README.md crates docs spec scripts; then
+    fail "bidi control characters found"
+  fi
+}
+
+prepare_pocket_ic_bin() {
+  local candidates=()
+
+  if [[ -n "${POCKET_IC_BIN:-}" ]]; then
+    candidates+=("${POCKET_IC_BIN}")
+  fi
+  candidates+=("crates/evm-rpc-e2e/pocket-ic")
+
+  local candidate
+  for candidate in "${candidates[@]}"; do
+    if [[ -x "${candidate}" ]] && "${candidate}" --version 2>/dev/null | grep -Eq '^pocket-ic-server 12\.'; then
+      export POCKET_IC_BIN="${candidate}"
+      log "use PocketIC binary: ${POCKET_IC_BIN}"
+      return
+    fi
+  done
+
+  fail "PocketIC server 12.x is required for evm-rpc-e2e; set POCKET_IC_BIN to a compatible binary"
+}
+
 run_rust_checks() {
   log "run Verus verification"
   scripts/verify-verus.sh
@@ -100,6 +127,13 @@ run_rust_checks() {
   log "run gateway allowlist boundary tests"
   cargo test -p ic-evm-gateway query_precompile_allow
 
+  log "build gateway wasm for PocketIC ICP query precompile tests"
+  cargo build -p ic-evm-gateway --target wasm32-unknown-unknown --release
+
+  log "run ICP query PocketIC E2E tests"
+  prepare_pocket_ic_bin
+  cargo test --manifest-path crates/evm-rpc-e2e/Cargo.toml query_precompile_
+
   log "run workspace check"
   cargo check --workspace
 
@@ -110,6 +144,7 @@ run_rust_checks() {
     crates/evm-core/src/kasane_precompiles_tests.rs \
     crates/evm-core/tests/common/mod.rs \
     crates/evm-core/tests/kasane_precompiles_query.rs \
+    crates/evm-rpc-e2e/tests/rpc_compat_e2e.rs \
     crates/ic-evm-gateway/src/lib.rs \
     crates/ic-evm-gateway/src/tests.rs
 
@@ -118,6 +153,7 @@ run_rust_checks() {
 }
 
 check_specgen_artifacts
+check_bidi_controls
 run_rust_checks
 
 log "ok"

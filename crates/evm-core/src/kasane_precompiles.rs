@@ -127,7 +127,10 @@ pub enum IcpQueryReply {
 enum IcpQueryMode {
     Disabled,
     Detect,
-    Reply(IcpQueryReply),
+    Reply {
+        expected: IcpQueryRequest,
+        reply: IcpQueryReply,
+    },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -147,25 +150,105 @@ impl IcpQueryExecutionContext {
     }
 }
 
+struct IcpQueryContextGuard {
+    prior: Option<IcpQueryExecutionContext>,
+}
+
+impl IcpQueryContextGuard {
+    fn enter_detection() -> Self {
+        let prior = ICP_QUERY_CONTEXT.with(|cell| {
+            let mut ctx = cell.borrow_mut();
+            let prior = ctx.clone();
+            if matches!(ctx.mode, IcpQueryMode::Disabled) {
+                *ctx = IcpQueryExecutionContext {
+                    mode: IcpQueryMode::Detect,
+                    calls: 0,
+                    pending: None,
+                };
+            }
+            prior
+        });
+        Self { prior: Some(prior) }
+    }
+
+    fn enter_reply(expected: IcpQueryRequest, reply: IcpQueryReply) -> Self {
+        let prior = ICP_QUERY_CONTEXT.with(|cell| {
+            let mut ctx = cell.borrow_mut();
+            let prior = ctx.clone();
+            *ctx = IcpQueryExecutionContext {
+                mode: IcpQueryMode::Reply { expected, reply },
+                calls: 0,
+                pending: None,
+            };
+            prior
+        });
+        Self { prior: Some(prior) }
+    }
+}
+
+impl Drop for IcpQueryContextGuard {
+    fn drop(&mut self) {
+        let Some(prior) = self.prior.take() else {
+            return;
+        };
+        ICP_QUERY_CONTEXT.with(|cell| {
+            *cell.borrow_mut() = prior;
+        });
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct KasanePrecompileProvider {
     inner: EthPrecompiles,
-    allow_external: bool,
+    access: PrecompileAccess,
     update_allowlist: BTreeSet<Vec<u8>>,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct PrecompileAccess {
+    pub wrap_side_effects: bool,
+    pub icp_query: bool,
+    pub icp_update_intent: bool,
+}
+
+impl PrecompileAccess {
+    pub const fn disabled() -> Self {
+        Self {
+            wrap_side_effects: false,
+            icp_query: false,
+            icp_update_intent: false,
+        }
+    }
+
+    pub const fn wrap_side_effects() -> Self {
+        Self {
+            wrap_side_effects: true,
+            icp_query: false,
+            icp_update_intent: true,
+        }
+    }
+
+    pub const fn icp_query() -> Self {
+        Self {
+            wrap_side_effects: false,
+            icp_query: true,
+            icp_update_intent: false,
+        }
+    }
+}
+
 impl KasanePrecompileProvider {
-    pub fn new(allow_external: bool) -> Self {
-        Self::with_update_allowlist(allow_external, BTreeSet::new())
+    pub fn new(access: PrecompileAccess) -> Self {
+        Self::with_update_allowlist(access, BTreeSet::new())
     }
 
     pub fn with_update_allowlist(
-        allow_external: bool,
+        access: PrecompileAccess,
         update_allowlist: BTreeSet<Vec<u8>>,
     ) -> Self {
         Self {
             inner: EthPrecompiles::default(),
-            allow_external,
+            access,
             update_allowlist,
         }
     }
@@ -191,23 +274,25 @@ where
         let address = inputs.bytecode_address.into_array();
 
         let output = match inputs.bytecode_address {
-            WRAP_PRECOMPILE_ADDRESS => {
-                Some(run_wrap_precompile(context, inputs, self.allow_external))
-            }
+            WRAP_PRECOMPILE_ADDRESS => Some(run_wrap_precompile(
+                context,
+                inputs,
+                self.access.wrap_side_effects,
+            )),
             NATIVE_WITHDRAW_PRECOMPILE_ADDRESS => Some(run_native_withdraw_precompile(
                 context,
                 inputs,
-                self.allow_external,
+                self.access.wrap_side_effects,
             )),
             ICP_QUERY_PRECOMPILE_ADDRESS => Some(run_icp_query_precompile(
                 context,
                 inputs,
-                self.allow_external,
+                self.access.icp_query,
             )),
             ICP_UPDATE_INTENT_PRECOMPILE_ADDRESS => Some(run_icp_update_intent_precompile(
                 context,
                 inputs,
-                self.allow_external,
+                self.access.icp_update_intent,
                 &self.update_allowlist,
             )),
             _ => self.inner.run(context, inputs)?,
@@ -251,43 +336,24 @@ where
 }
 
 pub fn with_icp_query_detection<T>(f: impl FnOnce() -> T) -> (T, Option<IcpQueryRequest>) {
-    let prior = ICP_QUERY_CONTEXT.with(|cell| {
-        let mut ctx = cell.borrow_mut();
-        let prior = ctx.clone();
-        if matches!(ctx.mode, IcpQueryMode::Disabled) {
-            *ctx = IcpQueryExecutionContext {
-                mode: IcpQueryMode::Detect,
-                calls: 0,
-                pending: None,
-            };
-        }
-        prior
-    });
+    let guard = IcpQueryContextGuard::enter_detection();
     let out = f();
     let pending = ICP_QUERY_CONTEXT.with(|cell| {
         let mut ctx = cell.borrow_mut();
-        let pending = ctx.pending.take();
-        *ctx = prior;
-        pending
+        ctx.pending.take()
     });
+    drop(guard);
     (out, pending)
 }
 
-pub fn with_icp_query_reply<T>(reply: IcpQueryReply, f: impl FnOnce() -> T) -> T {
-    let prior = ICP_QUERY_CONTEXT.with(|cell| {
-        let mut ctx = cell.borrow_mut();
-        let prior = ctx.clone();
-        *ctx = IcpQueryExecutionContext {
-            mode: IcpQueryMode::Reply(reply),
-            calls: 0,
-            pending: None,
-        };
-        prior
-    });
+pub fn with_icp_query_reply<T>(
+    expected: IcpQueryRequest,
+    reply: IcpQueryReply,
+    f: impl FnOnce() -> T,
+) -> T {
+    let guard = IcpQueryContextGuard::enter_reply(expected, reply);
     let out = f();
-    ICP_QUERY_CONTEXT.with(|cell| {
-        *cell.borrow_mut() = prior;
-    });
+    drop(guard);
     out
 }
 
@@ -420,7 +486,20 @@ fn run_icp_query_precompile<CTX: ContextTr>(
         Ok(value) => value,
         Err(code) => return precompile_fail(context, gas_limit, code),
     };
-    let reply = match ICP_QUERY_CONTEXT.with(|cell| {
+    let reply = match resolve_icp_query_reply(request) {
+        Ok(value) => value,
+        Err("ic_query.pending") => return precompile_fail(context, gas_limit, "ic_query.pending"),
+        Err(code) => return precompile_fail(context, gas_limit, code),
+    };
+
+    match reply {
+        IcpQueryReply::Ok(bytes) => icp_query_return(input.len(), bytes, gas_limit),
+        IcpQueryReply::Err(code) => precompile_fail(context, gas_limit, &code),
+    }
+}
+
+fn resolve_icp_query_reply(request: IcpQueryRequest) -> Result<IcpQueryReply, &'static str> {
+    ICP_QUERY_CONTEXT.with(|cell| {
         let mut ctx = cell.borrow_mut();
         if ctx.calls != 0 {
             return Err("ic_query.call_limit");
@@ -432,18 +511,14 @@ fn run_icp_query_precompile<CTX: ContextTr>(
                 ctx.pending = Some(request);
                 Err("ic_query.pending")
             }
-            IcpQueryMode::Reply(reply) => Ok(reply.clone()),
+            IcpQueryMode::Reply { expected, reply } => {
+                if request != *expected {
+                    return Err("ic_query.request_mismatch");
+                }
+                Ok(reply.clone())
+            }
         }
-    }) {
-        Ok(value) => value,
-        Err("ic_query.pending") => return precompile_fail(context, gas_limit, "ic_query.pending"),
-        Err(code) => return precompile_fail(context, gas_limit, code),
-    };
-
-    match reply {
-        IcpQueryReply::Ok(bytes) => icp_query_return(input.len(), bytes, gas_limit),
-        IcpQueryReply::Err(code) => precompile_fail(context, gas_limit, &code),
-    }
+    })
 }
 
 fn icp_query_return(input_len: usize, output: Vec<u8>, gas_limit: u64) -> InterpreterResult {

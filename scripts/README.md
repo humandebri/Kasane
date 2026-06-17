@@ -1,7 +1,5 @@
 # scripts/README.md
 
-Japanese version: [./README.ja.md](./README.ja.md)
-
 Shortest guide for operational scripts in this directory.
 If unsure, run the commands in the order below.
 
@@ -56,7 +54,7 @@ scripts/measure_precompile_ratio.sh
 - `scripts/check_gateway_api_compat_baseline.sh`: detects breaking changes in gateway API compatibility baseline (`--update` updates baseline)
 - `scripts/check_gateway_matrix_sync.sh`: verifies compatibility matrix row in `tools/rpc-gateway/README.md` matches `tools/rpc-gateway/package.json` version line
 - `scripts/check_precompile_feature_isolation.sh`: verifies the default wasm build of `ic-evm-core` does not pull BLS/KZG backend crates (`ark-bls12-381`, `c-kzg`, `blst`)
-- `scripts/check_icp_query_precompile_verification.sh`: PR #81 ICP query precompile gate; runs Verus, PBT/async/allowlist tests, workspace check, targeted rustfmt, and checks the PR-local specgen artifacts
+- `scripts/check_icp_query_precompile_verification.sh`: PR #81 ICP query precompile gate; runs Verus, PBT/async/allowlist/PocketIC tests, Bidi control checks, workspace check, targeted rustfmt, and checks the PR-local specgen artifacts
   - Use this script as the PR #81 merge gate. `specgen gate --base origin/main` remains diagnostic for this PR because the current CLI requires targets for every changed Rust function, including async adapters, methods, and test helpers outside the five pure spec targets.
 - `scripts/predeploy_smoke.sh`: `cargo check` + wasm build + PocketIC RPC compatibility E2E (optional indexer smoke)
 - `scripts/run_rpc_compat_e2e.sh`: RPC compatibility E2E test (`cargo test --test rpc_compat_e2e`)
@@ -66,10 +64,6 @@ scripts/measure_precompile_ratio.sh
 - `scripts/profile_wasm_deps.sh`: dependency-size profiling for wasm (`twiggy top/dominators`, optional `cargo +nightly bloat -Z build-std`, and `cargo tree -e features -i <crate>` snapshots)
   - output default: `docs/ops/reports/wasm-deps-<package>-<timestamp>/`
   - optional: `--compare <previous_output_dir>` to generate before/after table (bytes + instruction estimate)
-
-### rpc-gateway Documentation Language Policy
-- `tools/rpc-gateway/README.md` is the English canonical document
-- Japanese supplement is `tools/rpc-gateway/README.ja.md` (same for `ops/`, `smoke/`, and `contracts/`)
 
 ### Local Operations
 - `scripts/icp_local_clean_start.sh`: clean start helper for managed local network (`icp network`)
@@ -156,10 +150,6 @@ scripts/measure_precompile_ratio.sh
 - `scripts/ops/apply_prune_policy.sh`: apply policy + enable pruning + status check
 - `scripts/ops/tune_prune_max_ops.sh`: staged tuning based on need_prune/error counters
 - `scripts/ops/test_prune_ops_scripts.sh`: mock tests for the two scripts above
-- `scripts/ops/contabo_deploy_tools.sh`: sync `tools/indexer` / `tools/explorer` from git worktree on Contabo, then build+restart (git ref based)
-- `scripts/ops/contabo_deploy_gateway.sh`: sync `tools/rpc-gateway` from git worktree on Contabo, then build+restart (git ref based)
-  - when Contabo cannot use GitHub HTTPS auth, pass `REPO_URL=git@github.com:<owner>/<repo>.git` and give the remote `deployer` user a read-only SSH deploy key
-  - remote clone/fetch is expected to run as `deployer`; avoid provisioning the deploy key only for `root`
 
 ## Key Environment Variables
 - `CANISTER_NAME` / `CANISTER_ID`

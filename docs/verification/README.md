@@ -1,33 +1,29 @@
 # Verification Architecture
 
-Verus対象コードは `crates/verified-*` に置く。
-canister実装はIC runtime、stable memory、Candid、time、cycles、revm呼び出し、hash、codec入出力のadapterに限定する。
+Verus-targeted code lives under `crates/verified-*`. Canister implementation code is limited to adapters for the IC runtime, stable memory, Candid, time, cycles, `revm`, hashing, and codecs.
 
-## 境界
+## Boundaries
 
-- `crates/verified-core`: fee、nonce、queue、block、batch、tx index、prune、stable codec、state diffの純粋状態遷移。
-  実装関数に `cfg_attr(verus_keep_ghost, verus_spec(...))` を付け、adapterは同じ関数を直接呼ぶ。
-- `crates/evm-core`: stable stateの読み書き、revm実行、Candid/API入力、metrics更新。
-- `crates/evm-db`: stable memoryのbyte codecとmap key/value型。
-- `docs/verification/adapter-contracts.md`: adapter境界ごとのread/write map契約。
-- `docs/verification/tcb.md`: Verus対象外依存と未証明ロジックの台帳。
+- `crates/verified-core`: pure state transitions for fees, nonce, queueing, blocks, batches, transaction indexes, pruning, stable codecs, and state diffs. Adapter code calls the same implementation functions directly.
+- `crates/evm-core`: stable-state reads/writes, `revm` execution, Candid/API input, and metrics updates.
+- `crates/evm-db`: stable-memory byte codecs and map key/value types.
+- `docs/verification/adapter-contracts.md`: read/write map contracts for adapter boundaries.
+- `docs/verification/tcb.md`: dependencies and unproved logic outside the Verus target set.
 
-## 追加ルール
+## Rules
 
-- 新規Rust業務ロジックは `crates/verified-*` に追加する。
-- Verus対象外に置く場合、`docs/verification/tcb.md` にID、理由、代替検証を登録する。
-- adapter層へ分岐を追加する場合、先に純粋関数へ抽出できない理由を確認する。
-- fallback/shimで未証明分岐を増やさない。
+- Add new Rust business logic to `crates/verified-*`.
+- If logic must stay outside the Verus target set, add an ID, reason, and alternate validation to `docs/verification/tcb.md`.
+- Before adding branches to adapter code, confirm why the branch cannot be extracted into a pure function.
+- Do not add fallback or shim branches that expand the unproved surface.
 
-## 必須検証
+## Required Checks
 
 ```sh
 cargo check --workspace
 scripts/verify-verus.sh
 ```
 
-`scripts/verify-verus.sh` は `crates/verified-*/src/lib.rs` を列挙し、`--no-cheating --cfg verus_keep_ghost` で検証する。
-`proofs/*.rs` への複製実装は置かない。
+`scripts/verify-verus.sh` enumerates `crates/verified-*/src/lib.rs` and verifies with `--no-cheating --cfg verus_keep_ghost`.
 
-CIでは `scripts/check_verification_policy.sh` が `crates/**/*.rs` の変更を検出し、`crates/verified-*` または `docs/verification/tcb.md` の更新を要求する。
-`crates/*/src/*.rs` の業務ロジック変更では、PR本文に `verified_core::<function>` または `TCB-<id>` の根拠を書く。
+CI also runs `scripts/check_verification_policy.sh`. When Rust business logic changes under `crates/*/src/*.rs`, the PR body must cite either `verified_core::<function>` or a `TCB-<id>` entry.

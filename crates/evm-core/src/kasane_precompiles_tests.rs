@@ -3,8 +3,9 @@ use super::{
     estimate_wrap_precompile_gas, extra_gas_by_instruction_ratio, extra_gas_for_precompile,
     icp_update_intent_event_topic0, icp_update_intent_from_log, native_value_to_e8s,
     native_withdraw_event_topic0, native_withdraw_intent_from_log, parse_icp_query_input,
-    parse_icp_update_intent_input, parse_input, topic_from_address, transfer_event_topic0,
-    unwrap_intent_from_log, unwrap_owner, wrap_event_topic0, COMPACT_ICP_PRECOMPILE_FORMAT_VERSION,
+    parse_icp_update_intent_input, parse_input, resolve_icp_query_reply, topic_from_address,
+    transfer_event_topic0, unwrap_intent_from_log, unwrap_owner, with_icp_query_reply,
+    wrap_event_topic0, IcpQueryReply, COMPACT_ICP_PRECOMPILE_FORMAT_VERSION,
     COMPACT_UNWRAP_FORMAT_VERSION, ICP_PRECOMPILE_KIND_UPDATE, ICP_QUERY_KIND_QUERY,
     ICP_UPDATE_INTENT_PRECOMPILE_ADDRESS, MAX_PRINCIPAL_LEN, NATIVE_WITHDRAW_PRECOMPILE_ADDRESS,
     WEI_PER_E8S, WRAP_PRECOMPILE_ADDRESS,
@@ -18,6 +19,7 @@ use proptest::prelude::*;
 use revm::interpreter::{CallInput, CallInputs, CallScheme, CallValue};
 use revm::primitives::{Address, Bytes, U256};
 use std::borrow::Cow;
+use std::panic::{catch_unwind, AssertUnwindSafe};
 
 fn configure_runtime(factory: [u8; 20]) {
     init_stable_state();
@@ -204,6 +206,69 @@ fn icp_query_parser_rejects_trailing_data_against_verified_model() {
             1,
             0,
         )
+    );
+}
+
+#[test]
+fn icp_query_reply_rejects_request_mismatch() {
+    let expected = parse_icp_query_input(&encode_query_precompile_input(
+        ICP_QUERY_KIND_QUERY,
+        "read_state",
+        &[1],
+    ))
+    .expect("expected request");
+    let actual = parse_icp_query_input(&encode_query_precompile_input(
+        ICP_QUERY_KIND_QUERY,
+        "other_state",
+        &[1],
+    ))
+    .expect("actual request");
+
+    let result = with_icp_query_reply(expected, IcpQueryReply::Ok(vec![0xaa]), || {
+        resolve_icp_query_reply(actual)
+    });
+
+    assert_eq!(result.unwrap_err(), "ic_query.request_mismatch");
+}
+
+#[test]
+fn icp_query_detection_restores_context_after_panic() {
+    let result = catch_unwind(AssertUnwindSafe(|| {
+        super::with_icp_query_detection(|| panic!("test panic"))
+    }));
+    assert!(result.is_err());
+
+    let request = parse_icp_query_input(&encode_query_precompile_input(
+        ICP_QUERY_KIND_QUERY,
+        "read_state",
+        &[],
+    ))
+    .expect("request");
+    assert_eq!(
+        resolve_icp_query_reply(request).unwrap_err(),
+        "ic_query.async_context_required"
+    );
+}
+
+#[test]
+fn icp_query_reply_restores_context_after_panic() {
+    let request = parse_icp_query_input(&encode_query_precompile_input(
+        ICP_QUERY_KIND_QUERY,
+        "read_state",
+        &[],
+    ))
+    .expect("request");
+
+    let result = catch_unwind(AssertUnwindSafe(|| {
+        with_icp_query_reply(request.clone(), IcpQueryReply::Ok(vec![0xaa]), || {
+            panic!("test panic")
+        })
+    }));
+    assert!(result.is_err());
+
+    assert_eq!(
+        resolve_icp_query_reply(request).unwrap_err(),
+        "ic_query.async_context_required"
     );
 }
 

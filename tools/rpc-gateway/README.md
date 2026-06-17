@@ -1,7 +1,5 @@
 # RPC Gateway
 
-Japanese version: [./README.ja.md](./README.ja.md)
-
 Gateway-side implementation that translates canister Candid APIs into Ethereum-style JSON-RPC 2.0.
 
 ## Setup
@@ -241,7 +239,7 @@ Minimal flow (recommended):
 4. Pass that hash to `smoke:watch-receipt`
 5. Alert on `status!=0x1` / timeout / rpc error
 
-Rollback: if read or write validation fails, move the Cloudflare route/DNS back to the previous Contabo RPC endpoint.
+Rollback: if read or write validation fails, move the Cloudflare route/DNS back to the previous RPC endpoint.
 
 Example:
 

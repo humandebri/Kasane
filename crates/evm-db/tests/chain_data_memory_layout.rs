@@ -26,10 +26,11 @@ fn chain_data_memory_ids_are_fixed() {
     assert_eq!(AppMemoryId::WrapNativeLedgerCanister.as_u8(), 66);
     assert_eq!(AppMemoryId::WrapPendingSubmissions.as_u8(), 67);
     assert_eq!(AppMemoryId::QueryPrecompileAllowlist.as_u8(), 68);
-    assert_eq!(AppMemoryId::IcpUpdateRequests.as_u8(), 69);
-    assert_eq!(AppMemoryId::IcpUpdateDispatchQueue.as_u8(), 70);
-    assert_eq!(AppMemoryId::IcpUpdateDispatchMeta.as_u8(), 71);
-    assert_eq!(AppMemoryId::IcpUpdatePrecompileAllowlist.as_u8(), 72);
+    assert_eq!(AppMemoryId::EvmStateEpoch.as_u8(), 69);
+    assert_eq!(AppMemoryId::IcpUpdateRequests.as_u8(), 70);
+    assert_eq!(AppMemoryId::IcpUpdateDispatchQueue.as_u8(), 71);
+    assert_eq!(AppMemoryId::IcpUpdateDispatchMeta.as_u8(), 72);
+    assert_eq!(AppMemoryId::IcpUpdatePrecompileAllowlist.as_u8(), 73);
 }
 
 #[test]

@@ -3,7 +3,7 @@
 use crate::base_fee::compute_next_base_fee;
 use crate::bytes::try_address_to_bytes;
 use crate::hash;
-use crate::kasane_precompiles::IcpQueryRequest;
+use crate::kasane_precompiles::{IcpQueryRequest, PrecompileAccess};
 use crate::revm_exec::{
     commit_state_diff_to_db, compute_effective_gas_price, execute_tx_on, execute_tx_on_async,
     BlockExecContext, ExecError, ExecOutcome, ExecPath, OpHaltReason, OpTransactionError,
@@ -28,7 +28,8 @@ use evm_db::chain_data::{
 use evm_db::memory::{chain_data_memory_ids_for_estimate, memory_size_pages, WASM_PAGE_SIZE_BYTES};
 use evm_db::meta::tx_locs_v3_active;
 use evm_db::stable_state::{
-    clear_map as clear_stable_map, with_state, with_state_mut, StableState,
+    bump_evm_state_epoch, clear_map as clear_stable_map, current_evm_state_epoch, with_state,
+    with_state_mut, StableState,
 };
 use evm_db::types::keys::make_account_key;
 use evm_db::types::values::AccountVal;
@@ -271,6 +272,56 @@ pub struct CallObjectResult {
     pub gas_used: u64,
     pub return_data: Vec<u8>,
     pub revert_data: Option<Vec<u8>>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct QueryChainStateSnapshot {
+    base_fee: u64,
+    block_gas_limit: u64,
+    query_instruction_soft_limit: u64,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct QueryCallSnapshot {
+    head: Head,
+    chain: QueryChainStateSnapshot,
+    allowlist_fingerprint: [u8; 32],
+    runtime_config_fingerprint: [u8; 32],
+    evm_state_epoch: u64,
+}
+
+impl QueryCallSnapshot {
+    // account/storage/code は evm_state_epoch で検出する。await中に変わる mutable input は、
+    // snapshot に含めるか、PrecompileAccess で実行経路から無効化する。
+    fn capture() -> Self {
+        with_state(|state| {
+            let chain = *state.chain_state.get();
+            Self {
+                head: *state.head.get(),
+                chain: QueryChainStateSnapshot {
+                    base_fee: chain.base_fee,
+                    block_gas_limit: chain.block_gas_limit,
+                    query_instruction_soft_limit: chain.query_instruction_soft_limit,
+                },
+                allowlist_fingerprint: query_precompile_allowlist_fingerprint(state),
+                runtime_config_fingerprint: hash::keccak256(
+                    &state.runtime_config.get().into_bytes(),
+                ),
+                evm_state_epoch: current_evm_state_epoch(),
+            }
+        })
+    }
+}
+
+fn query_precompile_allowlist_fingerprint(state: &StableState) -> [u8; 32] {
+    let mut bytes = Vec::new();
+    for entry in state.query_precompile_allowlist.iter() {
+        let key = entry.key();
+        bytes.extend_from_slice(&(key.len() as u32).to_be_bytes());
+        bytes.extend_from_slice(key);
+        bytes.push(entry.value());
+    }
+    hash::keccak256(&bytes)
 }
 
 pub struct PruneStatus {
@@ -981,8 +1032,9 @@ pub fn submit_ic_tx_input(
 
 pub fn credit_balance(address: [u8; 20], amount: u128) -> Result<(), ChainError> {
     let key = make_account_key(address);
-    with_state_mut(|state| {
+    let changed = with_state_mut(|state| {
         let existing = state.accounts.get(&key);
+        let materialized = existing.is_none();
         let (nonce, balance, code_hash) = match existing {
             Some(value) => (value.nonce(), value.balance(), value.code_hash()),
             None => (0u64, [0u8; 32], [0u8; 32]),
@@ -992,8 +1044,12 @@ pub fn credit_balance(address: [u8; 20], amount: u128) -> Result<(), ChainError>
         let next = current.checked_add(add).ok_or(ChainError::MintOverflow)?;
         let updated = AccountVal::from_parts(nonce, next.to_be_bytes(), code_hash);
         state.accounts.insert(key, updated);
-        Ok(())
-    })
+        Ok(materialized || next != current)
+    })?;
+    if changed {
+        bump_evm_state_epoch();
+    }
+    Ok(())
 }
 
 pub fn credit_native_deposit(
@@ -1004,15 +1060,16 @@ pub fn credit_native_deposit(
     let key = TxId(request_id);
     let record = NativeCreditRecord::new(recipient, amount_wei);
     let amount = u128_from_u256_bytes(amount_wei).ok_or(ChainError::MintOverflow)?;
-    with_state_mut(|state| {
+    let changed = with_state_mut(|state| {
         if let Some(existing) = state.native_credit_records.get(&key) {
             if existing == record {
-                return Ok(());
+                return Ok(false);
             }
             return Err(ChainError::TxAlreadySeen);
         }
         let account_key = make_account_key(recipient);
         let existing = state.accounts.get(&account_key);
+        let materialized = existing.is_none();
         let (nonce, balance, code_hash) = match existing {
             Some(value) => (value.nonce(), value.balance(), value.code_hash()),
             None => (0u64, [0u8; 32], [0u8; 32]),
@@ -1023,8 +1080,12 @@ pub fn credit_native_deposit(
         let updated = AccountVal::from_parts(nonce, next.to_be_bytes(), code_hash);
         state.accounts.insert(account_key, updated);
         state.native_credit_records.insert(key, record);
-        Ok(())
-    })
+        Ok(materialized || next != current)
+    })?;
+    if changed {
+        bump_evm_state_epoch();
+    }
+    Ok(())
 }
 
 fn u128_from_u256_bytes(bytes: [u8; 32]) -> Option<u128> {
@@ -1337,7 +1398,7 @@ pub fn produce_block(max_txs: usize) -> Result<ProduceBlockOutcome, ChainError> 
             ExecPath::UserTx,
             false,
             remaining_instruction_budget,
-            true,
+            PrecompileAccess::wrap_side_effects(),
         );
         let outcome = match execution {
             Ok((value, user_diff)) => {
@@ -1761,7 +1822,7 @@ pub fn eth_call(raw_tx: Vec<u8>) -> Result<Vec<u8>, ChainError> {
         ExecPath::UserTx,
         false,
         instruction_soft_limit,
-        true,
+        PrecompileAccess::wrap_side_effects(),
     )
     .map_err(|err| ChainError::ExecFailed(Some(err)))?;
     Ok(outcome.return_data)
@@ -1855,7 +1916,7 @@ pub fn eth_call_object(input: CallObjectInput) -> Result<CallObjectResult, Chain
         ExecPath::UserTx,
         false,
         instruction_soft_limit,
-        true,
+        PrecompileAccess::wrap_side_effects(),
     )
     .map_err(|err| ChainError::ExecFailed(Some(err)))?;
     let revert_data = if outcome.receipt.status == 0 && !outcome.return_data.is_empty() {
@@ -1956,6 +2017,7 @@ where
     };
     let instruction_soft_limit = query_instruction_soft_limit();
     let mut db = CacheDB::new(crate::revm_db::RevmStableDb);
+    let query_snapshot = QueryCallSnapshot::capture();
     let (outcome, _) = execute_tx_on_async(
         &mut db,
         tx_id,
@@ -1965,8 +2027,15 @@ where
         ExecPath::UserTx,
         false,
         instruction_soft_limit,
-        true,
+        PrecompileAccess::icp_query(),
         &mut resolver,
+        || {
+            if QueryCallSnapshot::capture() == query_snapshot {
+                Ok(())
+            } else {
+                Err(ExecError::SnapshotChanged)
+            }
+        },
     )
     .await
     .map_err(|err| ChainError::ExecFailed(Some(err)))?;
@@ -2250,7 +2319,7 @@ fn execute_and_seal_with_caller(
         ExecPath::UserTx,
         false,
         None,
-        true,
+        PrecompileAccess::wrap_side_effects(),
     ) {
         Ok(value) => value,
         Err(err) => {

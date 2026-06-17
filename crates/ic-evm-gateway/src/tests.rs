@@ -139,6 +139,7 @@ fn exec_error_to_code(err: Option<&evm_core::revm_exec::ExecError>) -> &'static 
         Some(ExecError::InvalidGasFee) => "exec.gas_fee.invalid",
         Some(ExecError::ResultTooLarge) => "exec.result.too_large",
         Some(ExecError::InstructionBudgetExceeded) => "exec.budget.instruction_exceeded",
+        Some(ExecError::SnapshotChanged) => "exec.snapshot.changed",
         Some(ExecError::ExternalQuery(_)) => "exec.external_query",
         Some(ExecError::ExecutionFailed) => "exec.execution.failed",
     }
@@ -419,6 +420,20 @@ fn evm_did_does_not_export_fields_display_icrc21_shape() {
     let did = include_str!("../evm_canister.did");
     assert!(!did.contains("FieldsDisplay"));
     assert!(did.contains("LineDisplay"));
+}
+
+#[test]
+fn query_precompile_call_object_is_composite_query_in_dids() {
+    const METHOD: &str = "rpc_eth_call_object_with_query_precompile";
+    let default_did = include_str!("../evm_canister.did");
+    let admin_did = include_str!("../evm_canister_precompile_profile_admin.did");
+
+    let default_stmt = did_method_statement(default_did, METHOD).expect("default did method");
+    let admin_stmt = did_method_statement(admin_did, METHOD).expect("admin did method");
+
+    assert!(default_stmt.contains(" composite_query;"));
+    assert!(admin_stmt.contains(" composite_query;"));
+    assert!(!did_update_methods().contains(METHOD));
 }
 
 fn chain_submit_error_to_code(err: &ChainError) -> Option<(TxApiErrorKind, &'static str)> {
@@ -774,6 +789,7 @@ fn exec_error_codes_match_fixed_pattern() {
         Some(ExecError::InvalidGasFee),
         Some(ExecError::ResultTooLarge),
         Some(ExecError::InstructionBudgetExceeded),
+        Some(ExecError::SnapshotChanged),
         Some(ExecError::ExecutionFailed),
         None,
     ];
@@ -854,6 +870,11 @@ fn exec_error_to_code_matches_expected_set() {
             "instruction_budget",
             Some(ExecError::InstructionBudgetExceeded),
             "exec.budget.instruction_exceeded",
+        ),
+        (
+            "snapshot_changed",
+            Some(ExecError::SnapshotChanged),
+            "exec.snapshot.changed",
         ),
     ];
     for (case, err, expected) in cases {
@@ -3450,7 +3471,11 @@ fn did_update_methods() -> BTreeSet<String> {
         if !trimmed.ends_with(';') {
             continue;
         }
-        if stmt.contains(" : (") && stmt.contains("-> (") && !stmt.contains(" query") {
+        if stmt.contains(" : (")
+            && stmt.contains("-> (")
+            && !stmt.contains(" query")
+            && !stmt.contains(" composite_query")
+        {
             if let Some((name, _)) = stmt.split_once(" : (") {
                 out.insert(name.trim().to_string());
             }
@@ -3458,6 +3483,39 @@ fn did_update_methods() -> BTreeSet<String> {
         stmt.clear();
     }
     out
+}
+
+fn did_method_statement(did: &str, method: &str) -> Option<String> {
+    let prefix = format!("{method} : (");
+    let mut in_service = false;
+    let mut stmt = String::new();
+    for line in did.lines() {
+        let trimmed = line.trim();
+        if !in_service {
+            if trimmed.starts_with("service ") || trimmed.starts_with("service:") {
+                in_service = true;
+            }
+            continue;
+        }
+        if trimmed == "}" {
+            break;
+        }
+        if trimmed.is_empty() {
+            continue;
+        }
+        if !stmt.is_empty() {
+            stmt.push(' ');
+        }
+        stmt.push_str(trimmed);
+        if !trimmed.ends_with(';') {
+            continue;
+        }
+        if stmt.starts_with(&prefix) {
+            return Some(stmt);
+        }
+        stmt.clear();
+    }
+    None
 }
 
 #[test]
@@ -4739,8 +4797,8 @@ fn did_contains_dispatch_result_contract_shape() {
     assert!(did.contains("retry_native_deposit : (RetryRequestArgs) -> (Result_"));
     assert!(did.contains("retry_native_withdrawal : (RetryRequestArgs) -> (Result_"));
     assert!(did.contains("recover_failed_wrap : (RecoverFailedWrapArgs) -> (Result_"));
-    assert!(did.contains("set_fee_policy : (FeePolicyView) -> (Result)"));
-    assert!(did.contains("set_allowed_assets : (vec principal) -> (Result)"));
+    assert!(did.contains("set_fee_policy : (FeePolicyView) -> (Result);"));
+    assert!(did.contains("set_allowed_assets : (vec principal) -> (Result);"));
     assert!(!did.contains("get_request_dispatch_result"));
     assert!(did.contains("get_unwrap_request_ids_by_tx_id"));
     assert!(did.contains("get_unwrap_request_ids_by_eth_tx_hash"));

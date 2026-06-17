@@ -1,11 +1,10 @@
 # Adapter Contracts
 
-canister adapterは外部APIとstable map操作だけを担当する。
-業務判定は `verified_core::*` の結果に従う。
+Canister adapters own external APIs and stable-map operations. Business decisions follow `verified_core::*` results.
 
-## submit -> queue
+## `submit -> queue`
 
-読む:
+Reads:
 - `seen_tx`
 - `chain_state`
 - `sender_expected_nonce`
@@ -14,7 +13,7 @@ canister adapterは外部APIとstable map操作だけを担当する。
 - `pending_fee_index`
 - `principal_pending_count`
 
-書く:
+Writes:
 - `seen_tx`
 - `tx_store`
 - `eth_tx_hash_index`
@@ -32,13 +31,13 @@ canister adapterは外部APIとstable map操作だけを担当する。
 - `ready_key_by_tx_id`
 - `ready_by_seq`
 
-検出:
+Detection:
 - `debug_assert_queued_adapter_effects`
 - `common::assert_runtime_indexes_match_pending`
 
-## produce -> persist
+## `produce -> persist`
 
-読む:
+Reads:
 - `ready_queue`
 - `ready_key_by_tx_id`
 - `ready_by_seq`
@@ -49,7 +48,7 @@ canister adapterは外部APIとstable map操作だけを担当する。
 - `storage`
 - `codes`
 
-書く:
+Writes:
 - `blocks`
 - `tx_index`
 - `receipts`
@@ -64,19 +63,19 @@ canister adapterは外部APIとstable map操作だけを担当する。
 - `storage`
 - `codes`
 
-検出:
+Detection:
 - `debug_assert_persisted_included_effects`
 - `common::assert_block_persist_invariants`
 
-## drop
+## `drop`
 
-読む:
+Reads:
 - `tx_store`
 - `pending_meta_by_tx_id`
 - `ready_key_by_tx_id`
 - `pending_fee_key_by_tx_id`
 
-書く:
+Writes:
 - `tx_store`
 - `tx_locs`
 - `dropped_ring`
@@ -85,30 +84,30 @@ canister adapterは外部APIとstable map操作だけを担当する。
 - `eth_tx_hash_index`
 - `metrics_state`
 
-検出:
+Detection:
 - `debug_assert_dropped_payload_effects`
 - `common::assert_dropped_tx_purged`
 
-## rebuild
+## `rebuild`
 
-読む:
+Reads:
 - `tx_store`
 - `pending_by_sender_nonce`
 
-書く:
+Writes:
 - `principal_pending_count`
 - `pending_fee_index`
 - `pending_fee_key_by_tx_id`
 - `ready_by_seq`
 - `eth_tx_hash_index`
 
-検出:
+Detection:
 - `common::assert_runtime_indexes_match_pending`
 - `verify_eth_tx_hash_index`
 
-## prune
+## `prune`
 
-読む:
+Reads:
 - `head`
 - `blocks`
 - `receipts`
@@ -118,7 +117,7 @@ canister adapterは外部APIとstable map操作だけを担当する。
 - `prune_state`
 - `prune_journal`
 
-書く:
+Writes:
 - `blocks`
 - `receipts`
 - `tx_index`
@@ -128,12 +127,12 @@ canister adapterは外部APIとstable map操作だけを担当する。
 - `prune_journal`
 - `blob_store`
 
-非対象:
+Not in scope:
 - `accounts`
 - `storage`
 - `codes`
 - state root/trie storage
 
-検出:
+Detection:
 - `phase1_prune`
 - `prune_journal`

@@ -1,11 +1,10 @@
-# data_tx_id（現行実装準拠）
+# `data_tx_id`
 
-このドキュメントは、`tx_id` と関連ハッシュ/保存構造の「現在の実装」を簡潔に固定するためのものです。
-設計案ではなく、実装追従の運用ドキュメントとして扱います。
+This document records the current `tx_id`, hash, and storage semantics. It describes the implementation as it exists, not a new design.
 
-## 1. tx_id の現行定義
+## Current `tx_id` Definition
 
-`tx_id` は Route 別に別定義ではなく、内部的には共通で `stored_tx_id` を使います。
+All routes use the common internal `stored_tx_id`.
 
 ```text
 tx_id = keccak256(
@@ -18,43 +17,28 @@ tx_id = keccak256(
 )
 ```
 
-- `kind_u8`
-  - `0x01`: `EthSigned`
-  - `0x02`: `IcSynthetic`
-- 実装: `crates/evm-core/src/hash.rs` の `stored_tx_id`
+- `kind_u8 = 0x01`: `EthSigned`
+- `kind_u8 = 0x02`: `IcSynthetic`
+- Implementation: `crates/evm-core/src/hash.rs` (`stored_tx_id`)
 
-## 2. Route A: EthSigned（raw Ethereum tx）
+## Route A: `EthSigned`
 
-### 2.1 内部 `tx_id`
-- `submit_tx` では `stored_tx_id(kind=EthSigned, raw, None, None, None)` を採用。
-- つまり内部 `tx_id` は **Ethereum tx hash（`keccak(raw)`）と同一ではない**。
+`submit_tx` uses `stored_tx_id(kind=EthSigned, raw, None, None, None)`. The internal `tx_id` is not the Ethereum transaction hash.
 
-### 2.2 Ethereum 互換 hash との対応
-- `eth_tx_hash = keccak256(raw_tx_bytes)` は別に算出。
-- `eth_tx_hash_index` に `eth_tx_hash -> tx_id` を保存。
-- `eth_getTransactionByHash` 相当はこの index を引いて内部 `tx_id` に解決する。
+`eth_tx_hash = keccak256(raw_tx_bytes)` is stored separately in `eth_tx_hash_index` as `eth_tx_hash -> tx_id`. Hash-based Ethereum RPC methods resolve through that index.
 
-## 3. Route B: IcSynthetic（canister 呼び出し由来）
+## Route B: `IcSynthetic`
 
-### 3.1 内部 `tx_id`
-- `stored_tx_id(kind=IcSynthetic, raw, caller_evm, canister_id, caller_principal)`。
-- `caller_evm` は `caller_principal` から導出。
+`submit_ic_tx(record)` uses `stored_tx_id(kind=IcSynthetic, raw, caller_evm, canister_id, caller_principal)`.
 
-### 3.2 nonce の扱い
-- nonce は canister 側の自動採番ではない。
-- `submit_ic_tx(record)` の `nonce` フィールド値をそのまま使う。
+- `caller_evm` is derived from `caller_principal`.
+- Nonce is not auto-assigned by the canister; the submitted `nonce` field is used as-is.
 
-## 4. ハッシュ規則（現行）
-
-### 4.1 `tx_list_hash`
+## Hash Rules
 
 ```text
 tx_list_hash = keccak256(0x00 || tx_id_0 || tx_id_1 || ...)
 ```
-
-- 先頭に `0x00` を付ける（domain separation）。
-
-### 4.2 `block_hash`
 
 ```text
 block_hash = keccak256(
@@ -67,32 +51,21 @@ block_hash = keccak256(
 )
 ```
 
-- 先頭に `0x01` を付ける（domain separation）。
+The first byte is the domain-separation prefix.
 
-## 5. stable schema（実装の要点）
+## Stable Schema Summary
 
-現行は「最小構成」より拡張されています。主要ポイントのみ記載します。
+- Root: `StableState` (`StableBTreeMap` groups and `StableCell` groups).
+- Main maps: `queue`, `tx_store`, `tx_locs`, `tx_locs_v3`, `blocks`, `receipts`, `eth_tx_hash_index`.
+- Main cells: `chain_state`, `head`, `queue_meta`.
 
-- ルート: `StableState`（`StableBTreeMap` 群 + `StableCell` 群）
-- 主要 map:
-  - `queue: seq(u64) -> tx_id`
-  - `tx_store: tx_id -> StoredTxBytes`
-  - `tx_locs/tx_locs_v3: tx_id -> TxLoc`
-  - `blocks: block_number -> BlobPtr`
-  - `receipts: tx_id -> BlobPtr`
-  - `eth_tx_hash_index: eth_tx_hash(TxId wrapper) -> tx_id`
-- 主要 cell:
-  - `chain_state`（chain設定・base fee・`next_queue_seq` 等）
-  - `head`
-  - `queue_meta`
+## API Effects
 
-## 6. API 影響（現行動作）
+- `submit_raw_tx` and `submit_tx` return internal `tx_id`.
+- `rpc_eth_get_transaction_by_hash` resolves through `eth_tx_hash_index`.
+- `get_pending` and `get_receipt` use internal `tx_id`.
 
-- `submit_raw_tx` / `submit_tx` は内部 `tx_id` を返す。
-- `rpc_eth_get_transaction_by_hash` は `eth_tx_hash_index` で解決する。
-- `get_pending` / `get_receipt` は内部 `tx_id` 基準で参照する。
-
-## 7. 実装参照
+## References
 
 - `crates/evm-core/src/hash.rs`
 - `crates/evm-core/src/chain.rs`

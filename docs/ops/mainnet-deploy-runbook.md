@@ -1,7 +1,5 @@
 # Mainnet Deploy Runbook (`ic`)
 
-Japanese version: [./mainnet-deploy-runbook.ja.md](./mainnet-deploy-runbook.ja.md)
-
 ## Purpose
 Runbook for mainnet deployment, post-checks, rollback, and environment-specific operations.
 
@@ -24,7 +22,6 @@ Runbook for mainnet deployment, post-checks, rollback, and environment-specific 
 
 ## Usage
 Use this file as the canonical index for mainnet operation phases.
-For exact command sequences and environment-specific snippets, see the Japanese version.
 
 ## Precompile Gas-Ratio Policy
 - Measure precompile cost before mainnet deploy with `scripts/run_precompile_profile_e2e.sh` and `scripts/measure_precompile_ratio.sh`.

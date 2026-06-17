@@ -2,7 +2,7 @@
 
 use crate::bytes::{b256_to_bytes, try_address_to_bytes, u256_to_bytes};
 use crate::selfdestruct::selfdestruct_address;
-use evm_db::stable_state::with_state_mut;
+use evm_db::stable_state::{bump_evm_state_epoch, with_state_mut};
 use evm_db::types::keys::{make_account_key, make_code_key, make_storage_key};
 use evm_db::types::values::{AccountVal, CodeVal, U256Val};
 use evm_db::Storable;
@@ -124,6 +124,7 @@ impl DatabaseRef for RevmStableDb {
 
 impl DatabaseCommit for RevmStableDb {
     fn commit(&mut self, changes: revm::primitives::HashMap<Address, Account>) {
+        let mut mutated = false;
         for (address, account) in changes.into_iter() {
             let addr = try_address_to_bytes(address).expect("revm address must be 20 bytes");
             match account_commit_decision(
@@ -133,6 +134,7 @@ impl DatabaseCommit for RevmStableDb {
             ) {
                 AccountCommitDecision::Delete => {
                     selfdestruct_address(addr);
+                    mutated = true;
                     continue;
                 }
                 AccountCommitDecision::Upsert => {}
@@ -144,6 +146,7 @@ impl DatabaseCommit for RevmStableDb {
 
             with_state_mut(|state| {
                 state.accounts.insert(key, val);
+                mutated = true;
 
                 for (slot, entry) in account.changed_storage_slots() {
                     let storage_key = make_storage_key(addr, u256_to_bytes(*slot));
@@ -185,6 +188,9 @@ impl DatabaseCommit for RevmStableDb {
                     }
                 }
             });
+        }
+        if mutated {
+            bump_evm_state_epoch();
         }
     }
 }

@@ -1,7 +1,5 @@
 # ChainState 72->88 Migration Runbook
 
-Japanese version: [./chain-state-migration.ja.md](./chain-state-migration.ja.md)
-
 ## Purpose
 - Apply the `ChainState` wire size change (72 -> 88) safely without backward-compatibility shims.
 - Prevent accidental direct upgrades from silently resetting operational state to defaults.

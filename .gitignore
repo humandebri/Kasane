@@ -38,9 +38,15 @@ dist/
 .env
 .dev.vars
 .dev.vars.*
+.env.development
+.env.production
 .env.local
 *.env.local
 **/.env.local
+
+# private/internal operations assets
+ops/systemd/
+scripts/ops/[c]ontabo_*.sh
 
 # ops reports
 docs/ops/reports/

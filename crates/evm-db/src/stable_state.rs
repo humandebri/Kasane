@@ -127,6 +127,7 @@ pub struct StableState {
     pub state_root_gc_queue: StateRootGcQueue,
     pub state_root_gc_state: StableCell<GcStateV1, VMem>,
     pub native_credit_records: NativeCreditRecords,
+    pub evm_state_epoch: StableCell<u64, VMem>,
 }
 
 thread_local! {
@@ -272,6 +273,7 @@ pub fn init_stable_state() {
     let state_root_gc_state =
         StableCell::init(get_memory(AppMemoryId::StateRootGcState), GcStateV1::new());
     let native_credit_records = StableBTreeMap::init(get_memory(AppMemoryId::NativeCreditRecords));
+    let evm_state_epoch = StableCell::init(get_memory(AppMemoryId::EvmStateEpoch), 0u64);
     STABLE_STATE.with(|s| {
         *s.borrow_mut() = Some(StableState {
             accounts,
@@ -340,6 +342,7 @@ pub fn init_stable_state() {
             state_root_gc_queue,
             state_root_gc_state,
             native_credit_records,
+            evm_state_epoch,
         });
     });
 }
@@ -373,5 +376,16 @@ pub fn current_runtime_config() -> RuntimeConfigV1 {
 pub fn set_runtime_config(config: RuntimeConfigV1) {
     with_state_mut(|state| {
         state.runtime_config.set(config);
+    });
+}
+
+pub fn current_evm_state_epoch() -> u64 {
+    with_state(|state| *state.evm_state_epoch.get())
+}
+
+pub fn bump_evm_state_epoch() {
+    with_state_mut(|state| {
+        let next = state.evm_state_epoch.get().saturating_add(1);
+        state.evm_state_epoch.set(next);
     });
 }

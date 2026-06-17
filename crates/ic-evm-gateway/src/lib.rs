@@ -3165,6 +3165,14 @@ const INSPECT_METHOD_POLICIES: &[InspectMethodPolicy] = &[
         payload_limit: INSPECT_MANAGE_PAYLOAD_LIMIT,
     },
     InspectMethodPolicy {
+        method: "add_query_precompile_allowed_method",
+        payload_limit: INSPECT_MANAGE_PAYLOAD_LIMIT,
+    },
+    InspectMethodPolicy {
+        method: "remove_query_precompile_allowed_method",
+        payload_limit: INSPECT_MANAGE_PAYLOAD_LIMIT,
+    },
+    InspectMethodPolicy {
         method: "submit_native_deposit",
         payload_limit: INSPECT_MANAGE_PAYLOAD_LIMIT,
     },
@@ -3200,6 +3208,8 @@ const INSPECT_METHOD_POLICIES: &[InspectMethodPolicy] = &[
     },
 ];
 
+// inspect_message は ingress の事前拒否だけに使う。update body 側の
+// controller check を本来の access control として維持する。
 fn inspect_payload_limit_for_method(method: &str) -> Option<usize> {
     inspect_policy_for_method(method).map(|policy| policy.payload_limit)
 }

@@ -1,30 +1,30 @@
-# Verus TCB台帳
+# Verus TCB Ledger
 
-この文書はVerus証明対象外の仮定を管理する。
-証明対象外のRust業務ロジックを追加する場合、理由と検証手段を追記する。
+This document tracks assumptions outside the Verus proof target set. When Rust business logic is added outside the proof target set, record the reason and alternate validation here.
 
-## 証明対象
+## Proof Targets
 
-- `crates/verified-*`: 純粋な状態遷移、上限判定、codec境界、prune計算、state diff適用判定。
-- `crates/verified-*/src`: adapterが直接呼ぶ実装関数に付けた `requires` / `ensures` / `invariant` 仕様。
+- `crates/verified-*`: pure state transitions, bound checks, codec boundaries, pruning calculations, and state-diff application decisions.
+- `crates/verified-*/src`: implementation functions called directly by adapters, with `requires`, `ensures`, and `invariant` specifications.
 
 ## TCB
 
-| ID | 領域 | 仮定 | 代替検証 |
+| ID | Area | Assumption | Alternate validation |
 | --- | --- | --- | --- |
-| TCB-revm | `revm` | EVM実行意味論、gas消費、halt理由が上流仕様どおりである | 互換E2E、既存revmテスト、固定feature検査 |
-| TCB-alloy | `alloy-*` | RLP、署名、Ethereum型のdecode/encodeが仕様どおりである | 既存unit/integration、RPC互換smoke |
-| TCB-keccak | `keccak` | hash実装がEthereum互換である | 既知ベクトルテスト、state rootテスト |
-| TCB-state-root | state root/account state | pruning証明は履歴削除の観測整合だけを対象とし、current account state、trie、state root正当性は証明しない | state root migration/unit test、revm DB test、運用smoke |
-| TCB-dfinity | DFINITY crates | `ic-cdk`、`ic-stable-structures`、Candid、timerが公開契約どおり動く | PocketIC、upgrade/smoke |
-| TCB-ic-runtime | IC runtime | caller、time、cycles、performance counter、stable memoryがIC仕様どおりである | local/mainnet smoke、運用監視 |
-| TCB-ic-query-precompile | ICP query precompile 外部境界 | composite query経由の`Call::bounded_wait`、IC routing、remote canisterの応答正当性、timeoutはVerus対象外である。ローカル証明対象はallowlist済みquery requestを1回だけ発火し、返却bytesをgas制約付きでEVMへ戻す境界までとする | allowlist adapter test、`eth_call_object_async` test、PBT、mainnet/local smoke |
-| TCB-typescript | TypeScript tools | explorer/indexer/gateway UIはVerus対象外である | TypeScript検査、npm test、E2E |
-| TCB-github-actions | GitHub Actions | 固定したVerus release assetとRust toolchain取得が成功する | `scripts/verify-verus.sh` とCIログ |
+| `TCB-revm` | `revm` | EVM execution semantics, gas use, and halt reasons match upstream behavior. | compatibility E2E, upstream `revm` tests, fixed feature checks |
+| `TCB-alloy` | `alloy-*` | RLP, signatures, and Ethereum type decode/encode match the expected specs. | existing unit/integration tests, RPC compatibility smoke |
+| `TCB-keccak` | `keccak` | hash implementation is Ethereum-compatible. | known vector tests, state-root tests |
+| `TCB-state-root` | state root/account state | Pruning proofs cover historical deletion observability, not current account state, trie, or state-root correctness. | state-root migration/unit tests, revm DB tests, operational smoke |
+| `TCB-dfinity` | DFINITY crates | `ic-cdk`, `ic-stable-structures`, Candid, and timers follow their public contracts. | PocketIC, upgrade smoke, deployment smoke |
+| `TCB-ic-runtime` | IC runtime | caller, time, cycles, performance counters, and stable memory follow IC runtime behavior. | local/mainnet smoke, operational monitoring |
+| `TCB-ic-query-precompile` | ICP query precompile boundary | The entrypoint is `composite_query`; targets are query or composite query methods only; the controller-managed allowlist is the method-selection TCB. `Call::bounded_wait`, IC routing, remote response correctness, `SysUnknown`, timeouts, and cross-subnet rejects are outside Verus. Raw Candid bytes pass through `take_raw_args` / `into_bytes` without re-encoding. Local proofs cover one allowlisted query request returning to EVM under a two-pass snapshot guard and gas constraints. Persistent account, storage, and code mutations are detected by `evm_state_epoch`. | allowlist adapter tests, `eth_call_object_async` tests, PocketIC composite query E2E, PBT, local/mainnet smoke |
+| `TCB-ic-update-intent` | ICP update intent precompile boundary | EVM execution only records an allowlisted update intent log. The later bounded-wait update call, remote side effects, reply correctness, timeout classification, and dispatch recovery are outside Verus. | allowlist tests, intent log tests, dispatch state tests, local/mainnet smoke |
+| `TCB-typescript` | TypeScript tools | explorer, indexer, gateway, and UI code are outside the Verus target set. | TypeScript checks, npm tests, E2E |
+| `TCB-github-actions` | GitHub Actions | pinned Verus release assets and Rust toolchains are fetched successfully. | `scripts/verify-verus.sh` and CI logs |
 
-## 追加ルール
+## Rules
 
-- 新規Rust業務ロジックは `crates/verified-*` へ置く。
-- TCBへ逃がす場合、上表へID、仮定、代替検証を追加する。
-- adapter層はIC API、stable memory、time、cycles、Candid、revm呼び出しだけを行う。
-- fallback/shimで未証明分岐を増やさない。
+- Add new Rust business logic to `crates/verified-*`.
+- If logic is assigned to the TCB, add an ID, assumption, and alternate validation.
+- Adapter code should only call IC APIs, stable memory, time, cycles, Candid, and `revm`.
+- Do not expand the unproved branch surface with fallback or shim logic.
