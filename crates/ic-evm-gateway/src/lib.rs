@@ -18,7 +18,7 @@ use evm_db::chain_data::{
     MintSubmitStatus, OpsMode, ReceiptLike, RequestStatus as StoredRequestStatus, RuntimeConfigV1,
     TxId, TxKind, TxLoc, TxLocKind, UnwrapDispatchRequest, UnwrapRequestStatus,
     WrapEvmConfigStored, WrapPendingSubmission, WrapRequestStage, ICP_UPDATE_DECODE_FAILURE_CODE,
-    LOG_CONFIG_FILTER_MAX, UNWRAP_DECODE_FAILURE_CODE,
+    LOG_CONFIG_FILTER_MAX, MAX_ICP_UPDATE_REQUESTS, UNWRAP_DECODE_FAILURE_CODE,
 };
 use evm_db::memory::{all_memory_regions, memory_size_pages, WASM_PAGE_SIZE_BYTES};
 use evm_db::meta::{
@@ -79,7 +79,6 @@ const MAX_STORED_LEDGER_TX_ID_BYTES: usize = 128;
 const STALE_OPERATION_NANOS: u64 = 10 * 60 * 1_000_000_000;
 const ICP_UPDATE_REPLY_OMITTED_TOO_LARGE: &str = "ic_update.reply_omitted_too_large";
 const ICP_UPDATE_DISPATCH_TIMEOUT_SECONDS: u32 = 30;
-const MAX_ICP_UPDATE_REQUESTS: usize = 10_000;
 
 static UNWRAP_DISPATCH_SCHEDULED: std::sync::atomic::AtomicBool =
     std::sync::atomic::AtomicBool::new(false);
@@ -5034,6 +5033,8 @@ fn record_icp_update_requests_from_block(tx_ids: &[TxId]) {
 }
 
 fn trim_icp_update_requests(state: &mut evm_db::stable_state::StableState) {
+    // hard cap は EVM precompile capacity で enforced。ここでは terminal request だけを
+    // 履歴 pruning し、queued/dispatching の active request は絶対に削除しない。
     let len = usize::try_from(state.icp_update_requests.len()).unwrap_or(usize::MAX);
     if len <= MAX_ICP_UPDATE_REQUESTS {
         return;
@@ -5982,6 +5983,7 @@ fn finalize_icp_update_dispatch_attempt(
         req.status = applied.status;
         req.error_code = applied.error_code.map(clamp_error_code);
         state.icp_update_requests.insert(request_id, req);
+        trim_icp_update_requests(state);
     });
 }
 

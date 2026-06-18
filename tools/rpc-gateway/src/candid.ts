@@ -225,7 +225,7 @@ export const idlFactory: IDL.InterfaceFactory = ({ IDL }) => {
     rpc_eth_call_object_at: IDL.Func(
       [RpcCallObjectView, RpcBlockTagView],
       [IDL.Variant({ Ok: RpcCallResultView, Err: RpcErrorView })],
-      ["query"]
+      ["composite_query"]
     ),
     rpc_eth_estimate_gas_object: IDL.Func(
       [RpcCallObjectView],

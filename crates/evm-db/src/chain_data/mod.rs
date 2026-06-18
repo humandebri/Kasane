@@ -38,6 +38,7 @@ pub use constants::{
 pub use dropped_ring::{DroppedRingStateV1, DROPPED_RING_STATE_SIZE_U32};
 pub use icp_update_request::{
     IcpUpdateDispatchRequest, IcpUpdateRequestStatus, ICP_UPDATE_DECODE_FAILURE_CODE,
+    MAX_ICP_UPDATE_REQUESTS,
 };
 pub use internal_trace::{
     InternalTrace, InternalTraceActionKind, InternalTraceSet, MAX_INTERNAL_TRACES_PER_TX_U32,

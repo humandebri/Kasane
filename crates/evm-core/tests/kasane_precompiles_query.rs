@@ -11,7 +11,10 @@ use evm_core::kasane_precompiles::{
 };
 use evm_core::revm_exec::{configure_instruction_budget_tripped_for_test, ExecError};
 use evm_core::tx_decode::IcSyntheticTxInput;
-use evm_db::chain_data::{constants::CHAIN_ID, constants::MAX_RETURN_DATA, Head, RuntimeConfigV1};
+use evm_db::chain_data::{
+    constants::CHAIN_ID, constants::MAX_RETURN_DATA, Head, IcpUpdateDispatchRequest,
+    IcpUpdateRequestStatus, RuntimeConfigV1, TxId, TxKind, MAX_ICP_UPDATE_REQUESTS,
+};
 use evm_db::stable_state::{
     current_evm_state_epoch, init_stable_state, set_runtime_config, with_state, with_state_mut,
 };
@@ -23,6 +26,8 @@ mod common;
 
 const WRAPPED_TOKEN_ADDRESS: [u8; 20] = [0x42u8; 20];
 const FORWARDER_ADDRESS: [u8; 20] = [0x66u8; 20];
+const REVERTING_FORWARDER_ADDRESS: [u8; 20] = [0x67u8; 20];
+const UPDATE_RETRY_ADDRESS: [u8; 20] = [0x68u8; 20];
 const DOUBLE_QUERY_ADDRESS: [u8; 20] = [0x72u8; 20];
 const TEST_FACTORY_ADDRESS: [u8; 20] = [0x55u8; 20];
 const TEST_AMOUNT: u64 = 1_000_000_000_000;
@@ -99,6 +104,40 @@ fn allow_icp_update_method(method: &str) {
         state
             .icp_update_precompile_allowlist
             .insert(precompile_allow_key(target.as_slice(), method), 1);
+    });
+}
+
+fn test_icp_update_request(request_id: TxId) -> IcpUpdateDispatchRequest {
+    IcpUpdateDispatchRequest {
+        target: query_target().as_slice().to_vec(),
+        method: "write_state".to_string(),
+        arg: vec![0x44],
+        request_id,
+        tx_id: request_id,
+        block_number: 1,
+        tx_index: 0,
+        log_index: 0,
+        tx_kind: TxKind::IcSynthetic,
+        evm_sender: [0x31u8; 20],
+        ic_caller: None,
+        status: IcpUpdateRequestStatus::Queued,
+        reply: None,
+        error_code: None,
+        updated_at: 0,
+        call_started_at_time: 0,
+    }
+}
+
+fn seed_icp_update_requests(count: usize) {
+    with_state_mut(|state| {
+        for idx in 0..count {
+            let mut raw = [0x91u8; 32];
+            raw[24..32].copy_from_slice(&(idx as u64).to_be_bytes());
+            let request_id = TxId(raw);
+            state
+                .icp_update_requests
+                .insert(request_id, test_icp_update_request(request_id));
+        }
     });
 }
 
@@ -203,6 +242,29 @@ fn forwarder_runtime_bytecode_to(target: [u8; 20]) -> Vec<u8> {
     let mut code = vec![0x36, 0x3d, 0x3d, 0x37, 0x3d, 0x3d, 0x36, 0x3d, 0x3d, 0x73];
     code.extend_from_slice(&target);
     code.extend_from_slice(&[0x5a, 0xf1, 0x60, 0x26, 0x57, 0x3d, 0x3d, 0xfd, 0x5b, 0x00]);
+    code
+}
+
+fn reverting_forwarder_runtime_bytecode_to(target: [u8; 20]) -> Vec<u8> {
+    let mut code = vec![0x36, 0x3d, 0x3d, 0x37, 0x3d, 0x3d, 0x36, 0x3d, 0x3d, 0x73];
+    code.extend_from_slice(&target);
+    code.extend_from_slice(&[0x5a, 0xf1, 0x50, 0x3d, 0x3d, 0xfd]);
+    code
+}
+
+fn update_retry_runtime_bytecode(reverting_forwarder: [u8; 20], target: [u8; 20]) -> Vec<u8> {
+    let mut code = vec![0x36, 0x3d, 0x3d, 0x37];
+    code.extend_from_slice(&[0x3d, 0x3d, 0x36, 0x3d, 0x3d, 0x73]);
+    code.extend_from_slice(&reverting_forwarder);
+    code.extend_from_slice(&[0x5a, 0xf1, 0x50, 0x3d, 0x3d, 0x36, 0x3d, 0x3d, 0x73]);
+    code.extend_from_slice(&target);
+    code.extend_from_slice(&[0x5a, 0xf1, 0x60]);
+    let jumpdest_offset = code.len();
+    code.push(0x00);
+    code.extend_from_slice(&[0x57, 0x3d, 0x3d, 0xfd]);
+    let jumpdest = u8::try_from(code.len()).expect("test bytecode jumpdest fits u8");
+    code[jumpdest_offset] = jumpdest;
+    code.extend_from_slice(&[0x5b, 0x00]);
     code
 }
 
@@ -804,6 +866,164 @@ fn icp_update_intent_precompile_emits_log_when_called_through_forwarder() {
         hash::keccak256(b"KasaneIcpUpdateIntent(bytes)")
     );
     assert!(!log.data.data.is_empty());
+}
+
+#[test]
+fn icp_update_intent_capacity_is_reserved_within_block() {
+    setup_query_precompile_call_context();
+    allow_icp_update_method("write_state");
+    seed_icp_update_requests(MAX_ICP_UPDATE_REQUESTS - 1);
+    common::install_contract(
+        FORWARDER_ADDRESS,
+        &forwarder_runtime_bytecode_to(ICP_UPDATE_INTENT_PRECOMPILE_ADDRESS.into_array()),
+    );
+
+    let first_principal = vec![0x34u8];
+    let second_principal = vec![0x36u8];
+    let first_caller =
+        hash::derive_evm_address_from_principal(&first_principal).expect("must derive");
+    let second_caller =
+        hash::derive_evm_address_from_principal(&second_principal).expect("must derive");
+    common::fund_account(first_caller, 1_000_000_000_000_000_000u128);
+    common::fund_account(second_caller, 1_000_000_000_000_000_000u128);
+    let first = chain::submit_ic_tx_input(
+        first_principal,
+        vec![0xa2],
+        IcSyntheticTxInput {
+            to: Some(FORWARDER_ADDRESS),
+            value: [0u8; 32],
+            gas_limit: 300_000,
+            nonce: 0,
+            max_fee_per_gas: 2_000_000_000,
+            max_priority_fee_per_gas: 1_000_000_000,
+            data: encode_icp_update_input("write_state", &[0x44]),
+        },
+    )
+    .expect("submit first");
+    let second = chain::submit_ic_tx_input(
+        second_principal,
+        vec![0xa3],
+        IcSyntheticTxInput {
+            to: Some(FORWARDER_ADDRESS),
+            value: [0u8; 32],
+            gas_limit: 300_000,
+            nonce: 0,
+            max_fee_per_gas: 2_000_000_000,
+            max_priority_fee_per_gas: 1_000_000_000,
+            data: encode_icp_update_input("write_state", &[0x45]),
+        },
+    )
+    .expect("submit second");
+
+    let produced = chain::produce_block(2).expect("produce");
+    assert_eq!(produced.block.tx_ids, vec![first, second]);
+
+    let first_receipt = chain::get_receipt(&first).expect("first receipt");
+    assert_eq!(first_receipt.status, 1);
+    assert_eq!(first_receipt.logs.len(), 1);
+
+    let second_receipt = chain::get_receipt(&second).expect("second receipt");
+    assert_eq!(second_receipt.status, 0);
+    assert!(second_receipt.logs.is_empty());
+}
+
+#[test]
+fn icp_update_intent_full_capacity_reverts_without_stopping_block() {
+    setup_query_precompile_call_context();
+    allow_icp_update_method("write_state");
+    seed_icp_update_requests(MAX_ICP_UPDATE_REQUESTS);
+    common::install_contract(
+        FORWARDER_ADDRESS,
+        &forwarder_runtime_bytecode_to(ICP_UPDATE_INTENT_PRECOMPILE_ADDRESS.into_array()),
+    );
+
+    let caller_principal = vec![0x35u8];
+    let caller = hash::derive_evm_address_from_principal(&caller_principal).expect("must derive");
+    common::fund_account(caller, 1_000_000_000_000_000_000u128);
+    let tx_id = chain::submit_ic_tx_input(
+        caller_principal,
+        vec![0xa4],
+        IcSyntheticTxInput {
+            to: Some(FORWARDER_ADDRESS),
+            value: [0u8; 32],
+            gas_limit: 300_000,
+            nonce: 0,
+            max_fee_per_gas: 2_000_000_000,
+            max_priority_fee_per_gas: 1_000_000_000,
+            data: encode_icp_update_input("write_state", &[0x44]),
+        },
+    )
+    .expect("submit");
+
+    let produced = chain::produce_block(1).expect("produce");
+    assert_eq!(produced.block.tx_ids, vec![tx_id]);
+
+    let receipt = chain::get_receipt(&tx_id).expect("receipt");
+    assert_eq!(receipt.status, 0);
+    assert!(receipt.logs.is_empty());
+}
+
+#[test]
+fn icp_update_intent_reverted_subcall_does_not_consume_capacity() {
+    setup_query_precompile_call_context();
+    allow_icp_update_method("write_state");
+    seed_icp_update_requests(MAX_ICP_UPDATE_REQUESTS - 1);
+    common::install_contract(
+        REVERTING_FORWARDER_ADDRESS,
+        &reverting_forwarder_runtime_bytecode_to(ICP_UPDATE_INTENT_PRECOMPILE_ADDRESS.into_array()),
+    );
+    common::install_contract(
+        UPDATE_RETRY_ADDRESS,
+        &update_retry_runtime_bytecode(
+            REVERTING_FORWARDER_ADDRESS,
+            ICP_UPDATE_INTENT_PRECOMPILE_ADDRESS.into_array(),
+        ),
+    );
+
+    let caller_principal = vec![0x37u8];
+    let caller = hash::derive_evm_address_from_principal(&caller_principal).expect("must derive");
+    common::fund_account(caller, 1_000_000_000_000_000_000u128);
+    let tx_id = chain::submit_ic_tx_input(
+        caller_principal,
+        vec![0xa5],
+        IcSyntheticTxInput {
+            to: Some(UPDATE_RETRY_ADDRESS),
+            value: [0u8; 32],
+            gas_limit: 500_000,
+            nonce: 0,
+            max_fee_per_gas: 2_000_000_000,
+            max_priority_fee_per_gas: 1_000_000_000,
+            data: encode_icp_update_input("write_state", &[0x44]),
+        },
+    )
+    .expect("submit");
+
+    let produced = chain::produce_block(1).expect("produce");
+    assert_eq!(produced.block.tx_ids, vec![tx_id]);
+
+    let receipt = chain::get_receipt(&tx_id).expect("receipt");
+    assert_eq!(receipt.status, 1);
+    assert_eq!(receipt.logs.len(), 1);
+}
+
+#[test]
+fn icp_update_intent_capacity_does_not_limit_eth_call() {
+    setup_query_precompile_call_context();
+    allow_icp_update_method("write_state");
+    seed_icp_update_requests(MAX_ICP_UPDATE_REQUESTS);
+    common::install_contract(
+        FORWARDER_ADDRESS,
+        &forwarder_runtime_bytecode_to(ICP_UPDATE_INTENT_PRECOMPILE_ADDRESS.into_array()),
+    );
+
+    let out = chain::eth_call_object(build_call_input_to(
+        FORWARDER_ADDRESS,
+        encode_icp_update_input("write_state", &[0x44]),
+        [0u8; 32],
+    ))
+    .expect("eth_call");
+
+    assert_eq!(out.status, 1);
 }
 
 #[test]

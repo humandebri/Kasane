@@ -3,7 +3,7 @@
 use crate::base_fee::compute_next_base_fee;
 use crate::bytes::try_address_to_bytes;
 use crate::hash;
-use crate::kasane_precompiles::{IcpQueryRequest, PrecompileAccess};
+use crate::kasane_precompiles::{icp_update_intent_from_log, IcpQueryRequest, PrecompileAccess};
 use crate::revm_exec::{
     commit_state_diff_to_db, compute_effective_gas_price, execute_tx_on, execute_tx_on_async,
     BlockExecContext, ExecError, ExecOutcome, ExecPath, OpHaltReason, OpTransactionError,
@@ -1152,6 +1152,7 @@ pub fn produce_block(max_txs: usize) -> Result<ProduceBlockOutcome, ChainError> 
     let mut staged_txs: Vec<PreparedTx> = Vec::new();
     let mut decode_drop_count = 0usize;
     let mut decode_drops_by_principal: BTreeMap<Vec<u8>, u16> = BTreeMap::new();
+    let mut reserved_icp_update_intents = 0usize;
     with_state(|state| {
         tx_ids = select_ready_candidates(state, state.chain_state.get().base_fee, max_txs);
     });
@@ -1398,7 +1399,9 @@ pub fn produce_block(max_txs: usize) -> Result<ProduceBlockOutcome, ChainError> 
             ExecPath::UserTx,
             false,
             remaining_instruction_budget,
-            PrecompileAccess::wrap_side_effects(),
+            PrecompileAccess::wrap_side_effects_with_icp_update_reserved(
+                reserved_icp_update_intents,
+            ),
         );
         let outcome = match execution {
             Ok((value, user_diff)) => {
@@ -1481,6 +1484,14 @@ pub fn produce_block(max_txs: usize) -> Result<ProduceBlockOutcome, ChainError> 
             }
         };
         let gas_used = outcome.receipt.gas_used;
+        reserved_icp_update_intents = reserved_icp_update_intents.saturating_add(
+            outcome
+                .receipt
+                .logs
+                .iter()
+                .filter(|log| icp_update_intent_from_log(log).is_some())
+                .count(),
+        );
         observe_exec_outcome(timestamp, &outcome);
         block_gas_used = verified_core::block::add_block_gas_used(block_gas_used, gas_used);
         staged_included.push(StagedIncludedTx::Success {

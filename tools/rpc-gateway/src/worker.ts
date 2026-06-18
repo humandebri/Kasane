@@ -10,6 +10,7 @@ export default {
     configureGateway(env, { requireCanisterId: true });
     const rpcResponse = await handleRpcHttp({
       method: request.method,
+      path: new URL(request.url).pathname,
       origin: request.headers.get("origin") ?? undefined,
       readBodyText: () => readWorkerBody(request),
     });

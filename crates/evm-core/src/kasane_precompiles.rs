@@ -3,6 +3,7 @@
 use crate::hash;
 use evm_db::chain_data::constants::{CHAIN_ID, MAX_LOG_DATA};
 use evm_db::chain_data::receipt::LogEntry;
+use evm_db::chain_data::MAX_ICP_UPDATE_REQUESTS;
 use evm_db::stable_state::current_runtime_config;
 use revm::{
     context::Cfg,
@@ -206,6 +207,7 @@ pub struct KasanePrecompileProvider {
     inner: EthPrecompiles,
     access: PrecompileAccess,
     update_allowlist: BTreeSet<Vec<u8>>,
+    icp_update_intent_reserved: Option<usize>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -213,6 +215,7 @@ pub struct PrecompileAccess {
     pub wrap_side_effects: bool,
     pub icp_query: bool,
     pub icp_update_intent: bool,
+    pub icp_update_intent_reserved: Option<usize>,
 }
 
 impl PrecompileAccess {
@@ -221,6 +224,7 @@ impl PrecompileAccess {
             wrap_side_effects: false,
             icp_query: false,
             icp_update_intent: false,
+            icp_update_intent_reserved: None,
         }
     }
 
@@ -229,6 +233,16 @@ impl PrecompileAccess {
             wrap_side_effects: true,
             icp_query: false,
             icp_update_intent: true,
+            icp_update_intent_reserved: None,
+        }
+    }
+
+    pub const fn wrap_side_effects_with_icp_update_reserved(reserved: usize) -> Self {
+        Self {
+            wrap_side_effects: true,
+            icp_query: false,
+            icp_update_intent: true,
+            icp_update_intent_reserved: Some(reserved),
         }
     }
 
@@ -237,6 +251,7 @@ impl PrecompileAccess {
             wrap_side_effects: false,
             icp_query: true,
             icp_update_intent: false,
+            icp_update_intent_reserved: None,
         }
     }
 }
@@ -254,6 +269,7 @@ impl KasanePrecompileProvider {
             inner: EthPrecompiles::default(),
             access,
             update_allowlist,
+            icp_update_intent_reserved: access.icp_update_intent_reserved,
         }
     }
 }
@@ -293,12 +309,28 @@ where
                 inputs,
                 self.access.icp_query,
             )),
-            ICP_UPDATE_INTENT_PRECOMPILE_ADDRESS => Some(run_icp_update_intent_precompile(
-                context,
-                inputs,
-                self.access.icp_update_intent,
-                &self.update_allowlist,
-            )),
+            ICP_UPDATE_INTENT_PRECOMPILE_ADDRESS => {
+                let remaining_capacity = self.icp_update_intent_reserved.map(|reserved| {
+                    let existing = evm_db::stable_state::with_state(|state| {
+                        usize::try_from(state.icp_update_requests.len()).unwrap_or(usize::MAX)
+                    });
+                    let journaled = context
+                        .journal()
+                        .logs()
+                        .iter()
+                        .filter(|log| is_icp_update_intent_revm_log(log))
+                        .count();
+                    MAX_ICP_UPDATE_REQUESTS
+                        .saturating_sub(existing.saturating_add(reserved).saturating_add(journaled))
+                });
+                Some(run_icp_update_intent_precompile(
+                    context,
+                    inputs,
+                    self.access.icp_update_intent,
+                    &self.update_allowlist,
+                    remaining_capacity,
+                ))
+            }
             _ => self.inner.run(context, inputs)?,
         };
 
@@ -549,6 +581,7 @@ fn run_icp_update_intent_precompile<CTX: ContextTr>(
     inputs: &CallInputs,
     allow_external: bool,
     update_allowlist: &BTreeSet<Vec<u8>>,
+    remaining_capacity: Option<usize>,
 ) -> InterpreterResult {
     let gas_limit = inputs.gas_limit;
     if !allow_external {
@@ -573,23 +606,19 @@ fn run_icp_update_intent_precompile<CTX: ContextTr>(
     if !update_allowlist.contains(&precompile_allow_key(&intent.target, &intent.method)) {
         return precompile_fail(context, gas_limit, "ic_update.allowlist_miss");
     }
+    if matches!(remaining_capacity, Some(0)) {
+        return precompile_fail(context, gas_limit, "ic_update.capacity_exceeded");
+    }
     let log_data = encode_icp_update_intent_log_data(&intent);
     let log_data_len = log_data.len();
-    let log = Log::new_unchecked(
-        ICP_UPDATE_INTENT_PRECOMPILE_ADDRESS,
-        vec![B256::from(icp_update_intent_event_topic0())],
-        log_data.into(),
-    );
-    context.journal_mut().log(log);
-
+    let estimated_gas = ICP_UPDATE_BASE_GAS
+        .saturating_add(ICP_UPDATE_INPUT_BYTE_GAS.saturating_mul(input.len() as u64))
+        .saturating_add(ICP_UPDATE_LOG_BYTE_GAS.saturating_mul(log_data_len as u64));
     let mut out = InterpreterResult {
         result: InstructionResult::Return,
         gas: Gas::new(gas_limit),
         output: Bytes::new(),
     };
-    let estimated_gas = ICP_UPDATE_BASE_GAS
-        .saturating_add(ICP_UPDATE_INPUT_BYTE_GAS.saturating_mul(input.len() as u64))
-        .saturating_add(ICP_UPDATE_LOG_BYTE_GAS.saturating_mul(log_data_len as u64));
     if !out.gas.record_cost(estimated_gas) {
         return InterpreterResult {
             result: InstructionResult::PrecompileOOG,
@@ -597,7 +626,19 @@ fn run_icp_update_intent_precompile<CTX: ContextTr>(
             output: Bytes::new(),
         };
     }
+    let log = Log::new_unchecked(
+        ICP_UPDATE_INTENT_PRECOMPILE_ADDRESS,
+        vec![B256::from(icp_update_intent_event_topic0())],
+        log_data.into(),
+    );
+    context.journal_mut().log(log);
     out
+}
+
+fn is_icp_update_intent_revm_log(log: &Log) -> bool {
+    log.address == ICP_UPDATE_INTENT_PRECOMPILE_ADDRESS
+        && log.data.topics().len() == 1
+        && log.data.topics()[0] == B256::from(icp_update_intent_event_topic0())
 }
 
 pub fn precompile_allow_key(target: &[u8], method: &str) -> Vec<u8> {

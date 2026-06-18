@@ -18,6 +18,9 @@ export type GatewayConfig = {
   maxJsonDepth: number;
   logsBlockhashScanLimit: number;
   corsOrigins: string[];
+  x402Network: string;
+  x402RpcUrl: string;
+  x402SettlerPrivateKey: string | null;
 };
 
 type LoadConfigOptions = {
@@ -27,13 +30,15 @@ type LoadConfigOptions = {
 export function loadConfig(env: Record<string, string | undefined>, options: LoadConfigOptions = {}): GatewayConfig {
   const rpcSemanticsVersion = parseOptionalNonEmpty(env.RPC_SEMANTICS_VERSION) ?? "kasane-rpc-semantics/v1";
   const baseClientVersion = env.RPC_GATEWAY_CLIENT_VERSION ?? "kasane/phase2-gateway/v0.1.0";
+  const host = env.RPC_GATEWAY_HOST ?? "127.0.0.1";
+  const port = parseRangeInt(env.RPC_GATEWAY_PORT, 8545, 1, 65535);
   return {
     canisterId: parseCanisterId(env.EVM_CANISTER_ID, options.requireCanisterId === true),
     icHost: env.RPC_GATEWAY_IC_HOST ?? "https://icp-api.io",
     fetchRootKey: parseBool(env.RPC_GATEWAY_FETCH_ROOT_KEY),
     identityPem: parseOptionalNonEmpty(env.RPC_GATEWAY_IDENTITY_PEM),
-    host: env.RPC_GATEWAY_HOST ?? "127.0.0.1",
-    port: parseRangeInt(env.RPC_GATEWAY_PORT, 8545, 1, 65535),
+    host,
+    port,
     clientVersion: `${baseClientVersion} ${rpcSemanticsVersion}`,
     rpcSemanticsVersion,
     maxHttpBodySize: parseRangeInt(env.RPC_GATEWAY_MAX_HTTP_BODY_SIZE, 256 * 1024, 1024, 10 * 1024 * 1024),
@@ -41,6 +46,9 @@ export function loadConfig(env: Record<string, string | undefined>, options: Loa
     maxJsonDepth: parseRangeInt(env.RPC_GATEWAY_MAX_JSON_DEPTH, 20, 2, 100),
     logsBlockhashScanLimit: parseRangeInt(env.RPC_GATEWAY_LOGS_BLOCKHASH_SCAN_LIMIT, 2000, 100, 10000),
     corsOrigins: parseCorsOrigins(env.RPC_GATEWAY_CORS_ORIGIN),
+    x402Network: parseOptionalNonEmpty(env.X402_NETWORK) ?? "eip155:4801360",
+    x402RpcUrl: parseOptionalNonEmpty(env.X402_RPC_URL) ?? `http://${host}:${port}`,
+    x402SettlerPrivateKey: parseOptionalNonEmpty(env.X402_SETTLER_PRIVATE_KEY),
   };
 }
 

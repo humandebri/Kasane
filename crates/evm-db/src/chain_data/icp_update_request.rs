@@ -13,6 +13,7 @@ const MAX_ARG_LEN: usize = 3_997;
 const MAX_ERROR_LEN: usize = 192;
 const MAX_ENCODED_LEN: u32 = 38_656;
 const CHECKSUM_LEN: usize = 4;
+pub const MAX_ICP_UPDATE_REQUESTS: usize = 10_000;
 pub const ICP_UPDATE_DECODE_FAILURE_CODE: &str = "stable.decode.icp_update_request";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

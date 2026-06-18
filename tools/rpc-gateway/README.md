@@ -31,6 +31,9 @@ Default endpoint: `http://127.0.0.1:8545`
 
 ## Supported Methods
 
+- `GET /v2/x402/supported`
+- `POST /v2/x402/verify`
+- `POST /v2/x402/settle`
 - `web3_clientVersion`
 - `net_version`
 - `eth_chainId`
@@ -59,6 +62,22 @@ Default endpoint: `http://127.0.0.1:8545`
 | Not supported | `eth_getBlockByHash`, `eth_getTransactionByBlockHashAndIndex`, `eth_getTransactionByBlockNumberAndIndex`, `eth_getBlockTransactionCountByHash`, `eth_getBlockTransactionCountByNumber`, `eth_newFilter`, `eth_getFilterChanges`, `eth_uninstallFilter`, `eth_subscribe`, `eth_unsubscribe`, `eth_pendingTransactions` |
 
 Note: some methods in `Supported` are still partial. See the compatibility table below.
+
+## x402 Facilitator
+
+The gateway also exposes a minimal x402 v2 facilitator for Kasane exact EVM payments.
+
+```env
+X402_NETWORK=eip155:4801360
+X402_RPC_URL=http://127.0.0.1:8545
+X402_SETTLER_PRIVATE_KEY=0x...
+```
+
+- `/v2/x402/supported` advertises `x402Version=2`, `scheme=exact`, and `network=eip155:4801360` by default.
+- `/v2/x402/verify` validates payment shape, token `name()` / `version()`, nonce state, and simulates `receiveWithAuthorization`.
+- `/v2/x402/settle` signs and submits `receiveWithAuthorization` through `X402_RPC_URL`.
+- `X402_SETTLER_PRIVATE_KEY` must be the key for the merchant `payTo` address.
+- Wrapped tokens use EIP-3009 domain version `"1"`, so payment requirements must include `extra.version = "1"`.
 
 ## Compatibility Matrix (canister ↔ gateway)
 

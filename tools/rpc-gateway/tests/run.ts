@@ -41,6 +41,7 @@ import {
 } from "../src/client.js";
 import { identityFromPem } from "../src/identity.js";
 import { __test_resolve_cors_allow_origin } from "../src/server.js";
+import { testX402 } from "./x402.js";
 import worker from "../src/worker.js";
 
 function testHex(): void {
@@ -135,6 +136,14 @@ function testOpsStatusCandidProjection(): void {
     critical_corrupt: false,
     schema_version: 6,
   });
+}
+
+function testEthCallAtCandidIsCompositeQuery(): void {
+  const service = idlFactory({ IDL }).display();
+  assert.match(
+    service,
+    /rpc_eth_call_object_at:[\s\S]*?\) composite_query/
+  );
 }
 
 function testConfigIdentityPem(): void {
@@ -1153,6 +1162,7 @@ function jsonRpcErrorCode(value: unknown): number | undefined {
 testHex();
 testJsonRpc();
 testOpsStatusCandidProjection();
+testEthCallAtCandidIsCompositeQuery();
 testConfigIdentityPem();
 testConfigCorsOrigins();
 testConfigLogsBlockhashScanLimit();
@@ -1191,6 +1201,7 @@ async function main(): Promise<void> {
   await testWorkerPostSingleAndBatch();
   await testWorkerOptionsGetAndNotification();
   await testWorkerBodyLimit();
+  await testX402();
   console.log("ok");
 }
 

@@ -17,6 +17,7 @@ export function startServer(): http.Server {
 async function handleHttp(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
   const response = await handleRpcHttp({
     method: req.method ?? "",
+    path: requestPath(req.url),
     origin: req.headers.origin,
     readBodyText: () => readBody(req, CONFIG.maxHttpBodySize),
   });
@@ -29,6 +30,13 @@ async function handleHttp(req: http.IncomingMessage, res: http.ServerResponse): 
     return;
   }
   res.end(response.body);
+}
+
+function requestPath(rawUrl: string | undefined): string {
+  if (!rawUrl) {
+    return "/";
+  }
+  return rawUrl.split("?")[0] ?? "/";
 }
 
 function readBody(req: http.IncomingMessage, maxBytes: number): Promise<string> {
