@@ -22,6 +22,8 @@ pub enum IcpUpdateRequestStatus {
     Dispatching,
     Dispatched,
     DispatchFailed,
+    // bounded_wait の SysUnknown や upgrade recovery 後は安全に再試行できない。
+    // 監査用に保持する final 状態で、dispatch queue / active capacity には戻さない。
     DispatchUncertain,
 }
 

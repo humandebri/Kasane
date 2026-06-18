@@ -4179,6 +4179,94 @@ fn trim_icp_update_requests_removes_oldest_completed_only() {
 }
 
 #[test]
+fn record_icp_update_requests_from_block_prunes_terminal_history_at_full_capacity() {
+    init_stable_state();
+    let tx_id = TxId([0x65u8; 32]);
+    let target = Principal::self_authenticating(b"update-target");
+    let caller_principal = Principal::self_authenticating(b"update-caller");
+    let caller_evm = [0x33u8; 20];
+    let method = "write_state";
+    let arg = vec![0x44, 0x49, 0x44, 0x4c];
+    with_state_mut(|state| {
+        for idx in 0..super::MAX_ICP_UPDATE_REQUESTS {
+            let idx_u64 = u64::try_from(idx).expect("test index fits u64");
+            let mut raw = [0x66u8; 32];
+            raw[24..32].copy_from_slice(&idx_u64.to_be_bytes());
+            let request_id = TxId(raw);
+            let mut req = test_icp_update_request(
+                request_id,
+                vec![2],
+                "write_state",
+                IcpUpdateRequestStatus::Dispatched,
+            );
+            req.updated_at = idx_u64;
+            state.icp_update_requests.insert(request_id, req);
+        }
+
+        let raw = encode_ic_synthetic_input(&IcSyntheticTxInput {
+            to: Some([0x44u8; 20]),
+            value: [0u8; 32],
+            gas_limit: 100_000,
+            nonce: 0,
+            max_fee_per_gas: 1,
+            max_priority_fee_per_gas: 1,
+            data: Vec::new(),
+        });
+        state.tx_store.insert(
+            tx_id,
+            StoredTxBytes::new_with_fees(
+                tx_id,
+                TxKind::IcSynthetic,
+                raw,
+                Some(caller_evm),
+                vec![0xa1],
+                caller_principal.as_slice().to_vec(),
+                1,
+                1,
+                true,
+            ),
+        );
+        let receipt = ReceiptLike {
+            tx_id,
+            block_number: 10,
+            tx_index: 0,
+            status: 1,
+            gas_used: 1,
+            effective_gas_price: 1,
+            l1_data_fee: 0,
+            operator_fee: 0,
+            total_fee: 0,
+            return_data_hash: [0u8; 32],
+            return_data: Vec::new(),
+            contract_address: None,
+            logs: vec![log_entry_from_parts(
+                ICP_UPDATE_INTENT_PRECOMPILE_ADDRESS.into_array(),
+                vec![hash::keccak256(b"KasaneIcpUpdateIntent(bytes)")],
+                icp_update_log_data(target.as_slice(), method, &arg),
+            )],
+        };
+        let ptr = state
+            .blob_store
+            .store_bytes(receipt.to_bytes().as_ref())
+            .expect("store receipt");
+        state.receipts.insert(tx_id, ptr);
+    });
+
+    super::record_icp_update_requests_from_block(&[tx_id]);
+
+    let request_id = super::derive_log_request_id(&tx_id, 0).expect("request id");
+    let max_entries = u64::try_from(super::MAX_ICP_UPDATE_REQUESTS).expect("max fits u64");
+    let mut oldest = [0x66u8; 32];
+    oldest[24..32].copy_from_slice(&0u64.to_be_bytes());
+    with_state(|state| {
+        assert_eq!(state.icp_update_requests.len(), max_entries);
+        assert!(state.icp_update_requests.get(&request_id).is_some());
+        assert!(state.icp_update_requests.get(&TxId(oldest)).is_none());
+        assert_eq!(state.icp_update_dispatch_queue.len(), 1);
+    });
+}
+
+#[test]
 fn get_icp_update_request_returns_omitted_large_reply_reason() {
     init_stable_state();
     let request_id = TxId([0x2bu8; 32]);
