@@ -22,11 +22,11 @@
     "smoke:all": "bash smoke/run_all.sh"
   },
   "dependencies": {
-    "@icp-sdk/core": "^5.0.0",
-    "ethers": "^6.15.0"
+    "@icp-sdk/core": "^5.0.0"
   },
   "devDependencies": {
     "@types/node": "^22.10.2",
+    "ethers": "^6.15.0",
     "typescript": "^5.7.3",
     "tsx": "^4.19.2",
     "viem": "^2.37.13",

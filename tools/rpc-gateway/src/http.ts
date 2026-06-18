@@ -11,11 +11,9 @@ import {
   validateRequest,
 } from "./jsonrpc.js";
 import { handleRpc } from "./handlers.js";
-import { handleX402Http } from "./x402.js";
 
 export type RpcHttpRequest = {
   method: string;
-  path?: string;
   origin: string | undefined;
   readBodyText: () => Promise<string>;
 };
@@ -28,19 +26,9 @@ export type RpcHttpResponse = {
 
 export async function handleRpcHttp(input: RpcHttpRequest): Promise<RpcHttpResponse> {
   const headers = corsHeaders(input.origin);
-  const path = input.path ?? "/";
 
   if (input.method === "OPTIONS") {
     return { status: 204, headers, body: null };
-  }
-
-  if (path.startsWith("/v2/x402/")) {
-    const response = await handleX402Http({
-      method: input.method,
-      path,
-      readBodyText: input.readBodyText,
-    });
-    return { ...response, headers: { ...headers, ...response.headers } };
   }
 
   if (input.method !== "POST") {
@@ -112,7 +100,7 @@ async function handleSingle(req: JsonRpcRequest): Promise<JsonRpcResponse | null
 
 function corsHeaders(origin: string | undefined): Record<string, string> {
   const headers: Record<string, string> = {
-    "access-control-allow-methods": "GET, POST, OPTIONS",
+    "access-control-allow-methods": "POST, OPTIONS",
     "access-control-allow-headers": "content-type",
   };
   const allowOrigin = resolveCorsAllowOrigin(origin, CONFIG.corsOrigins);

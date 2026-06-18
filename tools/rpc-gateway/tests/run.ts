@@ -41,7 +41,6 @@ import {
 } from "../src/client.js";
 import { identityFromPem } from "../src/identity.js";
 import { __test_resolve_cors_allow_origin } from "../src/server.js";
-import { testX402 } from "./x402.js";
 import worker from "../src/worker.js";
 
 function testHex(): void {
@@ -1201,7 +1200,6 @@ async function main(): Promise<void> {
   await testWorkerPostSingleAndBatch();
   await testWorkerOptionsGetAndNotification();
   await testWorkerBodyLimit();
-  await testX402();
   console.log("ok");
 }
 
