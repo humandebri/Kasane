@@ -28,6 +28,7 @@ TEXT_SUFFIXES = {
     ".did",
     ".json",
     ".jsonc",
+    ".lock",
     ".md",
     ".mjs",
     ".rs",
