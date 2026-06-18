@@ -3,7 +3,7 @@
 use crate::hash;
 use evm_db::chain_data::constants::{CHAIN_ID, MAX_LOG_DATA};
 use evm_db::chain_data::receipt::LogEntry;
-use evm_db::chain_data::MAX_ICP_UPDATE_REQUESTS;
+use evm_db::chain_data::{IcpUpdateRequestStatus, MAX_ICP_UPDATE_REQUESTS};
 use evm_db::stable_state::current_runtime_config;
 use revm::{
     context::Cfg,
@@ -15,6 +15,8 @@ use revm::{
     primitives::{Address, Bytes, Log, B256, U256},
 };
 use std::boxed::Box;
+#[cfg(not(target_arch = "wasm32"))]
+use std::cell::Cell;
 use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -93,6 +95,12 @@ struct PrecompileProfileAccumulator {
 thread_local! {
     static PRECOMPILE_PROFILE_ACC: RefCell<BTreeMap<[u8; 20], PrecompileProfileAccumulator>> = const { RefCell::new(BTreeMap::new()) };
     static ICP_QUERY_CONTEXT: RefCell<IcpQueryExecutionContext> = RefCell::new(IcpQueryExecutionContext::disabled());
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+thread_local! {
+    static PRECOMPILE_INSTRUCTION_COUNTER_FOR_TEST: Cell<u64> = const { Cell::new(0) };
+    static PRECOMPILE_INSTRUCTION_COUNTER_STEP_FOR_TEST: Cell<u64> = const { Cell::new(0) };
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -312,7 +320,13 @@ where
             ICP_UPDATE_INTENT_PRECOMPILE_ADDRESS => {
                 let remaining_capacity = self.icp_update_intent_reserved.map(|reserved| {
                     let existing = evm_db::stable_state::with_state(|state| {
-                        usize::try_from(state.icp_update_requests.len()).unwrap_or(usize::MAX)
+                        state
+                            .icp_update_requests
+                            .iter()
+                            .filter(|entry| {
+                                icp_update_request_consumes_capacity(entry.value().status)
+                            })
+                            .count()
                     });
                     let journaled = context
                         .journal()
@@ -639,6 +653,19 @@ fn is_icp_update_intent_revm_log(log: &Log) -> bool {
     log.address == ICP_UPDATE_INTENT_PRECOMPILE_ADDRESS
         && log.data.topics().len() == 1
         && log.data.topics()[0] == B256::from(icp_update_intent_event_topic0())
+}
+
+fn icp_update_request_consumes_capacity(status: IcpUpdateRequestStatus) -> bool {
+    matches!(
+        status,
+        IcpUpdateRequestStatus::Queued | IcpUpdateRequestStatus::Dispatching
+    )
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub fn configure_precompile_instruction_counter_for_test(start: u64, step: u64) {
+    PRECOMPILE_INSTRUCTION_COUNTER_FOR_TEST.with(|counter| counter.set(start));
+    PRECOMPILE_INSTRUCTION_COUNTER_STEP_FOR_TEST.with(|counter| counter.set(step));
 }
 
 pub fn precompile_allow_key(target: &[u8], method: &str) -> Vec<u8> {
@@ -1222,7 +1249,12 @@ fn current_instruction_counter() -> u64 {
     }
     #[cfg(not(target_arch = "wasm32"))]
     {
-        0
+        PRECOMPILE_INSTRUCTION_COUNTER_FOR_TEST.with(|counter| {
+            let value = counter.get();
+            let step = PRECOMPILE_INSTRUCTION_COUNTER_STEP_FOR_TEST.with(|step| step.get());
+            counter.set(value.saturating_add(step));
+            value
+        })
     }
 }
 
