@@ -17,6 +17,13 @@ pub const MAX_ICP_QUERY_ARG_LEN: u64 = 3_997;
 #[allow(dead_code)]
 fn main() {}
 
+// specgen:contract compact_icp_query_input_safe_raw-8605da94 175152b93b28194f0a05f99fbca0e8cea94ef0110c9a3cf1b8b3be3c8e272e5f
+#[cfg_attr(verus_keep_ghost, verus_spec(result =>
+    requires
+        true,
+    ensures
+        result == (version == COMPACT_FORMAT_VERSION && kind == ICP_QUERY_KIND_QUERY && target_len >= 1 && target_len <= MAX_PRINCIPAL_LEN && target_present == 1 && method_len >= 1 && method_len <= MAX_QUERY_METHOD_LEN && method_present == 1 && method_utf8 == 1 && arg_present == 1 && arg_len <= MAX_ICP_QUERY_ARG_LEN && consumed_exact == 1),
+))]
 pub fn compact_icp_query_input_safe_raw(
     version: u64,
     kind: u64,
@@ -28,7 +35,8 @@ pub fn compact_icp_query_input_safe_raw(
     arg_present: u64,
     arg_len: u64,
     consumed_exact: u64,
-) -> bool {
+) -> bool
+{
     version == COMPACT_FORMAT_VERSION
         && kind == ICP_QUERY_KIND_QUERY
         && target_len >= 1
