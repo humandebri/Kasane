@@ -1,0 +1,15 @@
+{
+  "slug": "icp_query_gas_observation_safe_raw-9b7ab62f",
+  "command": "verus /Users/0xhude/Desktop/ICP/Kasane/crates/verified-core/src/kasane_precompiles/icp_query_gas_observation.rs",
+  "exit_code": 0,
+  "git_commit": "f729c2428c68299f1a634727e49b65353152eca4",
+  "worktree_dirty": false,
+  "semantic_hash": "6df654e3d7d13be863351dfbde1fe7f58235c3e332060e6c6d0f1ef1c0408398",
+  "spec_hash": "597a328a0685e885ce5898fcdb3686937a2e57d94ddbe823a08ed85256ef6efb",
+  "target_hash": "e1781d3a135d8429407ac2a82ccb383db9c2d966c3725a0a18a4c91764c5e9aa",
+  "contract_hash": "ddd9750c805680c29597a89219edf91352046ae996bba67d68a9b5f9062bfc1e",
+  "source_hash": "1b0d879a089d2884153260d30dd4ea63562b15c9252da66a7bd2f1772eef8d45",
+  "verified_subject": "implementation",
+  "result": "success",
+  "output": "verification results:: 9 verified, 0 errors\n"
+}

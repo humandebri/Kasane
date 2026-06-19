@@ -1,26 +1,26 @@
 {
-  "target": "classify_nonce",
+  "target": "classify_nonce_raw",
   "entry": {
-    "display_name": "classify_nonce",
-    "function": "classify_nonce",
-    "function_path": "classify_nonce",
+    "display_name": "classify_nonce_raw",
+    "function": "classify_nonce_raw",
+    "function_path": "classify_nonce_raw",
     "file": "crates/verified-core/src/nonce.rs",
-    "target_id": "ee78b7e5fd713b7a6cb00e75e1f2234f131220723b4ad3bb9ffb3380a17c5efd",
+    "target_id": "c47db783e7c1335f4afe349b77750cfdf01dac60d8a4466060228d78e369b980",
     "slug": "classify_nonce-3dada50d",
-    "source_hash": "3dada50dbfbec3c3991a06ad15fca6be5687c8c58a8a3a825fb8ed419d5afc2b",
-    "semantic_hash": "fa9487ba51d96176707f328ef5a7921718815d559e995dab958c1269eb12930b",
+    "source_hash": "fe53e4b54f3f5ce56df4f94f2c0acf06b7361e21a3fdcd7675106bd7e839ee04",
+    "semantic_hash": "5855e24251df50681ecda00b7cb978cb464126ebb856af5132d48320d4de131f",
     "created_at": "2026-05-14T03:28:40Z"
   },
-  "signature": "#[cfg_attr(verus_keep_ghost, verus_spec(decision => ensures\n    incoming_nonce < expected_nonce ==> decision == NonceDecision::TooLow,\n    incoming_nonce > expected_nonce ==> decision == NonceDecision::Gap,\n    incoming_nonce == expected_nonce && matches!(pending_effective_gas_price, None)\n        ==> decision == NonceDecision::Accept,\n    incoming_nonce == expected_nonce && matches!(pending_effective_gas_price, Some(_))\n        && incoming_effective_gas_price <= pending_effective_gas_price.unwrap()\n        ==> decision == NonceDecision::Conflict,\n    incoming_nonce == expected_nonce && matches!(pending_effective_gas_price, Some(_))\n        && incoming_effective_gas_price > pending_effective_gas_price.unwrap()\n        ==> decision == NonceDecision::Replace,\n))]\npub fn classify_nonce(\n    expected_nonce: u64,\n    incoming_nonce: u64,\n    pending_effective_gas_price: Option<u64>,\n    incoming_effective_gas_price: u64,\n) -> NonceDecision",
-  "body": "{\n    if incoming_nonce < expected_nonce {\n        return NonceDecision::TooLow;\n    }\n    if incoming_nonce > expected_nonce {\n        return NonceDecision::Gap;\n    }\n    match pending_effective_gas_price {\n        Some(old_effective) if incoming_effective_gas_price <= old_effective => {\n            NonceDecision::Conflict\n        }\n        Some(_) => NonceDecision::Replace,\n        None => NonceDecision::Accept,\n    }\n}",
+  "signature": "pub fn classify_nonce_raw(\n    expected_nonce: u64,\n    incoming_nonce: u64,\n    pending_effective_gas_price_present: u64,\n    pending_effective_gas_price_value: u64,\n    incoming_effective_gas_price: u64,\n) -> NonceDecision",
+  "body": "{\n    if incoming_nonce < expected_nonce {\n        return NonceDecision::TooLow;\n    }\n    if incoming_nonce > expected_nonce {\n        return NonceDecision::Gap;\n    }\n    if pending_effective_gas_price_present != 1 {\n        return NonceDecision::Accept;\n    }\n    if incoming_effective_gas_price <= pending_effective_gas_price_value {\n        NonceDecision::Conflict\n    } else {\n        NonceDecision::Replace\n    }\n}",
   "span": {
-    "start_line": 16,
-    "end_line": 47
+    "start_line": 19,
+    "end_line": 41
   },
-  "git_commit": "703d7df1dcdc48c6f15be3733c6da4ec5c6a8dad",
+  "git_commit": "34a45ba42bdc3df93e9f1b42d81e59f4b97491f8",
   "worktree_dirty": false,
-  "source_hash": "3dada50dbfbec3c3991a06ad15fca6be5687c8c58a8a3a825fb8ed419d5afc2b",
-  "semantic_hash": "fa9487ba51d96176707f328ef5a7921718815d559e995dab958c1269eb12930b",
+  "source_hash": "fe53e4b54f3f5ce56df4f94f2c0acf06b7361e21a3fdcd7675106bd7e839ee04",
+  "semantic_hash": "5855e24251df50681ecda00b7cb978cb464126ebb856af5132d48320d4de131f",
   "dependency_hash_inputs": [
     {
       "kind": "use",
@@ -32,13 +32,13 @@
       "kind": "module",
       "name": "cfg",
       "file": "crates/verified-core/src/nonce.rs",
-      "hash": "d07ab7d6f3ab4aa7ca1647fff45e23553f46d15049c0ff0c89392084e27beee8"
+      "hash": "28c97a5f01f84d0f10905d7f2feb25b7f602d71a4511cff67ee7dccaead7c2ae"
     },
     {
       "kind": "use",
       "name": "use",
       "file": "crates/verified-core/src/nonce.rs",
-      "hash": "f6ffe1421135716ecdc50f1ab9cefe7e90aa8cac1b479147459cbdbf72150be6"
+      "hash": "a164a652a94af1e6127770c2a974a0b228d73c555eb412205c84b63ba135df75"
     },
     {
       "kind": "type",

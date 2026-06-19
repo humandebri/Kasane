@@ -1,0 +1,5 @@
+# verus target: crates/verified-core/src/kasane_precompiles/icp_query_gas_observation.rs
+
+- verified_subject: implementation
+- contract_hash: ddd9750c805680c29597a89219edf91352046ae996bba67d68a9b5f9062bfc1e
+- semantic_hash: 6df654e3d7d13be863351dfbde1fe7f58235c3e332060e6c6d0f1ef1c0408398

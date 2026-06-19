@@ -33,7 +33,7 @@
   "verified_subject": "implementation",
   "contract_hash": "ddd9750c805680c29597a89219edf91352046ae996bba67d68a9b5f9062bfc1e",
   "applied_contract_hash": "ddd9750c805680c29597a89219edf91352046ae996bba67d68a9b5f9062bfc1e",
-  "applied_at": "2026-06-19T03:10:08Z",
+  "applied_at": "2026-06-19T03:40:47Z",
   "panic_behavior": "documented",
   "overflow_behavior": "documented",
   "rejected_behaviors": [],

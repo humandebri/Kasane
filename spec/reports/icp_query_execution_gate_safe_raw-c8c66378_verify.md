@@ -1,0 +1,17 @@
+# verify: icp_query_execution_gate_safe_raw-c8c66378
+
+- command: verus /Users/0xhude/Desktop/ICP/Kasane/crates/verified-core/src/kasane_precompiles/icp_query_execution_gate.rs
+- exit_code: 0
+- git_commit: f729c2428c68299f1a634727e49b65353152eca4
+- worktree_dirty: false
+- semantic_hash: 2a9ae3be7dfcedf7699685969c4eeb445ff6215daaf16e4b28701ca9c3d2a63e
+- spec_hash: 3da1c1412f256f8db9bf6780b13523d49d18a58d4f31590571d1ba3fb74950a9
+- target_hash: f0634f0352f9b8196f26df7f86c78fb6a91bf48363ba62a1591559dbb62f99c1
+- contract_hash: 1a8be935b0cb6f718b9a43789f66c2e5618caea84cddf06dd190d47094f50956
+- source_hash: 00539863baab084e7c759e715f0cd42e59912c7c19a6b11a0987c2d0cf76d87d
+- verified_subject: implementation
+- result: success
+
+## output
+verification results:: 1 verified, 0 errors
+
