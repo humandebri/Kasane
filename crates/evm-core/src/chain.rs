@@ -3,6 +3,7 @@
 use crate::base_fee::compute_next_base_fee;
 use crate::bytes::try_address_to_bytes;
 use crate::hash;
+use crate::kasane_precompiles::{IcpQueryRequest, PrecompileAccess};
 use crate::revm_exec::{
     commit_state_diff_to_db, compute_effective_gas_price, execute_tx_on, execute_tx_on_async,
     BlockExecContext, ExecError, ExecOutcome, ExecPath, OpHaltReason, OpTransactionError,
@@ -12,8 +13,6 @@ use crate::state_root::TouchedSummary;
 use crate::trie_commit;
 use crate::tx_decode::{decode_tx, encode_ic_synthetic_input, IcSyntheticTxInput};
 use crate::tx_submit;
-use crate::wrap_precompile::IcpQueryRequest;
-use crate::wrap_precompile::PrecompileAccess;
 use evm_db::chain_data::constants::{
     DROPPED_RING_CAPACITY, DROP_CODE_BLOCK_GAS_EXCEEDED, DROP_CODE_CALLER_MISSING,
     DROP_CODE_DECODE, DROP_CODE_EXEC, DROP_CODE_EXEC_PRECHECK, DROP_CODE_INSTRUCTION_BUDGET,

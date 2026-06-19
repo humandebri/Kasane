@@ -3,7 +3,7 @@
 use candid::Deserialize;
 use candid::{CandidType, Decode, Encode, Principal};
 use evm_core::hash;
-use evm_core::wrap_precompile::ICP_QUERY_PRECOMPILE_ADDRESS;
+use evm_core::kasane_precompiles::ICP_QUERY_PRECOMPILE_ADDRESS;
 use pocket_ic::PocketIc;
 use serde_json::Value;
 use std::panic::{self, AssertUnwindSafe};

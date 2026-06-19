@@ -49,7 +49,7 @@ Generate scenario candidates:
         && method_ascii == 1
     ),
 ))]
-pub fn icp_query_allowlist_entry_safe_raw(
+pub fn icp_precompile_allowlist_entry_safe_raw(
     target_len: u64,
     target_non_anonymous: u64,
     method_len: u64,
@@ -466,11 +466,11 @@ spec/runs/submit_transition_safe-5e9926e3/status.json
 spec/runs/submit_transition_safe-5e9926e3/extract.json
 spec/runs/submit_transition_safe-5e9926e3/scenarios.json
 spec/runs/submit_transition_safe-5e9926e3/draft.md
-spec/runs/icp_query_allowlist_entry_safe_raw-744d724a/status.json
-spec/runs/icp_query_allowlist_entry_safe_raw-744d724a/extract.json
-spec/runs/icp_query_allowlist_entry_safe_raw-744d724a/draft.md
-spec/runs/icp_query_allowlist_entry_safe_raw-744d724a/llm/draft.prompt.md
-spec/runs/icp_query_allowlist_entry_safe_raw-744d724a/llm/draft.response.md
+spec/runs/icp_precompile_allowlist_entry_safe_raw-744d724a/status.json
+spec/runs/icp_precompile_allowlist_entry_safe_raw-744d724a/extract.json
+spec/runs/icp_precompile_allowlist_entry_safe_raw-744d724a/draft.md
+spec/runs/icp_precompile_allowlist_entry_safe_raw-744d724a/llm/draft.prompt.md
+spec/runs/icp_precompile_allowlist_entry_safe_raw-744d724a/llm/draft.response.md
 vendor/revm/crates/interpreter/Cargo.toml
 spec/runs/submit_ic_tx_input-f634c1cd/status.json
 spec/runs/submit_ic_tx_input-f634c1cd/extract.json

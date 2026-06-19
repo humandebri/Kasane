@@ -10,7 +10,7 @@
   ],
   "test_evidence": [
     {
-      "scenario_id": "icp_query_allowlist_entry_safe_raw-nominal",
+      "scenario_id": "icp_precompile_allowlist_entry_safe_raw-nominal",
       "command": "cargo test -p ic-evm-gateway query_precompile_allow",
       "test_name": "gateway allowlist validation uses verified model for target and method boundaries",
       "recorded_at": "2026-05-22T07:18:33Z"

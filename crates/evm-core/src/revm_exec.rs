@@ -4,12 +4,12 @@ use crate::bytes::try_address_to_bytes;
 use crate::chain::{before_store_write_for_test, trap_store_err};
 use crate::constants::FEE_RECIPIENT;
 use crate::hash::keccak256;
+use crate::kasane_precompiles::{
+    with_icp_query_detection, with_icp_query_reply, IcpQueryReply, IcpQueryRequest,
+    KasanePrecompileProvider, PrecompileAccess,
+};
 use crate::revm_db::RevmStableDb;
 use crate::tx_decode::DecodeError;
-use crate::wrap_precompile::{
-    with_icp_query_detection, with_icp_query_reply, IcpQueryReply, IcpQueryRequest,
-    PrecompileAccess, WrapPrecompileProvider,
-};
 use evm_db::chain_data::constants::{
     CHAIN_ID, MAX_LOGS_PER_TX, MAX_LOG_DATA, MAX_LOG_TOPICS, MAX_RETURN_DATA,
 };
@@ -34,6 +34,7 @@ use revm::primitives::{Address, U256};
 use revm::state::Account;
 #[cfg(not(target_arch = "wasm32"))]
 use std::cell::Cell;
+use std::collections::BTreeSet;
 
 #[cfg(not(target_arch = "wasm32"))]
 thread_local! {
@@ -222,6 +223,13 @@ where
     )
     .ok_or(ExecError::InvalidGasFee)?;
 
+    let update_allowlist = evm_db::stable_state::with_state(|state| {
+        state
+            .icp_update_precompile_allowlist
+            .iter()
+            .map(|entry| entry.key().clone())
+            .collect::<BTreeSet<Vec<u8>>>()
+    });
     let inspector_limit = instruction_soft_limit.unwrap_or(0);
     let inspector = InspectorMux::new(inspector_limit, exec_ctx.block_number, tx_index);
     let mut evm = Context::mainnet()
@@ -237,7 +245,10 @@ where
             block.beneficiary = FEE_RECIPIENT;
         })
         .build_mainnet_with_inspector(inspector)
-        .with_precompiles(WrapPrecompileProvider::new(precompile_access));
+        .with_precompiles(KasanePrecompileProvider::with_update_allowlist(
+            precompile_access,
+            update_allowlist,
+        ));
 
     let (result, pending_query) =
         with_icp_query_detection(|| evm.inspect_tx(tx_env).map_err(map_tx_error_stage));

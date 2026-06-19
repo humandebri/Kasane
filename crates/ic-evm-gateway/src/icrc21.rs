@@ -3,8 +3,8 @@
 //! なぜ: submit_ic_tx を人間可読に承認させるため
 
 use candid::{CandidType, Deserialize, Nat};
+use evm_core::kasane_precompiles::WRAP_PRECOMPILE_ADDRESS;
 use evm_core::tx_decode::IcSyntheticTxInput;
-use evm_core::wrap_precompile::WRAP_PRECOMPILE_ADDRESS;
 
 use crate::{parse_submit_ic_tx_args, SubmitIcTxArgsDto};
 

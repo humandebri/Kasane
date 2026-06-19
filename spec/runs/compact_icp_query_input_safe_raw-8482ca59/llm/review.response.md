@@ -174,15 +174,15 @@ exec
 ./spec/targets.toml:322:function = "compact_icp_query_input_safe_raw"
 ./spec/targets.toml:323:function_path = "compact_icp_query_input_safe_raw"
 ./spec/targets.toml:326:slug = "compact_icp_query_input_safe_raw-8482ca59"
-./spec/runs/icp_query_allowlist_entry_safe_raw-744d724a/reviews/edge-case.md:5:Verus 仕様と実装の式は一致している。境界値も自然: `target_len == 1/MAX_PRINCIPAL_LEN` は許可、`0/MAX+1` は拒否。`method_len` も同様。`u64` 比較のみなのでオーバーフロー余地はない。
-./spec/runs/icp_query_allowlist_entry_safe_raw-744d724a/reviews/edge-case.md:8:- `MAX_PRINCIPAL_LEN` と `MAX_QUERY_METHOD_LEN` が `u64` 互換であること。
-./spec/runs/icp_query_allowlist_entry_safe_raw-744d724a/reviews/edge-case.md:9:- `verus_spec(valid => ensures ...)` がこのリポの属性マクロで戻り値名 `valid` を正しく束縛すること。specgen 標準の固定戻り値名は `result` なので、通常の specgen 注入と混在するなら要確認。
-./spec/runs/icp_query_allowlist_entry_safe_raw-744d724a/reviews/adversarial.md:5:Verus 仕様と実装の式は一致している。境界値も自然: `target_len == 1/MAX_PRINCIPAL_LEN` は許可、`0/MAX+1` は拒否。`method_len` も同様。`u64` 比較のみなのでオーバーフロー余地はない。
-./spec/runs/icp_query_allowlist_entry_safe_raw-744d724a/reviews/adversarial.md:8:- `MAX_PRINCIPAL_LEN` と `MAX_QUERY_METHOD_LEN` が `u64` 互換であること。
-./spec/runs/icp_query_allowlist_entry_safe_raw-744d724a/reviews/adversarial.md:9:- `verus_spec(valid => ensures ...)` がこのリポの属性マクロで戻り値名 `valid` を正しく束縛すること。specgen 標準の固定戻り値名は `result` なので、通常の specgen 注入と混在するなら要確認。
-./spec/runs/icp_query_allowlist_entry_safe_raw-744d724a/reviews/verus.md:5:Verus 仕様と実装の式は一致している。境界値も自然: `target_len == 1/MAX_PRINCIPAL_LEN` は許可、`0/MAX+1` は拒否。`method_len` も同様。`u64` 比較のみなのでオーバーフロー余地はない。
-./spec/runs/icp_query_allowlist_entry_safe_raw-744d724a/reviews/verus.md:8:- `MAX_PRINCIPAL_LEN` と `MAX_QUERY_METHOD_LEN` が `u64` 互換であること。
-./spec/runs/icp_query_allowlist_entry_safe_raw-744d724a/reviews/verus.md:9:- `verus_spec(valid => ensures ...)` がこのリポの属性マクロで戻り値名 `valid` を正しく束縛すること。specgen 標準の固定戻り値名は `result` なので、通常の specgen 注入と混在するなら要確認。
+./spec/runs/icp_precompile_allowlist_entry_safe_raw-744d724a/reviews/edge-case.md:5:Verus 仕様と実装の式は一致している。境界値も自然: `target_len == 1/MAX_PRINCIPAL_LEN` は許可、`0/MAX+1` は拒否。`method_len` も同様。`u64` 比較のみなのでオーバーフロー余地はない。
+./spec/runs/icp_precompile_allowlist_entry_safe_raw-744d724a/reviews/edge-case.md:8:- `MAX_PRINCIPAL_LEN` と `MAX_QUERY_METHOD_LEN` が `u64` 互換であること。
+./spec/runs/icp_precompile_allowlist_entry_safe_raw-744d724a/reviews/edge-case.md:9:- `verus_spec(valid => ensures ...)` がこのリポの属性マクロで戻り値名 `valid` を正しく束縛すること。specgen 標準の固定戻り値名は `result` なので、通常の specgen 注入と混在するなら要確認。
+./spec/runs/icp_precompile_allowlist_entry_safe_raw-744d724a/reviews/adversarial.md:5:Verus 仕様と実装の式は一致している。境界値も自然: `target_len == 1/MAX_PRINCIPAL_LEN` は許可、`0/MAX+1` は拒否。`method_len` も同様。`u64` 比較のみなのでオーバーフロー余地はない。
+./spec/runs/icp_precompile_allowlist_entry_safe_raw-744d724a/reviews/adversarial.md:8:- `MAX_PRINCIPAL_LEN` と `MAX_QUERY_METHOD_LEN` が `u64` 互換であること。
+./spec/runs/icp_precompile_allowlist_entry_safe_raw-744d724a/reviews/adversarial.md:9:- `verus_spec(valid => ensures ...)` がこのリポの属性マクロで戻り値名 `valid` を正しく束縛すること。specgen 標準の固定戻り値名は `result` なので、通常の specgen 注入と混在するなら要確認。
+./spec/runs/icp_precompile_allowlist_entry_safe_raw-744d724a/reviews/verus.md:5:Verus 仕様と実装の式は一致している。境界値も自然: `target_len == 1/MAX_PRINCIPAL_LEN` は許可、`0/MAX+1` は拒否。`method_len` も同様。`u64` 比較のみなのでオーバーフロー余地はない。
+./spec/runs/icp_precompile_allowlist_entry_safe_raw-744d724a/reviews/verus.md:8:- `MAX_PRINCIPAL_LEN` と `MAX_QUERY_METHOD_LEN` が `u64` 互換であること。
+./spec/runs/icp_precompile_allowlist_entry_safe_raw-744d724a/reviews/verus.md:9:- `verus_spec(valid => ensures ...)` がこのリポの属性マクロで戻り値名 `valid` を正しく束縛すること。specgen 標準の固定戻り値名は `result` なので、通常の specgen 注入と混在するなら要確認。
 ./crates/evm-db/src/chain_data/tx.rs:5:    MAX_PRINCIPAL_LEN, MAX_TX_SIZE, MAX_TX_SIZE_U32, TX_ID_LEN, TX_ID_LEN_U32,
 ./crates/evm-db/src/chain_data/tx.rs:25:    + MAX_PRINCIPAL_LEN as u32
 ./crates/evm-db/src/chain_data/tx.rs:27:    + MAX_PRINCIPAL_LEN as u32
@@ -202,75 +202,75 @@ exec
 ./spec/runs/icp_query_update_kind_rejected_raw-4de9db5f/llm/review.response.md:202:./crates/verified-core/tests/wrap_precompile_pbt.rs:128:                && kind == ICP_QUERY_KIND_QUERY
 ./spec/runs/icp_query_update_kind_rejected_raw-4de9db5f/llm/review.response.md:205:./crates/evm-core/src/wrap_precompile.rs:40:const ICP_QUERY_KIND_QUERY: u8 = 0;
 ./spec/runs/icp_query_update_kind_rejected_raw-4de9db5f/llm/review.response.md:208:./crates/evm-core/src/wrap_precompile.rs:507:    if kind != ICP_QUERY_KIND_QUERY {
-./spec/runs/icp_query_allowlist_entry_safe_raw-744d724a/reviews/implementation.md:5:Verus 仕様と実装の式は一致している。境界値も自然: `target_len == 1/MAX_PRINCIPAL_LEN` は許可、`0/MAX+1` は拒否。`method_len` も同様。`u64` 比較のみなのでオーバーフロー余地はない。
-./spec/runs/icp_query_allowlist_entry_safe_raw-744d724a/reviews/implementation.md:8:- `MAX_PRINCIPAL_LEN` と `MAX_QUERY_METHOD_LEN` が `u64` 互換であること。
-./spec/runs/icp_query_allowlist_entry_safe_raw-744d724a/reviews/implementation.md:9:- `verus_spec(valid => ensures ...)` がこのリポの属性マクロで戻り値名 `valid` を正しく束縛すること。specgen 標準の固定戻り値名は `result` なので、通常の specgen 注入と混在するなら要確認。
-./spec/runs/icp_query_allowlist_entry_safe_raw-744d724a/contract.json:6:    "result == (target_len >= 1 && target_len <= MAX_PRINCIPAL_LEN && target_non_anonymous == 1 && method_len >= 1 && method_len <= MAX_QUERY_METHOD_LEN && method_ascii == 1)"
-./spec/runs/icp_query_allowlist_entry_safe_raw-744d724a/extract.json:14:  "signature": "#[cfg_attr(verus_keep_ghost, verus_spec(valid => ensures\n    valid == (\n        target_len >= 1\n        && target_len <= MAX_PRINCIPAL_LEN\n        && target_non_anonymous == 1\n        && method_len >= 1\n        && method_len <= MAX_QUERY_METHOD_LEN\n        && method_ascii == 1\n    ),\n))]\npub fn icp_query_allowlist_entry_safe_raw(\n    target_len: u64,\n    target_non_anonymous: u64,\n    method_len: u64,\n    method_ascii: u64,\n) -> bool",
-./spec/runs/icp_query_allowlist_entry_safe_raw-744d724a/extract.json:15:  "body": "{\n    target_len >= 1\n        && target_len <= MAX_PRINCIPAL_LEN\n        && target_non_anonymous == 1\n        && method_len >= 1\n        && method_len <= MAX_QUERY_METHOD_LEN\n        && method_ascii == 1\n}",
-./spec/runs/icp_query_allowlist_entry_safe_raw-744d724a/scenarios.json:21:      "rationale": "前提: `MAX_PRINCIPAL_LEN = 29`, `MAX_QUERY_METHOD_LEN = 64`。定義は [wrap_precompile.rs](/Users/0xhude/Desktop/ICP/Kasane/crates/verified-core/src/wrap_precompile.rs:16)。\n\n| id | target_len | target_non_anonymous | method_len | method_ascii | expected | 目的 |\n|---|---:|---:|---:|---:|---|---|\n| valid_min_bounds | 1 | 1 | 1 | 1 | true | 最小有効値 |\n| valid_max_bounds | 29 | 1 | 64 | 1 | true | 最大有効値 |\n| invalid_target_len_zero | 0 | 1 | 1 | 1 | false | target 空拒否 |\n| invalid_target_len_above_max | 30 | 1 | 1 | 1 | false | target 上限超過拒否 |\n| invalid_target_anonymous | 1 | 0 | 1 | 1 | false | anonymous target 拒否 |\n| invalid_target_flag_non_binary | 1 | 2 | 1 | 1 | false | `== 1` 厳密性 |\n| invalid_method_len_zero | 1 | 1 | 0 | 1 | false | method 空拒否 |\n| invalid_method_len_above_max | 1 | 1 | 65 | 1 | false | method 上限超過拒否 |\n| invalid_method_non_ascii | 1 | 1 | 1 | 0 | false | 非ASCII method 拒否 |\n| invalid_method_ascii_flag_non_binary | 1 | 1 | 1 | 2 | false | `== 1` 厳密性 |\n| invalid_all_flags_bad | 1 | 0 | 1 | 0 | false | 複数フラグ不正 |\n| invalid_u64_extreme_lengths | u64::MAX | 1 | u64::MAX | 1 | false | 極大長拒否 |\n\n最小採用なら上から10件で十分。`u64::MAX` はPBT/境界検証向けの追加候補。"
+./spec/runs/icp_precompile_allowlist_entry_safe_raw-744d724a/reviews/implementation.md:5:Verus 仕様と実装の式は一致している。境界値も自然: `target_len == 1/MAX_PRINCIPAL_LEN` は許可、`0/MAX+1` は拒否。`method_len` も同様。`u64` 比較のみなのでオーバーフロー余地はない。
+./spec/runs/icp_precompile_allowlist_entry_safe_raw-744d724a/reviews/implementation.md:8:- `MAX_PRINCIPAL_LEN` と `MAX_QUERY_METHOD_LEN` が `u64` 互換であること。
+./spec/runs/icp_precompile_allowlist_entry_safe_raw-744d724a/reviews/implementation.md:9:- `verus_spec(valid => ensures ...)` がこのリポの属性マクロで戻り値名 `valid` を正しく束縛すること。specgen 標準の固定戻り値名は `result` なので、通常の specgen 注入と混在するなら要確認。
+./spec/runs/icp_precompile_allowlist_entry_safe_raw-744d724a/contract.json:6:    "result == (target_len >= 1 && target_len <= MAX_PRINCIPAL_LEN && target_non_anonymous == 1 && method_len >= 1 && method_len <= MAX_QUERY_METHOD_LEN && method_ascii == 1)"
+./spec/runs/icp_precompile_allowlist_entry_safe_raw-744d724a/extract.json:14:  "signature": "#[cfg_attr(verus_keep_ghost, verus_spec(valid => ensures\n    valid == (\n        target_len >= 1\n        && target_len <= MAX_PRINCIPAL_LEN\n        && target_non_anonymous == 1\n        && method_len >= 1\n        && method_len <= MAX_QUERY_METHOD_LEN\n        && method_ascii == 1\n    ),\n))]\npub fn icp_precompile_allowlist_entry_safe_raw(\n    target_len: u64,\n    target_non_anonymous: u64,\n    method_len: u64,\n    method_ascii: u64,\n) -> bool",
+./spec/runs/icp_precompile_allowlist_entry_safe_raw-744d724a/extract.json:15:  "body": "{\n    target_len >= 1\n        && target_len <= MAX_PRINCIPAL_LEN\n        && target_non_anonymous == 1\n        && method_len >= 1\n        && method_len <= MAX_QUERY_METHOD_LEN\n        && method_ascii == 1\n}",
+./spec/runs/icp_precompile_allowlist_entry_safe_raw-744d724a/scenarios.json:21:      "rationale": "前提: `MAX_PRINCIPAL_LEN = 29`, `MAX_QUERY_METHOD_LEN = 64`。定義は [wrap_precompile.rs](/Users/0xhude/Desktop/ICP/Kasane/crates/verified-core/src/wrap_precompile.rs:16)。\n\n| id | target_len | target_non_anonymous | method_len | method_ascii | expected | 目的 |\n|---|---:|---:|---:|---:|---|---|\n| valid_min_bounds | 1 | 1 | 1 | 1 | true | 最小有効値 |\n| valid_max_bounds | 29 | 1 | 64 | 1 | true | 最大有効値 |\n| invalid_target_len_zero | 0 | 1 | 1 | 1 | false | target 空拒否 |\n| invalid_target_len_above_max | 30 | 1 | 1 | 1 | false | target 上限超過拒否 |\n| invalid_target_anonymous | 1 | 0 | 1 | 1 | false | anonymous target 拒否 |\n| invalid_target_flag_non_binary | 1 | 2 | 1 | 1 | false | `== 1` 厳密性 |\n| invalid_method_len_zero | 1 | 1 | 0 | 1 | false | method 空拒否 |\n| invalid_method_len_above_max | 1 | 1 | 65 | 1 | false | method 上限超過拒否 |\n| invalid_method_non_ascii | 1 | 1 | 1 | 0 | false | 非ASCII method 拒否 |\n| invalid_method_ascii_flag_non_binary | 1 | 1 | 1 | 2 | false | `== 1` 厳密性 |\n| invalid_all_flags_bad | 1 | 0 | 1 | 0 | false | 複数フラグ不正 |\n| invalid_u64_extreme_lengths | u64::MAX | 1 | u64::MAX | 1 | false | 極大長拒否 |\n\n最小採用なら上から10件で十分。`u64::MAX` はPBT/境界検証向けの追加候補。"
 ./crates/evm-db/src/chain_data/caller.rs:4:use crate::chain_data::constants::{CALLER_KEY_LEN, MAX_PRINCIPAL_LEN};
 ./crates/evm-db/src/chain_data/caller.rs:15:        if bytes.len() > MAX_PRINCIPAL_LEN {
-./spec/runs/icp_query_allowlist_entry_safe_raw-744d724a/draft.md:4:#[cfg_attr(verus_keep_ghost, verus_spec(valid => ensures
-./spec/runs/icp_query_allowlist_entry_safe_raw-744d724a/draft.md:7:        && target_len <= MAX_PRINCIPAL_LEN
-./spec/runs/icp_query_allowlist_entry_safe_raw-744d724a/draft.md:10:        && method_len <= MAX_QUERY_METHOD_LEN
-./spec/runs/icp_query_allowlist_entry_safe_raw-744d724a/draft.md:25:#[cfg_attr(verus_keep_ghost, verus_spec(valid => ensures
-./spec/runs/icp_query_allowlist_entry_safe_raw-744d724a/draft.md:28:        && target_len <= MAX_PRINCIPAL_LEN
-./spec/runs/icp_query_allowlist_entry_safe_raw-744d724a/draft.md:31:        && method_len <= MAX_QUERY_METHOD_LEN
+./spec/runs/icp_precompile_allowlist_entry_safe_raw-744d724a/draft.md:4:#[cfg_attr(verus_keep_ghost, verus_spec(valid => ensures
+./spec/runs/icp_precompile_allowlist_entry_safe_raw-744d724a/draft.md:7:        && target_len <= MAX_PRINCIPAL_LEN
+./spec/runs/icp_precompile_allowlist_entry_safe_raw-744d724a/draft.md:10:        && method_len <= MAX_QUERY_METHOD_LEN
+./spec/runs/icp_precompile_allowlist_entry_safe_raw-744d724a/draft.md:25:#[cfg_attr(verus_keep_ghost, verus_spec(valid => ensures
+./spec/runs/icp_precompile_allowlist_entry_safe_raw-744d724a/draft.md:28:        && target_len <= MAX_PRINCIPAL_LEN
+./spec/runs/icp_precompile_allowlist_entry_safe_raw-744d724a/draft.md:31:        && method_len <= MAX_QUERY_METHOD_LEN
 ./spec/runs/icp_query_update_kind_rejected_raw-4de9db5f/llm/scenarios.response.md:254:./spec/runs/icp_query_update_kind_rejected_raw-4de9db5f/llm/scenarios.response.md:179:crates/evm-core/src/wrap_precompile_tests.rs:7:    COMPACT_UNWRAP_FORMAT_VERSION, ICP_QUERY_KIND_QUERY, ICP_QUERY_KIND_UPDATE_RESERVED,
-./spec/runs/icp_query_allowlist_entry_safe_raw-744d724a/llm/scenarios.prompt.md:2:#[cfg_attr(verus_keep_ghost, verus_spec(valid => ensures
-./spec/runs/icp_query_allowlist_entry_safe_raw-744d724a/llm/scenarios.prompt.md:5:        && target_len <= MAX_PRINCIPAL_LEN
-./spec/runs/icp_query_allowlist_entry_safe_raw-744d724a/llm/scenarios.prompt.md:8:        && method_len <= MAX_QUERY_METHOD_LEN
-./spec/runs/icp_query_allowlist_entry_safe_raw-744d724a/llm/scenarios.prompt.md:20:        && target_len <= MAX_PRINCIPAL_LEN
-./spec/runs/icp_query_allowlist_entry_safe_raw-744d724a/llm/scenarios.prompt.md:23:        && method_len <= MAX_QUERY_METHOD_LEN
-./spec/runs/icp_query_allowlist_entry_safe_raw-744d724a/llm/review.prompt.md:2:#[cfg_attr(verus_keep_ghost, verus_spec(valid => ensures
-./spec/runs/icp_query_allowlist_entry_safe_raw-744d724a/llm/review.prompt.md:5:        && target_len <= MAX_PRINCIPAL_LEN
-./spec/runs/icp_query_allowlist_entry_safe_raw-744d724a/llm/review.prompt.md:8:        && method_len <= MAX_QUERY_METHOD_LEN
-./spec/runs/icp_query_allowlist_entry_safe_raw-744d724a/llm/review.prompt.md:20:        && target_len <= MAX_PRINCIPAL_LEN
-./spec/runs/icp_query_allowlist_entry_safe_raw-744d724a/llm/review.prompt.md:23:        && method_len <= MAX_QUERY_METHOD_LEN
+./spec/runs/icp_precompile_allowlist_entry_safe_raw-744d724a/llm/scenarios.prompt.md:2:#[cfg_attr(verus_keep_ghost, verus_spec(valid => ensures
+./spec/runs/icp_precompile_allowlist_entry_safe_raw-744d724a/llm/scenarios.prompt.md:5:        && target_len <= MAX_PRINCIPAL_LEN
+./spec/runs/icp_precompile_allowlist_entry_safe_raw-744d724a/llm/scenarios.prompt.md:8:        && method_len <= MAX_QUERY_METHOD_LEN
+./spec/runs/icp_precompile_allowlist_entry_safe_raw-744d724a/llm/scenarios.prompt.md:20:        && target_len <= MAX_PRINCIPAL_LEN
+./spec/runs/icp_precompile_allowlist_entry_safe_raw-744d724a/llm/scenarios.prompt.md:23:        && method_len <= MAX_QUERY_METHOD_LEN
+./spec/runs/icp_precompile_allowlist_entry_safe_raw-744d724a/llm/review.prompt.md:2:#[cfg_attr(verus_keep_ghost, verus_spec(valid => ensures
+./spec/runs/icp_precompile_allowlist_entry_safe_raw-744d724a/llm/review.prompt.md:5:        && target_len <= MAX_PRINCIPAL_LEN
+./spec/runs/icp_precompile_allowlist_entry_safe_raw-744d724a/llm/review.prompt.md:8:        && method_len <= MAX_QUERY_METHOD_LEN
+./spec/runs/icp_precompile_allowlist_entry_safe_raw-744d724a/llm/review.prompt.md:20:        && target_len <= MAX_PRINCIPAL_LEN
+./spec/runs/icp_precompile_allowlist_entry_safe_raw-744d724a/llm/review.prompt.md:23:        && method_len <= MAX_QUERY_METHOD_LEN
 ./crates/evm-db/src/chain_data/constants.rs:30:pub const MAX_PRINCIPAL_LEN: usize = 29;
-./spec/runs/icp_query_allowlist_entry_safe_raw-744d724a/llm/draft.prompt.md:2:#[cfg_attr(verus_keep_ghost, verus_spec(valid => ensures
-./spec/runs/icp_query_allowlist_entry_safe_raw-744d724a/llm/draft.prompt.md:5:        && target_len <= MAX_PRINCIPAL_LEN
-./spec/runs/icp_query_allowlist_entry_safe_raw-744d724a/llm/draft.prompt.md:8:        && method_len <= MAX_QUERY_METHOD_LEN
-./spec/runs/icp_query_allowlist_entry_safe_raw-744d724a/llm/draft.prompt.md:20:        && target_len <= MAX_PRINCIPAL_LEN
-./spec/runs/icp_query_allowlist_entry_safe_raw-744d724a/llm/draft.prompt.md:23:        && method_len <= MAX_QUERY_METHOD_LEN
-./spec/runs/icp_query_allowlist_entry_safe_raw-744d724a/llm/review.response.md:9:Verus 仕様と実装の式は一致している。境界値も自然: `target_len == 1/MAX_PRINCIPAL_LEN` は許可、`0/MAX+1` は拒否。`method_len` も同様。`u64` 比較のみなのでオーバーフロー余地はない。
-./spec/runs/icp_query_allowlist_entry_safe_raw-744d724a/llm/review.response.md:12:- `MAX_PRINCIPAL_LEN` と `MAX_QUERY_METHOD_LEN` が `u64` 互換であること。
-./spec/runs/icp_query_allowlist_entry_safe_raw-744d724a/llm/review.response.md:13:- `verus_spec(valid => ensures ...)` がこのリポの属性マクロで戻り値名 `valid` を正しく束縛すること。specgen 標準の固定戻り値名は `result` なので、通常の specgen 注入と混在するなら要確認。
-./spec/runs/icp_query_allowlist_entry_safe_raw-744d724a/llm/review.response.md:32:#[cfg_attr(verus_keep_ghost, verus_spec(valid => ensures
-./spec/runs/icp_query_allowlist_entry_safe_raw-744d724a/llm/review.response.md:35:        && target_len <= MAX_PRINCIPAL_LEN
-./spec/runs/icp_query_allowlist_entry_safe_raw-744d724a/llm/review.response.md:38:        && method_len <= MAX_QUERY_METHOD_LEN
-./spec/runs/icp_query_allowlist_entry_safe_raw-744d724a/llm/review.response.md:50:        && target_len <= MAX_PRINCIPAL_LEN
-./spec/runs/icp_query_allowlist_entry_safe_raw-744d724a/llm/review.response.md:53:        && method_len <= MAX_QUERY_METHOD_LEN
-./spec/runs/icp_query_allowlist_entry_safe_raw-744d724a/llm/review.response.md:221:Verus 仕様と実装の式は一致している。境界値も自然: `target_len == 1/MAX_PRINCIPAL_LEN` は許可、`0/MAX+1` は拒否。`method_len` も同様。`u64` 比較のみなのでオーバーフロー余地はない。
-./spec/runs/icp_query_allowlist_entry_safe_raw-744d724a/llm/review.response.md:224:- `MAX_PRINCIPAL_LEN` と `MAX_QUERY_METHOD_LEN` が `u64` 互換であること。
-./spec/runs/icp_query_allowlist_entry_safe_raw-744d724a/llm/review.response.md:225:- `verus_spec(valid => ensures ...)` がこのリポの属性マクロで戻り値名 `valid` を正しく束縛すること。specgen 標準の固定戻り値名は `result` なので、通常の specgen 注入と混在するなら要確認。
-./spec/runs/icp_query_allowlist_entry_safe_raw-744d724a/llm/draft.response.md:10:#[cfg_attr(verus_keep_ghost, verus_spec(valid => ensures
-./spec/runs/icp_query_allowlist_entry_safe_raw-744d724a/llm/draft.response.md:13:        && target_len <= MAX_PRINCIPAL_LEN
-./spec/runs/icp_query_allowlist_entry_safe_raw-744d724a/llm/draft.response.md:16:        && method_len <= MAX_QUERY_METHOD_LEN
-./spec/runs/icp_query_allowlist_entry_safe_raw-744d724a/llm/draft.response.md:46:#[cfg_attr(verus_keep_ghost, verus_spec(valid => ensures
-./spec/runs/icp_query_allowlist_entry_safe_raw-744d724a/llm/draft.response.md:49:        && target_len <= MAX_PRINCIPAL_LEN
-./spec/runs/icp_query_allowlist_entry_safe_raw-744d724a/llm/draft.response.md:52:        && method_len <= MAX_QUERY_METHOD_LEN
-./spec/runs/icp_query_allowlist_entry_safe_raw-744d724a/llm/draft.response.md:64:        && target_len <= MAX_PRINCIPAL_LEN
-./spec/runs/icp_query_allowlist_entry_safe_raw-744d724a/llm/draft.response.md:67:        && method_len <= MAX_QUERY_METHOD_LEN
-./spec/runs/icp_query_allowlist_entry_safe_raw-744d724a/llm/draft.response.md:196:#[cfg_attr(verus_keep_ghost, verus_spec(valid => ensures
-./spec/runs/icp_query_allowlist_entry_safe_raw-744d724a/llm/draft.response.md:199:        && target_len <= MAX_PRINCIPAL_LEN
-./spec/runs/icp_query_allowlist_entry_safe_raw-744d724a/llm/draft.response.md:202:        && method_len <= MAX_QUERY_METHOD_LEN
-./spec/runs/icp_query_allowlist_entry_safe_raw-744d724a/llm/scenarios.response.md:7:前提: `MAX_PRINCIPAL_LEN = 29`, `MAX_QUERY_METHOD_LEN = 64`。定義は [wrap_precompile.rs](/Users/0xhude/Desktop/ICP/Kasane/crates/verified-core/src/wrap_precompile.rs:16)。
-./spec/runs/icp_query_allowlist_entry_safe_raw-744d724a/llm/scenarios.response.md:42:#[cfg_attr(verus_keep_ghost, verus_spec(valid => ensures
-./spec/runs/icp_query_allowlist_entry_safe_raw-744d724a/llm/scenarios.response.md:45:        && target_len <= MAX_PRINCIPAL_LEN
-./spec/runs/icp_query_allowlist_entry_safe_raw-744d724a/llm/scenarios.response.md:48:        && method_len <= MAX_QUERY_METHOD_LEN
-./spec/runs/icp_query_allowlist_entry_safe_raw-744d724a/llm/scenarios.response.md:60:        && target_len <= MAX_PRINCIPAL_LEN
-./spec/runs/icp_query_allowlist_entry_safe_raw-744d724a/llm/scenarios.response.md:63:        && method_len <= MAX_QUERY_METHOD_LEN
-./spec/runs/icp_query_allowlist_entry_safe_raw-744d724a/llm/scenarios.response.md:401:spec/runs/compact_icp_query_input_safe_raw-8482ca59/status.json
-./spec/runs/icp_query_allowlist_entry_safe_raw-744d724a/llm/scenarios.response.md:402:spec/runs/compact_icp_query_input_safe_raw-8482ca59/extract.json
-./spec/runs/icp_query_allowlist_entry_safe_raw-744d724a/llm/scenarios.response.md:403:spec/runs/compact_icp_query_input_safe_raw-8482ca59/draft.md
-./spec/runs/icp_query_allowlist_entry_safe_raw-744d724a/llm/scenarios.response.md:407:spec/runs/compact_icp_query_input_safe_raw-8482ca59/llm/draft.prompt.md
-./spec/runs/icp_query_allowlist_entry_safe_raw-744d724a/llm/scenarios.response.md:408:spec/runs/compact_icp_query_input_safe_raw-8482ca59/llm/draft.response.md
+./spec/runs/icp_precompile_allowlist_entry_safe_raw-744d724a/llm/draft.prompt.md:2:#[cfg_attr(verus_keep_ghost, verus_spec(valid => ensures
+./spec/runs/icp_precompile_allowlist_entry_safe_raw-744d724a/llm/draft.prompt.md:5:        && target_len <= MAX_PRINCIPAL_LEN
+./spec/runs/icp_precompile_allowlist_entry_safe_raw-744d724a/llm/draft.prompt.md:8:        && method_len <= MAX_QUERY_METHOD_LEN
+./spec/runs/icp_precompile_allowlist_entry_safe_raw-744d724a/llm/draft.prompt.md:20:        && target_len <= MAX_PRINCIPAL_LEN
+./spec/runs/icp_precompile_allowlist_entry_safe_raw-744d724a/llm/draft.prompt.md:23:        && method_len <= MAX_QUERY_METHOD_LEN
+./spec/runs/icp_precompile_allowlist_entry_safe_raw-744d724a/llm/review.response.md:9:Verus 仕様と実装の式は一致している。境界値も自然: `target_len == 1/MAX_PRINCIPAL_LEN` は許可、`0/MAX+1` は拒否。`method_len` も同様。`u64` 比較のみなのでオーバーフロー余地はない。
+./spec/runs/icp_precompile_allowlist_entry_safe_raw-744d724a/llm/review.response.md:12:- `MAX_PRINCIPAL_LEN` と `MAX_QUERY_METHOD_LEN` が `u64` 互換であること。
+./spec/runs/icp_precompile_allowlist_entry_safe_raw-744d724a/llm/review.response.md:13:- `verus_spec(valid => ensures ...)` がこのリポの属性マクロで戻り値名 `valid` を正しく束縛すること。specgen 標準の固定戻り値名は `result` なので、通常の specgen 注入と混在するなら要確認。
+./spec/runs/icp_precompile_allowlist_entry_safe_raw-744d724a/llm/review.response.md:32:#[cfg_attr(verus_keep_ghost, verus_spec(valid => ensures
+./spec/runs/icp_precompile_allowlist_entry_safe_raw-744d724a/llm/review.response.md:35:        && target_len <= MAX_PRINCIPAL_LEN
+./spec/runs/icp_precompile_allowlist_entry_safe_raw-744d724a/llm/review.response.md:38:        && method_len <= MAX_QUERY_METHOD_LEN
+./spec/runs/icp_precompile_allowlist_entry_safe_raw-744d724a/llm/review.response.md:50:        && target_len <= MAX_PRINCIPAL_LEN
+./spec/runs/icp_precompile_allowlist_entry_safe_raw-744d724a/llm/review.response.md:53:        && method_len <= MAX_QUERY_METHOD_LEN
+./spec/runs/icp_precompile_allowlist_entry_safe_raw-744d724a/llm/review.response.md:221:Verus 仕様と実装の式は一致している。境界値も自然: `target_len == 1/MAX_PRINCIPAL_LEN` は許可、`0/MAX+1` は拒否。`method_len` も同様。`u64` 比較のみなのでオーバーフロー余地はない。
+./spec/runs/icp_precompile_allowlist_entry_safe_raw-744d724a/llm/review.response.md:224:- `MAX_PRINCIPAL_LEN` と `MAX_QUERY_METHOD_LEN` が `u64` 互換であること。
+./spec/runs/icp_precompile_allowlist_entry_safe_raw-744d724a/llm/review.response.md:225:- `verus_spec(valid => ensures ...)` がこのリポの属性マクロで戻り値名 `valid` を正しく束縛すること。specgen 標準の固定戻り値名は `result` なので、通常の specgen 注入と混在するなら要確認。
+./spec/runs/icp_precompile_allowlist_entry_safe_raw-744d724a/llm/draft.response.md:10:#[cfg_attr(verus_keep_ghost, verus_spec(valid => ensures
+./spec/runs/icp_precompile_allowlist_entry_safe_raw-744d724a/llm/draft.response.md:13:        && target_len <= MAX_PRINCIPAL_LEN
+./spec/runs/icp_precompile_allowlist_entry_safe_raw-744d724a/llm/draft.response.md:16:        && method_len <= MAX_QUERY_METHOD_LEN
+./spec/runs/icp_precompile_allowlist_entry_safe_raw-744d724a/llm/draft.response.md:46:#[cfg_attr(verus_keep_ghost, verus_spec(valid => ensures
+./spec/runs/icp_precompile_allowlist_entry_safe_raw-744d724a/llm/draft.response.md:49:        && target_len <= MAX_PRINCIPAL_LEN
+./spec/runs/icp_precompile_allowlist_entry_safe_raw-744d724a/llm/draft.response.md:52:        && method_len <= MAX_QUERY_METHOD_LEN
+./spec/runs/icp_precompile_allowlist_entry_safe_raw-744d724a/llm/draft.response.md:64:        && target_len <= MAX_PRINCIPAL_LEN
+./spec/runs/icp_precompile_allowlist_entry_safe_raw-744d724a/llm/draft.response.md:67:        && method_len <= MAX_QUERY_METHOD_LEN
+./spec/runs/icp_precompile_allowlist_entry_safe_raw-744d724a/llm/draft.response.md:196:#[cfg_attr(verus_keep_ghost, verus_spec(valid => ensures
+./spec/runs/icp_precompile_allowlist_entry_safe_raw-744d724a/llm/draft.response.md:199:        && target_len <= MAX_PRINCIPAL_LEN
+./spec/runs/icp_precompile_allowlist_entry_safe_raw-744d724a/llm/draft.response.md:202:        && method_len <= MAX_QUERY_METHOD_LEN
+./spec/runs/icp_precompile_allowlist_entry_safe_raw-744d724a/llm/scenarios.response.md:7:前提: `MAX_PRINCIPAL_LEN = 29`, `MAX_QUERY_METHOD_LEN = 64`。定義は [wrap_precompile.rs](/Users/0xhude/Desktop/ICP/Kasane/crates/verified-core/src/wrap_precompile.rs:16)。
+./spec/runs/icp_precompile_allowlist_entry_safe_raw-744d724a/llm/scenarios.response.md:42:#[cfg_attr(verus_keep_ghost, verus_spec(valid => ensures
+./spec/runs/icp_precompile_allowlist_entry_safe_raw-744d724a/llm/scenarios.response.md:45:        && target_len <= MAX_PRINCIPAL_LEN
+./spec/runs/icp_precompile_allowlist_entry_safe_raw-744d724a/llm/scenarios.response.md:48:        && method_len <= MAX_QUERY_METHOD_LEN
+./spec/runs/icp_precompile_allowlist_entry_safe_raw-744d724a/llm/scenarios.response.md:60:        && target_len <= MAX_PRINCIPAL_LEN
+./spec/runs/icp_precompile_allowlist_entry_safe_raw-744d724a/llm/scenarios.response.md:63:        && method_len <= MAX_QUERY_METHOD_LEN
+./spec/runs/icp_precompile_allowlist_entry_safe_raw-744d724a/llm/scenarios.response.md:401:spec/runs/compact_icp_query_input_safe_raw-8482ca59/status.json
+./spec/runs/icp_precompile_allowlist_entry_safe_raw-744d724a/llm/scenarios.response.md:402:spec/runs/compact_icp_query_input_safe_raw-8482ca59/extract.json
+./spec/runs/icp_precompile_allowlist_entry_safe_raw-744d724a/llm/scenarios.response.md:403:spec/runs/compact_icp_query_input_safe_raw-8482ca59/draft.md
+./spec/runs/icp_precompile_allowlist_entry_safe_raw-744d724a/llm/scenarios.response.md:407:spec/runs/compact_icp_query_input_safe_raw-8482ca59/llm/draft.prompt.md
+./spec/runs/icp_precompile_allowlist_entry_safe_raw-744d724a/llm/scenarios.response.md:408:spec/runs/compact_icp_query_input_safe_raw-8482ca59/llm/draft.response.md
 ./spec/runs/icp_query_execution_gate_safe_raw-c8c66378/extract.json:14:  "signature": "#[cfg_attr(verus_keep_ghost, verus_spec(valid => ensures\n    valid == (\n        calls_before == 0\n        && mode_allows_external == 1\n        && value_is_zero == 1\n        && parsed_input == 1\n    ),\n))]\npub fn icp_query_execution_gate_safe_raw(\n    calls_before: u64,\n    mode_allows_external: u64,\n    value_is_zero: u64,\n    parsed_input: u64,\n) -> bool",
 ./spec/runs/icp_query_execution_gate_safe_raw-c8c66378/draft.md:4:#[cfg_attr(verus_keep_ghost, verus_spec(valid => ensures
 ./spec/runs/icp_query_execution_gate_safe_raw-c8c66378/draft.md:23:#[cfg_attr(verus_keep_ghost, verus_spec(valid => ensures
-./spec/accepted/icp_query_allowlist_entry_safe_raw-744d724a.json:26:    "result == (target_len >= 1 && target_len <= MAX_PRINCIPAL_LEN && target_non_anonymous == 1 && method_len >= 1 && method_len <= MAX_QUERY_METHOD_LEN && method_ascii == 1)"
+./spec/accepted/icp_precompile_allowlist_entry_safe_raw-744d724a.json:26:    "result == (target_len >= 1 && target_len <= MAX_PRINCIPAL_LEN && target_non_anonymous == 1 && method_len >= 1 && method_len <= MAX_QUERY_METHOD_LEN && method_ascii == 1)"
 ./spec/runs/icp_query_execution_gate_safe_raw-c8c66378/llm/scenarios.prompt.md:2:#[cfg_attr(verus_keep_ghost, verus_spec(valid => ensures
 ./crates/evm-core/src/wrap_precompile_tests.rs:7:    COMPACT_UNWRAP_FORMAT_VERSION, ICP_QUERY_KIND_QUERY, ICP_QUERY_KIND_UPDATE_RESERVED,
 ./crates/evm-core/src/wrap_precompile_tests.rs:8:    MAX_PRINCIPAL_LEN, NATIVE_WITHDRAW_PRECOMPILE_ADDRESS, WEI_PER_E8S, WRAP_PRECOMPILE_ADDRESS,
@@ -299,6 +299,6 @@ exec
 ./crates/verified-core/src/stable_codec.rs:28:#[cfg_attr(verus_keep_ghost, verus_spec(valid => ensures
 ./spec/runs/icp_query_gas_observation_safe_raw-ae357da2/llm/draft.prompt.md:2:#[cfg_attr(verus_keep_ghost, verus_spec(valid => ensures
 ./spec/runs/icp_query_gas_observation_safe_raw-ae357da2/llm/review.response.md:35:#[cfg_attr(verus_keep_ghost, verus_spec(valid => ensures
-./spec/runs/icp_query_gas_observation_safe_raw-ae357da2/llm/review.response.md:296:./spec/runs/icp_query_allowlist_entry_safe_raw-744d724a/reviews/edge-case.md:9:- `verus_spec(valid => ensures ...)` がこのリポの属性マクロで戻り値名 `valid` を正しく束縛すること。specgen 標準の固定戻り値名は `result` なので、通常の specgen 注入と混在するなら要確認。
-./spec/runs/icp_query_gas_observation_safe_raw-ae357da2/llm/review.response.md:297:./spec/runs/icp_query_allowlist_entry_safe_raw-744d724a/reviews/adversarial.md:9:- `verus_spec(valid => ensures ...)` がこのリポの属性マクロで戻り値名 `valid` を正しく束縛すること。specgen 標準の固定戻り値名は `result` なので、通常の specgen 注入と混在するなら要確認。
+./spec/runs/icp_query_gas_observation_safe_raw-ae357da2/llm/review.response.md:296:./spec/runs/icp_precompile_allowlist_entry_safe_raw-744d724a/reviews/edge-case.md:9:- `verus_spec(valid => ensures ...)` がこのリポの属性マクロで戻り値名 `valid` を正しく束縛すること。specgen 標準の固定戻り値名は `result` なので、通常の specgen 注入と混在するなら要確認。
+./spec/runs/icp_query_gas_observation_safe_raw-ae357da2/llm/review.response.md:297:./spec/runs/icp_precompile_allowlist_entry_safe_raw-744d724a/reviews/adversarial.md:9:- `verus_spec(valid => ensures ...)` がこのリポの属性マクロで戻り値名 `valid` を正しく束縛すること。specgen 標準の固定戻り値名は `result` なので、通常の specgen 注入と混在するなら要確認。
 ./spec/runs/i

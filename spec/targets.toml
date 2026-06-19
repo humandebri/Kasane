@@ -351,12 +351,12 @@ semantic_hash = "18e4342ead1acdbd2d672efcd2aab4913b2b8ee7904adc8dab1a8d60765c39b
 created_at = "2026-05-22T07:10:11Z"
 
 [[targets]]
-display_name = "icp_query_allowlist_entry_safe_raw"
-function = "icp_query_allowlist_entry_safe_raw"
-function_path = "icp_query_allowlist_entry_safe_raw"
+display_name = "icp_precompile_allowlist_entry_safe_raw"
+function = "icp_precompile_allowlist_entry_safe_raw"
+function_path = "icp_precompile_allowlist_entry_safe_raw"
 file = "crates/verified-core/src/wrap_precompile.rs"
 target_id = "ade0c024a054ab82f1e30df9909650950d6690deadf18e3328dbc2e380ab6bed"
-slug = "icp_query_allowlist_entry_safe_raw-744d724a"
+slug = "icp_precompile_allowlist_entry_safe_raw-744d724a"
 source_hash = "744d724ab51703c74b38bfa31261e65bbc8b99e0335effaf53e81ab499a5ec9c"
 semantic_hash = "0b6b4cea57f29b85514b0aea66d697fd2e3f041a1e3918ce19d3d182c39a70f7"
 created_at = "2026-05-22T07:10:11Z"

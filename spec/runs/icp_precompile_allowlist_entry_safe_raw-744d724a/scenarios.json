@@ -1,7 +1,7 @@
 {
-  "target": "icp_query_allowlist_entry_safe_raw",
+  "target": "icp_precompile_allowlist_entry_safe_raw",
   "target_id": "ade0c024a054ab82f1e30df9909650950d6690deadf18e3328dbc2e380ab6bed",
-  "slug": "icp_query_allowlist_entry_safe_raw-744d724a",
+  "slug": "icp_precompile_allowlist_entry_safe_raw-744d724a",
   "git_commit": "f4f6f494d8be02b8375b85c1b1cfb768376f6dff",
   "worktree_dirty": false,
   "source_hash": "744d724ab51703c74b38bfa31261e65bbc8b99e0335effaf53e81ab499a5ec9c",
@@ -9,7 +9,7 @@
   "tool_version": "0.1.0",
   "scenarios": [
     {
-      "id": "icp_query_allowlist_entry_safe_raw-nominal",
+      "id": "icp_precompile_allowlist_entry_safe_raw-nominal",
       "kind": "example",
       "executable": false,
       "inputs": {},

@@ -3,7 +3,7 @@ service : (opt InitArgs) -> {
   rpc_eth_block_number : () -> (nat64) query;
   rpc_eth_call_object_at : (RpcCallObjectView, RpcBlockTagView) -> (
       Result_19,
-    ) query;
+    ) composite_query;
   rpc_eth_chain_id : () -> (nat64) query;
   rpc_eth_estimate_gas_object_at : (RpcCallObjectView, RpcBlockTagView) -> (
       Result_21,

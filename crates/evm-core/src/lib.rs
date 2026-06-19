@@ -8,6 +8,7 @@ pub(crate) mod constants;
 pub mod db_adapter;
 pub mod export;
 pub mod hash;
+pub mod kasane_precompiles;
 pub mod revm_db;
 pub mod revm_exec;
 pub mod selfdestruct;
@@ -16,7 +17,6 @@ pub(crate) mod time;
 pub(crate) mod trie_commit;
 pub mod tx_decode;
 pub mod tx_submit;
-pub mod wrap_precompile;
 
 pub fn fee_recipient() -> [u8; 20] {
     constants::FEE_RECIPIENT.into_array()

@@ -208,7 +208,7 @@ query_pp() {
   local encoded
   local hex
   encoded="$(didc encode -d "${did_file}" -m "${method}" "${args}")"
-  hex="$(icp canister call --query -e "${NETWORK}" --identity "${ICP_IDENTITY_NAME}" --args-format hex -o hex "${canister}" "${method}" "${encoded}")"
+  hex="$(dfx canister call --query --network "${NETWORK}" --identity "${ICP_IDENTITY_NAME}" --candid "${did_file}" --type raw --output raw "${canister}" "${method}" "${encoded}")"
   didc decode -f hex -d "${did_file}" -m "${method}" "${hex}" | python -c 'import sys; print(" ".join(sys.stdin.read().split()))'
 }
 

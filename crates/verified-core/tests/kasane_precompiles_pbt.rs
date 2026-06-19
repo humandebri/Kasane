@@ -1,15 +1,15 @@
-//! どこで: wrap precompile PBT / 何を: compact入力・log・gas policy / なぜ: intent decode仕様の取り違えを検出するため
+//! どこで: Kasane precompile PBT / 何を: compact入力・log・gas policy / なぜ: intent decode仕様の取り違えを検出するため
 
 use proptest::prelude::*;
-use verified_core::wrap_precompile::{
+use verified_core::kasane_precompiles::{
     compact_icp_query_input_safe_raw, compact_native_withdraw_input_safe_raw,
     compact_principal_slot_safe_raw, compact_unwrap_input_safe_raw,
     icp_query_execution_gate_safe_raw, icp_query_gas_observation_safe_raw,
     icp_query_update_kind_rejected_raw, precompile_extra_gas_policy_safe_raw,
     precompile_log_shape_safe_raw, wrap_precompile_gas_observation_safe_raw,
     COMPACT_FORMAT_VERSION, COMPACT_NATIVE_WITHDRAW_INPUT_LEN, COMPACT_UNWRAP_INPUT_LEN,
-    ICP_QUERY_BASE_GAS, ICP_QUERY_INPUT_BYTE_GAS, ICP_QUERY_KIND_QUERY,
-    ICP_QUERY_KIND_UPDATE_RESERVED, ICP_QUERY_PRECOMPILE_ADDRESS_CODE, ICP_QUERY_REPLY_BYTE_GAS,
+    ICP_PRECOMPILE_KIND_UPDATE, ICP_QUERY_BASE_GAS, ICP_QUERY_INPUT_BYTE_GAS, ICP_QUERY_KIND_QUERY,
+    ICP_QUERY_PRECOMPILE_ADDRESS_CODE, ICP_QUERY_REPLY_BYTE_GAS,
     MAX_ICP_QUERY_COMBINED_LEN_WITH_EXACT_GAS, MAX_PRINCIPAL_LEN, MAX_QUERY_METHOD_LEN,
     NATIVE_WITHDRAW_PRECOMPILE_ADDRESS_CODE, UNWRAP_BURN_GAS_SURCHARGE,
     WRAP_PRECOMPILE_ADDRESS_CODE,
@@ -137,12 +137,12 @@ proptest! {
     }
 
     #[test]
-    fn pbt_icp_query_update_kind_stays_reserved(
+    fn pbt_icp_query_rejects_update_kind(
         kind in 0u64..4,
     ) {
         prop_assert_eq!(
             icp_query_update_kind_rejected_raw(kind),
-            kind == ICP_QUERY_KIND_UPDATE_RESERVED
+            kind == ICP_PRECOMPILE_KIND_UPDATE
         );
     }
 
@@ -279,14 +279,14 @@ proptest! {
     }
 
     #[test]
-    fn pbt_icp_query_allowlist_entry_requires_bounded_target_and_ascii_method(
+    fn pbt_icp_precompile_allowlist_entry_requires_bounded_target_and_ascii_method(
         target_len in 0u64..40,
         target_non_anonymous in 0u64..3,
         method_len in 0u64..80,
         method_ascii in 0u64..3,
     ) {
         prop_assert_eq!(
-            verified_core::wrap_precompile::icp_query_allowlist_entry_safe_raw(
+            verified_core::kasane_precompiles::icp_precompile_allowlist_entry_safe_raw(
                 target_len,
                 target_non_anonymous,
                 method_len,

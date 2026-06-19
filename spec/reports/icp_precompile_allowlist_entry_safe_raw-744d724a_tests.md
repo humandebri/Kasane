@@ -1,4 +1,4 @@
-# test evidence: icp_query_allowlist_entry_safe_raw-744d724a
+# test evidence: icp_precompile_allowlist_entry_safe_raw-744d724a
 
 - git_commit: f4f6f494d8be02b8375b85c1b1cfb768376f6dff
 - worktree_dirty: false
@@ -10,4 +10,4 @@
 - result: success
 
 ## cases
-- icp_query_allowlist_entry_safe_raw-nominal gateway allowlist validation uses verified model for target and method boundaries exit_code=0 result=success
+- icp_precompile_allowlist_entry_safe_raw-nominal gateway allowlist validation uses verified model for target and method boundaries exit_code=0 result=success

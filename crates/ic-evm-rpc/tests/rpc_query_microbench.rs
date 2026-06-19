@@ -10,7 +10,7 @@ use alloy_signer::SignerSync;
 use alloy_signer_local::PrivateKeySigner;
 use evm_core::chain;
 use evm_core::hash;
-use evm_core::wrap_precompile::WRAP_PRECOMPILE_ADDRESS;
+use evm_core::kasane_precompiles::WRAP_PRECOMPILE_ADDRESS;
 use evm_db::chain_data::constants::CHAIN_ID;
 use evm_db::stable_state::{init_stable_state, set_runtime_config, with_state_mut};
 use evm_db::types::keys::{make_account_key, make_storage_key};

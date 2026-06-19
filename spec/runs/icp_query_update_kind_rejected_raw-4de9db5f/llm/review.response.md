@@ -210,11 +210,11 @@ exec
 ./spec/targets.toml:333:function = "icp_query_update_kind_rejected_raw"
 ./spec/targets.toml:334:function_path = "icp_query_update_kind_rejected_raw"
 ./spec/targets.toml:337:slug = "icp_query_update_kind_rejected_raw-4de9db5f"
-./spec/runs/icp_query_allowlist_entry_safe_raw-744d724a/llm/scenarios.response.md:350:spec/runs/icp_query_update_kind_rejected_raw-4de9db5f/status.json
-./spec/runs/icp_query_allowlist_entry_safe_raw-744d724a/llm/scenarios.response.md:351:spec/runs/icp_query_update_kind_rejected_raw-4de9db5f/extract.json
-./spec/runs/icp_query_allowlist_entry_safe_raw-744d724a/llm/scenarios.response.md:352:spec/runs/icp_query_update_kind_rejected_raw-4de9db5f/draft.md
-./spec/runs/icp_query_allowlist_entry_safe_raw-744d724a/llm/scenarios.response.md:353:spec/runs/icp_query_update_kind_rejected_raw-4de9db5f/llm/draft.prompt.md
-./spec/runs/icp_query_allowlist_entry_safe_raw-744d724a/llm/scenarios.response.md:354:spec/runs/icp_query_update_kind_rejected_raw-4de9db5f/llm/draft.response.md
+./spec/runs/icp_precompile_allowlist_entry_safe_raw-744d724a/llm/scenarios.response.md:350:spec/runs/icp_query_update_kind_rejected_raw-4de9db5f/status.json
+./spec/runs/icp_precompile_allowlist_entry_safe_raw-744d724a/llm/scenarios.response.md:351:spec/runs/icp_query_update_kind_rejected_raw-4de9db5f/extract.json
+./spec/runs/icp_precompile_allowlist_entry_safe_raw-744d724a/llm/scenarios.response.md:352:spec/runs/icp_query_update_kind_rejected_raw-4de9db5f/draft.md
+./spec/runs/icp_precompile_allowlist_entry_safe_raw-744d724a/llm/scenarios.response.md:353:spec/runs/icp_query_update_kind_rejected_raw-4de9db5f/llm/draft.prompt.md
+./spec/runs/icp_precompile_allowlist_entry_safe_raw-744d724a/llm/scenarios.response.md:354:spec/runs/icp_query_update_kind_rejected_raw-4de9db5f/llm/draft.response.md
 ./spec/runs/icp_query_update_kind_rejected_raw-4de9db5f/extract.json:2:  "target": "icp_query_update_kind_rejected_raw",
 ./spec/runs/icp_query_update_kind_rejected_raw-4de9db5f/extract.json:4:    "display_name": "icp_query_update_kind_rejected_raw",
 ./spec/runs/icp_query_update_kind_rejected_raw-4de9db5f/extract.json:5:    "function": "icp_query_update_kind_rejected_raw",
@@ -253,11 +253,11 @@ exec
 ./spec/runs/icp_query_update_kind_rejected_raw-4de9db5f/llm/scenarios.response.md:68:pub fn icp_query_update_kind_rejected_raw(kind: u64) -> bool
 ./spec/runs/icp_query_update_kind_rejected_raw-4de9db5f/llm/scenarios.response.md:70:    kind == ICP_QUERY_KIND_UPDATE_RESERVED
 ./spec/runs/icp_query_update_kind_rejected_raw-4de9db5f/llm/scenarios.response.md:197:/bin/zsh -lc 'rg -n "ICP_QUERY_KIND_UPDATE_RESERVED|icp_query_update_kind_rejected_raw" .' in /Users/0xhude/Desktop/ICP/Kasane
-./spec/runs/icp_query_update_kind_rejected_raw-4de9db5f/llm/scenarios.response.md:199:./spec/runs/icp_query_allowlist_entry_safe_raw-744d724a/llm/scenarios.response.md:350:spec/runs/icp_query_update_kind_rejected_raw-4de9db5f/status.json
-./spec/runs/icp_query_update_kind_rejected_raw-4de9db5f/llm/scenarios.response.md:200:./spec/runs/icp_query_allowlist_entry_safe_raw-744d724a/llm/scenarios.response.md:351:spec/runs/icp_query_update_kind_rejected_raw-4de9db5f/extract.json
-./spec/runs/icp_query_update_kind_rejected_raw-4de9db5f/llm/scenarios.response.md:201:./spec/runs/icp_query_allowlist_entry_safe_raw-744d724a/llm/scenarios.response.md:352:spec/runs/icp_query_update_kind_rejected_raw-4de9db5f/draft.md
-./spec/runs/icp_query_update_kind_rejected_raw-4de9db5f/llm/scenarios.response.md:202:./spec/runs/icp_query_allowlist_entry_safe_raw-744d724a/llm/scenarios.response.md:353:spec/runs/icp_query_update_kind_rejected_raw-4de9db5f/llm/draft.prompt.md
-./spec/runs/icp_query_update_kind_rejected_raw-4de9db5f/llm/scenarios.response.md:203:./spec/runs/icp_query_allowlist_entry_safe_raw-744d724a/llm/scenarios.response.md:354:spec/runs/icp_query_update_kind_rejected_raw-4de9db5f/llm/draft.response.md
+./spec/runs/icp_query_update_kind_rejected_raw-4de9db5f/llm/scenarios.response.md:199:./spec/runs/icp_precompile_allowlist_entry_safe_raw-744d724a/llm/scenarios.response.md:350:spec/runs/icp_query_update_kind_rejected_raw-4de9db5f/status.json
+./spec/runs/icp_query_update_kind_rejected_raw-4de9db5f/llm/scenarios.response.md:200:./spec/runs/icp_precompile_allowlist_entry_safe_raw-744d724a/llm/scenarios.response.md:351:spec/runs/icp_query_update_kind_rejected_raw-4de9db5f/extract.json
+./spec/runs/icp_query_update_kind_rejected_raw-4de9db5f/llm/scenarios.response.md:201:./spec/runs/icp_precompile_allowlist_entry_safe_raw-744d724a/llm/scenarios.response.md:352:spec/runs/icp_query_update_kind_rejected_raw-4de9db5f/draft.md
+./spec/runs/icp_query_update_kind_rejected_raw-4de9db5f/llm/scenarios.response.md:202:./spec/runs/icp_precompile_allowlist_entry_safe_raw-744d724a/llm/scenarios.response.md:353:spec/runs/icp_query_update_kind_rejected_raw-4de9db5f/llm/draft.prompt.md
+./spec/runs/icp_query_update_kind_rejected_raw-4de9db5f/llm/scenarios.response.md:203:./spec/runs/icp_precompile_allowlist_entry_safe_raw-744d724a/llm/scenarios.response.md:354:spec/runs/icp_query_update_kind_rejected_raw-4de9db5f/llm/draft.response.md
 ./spec/runs/icp_query_update_kind_rejected_raw-4de9db5f/llm/scenarios.response.md:204:./spec/targets.toml:332:display_name = "icp_query_update_kind_rejected_raw"
 ./spec/runs/icp_query_update_kind_rejected_raw-4de9db5f/llm/scenarios.response.md:205:./spec/targets.toml:333:function = "icp_query_update_kind_rejected_raw"
 ./spec/runs/icp_query_update_kind_rejected_raw-4de9db5f/llm/scenarios.response.md:206:./spec/targets.toml:334:function_path = "icp_query_update_kind_rejected_raw"

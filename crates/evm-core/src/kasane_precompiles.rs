@@ -1,7 +1,7 @@
-//! どこで: EVM custom precompile / 何を: unwrap request の起票 / なぜ: wrap/vault 連携を tx 内で確定するため
+//! どこで: EVM custom precompile / 何を: Kasane専用precompile群 / なぜ: EVM tx内でIC連携intentを確定するため
 
 use crate::hash;
-use evm_db::chain_data::constants::CHAIN_ID;
+use evm_db::chain_data::constants::{CHAIN_ID, MAX_LOG_DATA};
 use evm_db::chain_data::receipt::LogEntry;
 use evm_db::stable_state::current_runtime_config;
 use revm::{
@@ -15,13 +15,14 @@ use revm::{
 };
 use std::boxed::Box;
 use std::cell::RefCell;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 // 予約レンジ方針:
 // - 0x00000000000000000000000000000000ffff0001: ICRC wrapped token unwrap
 // - 0x00000000000000000000000000000000ffff0002: Kasane native ICP withdrawal
 // - 0x00000000000000000000000000000000ffff0003: ICP query precompile
-// - 0x00000000000000000000000000000000ffff0004+: 将来拡張用の予約スロット
+// - 0x00000000000000000000000000000000ffff0004: ICP update intent precompile
+// - 0x00000000000000000000000000000000ffff0005+: 将来拡張用の予約スロット
 pub const WRAP_PRECOMPILE_ADDRESS: Address = Address::new([
     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xff, 0xff, 0x00, 0x01,
 ]);
@@ -31,14 +32,22 @@ pub const NATIVE_WITHDRAW_PRECOMPILE_ADDRESS: Address = Address::new([
 pub const ICP_QUERY_PRECOMPILE_ADDRESS: Address = Address::new([
     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xff, 0xff, 0x00, 0x03,
 ]);
+pub const ICP_UPDATE_INTENT_PRECOMPILE_ADDRESS: Address = Address::new([
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xff, 0xff, 0x00, 0x04,
+]);
 const MAX_FIELD_LEN: usize = 120;
 const MAX_PRINCIPAL_LEN: usize = 29;
 const MAX_QUERY_METHOD_LEN: usize = 64;
+const MAX_ICP_UPDATE_ARG_LEN: usize = 3_997;
+const MAX_ICP_QUERY_ARG_LEN: usize = MAX_ICP_UPDATE_ARG_LEN;
+const _: () = assert!(
+    1 + MAX_PRINCIPAL_LEN + 1 + MAX_QUERY_METHOD_LEN + 4 + MAX_ICP_UPDATE_ARG_LEN <= MAX_LOG_DATA
+);
 const COMPACT_UNWRAP_FORMAT_VERSION: u8 = 1;
 const COMPACT_NATIVE_WITHDRAW_FORMAT_VERSION: u8 = 1;
-const COMPACT_ICP_QUERY_FORMAT_VERSION: u8 = 1;
+const COMPACT_ICP_PRECOMPILE_FORMAT_VERSION: u8 = 1;
 const ICP_QUERY_KIND_QUERY: u8 = 0;
-const ICP_QUERY_KIND_UPDATE_RESERVED: u8 = 1;
+const ICP_PRECOMPILE_KIND_UPDATE: u8 = 1;
 const COMPACT_PRINCIPAL_FIELD_LEN: usize = 1 + MAX_PRINCIPAL_LEN;
 const COMPACT_UNWRAP_INPUT_LEN: usize = 1 + COMPACT_PRINCIPAL_FIELD_LEN * 2 + 32;
 const COMPACT_NATIVE_WITHDRAW_INPUT_LEN: usize = 1 + COMPACT_PRINCIPAL_FIELD_LEN;
@@ -55,6 +64,9 @@ const FIXED_PRECOMPILE_GAS_RATIO_DENOMINATOR: u32 = 100;
 const ICP_QUERY_BASE_GAS: u64 = 50_000;
 const ICP_QUERY_INPUT_BYTE_GAS: u64 = 16;
 const ICP_QUERY_REPLY_BYTE_GAS: u64 = 8;
+const ICP_UPDATE_BASE_GAS: u64 = 80_000;
+const ICP_UPDATE_INPUT_BYTE_GAS: u64 = 16;
+const ICP_UPDATE_LOG_BYTE_GAS: u64 = 8;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PrecompileProfileEntry {
@@ -97,6 +109,13 @@ pub struct NativeWithdrawIntent {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct IcpQueryRequest {
+    pub target: Vec<u8>,
+    pub method: String,
+    pub arg: Vec<u8>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct IcpUpdateIntent {
     pub target: Vec<u8>,
     pub method: String,
     pub arg: Vec<u8>,
@@ -183,15 +202,17 @@ impl Drop for IcpQueryContextGuard {
 }
 
 #[derive(Clone, Debug)]
-pub struct WrapPrecompileProvider {
+pub struct KasanePrecompileProvider {
     inner: EthPrecompiles,
     access: PrecompileAccess,
+    update_allowlist: BTreeSet<Vec<u8>>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct PrecompileAccess {
     pub wrap_side_effects: bool,
     pub icp_query: bool,
+    pub icp_update_intent: bool,
 }
 
 impl PrecompileAccess {
@@ -199,6 +220,7 @@ impl PrecompileAccess {
         Self {
             wrap_side_effects: false,
             icp_query: false,
+            icp_update_intent: false,
         }
     }
 
@@ -206,6 +228,7 @@ impl PrecompileAccess {
         Self {
             wrap_side_effects: true,
             icp_query: false,
+            icp_update_intent: true,
         }
     }
 
@@ -213,20 +236,29 @@ impl PrecompileAccess {
         Self {
             wrap_side_effects: false,
             icp_query: true,
+            icp_update_intent: false,
         }
     }
 }
 
-impl WrapPrecompileProvider {
+impl KasanePrecompileProvider {
     pub fn new(access: PrecompileAccess) -> Self {
+        Self::with_update_allowlist(access, BTreeSet::new())
+    }
+
+    pub fn with_update_allowlist(
+        access: PrecompileAccess,
+        update_allowlist: BTreeSet<Vec<u8>>,
+    ) -> Self {
         Self {
             inner: EthPrecompiles::default(),
             access,
+            update_allowlist,
         }
     }
 }
 
-impl<CTX> PrecompileProvider<CTX> for WrapPrecompileProvider
+impl<CTX> PrecompileProvider<CTX> for KasanePrecompileProvider
 where
     CTX: ContextTr<Cfg: Cfg>,
 {
@@ -261,6 +293,12 @@ where
                 inputs,
                 self.access.icp_query,
             )),
+            ICP_UPDATE_INTENT_PRECOMPILE_ADDRESS => Some(run_icp_update_intent_precompile(
+                context,
+                inputs,
+                self.access.icp_update_intent,
+                &self.update_allowlist,
+            )),
             _ => self.inner.run(context, inputs)?,
         };
 
@@ -286,6 +324,7 @@ where
             WRAP_PRECOMPILE_ADDRESS,
             NATIVE_WITHDRAW_PRECOMPILE_ADDRESS,
             ICP_QUERY_PRECOMPILE_ADDRESS,
+            ICP_UPDATE_INTENT_PRECOMPILE_ADDRESS,
         ];
         addresses.extend(self.inner.warm_addresses());
         Box::new(addresses.into_iter())
@@ -295,6 +334,7 @@ where
         *address == WRAP_PRECOMPILE_ADDRESS
             || *address == NATIVE_WITHDRAW_PRECOMPILE_ADDRESS
             || *address == ICP_QUERY_PRECOMPILE_ADDRESS
+            || *address == ICP_UPDATE_INTENT_PRECOMPILE_ADDRESS
             || self.inner.contains(address)
     }
 }
@@ -504,6 +544,70 @@ fn icp_query_return(input_len: usize, output: Vec<u8>, gas_limit: u64) -> Interp
     out
 }
 
+fn run_icp_update_intent_precompile<CTX: ContextTr>(
+    context: &mut CTX,
+    inputs: &CallInputs,
+    allow_external: bool,
+    update_allowlist: &BTreeSet<Vec<u8>>,
+) -> InterpreterResult {
+    let gas_limit = inputs.gas_limit;
+    if !allow_external {
+        return precompile_fail(
+            context,
+            gas_limit,
+            "ic_update.precompile.external_disallowed",
+        );
+    }
+    if inputs.is_static {
+        return precompile_fail(context, gas_limit, "ic_update.static_disallowed");
+    }
+    if !inputs.call_value().is_zero() {
+        return precompile_fail(context, gas_limit, "ic_update.value_disallowed");
+    }
+
+    let input = inputs.input.bytes(context);
+    let intent = match parse_icp_update_intent_input(&input) {
+        Ok(value) => value,
+        Err(code) => return precompile_fail(context, gas_limit, code),
+    };
+    if !update_allowlist.contains(&precompile_allow_key(&intent.target, &intent.method)) {
+        return precompile_fail(context, gas_limit, "ic_update.allowlist_miss");
+    }
+    let log_data = encode_icp_update_intent_log_data(&intent);
+    let log_data_len = log_data.len();
+    let log = Log::new_unchecked(
+        ICP_UPDATE_INTENT_PRECOMPILE_ADDRESS,
+        vec![B256::from(icp_update_intent_event_topic0())],
+        log_data.into(),
+    );
+    context.journal_mut().log(log);
+
+    let mut out = InterpreterResult {
+        result: InstructionResult::Return,
+        gas: Gas::new(gas_limit),
+        output: Bytes::new(),
+    };
+    let estimated_gas = ICP_UPDATE_BASE_GAS
+        .saturating_add(ICP_UPDATE_INPUT_BYTE_GAS.saturating_mul(input.len() as u64))
+        .saturating_add(ICP_UPDATE_LOG_BYTE_GAS.saturating_mul(log_data_len as u64));
+    if !out.gas.record_cost(estimated_gas) {
+        return InterpreterResult {
+            result: InstructionResult::PrecompileOOG,
+            gas: Gas::new(gas_limit),
+            output: Bytes::new(),
+        };
+    }
+    out
+}
+
+pub fn precompile_allow_key(target: &[u8], method: &str) -> Vec<u8> {
+    let mut out = Vec::with_capacity(1 + target.len() + method.len());
+    out.push(target.len() as u8);
+    out.extend_from_slice(target);
+    out.extend_from_slice(method.as_bytes());
+    out
+}
+
 fn precompile_fail<CTX: ContextTr>(
     context: &mut CTX,
     gas_limit: u64,
@@ -568,11 +672,11 @@ fn parse_icp_query_input(input: &[u8]) -> Result<IcpQueryRequest, &'static str> 
     }
     let mut offset = 0usize;
     let version = read_u8(input, &mut offset).ok_or("ic_query.arg.abi_invalid")?;
-    if version != COMPACT_ICP_QUERY_FORMAT_VERSION {
+    if version != COMPACT_ICP_PRECOMPILE_FORMAT_VERSION {
         return Err("ic_query.arg.version_invalid");
     }
     let kind = read_u8(input, &mut offset).ok_or("ic_query.arg.abi_invalid")?;
-    if kind == ICP_QUERY_KIND_UPDATE_RESERVED {
+    if kind == ICP_PRECOMPILE_KIND_UPDATE {
         return Err("ic_query.update_unimplemented");
     }
     if kind != ICP_QUERY_KIND_QUERY {
@@ -589,6 +693,9 @@ fn parse_icp_query_input(input: &[u8]) -> Result<IcpQueryRequest, &'static str> 
         .map_err(|_| "ic_query.method_invalid")?
         .to_string();
     let arg_len = read_u32_be(input, &mut offset).ok_or("ic_query.arg.abi_invalid")? as usize;
+    if arg_len > MAX_ICP_QUERY_ARG_LEN {
+        return Err("ic_query.arg.too_large");
+    }
     let arg = read_exact(input, &mut offset, arg_len)
         .ok_or("ic_query.arg.abi_invalid")?
         .to_vec();
@@ -596,6 +703,49 @@ fn parse_icp_query_input(input: &[u8]) -> Result<IcpQueryRequest, &'static str> 
         return Err("ic_query.arg.abi_invalid");
     }
     Ok(IcpQueryRequest {
+        target,
+        method,
+        arg,
+    })
+}
+
+fn parse_icp_update_intent_input(input: &[u8]) -> Result<IcpUpdateIntent, &'static str> {
+    if input.len() < 8 {
+        return Err("ic_update.arg.abi_invalid");
+    }
+    let mut offset = 0usize;
+    let version = read_u8(input, &mut offset).ok_or("ic_update.arg.abi_invalid")?;
+    if version != COMPACT_ICP_PRECOMPILE_FORMAT_VERSION {
+        return Err("ic_update.arg.version_invalid");
+    }
+    let kind = read_u8(input, &mut offset).ok_or("ic_update.arg.abi_invalid")?;
+    if kind != ICP_PRECOMPILE_KIND_UPDATE {
+        return Err("ic_update.kind_invalid");
+    }
+    let target = read_ic_update_principal(input, &mut offset)?;
+    let method_len = read_u8(input, &mut offset).ok_or("ic_update.arg.abi_invalid")? as usize;
+    if method_len == 0 || method_len > MAX_QUERY_METHOD_LEN {
+        return Err("ic_update.method_invalid");
+    }
+    let method_bytes =
+        read_exact(input, &mut offset, method_len).ok_or("ic_update.method_invalid")?;
+    if !method_bytes.is_ascii() {
+        return Err("ic_update.method_invalid");
+    }
+    let method = std::str::from_utf8(method_bytes)
+        .map_err(|_| "ic_update.method_invalid")?
+        .to_string();
+    let arg_len = read_u32_be(input, &mut offset).ok_or("ic_update.arg.abi_invalid")? as usize;
+    if arg_len > MAX_ICP_UPDATE_ARG_LEN {
+        return Err("ic_update.arg.too_large");
+    }
+    let arg = read_exact(input, &mut offset, arg_len)
+        .ok_or("ic_update.arg.abi_invalid")?
+        .to_vec();
+    if offset != input.len() {
+        return Err("ic_update.arg.abi_invalid");
+    }
+    Ok(IcpUpdateIntent {
         target,
         method,
         arg,
@@ -832,6 +982,18 @@ fn encode_native_withdraw_log_data(intent: &NativeWithdrawIntent) -> Vec<u8> {
     out
 }
 
+fn encode_icp_update_intent_log_data(intent: &IcpUpdateIntent) -> Vec<u8> {
+    let mut out =
+        Vec::with_capacity(6 + intent.target.len() + intent.method.len() + intent.arg.len());
+    out.push(intent.target.len() as u8);
+    out.extend_from_slice(&intent.target);
+    out.push(intent.method.len() as u8);
+    out.extend_from_slice(intent.method.as_bytes());
+    out.extend_from_slice(&(intent.arg.len() as u32).to_be_bytes());
+    out.extend_from_slice(&intent.arg);
+    out
+}
+
 pub fn unwrap_intent_from_log(log: &LogEntry) -> Option<UnwrapIntent> {
     if log.address.into_array() != WRAP_PRECOMPILE_ADDRESS.into_array() {
         return None;
@@ -876,12 +1038,49 @@ pub fn native_withdraw_intent_from_log(log: &LogEntry) -> Option<NativeWithdrawI
     })
 }
 
+pub fn icp_update_intent_from_log(log: &LogEntry) -> Option<IcpUpdateIntent> {
+    if log.address.into_array() != ICP_UPDATE_INTENT_PRECOMPILE_ADDRESS.into_array() {
+        return None;
+    }
+    let topics = log.topics();
+    if topics.len() != 1 || topics[0].0 != icp_update_intent_event_topic0() {
+        return None;
+    }
+    let data = log.data.data.as_ref();
+    let mut offset = 0usize;
+    let target = read_len_prefixed(data, &mut offset)?;
+    if target.len() > MAX_PRINCIPAL_LEN {
+        return None;
+    }
+    let method = read_len_prefixed(data, &mut offset)?;
+    if method.len() > MAX_QUERY_METHOD_LEN || !method.is_ascii() {
+        return None;
+    }
+    let arg_len = read_u32_be(data, &mut offset)? as usize;
+    if arg_len > MAX_ICP_UPDATE_ARG_LEN {
+        return None;
+    }
+    let arg = read_exact(data, &mut offset, arg_len)?.to_vec();
+    if offset != data.len() {
+        return None;
+    }
+    Some(IcpUpdateIntent {
+        target,
+        method: String::from_utf8(method).ok()?,
+        arg,
+    })
+}
+
 fn wrap_event_topic0() -> [u8; 32] {
     hash::keccak256(b"KasaneUnwrapRequest(bytes)")
 }
 
 fn native_withdraw_event_topic0() -> [u8; 32] {
     hash::keccak256(b"KasaneNativeWithdrawalRequest(bytes)")
+}
+
+fn icp_update_intent_event_topic0() -> [u8; 32] {
+    hash::keccak256(b"KasaneIcpUpdateIntent(bytes)")
 }
 
 fn approval_event_topic0() -> [u8; 32] {
@@ -922,6 +1121,16 @@ fn read_query_principal(input: &[u8], offset: &mut usize) -> Result<Vec<u8>, &'s
     read_exact(input, offset, len)
         .map(|bytes| bytes.to_vec())
         .ok_or("ic_query.arg.abi_invalid")
+}
+
+fn read_ic_update_principal(input: &[u8], offset: &mut usize) -> Result<Vec<u8>, &'static str> {
+    let len = read_u8(input, offset).ok_or("ic_update.arg.abi_invalid")? as usize;
+    if !is_valid_principal_bytes(len) {
+        return Err("ic_update.target_invalid");
+    }
+    read_exact(input, offset, len)
+        .map(|bytes| bytes.to_vec())
+        .ok_or("ic_update.arg.abi_invalid")
 }
 
 fn read_u8(data: &[u8], offset: &mut usize) -> Option<u8> {
@@ -1044,5 +1253,5 @@ pub fn clear_precompile_profile() {
 }
 
 #[cfg(test)]
-#[path = "wrap_precompile_tests.rs"]
+#[path = "kasane_precompiles_tests.rs"]
 mod tests;

@@ -10,6 +10,7 @@ use alloy_signer::SignerSync;
 use alloy_signer_local::PrivateKeySigner;
 use evm_core::chain::{self, TxIn};
 use evm_core::hash;
+use evm_core::kasane_precompiles::ICP_QUERY_PRECOMPILE_ADDRESS;
 use evm_core::tx_decode::IcSyntheticTxInput;
 use evm_db::chain_data::constants::{CHAIN_ID, MAX_TX_SIZE};
 use evm_db::chain_data::receipt::log_entry_from_parts;
@@ -22,11 +23,12 @@ use evm_db::types::keys::{make_account_key, make_code_key, make_storage_key};
 use evm_db::types::values::{AccountVal, CodeVal, U256Val};
 use evm_db::Storable;
 use ic_evm_rpc::{
-    rpc_eth_call_object, rpc_eth_call_object_at, rpc_eth_call_rawtx, rpc_eth_estimate_gas_object,
-    rpc_eth_estimate_gas_object_at, rpc_eth_fee_history, rpc_eth_gas_price, rpc_eth_get_balance,
-    rpc_eth_get_block_by_number_with_status, rpc_eth_get_block_number_by_hash, rpc_eth_get_code,
-    rpc_eth_get_logs_paged, rpc_eth_get_storage_at, rpc_eth_get_transaction_by_eth_hash,
-    rpc_eth_get_transaction_count_at, rpc_eth_get_transaction_receipt_by_eth_hash,
+    rpc_eth_call_object, rpc_eth_call_object_at, rpc_eth_call_object_at_async, rpc_eth_call_rawtx,
+    rpc_eth_estimate_gas_object, rpc_eth_estimate_gas_object_at, rpc_eth_fee_history,
+    rpc_eth_gas_price, rpc_eth_get_balance, rpc_eth_get_block_by_number_with_status,
+    rpc_eth_get_block_number_by_hash, rpc_eth_get_code, rpc_eth_get_logs_paged,
+    rpc_eth_get_storage_at, rpc_eth_get_transaction_by_eth_hash, rpc_eth_get_transaction_count_at,
+    rpc_eth_get_transaction_receipt_by_eth_hash,
     rpc_eth_get_transaction_receipt_with_status_by_eth_hash,
     rpc_eth_get_transaction_receipt_with_status_by_tx_id, rpc_eth_history_window,
     rpc_eth_max_priority_fee_per_gas, rpc_eth_send_raw_transaction, submit_tx_in_with_code,
@@ -34,11 +36,59 @@ use ic_evm_rpc::{
 use ic_evm_rpc_types::{
     EthLogFilterView, RpcBlockLookupView, RpcBlockTagView, RpcCallObjectView, RpcReceiptLookupView,
 };
+use std::future::Future;
+use std::pin::pin;
 use std::sync::{Mutex, OnceLock};
+use std::task::{Context, Poll, Waker};
 
 fn test_lock() -> &'static Mutex<()> {
     static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
     LOCK.get_or_init(|| Mutex::new(()))
+}
+
+fn run_ready_future<F>(future: F) -> F::Output
+where
+    F: Future,
+{
+    let waker = Waker::noop();
+    let mut context = Context::from_waker(waker);
+    let mut future = pin!(future);
+    match future.as_mut().poll(&mut context) {
+        Poll::Ready(output) => output,
+        Poll::Pending => panic!("test future must complete without suspension"),
+    }
+}
+
+fn encode_icp_query_input(method: &str, arg: &[u8]) -> Vec<u8> {
+    let target = candid::Principal::self_authenticating(b"rpc-query-target");
+    let target_bytes = target.as_slice();
+    let mut out = Vec::new();
+    out.push(1);
+    out.push(0);
+    out.push(target_bytes.len() as u8);
+    out.extend_from_slice(target_bytes);
+    out.push(method.len() as u8);
+    out.extend_from_slice(method.as_bytes());
+    out.extend_from_slice(&(arg.len() as u32).to_be_bytes());
+    out.extend_from_slice(arg);
+    out
+}
+
+fn icp_query_call_object(from: [u8; 20], method: &str, arg: &[u8]) -> RpcCallObjectView {
+    RpcCallObjectView {
+        to: Some(ICP_QUERY_PRECOMPILE_ADDRESS.as_slice().to_vec()),
+        from: Some(from.to_vec()),
+        gas: Some(300_000),
+        gas_price: Some(u128::from(DEFAULT_BASE_FEE + DEFAULT_MIN_FEE_FLOOR)),
+        nonce: Some(0),
+        max_fee_per_gas: None,
+        max_priority_fee_per_gas: None,
+        chain_id: None,
+        tx_type: Some(0),
+        access_list: None,
+        value: Some(vec![0u8; 32]),
+        data: Some(encode_icp_query_input(method, arg)),
+    }
 }
 
 fn store_fee_sample_block(max_fee_per_gas: u128, max_priority_fee_per_gas: u128) {
@@ -497,6 +547,86 @@ fn rpc_eth_call_and_estimate_at_accept_head_number_tag() {
     let gas = rpc_eth_estimate_gas_object_at(call, RpcBlockTagView::Number(5))
         .expect("head number estimate should succeed");
     assert!(gas > 0);
+}
+
+#[test]
+fn rpc_eth_call_object_at_async_resolves_icp_query_for_latest_tags() {
+    let _guard = test_lock().lock().expect("lock");
+    init_stable_state();
+    let from = [0x78u8; 20];
+    with_state_mut(|state| {
+        state.accounts.insert(
+            make_account_key(from),
+            AccountVal::from_parts(0, [0xffu8; 32], [0u8; 32]),
+        );
+        state.head.set(Head {
+            number: 5,
+            block_hash: [0x55u8; 32],
+            timestamp: 1_700_000_005,
+        });
+    });
+    let call = icp_query_call_object(from, "read_state", &[0x44, 0x49, 0x44, 0x4c]);
+    let expected_reply = vec![0xaa, 0xbb, 0xcc];
+    let mut latest_called = false;
+
+    let latest = run_ready_future(rpc_eth_call_object_at_async(
+        call.clone(),
+        RpcBlockTagView::Latest,
+        |request| {
+            latest_called = true;
+            assert_eq!(request.method, "read_state");
+            let reply = expected_reply.clone();
+            async move { Ok(reply) }
+        },
+    ))
+    .expect("latest async call");
+    assert!(latest_called);
+    assert_eq!(latest.status, 1);
+    assert_eq!(latest.return_data, expected_reply);
+
+    let mut number_called = false;
+    let by_number = run_ready_future(rpc_eth_call_object_at_async(
+        call,
+        RpcBlockTagView::Number(5),
+        |_| {
+            number_called = true;
+            async { Ok(vec![0xdd]) }
+        },
+    ))
+    .expect("head-number async call");
+    assert!(number_called);
+    assert_eq!(by_number.status, 1);
+    assert_eq!(by_number.return_data, vec![0xdd]);
+}
+
+#[test]
+fn rpc_eth_call_object_at_async_keeps_resolver_error_as_revert_shape() {
+    let _guard = test_lock().lock().expect("lock");
+    init_stable_state();
+    let from = [0x79u8; 20];
+    with_state_mut(|state| {
+        state.accounts.insert(
+            make_account_key(from),
+            AccountVal::from_parts(0, [0xffu8; 32], [0u8; 32]),
+        );
+    });
+    let call = icp_query_call_object(from, "read_state", &[]);
+    let mut resolver_called = false;
+
+    let out = run_ready_future(rpc_eth_call_object_at_async(
+        call,
+        RpcBlockTagView::Latest,
+        |_| {
+            resolver_called = true;
+            async { Err("ic_query.test_error".to_string()) }
+        },
+    ))
+    .expect("resolver error should execute as precompile revert");
+
+    assert!(resolver_called);
+    assert_eq!(out.status, 0);
+    assert!(out.return_data.is_empty());
+    assert!(out.revert_data.is_none());
 }
 
 #[test]

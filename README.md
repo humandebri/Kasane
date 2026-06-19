@@ -86,6 +86,12 @@ Filter APIs, subscriptions, mempool APIs, and block-hash indexed block lookups a
 - Each `eth_call` may invoke the ICP query precompile at most once. A second call reverts with `ic_query.call_limit`.
 - Two-pass execution compares the initial and post-query snapshots, including chain state, runtime config, allowlist fingerprint, and `evm_state_epoch`.
 
+`0x00000000000000000000000000000000ffff0004` is reserved for ICP update intents.
+
+- The ABI uses the same compact payload shape with `kind=1`.
+- Execution records an allowlisted update intent log; the remote IC update call is dispatched after block production.
+- Allowed `(target, method)` pairs are controller-managed with `add_update_precompile_allowed_method` and `remove_update_precompile_allowed_method`.
+
 The default build disables precompiles that require unsupported or intentionally excluded upstream feature sets:
 
 - EIP-4844 `KZG_POINT_EVALUATION` at `0x0a`.

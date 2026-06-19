@@ -405,7 +405,11 @@ PY
 rpc_eth_call_hex() {
   local to_hex="$1"
   local data_hex="$2"
-  icp canister call -e "${ICP_ENV}" --identity "${ICP_IDENTITY_NAME}" --query "${EVM_CANISTER_ID}" rpc_eth_call_object "(record { to = opt $(hex_to_candid_vec "${to_hex}"); gas = opt 500000 : opt nat64; value = null; data = opt $(hex_to_candid_vec "${data_hex}"); from = opt $(hex_to_candid_vec "${CALLER_EVM_HEX}"); max_fee_per_gas = null; max_priority_fee_per_gas = null; chain_id = null; nonce = null; tx_type = null; access_list = null; gas_price = null })"
+  dfx_query "${EVM_CANISTER_ID}" rpc_eth_call_object "(record { to = opt $(hex_to_candid_vec "${to_hex}"); gas = opt 500000 : opt nat64; value = null; data = opt $(hex_to_candid_vec "${data_hex}"); from = opt $(hex_to_candid_vec "${CALLER_EVM_HEX}"); max_fee_per_gas = null; max_priority_fee_per_gas = null; chain_id = null; nonce = null; tx_type = null; access_list = null; gas_price = null })"
+}
+
+dfx_query() {
+  dfx canister call --query --network "${ICP_ENV}" --identity "${ICP_IDENTITY_NAME}" "$@"
 }
 
 query_pp() {
@@ -416,7 +420,7 @@ query_pp() {
   local encoded
   local hex
   encoded="$(didc encode -d "${did_file}" -m "${method}" "${args}")"
-  hex="$(icp canister call --query -e "${ICP_ENV}" --identity "${ICP_IDENTITY_NAME}" --args-format hex -o hex "${canister}" "${method}" "${encoded}")"
+  hex="$(dfx canister call --query --network "${ICP_ENV}" --identity "${ICP_IDENTITY_NAME}" --candid "${did_file}" --type raw --output raw "${canister}" "${method}" "${encoded}")"
   didc decode -f hex -d "${did_file}" -m "${method}" "${hex}" | python -c 'import sys; print(" ".join(sys.stdin.read().split()))'
 }
 
@@ -483,14 +487,14 @@ import json, os
 print(json.loads(os.environ["WRAP_ESTIMATE_META"])["wrap_evm_hex"])
 PY
 )"
-WRAP_NONCE="$(extract_nat "$(icp canister call -e "${ICP_ENV}" --identity "${ICP_IDENTITY_NAME}" --query "${EVM_CANISTER_ID}" expected_nonce_by_address "(vec { $(python - <<PY
+WRAP_NONCE="$(extract_nat "$(dfx_query "${EVM_CANISTER_ID}" expected_nonce_by_address "(vec { $(python - <<PY
 hexv = "${WRAP_EVM_HEX}"
 print("; ".join(str(b) for b in bytes.fromhex(hexv)))
 PY
 ) })")")"
 
 WRAP_ESTIMATE_META="$(helper_json wrap-meta "${CALLER_PRINCIPAL}" "${FEE_LEDGER_CANISTER_ID}" "${WRAP_AMOUNT_E8S}" "${EVM_WRAP_FACTORY}" "${WRAP_NONCE}" "1" "${WRAP_CANISTER_ID}" "${FEE_LEDGER_DECIMALS}")"
-WRAP_ESTIMATE_OUT="$(icp canister call -e "${ICP_ENV}" --identity "${ICP_IDENTITY_NAME}" --query "${EVM_CANISTER_ID}" rpc_eth_estimate_gas_object "(record { to = opt $(WRAP_ESTIMATE_META="${WRAP_ESTIMATE_META}" python - <<'PY'
+WRAP_ESTIMATE_OUT="$(dfx_query "${EVM_CANISTER_ID}" rpc_eth_estimate_gas_object "(record { to = opt $(WRAP_ESTIMATE_META="${WRAP_ESTIMATE_META}" python - <<'PY'
 import json, os
 print(json.loads(os.environ["WRAP_ESTIMATE_META"])["estimate_to_vec"])
 PY
@@ -522,7 +526,7 @@ hexv = json.loads(os.environ["WRAP_META"])["evm_recipient_hex"]
 print(''.join(f'\\{hexv[i:i+2]}' for i in range(0, len(hexv), 2)))
 PY
 )"
-WRAP_QUOTE_OUT="$(icp canister call -e "${ICP_ENV}" --identity "${ICP_IDENTITY_NAME}" --query "${WRAP_CANISTER_ID}" quote_wrap_request "(record { asset_id = principal \"${FEE_LEDGER_CANISTER_ID}\"; amount_e8s = ${WRAP_AMOUNT_E8S} : nat; evm_recipient = blob \"${WRAP_RECIPIENT_BLOB}\"; gas_limit = ${WRAP_GAS_LIMIT} : nat64 })")"
+WRAP_QUOTE_OUT="$(dfx_query "${WRAP_CANISTER_ID}" quote_wrap_request "(record { asset_id = principal \"${FEE_LEDGER_CANISTER_ID}\"; amount_e8s = ${WRAP_AMOUNT_E8S} : nat; evm_recipient = blob \"${WRAP_RECIPIENT_BLOB}\"; gas_limit = ${WRAP_GAS_LIMIT} : nat64 })")"
 candid_is_ok "${WRAP_QUOTE_OUT}" >/dev/null
 WRAP_QUOTED_FEE_E8S="$(OUTPUT_TEXT="${WRAP_QUOTE_OUT}" python - <<'PY'
 import os, re
@@ -557,19 +561,19 @@ PY
 WRAP_RESULT_JSON="$(parse_get_request_json "${WRAP_RESULT_OUT}")"
 MINT_TX_ID_HEX="$(json_field "${WRAP_RESULT_JSON}" "mint_tx_id_hex")"
 WRAP_FEE_E8S="$(json_field "${WRAP_RESULT_JSON}" "charged_fee_e8s")"
-MINT_RECEIPT_OUT="$(wait_until "mint_receipt" "status = 1 : nat8" icp canister call -e "${ICP_ENV}" --identity "${ICP_IDENTITY_NAME}" --query "${EVM_CANISTER_ID}" rpc_eth_get_transaction_receipt_with_status_by_tx_id "(blob \"$(python - <<PY
+MINT_RECEIPT_OUT="$(wait_until "mint_receipt" "status = 1 : nat8" dfx_query "${EVM_CANISTER_ID}" rpc_eth_get_transaction_receipt_with_status_by_tx_id "(blob \"$(python - <<PY
 hexv = "${MINT_TX_ID_HEX}"
 print(''.join(f'\\\\{hexv[i:i+2]}' for i in range(0, len(hexv), 2)))
 PY
 )\")")"
 
-GAS_PRICE="$(extract_nat "$(icp canister call -e "${ICP_ENV}" --identity "${ICP_IDENTITY_NAME}" --query "${EVM_CANISTER_ID}" rpc_eth_gas_price '()')")"
-PRIORITY_FEE="$(extract_nat "$(icp canister call -e "${ICP_ENV}" --identity "${ICP_IDENTITY_NAME}" --query "${EVM_CANISTER_ID}" rpc_eth_max_priority_fee_per_gas '()')")"
+GAS_PRICE="$(extract_nat "$(dfx_query "${EVM_CANISTER_ID}" rpc_eth_gas_price '()')")"
+PRIORITY_FEE="$(extract_nat "$(dfx_query "${EVM_CANISTER_ID}" rpc_eth_max_priority_fee_per_gas '()')")"
 UNWRAP_REQS_OUT="$(query_pp "${WRAP_CANISTER_DID}" "${WRAP_CANISTER_ID}" get_unwrap_requirements "(record { asset_id = principal \"${FEE_LEDGER_CANISTER_ID}\"; amount_e8s = ${UNWRAP_AMOUNT_E8S} : nat; caller_evm_address = $(hex_to_candid_blob "${CALLER_EVM_HEX}") })")"
 UNWRAP_REQS_JSON="$(parse_get_unwrap_requirements_json "${UNWRAP_REQS_OUT}")"
 WRAPPED_TOKEN_HEX="$(json_field "${UNWRAP_REQS_JSON}" "wrapped_token_address_hex")"
 APPROVE_ESTIMATE_META="$(helper_json approve-estimate "${CALLER_EVM_HEX}" "${WRAPPED_TOKEN_HEX}" "${EVM_WRAP_FACTORY}" "${UNWRAP_AMOUNT_E8S}")"
-APPROVE_ESTIMATE_OUT="$(icp canister call -e "${ICP_ENV}" --identity "${ICP_IDENTITY_NAME}" --query "${EVM_CANISTER_ID}" rpc_eth_estimate_gas_object "(record { to = opt $(APPROVE_ESTIMATE_META="${APPROVE_ESTIMATE_META}" python - <<'PY'
+APPROVE_ESTIMATE_OUT="$(dfx_query "${EVM_CANISTER_ID}" rpc_eth_estimate_gas_object "(record { to = opt $(APPROVE_ESTIMATE_META="${APPROVE_ESTIMATE_META}" python - <<'PY'
 import json, os
 print(json.loads(os.environ["APPROVE_ESTIMATE_META"])["to_vec"])
 PY
@@ -595,7 +599,7 @@ print((value * 12 + 9) // 10)
 PY
 )"
 APPROVE_CALLDATA_HEX="$(helper_text approve-data "${EVM_WRAP_FACTORY}" "${UNWRAP_AMOUNT_E8S}")"
-APPROVE_NONCE="$(extract_nat "$(icp canister call -e "${ICP_ENV}" --identity "${ICP_IDENTITY_NAME}" --query "${EVM_CANISTER_ID}" expected_nonce_by_address "(vec { $(python - <<PY
+APPROVE_NONCE="$(extract_nat "$(dfx_query "${EVM_CANISTER_ID}" expected_nonce_by_address "(vec { $(python - <<PY
 hexv = "${CALLER_EVM_HEX}"
 print('; '.join(str(b) for b in bytes.fromhex(hexv)))
 PY
@@ -604,19 +608,19 @@ log "approve wrapped token for unwrap burn"
 APPROVE_SUBMIT_OUT="$(icp canister call -e "${ICP_ENV}" --identity "${ICP_IDENTITY_NAME}" "${EVM_CANISTER_ID}" submit_ic_tx "(record { to = opt $(hex_to_candid_vec "${WRAPPED_TOKEN_HEX}"); value = 0 : nat; gas_limit = ${APPROVE_GAS_LIMIT} : nat64; nonce = ${APPROVE_NONCE} : nat64; max_fee_per_gas = ${GAS_PRICE} : nat; max_priority_fee_per_gas = ${PRIORITY_FEE} : nat; data = $(hex_to_candid_vec "${APPROVE_CALLDATA_HEX}") })")"
 candid_is_ok "${APPROVE_SUBMIT_OUT}" >/dev/null
 APPROVE_TX_ID_HEX="$(extract_named_blob_hex "${APPROVE_SUBMIT_OUT}" "Ok")"
-APPROVE_RECEIPT_OUT="$(wait_until "approve_receipt" "status = 1 : nat8" icp canister call -e "${ICP_ENV}" --identity "${ICP_IDENTITY_NAME}" --query "${EVM_CANISTER_ID}" rpc_eth_get_transaction_receipt_with_status_by_tx_id "(blob \"$(python - <<PY
+APPROVE_RECEIPT_OUT="$(wait_until "approve_receipt" "status = 1 : nat8" dfx_query "${EVM_CANISTER_ID}" rpc_eth_get_transaction_receipt_with_status_by_tx_id "(blob \"$(python - <<PY
 hexv = "${APPROVE_TX_ID_HEX}"
 print(''.join(f'\\\\{hexv[i:i+2]}' for i in range(0, len(hexv), 2)))
 PY
 )\")")"
 
-UNWRAP_NONCE="$(extract_nat "$(icp canister call -e "${ICP_ENV}" --identity "${ICP_IDENTITY_NAME}" --query "${EVM_CANISTER_ID}" expected_nonce_by_address "(vec { $(python - <<PY
+UNWRAP_NONCE="$(extract_nat "$(dfx_query "${EVM_CANISTER_ID}" expected_nonce_by_address "(vec { $(python - <<PY
 hexv = "${CALLER_EVM_HEX}"
 print('; '.join(str(b) for b in bytes.fromhex(hexv)))
 PY
 ) })")")"
 UNWRAP_META="$(helper_json unwrap-meta "${CALLER_PRINCIPAL}" "${FEE_LEDGER_CANISTER_ID}" "${UNWRAP_AMOUNT_E8S}" "${UNWRAP_NONCE}" "${UNWRAP_RECIPIENT_PRINCIPAL}")"
-UNWRAP_ESTIMATE_OUT="$(icp canister call -e "${ICP_ENV}" --identity "${ICP_IDENTITY_NAME}" --query "${EVM_CANISTER_ID}" rpc_eth_estimate_gas_object "(record { to = opt $(UNWRAP_META="${UNWRAP_META}" python - <<'PY'
+UNWRAP_ESTIMATE_OUT="$(dfx_query "${EVM_CANISTER_ID}" rpc_eth_estimate_gas_object "(record { to = opt $(UNWRAP_META="${UNWRAP_META}" python - <<'PY'
 import json, os
 print(json.loads(os.environ["UNWRAP_META"])["estimate_to_vec"])
 PY
@@ -651,18 +655,18 @@ PY
 candid_is_ok "${UNWRAP_SUBMIT_OUT}" >/dev/null
 UNWRAP_TX_ID_HEX="$(extract_named_blob_hex "${UNWRAP_SUBMIT_OUT}" "Ok")"
 
-UNWRAP_RECEIPT_OUT="$(wait_until "unwrap_receipt" "status = 1 : nat8" icp canister call -e "${ICP_ENV}" --identity "${ICP_IDENTITY_NAME}" --query "${EVM_CANISTER_ID}" rpc_eth_get_transaction_receipt_with_status_by_tx_id "(blob \"$(python - <<PY
+UNWRAP_RECEIPT_OUT="$(wait_until "unwrap_receipt" "status = 1 : nat8" dfx_query "${EVM_CANISTER_ID}" rpc_eth_get_transaction_receipt_with_status_by_tx_id "(blob \"$(python - <<PY
 hexv = "${UNWRAP_TX_ID_HEX}"
 print(''.join(f'\\\\{hexv[i:i+2]}' for i in range(0, len(hexv), 2)))
 PY
 )\")")"
-UNWRAP_REQUEST_IDS_OUT="$(wait_until "unwrap request ids" "blob" icp canister call -e "${ICP_ENV}" --identity "${ICP_IDENTITY_NAME}" --query "${EVM_CANISTER_ID}" get_unwrap_request_ids_by_tx_id "(blob \"$(python - <<PY
+UNWRAP_REQUEST_IDS_OUT="$(wait_until "unwrap request ids" "blob" dfx_query "${EVM_CANISTER_ID}" get_unwrap_request_ids_by_tx_id "(blob \"$(python - <<PY
 hexv = "${UNWRAP_TX_ID_HEX}"
 print(''.join(f'\\\\{hexv[i:i+2]}' for i in range(0, len(hexv), 2)))
 PY
 )\")")"
 UNWRAP_REQUEST_ID_HEX="$(extract_first_blob_hex "${UNWRAP_REQUEST_IDS_OUT}")"
-DISPATCH_OUT="$(wait_until "dispatch" "status = variant { Dispatched }" icp canister call -e "${ICP_ENV}" --identity "${ICP_IDENTITY_NAME}" --query "${EVM_CANISTER_ID}" get_unwrap_dispatch_overview "(blob \"$(python - <<PY
+DISPATCH_OUT="$(wait_until "dispatch" "status = variant { Dispatched }" dfx_query "${EVM_CANISTER_ID}" get_unwrap_dispatch_overview "(blob \"$(python - <<PY
 hexv = "${UNWRAP_REQUEST_ID_HEX}"
 print(''.join(f'\\\\{hexv[i:i+2]}' for i in range(0, len(hexv), 2)))
 PY

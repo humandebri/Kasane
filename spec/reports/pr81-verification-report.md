@@ -55,7 +55,7 @@
 - added crates/ic-evm-gateway/src/tests.rs query_precompile_allow_key_decodes_valid_boundary
 - added crates/ic-evm-rpc/src/lib.rs rpc_eth_call_object_async
 - added crates/verified-core/src/wrap_precompile.rs compact_icp_query_input_safe_raw
-- added crates/verified-core/src/wrap_precompile.rs icp_query_allowlist_entry_safe_raw
+- added crates/verified-core/src/wrap_precompile.rs icp_precompile_allowlist_entry_safe_raw
 - added crates/verified-core/src/wrap_precompile.rs icp_query_execution_gate_safe_raw
 - added crates/verified-core/src/wrap_precompile.rs icp_query_gas_observation_safe_raw
 - added crates/verified-core/src/wrap_precompile.rs icp_query_update_kind_rejected_raw
@@ -132,7 +132,7 @@
 - crates/ic-evm-gateway/src/lib.rs::validate_query_precompile_allow_args: missing_target
 - crates/ic-evm-rpc/src/lib.rs::rpc_eth_call_object_async: missing_target
 - compact_icp_query_input_safe_raw-8482ca59: contract_hash_mismatch; missing_verify_report; accepted_md_json_mismatch; contract_hash_mismatch; provider_failure:review; unsupported_generic_or_lifetime; unsupported_type
-- icp_query_allowlist_entry_safe_raw-744d724a: contract_hash_mismatch; missing_verify_report; accepted_md_json_mismatch; contract_hash_mismatch; provider_failure:scenarios; unsupported_generic_or_lifetime; unsupported_type
+- icp_precompile_allowlist_entry_safe_raw-744d724a: contract_hash_mismatch; missing_verify_report; accepted_md_json_mismatch; contract_hash_mismatch; provider_failure:scenarios; unsupported_generic_or_lifetime; unsupported_type
 - icp_query_execution_gate_safe_raw-c8c66378: contract_hash_mismatch; missing_verify_report; accepted_md_json_mismatch; contract_hash_mismatch; unsupported_type
 - icp_query_gas_observation_safe_raw-ae357da2: contract_hash_mismatch; missing_test_evidence_report; missing_verify_report; semantic_hash_mismatch; accepted_md_json_mismatch; contract_hash_mismatch; provider_failure:review; provider_failure:scenarios; semantic_hash_mismatch; unsupported_generic_or_lifetime; unsupported_type
 - icp_query_update_kind_rejected_raw-4de9db5f: contract_hash_mismatch; missing_verify_report; accepted_md_json_mismatch; contract_hash_mismatch; provider_failure:review; provider_failure:scenarios; unsupported_type

@@ -1,4 +1,4 @@
-//! どこで: wrap precompile 観測境界 / 何を: compact入力・log shape・gas policy / なぜ: 不正intentと過小gasを防ぐため
+//! どこで: Kasane precompile 観測境界 / 何を: compact入力・log shape・gas policy / なぜ: 不正intentと過小gasを防ぐため
 #![allow(clippy::manual_range_contains, clippy::too_many_arguments)]
 
 #[cfg(verus_keep_ghost)]
@@ -25,7 +25,7 @@ pub const UNWRAP_BURN_GAS_SURCHARGE: u64 = 45_000;
 #[cfg_attr(verus_keep_ghost, verus_verify)]
 pub const ICP_QUERY_KIND_QUERY: u64 = 0;
 #[cfg_attr(verus_keep_ghost, verus_verify)]
-pub const ICP_QUERY_KIND_UPDATE_RESERVED: u64 = 1;
+pub const ICP_PRECOMPILE_KIND_UPDATE: u64 = 1;
 #[cfg_attr(verus_keep_ghost, verus_verify)]
 pub const ICP_QUERY_BASE_GAS: u64 = 50_000;
 #[cfg_attr(verus_keep_ghost, verus_verify)]
@@ -158,10 +158,10 @@ pub fn compact_icp_query_input_safe_raw(
 }
 
 #[cfg_attr(verus_keep_ghost, verus_spec(rejected => ensures
-    rejected == (kind == ICP_QUERY_KIND_UPDATE_RESERVED),
+    rejected == (kind == ICP_PRECOMPILE_KIND_UPDATE),
 ))]
 pub fn icp_query_update_kind_rejected_raw(kind: u64) -> bool {
-    kind == ICP_QUERY_KIND_UPDATE_RESERVED
+    kind == ICP_PRECOMPILE_KIND_UPDATE
 }
 
 #[cfg_attr(verus_keep_ghost, verus_spec(valid => ensures
@@ -174,7 +174,7 @@ pub fn icp_query_update_kind_rejected_raw(kind: u64) -> bool {
         && method_ascii == 1
     ),
 ))]
-pub fn icp_query_allowlist_entry_safe_raw(
+pub fn icp_precompile_allowlist_entry_safe_raw(
     target_len: u64,
     target_non_anonymous: u64,
     method_len: u64,

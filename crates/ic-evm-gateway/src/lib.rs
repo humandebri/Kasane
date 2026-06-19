@@ -3,17 +3,22 @@
 use candid::{CandidType, Nat, Principal};
 use evm_core::chain;
 use evm_core::hash;
-use evm_core::wrap_precompile::{native_withdraw_intent_from_log, unwrap_intent_from_log};
+use evm_core::kasane_precompiles::{
+    icp_update_intent_from_log, native_withdraw_intent_from_log, precompile_allow_key,
+    unwrap_intent_from_log,
+};
+use evm_core::tx_decode::decode_tx_view;
 use evm_db::chain_data::constants::CHAIN_ID;
 use evm_db::chain_data::constants::{MAX_QUEUE_SNAPSHOT_LIMIT, MAX_RETURN_DATA, MAX_TX_SIZE};
 use evm_db::chain_data::runtime_defaults::{DEFAULT_BLOCK_GAS_LIMIT, DEFAULT_MIN_FEE_FLOOR};
 use evm_db::chain_data::DEFAULT_MINING_INTERVAL_MS;
 use evm_db::chain_data::MIN_PRUNE_MAX_OPS_PER_TICK;
 use evm_db::chain_data::{
-    BlockData, FeePolicyStored, MigrationPhase, MintSubmitStatus, OpsMode, ReceiptLike,
-    RequestStatus as StoredRequestStatus, RuntimeConfigV1, TxId, TxKind, TxLoc, TxLocKind,
-    UnwrapDispatchRequest, UnwrapRequestStatus, WrapEvmConfigStored, WrapPendingSubmission,
-    WrapRequestStage, LOG_CONFIG_FILTER_MAX, UNWRAP_DECODE_FAILURE_CODE,
+    BlockData, FeePolicyStored, IcpUpdateDispatchRequest, IcpUpdateRequestStatus, MigrationPhase,
+    MintSubmitStatus, OpsMode, ReceiptLike, RequestStatus as StoredRequestStatus, RuntimeConfigV1,
+    TxId, TxKind, TxLoc, TxLocKind, UnwrapDispatchRequest, UnwrapRequestStatus,
+    WrapEvmConfigStored, WrapPendingSubmission, WrapRequestStage, ICP_UPDATE_DECODE_FAILURE_CODE,
+    LOG_CONFIG_FILTER_MAX, UNWRAP_DECODE_FAILURE_CODE,
 };
 use evm_db::memory::{all_memory_regions, memory_size_pages, WASM_PAGE_SIZE_BYTES};
 use evm_db::meta::{
@@ -28,7 +33,7 @@ use evm_db::upgrade;
 use ic_cdk::api::{
     accept_message, canister_cycle_balance, is_controller, msg_caller, msg_method_name,
 };
-use ic_cdk::call::Call;
+use ic_cdk::call::{Call, CallFailed, RejectCode};
 use num_bigint::BigUint;
 use serde::Deserialize;
 use std::collections::BTreeSet;
@@ -72,9 +77,17 @@ const WEI_PER_E8S: u128 = 10_000_000_000;
 const MAX_STORED_ERROR_CODE_BYTES: usize = 160;
 const MAX_STORED_LEDGER_TX_ID_BYTES: usize = 128;
 const STALE_OPERATION_NANOS: u64 = 10 * 60 * 1_000_000_000;
+const ICP_UPDATE_REPLY_OMITTED_TOO_LARGE: &str = "ic_update.reply_omitted_too_large";
+const ICP_UPDATE_DISPATCH_TIMEOUT_SECONDS: u32 = 30;
+const MAX_ICP_UPDATE_REQUESTS: usize = 10_000;
 
 static UNWRAP_DISPATCH_SCHEDULED: std::sync::atomic::AtomicBool =
     std::sync::atomic::AtomicBool::new(false);
+static ICP_UPDATE_DISPATCH_SCHEDULED: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+#[cfg(test)]
+static ICP_UPDATE_DISPATCH_TIMER_ARMS: std::sync::atomic::AtomicU64 =
+    std::sync::atomic::AtomicU64::new(0);
 #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
 static WRAP_WORKER_SCHEDULED: std::sync::atomic::AtomicBool =
     std::sync::atomic::AtomicBool::new(false);
@@ -115,15 +128,54 @@ pub struct SetFeePolicyArgs {
 }
 
 #[derive(Clone, Debug, CandidType, Deserialize, Eq, PartialEq)]
-pub struct QueryPrecompileAllowArgs {
+pub struct PrecompileAllowArgs {
     pub target: Principal,
     pub method: String,
 }
 
 #[derive(Clone, Debug, CandidType, Deserialize, Eq, PartialEq)]
-pub struct QueryPrecompileAllowedView {
+pub struct PrecompileAllowedView {
     pub target: Principal,
     pub method: String,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize, Eq, PartialEq)]
+pub struct IcpUpdateRequestView {
+    pub request_id: Vec<u8>,
+    pub tx_id: Vec<u8>,
+    pub block_number: u64,
+    pub tx_index: u32,
+    pub log_index: u32,
+    pub tx_kind: IcpUpdateTxKindView,
+    pub evm_sender: Vec<u8>,
+    pub ic_caller: Option<Principal>,
+    pub target: Principal,
+    pub method: String,
+    pub status: RequestDispatchStatusView,
+    pub reply: Option<Vec<u8>>,
+    pub error: Option<String>,
+    pub updated_at: u64,
+}
+
+#[derive(Clone, Copy, Debug, CandidType, Deserialize, Eq, PartialEq)]
+pub enum IcpUpdateTxKindView {
+    EthSigned,
+    IcSynthetic,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize, Eq, PartialEq)]
+pub struct IcpUpdateEnvelopeV1 {
+    pub version: u8,
+    pub chain_id: u64,
+    pub request_id: Vec<u8>,
+    pub tx_id: Vec<u8>,
+    pub block_number: u64,
+    pub tx_index: u32,
+    pub log_index: u32,
+    pub tx_kind: IcpUpdateTxKindView,
+    pub evm_sender: Vec<u8>,
+    pub ic_caller: Option<Principal>,
+    pub arg: Vec<u8>,
 }
 
 #[derive(Clone, Debug, CandidType, Deserialize)]
@@ -521,9 +573,9 @@ fn validate_allowed_assets(assets: &[Principal]) -> Result<(), String> {
     Ok(())
 }
 
-fn validate_query_precompile_allow_args(args: &QueryPrecompileAllowArgs) -> Result<(), String> {
+fn validate_query_precompile_allow_args(args: &PrecompileAllowArgs) -> Result<(), String> {
     let target_non_anonymous = args.target != Principal::anonymous();
-    let valid = verified_core::wrap_precompile::icp_query_allowlist_entry_safe_raw(
+    let valid = verified_core::kasane_precompiles::icp_precompile_allowlist_entry_safe_raw(
         args.target.as_slice().len() as u64,
         target_non_anonymous as u64,
         args.method.len() as u64,
@@ -538,23 +590,35 @@ fn validate_query_precompile_allow_args(args: &QueryPrecompileAllowArgs) -> Resu
     Ok(())
 }
 
-fn query_precompile_allow_key(target: Principal, method: &str) -> Vec<u8> {
-    let target_bytes = target.as_slice();
-    let mut out = Vec::with_capacity(1 + target_bytes.len() + method.len());
-    out.push(target_bytes.len() as u8);
-    out.extend_from_slice(target_bytes);
-    out.extend_from_slice(method.as_bytes());
-    out
+fn validate_update_precompile_allow_args(args: &PrecompileAllowArgs) -> Result<(), String> {
+    let target_non_anonymous = args.target != Principal::anonymous();
+    let valid = verified_core::kasane_precompiles::icp_precompile_allowlist_entry_safe_raw(
+        args.target.as_slice().len() as u64,
+        target_non_anonymous as u64,
+        args.method.len() as u64,
+        args.method.is_ascii() as u64,
+    );
+    if !valid && !target_non_anonymous {
+        return Err("arg.target_anonymous".to_string());
+    }
+    if !valid {
+        return Err("arg.method_invalid".to_string());
+    }
+    Ok(())
 }
 
-fn decode_query_precompile_allow_key(key: &[u8]) -> Option<QueryPrecompileAllowedView> {
+fn precompile_allow_key_for_principal(target: Principal, method: &str) -> Vec<u8> {
+    precompile_allow_key(target.as_slice(), method)
+}
+
+fn decode_precompile_allow_key_for_principal(key: &[u8]) -> Option<PrecompileAllowedView> {
     let len = usize::from(*key.first()?);
     if len == 0 || len > 29 || key.len() <= 1 + len {
         return None;
     }
     let target = Principal::from_slice(&key[1..1 + len]);
     let method = std::str::from_utf8(&key[1 + len..]).ok()?.to_string();
-    Some(QueryPrecompileAllowedView { target, method })
+    Some(PrecompileAllowedView { target, method })
 }
 
 fn is_query_precompile_allowed(target: &[u8], method: &str) -> bool {
@@ -562,8 +626,22 @@ fn is_query_precompile_allowed(target: &[u8], method: &str) -> bool {
         return false;
     }
     let target = Principal::from_slice(target);
-    let key = query_precompile_allow_key(target, method);
+    let key = precompile_allow_key_for_principal(target, method);
     with_state(|state| state.query_precompile_allowlist.get(&key).is_some())
+}
+
+fn is_update_precompile_allowed(target: &[u8], method: &str) -> bool {
+    if target.is_empty()
+        || target.len() > 29
+        || method.is_empty()
+        || method.len() > 64
+        || !method.is_ascii()
+    {
+        return false;
+    }
+    let target = Principal::from_slice(target);
+    let key = precompile_allow_key_for_principal(target, method);
+    with_state(|state| state.icp_update_precompile_allowlist.get(&key).is_some())
 }
 
 fn validate_evm_address(bytes: &[u8], code: &str) -> Result<(), String> {
@@ -1306,6 +1384,16 @@ fn u256_from_u128(value: u128) -> [u8; 32] {
     out
 }
 
+fn native_deposit_amount_wei_bytes(amount_e8s: &Nat) -> Result<[u8; 32], ApiError> {
+    let amount_e8s = nat_to_u128(amount_e8s).ok_or_else(|| {
+        api_invalid_argument("arg.amount_out_of_range", "arg.amount_out_of_range")
+    })?;
+    let amount_wei = amount_e8s.checked_mul(WEI_PER_E8S).ok_or_else(|| {
+        api_invalid_argument("arg.amount_out_of_range", "arg.amount_out_of_range")
+    })?;
+    Ok(u256_from_u128(amount_wei))
+}
+
 fn selector(signature: &[u8]) -> [u8; 4] {
     let mut keccak = Keccak::v256();
     keccak.update(signature);
@@ -1508,6 +1596,7 @@ async fn submit_native_deposit(
     if amount.iter().all(|&byte| byte == 0) {
         return Err(api_invalid_argument("arg.amount_zero", "arg.amount_zero"));
     }
+    let amount_wei = native_deposit_amount_wei_bytes(&args.amount_e8s)?;
     let max_fee_e8s = nat_to_u128(&args.max_fee_e8s).ok_or_else(|| {
         api_invalid_argument("arg.max_fee_out_of_range", "arg.max_fee_out_of_range")
     })?;
@@ -1589,7 +1678,7 @@ async fn submit_native_deposit(
     }
 
     if req.result.mint_tx_id.is_none() || req.result.status != StoredRequestStatus::Succeeded {
-        finalize_native_deposit_credit(request_id, &req, &args.evm_recipient)?;
+        finalize_native_deposit_credit(request_id, &args.evm_recipient, amount_wei)?;
     }
     clear_wrap_pending_submission(request_id);
     let fee_ledger_tx_id = with_state(|state| {
@@ -1747,17 +1836,14 @@ fn record_native_deposit_pulled(
 
 fn finalize_native_deposit_credit(
     request_id: TxId,
-    req: &evm_db::chain_data::WrapStoredRequest,
     evm_recipient: &[u8],
+    amount_wei: [u8; 32],
 ) -> Result<(), ApiError> {
-    let amount_wei = Nat(BigUint::from_bytes_be(&req.amount) * BigUint::from(WEI_PER_E8S));
-    let outcome = nat_to_fixed_be::<32>(&amount_wei)
-        .ok_or_else(|| api_rejected("arg.amount_out_of_range", "arg.amount_out_of_range"))
-        .and_then(|amount_wei| {
-            let mut recipient = [0u8; 20];
-            recipient.copy_from_slice(evm_recipient);
-            credit_native_deposit_internal(request_id.0, recipient, amount_wei)
-        });
+    let outcome = {
+        let mut recipient = [0u8; 20];
+        recipient.copy_from_slice(evm_recipient);
+        credit_native_deposit_internal(request_id.0, recipient, amount_wei)
+    };
     with_state_mut(|state| {
         let Some(mut req) = state.wrap_requests.get(&request_id) else {
             return;
@@ -1795,6 +1881,7 @@ fn dispatch_unwrap_request(
     if let Some(reason) = reject_anonymous_update() {
         return Err(api_rejected(&reason, &reason));
     }
+    reject_data_plane_write()?;
     require_wrap_canister_caller(msg_caller()).map_err(|err| api_rejected(&err, &err))?;
     let request_id = tx_id_from_bytes(args.request_id.clone())
         .ok_or_else(|| api_invalid_argument("arg.request_id_invalid", "arg.request_id_invalid"))?;
@@ -1827,6 +1914,7 @@ async fn dispatch_native_withdrawal_request(
     if let Some(reason) = reject_anonymous_update() {
         return Err(api_rejected(&reason, &reason));
     }
+    reject_data_plane_write()?;
     require_wrap_canister_caller(msg_caller()).map_err(|err| api_rejected(&err, &err))?;
     let request_id = tx_id_from_bytes(args.request_id.clone())
         .ok_or_else(|| api_invalid_argument("arg.request_id_invalid", "arg.request_id_invalid"))?;
@@ -2159,12 +2247,23 @@ fn get_allowed_assets() -> Result<Vec<Principal>, String> {
 }
 
 #[ic_cdk::query]
-fn get_query_precompile_allowlist() -> Vec<QueryPrecompileAllowedView> {
+fn get_query_precompile_allowlist() -> Vec<PrecompileAllowedView> {
     with_state(|state| {
         state
             .query_precompile_allowlist
             .iter()
-            .filter_map(|entry| decode_query_precompile_allow_key(entry.key()))
+            .filter_map(|entry| decode_precompile_allow_key_for_principal(entry.key()))
+            .collect()
+    })
+}
+
+#[ic_cdk::query]
+fn get_update_precompile_allowlist() -> Vec<PrecompileAllowedView> {
+    with_state(|state| {
+        state
+            .icp_update_precompile_allowlist
+            .iter()
+            .filter_map(|entry| decode_precompile_allow_key_for_principal(entry.key()))
             .collect()
     })
 }
@@ -2252,18 +2351,50 @@ fn get_native_deposit_result(request_id: Vec<u8>) -> Option<RequestOverview> {
     get_request(request_id)
 }
 
+#[ic_cdk::query]
+fn get_icp_update_request(request_id: Vec<u8>) -> Option<IcpUpdateRequestView> {
+    let request_id = tx_id_from_bytes(request_id)?;
+    with_state(|state| {
+        state.icp_update_requests.get(&request_id).map(|req| {
+            let target = Principal::from_slice(&req.target);
+            IcpUpdateRequestView {
+                request_id: request_id.0.to_vec(),
+                tx_id: req.tx_id.0.to_vec(),
+                block_number: req.block_number,
+                tx_index: req.tx_index,
+                log_index: req.log_index,
+                tx_kind: tx_kind_to_icp_update_view(req.tx_kind),
+                evm_sender: req.evm_sender.to_vec(),
+                ic_caller: req
+                    .ic_caller
+                    .as_ref()
+                    .map(|bytes| Principal::from_slice(bytes)),
+                target,
+                method: req.method,
+                status: icp_update_request_status_to_view(req.status),
+                reply: req.reply,
+                error: req.error_code,
+                updated_at: req.updated_at,
+            }
+        })
+    })
+}
+
 #[ic_cdk::update]
 fn retry_request(args: RetryRequestArgs) -> Result<RequestOverview, ApiError> {
+    reject_data_plane_write()?;
     retry_unwrap_dispatch(args.request_id)
 }
 
 #[ic_cdk::update]
 fn retry_native_withdrawal(args: RetryRequestArgs) -> Result<RequestOverview, ApiError> {
+    reject_data_plane_write()?;
     retry_unwrap_dispatch(args.request_id)
 }
 
 #[ic_cdk::update]
 fn retry_native_deposit(args: RetryRequestArgs) -> Result<RequestOverview, ApiError> {
+    reject_data_plane_write()?;
     let request_id = tx_id_from_bytes(args.request_id)
         .ok_or_else(|| api_invalid_argument("arg.request_id_invalid", "arg.request_id_invalid"))?;
     let req_result = with_state_mut(|state| {
@@ -2285,14 +2416,12 @@ fn retry_native_deposit(args: RetryRequestArgs) -> Result<RequestOverview, ApiEr
     });
     let req = req_result.map_err(|err| api_rejected(&err, &err))?;
 
-    let amount_wei = Nat(BigUint::from_bytes_be(&req.amount) * BigUint::from(WEI_PER_E8S));
-    let outcome = nat_to_fixed_be::<32>(&amount_wei)
-        .ok_or_else(|| api_rejected("arg.amount_out_of_range", "arg.amount_out_of_range"))
-        .and_then(|amount_wei| {
-            let mut recipient = [0u8; 20];
-            recipient.copy_from_slice(&req.evm_recipient);
-            credit_native_deposit_internal(request_id.0, recipient, amount_wei)
-        });
+    let amount_e8s = Nat(BigUint::from_bytes_be(&req.amount));
+    let outcome = native_deposit_amount_wei_bytes(&amount_e8s).and_then(|amount_wei| {
+        let mut recipient = [0u8; 20];
+        recipient.copy_from_slice(&req.evm_recipient);
+        credit_native_deposit_internal(request_id.0, recipient, amount_wei)
+    });
     with_state_mut(|state| {
         let Some(mut req) = state.wrap_requests.get(&request_id) else {
             return;
@@ -2319,6 +2448,7 @@ fn retry_native_deposit(args: RetryRequestArgs) -> Result<RequestOverview, ApiEr
 
 #[ic_cdk::update]
 async fn recover_failed_wrap(args: RecoverFailedWrapArgs) -> Result<RequestOverview, ApiError> {
+    reject_data_plane_write()?;
     let request_id = tx_id_from_bytes(args.request_id)
         .ok_or_else(|| api_invalid_argument("arg.request_id_invalid", "arg.request_id_invalid"))?;
     let req_result = with_state_mut(|state| {
@@ -2329,7 +2459,6 @@ async fn recover_failed_wrap(args: RecoverFailedWrapArgs) -> Result<RequestOverv
             || req.result.status != StoredRequestStatus::Failed
             || !req.result.mint_failed_recoverable
             || req.result.pull_ledger_tx_id.is_none()
-            || req.result.mint_tx_id.is_some()
         {
             return Err("wrap.recover_invalid_state".to_string());
         }
@@ -2515,13 +2644,13 @@ fn set_allowed_assets(assets: Vec<Principal>) -> Result<(), String> {
 }
 
 #[ic_cdk::update]
-fn add_query_precompile_allowed_method(args: QueryPrecompileAllowArgs) -> Result<(), String> {
+fn add_query_precompile_allowed_method(args: PrecompileAllowArgs) -> Result<(), String> {
     if let Some(reason) = reject_anonymous_update() {
         return Err(reason);
     }
     require_control_plane_write()?;
     validate_query_precompile_allow_args(&args)?;
-    let key = query_precompile_allow_key(args.target, &args.method);
+    let key = precompile_allow_key_for_principal(args.target, &args.method);
     with_state_mut(|state| {
         state.query_precompile_allowlist.insert(key, 1);
     });
@@ -2529,15 +2658,43 @@ fn add_query_precompile_allowed_method(args: QueryPrecompileAllowArgs) -> Result
 }
 
 #[ic_cdk::update]
-fn remove_query_precompile_allowed_method(args: QueryPrecompileAllowArgs) -> Result<(), String> {
+fn remove_query_precompile_allowed_method(args: PrecompileAllowArgs) -> Result<(), String> {
     if let Some(reason) = reject_anonymous_update() {
         return Err(reason);
     }
     require_control_plane_write()?;
     validate_query_precompile_allow_args(&args)?;
-    let key = query_precompile_allow_key(args.target, &args.method);
+    let key = precompile_allow_key_for_principal(args.target, &args.method);
     with_state_mut(|state| {
         state.query_precompile_allowlist.remove(&key);
+    });
+    Ok(())
+}
+
+#[ic_cdk::update]
+fn add_update_precompile_allowed_method(args: PrecompileAllowArgs) -> Result<(), String> {
+    if let Some(reason) = reject_anonymous_update() {
+        return Err(reason);
+    }
+    require_control_plane_write()?;
+    validate_update_precompile_allow_args(&args)?;
+    let key = precompile_allow_key_for_principal(args.target, &args.method);
+    with_state_mut(|state| {
+        state.icp_update_precompile_allowlist.insert(key, 1);
+    });
+    Ok(())
+}
+
+#[ic_cdk::update]
+fn remove_update_precompile_allowed_method(args: PrecompileAllowArgs) -> Result<(), String> {
+    if let Some(reason) = reject_anonymous_update() {
+        return Err(reason);
+    }
+    require_control_plane_write()?;
+    validate_update_precompile_allow_args(&args)?;
+    let key = precompile_allow_key_for_principal(args.target, &args.method);
+    with_state_mut(|state| {
+        state.icp_update_precompile_allowlist.remove(&key);
     });
     Ok(())
 }
@@ -2569,10 +2726,14 @@ fn post_upgrade(args: Option<InitArgs>) {
         );
     }
     observe_cycles();
+    let data_plane_enabled = reject_write_reason().is_none();
     reset_mining_schedule_after_upgrade();
-    restore_unwrap_dispatch_after_upgrade();
-    restore_wrap_worker_after_upgrade();
-    schedule_mining();
+    restore_unwrap_dispatch_after_upgrade(data_plane_enabled);
+    restore_icp_update_dispatch_after_upgrade(data_plane_enabled);
+    restore_wrap_worker_after_upgrade(data_plane_enabled);
+    if data_plane_enabled {
+        schedule_mining();
+    }
     schedule_cycle_observer();
 }
 
@@ -2585,16 +2746,23 @@ fn reset_mining_schedule_after_upgrade() {
     });
 }
 
-fn restore_unwrap_dispatch_after_upgrade() {
+fn restore_unwrap_dispatch_after_upgrade(schedule_workers: bool) {
     // upgrade後は timer 実体が失われるため、永続化済みの unwrap queue を再接続する。
-    if recover_unwrap_dispatch_state_after_upgrade(current_time_nanos()) {
+    if recover_unwrap_dispatch_state_after_upgrade(current_time_nanos()) && schedule_workers {
         schedule_unwrap_dispatch();
     }
 }
 
-fn restore_wrap_worker_after_upgrade() {
+fn restore_icp_update_dispatch_after_upgrade(schedule_workers: bool) {
+    // update intentもpost-commit副作用なので、upgrade後は永続queueを再接続する。
+    if recover_icp_update_dispatch_state_after_upgrade(current_time_nanos()) && schedule_workers {
+        schedule_icp_update_dispatch();
+    }
+}
+
+fn restore_wrap_worker_after_upgrade(schedule_workers: bool) {
     // upgrade後は timer 実体が失われるため、永続化済みの wrap queue を再接続する。
-    if recover_wrap_worker_state_after_upgrade() {
+    if recover_wrap_worker_state_after_upgrade() && schedule_workers {
         schedule_wrap_worker();
     }
 }
@@ -2610,38 +2778,33 @@ fn repair_stale_wrap_operations() -> Result<(), String> {
 }
 
 fn repair_stale_operations(now: u64) {
-    let (wrap_needs_schedule, unwrap_needs_schedule) = with_state_mut(|state| {
-        let cutoff = now.saturating_sub(STALE_OPERATION_NANOS);
-        let mut wrap_requeue = Vec::new();
-        let mut unwrap_requeue = Vec::new();
+    settle_submitted_wrap_mint_receipts(now);
+    let (wrap_needs_schedule, unwrap_needs_schedule, icp_update_needs_schedule) =
+        with_state_mut(|state| {
+            let cutoff = now.saturating_sub(STALE_OPERATION_NANOS);
+            let mut wrap_requeue = Vec::new();
+            let mut unwrap_requeue = Vec::new();
 
-        let wrap_items: Vec<_> = state
-            .wrap_requests
-            .iter()
-            .map(|entry| (*entry.key(), entry.value().clone()))
-            .collect();
-        for (request_id, mut req) in wrap_items {
-            if req.result.withdraw_in_progress && req.result.updated_at <= cutoff {
-                req.result.withdraw_in_progress = false;
-                req.result.stage = WrapRequestStage::Failed;
-                req.result.updated_at = now;
-                let _ = sanitize_wrap_request(req.clone()).map(|clean| {
-                    state.wrap_requests.insert(request_id, clean);
-                });
-                continue;
-            }
-            if req.result.status == StoredRequestStatus::Running && req.result.updated_at <= cutoff
-            {
-                if req.result.mint_tx_id.is_some()
-                    || req.result.mint_submit_status == MintSubmitStatus::Submitted
-                {
-                    req.result.status = StoredRequestStatus::Succeeded;
-                    req.result.stage = WrapRequestStage::Succeeded;
+            let wrap_items: Vec<_> = state
+                .wrap_requests
+                .iter()
+                .map(|entry| (*entry.key(), entry.value().clone()))
+                .collect();
+            for (request_id, mut req) in wrap_items {
+                if req.result.withdraw_in_progress && req.result.updated_at <= cutoff {
+                    req.result.withdraw_in_progress = false;
+                    req.result.stage = WrapRequestStage::Failed;
                     req.result.updated_at = now;
                     let _ = sanitize_wrap_request(req.clone()).map(|clean| {
                         state.wrap_requests.insert(request_id, clean);
                     });
-                } else {
+                    continue;
+                }
+                if req.result.status == StoredRequestStatus::Running
+                    && req.result.updated_at <= cutoff
+                    && req.result.mint_tx_id.is_none()
+                    && req.result.mint_submit_status != MintSubmitStatus::Submitted
+                {
                     req.result.status = StoredRequestStatus::Queued;
                     req.result.updated_at = now;
                     let _ = sanitize_wrap_request(req.clone()).map(|clean| {
@@ -2650,55 +2813,70 @@ fn repair_stale_operations(now: u64) {
                     wrap_requeue.push(request_id);
                 }
             }
-        }
 
-        let unwrap_items: Vec<_> = state
-            .unwrap_requests
-            .iter()
-            .map(|entry| (*entry.key(), entry.value().clone()))
-            .collect();
-        for (request_id, mut req) in unwrap_items {
-            if req.status == UnwrapRequestStatus::Dispatching && req.updated_at <= cutoff {
-                req.status = UnwrapRequestStatus::Queued;
-                req.updated_at = now;
-                if req.transfer_created_at_time == 0 {
-                    req.transfer_created_at_time = now;
+            let unwrap_items: Vec<_> = state
+                .unwrap_requests
+                .iter()
+                .map(|entry| (*entry.key(), entry.value().clone()))
+                .collect();
+            for (request_id, mut req) in unwrap_items {
+                if req.status == UnwrapRequestStatus::Dispatching && req.updated_at <= cutoff {
+                    req.status = UnwrapRequestStatus::Queued;
+                    req.updated_at = now;
+                    if req.transfer_created_at_time == 0 {
+                        req.transfer_created_at_time = now;
+                    }
+                    state.unwrap_requests.insert(request_id, req);
+                    unwrap_requeue.push(request_id);
                 }
-                state.unwrap_requests.insert(request_id, req);
-                unwrap_requeue.push(request_id);
             }
-        }
 
-        let mut wrap_queued = BTreeSet::new();
-        for entry in state.wrap_queue.iter() {
-            wrap_queued.insert(entry.value());
-        }
-        let mut wrap_meta = *state.wrap_queue_meta.get();
-        for request_id in wrap_requeue {
-            if wrap_queued.insert(request_id) {
-                let seq = wrap_meta.push();
-                state.wrap_queue.insert(seq, request_id);
+            let update_items: Vec<_> = state
+                .icp_update_requests
+                .iter()
+                .map(|entry| (*entry.key(), entry.value().clone()))
+                .collect();
+            for (request_id, mut req) in update_items {
+                if req.status == IcpUpdateRequestStatus::Dispatching && req.updated_at <= cutoff {
+                    req.status = IcpUpdateRequestStatus::DispatchUncertain;
+                    req.updated_at = now;
+                    req.error_code = Some("ic_update.dispatch_uncertain".to_string());
+                    state.icp_update_requests.insert(request_id, req);
+                }
             }
-        }
-        state.wrap_queue_meta.set(wrap_meta);
 
-        let mut unwrap_queued = BTreeSet::new();
-        for entry in state.unwrap_dispatch_queue.iter() {
-            unwrap_queued.insert(entry.value());
-        }
-        let mut unwrap_meta = *state.unwrap_dispatch_meta.get();
-        for request_id in unwrap_requeue {
-            if unwrap_queued.insert(request_id) {
-                let seq = unwrap_meta.push();
-                state.unwrap_dispatch_queue.insert(seq, request_id);
+            let mut wrap_queued = BTreeSet::new();
+            for entry in state.wrap_queue.iter() {
+                wrap_queued.insert(entry.value());
             }
-        }
-        state.unwrap_dispatch_meta.set(unwrap_meta);
-        (
-            !state.wrap_queue.is_empty(),
-            !state.unwrap_dispatch_queue.is_empty(),
-        )
-    });
+            let mut wrap_meta = *state.wrap_queue_meta.get();
+            for request_id in wrap_requeue {
+                if wrap_queued.insert(request_id) {
+                    let seq = wrap_meta.push();
+                    state.wrap_queue.insert(seq, request_id);
+                }
+            }
+            state.wrap_queue_meta.set(wrap_meta);
+
+            let mut unwrap_queued = BTreeSet::new();
+            for entry in state.unwrap_dispatch_queue.iter() {
+                unwrap_queued.insert(entry.value());
+            }
+            let mut unwrap_meta = *state.unwrap_dispatch_meta.get();
+            for request_id in unwrap_requeue {
+                if unwrap_queued.insert(request_id) {
+                    let seq = unwrap_meta.push();
+                    state.unwrap_dispatch_queue.insert(seq, request_id);
+                }
+            }
+            state.unwrap_dispatch_meta.set(unwrap_meta);
+
+            (
+                !state.wrap_queue.is_empty(),
+                !state.unwrap_dispatch_queue.is_empty(),
+                !state.icp_update_dispatch_queue.is_empty(),
+            )
+        });
     #[cfg(target_arch = "wasm32")]
     {
         if wrap_needs_schedule {
@@ -2707,10 +2885,17 @@ fn repair_stale_operations(now: u64) {
         if unwrap_needs_schedule {
             schedule_unwrap_dispatch();
         }
+        if icp_update_needs_schedule {
+            schedule_icp_update_dispatch();
+        }
     }
     #[cfg(not(target_arch = "wasm32"))]
     {
-        let _ = (wrap_needs_schedule, unwrap_needs_schedule);
+        let _ = (
+            wrap_needs_schedule,
+            unwrap_needs_schedule,
+            icp_update_needs_schedule,
+        );
     }
 }
 
@@ -2724,10 +2909,13 @@ fn recover_wrap_worker_state_after_upgrade() -> bool {
         let mut candidates = Vec::new();
         for item in state.wrap_requests.range(..) {
             let request_id = *item.key();
-            if matches!(
-                item.value().result.status,
-                StoredRequestStatus::Queued | StoredRequestStatus::Running
-            ) {
+            let req = item.value();
+            if req.gas_limit != 0
+                && matches!(
+                    item.value().result.status,
+                    StoredRequestStatus::Queued | StoredRequestStatus::Running
+                )
+            {
                 candidates.push(request_id);
             }
         }
@@ -2740,8 +2928,6 @@ fn recover_wrap_worker_state_after_upgrade() -> bool {
                     if req.result.mint_tx_id.is_some()
                         || req.result.mint_submit_status == MintSubmitStatus::Submitted
                     {
-                        req.result.status = StoredRequestStatus::Succeeded;
-                        req.result.stage = WrapRequestStage::Succeeded;
                         should_queue = false;
                     } else {
                         req.result.status = StoredRequestStatus::Queued;
@@ -2823,6 +3009,59 @@ fn recover_unwrap_dispatch_state_after_upgrade(now: u64) -> bool {
     })
 }
 
+fn recover_icp_update_dispatch_state_after_upgrade(now: u64) -> bool {
+    with_state_mut(|state| {
+        let mut queued_ids = BTreeSet::new();
+        for item in state.icp_update_dispatch_queue.range(..) {
+            queued_ids.insert(item.value());
+        }
+
+        let mut candidates = Vec::new();
+        let mut uncertain = Vec::new();
+        for item in state.icp_update_requests.range(..) {
+            let request_id = *item.key();
+            let mut req = item.value().clone();
+            match req.status {
+                IcpUpdateRequestStatus::Queued => {
+                    if !queued_ids.contains(&request_id) {
+                        candidates.push((request_id, req));
+                    }
+                }
+                IcpUpdateRequestStatus::Dispatching => {
+                    req.status = IcpUpdateRequestStatus::DispatchUncertain;
+                    req.updated_at = now;
+                    req.error_code = Some("ic_update.dispatch_uncertain".to_string());
+                    uncertain.push((request_id, req));
+                }
+                IcpUpdateRequestStatus::Dispatched
+                | IcpUpdateRequestStatus::DispatchFailed
+                | IcpUpdateRequestStatus::DispatchUncertain => {}
+            }
+        }
+
+        for (request_id, req) in uncertain {
+            state.icp_update_requests.insert(request_id, req);
+        }
+
+        if candidates.is_empty() {
+            return !state.icp_update_dispatch_queue.is_empty();
+        }
+
+        let mut meta = *state.icp_update_dispatch_meta.get();
+        for (request_id, req) in candidates {
+            state.icp_update_requests.insert(request_id, req);
+            if queued_ids.contains(&request_id) {
+                continue;
+            }
+            let seq = meta.push();
+            state.icp_update_dispatch_queue.insert(seq, request_id);
+            queued_ids.insert(request_id);
+        }
+        state.icp_update_dispatch_meta.set(meta);
+        !state.icp_update_dispatch_queue.is_empty()
+    })
+}
+
 #[ic_cdk::pre_upgrade]
 fn pre_upgrade() {
     upgrade::pre_upgrade();
@@ -2854,6 +3093,14 @@ struct InspectMethodPolicy {
 
 const INSPECT_METHOD_POLICIES: &[InspectMethodPolicy] = &[
     InspectMethodPolicy {
+        method: "add_query_precompile_allowed_method",
+        payload_limit: INSPECT_MANAGE_PAYLOAD_LIMIT,
+    },
+    InspectMethodPolicy {
+        method: "add_update_precompile_allowed_method",
+        payload_limit: INSPECT_MANAGE_PAYLOAD_LIMIT,
+    },
+    InspectMethodPolicy {
         method: "icrc21_canister_call_consent_message",
         payload_limit: INSPECT_MANAGE_PAYLOAD_LIMIT,
     },
@@ -2875,6 +3122,14 @@ const INSPECT_METHOD_POLICIES: &[InspectMethodPolicy] = &[
     },
     InspectMethodPolicy {
         method: "dispatch_unwrap_request",
+        payload_limit: INSPECT_MANAGE_PAYLOAD_LIMIT,
+    },
+    InspectMethodPolicy {
+        method: "remove_query_precompile_allowed_method",
+        payload_limit: INSPECT_MANAGE_PAYLOAD_LIMIT,
+    },
+    InspectMethodPolicy {
+        method: "remove_update_precompile_allowed_method",
         payload_limit: INSPECT_MANAGE_PAYLOAD_LIMIT,
     },
     InspectMethodPolicy {
@@ -2903,14 +3158,6 @@ const INSPECT_METHOD_POLICIES: &[InspectMethodPolicy] = &[
     },
     InspectMethodPolicy {
         method: "set_fee_policy",
-        payload_limit: INSPECT_MANAGE_PAYLOAD_LIMIT,
-    },
-    InspectMethodPolicy {
-        method: "add_query_precompile_allowed_method",
-        payload_limit: INSPECT_MANAGE_PAYLOAD_LIMIT,
-    },
-    InspectMethodPolicy {
-        method: "remove_query_precompile_allowed_method",
         payload_limit: INSPECT_MANAGE_PAYLOAD_LIMIT,
     },
     InspectMethodPolicy {
@@ -3061,6 +3308,7 @@ fn credit_native_deposit(
     if let Some(reason) = reject_anonymous_update() {
         return Err(api_rejected(&reason, &reason));
     }
+    reject_data_plane_write()?;
     let caller = msg_caller();
     if caller != current_wrap_canister_id() {
         return Err(api_rejected(
@@ -3479,12 +3727,12 @@ fn profile_precompile_call(call: RpcCallObjectView) -> Result<RpcCallResultView,
     ic_evm_rpc::rpc_eth_call_object(call)
 }
 
-#[ic_cdk::query]
-fn rpc_eth_call_object_at(
+#[ic_cdk::query(composite = true)]
+async fn rpc_eth_call_object_at(
     call: RpcCallObjectView,
     tag: RpcBlockTagView,
 ) -> Result<RpcCallResultView, RpcErrorView> {
-    ic_evm_rpc::rpc_eth_call_object_at(call, tag)
+    ic_evm_rpc::rpc_eth_call_object_at_async(call, tag, resolve_icp_query_precompile).await
 }
 
 #[ic_cdk::query]
@@ -3538,7 +3786,7 @@ fn rpc_eth_call_rawtx(raw_tx: Vec<u8>) -> Result<Vec<u8>, String> {
 }
 
 async fn resolve_icp_query_precompile(
-    request: evm_core::wrap_precompile::IcpQueryRequest,
+    request: evm_core::kasane_precompiles::IcpQueryRequest,
 ) -> Result<Vec<u8>, String> {
     if !is_query_precompile_allowed(&request.target, &request.method) {
         return Err("ic_query.allowlist_miss".to_string());
@@ -3837,7 +4085,7 @@ fn get_precompile_profile() -> Vec<PrecompileProfileView> {
     if let Err(reason) = require_controller() {
         ic_cdk::trap(&reason);
     }
-    evm_core::wrap_precompile::precompile_profile_snapshot()
+    evm_core::kasane_precompiles::precompile_profile_snapshot()
         .into_iter()
         .map(|entry| PrecompileProfileView {
             address: entry.address.to_vec(),
@@ -3859,7 +4107,7 @@ fn clear_precompile_profile() -> Result<(), String> {
         return Err(reason);
     }
     require_control_plane_write()?;
-    evm_core::wrap_precompile::clear_precompile_profile();
+    evm_core::kasane_precompiles::clear_precompile_profile();
     Ok(())
 }
 
@@ -4225,6 +4473,13 @@ fn reject_write_reason() -> Option<String> {
     ic_evm_ops::reject_write_reason_with_mode_provider(migration_pending(), cycle_mode)
 }
 
+fn reject_data_plane_write() -> Result<(), ApiError> {
+    if let Some(reason) = reject_write_reason() {
+        return Err(api_rejected(&reason, &reason));
+    }
+    Ok(())
+}
+
 fn reject_anonymous_update() -> Option<String> {
     reject_anonymous_principal(msg_caller())
 }
@@ -4482,6 +4737,7 @@ struct CycleObserverTickOutcome {
     migration_tick_ran: bool,
     migration_pending: bool,
     mode: OpsMode,
+    repair_stale_called: bool,
     schedule_mining_called: bool,
 }
 
@@ -4493,9 +4749,12 @@ fn run_cycle_observer_once() -> CycleObserverTickOutcome {
     }
     let migration_pending = migration_pending();
     let mode = observe_cycles();
-    repair_stale_operations(current_time_nanos());
     let schedule_mining_called =
         should_schedule_mining_after_cycle_observer(mode, migration_pending);
+    let repair_stale_called = schedule_mining_called;
+    if repair_stale_called {
+        repair_stale_operations(current_time_nanos());
+    }
     if schedule_mining_called {
         schedule_mining();
     }
@@ -4509,6 +4768,7 @@ fn run_cycle_observer_once() -> CycleObserverTickOutcome {
         migration_tick_ran,
         migration_pending,
         mode,
+        repair_stale_called,
         schedule_mining_called,
     }
 }
@@ -4612,7 +4872,10 @@ fn mining_tick_with_timer(timer_scheduler: fn(u64), reject_provider: fn() -> Opt
         match result {
             Ok(outcome) => {
                 record_unwrap_requests_from_block(&outcome.block.tx_ids);
+                record_icp_update_requests_from_block(&outcome.block.tx_ids);
+                settle_submitted_wrap_mint_receipts(current_time_nanos());
                 schedule_unwrap_dispatch();
+                schedule_icp_update_dispatch();
                 maybe_prune_on_block_event(outcome.block.number);
             }
             Err(chain::ChainError::NoExecutableTx) | Err(chain::ChainError::QueueEmpty) => {}
@@ -4635,6 +4898,13 @@ struct AppliedUnwrapDispatchOutcome {
     error_code: Option<String>,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct AppliedIcpUpdateDispatchOutcome {
+    status: IcpUpdateRequestStatus,
+    reply: Option<Vec<u8>>,
+    error_code: Option<String>,
+}
+
 fn record_unwrap_requests_from_block(tx_ids: &[TxId]) {
     for tx_id in tx_ids {
         let Some(receipt) = chain::get_receipt(tx_id) else {
@@ -4642,7 +4912,7 @@ fn record_unwrap_requests_from_block(tx_ids: &[TxId]) {
         };
         for (log_index, log) in receipt.logs.iter().enumerate() {
             if let Some(intent) = native_withdraw_intent_from_log(log) {
-                let Some(request_id) = derive_unwrap_request_id(tx_id, log_index) else {
+                let Some(request_id) = derive_log_request_id(tx_id, log_index) else {
                     continue;
                 };
                 with_state_mut(|state| {
@@ -4673,7 +4943,7 @@ fn record_unwrap_requests_from_block(tx_ids: &[TxId]) {
             let Some(intent) = unwrap_intent_from_log(log) else {
                 continue;
             };
-            let Some(request_id) = derive_unwrap_request_id(tx_id, log_index) else {
+            let Some(request_id) = derive_log_request_id(tx_id, log_index) else {
                 continue;
             };
             with_state_mut(|state| {
@@ -4703,6 +4973,121 @@ fn record_unwrap_requests_from_block(tx_ids: &[TxId]) {
     }
 }
 
+fn record_icp_update_requests_from_block(tx_ids: &[TxId]) {
+    for tx_id in tx_ids {
+        let Some(receipt) = chain::get_receipt(tx_id) else {
+            continue;
+        };
+        let Some(envelope) = chain::get_tx_envelope(tx_id) else {
+            continue;
+        };
+        let caller = envelope.caller_evm.unwrap_or([0u8; 20]);
+        let Ok(decoded) = decode_tx_view(envelope.kind, caller, &envelope.raw) else {
+            continue;
+        };
+        let ic_caller = if envelope.kind == TxKind::IcSynthetic {
+            Some(envelope.caller_principal.clone())
+        } else {
+            None
+        };
+        for (log_index, log) in receipt.logs.iter().enumerate() {
+            let Some(intent) = icp_update_intent_from_log(log) else {
+                continue;
+            };
+            let Some(request_id) = derive_log_request_id(tx_id, log_index) else {
+                continue;
+            };
+            with_state_mut(|state| {
+                if state.icp_update_requests.get(&request_id).is_some() {
+                    return;
+                }
+                let now = current_time_nanos();
+                state.icp_update_requests.insert(
+                    request_id,
+                    IcpUpdateDispatchRequest {
+                        target: intent.target.clone(),
+                        method: intent.method.clone(),
+                        arg: intent.arg.clone(),
+                        request_id,
+                        tx_id: *tx_id,
+                        block_number: receipt.block_number,
+                        tx_index: receipt.tx_index,
+                        log_index: u32::try_from(log_index).unwrap_or(u32::MAX),
+                        tx_kind: envelope.kind,
+                        evm_sender: decoded.from,
+                        ic_caller: ic_caller.clone(),
+                        status: IcpUpdateRequestStatus::Queued,
+                        reply: None,
+                        error_code: None,
+                        updated_at: now,
+                        call_started_at_time: 0,
+                    },
+                );
+                let mut meta = *state.icp_update_dispatch_meta.get();
+                let seq = meta.push();
+                state.icp_update_dispatch_meta.set(meta);
+                state.icp_update_dispatch_queue.insert(seq, request_id);
+                trim_icp_update_requests(state);
+            });
+        }
+    }
+}
+
+fn trim_icp_update_requests(state: &mut evm_db::stable_state::StableState) {
+    let len = usize::try_from(state.icp_update_requests.len()).unwrap_or(usize::MAX);
+    if len <= MAX_ICP_UPDATE_REQUESTS {
+        return;
+    }
+    let mut completed = state
+        .icp_update_requests
+        .iter()
+        .filter_map(|entry| {
+            let status = entry.value().status;
+            if matches!(
+                status,
+                IcpUpdateRequestStatus::Dispatched
+                    | IcpUpdateRequestStatus::DispatchFailed
+                    | IcpUpdateRequestStatus::DispatchUncertain
+            ) {
+                Some((entry.value().updated_at, *entry.key()))
+            } else {
+                None
+            }
+        })
+        .collect::<Vec<_>>();
+    completed.sort_by_key(|(updated_at, request_id)| (*updated_at, request_id.0));
+
+    let mut remaining = len;
+    for (_, request_id) in completed {
+        if remaining <= MAX_ICP_UPDATE_REQUESTS {
+            break;
+        }
+        state.icp_update_requests.remove(&request_id);
+        remove_icp_update_queue_entries(state, request_id);
+        remaining = remaining.saturating_sub(1);
+    }
+}
+
+fn remove_icp_update_queue_entries(
+    state: &mut evm_db::stable_state::StableState,
+    request_id: TxId,
+) {
+    let seqs = state
+        .icp_update_dispatch_queue
+        .iter()
+        .filter_map(|entry| {
+            if entry.value() == request_id {
+                Some(*entry.key())
+            } else {
+                None
+            }
+        })
+        .collect::<Vec<_>>();
+    for seq in seqs {
+        state.icp_update_dispatch_queue.remove(&seq);
+    }
+}
+
 fn schedule_unwrap_dispatch() {
     let should_schedule = !UNWRAP_DISPATCH_SCHEDULED.swap(true, Ordering::SeqCst);
     if !should_schedule {
@@ -4714,6 +5099,46 @@ fn schedule_unwrap_dispatch() {
             unwrap_dispatch_tick().await;
         },
     );
+}
+
+fn schedule_icp_update_dispatch() {
+    if ICP_UPDATE_DISPATCH_SCHEDULED
+        .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+        .is_err()
+    {
+        return;
+    }
+    arm_icp_update_dispatch_timer();
+}
+
+fn arm_icp_update_dispatch_timer() {
+    #[cfg(test)]
+    ICP_UPDATE_DISPATCH_TIMER_ARMS.fetch_add(1, Ordering::SeqCst);
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let _tick = icp_update_dispatch_tick;
+    }
+    #[cfg(target_arch = "wasm32")]
+    ic_cdk_timers::set_timer(
+        std::time::Duration::from_millis(WRAP_DISPATCH_DELAY_MS),
+        async move {
+            icp_update_dispatch_tick().await;
+        },
+    );
+}
+
+#[cfg(test)]
+fn reset_icp_update_dispatch_scheduler_for_tests(scheduled: bool) {
+    ICP_UPDATE_DISPATCH_SCHEDULED.store(scheduled, Ordering::SeqCst);
+    ICP_UPDATE_DISPATCH_TIMER_ARMS.store(0, Ordering::SeqCst);
+}
+
+#[cfg(test)]
+fn icp_update_dispatch_scheduler_state_for_tests() -> (bool, u64) {
+    (
+        ICP_UPDATE_DISPATCH_SCHEDULED.load(Ordering::SeqCst),
+        ICP_UPDATE_DISPATCH_TIMER_ARMS.load(Ordering::SeqCst),
+    )
 }
 
 #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
@@ -4771,8 +5196,58 @@ fn pop_next_dispatch_request(now: u64) -> Result<Option<(TxId, UnwrapDispatchReq
     out
 }
 
+fn pop_next_icp_update_request(
+    now: u64,
+) -> Result<Option<(TxId, IcpUpdateDispatchRequest)>, String> {
+    let out = with_state_mut(|state| {
+        let mut meta = *state.icp_update_dispatch_meta.get();
+        let seq = match meta.pop() {
+            Some(v) => v,
+            None => {
+                state.icp_update_dispatch_meta.set(meta);
+                return Ok(None);
+            }
+        };
+        state.icp_update_dispatch_meta.set(meta);
+
+        let Some(request_id) = state.icp_update_dispatch_queue.get(&seq) else {
+            return Err(format!("ic_update.dispatch.queue_missing:seq={seq}"));
+        };
+        state.icp_update_dispatch_queue.remove(&seq);
+        let Some(mut req) = state.icp_update_requests.get(&request_id) else {
+            return Err(format!(
+                "ic_update.dispatch.request_missing:request_id={:?}",
+                request_id.0
+            ));
+        };
+        if is_decode_failed_icp_update_request(&req) {
+            req.updated_at = now;
+            req.status = IcpUpdateRequestStatus::DispatchFailed;
+            req.reply = None;
+            req.error_code = Some(ICP_UPDATE_DECODE_FAILURE_CODE.to_string());
+            state.icp_update_requests.insert(request_id, req);
+            return Err(format!(
+                "ic_update.dispatch.quarantined:request_id={:?}:reason={ICP_UPDATE_DECODE_FAILURE_CODE}",
+                request_id.0
+            ));
+        }
+        req.status = IcpUpdateRequestStatus::Dispatching;
+        req.updated_at = now;
+        if req.call_started_at_time == 0 {
+            req.call_started_at_time = now;
+        }
+        state.icp_update_requests.insert(request_id, req.clone());
+        Ok(Some((request_id, req)))
+    });
+    out
+}
+
 fn is_decode_failed_unwrap_request(req: &UnwrapDispatchRequest) -> bool {
     req.error_code.as_deref() == Some(UNWRAP_DECODE_FAILURE_CODE)
+}
+
+fn is_decode_failed_icp_update_request(req: &IcpUpdateDispatchRequest) -> bool {
+    req.error_code.as_deref() == Some(ICP_UPDATE_DECODE_FAILURE_CODE)
 }
 
 fn is_quarantined_unwrap_request(req: &UnwrapDispatchRequest) -> bool {
@@ -4858,6 +5333,129 @@ async fn unwrap_dispatch_tick() {
     }
 }
 
+async fn icp_update_dispatch_tick() {
+    loop {
+        let next = pop_next_icp_update_request(current_time_nanos());
+        let Some((request_id, req)) = (match next {
+            Ok(v) => v,
+            Err(err) => {
+                if err.starts_with("ic_update.dispatch.quarantined:") {
+                    warn!(error = err, "icp_update_dispatch_tick quarantined request");
+                } else {
+                    error!(
+                        error = err,
+                        "icp_update_dispatch_tick skipped corrupted queue entry"
+                    );
+                }
+                continue;
+            }
+        }) else {
+            finish_icp_update_dispatch_tick();
+            break;
+        };
+
+        finalize_icp_update_dispatch_attempt(
+            request_id,
+            current_time_nanos(),
+            dispatch_icp_update_request_internal(req).await,
+        );
+
+        complete_icp_update_dispatch_tick();
+        break;
+    }
+}
+
+fn complete_icp_update_dispatch_tick() {
+    if with_state(|state| !state.icp_update_dispatch_queue.is_empty()) {
+        arm_icp_update_dispatch_timer();
+    } else {
+        finish_icp_update_dispatch_tick();
+    }
+}
+
+fn finish_icp_update_dispatch_tick() {
+    ICP_UPDATE_DISPATCH_SCHEDULED.store(false, Ordering::SeqCst);
+    if with_state(|state| !state.icp_update_dispatch_queue.is_empty()) {
+        schedule_icp_update_dispatch();
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum WrapMintReceiptSettlement {
+    Succeeded,
+    Failed,
+}
+
+fn submitted_wrap_mint_receipt_candidates() -> Vec<(TxId, TxId)> {
+    with_state(|state| {
+        state
+            .wrap_requests
+            .iter()
+            .filter_map(|entry| {
+                let req = entry.value();
+                if req.gas_limit == 0
+                    || req.result.status != StoredRequestStatus::Running
+                    || req.result.mint_submit_status != MintSubmitStatus::Submitted
+                {
+                    return None;
+                }
+                let mint_tx_id = tx_id_from_bytes(req.result.mint_tx_id.clone()?)?;
+                Some((*entry.key(), mint_tx_id))
+            })
+            .collect()
+    })
+}
+
+fn settle_submitted_wrap_mint_receipts(now: u64) -> u64 {
+    let settlements = submitted_wrap_mint_receipt_candidates()
+        .into_iter()
+        .filter_map(|(request_id, mint_tx_id)| {
+            let receipt = chain::get_receipt(&mint_tx_id)?;
+            let settlement = if receipt.status == 1 {
+                WrapMintReceiptSettlement::Succeeded
+            } else {
+                WrapMintReceiptSettlement::Failed
+            };
+            Some((request_id, settlement))
+        })
+        .collect::<Vec<_>>();
+    let settled = u64::try_from(settlements.len()).unwrap_or(u64::MAX);
+    if settlements.is_empty() {
+        return 0;
+    }
+    with_state_mut(|state| {
+        for (request_id, settlement) in settlements {
+            let Some(mut req) = state.wrap_requests.get(&request_id) else {
+                continue;
+            };
+            if req.result.status != StoredRequestStatus::Running
+                || req.result.mint_submit_status != MintSubmitStatus::Submitted
+            {
+                continue;
+            }
+            req.result.updated_at = now;
+            match settlement {
+                WrapMintReceiptSettlement::Succeeded => {
+                    req.result.status = StoredRequestStatus::Succeeded;
+                    req.result.stage = WrapRequestStage::Succeeded;
+                    req.result.error_code = None;
+                    req.result.mint_failed_recoverable = false;
+                }
+                WrapMintReceiptSettlement::Failed => {
+                    req.result.status = StoredRequestStatus::Failed;
+                    req.result.stage = WrapRequestStage::Failed;
+                    req.result.error_code = Some("wrap.mint_receipt_failed".to_string());
+                    req.result.mint_failed_recoverable = true;
+                }
+            }
+            if let Ok(req) = sanitize_wrap_request(req) {
+                state.wrap_requests.insert(request_id, req);
+            }
+        }
+    });
+    settled
+}
+
 #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
 async fn wrap_worker_tick() {
     WRAP_WORKER_SCHEDULED.store(false, Ordering::SeqCst);
@@ -4933,7 +5531,7 @@ async fn execute_wrap_request(
     let mint = submit_mint_tx_internal(request_id, &req).await;
     match mint {
         Ok(mint_tx_id) => WrapExecutionOutcome {
-            status: StoredRequestStatus::Succeeded,
+            status: StoredRequestStatus::Running,
             pull_ledger_tx_id: Some(pull_ledger_tx_id),
             mint_tx_id: Some(mint_tx_id),
             error_code: None,
@@ -5153,6 +5751,9 @@ fn apply_wrap_execution_outcome(request_id: TxId, outcome: WrapExecutionOutcome)
         req.result.stage = match outcome.status {
             StoredRequestStatus::Succeeded => WrapRequestStage::Succeeded,
             StoredRequestStatus::Failed => WrapRequestStage::Failed,
+            StoredRequestStatus::Running if req.result.mint_tx_id.is_some() => {
+                WrapRequestStage::MintSubmitted
+            }
             StoredRequestStatus::Running => WrapRequestStage::MintSubmitting,
             StoredRequestStatus::Queued => WrapRequestStage::FeeCollected,
         };
@@ -5167,11 +5768,22 @@ fn is_native_withdraw_dispatch_request(req: &UnwrapDispatchRequest) -> bool {
     req.asset_id.as_slice() == NATIVE_WITHDRAW_ASSET_MARKER
 }
 
-fn native_withdraw_gross_transfer_amount(amount: &Nat, fee: u128) -> Result<Nat, String> {
+fn gross_transfer_receive_amount(
+    amount: &Nat,
+    fee: u128,
+    code_prefix: &str,
+) -> Result<Nat, String> {
     let gross_amount =
-        nat_to_u128(amount).ok_or_else(|| "native_withdraw.amount_out_of_range".to_string())?;
-    let receive_amount = native_withdraw_receive_amount(gross_amount, fee)?;
+        nat_to_u128(amount).ok_or_else(|| format!("{code_prefix}.amount_out_of_range"))?;
+    let receive_amount = gross_amount
+        .checked_sub(fee)
+        .filter(|value| *value > 0)
+        .ok_or_else(|| format!("{code_prefix}.amount_not_above_fee"))?;
     Ok(Nat(BigUint::from(receive_amount)))
+}
+
+fn native_withdraw_gross_transfer_amount(amount: &Nat, fee: u128) -> Result<Nat, String> {
+    gross_transfer_receive_amount(amount, fee, "native_withdraw")
 }
 
 async fn dispatch_unwrap_request_internal(
@@ -5211,8 +5823,8 @@ async fn dispatch_unwrap_request_internal(
             };
         }
     };
-    let mut amount = Nat(BigUint::from_bytes_be(&req.amount));
-    if is_native_withdraw_dispatch_request(&req) {
+    let gross_amount = Nat(BigUint::from_bytes_be(&req.amount));
+    let amount = if is_native_withdraw_dispatch_request(&req) {
         let fee = match fetch_icrc1_fee(ledger).await {
             Ok(fee) => fee,
             Err(code) => {
@@ -5223,7 +5835,7 @@ async fn dispatch_unwrap_request_internal(
                 };
             }
         };
-        amount = match native_withdraw_gross_transfer_amount(&amount, fee) {
+        match native_withdraw_gross_transfer_amount(&gross_amount, fee) {
             Ok(amount) => amount,
             Err(code) => {
                 return AppliedUnwrapDispatchOutcome {
@@ -5232,8 +5844,10 @@ async fn dispatch_unwrap_request_internal(
                     error_code: Some(code),
                 };
             }
-        };
-    }
+        }
+    } else {
+        gross_amount
+    };
     match attempt_icrc1_transfer(
         ledger,
         recipient,
@@ -5256,6 +5870,85 @@ async fn dispatch_unwrap_request_internal(
     }
 }
 
+async fn dispatch_icp_update_request_internal(
+    req: IcpUpdateDispatchRequest,
+) -> AppliedIcpUpdateDispatchOutcome {
+    if !is_update_precompile_allowed(&req.target, &req.method) {
+        return AppliedIcpUpdateDispatchOutcome {
+            status: IcpUpdateRequestStatus::DispatchFailed,
+            reply: None,
+            error_code: Some("ic_update.allowlist_miss".to_string()),
+        };
+    }
+    let target = Principal::from_slice(&req.target);
+    let envelope = icp_update_envelope(&req);
+    let response = Call::bounded_wait(target, &req.method)
+        .with_arg(envelope)
+        .change_timeout(ICP_UPDATE_DISPATCH_TIMEOUT_SECONDS)
+        .await;
+    match response {
+        Ok(response) => icp_update_success_outcome(response.into_bytes()),
+        Err(err) => {
+            let uncertain = is_icp_update_uncertain_call_error(&err);
+            let detail = format!("{err}");
+            let status = if uncertain {
+                IcpUpdateRequestStatus::DispatchUncertain
+            } else {
+                IcpUpdateRequestStatus::DispatchFailed
+            };
+            AppliedIcpUpdateDispatchOutcome {
+                status,
+                reply: None,
+                error_code: Some(format!("ic_update.call_failed:{detail}")),
+            }
+        }
+    }
+}
+
+fn icp_update_envelope(req: &IcpUpdateDispatchRequest) -> IcpUpdateEnvelopeV1 {
+    IcpUpdateEnvelopeV1 {
+        version: 1,
+        chain_id: CHAIN_ID,
+        request_id: req.request_id.0.to_vec(),
+        tx_id: req.tx_id.0.to_vec(),
+        block_number: req.block_number,
+        tx_index: req.tx_index,
+        log_index: req.log_index,
+        tx_kind: tx_kind_to_icp_update_view(req.tx_kind),
+        evm_sender: req.evm_sender.to_vec(),
+        ic_caller: req
+            .ic_caller
+            .as_ref()
+            .map(|bytes| Principal::from_slice(bytes)),
+        arg: req.arg.clone(),
+    }
+}
+
+fn is_icp_update_uncertain_call_error(error: &CallFailed) -> bool {
+    // bounded_wait timeout is surfaced as SysUnknown. CallPerformFailed means the
+    // request was not enqueued, so it remains a deterministic dispatch failure.
+    matches!(
+        error,
+        CallFailed::CallRejected(rejection)
+            if rejection.reject_code().ok() == Some(RejectCode::SysUnknown)
+    )
+}
+
+fn icp_update_success_outcome(reply: Vec<u8>) -> AppliedIcpUpdateDispatchOutcome {
+    if reply.len() > MAX_RETURN_DATA {
+        return AppliedIcpUpdateDispatchOutcome {
+            status: IcpUpdateRequestStatus::Dispatched,
+            reply: None,
+            error_code: Some(ICP_UPDATE_REPLY_OMITTED_TOO_LARGE.to_string()),
+        };
+    }
+    AppliedIcpUpdateDispatchOutcome {
+        status: IcpUpdateRequestStatus::Dispatched,
+        reply: Some(reply),
+        error_code: None,
+    }
+}
+
 fn finalize_unwrap_dispatch_attempt(
     request_id: TxId,
     now: u64,
@@ -5275,6 +5968,23 @@ fn finalize_unwrap_dispatch_attempt(
     });
 }
 
+fn finalize_icp_update_dispatch_attempt(
+    request_id: TxId,
+    now: u64,
+    applied: AppliedIcpUpdateDispatchOutcome,
+) {
+    with_state_mut(|state| {
+        let Some(mut req) = state.icp_update_requests.get(&request_id) else {
+            return;
+        };
+        req.updated_at = now;
+        req.reply = applied.reply;
+        req.status = applied.status;
+        req.error_code = applied.error_code.map(clamp_error_code);
+        state.icp_update_requests.insert(request_id, req);
+    });
+}
+
 fn request_id_from_bytes(bytes: Vec<u8>) -> Option<[u8; 32]> {
     if bytes.len() != 32 {
         return None;
@@ -5284,7 +5994,7 @@ fn request_id_from_bytes(bytes: Vec<u8>) -> Option<[u8; 32]> {
     Some(out)
 }
 
-fn derive_unwrap_request_id(tx_id: &TxId, log_index: usize) -> Option<TxId> {
+fn derive_log_request_id(tx_id: &TxId, log_index: usize) -> Option<TxId> {
     let log_index = u32::try_from(log_index).ok()?;
     let mut payload = Vec::with_capacity(36);
     payload.extend_from_slice(&tx_id.0);
@@ -5306,7 +6016,7 @@ fn unwrap_request_ids_for_tx(tx_id: &TxId) -> Vec<TxId> {
             {
                 return None;
             }
-            derive_unwrap_request_id(tx_id, log_index)
+            derive_log_request_id(tx_id, log_index)
         })
         .collect()
 }
@@ -5317,6 +6027,23 @@ fn request_dispatch_status_to_view(status: UnwrapRequestStatus) -> RequestDispat
         UnwrapRequestStatus::Dispatching => RequestDispatchStatusView::Dispatching,
         UnwrapRequestStatus::Dispatched => RequestDispatchStatusView::Dispatched,
         UnwrapRequestStatus::DispatchFailed => RequestDispatchStatusView::DispatchFailed,
+    }
+}
+
+fn icp_update_request_status_to_view(status: IcpUpdateRequestStatus) -> RequestDispatchStatusView {
+    match status {
+        IcpUpdateRequestStatus::Queued => RequestDispatchStatusView::Queued,
+        IcpUpdateRequestStatus::Dispatching => RequestDispatchStatusView::Dispatching,
+        IcpUpdateRequestStatus::Dispatched => RequestDispatchStatusView::Dispatched,
+        IcpUpdateRequestStatus::DispatchFailed => RequestDispatchStatusView::DispatchFailed,
+        IcpUpdateRequestStatus::DispatchUncertain => RequestDispatchStatusView::DispatchUncertain,
+    }
+}
+
+fn tx_kind_to_icp_update_view(kind: TxKind) -> IcpUpdateTxKindView {
+    match kind {
+        TxKind::EthSigned => IcpUpdateTxKindView::EthSigned,
+        TxKind::IcSynthetic => IcpUpdateTxKindView::IcSynthetic,
     }
 }
 
