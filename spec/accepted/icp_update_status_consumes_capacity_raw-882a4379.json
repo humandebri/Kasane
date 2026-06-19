@@ -1,0 +1,41 @@
+{
+  "target": "icp_update_status_consumes_capacity_raw",
+  "target_id": "361451e8a89f903c90499fab4ae3c9652fef301551e975b5d59926a0bd5e618a",
+  "slug": "icp_update_status_consumes_capacity_raw-882a4379",
+  "file": "crates/verified-core/src/kasane_precompiles/icp_update_status_consumes_capacity.rs",
+  "function": "icp_update_status_consumes_capacity_raw",
+  "git_commit": "4e47020aff9e8260f6371e188b3d614e6d24eb34",
+  "worktree_dirty": false,
+  "source_hash": "3e9411e9e3cb3c0ef2300882a590faf94961a02a4a0af0a13102ca517d2ca53c",
+  "semantic_hash": "8c73a6c292284513246bfb2437fa864b52c7201c2f4347e4134c4e60c11f75e2",
+  "dependency_hash_inputs": [],
+  "unresolved_dependencies": [],
+  "spec_source_of_truth": "accepted_json",
+  "tool_version": "0.1.0",
+  "preconditions": [
+    "true"
+  ],
+  "postconditions": [
+    "result == (status_code == ICP_UPDATE_STATUS_QUEUED || status_code == ICP_UPDATE_STATUS_DISPATCHING)"
+  ],
+  "acceptance_criteria": [
+    "Consume active ICP update capacity only for Queued and Dispatching status codes."
+  ],
+  "test_evidence": [
+    {
+      "scenario_id": "icp_update_status_consumes_capacity_raw-nominal",
+      "command": "cargo test -p ic-evm-core kasane_precompiles_query",
+      "test_name": "ICP update capacity tests compare status mapping with verified model",
+      "recorded_at": "2026-06-19T00:00:00Z"
+    }
+  ],
+  "risk_level": "medium",
+  "verified_subject": "implementation",
+  "contract_hash": "7997881f9a9363d2153a04db673f2a2eb8db1ce8d0a270d6c012711175aa1b48",
+  "applied_contract_hash": "7997881f9a9363d2153a04db673f2a2eb8db1ce8d0a270d6c012711175aa1b48",
+  "applied_at": "2026-06-19T02:59:17Z",
+  "panic_behavior": "documented",
+  "overflow_behavior": "documented",
+  "rejected_behaviors": [],
+  "open_assumptions": []
+}

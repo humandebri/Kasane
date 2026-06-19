@@ -1,0 +1,41 @@
+{
+  "target": "icp_query_gas_observation_safe_raw",
+  "target_id": "c8578caf3dc486fc3ddbfcb92766134af83ece6b1aad90f9b5ea8eccbf602b4f",
+  "slug": "icp_query_gas_observation_safe_raw-9b7ab62f",
+  "file": "crates/verified-core/src/kasane_precompiles/icp_query_gas_observation.rs",
+  "function": "icp_query_gas_observation_safe_raw",
+  "git_commit": "4e47020aff9e8260f6371e188b3d614e6d24eb34",
+  "worktree_dirty": false,
+  "source_hash": "1b0d879a089d2884153260d30dd4ea63562b15c9252da66a7bd2f1772eef8d45",
+  "semantic_hash": "910a170aadb10ae82caec25dd3ad87d588dcd4b66dd2d5c7bb8d85c6706c9e79",
+  "dependency_hash_inputs": [],
+  "unresolved_dependencies": [],
+  "spec_source_of_truth": "accepted_json",
+  "tool_version": "0.1.0",
+  "preconditions": [
+    "true"
+  ],
+  "postconditions": [
+    "result == (observed_address_code == ICP_QUERY_PRECOMPILE_ADDRESS_CODE && (outcome == ICP_QUERY_OUTCOME_RETURN || outcome == ICP_QUERY_OUTCOME_OOG || outcome == ICP_QUERY_OUTCOME_OTHER_FAILURE) && (input_len > MAX_ICP_QUERY_COMBINED_LEN_WITH_EXACT_GAS || reply_len > MAX_ICP_QUERY_COMBINED_LEN_WITH_EXACT_GAS || charged_gas >= ICP_QUERY_BASE_GAS + input_len * ICP_QUERY_INPUT_BYTE_GAS + reply_len * ICP_QUERY_REPLY_BYTE_GAS) && (outcome != ICP_QUERY_OUTCOME_RETURN || gas_limit >= charged_gas) && (outcome != ICP_QUERY_OUTCOME_OOG || gas_limit < charged_gas))"
+  ],
+  "acceptance_criteria": [
+    "Require the ICP query precompile address, a known return/OOG/other-failure outcome, exact byte gas lower bound in the conservative non-overflow range, and OOG-only gas-limit split."
+  ],
+  "test_evidence": [
+    {
+      "scenario_id": "icp_query_gas_observation_safe_raw-nominal",
+      "command": "cargo test -p verified-core --test kasane_precompiles_pbt",
+      "test_name": "verified-core ICP query gas observation PBT",
+      "recorded_at": "2026-06-19T00:00:00Z"
+    }
+  ],
+  "risk_level": "medium",
+  "verified_subject": "implementation",
+  "contract_hash": "ddd9750c805680c29597a89219edf91352046ae996bba67d68a9b5f9062bfc1e",
+  "applied_contract_hash": "ddd9750c805680c29597a89219edf91352046ae996bba67d68a9b5f9062bfc1e",
+  "applied_at": "2026-06-19T02:57:11Z",
+  "panic_behavior": "documented",
+  "overflow_behavior": "documented",
+  "rejected_behaviors": [],
+  "open_assumptions": []
+}

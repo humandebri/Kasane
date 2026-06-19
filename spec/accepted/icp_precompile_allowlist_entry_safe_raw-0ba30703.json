@@ -1,0 +1,41 @@
+{
+  "target": "icp_precompile_allowlist_entry_safe_raw",
+  "target_id": "99d4b47d84d399c22b436a28009ca2f2df71b0dbae9a08fb91509bb8e36fb9d5",
+  "slug": "icp_precompile_allowlist_entry_safe_raw-0ba30703",
+  "file": "crates/verified-core/src/kasane_precompiles/icp_precompile_allowlist_entry.rs",
+  "function": "icp_precompile_allowlist_entry_safe_raw",
+  "git_commit": "4e47020aff9e8260f6371e188b3d614e6d24eb34",
+  "worktree_dirty": false,
+  "source_hash": "ba6fd61019c4c10301d2f176a5231c39c2ff6a5330ab59a441ccc9241cab6d4e",
+  "semantic_hash": "239c318e965ef4931ee860a84280f6f78ab9b1b65fb9c2ed9a74c91d481a04d6",
+  "dependency_hash_inputs": [],
+  "unresolved_dependencies": [],
+  "spec_source_of_truth": "accepted_json",
+  "tool_version": "0.1.0",
+  "preconditions": [
+    "true"
+  ],
+  "postconditions": [
+    "result == (target_len >= 1 && target_len <= MAX_PRINCIPAL_LEN && target_non_anonymous == 1 && method_len >= 1 && method_len <= MAX_QUERY_METHOD_LEN && method_ascii == 1)"
+  ],
+  "acceptance_criteria": [
+    "Accept allowlist entries only for bounded non-anonymous targets and bounded ASCII method names."
+  ],
+  "test_evidence": [
+    {
+      "scenario_id": "icp_precompile_allowlist_entry_safe_raw-nominal",
+      "command": "cargo test -p ic-evm-gateway query_precompile_allow",
+      "test_name": "gateway allowlist validation uses verified model for target and method boundaries",
+      "recorded_at": "2026-06-19T00:00:00Z"
+    }
+  ],
+  "risk_level": "medium",
+  "verified_subject": "implementation",
+  "contract_hash": "8a6f469452c75a66e7b9716afdefffbe7858fb852cff4b90efd361282cbbb86d",
+  "applied_contract_hash": "8a6f469452c75a66e7b9716afdefffbe7858fb852cff4b90efd361282cbbb86d",
+  "applied_at": "2026-06-19T02:57:11Z",
+  "panic_behavior": "documented",
+  "overflow_behavior": "documented",
+  "rejected_behaviors": [],
+  "open_assumptions": []
+}

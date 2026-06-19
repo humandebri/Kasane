@@ -3,6 +3,9 @@
 #[cfg(verus_keep_ghost)]
 use vstd::prelude::*;
 
+#[allow(dead_code)]
+fn main() {}
+
 #[cfg_attr(verus_keep_ghost, verus_spec(valid => ensures
     valid == (max_txs > 0),
 ))]
@@ -60,19 +63,6 @@ pub fn instruction_limit_exhausted(
         && instruction_consumed(instruction_start, instruction_current) >= instruction_soft_limit
 }
 
-#[cfg_attr(verus_keep_ghost, verus_spec(stop => ensures
-    stop == (
-        (block_gas_limit > 0 && block_gas_used >= block_gas_limit)
-        || (
-            instruction_soft_limit > 0
-            && (if instruction_current >= instruction_start {
-                instruction_current - instruction_start
-            } else {
-                0
-            }) >= instruction_soft_limit
-        )
-    ),
-))]
 pub fn should_stop_execution(
     block_gas_used: u64,
     block_gas_limit: u64,

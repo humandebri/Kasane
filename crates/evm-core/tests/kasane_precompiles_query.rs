@@ -129,6 +129,52 @@ fn test_icp_update_request(request_id: TxId) -> IcpUpdateDispatchRequest {
     }
 }
 
+fn icp_update_status_code(status: IcpUpdateRequestStatus) -> u64 {
+    match status {
+        IcpUpdateRequestStatus::Queued => {
+            verified_core::kasane_precompiles::ICP_UPDATE_STATUS_QUEUED
+        }
+        IcpUpdateRequestStatus::Dispatching => {
+            verified_core::kasane_precompiles::ICP_UPDATE_STATUS_DISPATCHING
+        }
+        IcpUpdateRequestStatus::Dispatched => {
+            verified_core::kasane_precompiles::ICP_UPDATE_STATUS_DISPATCHED
+        }
+        IcpUpdateRequestStatus::DispatchFailed => {
+            verified_core::kasane_precompiles::ICP_UPDATE_STATUS_DISPATCH_FAILED
+        }
+        IcpUpdateRequestStatus::DispatchUncertain => {
+            verified_core::kasane_precompiles::ICP_UPDATE_STATUS_DISPATCH_UNCERTAIN
+        }
+    }
+}
+
+fn assert_verified_icp_update_status_model(status: IcpUpdateRequestStatus, consumes: bool) {
+    assert_eq!(
+        verified_core::kasane_precompiles::icp_update_status_consumes_capacity_raw(
+            icp_update_status_code(status),
+        ),
+        consumes
+    );
+}
+
+fn assert_verified_icp_update_capacity_model(
+    existing_active: usize,
+    reserved: usize,
+    journaled: usize,
+    accepted: bool,
+) {
+    assert_eq!(
+        verified_core::kasane_precompiles::icp_update_capacity_accepts_raw(
+            existing_active as u64,
+            reserved as u64,
+            journaled as u64,
+            MAX_ICP_UPDATE_REQUESTS as u64,
+        ),
+        accepted
+    );
+}
+
 fn seed_icp_update_requests(count: usize) {
     seed_icp_update_requests_with_status(count, IcpUpdateRequestStatus::Queued);
 }
@@ -895,6 +941,9 @@ fn icp_update_intent_capacity_is_reserved_within_block() {
     setup_query_precompile_call_context();
     allow_icp_update_method("write_state");
     seed_icp_update_requests(MAX_ICP_UPDATE_REQUESTS - 1);
+    assert_verified_icp_update_status_model(IcpUpdateRequestStatus::Queued, true);
+    assert_verified_icp_update_capacity_model(MAX_ICP_UPDATE_REQUESTS - 1, 0, 0, true);
+    assert_verified_icp_update_capacity_model(MAX_ICP_UPDATE_REQUESTS - 1, 0, 1, false);
     common::install_contract(
         FORWARDER_ADDRESS,
         &forwarder_runtime_bytecode_to(ICP_UPDATE_INTENT_PRECOMPILE_ADDRESS.into_array()),
@@ -954,6 +1003,8 @@ fn icp_update_intent_full_capacity_reverts_without_stopping_block() {
     setup_query_precompile_call_context();
     allow_icp_update_method("write_state");
     seed_icp_update_requests(MAX_ICP_UPDATE_REQUESTS);
+    assert_verified_icp_update_status_model(IcpUpdateRequestStatus::Queued, true);
+    assert_verified_icp_update_capacity_model(MAX_ICP_UPDATE_REQUESTS, 0, 0, false);
     common::install_contract(
         FORWARDER_ADDRESS,
         &forwarder_runtime_bytecode_to(ICP_UPDATE_INTENT_PRECOMPILE_ADDRESS.into_array()),
@@ -993,6 +1044,8 @@ fn icp_update_intent_dispatching_capacity_reverts_without_stopping_block() {
         MAX_ICP_UPDATE_REQUESTS,
         IcpUpdateRequestStatus::Dispatching,
     );
+    assert_verified_icp_update_status_model(IcpUpdateRequestStatus::Dispatching, true);
+    assert_verified_icp_update_capacity_model(MAX_ICP_UPDATE_REQUESTS, 0, 0, false);
     common::install_contract(
         FORWARDER_ADDRESS,
         &forwarder_runtime_bytecode_to(ICP_UPDATE_INTENT_PRECOMPILE_ADDRESS.into_array()),
@@ -1034,6 +1087,8 @@ fn icp_update_intent_terminal_history_does_not_consume_capacity() {
         setup_query_precompile_call_context();
         allow_icp_update_method("write_state");
         seed_icp_update_requests_with_status(MAX_ICP_UPDATE_REQUESTS, status);
+        assert_verified_icp_update_status_model(status, false);
+        assert_verified_icp_update_capacity_model(0, 0, 0, true);
         common::install_contract(
             FORWARDER_ADDRESS,
             &forwarder_runtime_bytecode_to(ICP_UPDATE_INTENT_PRECOMPILE_ADDRESS.into_array()),

@@ -1,13 +1,13 @@
 {
   "target": "should_stop_execution",
-  "target_id": "bb5b677c76635020eb395881a17f57db79f6d5373325ffcbaaa7a20044ac695c",
+  "target_id": "148954761b383e96afa8ccfbc4db3c7e8fc5a902e5792063fc6d6380ae8d1aa3",
   "slug": "should_stop_execution-207b8917",
   "file": "crates/verified-core/src/block.rs",
   "function": "should_stop_execution",
-  "git_commit": "703d7df1dcdc48c6f15be3733c6da4ec5c6a8dad",
+  "git_commit": "4e47020aff9e8260f6371e188b3d614e6d24eb34",
   "worktree_dirty": false,
-  "source_hash": "207b8917aba05a0e57fdbfa90be39c0e28e586fee3db5a9e1ba3ca68e4f6408e",
-  "semantic_hash": "3b26bd46cb29deee1b1b0351d0b169ada91df7214b1a471dafe653286e306225",
+  "source_hash": "0909f8060e4746e5d5c98d04c17cc8cc4614a4d82850c79675aaaabf1388aae4",
+  "semantic_hash": "7343af6e7819d43d44a10806846cc7ee8ce23ed92cbff40ce4b79b7008174620",
   "dependency_hash_inputs": [
     {
       "kind": "use",
@@ -31,12 +31,46 @@
   "unresolved_dependencies": [],
   "spec_source_of_truth": "accepted_json",
   "tool_version": "0.1.0",
-  "preconditions": [],
-  "postconditions": [
-    "stop == ((block_gas_limit > 0 && block_gas_used >= block_gas_limit) || (instruction_soft_limit > 0 && consumed >= instruction_soft_limit))",
-    "instruction_current >= instruction_start ==> consumed == instruction_current - instruction_start",
-    "instruction_current < instruction_start ==> consumed == 0"
+  "preconditions": [
+    "true"
   ],
+  "postconditions": [
+    "result == ((block_gas_limit > 0 && block_gas_used >= block_gas_limit) || (instruction_soft_limit > 0 && (if instruction_current >= instruction_start { instruction_current - instruction_start } else { 0 }) >= instruction_soft_limit))"
+  ],
+  "acceptance_criteria": [
+    "Execution stops exactly when an enabled block gas limit is reached or an enabled instruction soft limit is reached after saturating consumed instructions."
+  ],
+  "test_evidence": [
+    {
+      "scenario_id": "should-stop-gas-limit-reached",
+      "command": "cargo test -p verified-core execution_stops_on_gas_or_instruction_budget",
+      "test_name": "execution_stops_on_gas_or_instruction_budget",
+      "recorded_at": "2026-06-19T00:09:13Z"
+    },
+    {
+      "scenario_id": "should-stop-gas-limit-disabled",
+      "command": "cargo test -p verified-core execution_stops_on_gas_or_instruction_budget",
+      "test_name": "execution_stops_on_gas_or_instruction_budget",
+      "recorded_at": "2026-06-19T00:09:16Z"
+    },
+    {
+      "scenario_id": "should-stop-instruction-limit-reached",
+      "command": "cargo test -p verified-core execution_stops_on_gas_or_instruction_budget",
+      "test_name": "execution_stops_on_gas_or_instruction_budget",
+      "recorded_at": "2026-06-19T00:09:19Z"
+    },
+    {
+      "scenario_id": "should-continue-instruction-counter-underflow",
+      "command": "cargo test -p verified-core execution_stops_on_gas_or_instruction_budget",
+      "test_name": "execution_stops_on_gas_or_instruction_budget",
+      "recorded_at": "2026-06-19T00:09:23Z"
+    }
+  ],
+  "risk_level": "medium",
+  "verified_subject": "implementation",
+  "contract_hash": "3f765260952e27a8ec3a0314c78c742a43785b862bed08f1b0093bf859e36e89",
+  "applied_contract_hash": "3f765260952e27a8ec3a0314c78c742a43785b862bed08f1b0093bf859e36e89",
+  "applied_at": "2026-06-19T02:57:11Z",
   "panic_behavior": "documented",
   "overflow_behavior": "documented",
   "rejected_behaviors": [],
