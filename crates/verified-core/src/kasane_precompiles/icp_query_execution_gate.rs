@@ -18,7 +18,6 @@ pub fn icp_query_execution_gate_safe_raw(
     mode_allows_external: u64,
     value_is_zero: u64,
     parsed_input: u64,
-) -> bool
-{
+) -> bool {
     calls_before == 0 && mode_allows_external == 1 && value_is_zero == 1 && parsed_input == 1
 }

@@ -16,7 +16,6 @@ fn main() {}
     ensures
         result == (kind == ICP_PRECOMPILE_KIND_UPDATE),
 ))]
-pub fn icp_query_update_kind_rejected_raw(kind: u64) -> bool
-{
+pub fn icp_query_update_kind_rejected_raw(kind: u64) -> bool {
     kind == ICP_PRECOMPILE_KIND_UPDATE
 }

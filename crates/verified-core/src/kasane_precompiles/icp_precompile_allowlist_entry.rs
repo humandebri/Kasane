@@ -23,8 +23,7 @@ pub fn icp_precompile_allowlist_entry_safe_raw(
     target_non_anonymous: u64,
     method_len: u64,
     method_ascii: u64,
-) -> bool
-{
+) -> bool {
     target_len >= 1
         && target_len <= MAX_PRINCIPAL_LEN
         && target_non_anonymous == 1

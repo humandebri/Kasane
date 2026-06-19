@@ -18,8 +18,7 @@ pub fn icp_update_capacity_accepts_raw(
     reserved: u64,
     journaled: u64,
     max: u64,
-) -> bool
-{
+) -> bool {
     existing_active < max
         && reserved <= max - existing_active
         && journaled < max - existing_active - reserved

@@ -37,8 +37,7 @@ pub fn icp_query_gas_observation_safe_raw(
     charged_gas: u64,
     gas_limit: u64,
     outcome: u64,
-) -> bool
-{
+) -> bool {
     let exact_combined_len = input_len <= MAX_ICP_QUERY_COMBINED_LEN_WITH_EXACT_GAS
         && reply_len <= MAX_ICP_QUERY_COMBINED_LEN_WITH_EXACT_GAS;
     let exact_charged_gas = if exact_combined_len {

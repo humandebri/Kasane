@@ -18,7 +18,6 @@ fn main() {}
     ensures
         result == (status_code == ICP_UPDATE_STATUS_QUEUED || status_code == ICP_UPDATE_STATUS_DISPATCHING),
 ))]
-pub fn icp_update_status_consumes_capacity_raw(status_code: u64) -> bool
-{
+pub fn icp_update_status_consumes_capacity_raw(status_code: u64) -> bool {
     status_code == ICP_UPDATE_STATUS_QUEUED || status_code == ICP_UPDATE_STATUS_DISPATCHING
 }

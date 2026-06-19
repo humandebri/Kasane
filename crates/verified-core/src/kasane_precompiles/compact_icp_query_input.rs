@@ -35,8 +35,7 @@ pub fn compact_icp_query_input_safe_raw(
     arg_present: u64,
     arg_len: u64,
     consumed_exact: u64,
-) -> bool
-{
+) -> bool {
     version == COMPACT_FORMAT_VERSION
         && kind == ICP_QUERY_KIND_QUERY
         && target_len >= 1
