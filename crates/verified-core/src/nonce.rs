@@ -33,8 +33,7 @@ pub fn classify_nonce_raw(
     pending_effective_gas_price_present: u64,
     pending_effective_gas_price_value: u64,
     incoming_effective_gas_price: u64,
-) -> NonceDecision
-{
+) -> NonceDecision {
     if incoming_nonce < expected_nonce {
         return NonceDecision::TooLow;
     }

@@ -76,8 +76,7 @@ pub fn should_stop_execution(
     instruction_soft_limit: u64,
     instruction_start: u64,
     instruction_current: u64,
-) -> bool
-{
+) -> bool {
     (block_gas_limit > 0 && block_gas_used >= block_gas_limit)
         || instruction_limit_exhausted(
             instruction_soft_limit,
