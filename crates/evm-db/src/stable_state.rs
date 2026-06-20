@@ -114,6 +114,7 @@ pub struct StableState {
     pub icp_update_dispatch_queue: IcpUpdateDispatchQueue,
     pub icp_update_dispatch_meta: StableCell<QueueMeta, VMem>,
     pub icp_update_precompile_allowlist: IcpUpdatePrecompileAllowlist,
+    pub icp_update_active_count: StableCell<u64, VMem>,
     pub runtime_config: StableCell<RuntimeConfigV1, VMem>,
     pub dropped_ring_state: StableCell<DroppedRingStateV1, VMem>,
     pub dropped_ring: DroppedRing,
@@ -243,6 +244,8 @@ pub fn init_stable_state() {
     );
     let icp_update_precompile_allowlist =
         StableBTreeMap::init(get_memory(AppMemoryId::IcpUpdatePrecompileAllowlist));
+    let icp_update_active_count =
+        StableCell::init(get_memory(AppMemoryId::IcpUpdateActiveCount), 0u64);
     let runtime_config = StableCell::init(
         get_memory(AppMemoryId::RuntimeConfig),
         RuntimeConfigV1::new_unconfigured(),
@@ -329,6 +332,7 @@ pub fn init_stable_state() {
             icp_update_dispatch_queue,
             icp_update_dispatch_meta,
             icp_update_precompile_allowlist,
+            icp_update_active_count,
             runtime_config,
             dropped_ring_state,
             dropped_ring,

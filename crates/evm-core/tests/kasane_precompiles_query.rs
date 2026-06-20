@@ -191,6 +191,12 @@ fn seed_icp_update_requests_with_status(count: usize, status: IcpUpdateRequestSt
             req.updated_at = idx_u64;
             state.icp_update_requests.insert(request_id, req);
         }
+        let active = if status.consumes_capacity() {
+            u64::try_from(count).expect("seed count fits u64")
+        } else {
+            0
+        };
+        state.icp_update_active_count.set(active);
     });
 }
 

@@ -2840,7 +2840,7 @@ fn repair_stale_operations(now: u64) {
                     req.status = IcpUpdateRequestStatus::DispatchUncertain;
                     req.updated_at = now;
                     req.error_code = Some("ic_update.dispatch_uncertain".to_string());
-                    state.icp_update_requests.insert(request_id, req);
+                    store_icp_update_request(state, request_id, req);
                 }
             }
 
@@ -3039,7 +3039,7 @@ fn recover_icp_update_dispatch_state_after_upgrade(now: u64) -> bool {
         }
 
         for (request_id, req) in uncertain {
-            state.icp_update_requests.insert(request_id, req);
+            store_icp_update_request(state, request_id, req);
         }
 
         if candidates.is_empty() {
@@ -3048,7 +3048,7 @@ fn recover_icp_update_dispatch_state_after_upgrade(now: u64) -> bool {
 
         let mut meta = *state.icp_update_dispatch_meta.get();
         for (request_id, req) in candidates {
-            state.icp_update_requests.insert(request_id, req);
+            store_icp_update_request(state, request_id, req);
             if queued_ids.contains(&request_id) {
                 continue;
             }
@@ -4414,6 +4414,13 @@ fn schema_migration_tick(max_steps: u32) -> bool {
                     state.cursor_key = [0u8; 32];
                     set_schema_migration_state(state);
                 }
+                if state.from_version < 7 {
+                    let active = evm_db::stable_state::with_state_mut(|stable| {
+                        rebuild_icp_update_active_count(stable)
+                    });
+                    state.cursor = active;
+                    set_schema_migration_state(state);
+                }
                 state.phase = SchemaMigrationPhase::Verify;
                 state.cursor = 0;
                 set_schema_migration_state(state);
@@ -5001,7 +5008,8 @@ fn record_icp_update_requests_from_block(tx_ids: &[TxId]) {
                     return;
                 }
                 let now = current_time_nanos();
-                state.icp_update_requests.insert(
+                store_icp_update_request(
+                    state,
                     request_id,
                     IcpUpdateDispatchRequest {
                         target: intent.target.clone(),
@@ -5067,6 +5075,46 @@ fn trim_icp_update_requests(state: &mut evm_db::stable_state::StableState) {
         remove_icp_update_queue_entries(state, request_id);
         remaining = remaining.saturating_sub(1);
     }
+}
+
+fn store_icp_update_request(
+    state: &mut evm_db::stable_state::StableState,
+    request_id: TxId,
+    req: IcpUpdateDispatchRequest,
+) {
+    let previous = state.icp_update_requests.get(&request_id).map(|v| v.status);
+    adjust_icp_update_active_count(state, previous, Some(req.status));
+    state.icp_update_requests.insert(request_id, req);
+}
+
+fn adjust_icp_update_active_count(
+    state: &mut evm_db::stable_state::StableState,
+    previous: Option<IcpUpdateRequestStatus>,
+    next: Option<IcpUpdateRequestStatus>,
+) {
+    let previous_active = previous.is_some_and(IcpUpdateRequestStatus::consumes_capacity);
+    let next_active = next.is_some_and(IcpUpdateRequestStatus::consumes_capacity);
+    if previous_active == next_active {
+        return;
+    }
+    let current = *state.icp_update_active_count.get();
+    let updated = if next_active {
+        current.saturating_add(1)
+    } else {
+        current.saturating_sub(1)
+    };
+    state.icp_update_active_count.set(updated);
+}
+
+fn rebuild_icp_update_active_count(state: &mut evm_db::stable_state::StableState) -> u64 {
+    let active = state
+        .icp_update_requests
+        .iter()
+        .filter(|entry| entry.value().status.consumes_capacity())
+        .count();
+    let active = u64::try_from(active).unwrap_or(u64::MAX);
+    state.icp_update_active_count.set(active);
+    active
 }
 
 fn remove_icp_update_queue_entries(
@@ -5226,7 +5274,7 @@ fn pop_next_icp_update_request(
             req.status = IcpUpdateRequestStatus::DispatchFailed;
             req.reply = None;
             req.error_code = Some(ICP_UPDATE_DECODE_FAILURE_CODE.to_string());
-            state.icp_update_requests.insert(request_id, req);
+            store_icp_update_request(state, request_id, req);
             return Err(format!(
                 "ic_update.dispatch.quarantined:request_id={:?}:reason={ICP_UPDATE_DECODE_FAILURE_CODE}",
                 request_id.0
@@ -5237,7 +5285,7 @@ fn pop_next_icp_update_request(
         if req.call_started_at_time == 0 {
             req.call_started_at_time = now;
         }
-        state.icp_update_requests.insert(request_id, req.clone());
+        store_icp_update_request(state, request_id, req.clone());
         Ok(Some((request_id, req)))
     });
     out
@@ -5982,7 +6030,7 @@ fn finalize_icp_update_dispatch_attempt(
         req.reply = applied.reply;
         req.status = applied.status;
         req.error_code = applied.error_code.map(clamp_error_code);
-        state.icp_update_requests.insert(request_id, req);
+        store_icp_update_request(state, request_id, req);
         trim_icp_update_requests(state);
     });
 }

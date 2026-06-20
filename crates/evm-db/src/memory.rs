@@ -85,6 +85,7 @@ pub enum AppMemoryId {
     IcpUpdateDispatchQueue = 71,
     IcpUpdateDispatchMeta = 72,
     IcpUpdatePrecompileAllowlist = 73,
+    IcpUpdateActiveCount = 74,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -94,7 +95,7 @@ pub struct MemoryRegionInfo {
     pub include_in_estimate: bool,
 }
 
-const ALL_MEMORY_REGIONS: [MemoryRegionInfo; 74] = [
+const ALL_MEMORY_REGIONS: [MemoryRegionInfo; 75] = [
     MemoryRegionInfo {
         id: AppMemoryId::Upgrades,
         name: "Upgrades",
@@ -465,6 +466,11 @@ const ALL_MEMORY_REGIONS: [MemoryRegionInfo; 74] = [
         name: "IcpUpdatePrecompileAllowlist",
         include_in_estimate: false,
     },
+    MemoryRegionInfo {
+        id: AppMemoryId::IcpUpdateActiveCount,
+        name: "IcpUpdateActiveCount",
+        include_in_estimate: false,
+    },
 ];
 
 impl AppMemoryId {
@@ -544,6 +550,7 @@ impl AppMemoryId {
             AppMemoryId::IcpUpdateDispatchQueue => 71,
             AppMemoryId::IcpUpdateDispatchMeta => 72,
             AppMemoryId::IcpUpdatePrecompileAllowlist => 73,
+            AppMemoryId::IcpUpdateActiveCount => 74,
         }
     }
 

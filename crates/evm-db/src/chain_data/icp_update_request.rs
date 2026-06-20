@@ -28,6 +28,10 @@ pub enum IcpUpdateRequestStatus {
 }
 
 impl IcpUpdateRequestStatus {
+    pub fn consumes_capacity(self) -> bool {
+        matches!(self, Self::Queued | Self::Dispatching)
+    }
+
     fn to_u8(self) -> u8 {
         match self {
             Self::Queued => 0,

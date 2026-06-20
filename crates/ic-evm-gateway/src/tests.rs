@@ -713,6 +713,20 @@ fn test_icp_update_request(
     }
 }
 
+fn assert_icp_update_active_count_matches_scan() {
+    with_state(|state| {
+        let active = state
+            .icp_update_requests
+            .iter()
+            .filter(|entry| entry.value().status.consumes_capacity())
+            .count();
+        assert_eq!(
+            *state.icp_update_active_count.get(),
+            u64::try_from(active).expect("active count fits u64")
+        );
+    });
+}
+
 #[test]
 fn parse_submit_ic_tx_args_rejects_value_out_of_range() {
     let too_large = Nat::from_str(
@@ -2817,6 +2831,49 @@ fn apply_post_upgrade_migrations_resyncs_gas_limit_and_fee_floors_only() {
 }
 
 #[test]
+fn apply_post_upgrade_migrations_rebuilds_icp_update_active_count() {
+    init_stable_state();
+    let current = evm_db::meta::current_schema_version();
+    with_state_mut(|state| {
+        for (idx, status) in [
+            IcpUpdateRequestStatus::Queued,
+            IcpUpdateRequestStatus::Dispatching,
+            IcpUpdateRequestStatus::Dispatched,
+            IcpUpdateRequestStatus::DispatchFailed,
+            IcpUpdateRequestStatus::DispatchUncertain,
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let mut raw = [0x39u8; 32];
+            raw[24..32].copy_from_slice(&(idx as u64).to_be_bytes());
+            let request_id = TxId(raw);
+            state.icp_update_requests.insert(
+                request_id,
+                test_icp_update_request(request_id, vec![1], "write_state", status),
+            );
+        }
+        state.icp_update_active_count.set(0);
+    });
+    let mut meta = evm_db::meta::Meta::new();
+    meta.schema_version = current.saturating_sub(1);
+    meta.last_migration_from = meta.schema_version;
+    meta.last_migration_to = meta.schema_version;
+    evm_db::meta::set_meta(meta);
+
+    super::apply_post_upgrade_migrations();
+    run_post_upgrade_migrations_until_settled();
+
+    with_state(|state| {
+        assert_eq!(*state.icp_update_active_count.get(), 2);
+    });
+    assert_icp_update_active_count_matches_scan();
+    let meta = evm_db::meta::get_meta();
+    assert_eq!(meta.schema_version, current);
+    assert!(!meta.needs_migration);
+}
+
+#[test]
 fn apply_post_upgrade_migrations_resyncs_any_stale_floor_values() {
     init_stable_state();
     let current = evm_db::meta::current_schema_version();
@@ -3858,7 +3915,9 @@ fn record_icp_update_requests_from_block_stores_update_intent_logs() {
         assert_eq!(req.ic_caller, Some(caller_principal.as_slice().to_vec()));
         assert_eq!(req.status, IcpUpdateRequestStatus::Queued);
         assert_eq!(state.icp_update_dispatch_queue.len(), 1);
+        assert_eq!(*state.icp_update_active_count.get(), 1);
     });
+    assert_icp_update_active_count_matches_scan();
 }
 
 #[test]
@@ -3932,7 +3991,9 @@ fn record_icp_update_requests_from_block_recovers_eth_signed_sender() {
         assert_eq!(req.evm_sender, expected_sender);
         assert_eq!(req.ic_caller, None);
         assert_eq!(req.status, IcpUpdateRequestStatus::Queued);
+        assert_eq!(*state.icp_update_active_count.get(), 1);
     });
+    assert_icp_update_active_count_matches_scan();
 }
 
 #[test]
@@ -3953,6 +4014,7 @@ fn pop_next_icp_update_request_marks_dispatching() {
         let seq = meta.push();
         state.icp_update_dispatch_meta.set(meta);
         state.icp_update_dispatch_queue.insert(seq, request_id);
+        super::rebuild_icp_update_active_count(state);
     });
 
     let popped = pop_next_icp_update_request(99)
@@ -3966,7 +4028,76 @@ fn pop_next_icp_update_request_marks_dispatching() {
         assert_eq!(stored.status, IcpUpdateRequestStatus::Dispatching);
         assert_eq!(stored.call_started_at_time, 99);
         assert!(state.icp_update_dispatch_queue.is_empty());
+        assert_eq!(*state.icp_update_active_count.get(), 1);
     });
+    assert_icp_update_active_count_matches_scan();
+}
+
+#[test]
+fn pop_next_icp_update_request_quarantines_decode_failure_and_decrements_active_count() {
+    init_stable_state();
+    let request_id = TxId([0x36u8; 32]);
+    with_state_mut(|state| {
+        let mut req = test_icp_update_request(
+            request_id,
+            vec![1, 2, 3],
+            "write_state",
+            IcpUpdateRequestStatus::Queued,
+        );
+        req.error_code = Some(evm_db::chain_data::ICP_UPDATE_DECODE_FAILURE_CODE.to_string());
+        state.icp_update_requests.insert(request_id, req);
+        let mut meta = *state.icp_update_dispatch_meta.get();
+        let seq = meta.push();
+        state.icp_update_dispatch_meta.set(meta);
+        state.icp_update_dispatch_queue.insert(seq, request_id);
+        super::rebuild_icp_update_active_count(state);
+    });
+
+    let err = pop_next_icp_update_request(99).expect_err("decode marker is quarantined");
+
+    assert!(err.contains("ic_update.dispatch.quarantined"));
+    with_state(|state| {
+        let stored = state.icp_update_requests.get(&request_id).expect("stored");
+        assert_eq!(stored.status, IcpUpdateRequestStatus::DispatchFailed);
+        assert_eq!(*state.icp_update_active_count.get(), 0);
+    });
+    assert_icp_update_active_count_matches_scan();
+}
+
+#[test]
+fn finalize_icp_update_dispatch_attempt_decrements_active_count() {
+    init_stable_state();
+    let request_id = TxId([0x37u8; 32]);
+    with_state_mut(|state| {
+        state.icp_update_requests.insert(
+            request_id,
+            test_icp_update_request(
+                request_id,
+                vec![1, 2, 3],
+                "write_state",
+                IcpUpdateRequestStatus::Dispatching,
+            ),
+        );
+        super::rebuild_icp_update_active_count(state);
+    });
+
+    super::finalize_icp_update_dispatch_attempt(
+        request_id,
+        123,
+        super::AppliedIcpUpdateDispatchOutcome {
+            status: IcpUpdateRequestStatus::Dispatched,
+            reply: Some(vec![0xaa]),
+            error_code: None,
+        },
+    );
+
+    with_state(|state| {
+        let stored = state.icp_update_requests.get(&request_id).expect("stored");
+        assert_eq!(stored.status, IcpUpdateRequestStatus::Dispatched);
+        assert_eq!(stored.reply, Some(vec![0xaa]));
+        assert_eq!(*state.icp_update_active_count.get(), 0);
+    });
+    assert_icp_update_active_count_matches_scan();
 }
 
 #[test]
@@ -4164,6 +4295,7 @@ fn trim_icp_update_requests_removes_oldest_completed_only() {
             req.updated_at = idx as u64;
             state.icp_update_requests.insert(request_id, req);
         }
+        super::rebuild_icp_update_active_count(state);
 
         super::trim_icp_update_requests(state);
 
@@ -4175,7 +4307,9 @@ fn trim_icp_update_requests_removes_oldest_completed_only() {
         let mut oldest = [0x62u8; 32];
         oldest[24..32].copy_from_slice(&0u64.to_be_bytes());
         assert!(state.icp_update_requests.get(&TxId(oldest)).is_none());
+        assert_eq!(*state.icp_update_active_count.get(), 1);
     });
+    assert_icp_update_active_count_matches_scan();
 }
 
 #[test]
@@ -4263,7 +4397,9 @@ fn record_icp_update_requests_from_block_prunes_terminal_history_at_full_capacit
         assert!(state.icp_update_requests.get(&request_id).is_some());
         assert!(state.icp_update_requests.get(&TxId(oldest)).is_none());
         assert_eq!(state.icp_update_dispatch_queue.len(), 1);
+        assert_eq!(*state.icp_update_active_count.get(), 1);
     });
+    assert_icp_update_active_count_matches_scan();
 }
 
 #[test]
@@ -4313,6 +4449,7 @@ fn recover_icp_update_dispatch_marks_dispatching_uncertain_without_requeue() {
             req.call_started_at_time = 1;
             req
         });
+        super::rebuild_icp_update_active_count(state);
     });
 
     let needs_schedule = super::recover_icp_update_dispatch_state_after_upgrade(99);
@@ -4327,7 +4464,43 @@ fn recover_icp_update_dispatch_marks_dispatching_uncertain_without_requeue() {
             Some("ic_update.dispatch_uncertain".to_string())
         );
         assert!(state.icp_update_dispatch_queue.is_empty());
+        assert_eq!(*state.icp_update_active_count.get(), 0);
     });
+    assert_icp_update_active_count_matches_scan();
+}
+
+#[test]
+fn repair_stale_operations_marks_icp_update_dispatching_uncertain_and_decrements_active_count() {
+    init_stable_state();
+    let request_id = TxId([0x38u8; 32]);
+    with_state_mut(|state| {
+        state.icp_update_requests.insert(request_id, {
+            let mut req = test_icp_update_request(
+                request_id,
+                Principal::self_authenticating(b"update-target")
+                    .as_slice()
+                    .to_vec(),
+                "write_state",
+                IcpUpdateRequestStatus::Dispatching,
+            );
+            req.updated_at = 1;
+            req
+        });
+        super::rebuild_icp_update_active_count(state);
+    });
+
+    super::repair_stale_operations(super::STALE_OPERATION_NANOS.saturating_add(2));
+
+    with_state(|state| {
+        let stored = state.icp_update_requests.get(&request_id).expect("stored");
+        assert_eq!(stored.status, IcpUpdateRequestStatus::DispatchUncertain);
+        assert_eq!(
+            stored.error_code,
+            Some("ic_update.dispatch_uncertain".to_string())
+        );
+        assert_eq!(*state.icp_update_active_count.get(), 0);
+    });
+    assert_icp_update_active_count_matches_scan();
 }
 
 #[test]

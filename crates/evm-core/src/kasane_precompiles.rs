@@ -3,7 +3,7 @@
 use crate::hash;
 use evm_db::chain_data::constants::{CHAIN_ID, MAX_LOG_DATA};
 use evm_db::chain_data::receipt::LogEntry;
-use evm_db::chain_data::{IcpUpdateRequestStatus, MAX_ICP_UPDATE_REQUESTS};
+use evm_db::chain_data::MAX_ICP_UPDATE_REQUESTS;
 use evm_db::stable_state::current_runtime_config;
 use revm::{
     context::Cfg,
@@ -320,13 +320,7 @@ where
             ICP_UPDATE_INTENT_PRECOMPILE_ADDRESS => {
                 let remaining_capacity = self.icp_update_intent_reserved.map(|reserved| {
                     let existing = evm_db::stable_state::with_state(|state| {
-                        state
-                            .icp_update_requests
-                            .iter()
-                            .filter(|entry| {
-                                icp_update_request_consumes_capacity(entry.value().status)
-                            })
-                            .count()
+                        usize::try_from(*state.icp_update_active_count.get()).unwrap_or(usize::MAX)
                     });
                     let journaled = context
                         .journal()
@@ -653,13 +647,6 @@ fn is_icp_update_intent_revm_log(log: &Log) -> bool {
     log.address == ICP_UPDATE_INTENT_PRECOMPILE_ADDRESS
         && log.data.topics().len() == 1
         && log.data.topics()[0] == B256::from(icp_update_intent_event_topic0())
-}
-
-fn icp_update_request_consumes_capacity(status: IcpUpdateRequestStatus) -> bool {
-    matches!(
-        status,
-        IcpUpdateRequestStatus::Queued | IcpUpdateRequestStatus::Dispatching
-    )
 }
 
 #[cfg(not(target_arch = "wasm32"))]
