@@ -18,7 +18,7 @@ use evm_db::chain_data::{
     MintSubmitStatus, OpsMode, ReceiptLike, RequestStatus as StoredRequestStatus, RuntimeConfigV1,
     TxId, TxKind, TxLoc, TxLocKind, UnwrapDispatchRequest, UnwrapRequestStatus,
     WrapEvmConfigStored, WrapPendingSubmission, WrapRequestStage, ICP_UPDATE_DECODE_FAILURE_CODE,
-    LOG_CONFIG_FILTER_MAX, UNWRAP_DECODE_FAILURE_CODE,
+    LOG_CONFIG_FILTER_MAX, MAX_ICP_UPDATE_REQUESTS, UNWRAP_DECODE_FAILURE_CODE,
 };
 use evm_db::memory::{all_memory_regions, memory_size_pages, WASM_PAGE_SIZE_BYTES};
 use evm_db::meta::{
@@ -79,7 +79,6 @@ const MAX_STORED_LEDGER_TX_ID_BYTES: usize = 128;
 const STALE_OPERATION_NANOS: u64 = 10 * 60 * 1_000_000_000;
 const ICP_UPDATE_REPLY_OMITTED_TOO_LARGE: &str = "ic_update.reply_omitted_too_large";
 const ICP_UPDATE_DISPATCH_TIMEOUT_SECONDS: u32 = 30;
-const MAX_ICP_UPDATE_REQUESTS: usize = 10_000;
 
 static UNWRAP_DISPATCH_SCHEDULED: std::sync::atomic::AtomicBool =
     std::sync::atomic::AtomicBool::new(false);
@@ -987,7 +986,11 @@ fn request_memo(request_id: TxId, kind: TransferMemoKind) -> Vec<u8> {
 }
 
 fn nat_to_be_bytes(value: &Nat) -> Vec<u8> {
-    value.0.to_bytes_be()
+    let bytes = value.0.to_bytes_be();
+    if bytes.is_empty() {
+        return vec![0];
+    }
+    bytes
 }
 
 #[ic_cdk::query]
@@ -2841,7 +2844,7 @@ fn repair_stale_operations(now: u64) {
                     req.status = IcpUpdateRequestStatus::DispatchUncertain;
                     req.updated_at = now;
                     req.error_code = Some("ic_update.dispatch_uncertain".to_string());
-                    state.icp_update_requests.insert(request_id, req);
+                    store_icp_update_request(state, request_id, req);
                 }
             }
 
@@ -3040,7 +3043,7 @@ fn recover_icp_update_dispatch_state_after_upgrade(now: u64) -> bool {
         }
 
         for (request_id, req) in uncertain {
-            state.icp_update_requests.insert(request_id, req);
+            store_icp_update_request(state, request_id, req);
         }
 
         if candidates.is_empty() {
@@ -3049,7 +3052,7 @@ fn recover_icp_update_dispatch_state_after_upgrade(now: u64) -> bool {
 
         let mut meta = *state.icp_update_dispatch_meta.get();
         for (request_id, req) in candidates {
-            state.icp_update_requests.insert(request_id, req);
+            store_icp_update_request(state, request_id, req);
             if queued_ids.contains(&request_id) {
                 continue;
             }
@@ -4415,6 +4418,13 @@ fn schema_migration_tick(max_steps: u32) -> bool {
                     state.cursor_key = [0u8; 32];
                     set_schema_migration_state(state);
                 }
+                if state.from_version < 7 {
+                    let active = evm_db::stable_state::with_state_mut(|stable| {
+                        rebuild_icp_update_active_count(stable)
+                    });
+                    state.cursor = active;
+                    set_schema_migration_state(state);
+                }
                 state.phase = SchemaMigrationPhase::Verify;
                 state.cursor = 0;
                 set_schema_migration_state(state);
@@ -5002,7 +5012,8 @@ fn record_icp_update_requests_from_block(tx_ids: &[TxId]) {
                     return;
                 }
                 let now = current_time_nanos();
-                state.icp_update_requests.insert(
+                store_icp_update_request(
+                    state,
                     request_id,
                     IcpUpdateDispatchRequest {
                         target: intent.target.clone(),
@@ -5034,6 +5045,8 @@ fn record_icp_update_requests_from_block(tx_ids: &[TxId]) {
 }
 
 fn trim_icp_update_requests(state: &mut evm_db::stable_state::StableState) {
+    // hard cap は EVM precompile capacity で enforced。ここでは terminal request だけを
+    // 履歴 pruning し、queued/dispatching の active request は絶対に削除しない。
     let len = usize::try_from(state.icp_update_requests.len()).unwrap_or(usize::MAX);
     if len <= MAX_ICP_UPDATE_REQUESTS {
         return;
@@ -5066,6 +5079,46 @@ fn trim_icp_update_requests(state: &mut evm_db::stable_state::StableState) {
         remove_icp_update_queue_entries(state, request_id);
         remaining = remaining.saturating_sub(1);
     }
+}
+
+fn store_icp_update_request(
+    state: &mut evm_db::stable_state::StableState,
+    request_id: TxId,
+    req: IcpUpdateDispatchRequest,
+) {
+    let previous = state.icp_update_requests.get(&request_id).map(|v| v.status);
+    adjust_icp_update_active_count(state, previous, Some(req.status));
+    state.icp_update_requests.insert(request_id, req);
+}
+
+fn adjust_icp_update_active_count(
+    state: &mut evm_db::stable_state::StableState,
+    previous: Option<IcpUpdateRequestStatus>,
+    next: Option<IcpUpdateRequestStatus>,
+) {
+    let previous_active = previous.is_some_and(IcpUpdateRequestStatus::consumes_capacity);
+    let next_active = next.is_some_and(IcpUpdateRequestStatus::consumes_capacity);
+    if previous_active == next_active {
+        return;
+    }
+    let current = *state.icp_update_active_count.get();
+    let updated = if next_active {
+        current.saturating_add(1)
+    } else {
+        current.saturating_sub(1)
+    };
+    state.icp_update_active_count.set(updated);
+}
+
+fn rebuild_icp_update_active_count(state: &mut evm_db::stable_state::StableState) -> u64 {
+    let active = state
+        .icp_update_requests
+        .iter()
+        .filter(|entry| entry.value().status.consumes_capacity())
+        .count();
+    let active = u64::try_from(active).unwrap_or(u64::MAX);
+    state.icp_update_active_count.set(active);
+    active
 }
 
 fn remove_icp_update_queue_entries(
@@ -5225,7 +5278,7 @@ fn pop_next_icp_update_request(
             req.status = IcpUpdateRequestStatus::DispatchFailed;
             req.reply = None;
             req.error_code = Some(ICP_UPDATE_DECODE_FAILURE_CODE.to_string());
-            state.icp_update_requests.insert(request_id, req);
+            store_icp_update_request(state, request_id, req);
             return Err(format!(
                 "ic_update.dispatch.quarantined:request_id={:?}:reason={ICP_UPDATE_DECODE_FAILURE_CODE}",
                 request_id.0
@@ -5236,7 +5289,7 @@ fn pop_next_icp_update_request(
         if req.call_started_at_time == 0 {
             req.call_started_at_time = now;
         }
-        state.icp_update_requests.insert(request_id, req.clone());
+        store_icp_update_request(state, request_id, req.clone());
         Ok(Some((request_id, req)))
     });
     out
@@ -5959,9 +6012,18 @@ fn finalize_unwrap_dispatch_attempt(
             return;
         };
         req.updated_at = now;
-        req.ledger_tx_id = applied
-            .ledger_tx_id
-            .and_then(|tx_id| validated_ledger_tx_id(tx_id).ok());
+        req.ledger_tx_id = match (applied.status, applied.ledger_tx_id) {
+            (UnwrapRequestStatus::Dispatched, Some(tx_id)) => match validated_ledger_tx_id(tx_id) {
+                Ok(tx_id) => Some(tx_id),
+                Err(code) => ic_cdk::trap(&code),
+            },
+            (UnwrapRequestStatus::Dispatched, None) => ic_cdk::trap("ledger.tx_id_missing"),
+            (_, Some(tx_id)) => match validated_ledger_tx_id(tx_id) {
+                Ok(tx_id) => Some(tx_id),
+                Err(code) => ic_cdk::trap(&code),
+            },
+            (_, None) => None,
+        };
         req.status = applied.status;
         req.error_code = applied.error_code.map(clamp_error_code);
         state.unwrap_requests.insert(request_id, req);
@@ -5981,7 +6043,8 @@ fn finalize_icp_update_dispatch_attempt(
         req.reply = applied.reply;
         req.status = applied.status;
         req.error_code = applied.error_code.map(clamp_error_code);
-        state.icp_update_requests.insert(request_id, req);
+        store_icp_update_request(state, request_id, req);
+        trim_icp_update_requests(state);
     });
 }
 

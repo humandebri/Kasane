@@ -3,7 +3,7 @@
 use crate::base_fee::compute_next_base_fee;
 use crate::bytes::try_address_to_bytes;
 use crate::hash;
-use crate::kasane_precompiles::{IcpQueryRequest, PrecompileAccess};
+use crate::kasane_precompiles::{icp_update_intent_from_log, IcpQueryRequest, PrecompileAccess};
 use crate::revm_exec::{
     commit_state_diff_to_db, compute_effective_gas_price, execute_tx_on, execute_tx_on_async,
     BlockExecContext, ExecError, ExecOutcome, ExecPath, OpHaltReason, OpTransactionError,
@@ -562,6 +562,14 @@ fn tx_locs_get(state: &StableState, tx_id: &TxId) -> Option<TxLoc> {
     Some(loc)
 }
 
+fn pruned_tx_locs_get(state: &StableState, tx_id: &TxId) -> Option<TxLoc> {
+    let loc = state.pruned_tx_locs.get(tx_id)?;
+    if loc.is_decode_failure_placeholder() {
+        return None;
+    }
+    Some(loc)
+}
+
 fn insert_eth_tx_hash_index_for_envelope(
     state: &mut evm_db::stable_state::StableState,
     tx_id: TxId,
@@ -591,6 +599,28 @@ fn remove_eth_tx_hash_index_for_tx_id(state: &mut evm_db::stable_state::StableSt
     state
         .eth_tx_hash_index
         .remove(&TxId(hash::keccak256(&stored.raw)));
+}
+
+fn mark_pruned_receipt_status_marker(state: &mut StableState, tx_id: TxId) {
+    let Some(loc) = tx_locs_get(state, &tx_id) else {
+        return;
+    };
+    if loc.kind != TxLocKind::Included {
+        return;
+    }
+    state.pruned_tx_locs.insert(tx_id, loc);
+    let Some(envelope) = state.tx_store.get(&tx_id) else {
+        return;
+    };
+    let Ok(stored) = StoredTx::try_from(envelope) else {
+        return;
+    };
+    if stored.kind != TxKind::EthSigned {
+        return;
+    }
+    state
+        .pruned_eth_tx_hash_index
+        .insert(TxId(hash::keccak256(&stored.raw)), tx_id);
 }
 
 fn tx_locs_insert(state: &mut StableState, tx_id: TxId, loc: TxLoc) {
@@ -1152,6 +1182,7 @@ pub fn produce_block(max_txs: usize) -> Result<ProduceBlockOutcome, ChainError> 
     let mut staged_txs: Vec<PreparedTx> = Vec::new();
     let mut decode_drop_count = 0usize;
     let mut decode_drops_by_principal: BTreeMap<Vec<u8>, u16> = BTreeMap::new();
+    let mut reserved_icp_update_intents = 0usize;
     with_state(|state| {
         tx_ids = select_ready_candidates(state, state.chain_state.get().base_fee, max_txs);
     });
@@ -1398,7 +1429,9 @@ pub fn produce_block(max_txs: usize) -> Result<ProduceBlockOutcome, ChainError> 
             ExecPath::UserTx,
             false,
             remaining_instruction_budget,
-            PrecompileAccess::wrap_side_effects(),
+            PrecompileAccess::wrap_side_effects_with_icp_update_reserved(
+                reserved_icp_update_intents,
+            ),
         );
         let outcome = match execution {
             Ok((value, user_diff)) => {
@@ -1481,6 +1514,14 @@ pub fn produce_block(max_txs: usize) -> Result<ProduceBlockOutcome, ChainError> 
             }
         };
         let gas_used = outcome.receipt.gas_used;
+        reserved_icp_update_intents = reserved_icp_update_intents.saturating_add(
+            outcome
+                .receipt
+                .logs
+                .iter()
+                .filter(|log| icp_update_intent_from_log(log).is_some())
+                .count(),
+        );
         observe_exec_outcome(timestamp, &outcome);
         block_gas_used = verified_core::block::add_block_gas_used(block_gas_used, gas_used);
         staged_included.push(StagedIncludedTx::Success {
@@ -2453,6 +2494,14 @@ pub fn get_tx_loc(tx_id: &TxId) -> Option<TxLoc> {
     with_state(|state| tx_locs_get(state, tx_id))
 }
 
+pub fn get_pruned_tx_loc(tx_id: &TxId) -> Option<TxLoc> {
+    with_state(|state| pruned_tx_locs_get(state, tx_id))
+}
+
+pub fn get_pruned_eth_tx_id_by_hash(eth_tx_hash: &TxId) -> Option<TxId> {
+    with_state(|state| state.pruned_eth_tx_hash_index.get(eth_tx_hash))
+}
+
 pub fn prune_blocks(retain: u64, max_ops: u32) -> Result<PruneResult, ChainError> {
     if retain == 0 || max_ops == 0 {
         return Err(ChainError::InvalidLimit);
@@ -2511,6 +2560,9 @@ pub fn prune_blocks(retain: u64, max_ops: u32) -> Result<PruneResult, ChainError
             // WAL: persist recovery cursor before destructive deletes.
             state.prune_state.set(prune_state);
 
+            for tx_id in block.tx_ids.iter() {
+                mark_pruned_receipt_status_marker(state, *tx_id);
+            }
             let _ = state.blocks.remove(&next);
             for tx_id in block.tx_ids.iter() {
                 remove_pending_fee_index_by_tx_id(state, *tx_id);
@@ -2620,6 +2672,9 @@ fn recover_prune_journal(state: &mut evm_db::stable_state::StableState) -> Resul
     };
     if let Some(journal) = state.prune_journal.get(&journal_block) {
         if let Some(block) = load_block(state, journal_block) {
+            for tx_id in block.tx_ids.iter() {
+                mark_pruned_receipt_status_marker(state, *tx_id);
+            }
             let _ = state.blocks.remove(&journal_block);
             for tx_id in block.tx_ids.iter() {
                 remove_pending_fee_index_by_tx_id(state, *tx_id);

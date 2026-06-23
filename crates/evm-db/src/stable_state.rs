@@ -41,6 +41,8 @@ pub type PendingFeeIndex = StableBTreeMap<PendingFeeKey, TxId, VMem>;
 pub type PendingFeeKeyByTxId = StableBTreeMap<TxId, PendingFeeKey, VMem>;
 pub type ReadyBySeq = StableBTreeMap<ReadySeqKey, TxId, VMem>;
 pub type EthTxHashIndex = StableBTreeMap<TxId, TxId, VMem>;
+pub type PrunedTxLocs = StableBTreeMap<TxId, crate::chain_data::TxLoc, VMem>;
+pub type PrunedEthTxHashIndex = StableBTreeMap<TxId, TxId, VMem>;
 pub type UnwrapRequests = StableBTreeMap<TxId, UnwrapDispatchRequest, VMem>;
 pub type UnwrapDispatchQueue = StableBTreeMap<u64, TxId, VMem>;
 pub type WrapRequests = StableBTreeMap<TxId, WrapStoredRequest, VMem>;
@@ -98,6 +100,8 @@ pub struct StableState {
     pub pending_fee_key_by_tx_id: PendingFeeKeyByTxId,
     pub ready_by_seq: ReadyBySeq,
     pub eth_tx_hash_index: EthTxHashIndex,
+    pub pruned_tx_locs: PrunedTxLocs,
+    pub pruned_eth_tx_hash_index: PrunedEthTxHashIndex,
     pub unwrap_requests: UnwrapRequests,
     pub unwrap_dispatch_queue: UnwrapDispatchQueue,
     pub unwrap_dispatch_meta: StableCell<QueueMeta, VMem>,
@@ -114,6 +118,7 @@ pub struct StableState {
     pub icp_update_dispatch_queue: IcpUpdateDispatchQueue,
     pub icp_update_dispatch_meta: StableCell<QueueMeta, VMem>,
     pub icp_update_precompile_allowlist: IcpUpdatePrecompileAllowlist,
+    pub icp_update_active_count: StableCell<u64, VMem>,
     pub runtime_config: StableCell<RuntimeConfigV1, VMem>,
     pub dropped_ring_state: StableCell<DroppedRingStateV1, VMem>,
     pub dropped_ring: DroppedRing,
@@ -201,6 +206,9 @@ pub fn init_stable_state() {
         StableBTreeMap::init(get_memory(AppMemoryId::PendingFeeKeyByTxId));
     let ready_by_seq = StableBTreeMap::init(get_memory(AppMemoryId::ReadyBySeq));
     let eth_tx_hash_index = StableBTreeMap::init(get_memory(AppMemoryId::EthTxHashIndex));
+    let pruned_tx_locs = StableBTreeMap::init(get_memory(AppMemoryId::PrunedTxLocs));
+    let pruned_eth_tx_hash_index =
+        StableBTreeMap::init(get_memory(AppMemoryId::PrunedEthTxHashIndex));
     let unwrap_requests = StableBTreeMap::init(get_memory(AppMemoryId::UnwrapRequests));
     let unwrap_dispatch_queue = StableBTreeMap::init(get_memory(AppMemoryId::UnwrapDispatchQueue));
     let unwrap_dispatch_meta = StableCell::init(
@@ -243,6 +251,8 @@ pub fn init_stable_state() {
     );
     let icp_update_precompile_allowlist =
         StableBTreeMap::init(get_memory(AppMemoryId::IcpUpdatePrecompileAllowlist));
+    let icp_update_active_count =
+        StableCell::init(get_memory(AppMemoryId::IcpUpdateActiveCount), 0u64);
     let runtime_config = StableCell::init(
         get_memory(AppMemoryId::RuntimeConfig),
         RuntimeConfigV1::new_unconfigured(),
@@ -313,6 +323,8 @@ pub fn init_stable_state() {
             pending_fee_key_by_tx_id,
             ready_by_seq,
             eth_tx_hash_index,
+            pruned_tx_locs,
+            pruned_eth_tx_hash_index,
             unwrap_requests,
             unwrap_dispatch_queue,
             unwrap_dispatch_meta,
@@ -329,6 +341,7 @@ pub fn init_stable_state() {
             icp_update_dispatch_queue,
             icp_update_dispatch_meta,
             icp_update_precompile_allowlist,
+            icp_update_active_count,
             runtime_config,
             dropped_ring_state,
             dropped_ring,

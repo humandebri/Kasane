@@ -8,7 +8,7 @@ use verified_core::core_safety::{
 use verified_core::core_safety_block::block_commit_safe_raw;
 use verified_core::core_safety_included::included_tx_safe_raw;
 use verified_core::no_reorg::no_reorg_append_only_raw;
-use verified_core::nonce::{classify_nonce, NonceDecision};
+use verified_core::nonce::{classify_nonce_raw, NonceDecision};
 use verified_core::prune_safety::{prune_tx_cleanup_complete, PruneTxCleanupInput};
 use verified_core::receipt_index::{
     receipt_index_location_bidirectional, receipt_index_target_observation_safe,
@@ -63,26 +63,28 @@ proptest! {
     fn pbt_nonce_decision_matches_total_order(
         expected_nonce in any::<u64>(),
         incoming_nonce in any::<u64>(),
-        pending_effective_gas_price in proptest::option::of(any::<u64>()),
+        pending_effective_gas_price_present in 0u64..4,
+        pending_effective_gas_price_value in any::<u64>(),
         incoming_effective_gas_price in any::<u64>(),
     ) {
         let expected = if incoming_nonce < expected_nonce {
             NonceDecision::TooLow
         } else if incoming_nonce > expected_nonce {
             NonceDecision::Gap
+        } else if pending_effective_gas_price_present != 1 {
+            NonceDecision::Accept
+        } else if incoming_effective_gas_price <= pending_effective_gas_price_value {
+            NonceDecision::Conflict
         } else {
-            match pending_effective_gas_price {
-                None => NonceDecision::Accept,
-                Some(old) if incoming_effective_gas_price <= old => NonceDecision::Conflict,
-                Some(_) => NonceDecision::Replace,
-            }
+            NonceDecision::Replace
         };
 
         prop_assert_eq!(
-            classify_nonce(
+            classify_nonce_raw(
                 expected_nonce,
                 incoming_nonce,
-                pending_effective_gas_price,
+                pending_effective_gas_price_present,
+                pending_effective_gas_price_value,
                 incoming_effective_gas_price,
             ),
             expected

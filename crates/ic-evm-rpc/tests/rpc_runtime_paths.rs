@@ -16,7 +16,7 @@ use evm_db::chain_data::constants::{CHAIN_ID, MAX_TX_SIZE};
 use evm_db::chain_data::receipt::log_entry_from_parts;
 use evm_db::chain_data::runtime_defaults::{DEFAULT_BASE_FEE, DEFAULT_MIN_FEE_FLOOR};
 use evm_db::chain_data::{
-    BlockData, Head, ReceiptLike, SenderKey, StoredTxBytes, TxId, TxIndexEntry, TxKind,
+    BlockData, Head, ReceiptLike, SenderKey, StoredTxBytes, TxId, TxIndexEntry, TxKind, TxLoc,
 };
 use evm_db::stable_state::{init_stable_state, with_state_mut};
 use evm_db::types::keys::{make_account_key, make_code_key, make_storage_key};
@@ -1911,6 +1911,55 @@ fn get_transaction_receipt_with_status_by_tx_id_rejects_invalid_len() {
     assert!(matches!(
         rpc_eth_get_transaction_receipt_with_status_by_tx_id(vec![0u8; 31]),
         RpcReceiptLookupView::NotFound
+    ));
+}
+
+#[test]
+fn get_transaction_receipt_with_status_by_tx_id_returns_pruned_marker() {
+    let _guard = test_lock().lock().expect("lock");
+    init_stable_state();
+    let tx_id = TxId([0x71; 32]);
+    with_state_mut(|state| {
+        let mut prune = *state.prune_state.get();
+        prune.set_pruned_before(10);
+        state.prune_state.set(prune);
+        state.pruned_tx_locs.insert(tx_id, TxLoc::included(9, 0));
+    });
+
+    assert!(matches!(
+        rpc_eth_get_transaction_receipt_with_status_by_tx_id(tx_id.0.to_vec()),
+        RpcReceiptLookupView::Pruned {
+            pruned_before_block: 10
+        }
+    ));
+}
+
+#[test]
+fn get_transaction_receipt_with_status_by_eth_hash_returns_pruned_marker() {
+    let _guard = test_lock().lock().expect("lock");
+    init_stable_state();
+    let raw = vec![0x02, 0x71];
+    let eth_hash = TxId(hash::keccak256(&raw));
+    let tx_id = TxId(hash::stored_tx_id(
+        TxKind::EthSigned,
+        &raw,
+        None,
+        None,
+        None,
+    ));
+    with_state_mut(|state| {
+        let mut prune = *state.prune_state.get();
+        prune.set_pruned_before(10);
+        state.prune_state.set(prune);
+        state.pruned_tx_locs.insert(tx_id, TxLoc::included(9, 0));
+        state.pruned_eth_tx_hash_index.insert(eth_hash, tx_id);
+    });
+
+    assert!(matches!(
+        rpc_eth_get_transaction_receipt_with_status_by_eth_hash(eth_hash.0.to_vec()),
+        RpcReceiptLookupView::Pruned {
+            pruned_before_block: 10
+        }
     ));
 }
 

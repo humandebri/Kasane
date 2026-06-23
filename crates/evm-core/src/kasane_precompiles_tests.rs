@@ -80,6 +80,22 @@ fn icp_query_precompile_accepts_max_arg_and_rejects_one_byte_over() {
         parse_icp_query_input(&input).unwrap_err(),
         "ic_query.arg.too_large"
     );
+    assert!(
+        !verified_core::kasane_precompiles::compact_icp_query_input_safe_raw(
+            COMPACT_ICP_PRECOMPILE_FORMAT_VERSION as u64,
+            ICP_QUERY_KIND_QUERY as u64,
+            candid::Principal::self_authenticating(b"query-target")
+                .as_slice()
+                .len() as u64,
+            1,
+            "read_state".len() as u64,
+            1,
+            1,
+            1,
+            too_large.len() as u64,
+            1,
+        )
+    );
 }
 
 #[test]
@@ -157,7 +173,7 @@ proptest! {
         target_len in 0usize..=40,
         method_len in 0usize..=80,
         method_is_utf8 in any::<bool>(),
-        arg in proptest::collection::vec(any::<u8>(), 0..32),
+        arg in proptest::collection::vec(any::<u8>(), 0..=4_100),
     ) {
         let mut input = Vec::new();
         let target = vec![0x2au8; target_len];
@@ -184,6 +200,7 @@ proptest! {
             1,
             u64::from(method_is_utf8),
             1,
+            arg.len() as u64,
             1,
         );
         let parsed = parse_icp_query_input(&input);
@@ -223,6 +240,7 @@ fn icp_query_parser_rejects_truncated_arg_against_verified_model() {
             1,
             1,
             0,
+            3,
             1,
         )
     );
@@ -248,6 +266,7 @@ fn icp_query_parser_rejects_trailing_data_against_verified_model() {
             1,
             1,
             1,
+            3,
             0,
         )
     );

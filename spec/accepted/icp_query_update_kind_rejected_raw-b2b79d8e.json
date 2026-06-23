@@ -1,0 +1,41 @@
+{
+  "target": "icp_query_update_kind_rejected_raw",
+  "target_id": "6511febba12f09e128c6510e81689043252d8fac87e5ed319cd95c636f60b852",
+  "slug": "icp_query_update_kind_rejected_raw-b2b79d8e",
+  "file": "crates/verified-core/src/kasane_precompiles/icp_query_update_kind_rejected.rs",
+  "function": "icp_query_update_kind_rejected_raw",
+  "git_commit": "f729c2428c68299f1a634727e49b65353152eca4",
+  "worktree_dirty": false,
+  "source_hash": "ec46ec201d4c1356a8d7d07f03bd5f7e58da323bfa903451dc0a9247f41ac3db",
+  "semantic_hash": "6e7b58d53556be54b78b78eb2c4cabf411ac248b1b283651a5872f192a42bf48",
+  "dependency_hash_inputs": [],
+  "unresolved_dependencies": [],
+  "spec_source_of_truth": "accepted_json",
+  "tool_version": "0.1.0",
+  "preconditions": [
+    "true"
+  ],
+  "postconditions": [
+    "result == (kind == ICP_PRECOMPILE_KIND_UPDATE)"
+  ],
+  "acceptance_criteria": [
+    "Reject exactly the reserved ICP update kind from the ICP query parser path."
+  ],
+  "test_evidence": [
+    {
+      "scenario_id": "icp_query_update_kind_rejected_raw-nominal",
+      "command": "cargo test -p ic-evm-core icp_query_precompile",
+      "test_name": "ICP query precompile rejects update kind",
+      "recorded_at": "2026-06-19T00:00:00Z"
+    }
+  ],
+  "risk_level": "medium",
+  "verified_subject": "implementation",
+  "contract_hash": "4c0815677d8f2031095adf41352b727e050382070d4ccb0a7deb6bb84503a233",
+  "applied_contract_hash": "4c0815677d8f2031095adf41352b727e050382070d4ccb0a7deb6bb84503a233",
+  "applied_at": "2026-06-19T05:11:56Z",
+  "panic_behavior": "documented",
+  "overflow_behavior": "documented",
+  "rejected_behaviors": [],
+  "open_assumptions": []
+}

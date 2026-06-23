@@ -1,7 +1,9 @@
 //! どこで: Phase1 pruning テスト / 何を: prune_blocks の削除と状態更新 / なぜ: None判定の前提を保証するため
 
-use evm_core::chain;
-use evm_db::chain_data::{BlockData, ReceiptLike, TxId, TxIndexEntry, TxLoc};
+use evm_core::{chain, hash};
+use evm_db::chain_data::{
+    BlockData, ReceiptLike, StoredTxBytes, TxId, TxIndexEntry, TxKind, TxLoc,
+};
 use evm_db::stable_state::{init_stable_state, with_state, with_state_mut};
 use evm_db::Storable;
 
@@ -9,7 +11,15 @@ use evm_db::Storable;
 fn prune_blocks_removes_old_data() {
     init_stable_state();
 
-    let tx1 = TxId([0x11; 32]);
+    let raw1 = vec![0x02, 0x11];
+    let eth_hash1 = TxId(hash::keccak256(&raw1));
+    let tx1 = TxId(hash::stored_tx_id(
+        TxKind::EthSigned,
+        &raw1,
+        None,
+        None,
+        None,
+    ));
     let tx2 = TxId([0x22; 32]);
     let tx3 = TxId([0x33; 32]);
 
@@ -27,6 +37,21 @@ fn prune_blocks_removes_old_data() {
         insert_receipt(state, tx1, 1);
         insert_receipt(state, tx2, 2);
         insert_receipt(state, tx3, 3);
+        state.tx_store.insert(
+            tx1,
+            StoredTxBytes::new_with_fees(
+                tx1,
+                TxKind::EthSigned,
+                raw1.clone(),
+                None,
+                Vec::new(),
+                Vec::new(),
+                0,
+                0,
+                false,
+            ),
+        );
+        state.eth_tx_hash_index.insert(eth_hash1, tx1);
         state.seen_tx.insert(tx1, 1);
         state.seen_tx.insert(tx2, 1);
         state.seen_tx.insert(tx3, 1);
@@ -55,6 +80,11 @@ fn prune_blocks_removes_old_data() {
         assert!(state.tx_locs.get(&tx1).is_none());
         assert!(state.tx_locs.get(&tx2).is_none());
         assert!(state.tx_locs.get(&tx3).is_some());
+        assert_eq!(state.pruned_tx_locs.get(&tx1), Some(TxLoc::included(1, 0)));
+        assert_eq!(state.pruned_tx_locs.get(&tx2), Some(TxLoc::included(2, 0)));
+        assert!(state.pruned_tx_locs.get(&tx3).is_none());
+        assert!(state.eth_tx_hash_index.get(&eth_hash1).is_none());
+        assert_eq!(state.pruned_eth_tx_hash_index.get(&eth_hash1), Some(tx1));
         assert!(state.seen_tx.get(&tx1).is_none());
         assert!(state.seen_tx.get(&tx2).is_none());
         assert!(state.seen_tx.get(&tx3).is_some());

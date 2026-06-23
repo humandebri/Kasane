@@ -1,13 +1,13 @@
 {
-  "target": "classify_nonce",
-  "target_id": "ee78b7e5fd713b7a6cb00e75e1f2234f131220723b4ad3bb9ffb3380a17c5efd",
+  "target": "classify_nonce_raw",
+  "target_id": "c47db783e7c1335f4afe349b77750cfdf01dac60d8a4466060228d78e369b980",
   "slug": "classify_nonce-3dada50d",
   "file": "crates/verified-core/src/nonce.rs",
-  "function": "classify_nonce",
-  "git_commit": "703d7df1dcdc48c6f15be3733c6da4ec5c6a8dad",
+  "function": "classify_nonce_raw",
+  "git_commit": "f729c2428c68299f1a634727e49b65353152eca4",
   "worktree_dirty": false,
-  "source_hash": "3dada50dbfbec3c3991a06ad15fca6be5687c8c58a8a3a825fb8ed419d5afc2b",
-  "semantic_hash": "fa9487ba51d96176707f328ef5a7921718815d559e995dab958c1269eb12930b",
+  "source_hash": "fe53e4b54f3f5ce56df4f94f2c0acf06b7361e21a3fdcd7675106bd7e839ee04",
+  "semantic_hash": "5855e24251df50681ecda00b7cb978cb464126ebb856af5132d48320d4de131f",
   "dependency_hash_inputs": [
     {
       "kind": "use",
@@ -37,14 +37,62 @@
   "unresolved_dependencies": [],
   "spec_source_of_truth": "accepted_json",
   "tool_version": "0.1.0",
-  "preconditions": [],
+  "preconditions": [
+    "true"
+  ],
   "postconditions": [
     "incoming_nonce < expected_nonce ==> result == NonceDecision::TooLow",
     "incoming_nonce > expected_nonce ==> result == NonceDecision::Gap",
-    "incoming_nonce == expected_nonce && pending_effective_gas_price == None ==> result == NonceDecision::Accept",
-    "incoming_nonce == expected_nonce && pending_effective_gas_price == Some(old) && incoming_effective_gas_price <= old ==> result == NonceDecision::Conflict",
-    "incoming_nonce == expected_nonce && pending_effective_gas_price == Some(old) && incoming_effective_gas_price > old ==> result == NonceDecision::Replace"
+    "incoming_nonce == expected_nonce && pending_effective_gas_price_present != 1 ==> result == NonceDecision::Accept",
+    "incoming_nonce == expected_nonce && pending_effective_gas_price_present == 1 && incoming_effective_gas_price <= pending_effective_gas_price_value ==> result == NonceDecision::Conflict",
+    "incoming_nonce == expected_nonce && pending_effective_gas_price_present == 1 && incoming_effective_gas_price > pending_effective_gas_price_value ==> result == NonceDecision::Replace"
   ],
+  "acceptance_criteria": [
+    "Nonce raw classification returns TooLow, Gap, Accept, Conflict, or Replace according to current nonce and replacement fee rules."
+  ],
+  "test_evidence": [
+    {
+      "scenario_id": "classify_nonce-too-low",
+      "command": "cargo test -p verified-core classify_nonce_rejects_low_and_gap",
+      "test_name": "classify_nonce_rejects_low_and_gap",
+      "recorded_at": "2026-06-19T00:08:04Z"
+    },
+    {
+      "scenario_id": "classify_nonce-gap",
+      "command": "cargo test -p verified-core classify_nonce_rejects_low_and_gap",
+      "test_name": "classify_nonce_rejects_low_and_gap",
+      "recorded_at": "2026-06-19T00:08:07Z"
+    },
+    {
+      "scenario_id": "classify_nonce-accept-no-pending",
+      "command": "cargo test -p verified-core classify_nonce_handles_current_and_replacement",
+      "test_name": "classify_nonce_handles_current_and_replacement",
+      "recorded_at": "2026-06-19T00:08:12Z"
+    },
+    {
+      "scenario_id": "classify_nonce-conflict-equal-price",
+      "command": "cargo test -p verified-core classify_nonce_handles_current_and_replacement",
+      "test_name": "classify_nonce_handles_current_and_replacement",
+      "recorded_at": "2026-06-19T00:08:15Z"
+    },
+    {
+      "scenario_id": "classify_nonce-conflict-lower-price",
+      "command": "cargo test -p verified-core classify_nonce_handles_current_and_replacement",
+      "test_name": "classify_nonce_handles_current_and_replacement",
+      "recorded_at": "2026-06-19T00:08:20Z"
+    },
+    {
+      "scenario_id": "classify_nonce-replace-higher-price",
+      "command": "cargo test -p verified-core classify_nonce_handles_current_and_replacement",
+      "test_name": "classify_nonce_handles_current_and_replacement",
+      "recorded_at": "2026-06-19T00:08:24Z"
+    }
+  ],
+  "risk_level": "medium",
+  "verified_subject": "implementation",
+  "contract_hash": "292d8564218ba2fe0832e35f5a22f9b62a63eb7bcd3f22336e8cf6d25dcfe62f",
+  "applied_contract_hash": "292d8564218ba2fe0832e35f5a22f9b62a63eb7bcd3f22336e8cf6d25dcfe62f",
+  "applied_at": "2026-06-19T03:41:51Z",
   "panic_behavior": "documented",
   "overflow_behavior": "documented",
   "rejected_behaviors": [],
