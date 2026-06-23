@@ -1,0 +1,28 @@
+{
+  "properties_with_code": [
+    {
+      "property_id": "PROP-kasane-inv-018",
+      "text": "Update intent allowlist changes must be controller managed.",
+      "type": "invariant",
+      "assertion": "forall a: mutate_allowlist(a) => caller(a) in controllers",
+      "severity": "HIGH",
+      "covers": "SG-004",
+      "reachability": {
+        "classification": "external-reachable",
+        "entry_points": [
+          "Precompile",
+          "AdminAPI"
+        ],
+        "attacker_controlled": true,
+        "bug_bounty_scope": "in-scope"
+      },
+      "exploitability": "external-attack",
+      "_id_prefix": "PROP-kasane-inv-018",
+      "code_scope": {
+        "locations": [],
+        "resolution_status": "not_found",
+        "resolution_error": "Constrained search failed: allowed target paths src/, tests/, docs/API_STABILITY.md, and docs/OPERATIONS.md do not exist in the checkout. Searched identifiers/terms: mutate_allowlist, allowlist, controller, controllers, update intent, AdminAPI, Precompile. Actual code appears outside allowed search paths, so no code location was resolved without violating batch constraints."
+      }
+    }
+  ]
+}

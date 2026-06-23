@@ -1,0 +1,24 @@
+{
+  "metadata": {
+    "phase": "03",
+    "worker_id": 2,
+    "batch_index": 2,
+    "item_count": 1,
+    "timestamp": 1782175119,
+    "processed_ids": [
+      "PROP-kasane-pre-002"
+    ],
+    "queue_file": "/Volumes/KINGSTON/speca/kasane-speca-rust-clean/outputs/03_ASYNC_QUEUE_W2B2_1782175119.json",
+    "context_file": "/Volumes/KINGSTON/speca/kasane-speca-rust-clean/outputs/03_CONTEXT_W2B2_1782175119.json"
+  },
+  "audit_items": [
+    {
+      "property_id": "PROP-kasane-pre-002",
+      "classification": "not-a-vulnerability",
+      "code_path": "crates/ic-evm-tx/src/lib.rs::recover_eth_tx::L51-187",
+      "proof_trace": "EthSigned admission reaches chain::submit_tx through rpc_eth_send_raw_transaction and submit_tx_in, and submit_tx decodes before inserting into seen_tx, tx_store, pending indexes, or queue metadata. For EthSigned, decode_tx calls decode_eth_raw_tx_to_recovered, which enforces non-empty and max-size bounds, rejects unsupported typed transactions, validates chain_id, rejects trailing bytes, and only returns after Signed::recover_signer succeeds; invalid RLP/signature therefore maps to DecodeFailed before enqueue. Stress checks found no alternate EthSigned enqueue path that bypasses this decode boundary, and tests cover invalid signature, wrong or missing chain_id, unsupported 4844/7702, and submit_tx_in decode rejection.",
+      "attack_scenario": "",
+      "checklist_id": "PROP-kasane-pre-002"
+    }
+  ]
+}

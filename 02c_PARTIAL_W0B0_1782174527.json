@@ -1,0 +1,90 @@
+{
+  "properties_with_code": [
+    {
+      "property_id": "PROP-kasane-pre-001",
+      "text": "submit_ic_tx must derive sender only from msg_caller.",
+      "type": "pre-condition",
+      "assertion": "forall r,c: submit_ic_tx(r,c).sender == derive_sender(c) && r.sender is ignored",
+      "severity": "HIGH",
+      "covers": "SG-001",
+      "reachability": {
+        "classification": "external-reachable",
+        "entry_points": [
+          "IC",
+          "submit_ic_tx"
+        ],
+        "attacker_controlled": true,
+        "bug_bounty_scope": "in-scope"
+      },
+      "exploitability": "external-attack",
+      "_id_prefix": "PROP-kasane-pre-001",
+      "code_scope": {
+        "locations": [
+          {
+            "file": "crates/ic-evm-gateway/src/lib.rs",
+            "symbol": "submit_ic_tx",
+            "line_range": {
+              "start": 3237,
+              "end": 3250
+            },
+            "role": "primary",
+            "note": "IC update entrypoint passes msg_caller bytes into the internal submit path."
+          },
+          {
+            "file": "crates/ic-evm-gateway/src/lib.rs",
+            "symbol": "submit_ic_tx_internal",
+            "line_range": {
+              "start": 3252,
+              "end": 3263
+            },
+            "role": "caller",
+            "note": "Gateway wrapper forwards caller principal, canister id, and parsed transaction to the core submit path."
+          },
+          {
+            "file": "crates/ic-evm-gateway/src/lib.rs",
+            "symbol": "submit_ic_tx_internal_with_canister",
+            "line_range": {
+              "start": 3265,
+              "end": 3278
+            },
+            "role": "caller",
+            "note": "Gateway wrapper preserves the caller-derived submit context before scheduler mediation."
+          },
+          {
+            "file": "crates/ic-evm-gateway/src/lib.rs",
+            "symbol": "submit_ic_tx_internal_with_canister_and_scheduler",
+            "line_range": {
+              "start": 3280,
+              "end": 3355
+            },
+            "role": "caller",
+            "note": "Gateway scheduler boundary calls the core submit implementation."
+          },
+          {
+            "file": "crates/evm-core/src/chain.rs",
+            "symbol": "submit_ic_tx_input",
+            "line_range": {
+              "start": 922,
+              "end": 1020
+            },
+            "role": "primary",
+            "note": "Core submit path derives the EVM sender from caller_principal and inserts pending sender indexes."
+          },
+          {
+            "file": "crates/evm-core/src/hash.rs",
+            "symbol": "derive_evm_address_from_principal",
+            "line_range": {
+              "start": 6,
+              "end": 6
+            },
+            "role": "callee",
+            "note": "Core hash module re-exports the principal-to-EVM-address derivation function used by submit_ic_tx_input."
+          }
+        ],
+        "resolution_status": "resolved",
+        "resolution_error": "",
+        "resolution_method": "grep_fallback"
+      }
+    }
+  ]
+}
