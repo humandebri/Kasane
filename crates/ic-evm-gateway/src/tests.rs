@@ -1524,6 +1524,103 @@ fn finalize_unwrap_dispatch_attempt_keeps_terminal_failure_out_of_queue() {
     });
 }
 
+#[test]
+fn nat_to_be_bytes_keeps_zero_as_single_byte() {
+    assert_eq!(super::nat_to_be_bytes(&Nat::from(0u8)), vec![0]);
+    assert_eq!(super::nat_to_be_bytes(&Nat::from(1u8)), vec![1]);
+}
+
+#[test]
+fn finalize_unwrap_dispatch_attempt_stores_success_ledger_tx_id() {
+    init_stable_state();
+    let request_id = TxId([0x67u8; 32]);
+    with_state_mut(|state| {
+        state.unwrap_requests.insert(
+            request_id,
+            sample_unwrap_request(UnwrapRequestStatus::Dispatching, None, 1),
+        );
+    });
+
+    super::finalize_unwrap_dispatch_attempt(
+        request_id,
+        666,
+        super::AppliedUnwrapDispatchOutcome {
+            status: UnwrapRequestStatus::Dispatched,
+            ledger_tx_id: Some(vec![0]),
+            error_code: None,
+        },
+    );
+
+    with_state(|state| {
+        let req = state.unwrap_requests.get(&request_id).expect("request");
+        assert_eq!(req.status, UnwrapRequestStatus::Dispatched);
+        assert_eq!(req.ledger_tx_id, Some(vec![0]));
+        assert_eq!(req.updated_at, 666);
+    });
+}
+
+#[test]
+fn finalize_unwrap_dispatch_attempt_traps_dispatched_without_ledger_tx_id() {
+    init_stable_state();
+    let request_id = TxId([0x68u8; 32]);
+    with_state_mut(|state| {
+        state.unwrap_requests.insert(
+            request_id,
+            sample_unwrap_request(UnwrapRequestStatus::Dispatching, None, 1),
+        );
+    });
+
+    let result = catch_unwind(AssertUnwindSafe(|| {
+        super::finalize_unwrap_dispatch_attempt(
+            request_id,
+            777,
+            super::AppliedUnwrapDispatchOutcome {
+                status: UnwrapRequestStatus::Dispatched,
+                ledger_tx_id: None,
+                error_code: None,
+            },
+        );
+    }));
+
+    assert!(result.is_err());
+    with_state(|state| {
+        let req = state.unwrap_requests.get(&request_id).expect("request");
+        assert_eq!(req.status, UnwrapRequestStatus::Dispatching);
+        assert_eq!(req.ledger_tx_id, None);
+    });
+}
+
+#[test]
+fn finalize_unwrap_dispatch_attempt_traps_dispatched_with_invalid_ledger_tx_id() {
+    init_stable_state();
+    let request_id = TxId([0x69u8; 32]);
+    with_state_mut(|state| {
+        state.unwrap_requests.insert(
+            request_id,
+            sample_unwrap_request(UnwrapRequestStatus::Dispatching, None, 1),
+        );
+    });
+
+    let result = catch_unwind(AssertUnwindSafe(|| {
+        super::finalize_unwrap_dispatch_attempt(
+            request_id,
+            888,
+            super::AppliedUnwrapDispatchOutcome {
+                status: UnwrapRequestStatus::Dispatched,
+                ledger_tx_id: Some(Vec::new()),
+                error_code: None,
+            },
+        );
+    }));
+
+    assert!(result.is_err());
+    with_state(|state| {
+        let req = state.unwrap_requests.get(&request_id).expect("request");
+        assert_eq!(req.status, UnwrapRequestStatus::Dispatching);
+        assert_eq!(req.ledger_tx_id, None);
+    });
+}
+
 fn build_ic_synthetic_tx_input_for_test(
     nonce: u64,
     max_fee_per_gas: u128,
@@ -2228,8 +2325,8 @@ fn quote_wrap_request_allowed_asset_uses_floor_when_fee_sample_missing() {
     })
     .expect("quote should use floor without fee sample");
 
-    assert_eq!(out.charged_gas_price_wei, Nat::from(180_000_000_000u128));
-    assert_eq!(out.charged_fee_e8s, Nat::from(1_378_000u128));
+    assert_eq!(out.charged_gas_price_wei, Nat::from(300_000_000_000u128));
+    assert_eq!(out.charged_fee_e8s, Nat::from(1_630_000u128));
     assert_eq!(out.cycle_fee_e8s, 1_000_000);
     assert_eq!(out.fee_ledger_canister, fee_ledger);
 }

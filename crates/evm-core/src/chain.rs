@@ -562,6 +562,14 @@ fn tx_locs_get(state: &StableState, tx_id: &TxId) -> Option<TxLoc> {
     Some(loc)
 }
 
+fn pruned_tx_locs_get(state: &StableState, tx_id: &TxId) -> Option<TxLoc> {
+    let loc = state.pruned_tx_locs.get(tx_id)?;
+    if loc.is_decode_failure_placeholder() {
+        return None;
+    }
+    Some(loc)
+}
+
 fn insert_eth_tx_hash_index_for_envelope(
     state: &mut evm_db::stable_state::StableState,
     tx_id: TxId,
@@ -591,6 +599,28 @@ fn remove_eth_tx_hash_index_for_tx_id(state: &mut evm_db::stable_state::StableSt
     state
         .eth_tx_hash_index
         .remove(&TxId(hash::keccak256(&stored.raw)));
+}
+
+fn mark_pruned_receipt_status_marker(state: &mut StableState, tx_id: TxId) {
+    let Some(loc) = tx_locs_get(state, &tx_id) else {
+        return;
+    };
+    if loc.kind != TxLocKind::Included {
+        return;
+    }
+    state.pruned_tx_locs.insert(tx_id, loc);
+    let Some(envelope) = state.tx_store.get(&tx_id) else {
+        return;
+    };
+    let Ok(stored) = StoredTx::try_from(envelope) else {
+        return;
+    };
+    if stored.kind != TxKind::EthSigned {
+        return;
+    }
+    state
+        .pruned_eth_tx_hash_index
+        .insert(TxId(hash::keccak256(&stored.raw)), tx_id);
 }
 
 fn tx_locs_insert(state: &mut StableState, tx_id: TxId, loc: TxLoc) {
@@ -2464,6 +2494,14 @@ pub fn get_tx_loc(tx_id: &TxId) -> Option<TxLoc> {
     with_state(|state| tx_locs_get(state, tx_id))
 }
 
+pub fn get_pruned_tx_loc(tx_id: &TxId) -> Option<TxLoc> {
+    with_state(|state| pruned_tx_locs_get(state, tx_id))
+}
+
+pub fn get_pruned_eth_tx_id_by_hash(eth_tx_hash: &TxId) -> Option<TxId> {
+    with_state(|state| state.pruned_eth_tx_hash_index.get(eth_tx_hash))
+}
+
 pub fn prune_blocks(retain: u64, max_ops: u32) -> Result<PruneResult, ChainError> {
     if retain == 0 || max_ops == 0 {
         return Err(ChainError::InvalidLimit);
@@ -2522,6 +2560,9 @@ pub fn prune_blocks(retain: u64, max_ops: u32) -> Result<PruneResult, ChainError
             // WAL: persist recovery cursor before destructive deletes.
             state.prune_state.set(prune_state);
 
+            for tx_id in block.tx_ids.iter() {
+                mark_pruned_receipt_status_marker(state, *tx_id);
+            }
             let _ = state.blocks.remove(&next);
             for tx_id in block.tx_ids.iter() {
                 remove_pending_fee_index_by_tx_id(state, *tx_id);
@@ -2631,6 +2672,9 @@ fn recover_prune_journal(state: &mut evm_db::stable_state::StableState) -> Resul
     };
     if let Some(journal) = state.prune_journal.get(&journal_block) {
         if let Some(block) = load_block(state, journal_block) {
+            for tx_id in block.tx_ids.iter() {
+                mark_pruned_receipt_status_marker(state, *tx_id);
+            }
             let _ = state.blocks.remove(&journal_block);
             for tx_id in block.tx_ids.iter() {
                 remove_pending_fee_index_by_tx_id(state, *tx_id);

@@ -986,7 +986,11 @@ fn request_memo(request_id: TxId, kind: TransferMemoKind) -> Vec<u8> {
 }
 
 fn nat_to_be_bytes(value: &Nat) -> Vec<u8> {
-    value.0.to_bytes_be()
+    let bytes = value.0.to_bytes_be();
+    if bytes.is_empty() {
+        return vec![0];
+    }
+    bytes
 }
 
 #[ic_cdk::query]
@@ -6008,9 +6012,18 @@ fn finalize_unwrap_dispatch_attempt(
             return;
         };
         req.updated_at = now;
-        req.ledger_tx_id = applied
-            .ledger_tx_id
-            .and_then(|tx_id| validated_ledger_tx_id(tx_id).ok());
+        req.ledger_tx_id = match (applied.status, applied.ledger_tx_id) {
+            (UnwrapRequestStatus::Dispatched, Some(tx_id)) => match validated_ledger_tx_id(tx_id) {
+                Ok(tx_id) => Some(tx_id),
+                Err(code) => ic_cdk::trap(&code),
+            },
+            (UnwrapRequestStatus::Dispatched, None) => ic_cdk::trap("ledger.tx_id_missing"),
+            (_, Some(tx_id)) => match validated_ledger_tx_id(tx_id) {
+                Ok(tx_id) => Some(tx_id),
+                Err(code) => ic_cdk::trap(&code),
+            },
+            (_, None) => None,
+        };
         req.status = applied.status;
         req.error_code = applied.error_code.map(clamp_error_code);
         state.unwrap_requests.insert(request_id, req);

@@ -86,6 +86,8 @@ pub enum AppMemoryId {
     IcpUpdateDispatchMeta = 72,
     IcpUpdatePrecompileAllowlist = 73,
     IcpUpdateActiveCount = 74,
+    PrunedTxLocs = 75,
+    PrunedEthTxHashIndex = 76,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -95,7 +97,7 @@ pub struct MemoryRegionInfo {
     pub include_in_estimate: bool,
 }
 
-const ALL_MEMORY_REGIONS: [MemoryRegionInfo; 75] = [
+const ALL_MEMORY_REGIONS: [MemoryRegionInfo; 77] = [
     MemoryRegionInfo {
         id: AppMemoryId::Upgrades,
         name: "Upgrades",
@@ -471,6 +473,16 @@ const ALL_MEMORY_REGIONS: [MemoryRegionInfo; 75] = [
         name: "IcpUpdateActiveCount",
         include_in_estimate: false,
     },
+    MemoryRegionInfo {
+        id: AppMemoryId::PrunedTxLocs,
+        name: "PrunedTxLocs",
+        include_in_estimate: true,
+    },
+    MemoryRegionInfo {
+        id: AppMemoryId::PrunedEthTxHashIndex,
+        name: "PrunedEthTxHashIndex",
+        include_in_estimate: true,
+    },
 ];
 
 impl AppMemoryId {
@@ -551,6 +563,8 @@ impl AppMemoryId {
             AppMemoryId::IcpUpdateDispatchMeta => 72,
             AppMemoryId::IcpUpdatePrecompileAllowlist => 73,
             AppMemoryId::IcpUpdateActiveCount => 74,
+            AppMemoryId::PrunedTxLocs => 75,
+            AppMemoryId::PrunedEthTxHashIndex => 76,
         }
     }
 

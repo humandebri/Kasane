@@ -9,7 +9,7 @@ pub const DEFAULT_MINING_INTERVAL_MS: u64 = 2_000;
 // 運用方針: 1.00 gwei から引き上げ検討後、250 gwei を初期デフォルトに採用。
 pub const DEFAULT_BASE_FEE: u64 = 250_000_000_000;
 // 現行運用では legacy gas_price 下限と EIP-1559 priority fee 下限を同値で扱う。
-pub const DEFAULT_MIN_FEE_FLOOR: u64 = 150_000_000_000;
+pub const DEFAULT_MIN_FEE_FLOOR: u64 = 250_000_000_000;
 pub const DEFAULT_BLOCK_GAS_LIMIT: u64 = 12_000_000;
 // update 実行の既定値。0 の場合は命令数ベースの早期打ち切りを無効化する。
 // 既定値は「上限手前で安全に止める」ための保守値。

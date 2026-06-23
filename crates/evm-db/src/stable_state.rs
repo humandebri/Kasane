@@ -41,6 +41,8 @@ pub type PendingFeeIndex = StableBTreeMap<PendingFeeKey, TxId, VMem>;
 pub type PendingFeeKeyByTxId = StableBTreeMap<TxId, PendingFeeKey, VMem>;
 pub type ReadyBySeq = StableBTreeMap<ReadySeqKey, TxId, VMem>;
 pub type EthTxHashIndex = StableBTreeMap<TxId, TxId, VMem>;
+pub type PrunedTxLocs = StableBTreeMap<TxId, crate::chain_data::TxLoc, VMem>;
+pub type PrunedEthTxHashIndex = StableBTreeMap<TxId, TxId, VMem>;
 pub type UnwrapRequests = StableBTreeMap<TxId, UnwrapDispatchRequest, VMem>;
 pub type UnwrapDispatchQueue = StableBTreeMap<u64, TxId, VMem>;
 pub type WrapRequests = StableBTreeMap<TxId, WrapStoredRequest, VMem>;
@@ -98,6 +100,8 @@ pub struct StableState {
     pub pending_fee_key_by_tx_id: PendingFeeKeyByTxId,
     pub ready_by_seq: ReadyBySeq,
     pub eth_tx_hash_index: EthTxHashIndex,
+    pub pruned_tx_locs: PrunedTxLocs,
+    pub pruned_eth_tx_hash_index: PrunedEthTxHashIndex,
     pub unwrap_requests: UnwrapRequests,
     pub unwrap_dispatch_queue: UnwrapDispatchQueue,
     pub unwrap_dispatch_meta: StableCell<QueueMeta, VMem>,
@@ -202,6 +206,9 @@ pub fn init_stable_state() {
         StableBTreeMap::init(get_memory(AppMemoryId::PendingFeeKeyByTxId));
     let ready_by_seq = StableBTreeMap::init(get_memory(AppMemoryId::ReadyBySeq));
     let eth_tx_hash_index = StableBTreeMap::init(get_memory(AppMemoryId::EthTxHashIndex));
+    let pruned_tx_locs = StableBTreeMap::init(get_memory(AppMemoryId::PrunedTxLocs));
+    let pruned_eth_tx_hash_index =
+        StableBTreeMap::init(get_memory(AppMemoryId::PrunedEthTxHashIndex));
     let unwrap_requests = StableBTreeMap::init(get_memory(AppMemoryId::UnwrapRequests));
     let unwrap_dispatch_queue = StableBTreeMap::init(get_memory(AppMemoryId::UnwrapDispatchQueue));
     let unwrap_dispatch_meta = StableCell::init(
@@ -316,6 +323,8 @@ pub fn init_stable_state() {
             pending_fee_key_by_tx_id,
             ready_by_seq,
             eth_tx_hash_index,
+            pruned_tx_locs,
+            pruned_eth_tx_hash_index,
             unwrap_requests,
             unwrap_dispatch_queue,
             unwrap_dispatch_meta,
