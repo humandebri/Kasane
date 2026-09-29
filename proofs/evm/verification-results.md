@@ -16,7 +16,7 @@
 | Kasane CALL 経路 | 12 ケース成功。送信者 nonce、gas 徴収、receipt、受取残高、storage、logs を確認 |
 | Kasane CREATE/SELFDESTRUCT | 親 commit/revert の 4 ケース成功。作成先の残存、残高移動、code hash、nonce、fee を確認 |
 | untouched account の直接 commit | stable DB と state epoch は不変。touched account は書き込まれる |
-| 過去に保存された空 account | stable DB にゼロ値 account が残っていても state root は空状態と同じ。nonce が非ゼロなら root は変わる |
+| 過去に保存された空 account | stable DB にゼロ値 account が残っていても、全量再計算・差分 commit とも state root は空状態と同じ。nonce が非ゼロなら root は変わる |
 | ICP update intent precompile | reverted subcall と成功した再試行の receipt log、request map を確認 |
 | `cargo test --locked -p ic-evm-core --lib revm_exec::tests` | 10 テスト成功 |
 | `cargo test --locked -p verified-core` | 32 テスト成功 |
