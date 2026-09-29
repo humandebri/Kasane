@@ -14,6 +14,28 @@ def commitAccount (old : Option Nat) (new : Nat) : AccountDecision → Option Na
   | .delete => none
   | .upsert => some new
 
+structure StoredAccount where
+  nonce : Nat
+  balance : Nat
+  codeEmpty : Bool
+  deriving DecidableEq
+
+def accountIsEmpty (account : StoredAccount) : Bool :=
+  account.nonce == 0 && account.balance == 0 && account.codeEmpty
+
+def readAccount (stored : Option StoredAccount) : Option StoredAccount :=
+  match stored with
+  | none => none
+  | some account => if accountIsEmpty account then none else some account
+
+theorem empty_account_read_as_absent (account : StoredAccount)
+    (h : accountIsEmpty account = true) : readAccount (some account) = none := by
+  simp [readAccount, h]
+
+theorem nonempty_account_read_preserved (account : StoredAccount)
+    (h : accountIsEmpty account = false) : readAccount (some account) = some account := by
+  simp [readAccount, h]
+
 inductive CodeDecision where
   | skip | remove | insert
   deriving DecidableEq, Repr

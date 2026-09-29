@@ -67,7 +67,7 @@ Rust パスは `vendor/revm/crates/` が起点。
 `bash scripts/verify-revm.sh` は以下を実行する。
 
 1. vendored tree・本番 features・対応元ファイル・公式 fixtures の hash 確認。
-2. Lean ビルドと全宣言の公理監査、既存の純粋関数 431 ケース比較。
+2. Lean ビルドと全宣言の公理監査、既存の純粋関数 439 ケース比較。
 3. 実際の `JournalInner` の `sstore` / `transfer_loaded` / checkpoint 操作と Lean を比較。
    初期 storage 3 通り × 移転額 3 通り、各 5 時点の storage 2 slot・残高・log 数/内容/順序・depth。
    合計 9 traces / 45 observations を完全一致で照合する。
@@ -77,7 +77,8 @@ Rust パスは `vendor/revm/crates/` が起点。
 5. Kasane の `execute_tx` と `RevmStableDb` でネスト CALL 12 ケースを実行。
    子 STOP/REVERT/INVALID × 親 STOP/REVERT × legacy/EIP-1559。
    storage・残高・logs・status・送信者 nonce・徴収額・受取残高を確認する。
-6. CREATE と SELFDESTRUCT の親 commit/revert 4 ケースを stable DB まで検査。
+6. CREATE の親 commit/revert と旧空 account 有無、および SELFDESTRUCT の親
+   commit/revert を stable DB まで検査。
    untouched account の commit skip と、REVERT 後の nonce・fee を別途検査。
    ICP update intent precompile の reverted subcall と再試行も実行する。
 
@@ -103,8 +104,15 @@ CREATE の親 REVERT テストでは、取り消された作成先が空 account
 vendored revm の `CacheDB::commit` はこれを skip する。Kasane の判定関数に
 `Skip` を追加し、Verus で untouched ⇒ Skip を証明した。Lean の状態モデルも
 同じ分岐に合わせ、実際の CREATE と直接 commit テストで永続化されないことを確認する。
-既存 canister の stable DB に過去の実行で残った空 account はこの変更だけで除去されない。
-既存状態の棚卸しや修復は別の運用判断が必要。
+旧空 account を残したままだと、そのアドレスへの CREATE が失敗することも再現した。
+これは [EIP-161](https://eips.ethereum.org/EIPS/eip-161) の空 account の扱いと
+[EIP-684](https://eips.ethereum.org/EIPS/eip-684) の衝突条件に反する。
+`basic` / `basic_ref` で nonce・残高がゼロ、code hash が空の保存済み record を
+`None` として返し、runtime code を返す CREATE が成功することを確認した。
+Lean の `readAccount` 定理と Verus の `account_is_empty` 契約はこの読み取り規則を扱う。
+byte codec と code hash 判定を含む Rust アダプタ全体の refinement は未証明。
+既存 canister の stable DB から空 record は除去されない。件数の棚卸しや物理削除は
+別の運用判断が必要。
 
 ## 残る証明義務と opcode 検証の評価
 

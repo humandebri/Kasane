@@ -26,6 +26,13 @@ pub enum CodeCommitDecision {
     Insert,
 }
 
+#[cfg_attr(verus_keep_ghost, verus_spec(empty => ensures
+    empty == (nonce == 0 && balance_is_zero && code_is_empty),
+))]
+pub fn account_is_empty(nonce: u64, balance_is_zero: bool, code_is_empty: bool) -> bool {
+    nonce == 0 && balance_is_zero && code_is_empty
+}
+
 #[cfg_attr(verus_keep_ghost, verus_spec(decision => ensures
     !is_touched ==> decision == AccountCommitDecision::Skip,
     is_touched && (is_selfdestructed || is_empty)
@@ -77,7 +84,7 @@ pub fn code_commit_decision(has_code: bool, code_is_empty: bool) -> CodeCommitDe
 #[cfg(test)]
 mod tests {
     use super::{
-        account_commit_decision, code_commit_decision, storage_commit_decision,
+        account_commit_decision, account_is_empty, code_commit_decision, storage_commit_decision,
         AccountCommitDecision, CodeCommitDecision, StorageCommitDecision,
     };
 
@@ -107,6 +114,14 @@ mod tests {
             account_commit_decision(false, false, true),
             AccountCommitDecision::Upsert
         );
+    }
+
+    #[test]
+    fn empty_account_requires_zero_nonce_balance_and_code() {
+        assert!(account_is_empty(0, true, true));
+        assert!(!account_is_empty(1, true, true));
+        assert!(!account_is_empty(0, false, true));
+        assert!(!account_is_empty(0, true, false));
     }
 
     #[test]

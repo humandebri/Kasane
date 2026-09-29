@@ -4,13 +4,14 @@ use evm_core::{
 };
 use evm_db::{
     chain_data::{TxId, TxKind},
-    stable_state::{current_evm_state_epoch, init_stable_state},
+    stable_state::{current_evm_state_epoch, init_stable_state, with_state, with_state_mut},
+    types::{keys::make_account_key, values::AccountVal},
 };
 use revm::{
     context::TxEnv,
     primitives::{Address, Bytes, HashMap, TxKind as RevmTxKind, U256},
     state::{Account, AccountInfo, Bytecode, EvmStorageSlot},
-    Database, DatabaseCommit,
+    Database, DatabaseCommit, DatabaseRef,
 };
 
 fn account(balance: u64, nonce: u64, code: Vec<u8>, slot: u64) -> Account {
@@ -95,6 +96,43 @@ fn untouched_revm_account_does_not_create_stable_state() {
         db.commit(HashMap::from_iter([(address, account)]));
         assert_eq!(db.basic(address).unwrap().unwrap().balance, U256::from(7));
         assert!(current_evm_state_epoch() > epoch);
+    })
+    .join()
+    .unwrap();
+}
+
+#[test]
+fn legacy_empty_record_is_absent_from_revm_database_reads() {
+    std::thread::spawn(|| {
+        init_stable_state();
+        let address = Address::with_last_byte(0x72);
+        let key = make_account_key(address.into_array());
+        with_state_mut(|state| {
+            state
+                .accounts
+                .insert(key, AccountVal::from_parts(0, [0u8; 32], [0u8; 32]));
+        });
+        assert!(with_state(|state| state.accounts.get(&key).is_some()));
+        let mut db = RevmStableDb;
+        assert!(db.basic(address).unwrap().is_none());
+        assert!(db.basic_ref(address).unwrap().is_none());
+
+        with_state_mut(|state| {
+            state.accounts.insert(
+                key,
+                AccountVal::from_parts(0, [0u8; 32], revm::primitives::KECCAK_EMPTY.0),
+            );
+        });
+        assert!(db.basic(address).unwrap().is_none());
+        assert!(db.basic_ref(address).unwrap().is_none());
+
+        with_state_mut(|state| {
+            state
+                .accounts
+                .insert(key, AccountVal::from_parts(1, [0u8; 32], [0u8; 32]));
+        });
+        assert_eq!(db.basic(address).unwrap().unwrap().nonce, 1);
+        assert_eq!(db.basic_ref(address).unwrap().unwrap().nonce, 1);
     })
     .join()
     .unwrap();
@@ -244,36 +282,59 @@ fn create_is_persisted_only_when_parent_commits() {
     let parent = Address::with_last_byte(0x52);
     let created = parent.create(1);
     for parent_reverts in [false, true] {
-        std::thread::spawn(move || {
-            init_stable_state();
-            // Place PUSH1 0; PUSH1 0; RETURN in memory and execute CREATE.
-            let mut code = vec![
-                0x64, 0x60, 0x00, 0x60, 0x00, 0xf3, 0x60, 0x00, 0x52, 0x60, 0x05, 0x60, 0x1b, 0x60,
-                0x00, 0xf0, 0x50,
-            ];
-            code.extend(if parent_reverts {
-                [0x60, 0x00, 0x60, 0x00, 0xfd]
-            } else {
-                [0x60, 0x00, 0x60, 0x00, 0x00]
-            });
-            let mut db = RevmStableDb;
-            db.commit(HashMap::from_iter([
-                (sender, account(1_000_000_000, 7, vec![], 0)),
-                (parent, account(100, 1, code, 7)),
-            ]));
-            let outcome = execute_test_call(parent);
-            assert_eq!(outcome.receipt.status, u8::from(!parent_reverts));
-            assert!(outcome.receipt.logs.is_empty());
-            assert_eq!(
-                db.basic(parent).unwrap().unwrap().nonce,
-                if parent_reverts { 1 } else { 2 }
-            );
-            assert_eq!(db.basic(created).unwrap().is_some(), !parent_reverts);
-            assert_eq!(db.storage(parent, U256::ZERO).unwrap(), U256::from(7));
-            assert_transaction_accounting(&mut db, &outcome);
-        })
-        .join()
-        .unwrap();
+        for legacy_empty_created in [false, true] {
+            std::thread::spawn(move || {
+                init_stable_state();
+                if legacy_empty_created {
+                    with_state_mut(|state| {
+                        state.accounts.insert(
+                            make_account_key(created.into_array()),
+                            AccountVal::from_parts(0, [0u8; 32], [0u8; 32]),
+                        );
+                    });
+                }
+                // Return one JUMPDEST byte from the init code so creation is observable.
+                let mut code = vec![
+                    0x69, 0x60, 0x5b, 0x60, 0x00, 0x53, 0x60, 0x01, 0x60, 0x00, 0xf3, 0x60, 0x00,
+                    0x52, 0x60, 0x0a, 0x60, 0x16, 0x60, 0x00, 0xf0, 0x50,
+                ];
+                code.extend(if parent_reverts {
+                    [0x60, 0x00, 0x60, 0x00, 0xfd]
+                } else {
+                    [0x60, 0x00, 0x60, 0x00, 0x00]
+                });
+                let mut db = RevmStableDb;
+                db.commit(HashMap::from_iter([
+                    (sender, account(1_000_000_000, 7, vec![], 0)),
+                    (parent, account(100, 1, code, 7)),
+                ]));
+                let outcome = execute_test_call(parent);
+                assert_eq!(outcome.receipt.status, u8::from(!parent_reverts));
+                assert!(outcome.receipt.logs.is_empty());
+                assert_eq!(
+                    db.basic(parent).unwrap().unwrap().nonce,
+                    if parent_reverts { 1 } else { 2 }
+                );
+                let created_info = db.basic(created).unwrap();
+                assert_eq!(created_info.is_some(), !parent_reverts);
+                if !parent_reverts {
+                    assert_eq!(
+                        created_info.unwrap().code_hash,
+                        Bytecode::new_raw(Bytes::from_static(&[0x5b])).hash_slow(),
+                        "legacy_empty_created={legacy_empty_created}"
+                    );
+                } else if legacy_empty_created {
+                    assert!(with_state(|state| state
+                        .accounts
+                        .get(&make_account_key(created.into_array()))
+                        .is_some()));
+                }
+                assert_eq!(db.storage(parent, U256::ZERO).unwrap(), U256::from(7));
+                assert_transaction_accounting(&mut db, &outcome);
+            })
+            .join()
+            .unwrap();
+        }
     }
 }
 

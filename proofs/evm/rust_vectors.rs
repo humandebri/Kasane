@@ -34,12 +34,23 @@ fn main() {
     for destroyed in [false, true] {
         for empty in [false, true] {
             for touched in [false, true] {
-                let decision = match state_diff::account_commit_decision(destroyed, empty, touched) {
+                let decision = match state_diff::account_commit_decision(destroyed, empty, touched)
+                {
                     state_diff::AccountCommitDecision::Skip => "skip",
                     state_diff::AccountCommitDecision::Delete => "delete",
                     state_diff::AccountCommitDecision::Upsert => "upsert",
                 };
                 println!("account {destroyed} {empty} {touched} {decision}");
+            }
+        }
+    }
+    for nonce in [0, 1] {
+        for balance_is_zero in [false, true] {
+            for code_is_empty in [false, true] {
+                println!(
+                    "account_empty {nonce} {balance_is_zero} {code_is_empty} {}",
+                    state_diff::account_is_empty(nonce, balance_is_zero, code_is_empty)
+                );
             }
         }
     }

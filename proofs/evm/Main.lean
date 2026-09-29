@@ -25,6 +25,12 @@ def main : IO Unit := do
           | .delete => "delete"
           | .upsert => "upsert"
         IO.println s!"account {destroyed} {empty} {touched} {decision}"
+  for nonce in [0, 1] do
+    for balanceIsZero in [false, true] do
+      for codeIsEmpty in [false, true] do
+        let account : StoredAccount :=
+          { nonce, balance := if balanceIsZero then 0 else 1, codeEmpty := codeIsEmpty }
+        IO.println s!"account_empty {nonce} {balanceIsZero} {codeIsEmpty} {accountIsEmpty account}"
   for hasCode in [false, true] do
     for empty in [false, true] do
       let decision := match codeDecision hasCode empty with

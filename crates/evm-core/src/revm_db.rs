@@ -11,8 +11,8 @@ use revm::primitives::{Address, StorageKey, StorageValue, B256, KECCAK_EMPTY, U2
 use revm::state::{Account, AccountInfo, Bytecode};
 use std::borrow::Cow;
 use verified_core::state_diff::{
-    account_commit_decision, code_commit_decision, storage_commit_decision, AccountCommitDecision,
-    CodeCommitDecision, StorageCommitDecision,
+    account_commit_decision, account_is_empty, code_commit_decision, storage_commit_decision,
+    AccountCommitDecision, CodeCommitDecision, StorageCommitDecision,
 };
 
 #[derive(Clone, Copy, Debug)]
@@ -25,11 +25,7 @@ impl Database for RevmStableDb {
         let addr = try_address_to_bytes(address).expect("revm address must be 20 bytes");
         let key = make_account_key(addr);
         let value = evm_db::stable_state::with_state(|state| state.accounts.get(&key));
-        let info = match value {
-            Some(account) => account_val_to_info(&account),
-            None => return Ok(None),
-        };
-        Ok(Some(info))
+        Ok(value.and_then(|account| account_val_to_info(&account)))
     }
 
     fn code_by_hash(&mut self, code_hash: B256) -> Result<Bytecode, Self::Error> {
@@ -77,11 +73,7 @@ impl DatabaseRef for RevmStableDb {
         let addr = try_address_to_bytes(address).expect("revm address must be 20 bytes");
         let key = make_account_key(addr);
         let value = evm_db::stable_state::with_state(|state| state.accounts.get(&key));
-        let info = match value {
-            Some(account) => account_val_to_info(&account),
-            None => return Ok(None),
-        };
-        Ok(Some(info))
+        Ok(value.and_then(|account| account_val_to_info(&account)))
     }
 
     fn code_by_hash_ref(&self, code_hash: B256) -> Result<Bytecode, Self::Error> {
@@ -196,16 +188,23 @@ impl DatabaseCommit for RevmStableDb {
     }
 }
 
-fn account_val_to_info(val: &AccountVal) -> AccountInfo {
+fn account_val_to_info(val: &AccountVal) -> Option<AccountInfo> {
     let balance = U256::from_be_bytes(val.balance());
     let code_hash = B256::from(val.code_hash());
-    AccountInfo {
+    if account_is_empty(
+        val.nonce(),
+        balance.is_zero(),
+        code_hash.is_zero() || code_hash == KECCAK_EMPTY,
+    ) {
+        return None;
+    }
+    Some(AccountInfo {
         balance,
         nonce: val.nonce(),
         code_hash,
         account_id: None,
         code: None,
-    }
+    })
 }
 
 fn info_to_account_val(info: &AccountInfo) -> AccountVal {
