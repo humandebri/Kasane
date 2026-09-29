@@ -59,10 +59,9 @@ impl<'a> JournalBuilder<'a> {
             let key = HashKey(b256_to_bytes(hash));
             raw_owned = if let Some(raw) = self.new_node_records.get(&key) {
                 raw.clone()
-            } else if let Some(record) = self.state.state_root_node_db.get(&key) {
-                record.rlp.clone()
             } else {
-                return None;
+                let record = self.state.state_root_node_db.get(&key)?;
+                record.rlp.clone()
             };
             let mut slice = raw_owned.as_slice();
             TrieNode::decode(&mut slice).ok()
