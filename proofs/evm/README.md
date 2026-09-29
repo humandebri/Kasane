@@ -18,6 +18,8 @@ cargo test -p ic-evm-core --lib revm_exec::tests
 
 `elan`、固定版の Lean、`rustc`、`shasum`、Verus が必要。統合ゲートは
 `verify-verus.sh` の `--no-cheating` を通してから `verify-revm.sh` を実行する。
+`verify-revm.sh` は独立した `target/evm-proof` を使用する。別 Cargo.lock の
+PocketIC E2E と成果物を混ぜないためで、`CARGO_TARGET_DIR` で変更できる。
 既存の CI は Verus と Rust の実行テストを実行するが、Lean はまだ組み込んでいない。
 スクリプトは対応元の SHA-256、`lake build`、公理監査、Rust/Lean の 431 ケース比較を実行する。
 生成物は `.lake/` 内。Lean 側の評価は比較テスト用であり、証明には native evaluation を使わない。
@@ -33,14 +35,15 @@ cargo test -p ic-evm-core --lib revm_exec::tests
 | `Fees.lean` | 有効価格の受理・拒否条件、受理時に `min(cap, base + priority)` と一致、base/cap/u64 上限。legacy の priority 未指定時は条件付きで cap と一致 | `verified-core/src/fee.rs::effective_gas_price` の Verus 契約と `revm_exec.rs` の入力変換 |
 | `Fees.lean` | u64 同士の積は u128 に収まり、追加料金ゼロ時の総額は gas × price | 同 `l2_fee` / `total_fee` / `base_fee_reward` |
 | `Fees.lean` | base fee 加算は nonce/code hash を保存。残高は U256 上限で飽和し、溢れなければ正確に加算 | `evm-core/src/revm_exec.rs::add_base_fee_portion_to_recipient` |
-| `State.lean` | account 削除条件、code 未指定時の skip、storage のゼロ値削除は読み取り値を保存 | `verified-core/src/state_diff.rs`、`revm_db.rs` |
+| `State.lean` | untouched account は書き込まず、touched の empty/destroyed account は削除。code 未指定時の skip、storage のゼロ値削除は読み取り値を保存 | `verified-core/src/state_diff.rs`、`revm_db.rs` |
 | `State.lean` | 書き込み一覧にないキーは不変。同一キーは最後の書き込みが有効 | `RevmStableDb::commit` の論理 map モデル |
 | `Execution.lean` | Success/Revert/Halt から status/output/address/logs/gas/fee への射影 | `revm_exec.rs::execute_tx_on` の match |
 | `Execution.lean` | commit 前の中断はモデルの DB を変えない。サイズエラーは commit 後に返る | 同関数の実行順序 |
 | `Execution.lean` | commit がコントラクト観測を保存するという仮定を、REVERT の戻り値まで引き継ぐ | 条件付きの接続定理。巻き戻しそのものの証明ではない |
+| `Journal.lean` | 任意の有効 action 列で checkpoint index より後の oldest-first suffix を逆順 undo すると、観測状態と log prefix が復元される | vendored `JournalInner::checkpoint_revert` の index/drain/rev 形状。Rust との全入力 refinement は未証明 |
 
 パスの `verified-core` / `evm-core` は `crates/` 配下。
-明示的な定理は 32 個。`Nat` で整数値を表現し、Rust の型上限は定理の仮定と
+明示的な定理は 34 個。`Nat` で整数値を表現し、Rust の型上限は定理の仮定と
 `max64` / `max128` / `max256` で表す。任意の Nat を Rust の有効入力とは扱わない。
 
 ## Rust との対応と残る義務
@@ -61,6 +64,11 @@ Lean は `transactionPrice cap none base = some cap` を同じ境界条件で証
 価格 256 ケース、総額 144 ケース、reward 16 ケース、account 8 ケース、code 4 ケース、
 storage 3 ケースを Lean と比較する。有限の比較なので、Rust と Lean の全入力での同値性は未証明。
 storage の比較は `is_zero` の判定後を対象とし、U256 実装は検証しない。
+
+`RevmStableDb::commit` は以前、REVERT 後の untouched な作成先 account を
+stable DB に書き込んでいた。vendored revm の commit と同じく untouched を skip し、
+Verus 契約と Lean の `untouched_account_preserved`、CREATE の実行回帰テストで確認する。
+この修正も DB 全体の refinement proof ではない。
 
 残る前提・未証明部分は次のとおり。
 

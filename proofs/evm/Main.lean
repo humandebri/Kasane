@@ -20,7 +20,11 @@ def main : IO Unit := do
   for destroyed in [false, true] do
     for empty in [false, true] do
       for touched in [false, true] do
-        IO.println s!"account {destroyed} {empty} {touched} {deleteAccount destroyed empty touched}"
+        let decision := match accountDecision destroyed empty touched with
+          | .skip => "skip"
+          | .delete => "delete"
+          | .upsert => "upsert"
+        IO.println s!"account {destroyed} {empty} {touched} {decision}"
   for hasCode in [false, true] do
     for empty in [false, true] do
       let decision := match codeDecision hasCode empty with

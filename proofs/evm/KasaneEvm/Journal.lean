@@ -104,6 +104,25 @@ theorem child_revert_preserves_parent (s : World) (parent child : List Action)
 theorem rollback_logs (before emitted : List Nat) :
     (before ++ emitted).take before.length = before := by simp
 
+/-- The index layout used by `JournalInner::checkpoint_revert`. Journal entries
+are oldest-first here, as in Rust; `undo` consumes the drained suffix in reverse. -/
+structure Checkpoint where
+  journal_i : Nat
+  log_i : Nat
+
+def revertAt (s : World) (entries : List Entry) (logs : List Nat)
+    (cp : Checkpoint) : World × List Entry × List Nat :=
+  (undo s ((entries.drop cp.journal_i).reverse),
+    entries.take cp.journal_i, logs.take cp.log_i)
+
+theorem revert_at_checkpoint (s : World) (prior : List Entry)
+    (beforeLogs emitted : List Nat) (actions : List Action)
+    (h : ValidTrace s actions) :
+    revertAt (run s actions).1 (prior ++ (run s actions).2.reverse)
+      (beforeLogs ++ emitted) ⟨prior.length, beforeLogs.length⟩ =
+      (s, prior, beforeLogs) := by
+  simp [revertAt, rollback_trace s actions h]
+
 theorem commit_keeps_undo_entries (entries : List Entry) (depth : Nat) :
     (entries, depth - 1).1 = entries := rfl
 

@@ -40,7 +40,9 @@ local gate; existing CI does not invoke it automatically.
 
 `bash scripts/verify-revm.sh` additionally checks the pinned revm source/features,
 compares actual journal traces with Lean, and runs official Prague state fixtures
-and Kasane nested CALL regressions. See [implementation correspondence](../../proofs/evm/revm-correspondence.md).
+and Kasane CALL/CREATE/SELFDESTRUCT and precompile rollback regressions.
+The stable DB adapter skips untouched accounts, including a reverted CREATE target.
+See [implementation correspondence](../../proofs/evm/revm-correspondence.md).
 
 `bash scripts/verify-evm-proofs.sh` runs the Verus implementation contracts and
 the Lean/revm gate together. The legacy gas-price property is proved independently

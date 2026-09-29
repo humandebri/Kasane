@@ -1208,6 +1208,14 @@ fn icp_update_intent_reverted_subcall_does_not_consume_capacity() {
     let receipt = chain::get_receipt(&tx_id).expect("receipt");
     assert_eq!(receipt.status, 1);
     assert_eq!(receipt.logs.len(), 1);
+    with_state(|state| {
+        // Block production records the successful retry in the receipt log;
+        // it must not enqueue either subcall in the gateway request map here.
+        assert_eq!(
+            state.icp_update_requests.len(),
+            u64::try_from(MAX_ICP_UPDATE_REQUESTS - 1).unwrap()
+        );
+    });
 }
 
 #[test]

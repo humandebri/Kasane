@@ -16,9 +16,13 @@ def main : IO Unit := do
       let child := run parent.1 [.store 0 22, .store 1 33, .transfer 3]
       let childLogs := parentLogs ++ [2]
       observe "child" child.1 childLogs 2
-      let restoredLogs := childLogs.take parentLogs.length
-      observe "child_revert" (undo child.1 child.2) restoredLogs 1
+      let childRevert := revertAt child.1 (parent.2.reverse ++ child.2.reverse)
+        childLogs ⟨parent.2.length, parentLogs.length⟩
+      let restoredLogs := childRevert.2.2
+      observe "child_revert" childRevert.1 restoredLogs 1
       let retry := run parent.1 [.store 0 44, .transfer 2]
       let retryLogs := restoredLogs ++ [3]
       observe "child_commit" retry.1 retryLogs 1
-      observe "parent_revert" (undo retry.1 (retry.2 ++ parent.2)) (retryLogs.take 0) 0
+      let parentRevert := revertAt retry.1 (parent.2.reverse ++ retry.2.reverse)
+        retryLogs ⟨0, 0⟩
+      observe "parent_revert" parentRevert.1 parentRevert.2.2 0

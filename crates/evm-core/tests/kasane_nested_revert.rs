@@ -1,10 +1,10 @@
 use evm_core::{
     revm_db::RevmStableDb,
-    revm_exec::{execute_tx, BlockExecContext, ExecPath},
+    revm_exec::{execute_tx, BlockExecContext, ExecOutcome, ExecPath},
 };
 use evm_db::{
     chain_data::{TxId, TxKind},
-    stable_state::init_stable_state,
+    stable_state::{current_evm_state_epoch, init_stable_state},
 };
 use revm::{
     context::TxEnv,
@@ -28,6 +28,76 @@ fn account(balance: u64, nonce: u64, code: Vec<u8>, slot: u64) -> Account {
         EvmStorageSlot::new_changed(U256::ZERO, U256::from(slot), 0),
     );
     account
+}
+
+fn execute_test_call(parent: Address) -> ExecOutcome {
+    let tx = TxEnv::builder()
+        .caller(Address::with_last_byte(0x11))
+        .nonce(7)
+        .chain_id(Some(evm_db::chain_data::constants::CHAIN_ID))
+        .kind(RevmTxKind::Call(parent))
+        .gas_limit(500_000)
+        .gas_price(3)
+        .gas_priority_fee(Some(1))
+        .build()
+        .unwrap();
+    execute_tx(
+        TxId([0x43; 32]),
+        0,
+        TxKind::EthSigned,
+        &[],
+        tx,
+        &BlockExecContext {
+            block_number: 1,
+            timestamp: 1,
+            base_fee: 1,
+            block_gas_limit: 1_000_000,
+        },
+        ExecPath::UserTx,
+    )
+    .unwrap()
+}
+
+fn assert_transaction_accounting(db: &mut RevmStableDb, outcome: &ExecOutcome) {
+    let fee = u128::from(outcome.receipt.gas_used) * 2;
+    assert_eq!(outcome.receipt.effective_gas_price, 2);
+    assert_eq!(outcome.receipt.total_fee, fee);
+    let sender = db.basic(Address::with_last_byte(0x11)).unwrap().unwrap();
+    assert_eq!(sender.nonce, 8);
+    assert_eq!(sender.balance, U256::from(1_000_000_000u128 - fee));
+    assert_eq!(
+        db.basic(Address::from(evm_core::fee_recipient()))
+            .unwrap()
+            .unwrap()
+            .balance,
+        U256::from(fee)
+    );
+}
+
+#[test]
+fn untouched_revm_account_does_not_create_stable_state() {
+    std::thread::spawn(|| {
+        init_stable_state();
+        let address = Address::with_last_byte(0x71);
+        let mut account = Account::from(AccountInfo {
+            balance: U256::from(7),
+            nonce: 1,
+            ..Default::default()
+        });
+        assert!(!account.is_touched());
+        let mut db = RevmStableDb;
+        let epoch = current_evm_state_epoch();
+        db.commit(HashMap::from_iter([(address, account.clone())]));
+        assert!(db.basic(address).unwrap().is_none());
+        assert_eq!(current_evm_state_epoch(), epoch);
+
+        account.mark_touch();
+        db.commit(HashMap::from_iter([(address, account)]));
+        assert_eq!(db.basic(address).unwrap().unwrap().balance, U256::from(7));
+        assert!(current_evm_state_epoch() > epoch);
+    })
+    .join()
+    .unwrap();
 }
 
 #[test]
@@ -96,9 +166,9 @@ fn kasane_nested_call_revert_preserves_transaction_accounting() {
                     let success = !parent_reverts;
                     let child_success = success && child_exit == 0;
                     let expected_log_addresses = if child_success {
-                        vec![parent, child]
+                        vec![parent.into_array(), child.into_array()]
                     } else if success {
-                        vec![parent]
+                        vec![parent.into_array()]
                     } else {
                         vec![]
                     };
@@ -107,7 +177,7 @@ fn kasane_nested_call_revert_preserves_transaction_accounting() {
                             .receipt
                             .logs
                             .iter()
-                            .map(|log| log.address)
+                            .map(|log| log.address.into_array())
                             .collect::<Vec<_>>(),
                         expected_log_addresses
                     );
@@ -165,5 +235,95 @@ fn kasane_nested_call_revert_preserves_transaction_accounting() {
                 .unwrap();
             }
         }
+    }
+}
+
+#[test]
+fn create_is_persisted_only_when_parent_commits() {
+    let sender = Address::with_last_byte(0x11);
+    let parent = Address::with_last_byte(0x52);
+    let created = parent.create(1);
+    for parent_reverts in [false, true] {
+        std::thread::spawn(move || {
+            init_stable_state();
+            // Place PUSH1 0; PUSH1 0; RETURN in memory and execute CREATE.
+            let mut code = vec![
+                0x64, 0x60, 0x00, 0x60, 0x00, 0xf3, 0x60, 0x00, 0x52, 0x60, 0x05, 0x60, 0x1b, 0x60,
+                0x00, 0xf0, 0x50,
+            ];
+            code.extend(if parent_reverts {
+                [0x60, 0x00, 0x60, 0x00, 0xfd]
+            } else {
+                [0x60, 0x00, 0x60, 0x00, 0x00]
+            });
+            let mut db = RevmStableDb;
+            db.commit(HashMap::from_iter([
+                (sender, account(1_000_000_000, 7, vec![], 0)),
+                (parent, account(100, 1, code, 7)),
+            ]));
+            let outcome = execute_test_call(parent);
+            assert_eq!(outcome.receipt.status, u8::from(!parent_reverts));
+            assert!(outcome.receipt.logs.is_empty());
+            assert_eq!(
+                db.basic(parent).unwrap().unwrap().nonce,
+                if parent_reverts { 1 } else { 2 }
+            );
+            assert_eq!(db.basic(created).unwrap().is_some(), !parent_reverts);
+            assert_eq!(db.storage(parent, U256::ZERO).unwrap(), U256::from(7));
+            assert_transaction_accounting(&mut db, &outcome);
+        })
+        .join()
+        .unwrap();
+    }
+}
+
+#[test]
+fn selfdestruct_balance_transfer_rolls_back_with_parent() {
+    let sender = Address::with_last_byte(0x11);
+    let parent = Address::with_last_byte(0x62);
+    let child = Address::with_last_byte(0x63);
+    let beneficiary = Address::with_last_byte(0x64);
+    for parent_reverts in [false, true] {
+        std::thread::spawn(move || {
+            init_stable_state();
+            let mut child_code = vec![0x73];
+            child_code.extend_from_slice(beneficiary.as_slice());
+            child_code.push(0xff);
+            let child_code_hash = Bytecode::new_raw(Bytes::from(child_code.clone())).hash_slow();
+            // CALL child with value 0, then either STOP or REVERT in the parent.
+            let mut parent_code = vec![0x60, 0, 0x60, 0, 0x60, 0, 0x60, 0, 0x60, 0, 0x73];
+            parent_code.extend_from_slice(child.as_slice());
+            parent_code.extend([0x5a, 0xf1, 0x50]);
+            if parent_reverts {
+                parent_code.extend([0x60, 0, 0x60, 0, 0xfd]);
+            } else {
+                parent_code.push(0);
+            }
+            let mut db = RevmStableDb;
+            db.commit(HashMap::from_iter([
+                (sender, account(1_000_000_000, 7, vec![], 0)),
+                (parent, account(100, 1, parent_code, 7)),
+                (child, account(50, 1, child_code, 8)),
+                (beneficiary, account(10, 1, vec![], 0)),
+            ]));
+            let outcome = execute_test_call(parent);
+            assert_eq!(outcome.receipt.status, u8::from(!parent_reverts));
+            assert!(outcome.receipt.logs.is_empty());
+            let child_info = db.basic(child).unwrap().unwrap();
+            assert_eq!(
+                child_info.balance,
+                U256::from(if parent_reverts { 50 } else { 0 })
+            );
+            // Prague keeps the code of a contract created before this transaction.
+            assert_eq!(child_info.code_hash, child_code_hash);
+            assert_eq!(db.storage(child, U256::ZERO).unwrap(), U256::from(8));
+            assert_eq!(
+                db.basic(beneficiary).unwrap().unwrap().balance,
+                U256::from(if parent_reverts { 10 } else { 60 })
+            );
+            assert_transaction_accounting(&mut db, &outcome);
+        })
+        .join()
+        .unwrap();
     }
 }

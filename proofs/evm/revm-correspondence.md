@@ -47,13 +47,14 @@ Rust パスは `vendor/revm/crates/` が起点。
 | `context/src/journal/inner.rs::checkpoint` | frame 前の履歴と後続 suffix の分離 | Rust の index 表現は未証明 |
 | 同 `checkpoint_commit` | `commit_keeps_undo_entries` | depth のみ減らし、履歴を残す |
 | 同 `checkpoint_revert` | `undo` / `undo_append` / `rollback_trace` | suffix の逆順再生 |
+| 同 `checkpoint_revert` の `journal_i` / `log_i` | `revertAt` / `revert_at_checkpoint` | oldest-first suffix と log prefix の index 操作 |
 | `context/interface/src/journaled_state/entry.rs::StorageChanged` | `save` / `undoEntry` / `restore_storage` | 旧 present value を同じ key に戻す |
 | 同 `BalanceTransfer`、`inner.rs::transfer_loaded` | `step_inverse` / `valid` / `step` | 異なる account 間の正常移転、残高範囲の前提あり |
 | `inner.rs` の `logs.truncate` | `rollback_logs` | checkpoint 前の logs のみ保存 |
 | `handler/src/frame.rs` の CALL return | `parent_revert_after_child_commit` / `child_revert_preserves_parent` | 子 commit 後も親 REVERT で戻す |
 | `handler/src/pre_execution.rs` の nonce/fee | `call_rollback_preserves_transaction_accounting` | CALL checkpoint 外の観測。順序はコード確認と実行テスト |
 
-`rollback_trace` は任意の有限な有効 action 列に対する帰納証明。
+`rollback_trace` と `revert_at_checkpoint` は任意の有限な有効 action 列に対する証明。
 各 action の逆操作も証明しており、「巻き戻しが正しい」という公理は置かない。
 モデルの履歴は newest-first、Rust は oldest-first。`drain(...).rev()` と対応する。
 
@@ -70,14 +71,19 @@ Rust パスは `vendor/revm/crates/` が起点。
 3. 実際の `JournalInner` の `sstore` / `transfer_loaded` / checkpoint 操作と Lean を比較。
    初期 storage 3 通り × 移転額 3 通り、各 5 時点の storage 2 slot・残高・log 数/内容/順序・depth。
    合計 9 traces / 45 observations を完全一致で照合する。
+   さらに storage 2 slot と transfer からなる長さ 5 の全 243 列について、
+   子 checkpoint の commit/revert 両方を直接実装で検査する（486 traces）。
 4. Ethereum Prague state fixture 38 ケースの state root と logs hash を照合。
-5. Kasane の `execute_tx` と `RevmStableDb` で 12 ケースを実行。
+5. Kasane の `execute_tx` と `RevmStableDb` でネスト CALL 12 ケースを実行。
    子 STOP/REVERT/INVALID × 親 STOP/REVERT × legacy/EIP-1559。
    storage・残高・logs・status・送信者 nonce・徴収額・受取残高を確認する。
+6. CREATE と SELFDESTRUCT の親 commit/revert 4 ケースを stable DB まで検査。
+   untouched account の commit skip と、REVERT 後の nonce・fee を別途検査。
+   ICP update intent precompile の reverted subcall と再試行も実行する。
 
 Kasane テストは毎回独立した thread-local stable memory を使う。
 `init_stable_state` は領域を開き直す処理であり、再呼び出しは消去にならない。
-公式テストには Kasane の base fee 加算や独自 precompile を入れず、独自仕様は別の 12 ケースで検査する。
+公式テストには Kasane の base fee 加算や独自 precompile を入れず、独自仕様は別の実行テストで検査する。
 
 ## 検証で見つかった修正
 
@@ -92,10 +98,18 @@ Verus の `--no-cheating` 契約を追加した。受理時の一般価格も Le
 `execute_tx_on` の引数変換との結合はコードレビューと上記実行テストによる。
 EIP-1559（cap=3、priority=1、base=1）は価格 2 のまま。
 
+CREATE の親 REVERT テストでは、取り消された作成先が空 account として stable DB に
+残る不具合を再現した。`RevmStableDb::commit` は untouched account も upsert していたが、
+vendored revm の `CacheDB::commit` はこれを skip する。Kasane の判定関数に
+`Skip` を追加し、Verus で untouched ⇒ Skip を証明した。Lean の状態モデルも
+同じ分岐に合わせ、実際の CREATE と直接 commit テストで永続化されないことを確認する。
+既存 canister の stable DB に過去の実行で残った空 account はこの変更だけで除去されない。
+既存状態の棚卸しや修復は別の運用判断が必要。
+
 ## 残る証明義務と opcode 検証の評価
 
 今回は **モデルの証明＋実ソースの対応レビュー＋実装との有限比較**。
-Rust 全入力での refinement、言語意味論、コンパイラ/Wasm の保存性は未証明。
+Rust 全入力での journal/DB refinement、言語意味論、コンパイラ/Wasm の保存性は未証明。
 hash 一致やテストの成功を refinement proof と呼ばない。
 
 CREATE、SELFDESTRUCT、transient storage、warm/cold と refund、存在しない account、alias、

@@ -132,6 +132,7 @@ impl DatabaseCommit for RevmStableDb {
                 account.is_empty(),
                 account.is_touched(),
             ) {
+                AccountCommitDecision::Skip => continue,
                 AccountCommitDecision::Delete => {
                     selfdestruct_address(addr);
                     mutated = true;

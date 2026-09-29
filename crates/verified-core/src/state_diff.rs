@@ -6,6 +6,7 @@ use vstd::prelude::*;
 #[cfg_attr(verus_keep_ghost, verus_verify)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum AccountCommitDecision {
+    Skip,
     Delete,
     Upsert,
 }
@@ -26,9 +27,10 @@ pub enum CodeCommitDecision {
 }
 
 #[cfg_attr(verus_keep_ghost, verus_spec(decision => ensures
-    is_selfdestructed || (is_empty && is_touched)
+    !is_touched ==> decision == AccountCommitDecision::Skip,
+    is_touched && (is_selfdestructed || is_empty)
         ==> decision == AccountCommitDecision::Delete,
-    !(is_selfdestructed || (is_empty && is_touched))
+    is_touched && !is_selfdestructed && !is_empty
         ==> decision == AccountCommitDecision::Upsert,
 ))]
 pub fn account_commit_decision(
@@ -36,7 +38,9 @@ pub fn account_commit_decision(
     is_empty: bool,
     is_touched: bool,
 ) -> AccountCommitDecision {
-    if is_selfdestructed || (is_empty && is_touched) {
+    if !is_touched {
+        AccountCommitDecision::Skip
+    } else if is_selfdestructed || is_empty {
         AccountCommitDecision::Delete
     } else {
         AccountCommitDecision::Upsert
@@ -78,9 +82,9 @@ mod tests {
     };
 
     #[test]
-    fn account_commit_deletes_only_destroyed_or_empty_touched_accounts() {
+    fn account_commit_skips_untouched_and_deletes_empty_touched_accounts() {
         assert_eq!(
-            account_commit_decision(true, false, false),
+            account_commit_decision(true, false, true),
             AccountCommitDecision::Delete
         );
         assert_eq!(
@@ -89,6 +93,18 @@ mod tests {
         );
         assert_eq!(
             account_commit_decision(false, true, false),
+            AccountCommitDecision::Skip
+        );
+        assert_eq!(
+            account_commit_decision(true, false, false),
+            AccountCommitDecision::Skip
+        );
+        assert_eq!(
+            account_commit_decision(false, false, false),
+            AccountCommitDecision::Skip
+        );
+        assert_eq!(
+            account_commit_decision(false, false, true),
             AccountCommitDecision::Upsert
         );
     }

@@ -34,9 +34,12 @@ fn main() {
     for destroyed in [false, true] {
         for empty in [false, true] {
             for touched in [false, true] {
-                let delete = state_diff::account_commit_decision(destroyed, empty, touched)
-                    == state_diff::AccountCommitDecision::Delete;
-                println!("account {destroyed} {empty} {touched} {delete}");
+                let decision = match state_diff::account_commit_decision(destroyed, empty, touched) {
+                    state_diff::AccountCommitDecision::Skip => "skip",
+                    state_diff::AccountCommitDecision::Delete => "delete",
+                    state_diff::AccountCommitDecision::Upsert => "upsert",
+                };
+                println!("account {destroyed} {empty} {touched} {decision}");
             }
         }
     }

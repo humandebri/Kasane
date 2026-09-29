@@ -130,3 +130,109 @@ fn journal_nested_commit_and_revert_vectors() {
         std::fs::write(path, out).unwrap();
     }
 }
+
+#[test]
+fn journal_reverts_every_short_storage_transfer_trace() {
+    let source = Address::with_last_byte(0x41);
+    let target = Address::with_last_byte(0x42);
+    // All length-five words over {slot 0, slot 1, transfer}, with either
+    // child commit or child revert. The Lean theorem covers arbitrary length;
+    // this exercises the corresponding vendored Rust path over finite inputs.
+    for trace in 0..3usize.pow(5) {
+        for child_commits in [false, true] {
+            let mut journal = JournalInner::<JournalEntry>::new();
+            journal.spec = EVM_SPEC_ID;
+            let mut source_account = Account::from(AccountInfo {
+                balance: U256::from(100),
+                nonce: 1,
+                ..Default::default()
+            });
+            for (key, value) in [(0, 7), (1, 9)] {
+                source_account
+                    .storage
+                    .insert(U256::from(key), EvmStorageSlot::new(U256::from(value), 0));
+            }
+            journal.state.insert(source, source_account);
+            journal.state.insert(
+                target,
+                Account::from(AccountInfo {
+                    balance: U256::from(50),
+                    nonce: 1,
+                    ..Default::default()
+                }),
+            );
+            journal.log(Log::new_unchecked(source, vec![], vec![9].into()));
+            let parent = journal.checkpoint();
+            let mut db = InMemoryDB::default();
+            let mut encoded = trace;
+            let mut child = None;
+            let mut at_child = None;
+            for step in 0..5u64 {
+                if step == 2 {
+                    child = Some(journal.checkpoint());
+                    at_child = Some((
+                        journal.state[&source].info.balance,
+                        journal.state[&target].info.balance,
+                        journal.state[&source].storage[&U256::ZERO].present_value,
+                        journal.state[&source].storage[&U256::from(1)].present_value,
+                        journal.logs.clone(),
+                    ));
+                }
+                match encoded % 3 {
+                    0 | 1 => {
+                        let slot = U256::from((encoded % 3) as u64);
+                        journal
+                            .sstore(&mut db, source, slot, U256::from(step + 11), false)
+                            .unwrap();
+                    }
+                    2 => assert_eq!(
+                        journal.transfer_loaded(source, target, U256::from(step + 1)),
+                        None
+                    ),
+                    _ => unreachable!(),
+                }
+                encoded /= 3;
+                journal.log(Log::new_unchecked(
+                    source,
+                    vec![],
+                    vec![(step + 1) as u8].into(),
+                ));
+            }
+            if child_commits {
+                let entries = journal.journal.len();
+                journal.checkpoint_commit();
+                assert_eq!(journal.journal.len(), entries);
+            } else {
+                journal.checkpoint_revert(child.unwrap());
+                let before = at_child.unwrap();
+                assert_eq!(journal.state[&source].info.balance, before.0);
+                assert_eq!(journal.state[&target].info.balance, before.1);
+                assert_eq!(
+                    journal.state[&source].storage[&U256::ZERO].present_value,
+                    before.2
+                );
+                assert_eq!(
+                    journal.state[&source].storage[&U256::from(1)].present_value,
+                    before.3
+                );
+                assert_eq!(journal.logs, before.4);
+            }
+            assert_eq!(journal.depth, 1, "trace {trace}");
+            journal.checkpoint_revert(parent);
+            assert_eq!(journal.state[&source].info.balance, U256::from(100));
+            assert_eq!(journal.state[&target].info.balance, U256::from(50));
+            assert_eq!(
+                journal.state[&source].storage[&U256::ZERO].present_value,
+                U256::from(7)
+            );
+            assert_eq!(
+                journal.state[&source].storage[&U256::from(1)].present_value,
+                U256::from(9)
+            );
+            assert_eq!(journal.logs.len(), 1);
+            assert_eq!(journal.logs[0].data.data.as_ref(), &[9]);
+            assert!(journal.journal.is_empty());
+            assert_eq!(journal.depth, 0);
+        }
+    }
+}

@@ -2,8 +2,17 @@ import Std
 
 namespace KasaneEvm
 
-def deleteAccount (destroyed empty touched : Bool) : Bool :=
-  destroyed || (empty && touched)
+inductive AccountDecision where
+  | skip | delete | upsert
+  deriving DecidableEq, Repr
+
+def accountDecision (destroyed empty touched : Bool) : AccountDecision :=
+  if !touched then .skip else if destroyed || empty then .delete else .upsert
+
+def commitAccount (old : Option Nat) (new : Nat) : AccountDecision → Option Nat
+  | .skip => old
+  | .delete => none
+  | .upsert => some new
 
 inductive CodeDecision where
   | skip | remove | insert
@@ -13,9 +22,14 @@ def codeDecision (hasCode empty : Bool) : CodeDecision :=
   if !hasCode then .skip else if empty then .remove else .insert
 
 theorem account_deleted_iff (destroyed empty touched : Bool) :
-    deleteAccount destroyed empty touched = true ↔
-      destroyed = true ∨ (empty = true ∧ touched = true) := by
+    accountDecision destroyed empty touched = .delete ↔
+      touched = true ∧ (destroyed = true ∨ empty = true) := by
   cases destroyed <;> cases empty <;> cases touched <;> decide
+
+theorem untouched_account_preserved (destroyed empty : Bool)
+    (old : Option Nat) (new : Nat) :
+    commitAccount old new (accountDecision destroyed empty false) = old := by
+  simp [accountDecision, commitAccount]
 
 theorem absent_code_preserved (empty : Bool) : codeDecision false empty = .skip := by
   rfl
