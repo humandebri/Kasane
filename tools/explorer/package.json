@@ -18,13 +18,14 @@
     "@coreui/icons": "^3.0.1",
     "@coreui/icons-react": "^2.3.0",
     "@dfinity/ic-pub-key": "1.0.1",
+    "@dfinity/principal": "3.4.3",
     "@icp-sdk/core": "^5.0.0",
     "@radix-ui/react-tabs": "^1.1.13",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "lightweight-charts": "^5.1.0",
     "lucide-react": "^0.539.0",
-    "next": "^16.2.6",
+    "next": "^16.3.6",
     "pg": "^8.18.0",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
@@ -34,8 +35,8 @@
   },
   "pnpm": {
     "overrides": {
-      "immutable": "^4.3.8",
-      "tmp": "^0.2.5"
+      "immutable": "^4.3.9",
+      "tmp": "^0.2.6"
     }
   },
   "devDependencies": {
@@ -46,7 +47,7 @@
     "@types/react-dom": "^19.2.2",
     "pg-mem": "^3.0.11",
     "tailwindcss": "^4.1.12",
-    "tsx": "^4.20.4",
+    "tsx": "^4.23.15",
     "typescript": "^5.9.2"
   }
 }
