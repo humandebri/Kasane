@@ -5613,7 +5613,7 @@ fn finish_icp_update_dispatch_tick() {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum WrapMintReceiptSettlement {
     Succeeded,
-    Failed,
+    Failed(&'static str),
 }
 
 fn submitted_wrap_mint_receipt_candidates() -> Vec<(TxId, TxId)> {
@@ -5640,11 +5640,17 @@ fn settle_submitted_wrap_mint_receipts(now: u64) -> u64 {
     let settlements = submitted_wrap_mint_receipt_candidates()
         .into_iter()
         .filter_map(|(request_id, mint_tx_id)| {
-            let receipt = chain::get_receipt(&mint_tx_id)?;
-            let settlement = if receipt.status == 1 {
-                WrapMintReceiptSettlement::Succeeded
-            } else {
-                WrapMintReceiptSettlement::Failed
+            let settlement = match chain::get_receipt(&mint_tx_id) {
+                Some(receipt) if receipt.status == 1 => WrapMintReceiptSettlement::Succeeded,
+                Some(_) => WrapMintReceiptSettlement::Failed("wrap.mint_receipt_failed"),
+                None => {
+                    // Droppedにはreceiptが作られないため、確定したdropだけを返金対象にする。
+                    let loc = chain::get_tx_loc(&mint_tx_id)?;
+                    if loc.kind != TxLocKind::Dropped {
+                        return None;
+                    }
+                    WrapMintReceiptSettlement::Failed("wrap.mint_dropped")
+                }
             };
             Some((request_id, settlement))
         })
@@ -5671,10 +5677,10 @@ fn settle_submitted_wrap_mint_receipts(now: u64) -> u64 {
                     req.result.error_code = None;
                     req.result.mint_failed_recoverable = false;
                 }
-                WrapMintReceiptSettlement::Failed => {
+                WrapMintReceiptSettlement::Failed(error_code) => {
                     req.result.status = StoredRequestStatus::Failed;
                     req.result.stage = WrapRequestStage::Failed;
-                    req.result.error_code = Some("wrap.mint_receipt_failed".to_string());
+                    req.result.error_code = Some(error_code.to_string());
                     req.result.mint_failed_recoverable = true;
                 }
             }

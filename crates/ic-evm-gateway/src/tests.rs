@@ -1434,6 +1434,48 @@ fn settle_submitted_wrap_mint_receipts_updates_terminal_status() {
 }
 
 #[test]
+fn settle_dropped_wrap_mint_allows_refund_without_requeue() {
+    for v3_active in [false, true] {
+        init_stable_state();
+        evm_db::meta::set_tx_locs_v3_active(v3_active);
+        let request_id = TxId([0xd1; 32]);
+        let mint_tx_id = TxId([0xd2; 32]);
+        let mut req = sample_wrap_request(RequestStatus::Running);
+        req.result.stage = WrapRequestStage::MintSubmitted;
+        req.result.mint_submit_status = MintSubmitStatus::Submitted;
+        req.result.mint_tx_id = Some(mint_tx_id.0.to_vec());
+        req.result.pull_ledger_tx_id = Some(vec![1]);
+        req.result.updated_at = 1;
+        with_state_mut(|state| {
+            state.wrap_requests.insert(request_id, req);
+            let loc = TxLoc::dropped(evm_db::chain_data::constants::DROP_CODE_INVALID_FEE);
+            if v3_active {
+                state.tx_locs_v3.insert(mint_tx_id, loc);
+            } else {
+                state.tx_locs.insert(mint_tx_id, loc);
+            }
+        });
+
+        assert!(chain::get_receipt(&mint_tx_id).is_none());
+        let now = super::STALE_OPERATION_NANOS + 2;
+        super::repair_stale_operations(now);
+
+        with_state(|state| {
+            let req = state.wrap_requests.get(&request_id).expect("request");
+            assert_eq!(req.result.status, RequestStatus::Failed);
+            assert_eq!(req.result.stage, WrapRequestStage::Failed);
+            assert!(req.result.mint_failed_recoverable);
+            assert_eq!(req.result.error_code.as_deref(), Some("wrap.mint_dropped"));
+            assert_eq!(req.result.pull_ledger_tx_id, Some(vec![1]));
+            assert_eq!(req.result.mint_tx_id, Some(mint_tx_id.0.to_vec()));
+            assert_eq!(req.result.updated_at, now);
+            assert!(state.wrap_queue.is_empty());
+        });
+        assert_eq!(super::settle_submitted_wrap_mint_receipts(now + 1), 0);
+    }
+}
+
+#[test]
 fn repair_stale_operations_does_not_succeed_submitted_mint_without_receipt() {
     init_stable_state();
     let request_id = TxId([0x86u8; 32]);
@@ -2974,9 +3016,18 @@ fn apply_post_upgrade_migrations_rebuilds_icp_update_active_count() {
 fn apply_post_upgrade_migrations_moves_tx_locs_before_enabling_v3() {
     init_stable_state();
     let current = evm_db::meta::current_schema_version();
-    let tx_id = TxId([0x4au8; 32]);
+    // 512件の移行バッチを超え、v3切り替え前の途中状態も検証する。
+    let tx_ids = (0u64..513)
+        .map(|index| {
+            let mut bytes = [0x4au8; 32];
+            bytes[24..].copy_from_slice(&index.to_be_bytes());
+            TxId(bytes)
+        })
+        .collect::<Vec<_>>();
     with_state_mut(|state| {
-        state.tx_locs.insert(tx_id, TxLoc::included(7, 0));
+        for tx_id in &tx_ids {
+            state.tx_locs.insert(*tx_id, TxLoc::included(7, 0));
+        }
     });
     let mut meta = evm_db::meta::Meta::new();
     meta.schema_version = current.saturating_sub(1);
@@ -2987,10 +3038,13 @@ fn apply_post_upgrade_migrations_moves_tx_locs_before_enabling_v3() {
     super::apply_post_upgrade_migrations();
 
     assert!(!evm_db::meta::tx_locs_v3_active());
+    with_state(|state| assert_eq!(state.tx_locs_v3.len(), 512));
     run_post_upgrade_migrations_until_settled();
     assert!(evm_db::meta::tx_locs_v3_active());
     with_state(|state| {
-        assert_eq!(state.tx_locs_v3.get(&tx_id), Some(TxLoc::included(7, 0)));
+        for tx_id in &tx_ids {
+            assert_eq!(state.tx_locs_v3.get(tx_id), Some(TxLoc::included(7, 0)));
+        }
     });
 }
 
