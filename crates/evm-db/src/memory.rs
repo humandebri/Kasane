@@ -85,6 +85,11 @@ pub enum AppMemoryId {
     IcpUpdateDispatchQueue = 71,
     IcpUpdateDispatchMeta = 72,
     IcpUpdatePrecompileAllowlist = 73,
+    IcpUpdateActiveCount = 74,
+    PrunedTxLocs = 75,
+    PrunedEthTxHashIndex = 76,
+    PrunedMarkerBlockIndex = 77,
+    PrunedMarkerEthHashByTxId = 78,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -94,7 +99,7 @@ pub struct MemoryRegionInfo {
     pub include_in_estimate: bool,
 }
 
-const ALL_MEMORY_REGIONS: [MemoryRegionInfo; 74] = [
+const ALL_MEMORY_REGIONS: [MemoryRegionInfo; 79] = [
     MemoryRegionInfo {
         id: AppMemoryId::Upgrades,
         name: "Upgrades",
@@ -465,6 +470,31 @@ const ALL_MEMORY_REGIONS: [MemoryRegionInfo; 74] = [
         name: "IcpUpdatePrecompileAllowlist",
         include_in_estimate: false,
     },
+    MemoryRegionInfo {
+        id: AppMemoryId::IcpUpdateActiveCount,
+        name: "IcpUpdateActiveCount",
+        include_in_estimate: false,
+    },
+    MemoryRegionInfo {
+        id: AppMemoryId::PrunedTxLocs,
+        name: "PrunedTxLocs",
+        include_in_estimate: true,
+    },
+    MemoryRegionInfo {
+        id: AppMemoryId::PrunedEthTxHashIndex,
+        name: "PrunedEthTxHashIndex",
+        include_in_estimate: true,
+    },
+    MemoryRegionInfo {
+        id: AppMemoryId::PrunedMarkerBlockIndex,
+        name: "PrunedMarkerBlockIndex",
+        include_in_estimate: true,
+    },
+    MemoryRegionInfo {
+        id: AppMemoryId::PrunedMarkerEthHashByTxId,
+        name: "PrunedMarkerEthHashByTxId",
+        include_in_estimate: true,
+    },
 ];
 
 impl AppMemoryId {
@@ -544,6 +574,11 @@ impl AppMemoryId {
             AppMemoryId::IcpUpdateDispatchQueue => 71,
             AppMemoryId::IcpUpdateDispatchMeta => 72,
             AppMemoryId::IcpUpdatePrecompileAllowlist => 73,
+            AppMemoryId::IcpUpdateActiveCount => 74,
+            AppMemoryId::PrunedTxLocs => 75,
+            AppMemoryId::PrunedEthTxHashIndex => 76,
+            AppMemoryId::PrunedMarkerBlockIndex => 77,
+            AppMemoryId::PrunedMarkerEthHashByTxId => 78,
         }
     }
 

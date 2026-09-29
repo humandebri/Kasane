@@ -174,7 +174,9 @@ fn decode_hex(input: &str) -> Vec<u8> {
     let bytes = input.as_bytes();
     assert_eq!(bytes.len() % 2, 0, "hex length must be even");
     bytes
-        .chunks_exact(2)
+        .as_chunks::<2>()
+        .0
+        .iter()
         .map(|pair| (nibble(pair[0]) << 4) | nibble(pair[1]))
         .collect()
 }

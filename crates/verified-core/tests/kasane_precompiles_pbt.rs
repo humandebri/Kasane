@@ -5,11 +5,15 @@ use verified_core::kasane_precompiles::{
     compact_icp_query_input_safe_raw, compact_native_withdraw_input_safe_raw,
     compact_principal_slot_safe_raw, compact_unwrap_input_safe_raw,
     icp_query_execution_gate_safe_raw, icp_query_gas_observation_safe_raw,
-    icp_query_update_kind_rejected_raw, precompile_extra_gas_policy_safe_raw,
+    icp_query_update_kind_rejected_raw, icp_update_capacity_accepts_raw,
+    icp_update_status_consumes_capacity_raw, precompile_extra_gas_policy_safe_raw,
     precompile_log_shape_safe_raw, wrap_precompile_gas_observation_safe_raw,
     COMPACT_FORMAT_VERSION, COMPACT_NATIVE_WITHDRAW_INPUT_LEN, COMPACT_UNWRAP_INPUT_LEN,
     ICP_PRECOMPILE_KIND_UPDATE, ICP_QUERY_BASE_GAS, ICP_QUERY_INPUT_BYTE_GAS, ICP_QUERY_KIND_QUERY,
-    ICP_QUERY_PRECOMPILE_ADDRESS_CODE, ICP_QUERY_REPLY_BYTE_GAS,
+    ICP_QUERY_OUTCOME_OOG, ICP_QUERY_OUTCOME_OTHER_FAILURE, ICP_QUERY_OUTCOME_RETURN,
+    ICP_QUERY_PRECOMPILE_ADDRESS_CODE, ICP_QUERY_REPLY_BYTE_GAS, ICP_UPDATE_STATUS_DISPATCHED,
+    ICP_UPDATE_STATUS_DISPATCHING, ICP_UPDATE_STATUS_DISPATCH_FAILED,
+    ICP_UPDATE_STATUS_DISPATCH_UNCERTAIN, ICP_UPDATE_STATUS_QUEUED, MAX_ICP_QUERY_ARG_LEN,
     MAX_ICP_QUERY_COMBINED_LEN_WITH_EXACT_GAS, MAX_PRINCIPAL_LEN, MAX_QUERY_METHOD_LEN,
     NATIVE_WITHDRAW_PRECOMPILE_ADDRESS_CODE, UNWRAP_BURN_GAS_SURCHARGE,
     WRAP_PRECOMPILE_ADDRESS_CODE,
@@ -110,6 +114,7 @@ proptest! {
         method_present in 0u64..3,
         method_utf8 in 0u64..3,
         arg_present in 0u64..3,
+        arg_len in 0u64..4_100,
         consumed_exact in 0u64..3,
     ) {
         prop_assert_eq!(
@@ -122,6 +127,7 @@ proptest! {
                 method_present,
                 method_utf8,
                 arg_present,
+                arg_len,
                 consumed_exact,
             ),
             version == COMPACT_FORMAT_VERSION
@@ -132,6 +138,7 @@ proptest! {
                 && method_present == 1
                 && method_utf8 == 1
                 && arg_present == 1
+                && arg_len <= MAX_ICP_QUERY_ARG_LEN
                 && consumed_exact == 1
         );
     }
@@ -227,13 +234,13 @@ proptest! {
     }
 
     #[test]
-    fn pbt_icp_query_gas_observation_matches_base_byte_cost_and_oog_split(
+    fn pbt_icp_query_gas_observation_matches_base_byte_cost_and_outcome_split(
         observed_address_code in 0u64..5,
         input_len in any::<u64>(),
         reply_len in any::<u64>(),
         charged_gas in any::<u64>(),
         gas_limit in any::<u64>(),
-        returned_success in 0u64..3,
+        outcome in 0u64..5,
     ) {
         prop_assert_eq!(
             icp_query_gas_observation_safe_raw(
@@ -242,18 +249,50 @@ proptest! {
                 reply_len,
                 charged_gas,
                 gas_limit,
-                returned_success,
+                outcome,
             ),
             observed_address_code == ICP_QUERY_PRECOMPILE_ADDRESS_CODE
-                && returned_success <= 1
+                && (outcome == ICP_QUERY_OUTCOME_RETURN
+                    || outcome == ICP_QUERY_OUTCOME_OOG
+                    || outcome == ICP_QUERY_OUTCOME_OTHER_FAILURE)
                 && ((input_len > MAX_ICP_QUERY_COMBINED_LEN_WITH_EXACT_GAS
                     || reply_len > MAX_ICP_QUERY_COMBINED_LEN_WITH_EXACT_GAS)
                     || charged_gas
                         >= ICP_QUERY_BASE_GAS
                             + input_len * ICP_QUERY_INPUT_BYTE_GAS
                             + reply_len * ICP_QUERY_REPLY_BYTE_GAS)
-                && (returned_success != 1 || gas_limit >= charged_gas)
-                && (returned_success != 0 || gas_limit < charged_gas)
+                && (outcome != ICP_QUERY_OUTCOME_RETURN || gas_limit >= charged_gas)
+                && (outcome != ICP_QUERY_OUTCOME_OOG || gas_limit < charged_gas)
+        );
+    }
+
+    #[test]
+    fn pbt_icp_update_status_capacity_model_matches_active_statuses(
+        status_code in 0u64..7,
+    ) {
+        prop_assert_eq!(
+            icp_update_status_consumes_capacity_raw(status_code),
+            status_code == ICP_UPDATE_STATUS_QUEUED
+                || status_code == ICP_UPDATE_STATUS_DISPATCHING
+        );
+        prop_assert!(!icp_update_status_consumes_capacity_raw(ICP_UPDATE_STATUS_DISPATCHED));
+        prop_assert!(!icp_update_status_consumes_capacity_raw(ICP_UPDATE_STATUS_DISPATCH_FAILED));
+        prop_assert!(!icp_update_status_consumes_capacity_raw(ICP_UPDATE_STATUS_DISPATCH_UNCERTAIN));
+    }
+
+    #[test]
+    fn pbt_icp_update_capacity_accepts_only_when_active_reserved_journaled_fit(
+        existing_active in 0u64..20_000,
+        reserved in 0u64..20_000,
+        journaled in 0u64..20_000,
+        max in 0u64..20_000,
+    ) {
+        let expected = existing_active < max
+            && reserved <= max - existing_active
+            && journaled < max - existing_active - reserved;
+        prop_assert_eq!(
+            icp_update_capacity_accepts_raw(existing_active, reserved, journaled, max),
+            expected
         );
     }
 

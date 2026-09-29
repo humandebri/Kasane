@@ -23,6 +23,7 @@ if ! command -v forge >/dev/null 2>&1; then
 fi
 
 scripts/check_rng_paths.sh
+scripts/check_hidden_unicode.sh
 scripts/check_getrandom_wasm_features.sh
 scripts/check_did_sync.sh
 scripts/check_gateway_api_compat_baseline.sh

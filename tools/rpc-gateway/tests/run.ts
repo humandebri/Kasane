@@ -137,6 +137,14 @@ function testOpsStatusCandidProjection(): void {
   });
 }
 
+function testEthCallAtCandidIsCompositeQuery(): void {
+  const service = idlFactory({ IDL }).display();
+  assert.match(
+    service,
+    /rpc_eth_call_object_at:[\s\S]*?\) composite_query/
+  );
+}
+
 function testConfigIdentityPem(): void {
   const withPem = loadConfig({
     EVM_CANISTER_ID: "aaaaa-aa",
@@ -1153,6 +1161,7 @@ function jsonRpcErrorCode(value: unknown): number | undefined {
 testHex();
 testJsonRpc();
 testOpsStatusCandidProjection();
+testEthCallAtCandidIsCompositeQuery();
 testConfigIdentityPem();
 testConfigCorsOrigins();
 testConfigLogsBlockhashScanLimit();

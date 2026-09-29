@@ -1,15 +1,17 @@
 # verify: classify_nonce-3dada50d
 
-- command: verus /Users/0xhude/Desktop/ICP/Kasane/spec/verus/classify_nonce-3dada50d_verus.rs
+- command: verus /Users/0xhude/Desktop/ICP/Kasane/crates/verified-core/src/nonce.rs
 - exit_code: 0
-- git_commit: 703d7df1dcdc48c6f15be3733c6da4ec5c6a8dad
+- git_commit: f729c2428c68299f1a634727e49b65353152eca4
 - worktree_dirty: false
-- semantic_hash: fa9487ba51d96176707f328ef5a7921718815d559e995dab958c1269eb12930b
-- spec_hash: 6adf3e0a654e4138ac6d25b690c62316ac3e15c317256411820e733ae4e9342c
-- harness_hash: e1d2cb584c49b8ee702513b361fd6fbcc6884b251813ba1687ecfa0eb9c080a7
-- verified_subject: harness_only
+- semantic_hash: 5855e24251df50681ecda00b7cb978cb464126ebb856af5132d48320d4de131f
+- spec_hash: 221e2889a2f8a326c5781f0e9db967b72a5b63abca28dfb91a68bd3d4a867f0d
+- target_hash: eff711e904927b24922599897bdc0f4ebfbd63984a571244682b69906be74dc3
+- contract_hash: 292d8564218ba2fe0832e35f5a22f9b62a63eb7bcd3f22336e8cf6d25dcfe62f
+- source_hash: fe53e4b54f3f5ce56df4f94f2c0acf06b7361e21a3fdcd7675106bd7e839ee04
+- verified_subject: implementation
 - result: success
 
 ## output
-verification results:: 1 verified, 0 errors
+verification results:: 3 verified, 0 errors
 

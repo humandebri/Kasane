@@ -31,6 +31,9 @@ fn chain_data_memory_ids_are_fixed() {
     assert_eq!(AppMemoryId::IcpUpdateDispatchQueue.as_u8(), 71);
     assert_eq!(AppMemoryId::IcpUpdateDispatchMeta.as_u8(), 72);
     assert_eq!(AppMemoryId::IcpUpdatePrecompileAllowlist.as_u8(), 73);
+    assert_eq!(AppMemoryId::IcpUpdateActiveCount.as_u8(), 74);
+    assert_eq!(AppMemoryId::PrunedTxLocs.as_u8(), 75);
+    assert_eq!(AppMemoryId::PrunedEthTxHashIndex.as_u8(), 76);
 }
 
 #[test]

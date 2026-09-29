@@ -1,0 +1,41 @@
+{
+  "target": "compact_icp_query_input_safe_raw",
+  "target_id": "114b955c6fa1a34a64c77469ccae3540493d7344a0bdae03bf072531f71c90bd",
+  "slug": "compact_icp_query_input_safe_raw-8605da94",
+  "file": "crates/verified-core/src/kasane_precompiles/compact_icp_query_input.rs",
+  "function": "compact_icp_query_input_safe_raw",
+  "git_commit": "f729c2428c68299f1a634727e49b65353152eca4",
+  "worktree_dirty": false,
+  "source_hash": "735eda39cf8279e561a1e3ffc36bbb9d5421e53722f49be213b2a20b816970f9",
+  "semantic_hash": "6afea15d15eb98b9eb1b5a6f6b39632c30c54515a5c0257fb878a1da6649f20b",
+  "dependency_hash_inputs": [],
+  "unresolved_dependencies": [],
+  "spec_source_of_truth": "accepted_json",
+  "tool_version": "0.1.0",
+  "preconditions": [
+    "true"
+  ],
+  "postconditions": [
+    "result == (version == COMPACT_FORMAT_VERSION && kind == ICP_QUERY_KIND_QUERY && target_len >= 1 && target_len <= MAX_PRINCIPAL_LEN && target_present == 1 && method_len >= 1 && method_len <= MAX_QUERY_METHOD_LEN && method_present == 1 && method_utf8 == 1 && arg_present == 1 && arg_len <= MAX_ICP_QUERY_ARG_LEN && consumed_exact == 1)"
+  ],
+  "acceptance_criteria": [
+    "Accept only compact ICP query inputs with version 1, query kind, bounded target and method, UTF-8 method bytes, present bounded argument bytes, and no trailing data."
+  ],
+  "test_evidence": [
+    {
+      "scenario_id": "compact_icp_query_input_safe_raw-nominal",
+      "command": "cargo test -p ic-evm-core icp_query_precompile",
+      "test_name": "ICP query parser/model PBT and compact parser boundary tests",
+      "recorded_at": "2026-06-19T00:00:00Z"
+    }
+  ],
+  "risk_level": "medium",
+  "verified_subject": "implementation",
+  "contract_hash": "175152b93b28194f0a05f99fbca0e8cea94ef0110c9a3cf1b8b3be3c8e272e5f",
+  "applied_contract_hash": "175152b93b28194f0a05f99fbca0e8cea94ef0110c9a3cf1b8b3be3c8e272e5f",
+  "applied_at": "2026-06-19T05:11:54Z",
+  "panic_behavior": "documented",
+  "overflow_behavior": "documented",
+  "rejected_behaviors": [],
+  "open_assumptions": []
+}

@@ -13,6 +13,7 @@ const MAX_ARG_LEN: usize = 3_997;
 const MAX_ERROR_LEN: usize = 192;
 const MAX_ENCODED_LEN: u32 = 38_656;
 const CHECKSUM_LEN: usize = 4;
+pub const MAX_ICP_UPDATE_REQUESTS: usize = 10_000;
 pub const ICP_UPDATE_DECODE_FAILURE_CODE: &str = "stable.decode.icp_update_request";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -21,10 +22,16 @@ pub enum IcpUpdateRequestStatus {
     Dispatching,
     Dispatched,
     DispatchFailed,
+    // bounded_wait の SysUnknown や upgrade recovery 後は安全に再試行できない。
+    // 監査用に保持する final 状態で、dispatch queue / active capacity には戻さない。
     DispatchUncertain,
 }
 
 impl IcpUpdateRequestStatus {
+    pub fn consumes_capacity(self) -> bool {
+        matches!(self, Self::Queued | Self::Dispatching)
+    }
+
     fn to_u8(self) -> u8 {
         match self {
             Self::Queued => 0,

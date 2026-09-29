@@ -13,13 +13,14 @@ const META_MAGIC: [u8; 4] = *b"EVM0";
 const META_LAYOUT_VERSION: u32 = 2;
 const META_LEGACY_SIZE: usize = 40;
 const META_SIZE: usize = 64;
-pub const CURRENT_SCHEMA_VERSION: u32 = 6;
+pub const CURRENT_SCHEMA_VERSION: u32 = 8;
 #[allow(dead_code)]
-const META_SCHEMA_STRING: &str = "mem:0..4|keys:v2|ic_tx:rlp-fixed|merkle:v1|env:v1";
+const META_SCHEMA_STRING: &str =
+    "mem:0..78|keys:v3|ic_tx:rlp-fixed|merkle:v1|env:v1|tx_locs:v3|pruned_markers:v1";
 // Keccak-256(META_SCHEMA_STRING)
 const META_SCHEMA_HASH: [u8; 32] = [
-    0x02, 0x8f, 0x59, 0xb7, 0xbf, 0xf9, 0xda, 0x2d, 0xf9, 0x58, 0xa9, 0x22, 0xd7, 0x61, 0xad, 0xb1,
-    0x36, 0xe2, 0x8d, 0xb7, 0x45, 0xf4, 0xf4, 0xaf, 0x25, 0xf7, 0x7f, 0x60, 0xa4, 0x9b, 0xf0, 0x7b,
+    0xc2, 0x32, 0xf0, 0xd9, 0x5e, 0x4b, 0xd2, 0xca, 0x3b, 0xdb, 0x13, 0x37, 0x81, 0x49, 0x72, 0xd5,
+    0xdd, 0x97, 0x64, 0x9e, 0xae, 0x56, 0x08, 0xaf, 0xd1, 0xf9, 0xcc, 0x05, 0xaf, 0xae, 0x6b, 0xaf,
 ];
 const SCHEMA_MIGRATION_LEGACY_SIZE: usize = 32;
 const SCHEMA_MIGRATION_SIZE: usize = 64;
@@ -33,6 +34,9 @@ pub enum SchemaMigrationPhase {
     Verify = 3,
     Done = 4,
     Error = 5,
+    TxLocsV3 = 6,
+    PrunedMarkerBlockIndex = 7,
+    PrunedMarkerEthHashIndex = 8,
 }
 
 impl SchemaMigrationPhase {
@@ -44,6 +48,9 @@ impl SchemaMigrationPhase {
             3 => Self::Verify,
             4 => Self::Done,
             5 => Self::Error,
+            6 => Self::TxLocsV3,
+            7 => Self::PrunedMarkerBlockIndex,
+            8 => Self::PrunedMarkerEthHashIndex,
             _ => Self::Error,
         }
     }

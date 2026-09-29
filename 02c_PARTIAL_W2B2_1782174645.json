@@ -1,0 +1,150 @@
+{
+  "properties_with_code": [
+    {
+      "property_id": "PROP-kasane-pre-002",
+      "text": "Only valid signatures may enqueue EthSigned transactions.",
+      "type": "pre-condition",
+      "assertion": "forall raw: enqueue(EthSigned(raw)) => valid_signature(raw) && well_formed_tx(raw)",
+      "severity": "HIGH",
+      "covers": "SG-002",
+      "reachability": {
+        "classification": "external-reachable",
+        "entry_points": [
+          "JSON-RPC",
+          "eth_sendRawTransaction"
+        ],
+        "attacker_controlled": true,
+        "bug_bounty_scope": "in-scope"
+      },
+      "exploitability": "external-attack",
+      "_id_prefix": "PROP-kasane-pre-002",
+      "code_scope": {
+        "locations": [
+          {
+            "file": "crates/ic-evm-rpc/src/lib.rs",
+            "symbol": "rpc_eth_send_raw_transaction",
+            "line_range": {
+              "start": 495,
+              "end": 507
+            },
+            "role": "primary",
+            "note": "JSON-RPC raw transaction entry point that wraps EthSigned submission."
+          },
+          {
+            "file": "crates/ic-evm-rpc/src/lib.rs",
+            "symbol": "submit_tx_in_with_code",
+            "line_range": {
+              "start": 508,
+              "end": 514
+            },
+            "role": "caller",
+            "note": "RPC wrapper that maps chain submission failures to RPC errors."
+          },
+          {
+            "file": "crates/evm-core/src/chain.rs",
+            "symbol": "submit_tx_in",
+            "line_range": {
+              "start": 233,
+              "end": 347
+            },
+            "role": "caller",
+            "note": "Typed chain submission dispatcher for TxIn::EthSigned."
+          },
+          {
+            "file": "crates/evm-core/src/chain.rs",
+            "symbol": "submit_tx",
+            "line_range": {
+              "start": 820,
+              "end": 921
+            },
+            "role": "primary",
+            "note": "Queue insertion path; decodes EthSigned input before storing pending transaction."
+          },
+          {
+            "file": "crates/evm-core/src/tx_decode.rs",
+            "symbol": "decode_tx",
+            "line_range": {
+              "start": 171,
+              "end": 195
+            },
+            "role": "callee",
+            "note": "Dispatches EthSigned decoding to raw Ethereum transaction recovery."
+          },
+          {
+            "file": "crates/evm-core/src/tx_decode.rs",
+            "symbol": "decode_eth_raw_tx",
+            "line_range": {
+              "start": 228,
+              "end": 235
+            },
+            "role": "callee",
+            "note": "Public raw Ethereum transaction decode API."
+          },
+          {
+            "file": "crates/evm-core/src/tx_decode.rs",
+            "symbol": "decode_eth_raw_tx_to_recovered",
+            "line_range": {
+              "start": 236,
+              "end": 249
+            },
+            "role": "callee",
+            "note": "Rejects unsupported/empty forms and delegates signer recovery."
+          },
+          {
+            "file": "crates/ic-evm-tx/src/lib.rs",
+            "symbol": "recover_eth_tx",
+            "line_range": {
+              "start": 51,
+              "end": 69
+            },
+            "role": "callee",
+            "note": "Raw Ethereum transaction recovery entry point."
+          },
+          {
+            "file": "crates/ic-evm-tx/src/lib.rs",
+            "symbol": "finalize_recovered",
+            "line_range": {
+              "start": 164,
+              "end": 186
+            },
+            "role": "callee",
+            "note": "Validates chain id and recovers signer from the signed transaction."
+          },
+          {
+            "file": "crates/evm-core/tests/phase1_eth_decode.rs",
+            "symbol": "chain_id_none_is_rejected_before_signature",
+            "line_range": {
+              "start": 115,
+              "end": 123
+            },
+            "role": "related",
+            "note": "Regression coverage for chain id validation before signature acceptance."
+          },
+          {
+            "file": "crates/evm-core/tests/phase1_eth_decode.rs",
+            "symbol": "invalid_signature_after_chain_id_passes_strict_check",
+            "line_range": {
+              "start": 134,
+              "end": 140
+            },
+            "role": "related",
+            "note": "Regression coverage for invalid signature rejection."
+          },
+          {
+            "file": "crates/evm-core/tests/tx_recovery_isolation.rs",
+            "symbol": "recovery_path_checks_chain_id_before_signature",
+            "line_range": {
+              "start": 23,
+              "end": 28
+            },
+            "role": "related",
+            "note": "Recovery boundary test for validation ordering."
+          }
+        ],
+        "resolution_status": "resolved",
+        "resolution_error": "",
+        "resolution_method": "grep_fallback"
+      }
+    }
+  ]
+}

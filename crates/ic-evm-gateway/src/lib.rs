@@ -18,7 +18,7 @@ use evm_db::chain_data::{
     MintSubmitStatus, OpsMode, ReceiptLike, RequestStatus as StoredRequestStatus, RuntimeConfigV1,
     TxId, TxKind, TxLoc, TxLocKind, UnwrapDispatchRequest, UnwrapRequestStatus,
     WrapEvmConfigStored, WrapPendingSubmission, WrapRequestStage, ICP_UPDATE_DECODE_FAILURE_CODE,
-    LOG_CONFIG_FILTER_MAX, UNWRAP_DECODE_FAILURE_CODE,
+    LOG_CONFIG_FILTER_MAX, MAX_ICP_UPDATE_REQUESTS, UNWRAP_DECODE_FAILURE_CODE,
 };
 use evm_db::memory::{all_memory_regions, memory_size_pages, WASM_PAGE_SIZE_BYTES};
 use evm_db::meta::{
@@ -79,7 +79,6 @@ const MAX_STORED_LEDGER_TX_ID_BYTES: usize = 128;
 const STALE_OPERATION_NANOS: u64 = 10 * 60 * 1_000_000_000;
 const ICP_UPDATE_REPLY_OMITTED_TOO_LARGE: &str = "ic_update.reply_omitted_too_large";
 const ICP_UPDATE_DISPATCH_TIMEOUT_SECONDS: u32 = 30;
-const MAX_ICP_UPDATE_REQUESTS: usize = 10_000;
 
 static UNWRAP_DISPATCH_SCHEDULED: std::sync::atomic::AtomicBool =
     std::sync::atomic::AtomicBool::new(false);
@@ -176,6 +175,18 @@ pub struct IcpUpdateEnvelopeV1 {
     pub evm_sender: Vec<u8>,
     pub ic_caller: Option<Principal>,
     pub arg: Vec<u8>,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize)]
+pub struct ResolveIcpUpdateRequestArgs {
+    pub request_id: Vec<u8>,
+    pub resolution: IcpUpdateResolutionView,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize, Eq, PartialEq)]
+pub enum IcpUpdateResolutionView {
+    Dispatched { reply: Option<Vec<u8>> },
+    Failed { error: String },
 }
 
 #[derive(Clone, Debug, CandidType, Deserialize)]
@@ -987,7 +998,11 @@ fn request_memo(request_id: TxId, kind: TransferMemoKind) -> Vec<u8> {
 }
 
 fn nat_to_be_bytes(value: &Nat) -> Vec<u8> {
-    value.0.to_bytes_be()
+    let bytes = value.0.to_bytes_be();
+    if bytes.is_empty() {
+        return vec![0];
+    }
+    bytes
 }
 
 #[ic_cdk::query]
@@ -2355,29 +2370,94 @@ fn get_native_deposit_result(request_id: Vec<u8>) -> Option<RequestOverview> {
 fn get_icp_update_request(request_id: Vec<u8>) -> Option<IcpUpdateRequestView> {
     let request_id = tx_id_from_bytes(request_id)?;
     with_state(|state| {
-        state.icp_update_requests.get(&request_id).map(|req| {
-            let target = Principal::from_slice(&req.target);
-            IcpUpdateRequestView {
-                request_id: request_id.0.to_vec(),
-                tx_id: req.tx_id.0.to_vec(),
-                block_number: req.block_number,
-                tx_index: req.tx_index,
-                log_index: req.log_index,
-                tx_kind: tx_kind_to_icp_update_view(req.tx_kind),
-                evm_sender: req.evm_sender.to_vec(),
-                ic_caller: req
-                    .ic_caller
-                    .as_ref()
-                    .map(|bytes| Principal::from_slice(bytes)),
-                target,
-                method: req.method,
-                status: icp_update_request_status_to_view(req.status),
-                reply: req.reply,
-                error: req.error_code,
-                updated_at: req.updated_at,
-            }
-        })
+        state
+            .icp_update_requests
+            .get(&request_id)
+            .map(icp_update_request_to_view)
     })
+}
+
+#[ic_cdk::update]
+fn resolve_icp_update_request(
+    args: ResolveIcpUpdateRequestArgs,
+) -> Result<IcpUpdateRequestView, ApiError> {
+    if let Some(reason) = reject_anonymous_update() {
+        return Err(api_rejected(&reason, &reason));
+    }
+    require_control_plane_write().map_err(|err| api_rejected(&err, &err))?;
+    let request_id = tx_id_from_bytes(args.request_id)
+        .ok_or_else(|| api_invalid_argument("arg.request_id_invalid", "arg.request_id_invalid"))?;
+    let now = current_time_nanos();
+    resolve_icp_update_request_internal(request_id, args.resolution, now)
+}
+
+fn resolve_icp_update_request_internal(
+    request_id: TxId,
+    resolution: IcpUpdateResolutionView,
+    now: u64,
+) -> Result<IcpUpdateRequestView, ApiError> {
+    with_state_mut(|state| {
+        let Some(mut req) = state.icp_update_requests.get(&request_id) else {
+            return Err(api_rejected("request.not_found", "request.not_found"));
+        };
+        match req.status {
+            IcpUpdateRequestStatus::DispatchFailed | IcpUpdateRequestStatus::DispatchUncertain => {}
+            _ => {
+                return Err(api_rejected(
+                    "request.status_not_resolvable",
+                    "request.status_not_resolvable",
+                ));
+            }
+        }
+        match resolution {
+            IcpUpdateResolutionView::Dispatched { reply } => {
+                if reply
+                    .as_ref()
+                    .is_some_and(|bytes| bytes.len() > MAX_RETURN_DATA)
+                {
+                    return Err(api_invalid_argument(
+                        "arg.reply_too_large",
+                        "arg.reply_too_large",
+                    ));
+                }
+                req.status = IcpUpdateRequestStatus::Dispatched;
+                req.reply = reply;
+                req.error_code = None;
+            }
+            IcpUpdateResolutionView::Failed { error } => {
+                req.status = IcpUpdateRequestStatus::DispatchFailed;
+                req.reply = None;
+                req.error_code = Some(clamp_error_code(error));
+            }
+        }
+        req.updated_at = now;
+        store_icp_update_request(state, request_id, req.clone());
+        trim_icp_update_requests(state);
+        Ok(icp_update_request_to_view(req))
+    })
+}
+
+fn icp_update_request_to_view(req: IcpUpdateDispatchRequest) -> IcpUpdateRequestView {
+    let target = Principal::from_slice(&req.target);
+    IcpUpdateRequestView {
+        request_id: req.request_id.0.to_vec(),
+        tx_id: req.tx_id.0.to_vec(),
+        block_number: req.block_number,
+        tx_index: req.tx_index,
+        log_index: req.log_index,
+        tx_kind: tx_kind_to_icp_update_view(req.tx_kind),
+        evm_sender: req.evm_sender.to_vec(),
+        ic_caller: req
+            .ic_caller
+            .as_ref()
+            .map(|bytes| Principal::from_slice(bytes)),
+        target,
+        method: req.method,
+        status: icp_update_request_status_to_view(req.status),
+        reply: req.reply,
+        error: req.error_code,
+        updated_at: req.updated_at,
+    }
 }
 
 #[ic_cdk::update]
@@ -2841,7 +2921,7 @@ fn repair_stale_operations(now: u64) {
                     req.status = IcpUpdateRequestStatus::DispatchUncertain;
                     req.updated_at = now;
                     req.error_code = Some("ic_update.dispatch_uncertain".to_string());
-                    state.icp_update_requests.insert(request_id, req);
+                    store_icp_update_request(state, request_id, req);
                 }
             }
 
@@ -3040,7 +3120,7 @@ fn recover_icp_update_dispatch_state_after_upgrade(now: u64) -> bool {
         }
 
         for (request_id, req) in uncertain {
-            state.icp_update_requests.insert(request_id, req);
+            store_icp_update_request(state, request_id, req);
         }
 
         if candidates.is_empty() {
@@ -3049,7 +3129,7 @@ fn recover_icp_update_dispatch_state_after_upgrade(now: u64) -> bool {
 
         let mut meta = *state.icp_update_dispatch_meta.get();
         for (request_id, req) in candidates {
-            state.icp_update_requests.insert(request_id, req);
+            store_icp_update_request(state, request_id, req);
             if queued_ids.contains(&request_id) {
                 continue;
             }
@@ -3150,6 +3230,10 @@ const INSPECT_METHOD_POLICIES: &[InspectMethodPolicy] = &[
     },
     InspectMethodPolicy {
         method: "retry_request",
+        payload_limit: INSPECT_MANAGE_PAYLOAD_LIMIT,
+    },
+    InspectMethodPolicy {
+        method: "resolve_icp_update_request",
         payload_limit: INSPECT_MANAGE_PAYLOAD_LIMIT,
     },
     InspectMethodPolicy {
@@ -3619,6 +3703,18 @@ fn set_prune_policy(policy: PrunePolicyView) -> Result<(), String> {
 }
 
 fn validate_prune_policy_input(policy: &PrunePolicyView) -> Result<(), String> {
+    if policy.target_bytes == 0 {
+        return Err("input.prune.target_bytes.zero".to_string());
+    }
+    if policy.retain_blocks == 0 && policy.retain_days == 0 {
+        return Err("input.prune.retention.empty".to_string());
+    }
+    if policy.headroom_ratio_bps > 10_000 || policy.hard_emergency_ratio_bps > 10_000 {
+        return Err("input.prune.ratio.out_of_range".to_string());
+    }
+    if policy.headroom_ratio_bps >= policy.hard_emergency_ratio_bps {
+        return Err("input.prune.ratio.order".to_string());
+    }
     if policy.max_ops_per_tick < MIN_PRUNE_MAX_OPS_PER_TICK {
         return Err("input.prune.max_ops_per_tick.non_positive".to_string());
     }
@@ -4384,6 +4480,11 @@ fn schema_migration_tick(max_steps: u32) -> bool {
                     state.cursor_key_set = false;
                     state.cursor_key = [0u8; 32];
                 }
+                if state.from_version < 8 {
+                    chain::clear_pruned_marker_indexes();
+                    state.cursor_key_set = false;
+                    state.cursor_key = [0u8; 32];
+                }
                 state.phase = SchemaMigrationPhase::Scan;
                 state.cursor = 0;
                 set_schema_migration_state(state);
@@ -4415,9 +4516,98 @@ fn schema_migration_tick(max_steps: u32) -> bool {
                     state.cursor_key = [0u8; 32];
                     set_schema_migration_state(state);
                 }
-                state.phase = SchemaMigrationPhase::Verify;
-                state.cursor = 0;
+                let active = evm_db::stable_state::with_state_mut(|stable| {
+                    rebuild_icp_update_active_count(stable)
+                });
+                state.cursor = active;
                 set_schema_migration_state(state);
+                state.phase = if state.from_version < 8 {
+                    SchemaMigrationPhase::PrunedMarkerBlockIndex
+                } else if !evm_db::meta::tx_locs_v3_active() {
+                    SchemaMigrationPhase::TxLocsV3
+                } else {
+                    SchemaMigrationPhase::Verify
+                };
+                state.cursor = 0;
+                state.cursor_key_set = false;
+                state.cursor_key = [0u8; 32];
+                set_schema_migration_state(state);
+            }
+            SchemaMigrationPhase::PrunedMarkerBlockIndex => {
+                let start_key = if state.cursor_key_set {
+                    Some(TxId(state.cursor_key))
+                } else {
+                    None
+                };
+                let (last_key, rebuilt, done) =
+                    chain::rebuild_pruned_marker_block_index_batch(start_key, 512);
+                state.cursor = state.cursor.saturating_add(rebuilt);
+                if let Some(key) = last_key {
+                    state.cursor_key_set = true;
+                    state.cursor_key = key.0;
+                }
+                if done {
+                    state.phase = SchemaMigrationPhase::PrunedMarkerEthHashIndex;
+                    state.cursor = 0;
+                    state.cursor_key_set = false;
+                    state.cursor_key = [0u8; 32];
+                }
+                set_schema_migration_state(state);
+                if !done {
+                    return false;
+                }
+            }
+            SchemaMigrationPhase::PrunedMarkerEthHashIndex => {
+                let start_key = if state.cursor_key_set {
+                    Some(TxId(state.cursor_key))
+                } else {
+                    None
+                };
+                let (last_key, rebuilt, done) =
+                    chain::rebuild_pruned_marker_eth_hash_by_tx_id_batch(start_key, 512);
+                state.cursor = state.cursor.saturating_add(rebuilt);
+                if let Some(key) = last_key {
+                    state.cursor_key_set = true;
+                    state.cursor_key = key.0;
+                }
+                if done {
+                    state.phase = if !evm_db::meta::tx_locs_v3_active() {
+                        SchemaMigrationPhase::TxLocsV3
+                    } else {
+                        SchemaMigrationPhase::Verify
+                    };
+                    state.cursor = 0;
+                    state.cursor_key_set = false;
+                    state.cursor_key = [0u8; 32];
+                }
+                set_schema_migration_state(state);
+                if !done {
+                    return false;
+                }
+            }
+            SchemaMigrationPhase::TxLocsV3 => {
+                let start_key = if state.cursor_key_set {
+                    Some(TxId(state.cursor_key))
+                } else {
+                    None
+                };
+                let (last_key, copied, done) = chain::migrate_tx_locs_batch(start_key, 512);
+                state.cursor = state.cursor.saturating_add(copied);
+                if let Some(key) = last_key {
+                    state.cursor_key_set = true;
+                    state.cursor_key = key.0;
+                }
+                if done {
+                    set_tx_locs_v3_active(true);
+                    state.phase = SchemaMigrationPhase::Verify;
+                    state.cursor = 0;
+                    state.cursor_key_set = false;
+                    state.cursor_key = [0u8; 32];
+                }
+                set_schema_migration_state(state);
+                if !done {
+                    return false;
+                }
             }
             SchemaMigrationPhase::Verify => {
                 if !evm_db::meta::tx_locs_v3_active() {
@@ -4674,9 +4864,6 @@ fn apply_post_upgrade_migrations() {
     let from = meta.schema_version;
     if from < current {
         sync_chain_runtime_defaults_for_schema_upgrade();
-    }
-    if from >= 3 && !evm_db::meta::tx_locs_v3_active() {
-        set_tx_locs_v3_active(true);
     }
     let state_root_pending = with_state(|state| {
         !state.state_root_meta.get().initialized
@@ -5002,7 +5189,8 @@ fn record_icp_update_requests_from_block(tx_ids: &[TxId]) {
                     return;
                 }
                 let now = current_time_nanos();
-                state.icp_update_requests.insert(
+                store_icp_update_request(
+                    state,
                     request_id,
                     IcpUpdateDispatchRequest {
                         target: intent.target.clone(),
@@ -5034,6 +5222,8 @@ fn record_icp_update_requests_from_block(tx_ids: &[TxId]) {
 }
 
 fn trim_icp_update_requests(state: &mut evm_db::stable_state::StableState) {
+    // hard cap は EVM precompile capacity で enforced。ここでは terminal request だけを
+    // 履歴 pruning し、queued/dispatching の active request は絶対に削除しない。
     let len = usize::try_from(state.icp_update_requests.len()).unwrap_or(usize::MAX);
     if len <= MAX_ICP_UPDATE_REQUESTS {
         return;
@@ -5066,6 +5256,46 @@ fn trim_icp_update_requests(state: &mut evm_db::stable_state::StableState) {
         remove_icp_update_queue_entries(state, request_id);
         remaining = remaining.saturating_sub(1);
     }
+}
+
+fn store_icp_update_request(
+    state: &mut evm_db::stable_state::StableState,
+    request_id: TxId,
+    req: IcpUpdateDispatchRequest,
+) {
+    let previous = state.icp_update_requests.get(&request_id).map(|v| v.status);
+    adjust_icp_update_active_count(state, previous, Some(req.status));
+    state.icp_update_requests.insert(request_id, req);
+}
+
+fn adjust_icp_update_active_count(
+    state: &mut evm_db::stable_state::StableState,
+    previous: Option<IcpUpdateRequestStatus>,
+    next: Option<IcpUpdateRequestStatus>,
+) {
+    let previous_active = previous.is_some_and(IcpUpdateRequestStatus::consumes_capacity);
+    let next_active = next.is_some_and(IcpUpdateRequestStatus::consumes_capacity);
+    if previous_active == next_active {
+        return;
+    }
+    let current = *state.icp_update_active_count.get();
+    let updated = if next_active {
+        current.saturating_add(1)
+    } else {
+        current.saturating_sub(1)
+    };
+    state.icp_update_active_count.set(updated);
+}
+
+fn rebuild_icp_update_active_count(state: &mut evm_db::stable_state::StableState) -> u64 {
+    let active = state
+        .icp_update_requests
+        .iter()
+        .filter(|entry| entry.value().status.consumes_capacity())
+        .count();
+    let active = u64::try_from(active).unwrap_or(u64::MAX);
+    state.icp_update_active_count.set(active);
+    active
 }
 
 fn remove_icp_update_queue_entries(
@@ -5225,7 +5455,7 @@ fn pop_next_icp_update_request(
             req.status = IcpUpdateRequestStatus::DispatchFailed;
             req.reply = None;
             req.error_code = Some(ICP_UPDATE_DECODE_FAILURE_CODE.to_string());
-            state.icp_update_requests.insert(request_id, req);
+            store_icp_update_request(state, request_id, req);
             return Err(format!(
                 "ic_update.dispatch.quarantined:request_id={:?}:reason={ICP_UPDATE_DECODE_FAILURE_CODE}",
                 request_id.0
@@ -5236,7 +5466,7 @@ fn pop_next_icp_update_request(
         if req.call_started_at_time == 0 {
             req.call_started_at_time = now;
         }
-        state.icp_update_requests.insert(request_id, req.clone());
+        store_icp_update_request(state, request_id, req.clone());
         Ok(Some((request_id, req)))
     });
     out
@@ -5383,7 +5613,7 @@ fn finish_icp_update_dispatch_tick() {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum WrapMintReceiptSettlement {
     Succeeded,
-    Failed,
+    Failed(&'static str),
 }
 
 fn submitted_wrap_mint_receipt_candidates() -> Vec<(TxId, TxId)> {
@@ -5410,11 +5640,17 @@ fn settle_submitted_wrap_mint_receipts(now: u64) -> u64 {
     let settlements = submitted_wrap_mint_receipt_candidates()
         .into_iter()
         .filter_map(|(request_id, mint_tx_id)| {
-            let receipt = chain::get_receipt(&mint_tx_id)?;
-            let settlement = if receipt.status == 1 {
-                WrapMintReceiptSettlement::Succeeded
-            } else {
-                WrapMintReceiptSettlement::Failed
+            let settlement = match chain::get_receipt(&mint_tx_id) {
+                Some(receipt) if receipt.status == 1 => WrapMintReceiptSettlement::Succeeded,
+                Some(_) => WrapMintReceiptSettlement::Failed("wrap.mint_receipt_failed"),
+                None => {
+                    // Droppedにはreceiptが作られないため、確定したdropだけを返金対象にする。
+                    let loc = chain::get_tx_loc(&mint_tx_id)?;
+                    if loc.kind != TxLocKind::Dropped {
+                        return None;
+                    }
+                    WrapMintReceiptSettlement::Failed("wrap.mint_dropped")
+                }
             };
             Some((request_id, settlement))
         })
@@ -5441,10 +5677,10 @@ fn settle_submitted_wrap_mint_receipts(now: u64) -> u64 {
                     req.result.error_code = None;
                     req.result.mint_failed_recoverable = false;
                 }
-                WrapMintReceiptSettlement::Failed => {
+                WrapMintReceiptSettlement::Failed(error_code) => {
                     req.result.status = StoredRequestStatus::Failed;
                     req.result.stage = WrapRequestStage::Failed;
-                    req.result.error_code = Some("wrap.mint_receipt_failed".to_string());
+                    req.result.error_code = Some(error_code.to_string());
                     req.result.mint_failed_recoverable = true;
                 }
             }
@@ -5959,9 +6195,18 @@ fn finalize_unwrap_dispatch_attempt(
             return;
         };
         req.updated_at = now;
-        req.ledger_tx_id = applied
-            .ledger_tx_id
-            .and_then(|tx_id| validated_ledger_tx_id(tx_id).ok());
+        req.ledger_tx_id = match (applied.status, applied.ledger_tx_id) {
+            (UnwrapRequestStatus::Dispatched, Some(tx_id)) => match validated_ledger_tx_id(tx_id) {
+                Ok(tx_id) => Some(tx_id),
+                Err(code) => ic_cdk::trap(&code),
+            },
+            (UnwrapRequestStatus::Dispatched, None) => ic_cdk::trap("ledger.tx_id_missing"),
+            (_, Some(tx_id)) => match validated_ledger_tx_id(tx_id) {
+                Ok(tx_id) => Some(tx_id),
+                Err(code) => ic_cdk::trap(&code),
+            },
+            (_, None) => None,
+        };
         req.status = applied.status;
         req.error_code = applied.error_code.map(clamp_error_code);
         state.unwrap_requests.insert(request_id, req);
@@ -5981,7 +6226,8 @@ fn finalize_icp_update_dispatch_attempt(
         req.reply = applied.reply;
         req.status = applied.status;
         req.error_code = applied.error_code.map(clamp_error_code);
-        state.icp_update_requests.insert(request_id, req);
+        store_icp_update_request(state, request_id, req);
+        trim_icp_update_requests(state);
     });
 }
 
@@ -6084,7 +6330,10 @@ ic_cdk::export_candid!();
 // NOTE: build-time only; keep out of production surface area.
 #[cfg(feature = "did-gen")]
 pub fn export_did() -> String {
-    __export_service()
+    __export_service().replace(
+        "tx_kind : TxKindView;\n  reply : opt blob;\n};\ntype IcpUpdateResolutionView",
+        "tx_kind : IcpUpdateTxKindView;\n  reply : opt blob;\n};\ntype IcpUpdateResolutionView",
+    )
 }
 
 #[cfg(test)]

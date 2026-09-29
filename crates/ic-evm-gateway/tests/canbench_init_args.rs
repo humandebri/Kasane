@@ -6,7 +6,7 @@ fn decode_hex(input: &str) -> Vec<u8> {
     let bytes = input.as_bytes();
     assert_eq!(bytes.len() % 2, 0, "hex length must be even");
     let mut out = Vec::with_capacity(bytes.len() / 2);
-    for pair in bytes.chunks_exact(2) {
+    for pair in bytes.as_chunks::<2>().0 {
         let hi = (pair[0] as char).to_digit(16).expect("valid hex") as u8;
         let lo = (pair[1] as char).to_digit(16).expect("valid hex") as u8;
         out.push((hi << 4) | lo);

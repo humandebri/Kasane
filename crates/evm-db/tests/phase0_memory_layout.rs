@@ -18,4 +18,6 @@ fn memory_id_layout_is_frozen() {
     assert_eq!(AppMemoryId::OpsMetrics.as_u8(), 36);
     assert_eq!(AppMemoryId::TxLocsV3.as_u8(), 37);
     assert_eq!(AppMemoryId::EthTxHashIndex.as_u8(), 53);
+    assert_eq!(AppMemoryId::PrunedTxLocs.as_u8(), 75);
+    assert_eq!(AppMemoryId::PrunedEthTxHashIndex.as_u8(), 76);
 }

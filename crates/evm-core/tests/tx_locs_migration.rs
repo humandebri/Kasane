@@ -1,7 +1,10 @@
 //! どこで: evm-core migration test / 何を: tx_locs key cursor移行 / なぜ: tick再開の正当性を担保するため
 
-use evm_core::chain::migrate_tx_locs_batch;
-use evm_db::chain_data::{TxId, TxLoc};
+use evm_core::chain::{
+    migrate_tx_locs_batch, rebuild_pruned_marker_block_index_batch,
+    rebuild_pruned_marker_eth_hash_by_tx_id_batch,
+};
+use evm_db::chain_data::{PrunedMarkerBlockKey, TxId, TxLoc};
 use evm_db::stable_state::{init_stable_state, with_state, with_state_mut};
 
 fn mk_tx_id(seed: u8) -> TxId {
@@ -9,6 +12,55 @@ fn mk_tx_id(seed: u8) -> TxId {
     buf[0] = seed;
     buf[31] = seed.wrapping_add(1);
     TxId(buf)
+}
+
+#[test]
+fn pruned_marker_indexes_rebuild_in_multiple_ticks() {
+    init_stable_state();
+    let tx_ids = [mk_tx_id(4), mk_tx_id(5), mk_tx_id(6)];
+    let eth_hashes = [mk_tx_id(7), mk_tx_id(8), mk_tx_id(9)];
+
+    with_state_mut(|state| {
+        for (idx, tx_id) in tx_ids.iter().enumerate() {
+            let block_number = u64::try_from(idx + 10).expect("block number");
+            state
+                .pruned_tx_locs
+                .insert(*tx_id, TxLoc::included(block_number, 0));
+            state
+                .pruned_eth_tx_hash_index
+                .insert(eth_hashes[idx], *tx_id);
+        }
+    });
+
+    let (last_key, copied, done) = rebuild_pruned_marker_block_index_batch(None, 2);
+    assert_eq!(copied, 2);
+    assert!(!done);
+    let (_last_key, copied, done) = rebuild_pruned_marker_block_index_batch(last_key, 2);
+    assert_eq!(copied, 1);
+    assert!(done);
+
+    let (last_key, copied, done) = rebuild_pruned_marker_eth_hash_by_tx_id_batch(None, 2);
+    assert_eq!(copied, 2);
+    assert!(!done);
+    let (_last_key, copied, done) = rebuild_pruned_marker_eth_hash_by_tx_id_batch(last_key, 2);
+    assert_eq!(copied, 1);
+    assert!(done);
+
+    with_state(|state| {
+        for (idx, tx_id) in tx_ids.iter().enumerate() {
+            let block_number = u64::try_from(idx + 10).expect("block number");
+            assert_eq!(
+                state
+                    .pruned_marker_block_index
+                    .get(&PrunedMarkerBlockKey::new(block_number, tx_id.0)),
+                Some(*tx_id)
+            );
+            assert_eq!(
+                state.pruned_marker_eth_hash_by_tx_id.get(tx_id),
+                Some(eth_hashes[idx])
+            );
+        }
+    });
 }
 
 #[test]

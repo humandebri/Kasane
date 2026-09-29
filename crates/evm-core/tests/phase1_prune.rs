@@ -1,7 +1,9 @@
 //! どこで: Phase1 pruning テスト / 何を: prune_blocks の削除と状態更新 / なぜ: None判定の前提を保証するため
 
-use evm_core::chain;
-use evm_db::chain_data::{BlockData, ReceiptLike, TxId, TxIndexEntry, TxLoc};
+use evm_core::{chain, hash};
+use evm_db::chain_data::{
+    BlockData, PrunedMarkerBlockKey, ReceiptLike, StoredTxBytes, TxId, TxIndexEntry, TxKind, TxLoc,
+};
 use evm_db::stable_state::{init_stable_state, with_state, with_state_mut};
 use evm_db::Storable;
 
@@ -9,8 +11,24 @@ use evm_db::Storable;
 fn prune_blocks_removes_old_data() {
     init_stable_state();
 
-    let tx1 = TxId([0x11; 32]);
-    let tx2 = TxId([0x22; 32]);
+    let raw1 = vec![0x02, 0x11];
+    let eth_hash1 = TxId(hash::keccak256(&raw1));
+    let tx1 = TxId(hash::stored_tx_id(
+        TxKind::EthSigned,
+        &raw1,
+        None,
+        None,
+        None,
+    ));
+    let raw2 = vec![0x02, 0x22];
+    let eth_hash2 = TxId(hash::keccak256(&raw2));
+    let tx2 = TxId(hash::stored_tx_id(
+        TxKind::EthSigned,
+        &raw2,
+        None,
+        None,
+        None,
+    ));
     let tx3 = TxId([0x33; 32]);
 
     let block1 = make_block(1, tx1);
@@ -27,6 +45,36 @@ fn prune_blocks_removes_old_data() {
         insert_receipt(state, tx1, 1);
         insert_receipt(state, tx2, 2);
         insert_receipt(state, tx3, 3);
+        state.tx_store.insert(
+            tx1,
+            StoredTxBytes::new_with_fees(
+                tx1,
+                TxKind::EthSigned,
+                raw1.clone(),
+                None,
+                Vec::new(),
+                Vec::new(),
+                0,
+                0,
+                false,
+            ),
+        );
+        state.tx_store.insert(
+            tx2,
+            StoredTxBytes::new_with_fees(
+                tx2,
+                TxKind::EthSigned,
+                raw2.clone(),
+                None,
+                Vec::new(),
+                Vec::new(),
+                0,
+                0,
+                false,
+            ),
+        );
+        state.eth_tx_hash_index.insert(eth_hash1, tx1);
+        state.eth_tx_hash_index.insert(eth_hash2, tx2);
         state.seen_tx.insert(tx1, 1);
         state.seen_tx.insert(tx2, 1);
         state.seen_tx.insert(tx3, 1);
@@ -55,6 +103,28 @@ fn prune_blocks_removes_old_data() {
         assert!(state.tx_locs.get(&tx1).is_none());
         assert!(state.tx_locs.get(&tx2).is_none());
         assert!(state.tx_locs.get(&tx3).is_some());
+        assert!(state.pruned_tx_locs.get(&tx1).is_none());
+        assert_eq!(state.pruned_tx_locs.get(&tx2), Some(TxLoc::included(2, 0)));
+        assert!(state.pruned_tx_locs.get(&tx3).is_none());
+        assert!(state.eth_tx_hash_index.get(&eth_hash1).is_none());
+        assert!(state.eth_tx_hash_index.get(&eth_hash2).is_none());
+        assert!(state.pruned_eth_tx_hash_index.get(&eth_hash1).is_none());
+        assert_eq!(state.pruned_eth_tx_hash_index.get(&eth_hash2), Some(tx2));
+        assert!(state.pruned_marker_eth_hash_by_tx_id.get(&tx1).is_none());
+        assert_eq!(
+            state.pruned_marker_eth_hash_by_tx_id.get(&tx2),
+            Some(eth_hash2)
+        );
+        assert!(state
+            .pruned_marker_block_index
+            .get(&PrunedMarkerBlockKey::new(1, tx1.0))
+            .is_none());
+        assert_eq!(
+            state
+                .pruned_marker_block_index
+                .get(&PrunedMarkerBlockKey::new(2, tx2.0)),
+            Some(tx2)
+        );
         assert!(state.seen_tx.get(&tx1).is_none());
         assert!(state.seen_tx.get(&tx2).is_none());
         assert!(state.seen_tx.get(&tx3).is_some());
@@ -196,14 +266,112 @@ fn prune_blocks_resumes_after_max_ops_stop() {
     let second = chain::prune_blocks(1, 6).expect("second partial prune should resume");
     assert!(second.did_work);
     assert_eq!(second.pruned_before_block, Some(2));
-    assert_eq!(second.remaining, 0);
+    assert_eq!(second.remaining, 1);
+
+    let third = chain::prune_blocks(1, 3).expect("marker cleanup should finish");
+    assert!(third.did_work);
+    assert_eq!(third.pruned_before_block, Some(2));
+    assert_eq!(third.remaining, 0);
 
     with_state(|state| {
         assert!(state.blocks.get(&1).is_none());
         assert!(state.blocks.get(&2).is_none());
         assert!(state.blocks.get(&3).is_some());
+        assert!(state.pruned_tx_locs.get(&tx1).is_none());
+        assert_eq!(state.pruned_tx_locs.get(&tx2), Some(TxLoc::included(2, 0)));
         assert_eq!(state.prune_state.get().pruned_before(), Some(2));
         assert!(state.prune_state.get().journal_block().is_none());
+    });
+}
+
+#[test]
+fn prune_blocks_cleans_old_pruned_markers_without_block_work() {
+    init_stable_state();
+
+    let tx1 = TxId([0x61; 32]);
+    let tx2 = TxId([0x62; 32]);
+    let eth_hash1 = TxId([0xe1; 32]);
+    let eth_hash2 = TxId([0xe2; 32]);
+
+    with_state_mut(|state| {
+        insert_pruned_marker(state, 1, tx1, eth_hash1);
+        insert_pruned_marker(state, 2, tx2, eth_hash2);
+        let mut prune_state = *state.prune_state.get();
+        prune_state.set_pruned_before(2);
+        state.prune_state.set(prune_state);
+        let mut head = *state.head.get();
+        head.number = 3;
+        state.head.set(head);
+    });
+
+    let result = chain::prune_blocks(1, 10).expect("marker cleanup should succeed");
+    assert!(result.did_work);
+    assert_eq!(result.remaining, 0);
+    assert_eq!(result.pruned_before_block, Some(2));
+
+    with_state(|state| {
+        assert!(state.pruned_tx_locs.get(&tx1).is_none());
+        assert_eq!(state.pruned_tx_locs.get(&tx2), Some(TxLoc::included(2, 0)));
+        assert!(state.pruned_eth_tx_hash_index.get(&eth_hash1).is_none());
+        assert_eq!(state.pruned_eth_tx_hash_index.get(&eth_hash2), Some(tx2));
+        assert!(state.pruned_marker_eth_hash_by_tx_id.get(&tx1).is_none());
+        assert_eq!(
+            state.pruned_marker_eth_hash_by_tx_id.get(&tx2),
+            Some(eth_hash2)
+        );
+        assert!(state
+            .pruned_marker_block_index
+            .get(&PrunedMarkerBlockKey::new(1, tx1.0))
+            .is_none());
+        assert_eq!(
+            state
+                .pruned_marker_block_index
+                .get(&PrunedMarkerBlockKey::new(2, tx2.0)),
+            Some(tx2)
+        );
+    });
+}
+
+#[test]
+fn prune_blocks_reports_remaining_marker_cleanup_when_budget_limited() {
+    init_stable_state();
+
+    let tx1 = TxId([0x71; 32]);
+    let tx2 = TxId([0x72; 32]);
+    let eth_hash1 = TxId([0xf1; 32]);
+    let eth_hash2 = TxId([0xf2; 32]);
+
+    with_state_mut(|state| {
+        insert_pruned_marker(state, 1, tx1, eth_hash1);
+        insert_pruned_marker(state, 2, tx2, eth_hash2);
+        let mut prune_state = *state.prune_state.get();
+        prune_state.set_pruned_before(3);
+        state.prune_state.set(prune_state);
+        let mut head = *state.head.get();
+        head.number = 4;
+        state.head.set(head);
+    });
+
+    let first = chain::prune_blocks(1, 4).expect("first marker cleanup should succeed");
+    assert!(first.did_work);
+    assert_eq!(first.remaining, 1);
+    assert_eq!(first.pruned_before_block, Some(3));
+    with_state(|state| {
+        assert!(state.pruned_tx_locs.get(&tx1).is_none());
+        assert_eq!(state.pruned_tx_locs.get(&tx2), Some(TxLoc::included(2, 0)));
+    });
+
+    let second = chain::prune_blocks(1, 4).expect("second marker cleanup should succeed");
+    assert!(second.did_work);
+    assert_eq!(second.remaining, 0);
+    assert_eq!(second.pruned_before_block, Some(3));
+    with_state(|state| {
+        assert!(state.pruned_tx_locs.get(&tx1).is_none());
+        assert!(state.pruned_tx_locs.get(&tx2).is_none());
+        assert!(state.pruned_eth_tx_hash_index.get(&eth_hash1).is_none());
+        assert!(state.pruned_eth_tx_hash_index.get(&eth_hash2).is_none());
+        assert!(state.pruned_marker_eth_hash_by_tx_id.get(&tx1).is_none());
+        assert!(state.pruned_marker_eth_hash_by_tx_id.get(&tx2).is_none());
     });
 }
 
@@ -270,4 +438,22 @@ fn insert_tx_index(state: &mut evm_db::stable_state::StableState, tx_id: TxId, b
         .store_bytes(&bytes)
         .expect("store tx_index");
     state.tx_index.insert(tx_id, ptr);
+}
+
+fn insert_pruned_marker(
+    state: &mut evm_db::stable_state::StableState,
+    block_number: u64,
+    tx_id: TxId,
+    eth_hash: TxId,
+) {
+    state
+        .pruned_tx_locs
+        .insert(tx_id, TxLoc::included(block_number, 0));
+    state
+        .pruned_marker_block_index
+        .insert(PrunedMarkerBlockKey::new(block_number, tx_id.0), tx_id);
+    state.pruned_eth_tx_hash_index.insert(eth_hash, tx_id);
+    state
+        .pruned_marker_eth_hash_by_tx_id
+        .insert(tx_id, eth_hash);
 }

@@ -199,6 +199,10 @@ type IcpUpdateRequestView = record {
   tx_kind : IcpUpdateTxKindView;
   reply : opt blob;
 };
+type IcpUpdateResolutionView = variant {
+  Failed : record { error : text };
+  Dispatched : record { reply : opt blob };
+};
 type IcpUpdateTxKindView = variant { EthSigned; IcSynthetic };
 type Icrc21ConsentInfo = record {
   metadata : Icrc21ConsentMessageMetadata;
@@ -448,6 +452,10 @@ type RequestStageView = variant {
   FeeCollected;
 };
 type RequestStatus = variant { Queued; Failed; Succeeded; Running };
+type ResolveIcpUpdateRequestArgs = record {
+  request_id : blob;
+  resolution : IcpUpdateResolutionView;
+};
 type Result = variant { Ok; Err : text };
 type Result_1 = variant { Ok; Err : ApiError };
 type Result_10 = variant { Ok : GetUnwrapRequirementsOk; Err : ApiError };
@@ -461,17 +469,18 @@ type Result_17 = variant { Ok : QuoteNativeWithdrawalOk; Err : ApiError };
 type Result_18 = variant { Ok : QuoteWrapRequestOk; Err : ApiError };
 type Result_19 = variant { Ok : RequestOverview; Err : ApiError };
 type Result_2 = variant { Ok : DispatchUnwrapRequestOk; Err : ApiError };
-type Result_20 = variant { Ok : blob; Err : text };
-type Result_21 = variant { Ok : nat64; Err : RpcErrorView };
-type Result_22 = variant { Ok : RpcFeeHistoryView; Err : RpcErrorView };
-type Result_23 = variant { Ok : nat; Err : RpcErrorView };
-type Result_24 = variant { Ok : blob; Err : RpcErrorView };
-type Result_25 = variant { Ok : opt nat64; Err : text };
-type Result_26 = variant { Ok : EthLogsPageView; Err : GetLogsErrorView };
-type Result_27 = variant { Ok : blob; Err : SubmitTxError };
-type Result_28 = variant { Ok : SubmitNativeDepositOk; Err : ApiError };
-type Result_29 = variant { Ok : SubmitWrapRequestOk; Err : ApiError };
+type Result_20 = variant { Ok : IcpUpdateRequestView; Err : ApiError };
+type Result_21 = variant { Ok : blob; Err : text };
+type Result_22 = variant { Ok : nat64; Err : RpcErrorView };
+type Result_23 = variant { Ok : RpcFeeHistoryView; Err : RpcErrorView };
+type Result_24 = variant { Ok : nat; Err : RpcErrorView };
+type Result_25 = variant { Ok : blob; Err : RpcErrorView };
+type Result_26 = variant { Ok : opt nat64; Err : text };
+type Result_27 = variant { Ok : EthLogsPageView; Err : GetLogsErrorView };
+type Result_28 = variant { Ok : blob; Err : SubmitTxError };
+type Result_29 = variant { Ok : SubmitNativeDepositOk; Err : ApiError };
 type Result_3 = variant { Ok : EstimateIcTxOk; Err : ApiError };
+type Result_30 = variant { Ok : SubmitWrapRequestOk; Err : ApiError };
 type Result_4 = variant { Ok : nat64; Err : text };
 type Result_5 = variant { Ok : ExportResponseView; Err : ExportErrorView };
 type Result_6 = variant { Ok : vec principal; Err : text };
@@ -653,6 +662,7 @@ service : (opt InitArgs) -> {
   remove_query_precompile_allowed_method : (PrecompileAllowArgs) -> (Result);
   remove_update_precompile_allowed_method : (PrecompileAllowArgs) -> (Result);
   repair_stale_wrap_operations : () -> (Result);
+  resolve_icp_update_request : (ResolveIcpUpdateRequestArgs) -> (Result_20);
   retry_native_deposit : (RetryRequestArgs) -> (Result_19);
   retry_native_withdrawal : (RetryRequestArgs) -> (Result_19);
   retry_request : (RetryRequestArgs) -> (Result_19);
@@ -664,31 +674,31 @@ service : (opt InitArgs) -> {
   rpc_eth_call_object_with_query_precompile : (RpcCallObjectView) -> (
       Result_14,
     ) composite_query;
-  rpc_eth_call_rawtx : (blob) -> (Result_20) query;
+  rpc_eth_call_rawtx : (blob) -> (Result_21) query;
   rpc_eth_chain_id : () -> (nat64) query;
-  rpc_eth_estimate_gas_object : (RpcCallObjectView) -> (Result_21) query;
+  rpc_eth_estimate_gas_object : (RpcCallObjectView) -> (Result_22) query;
   rpc_eth_estimate_gas_object_at : (RpcCallObjectView, RpcBlockTagView) -> (
-      Result_21,
-    ) query;
-  rpc_eth_fee_history : (nat64, RpcBlockTagView, opt vec float64) -> (
       Result_22,
     ) query;
-  rpc_eth_gas_price : () -> (Result_23) query;
-  rpc_eth_get_balance : (blob, RpcBlockTagView) -> (Result_24) query;
+  rpc_eth_fee_history : (nat64, RpcBlockTagView, opt vec float64) -> (
+      Result_23,
+    ) query;
+  rpc_eth_gas_price : () -> (Result_24) query;
+  rpc_eth_get_balance : (blob, RpcBlockTagView) -> (Result_25) query;
   rpc_eth_get_block_by_number : (nat64, bool) -> (opt EthBlockView) query;
   rpc_eth_get_block_by_number_with_status : (nat64, bool) -> (
       RpcBlockLookupView,
     ) query;
-  rpc_eth_get_block_number_by_hash : (blob, nat32) -> (Result_25) query;
-  rpc_eth_get_code : (blob, RpcBlockTagView) -> (Result_24) query;
+  rpc_eth_get_block_number_by_hash : (blob, nat32) -> (Result_26) query;
+  rpc_eth_get_code : (blob, RpcBlockTagView) -> (Result_25) query;
   rpc_eth_get_logs_paged : (EthLogFilterView, opt EthLogsCursorView, nat32) -> (
-      Result_26,
+      Result_27,
     ) query;
-  rpc_eth_get_storage_at : (blob, blob, RpcBlockTagView) -> (Result_24) query;
+  rpc_eth_get_storage_at : (blob, blob, RpcBlockTagView) -> (Result_25) query;
   rpc_eth_get_transaction_by_eth_hash : (blob) -> (opt EthTxView) query;
   rpc_eth_get_transaction_by_tx_id : (blob) -> (opt EthTxView) query;
   rpc_eth_get_transaction_count_at : (blob, RpcBlockTagView) -> (
-      Result_21,
+      Result_22,
     ) query;
   rpc_eth_get_transaction_receipt_by_eth_hash : (blob) -> (
       opt EthReceiptView,
@@ -700,14 +710,14 @@ service : (opt InitArgs) -> {
       RpcReceiptLookupView,
     ) query;
   rpc_eth_history_window : () -> (RpcHistoryWindowView) query;
-  rpc_eth_max_priority_fee_per_gas : () -> (Result_23) query;
-  rpc_eth_send_raw_transaction : (blob) -> (Result_27);
+  rpc_eth_max_priority_fee_per_gas : () -> (Result_24) query;
+  rpc_eth_send_raw_transaction : (blob) -> (Result_28);
   set_allowed_assets : (vec principal) -> (Result);
   set_fee_policy : (FeePolicyView) -> (Result);
   set_log_filter : (opt text) -> (Result);
   set_prune_policy : (PrunePolicyView) -> (Result);
   set_pruning_enabled : (bool) -> (Result);
-  submit_ic_tx : (SubmitIcTxArgsDto) -> (Result_27);
-  submit_native_deposit : (SubmitNativeDepositArgs) -> (Result_28);
-  submit_wrap_request : (SubmitWrapRequestArgs) -> (Result_29);
+  submit_ic_tx : (SubmitIcTxArgsDto) -> (Result_28);
+  submit_native_deposit : (SubmitNativeDepositArgs) -> (Result_29);
+  submit_wrap_request : (SubmitWrapRequestArgs) -> (Result_30);
 }

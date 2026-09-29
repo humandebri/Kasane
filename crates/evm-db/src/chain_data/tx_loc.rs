@@ -1,12 +1,59 @@
 //! どこで: chain_data のTx位置 / 何を: Pending/Included/Dropped の最小表現 / なぜ: pending可視化を安定化するため
 
 use crate::chain_data::codec::{encode_guarded, mark_decode_failure};
-use crate::chain_data::constants::TX_LOC_SIZE_U32;
+use crate::chain_data::constants::{TX_ID_LEN, TX_LOC_SIZE_U32};
 use crate::corrupt_log::record_corrupt;
 use ic_stable_structures::storable::Bound;
 use ic_stable_structures::Storable;
 use std::borrow::Cow;
 use wincode::{SchemaRead, SchemaWrite};
+
+pub const PRUNED_MARKER_BLOCK_KEY_LEN: usize = 40;
+pub const PRUNED_MARKER_BLOCK_KEY_LEN_U32: u32 = 40;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
+pub struct PrunedMarkerBlockKey(pub [u8; PRUNED_MARKER_BLOCK_KEY_LEN]);
+
+impl PrunedMarkerBlockKey {
+    pub fn new(block_number: u64, tx_id: [u8; TX_ID_LEN]) -> Self {
+        let mut out = [0u8; PRUNED_MARKER_BLOCK_KEY_LEN];
+        out[0..8].copy_from_slice(&block_number.to_be_bytes());
+        out[8..40].copy_from_slice(&tx_id);
+        Self(out)
+    }
+
+    pub fn block_number(self) -> u64 {
+        let mut raw = [0u8; 8];
+        raw.copy_from_slice(&self.0[0..8]);
+        u64::from_be_bytes(raw)
+    }
+}
+
+impl Storable for PrunedMarkerBlockKey {
+    fn to_bytes(&self) -> Cow<'_, [u8]> {
+        Cow::Borrowed(&self.0)
+    }
+
+    fn into_bytes(self) -> Vec<u8> {
+        self.0.to_vec()
+    }
+
+    fn from_bytes(bytes: Cow<'_, [u8]>) -> Self {
+        let data = bytes.as_ref();
+        if data.len() != PRUNED_MARKER_BLOCK_KEY_LEN {
+            mark_decode_failure(b"pruned_marker_block_key", true);
+            return Self([0u8; PRUNED_MARKER_BLOCK_KEY_LEN]);
+        }
+        let mut out = [0u8; PRUNED_MARKER_BLOCK_KEY_LEN];
+        out.copy_from_slice(data);
+        Self(out)
+    }
+
+    const BOUND: Bound = Bound::Bounded {
+        max_size: PRUNED_MARKER_BLOCK_KEY_LEN_U32,
+        is_fixed_size: true,
+    };
+}
 
 #[derive(Clone, Copy, Debug, SchemaRead, SchemaWrite, Eq, PartialEq)]
 #[repr(u8)]

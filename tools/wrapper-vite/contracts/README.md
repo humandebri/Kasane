@@ -10,6 +10,7 @@ This directory contains the minimal EVM-side implementation for deterministic wr
   - creates the token with `CREATE2` only when it does not exist, then mints
 - `WrappedAssetToken.sol`
   - minimal ERC-20 token
+  - EIP-3009 transfer authorization for x402 exact payments
   - only the factory can mint
   - burns must go through the factory
 
@@ -19,6 +20,7 @@ This directory contains the minimal EVM-side implementation for deterministic wr
 - Deployment creation data is `bytecode || abi.encode(constructor(address minter_))`; do not omit the constructor argument.
 - The canister reads ledger metadata `icrc1:decimals` and calls `mintForAsset`.
 - The same `chain_id`, `canister_id`, and `decimals` reproduce the same token address.
+- EIP-3009 domain is `name`, `version = "1"`, `chainId`, and token address.
 - `WrappedAssetToken.burn` and `burnFrom` are disabled; unwrap burns go through `WrapTokenFactory.burnFromAsset`.
 - Treat `minter` as a trusted supply boundary with the same severity as the EVM canister.
 
@@ -27,7 +29,7 @@ This directory contains the minimal EVM-side implementation for deterministic wr
 ```bash
 cd tools/wrapper-vite/contracts
 forge build
-forge test -vv
+forge test --offline
 ```
 
-CI should run `forge build` and `forge test`, covering `predictTokenAddress(bytes,uint8)`, `mintForAsset`, and `burnFromAsset` compatibility.
+CI should run `forge build` and `forge test --offline`, covering `predictTokenAddress(bytes,uint8)`, `mintForAsset`, `burnFromAsset`, and EIP-3009 authorization compatibility.

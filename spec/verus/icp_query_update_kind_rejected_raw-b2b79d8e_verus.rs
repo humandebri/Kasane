@@ -1,0 +1,5 @@
+# verus target: crates/verified-core/src/kasane_precompiles/icp_query_update_kind_rejected.rs
+
+- verified_subject: implementation
+- contract_hash: 4c0815677d8f2031095adf41352b727e050382070d4ccb0a7deb6bb84503a233
+- semantic_hash: 6e7b58d53556be54b78b78eb2c4cabf411ac248b1b283651a5872f192a42bf48

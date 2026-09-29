@@ -317,7 +317,7 @@ fn placeholder_hash(raw: &[u8]) -> [u8; TX_ID_LEN] {
     const FNV_OFFSET: u64 = 0xcbf29ce484222325;
     const FNV_PRIME: u64 = 0x100000001b3;
     let mut out = [0u8; TX_ID_LEN];
-    for (i, chunk) in out.chunks_exact_mut(8).enumerate() {
+    for (i, chunk) in out.as_chunks_mut::<8>().0.iter_mut().enumerate() {
         let mut hash = FNV_OFFSET.wrapping_add(i as u64);
         for b in raw {
             hash ^= *b as u64;
@@ -619,7 +619,21 @@ fn len_to_u32(len: usize) -> Option<u32> {
 
 #[cfg(test)]
 mod tests {
-    use super::{stored_tx_id, StoredTx, StoredTxBytes, StoredTxError, TxId, TxKind};
+    use super::{
+        placeholder_hash, stored_tx_id, StoredTx, StoredTxBytes, StoredTxError, TxId, TxKind,
+    };
+
+    #[test]
+    fn decode_failure_placeholder_hash_keeps_existing_bytes() {
+        assert_eq!(
+            placeholder_hash(b"abc"),
+            [
+                0xe7, 0x1f, 0xa2, 0x19, 0x05, 0x41, 0x57, 0x4b, 0x00, 0x43, 0x15, 0x19, 0x13, 0x41,
+                0x65, 0xf2, 0xf5, 0xd9, 0x04, 0x19, 0x0c, 0xdc, 0x49, 0x89, 0x12, 0x61, 0x6f, 0x19,
+                0x1d, 0xbd, 0xc0, 0x98,
+            ]
+        );
+    }
 
     #[test]
     fn eth_signed_allows_caller_principal_metadata() {

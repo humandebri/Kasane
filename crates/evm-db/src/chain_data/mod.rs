@@ -38,6 +38,7 @@ pub use constants::{
 pub use dropped_ring::{DroppedRingStateV1, DROPPED_RING_STATE_SIZE_U32};
 pub use icp_update_request::{
     IcpUpdateDispatchRequest, IcpUpdateRequestStatus, ICP_UPDATE_DECODE_FAILURE_CODE,
+    MAX_ICP_UPDATE_REQUESTS,
 };
 pub use internal_trace::{
     InternalTrace, InternalTraceActionKind, InternalTraceSet, MAX_INTERNAL_TRACES_PER_TX_U32,
@@ -70,7 +71,7 @@ pub use state_root_ops::{
 pub use tx::{
     StoredTx, StoredTxBytes, StoredTxBytesError, StoredTxError, TxId, TxIndexEntry, TxKind,
 };
-pub use tx_loc::{TxLoc, TxLocKind};
+pub use tx_loc::{PrunedMarkerBlockKey, TxLoc, TxLocKind};
 pub use unwrap_request::{UnwrapDispatchRequest, UnwrapRequestStatus, UNWRAP_DECODE_FAILURE_CODE};
 pub use wrap_request::{
     FeePolicyStored, MintSubmitStatus, RequestStatus, WrapEvmConfigStored, WrapPendingSubmission,

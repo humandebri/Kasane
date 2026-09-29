@@ -30,58 +30,97 @@ require_contains() {
   fi
 }
 
+require_specgen_status_pass() {
+  local target="$1"
+  specgen status "${target}" --check >/dev/null
+}
+
+target_file_for_slug() {
+  case "$1" in
+    compact_icp_query_input_safe_raw-8605da94)
+      echo "crates/verified-core/src/kasane_precompiles/compact_icp_query_input.rs"
+      ;;
+    icp_query_update_kind_rejected_raw-b2b79d8e)
+      echo "crates/verified-core/src/kasane_precompiles/icp_query_update_kind_rejected.rs"
+      ;;
+    icp_query_gas_observation_safe_raw-9b7ab62f)
+      echo "crates/verified-core/src/kasane_precompiles/icp_query_gas_observation.rs"
+      ;;
+    icp_precompile_allowlist_entry_safe_raw-0ba30703)
+      echo "crates/verified-core/src/kasane_precompiles/icp_precompile_allowlist_entry.rs"
+      ;;
+    icp_query_execution_gate_safe_raw-c8c66378)
+      echo "crates/verified-core/src/kasane_precompiles/icp_query_execution_gate.rs"
+      ;;
+    icp_update_status_consumes_capacity_raw-882a4379)
+      echo "crates/verified-core/src/kasane_precompiles/icp_update_status_consumes_capacity.rs"
+      ;;
+    icp_update_capacity_accepts_raw-9d22db3f)
+      echo "crates/verified-core/src/kasane_precompiles/icp_update_capacity_accepts.rs"
+      ;;
+    *)
+      fail "unknown specgen target: $1"
+      ;;
+  esac
+}
+
 check_specgen_targets() {
   local targets=(
-    "compact_icp_query_input_safe_raw-8482ca59"
-    "icp_query_update_kind_rejected_raw-4de9db5f"
-    "icp_query_gas_observation_safe_raw-ae357da2"
-    "icp_precompile_allowlist_entry_safe_raw-744d724a"
+    "compact_icp_query_input_safe_raw-8605da94"
+    "icp_query_update_kind_rejected_raw-b2b79d8e"
+    "icp_query_gas_observation_safe_raw-9b7ab62f"
+    "icp_precompile_allowlist_entry_safe_raw-0ba30703"
     "icp_query_execution_gate_safe_raw-c8c66378"
+    "icp_update_status_consumes_capacity_raw-882a4379"
+    "icp_update_capacity_accepts_raw-9d22db3f"
   )
 
-  log "check specgen targets and accepted specs"
+  log "check specgen targets, accepted specs, and status"
   require_file "spec/targets.toml"
 
   local target
   for target in "${targets[@]}"; do
+    local target_file
+    target_file="$(target_file_for_slug "${target}")"
     require_contains "spec/targets.toml" "slug = \"${target}\""
+    require_contains "spec/targets.toml" "file = \"${target_file}\""
     require_file "spec/accepted/${target}.json"
+    require_file "spec/accepted/${target}.md"
     require_contains "spec/accepted/${target}.json" "\"slug\": \"${target}\""
+    require_contains "spec/accepted/${target}.json" "\"file\": \"${target_file}\""
+    require_specgen_status_pass "${target}"
   done
 }
 
-check_specgen_test_evidence() {
-  local evidence=(
-    "spec/reports/compact_icp_query_input_safe_raw-8482ca59_tests.json"
-    "spec/reports/icp_query_update_kind_rejected_raw-4de9db5f_tests.json"
-    "spec/reports/icp_precompile_allowlist_entry_safe_raw-744d724a_tests.json"
-    "spec/reports/icp_query_execution_gate_safe_raw-c8c66378_tests.json"
+check_specgen_verify_evidence() {
+  local targets=(
+    "compact_icp_query_input_safe_raw-8605da94"
+    "icp_query_update_kind_rejected_raw-b2b79d8e"
+    "icp_query_gas_observation_safe_raw-9b7ab62f"
+    "icp_precompile_allowlist_entry_safe_raw-0ba30703"
+    "icp_query_execution_gate_safe_raw-c8c66378"
+    "icp_update_status_consumes_capacity_raw-882a4379"
+    "icp_update_capacity_accepts_raw-9d22db3f"
   )
 
-  log "check generated specgen test evidence"
-  local report
-  for report in "${evidence[@]}"; do
+  log "check generated Verus evidence"
+  local target
+  for target in "${targets[@]}"; do
+    local report="spec/reports/${target}_verify.json"
     require_file "${report}"
+    require_contains "${report}" "\"slug\": \"${target}\""
+    require_contains "${report}" "\"semantic_hash\":"
+    require_contains "${report}" "\"source_hash\":"
+    require_contains "${report}" "\"spec_hash\":"
+    require_contains "${report}" "\"target_hash\":"
+    require_contains "${report}" "\"contract_hash\":"
     require_contains "${report}" "\"result\": \"success\""
   done
 }
 
-check_specgen_gate_report() {
-  local report="spec/reports/pr81-verification-report.md"
-
-  log "check specgen diagnostic report"
-  require_file "${report}"
-  require_contains "${report}" "- check_result: fail"
-  require_contains "${report}" "## missing targets"
-  require_contains "${report}" "icp_query_gas_observation_safe_raw-ae357da2"
-  require_contains "${report}" "missing_test_evidence_report"
-  require_contains "${report}" "missing_verify_report"
-}
-
 check_specgen_artifacts() {
   check_specgen_targets
-  check_specgen_test_evidence
-  check_specgen_gate_report
+  check_specgen_verify_evidence
 }
 
 check_bidi_controls() {

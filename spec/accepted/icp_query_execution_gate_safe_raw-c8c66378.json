@@ -1,21 +1,14 @@
 {
   "target": "icp_query_execution_gate_safe_raw",
-  "target_id": "f7b096ac5b912da84f00049b8483481de5b1ef0d23118850cf2547d11f5f0520",
+  "target_id": "78c16d31052891681bada494ed712db02c1137334a956d56701448bbb8b3128c",
   "slug": "icp_query_execution_gate_safe_raw-c8c66378",
-  "file": "crates/verified-core/src/wrap_precompile.rs",
+  "file": "crates/verified-core/src/kasane_precompiles/icp_query_execution_gate.rs",
   "function": "icp_query_execution_gate_safe_raw",
-  "git_commit": "f4f6f494d8be02b8375b85c1b1cfb768376f6dff",
+  "git_commit": "f729c2428c68299f1a634727e49b65353152eca4",
   "worktree_dirty": false,
-  "source_hash": "c8c66378a334edaa890f62987b18dc9d89116acd795898f195e2b891ee1710f3",
-  "semantic_hash": "8204207021ba904b1a7feb073aba9a6903f7674a6a197baa080817f53f3cca1a",
-  "dependency_hash_inputs": [
-    {
-      "kind": "use",
-      "name": "cfg",
-      "file": "crates/verified-core/src/wrap_precompile.rs",
-      "hash": "a5eb4157d5d32303032e3dc786e34f004ebe17f0ff1bb26f90ac9eb42478596c"
-    }
-  ],
+  "source_hash": "00539863baab084e7c759e715f0cd42e59912c7c19a6b11a0987c2d0cf76d87d",
+  "semantic_hash": "2a9ae3be7dfcedf7699685969c4eeb445ff6215daaf16e4b28701ca9c3d2a63e",
+  "dependency_hash_inputs": [],
   "unresolved_dependencies": [],
   "spec_source_of_truth": "accepted_json",
   "tool_version": "0.1.0",
@@ -31,16 +24,16 @@
   "test_evidence": [
     {
       "scenario_id": "icp_query_execution_gate_safe_raw-nominal",
-      "command": "cargo test -p ic-evm-core wrap_precompile_query",
+      "command": "cargo test -p ic-evm-core icp_query_precompile",
       "test_name": "async resolver success/error, sync ExternalQuery failure, and value rejection tests",
-      "recorded_at": "2026-05-22T07:18:33Z"
+      "recorded_at": "2026-06-19T00:00:00Z"
     }
   ],
   "risk_level": "medium",
   "verified_subject": "implementation",
   "contract_hash": "1a8be935b0cb6f718b9a43789f66c2e5618caea84cddf06dd190d47094f50956",
   "applied_contract_hash": "1a8be935b0cb6f718b9a43789f66c2e5618caea84cddf06dd190d47094f50956",
-  "applied_at": "2026-05-22T07:25:00Z",
+  "applied_at": "2026-06-19T05:12:00Z",
   "panic_behavior": "documented",
   "overflow_behavior": "documented",
   "rejected_behaviors": [],

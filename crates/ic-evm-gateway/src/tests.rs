@@ -713,6 +713,20 @@ fn test_icp_update_request(
     }
 }
 
+fn assert_icp_update_active_count_matches_scan() {
+    with_state(|state| {
+        let active = state
+            .icp_update_requests
+            .iter()
+            .filter(|entry| entry.value().status.consumes_capacity())
+            .count();
+        assert_eq!(
+            *state.icp_update_active_count.get(),
+            u64::try_from(active).expect("active count fits u64")
+        );
+    });
+}
+
 #[test]
 fn parse_submit_ic_tx_args_rejects_value_out_of_range() {
     let too_large = Nat::from_str(
@@ -1420,6 +1434,48 @@ fn settle_submitted_wrap_mint_receipts_updates_terminal_status() {
 }
 
 #[test]
+fn settle_dropped_wrap_mint_allows_refund_without_requeue() {
+    for v3_active in [false, true] {
+        init_stable_state();
+        evm_db::meta::set_tx_locs_v3_active(v3_active);
+        let request_id = TxId([0xd1; 32]);
+        let mint_tx_id = TxId([0xd2; 32]);
+        let mut req = sample_wrap_request(RequestStatus::Running);
+        req.result.stage = WrapRequestStage::MintSubmitted;
+        req.result.mint_submit_status = MintSubmitStatus::Submitted;
+        req.result.mint_tx_id = Some(mint_tx_id.0.to_vec());
+        req.result.pull_ledger_tx_id = Some(vec![1]);
+        req.result.updated_at = 1;
+        with_state_mut(|state| {
+            state.wrap_requests.insert(request_id, req);
+            let loc = TxLoc::dropped(evm_db::chain_data::constants::DROP_CODE_INVALID_FEE);
+            if v3_active {
+                state.tx_locs_v3.insert(mint_tx_id, loc);
+            } else {
+                state.tx_locs.insert(mint_tx_id, loc);
+            }
+        });
+
+        assert!(chain::get_receipt(&mint_tx_id).is_none());
+        let now = super::STALE_OPERATION_NANOS + 2;
+        super::repair_stale_operations(now);
+
+        with_state(|state| {
+            let req = state.wrap_requests.get(&request_id).expect("request");
+            assert_eq!(req.result.status, RequestStatus::Failed);
+            assert_eq!(req.result.stage, WrapRequestStage::Failed);
+            assert!(req.result.mint_failed_recoverable);
+            assert_eq!(req.result.error_code.as_deref(), Some("wrap.mint_dropped"));
+            assert_eq!(req.result.pull_ledger_tx_id, Some(vec![1]));
+            assert_eq!(req.result.mint_tx_id, Some(mint_tx_id.0.to_vec()));
+            assert_eq!(req.result.updated_at, now);
+            assert!(state.wrap_queue.is_empty());
+        });
+        assert_eq!(super::settle_submitted_wrap_mint_receipts(now + 1), 0);
+    }
+}
+
+#[test]
 fn repair_stale_operations_does_not_succeed_submitted_mint_without_receipt() {
     init_stable_state();
     let request_id = TxId([0x86u8; 32]);
@@ -1507,6 +1563,103 @@ fn finalize_unwrap_dispatch_attempt_keeps_terminal_failure_out_of_queue() {
         );
         assert_eq!(req.updated_at, 555);
         assert_eq!(state.unwrap_dispatch_queue.len(), 0);
+    });
+}
+
+#[test]
+fn nat_to_be_bytes_keeps_zero_as_single_byte() {
+    assert_eq!(super::nat_to_be_bytes(&Nat::from(0u8)), vec![0]);
+    assert_eq!(super::nat_to_be_bytes(&Nat::from(1u8)), vec![1]);
+}
+
+#[test]
+fn finalize_unwrap_dispatch_attempt_stores_success_ledger_tx_id() {
+    init_stable_state();
+    let request_id = TxId([0x67u8; 32]);
+    with_state_mut(|state| {
+        state.unwrap_requests.insert(
+            request_id,
+            sample_unwrap_request(UnwrapRequestStatus::Dispatching, None, 1),
+        );
+    });
+
+    super::finalize_unwrap_dispatch_attempt(
+        request_id,
+        666,
+        super::AppliedUnwrapDispatchOutcome {
+            status: UnwrapRequestStatus::Dispatched,
+            ledger_tx_id: Some(vec![0]),
+            error_code: None,
+        },
+    );
+
+    with_state(|state| {
+        let req = state.unwrap_requests.get(&request_id).expect("request");
+        assert_eq!(req.status, UnwrapRequestStatus::Dispatched);
+        assert_eq!(req.ledger_tx_id, Some(vec![0]));
+        assert_eq!(req.updated_at, 666);
+    });
+}
+
+#[test]
+fn finalize_unwrap_dispatch_attempt_traps_dispatched_without_ledger_tx_id() {
+    init_stable_state();
+    let request_id = TxId([0x68u8; 32]);
+    with_state_mut(|state| {
+        state.unwrap_requests.insert(
+            request_id,
+            sample_unwrap_request(UnwrapRequestStatus::Dispatching, None, 1),
+        );
+    });
+
+    let result = catch_unwind(AssertUnwindSafe(|| {
+        super::finalize_unwrap_dispatch_attempt(
+            request_id,
+            777,
+            super::AppliedUnwrapDispatchOutcome {
+                status: UnwrapRequestStatus::Dispatched,
+                ledger_tx_id: None,
+                error_code: None,
+            },
+        );
+    }));
+
+    assert!(result.is_err());
+    with_state(|state| {
+        let req = state.unwrap_requests.get(&request_id).expect("request");
+        assert_eq!(req.status, UnwrapRequestStatus::Dispatching);
+        assert_eq!(req.ledger_tx_id, None);
+    });
+}
+
+#[test]
+fn finalize_unwrap_dispatch_attempt_traps_dispatched_with_invalid_ledger_tx_id() {
+    init_stable_state();
+    let request_id = TxId([0x69u8; 32]);
+    with_state_mut(|state| {
+        state.unwrap_requests.insert(
+            request_id,
+            sample_unwrap_request(UnwrapRequestStatus::Dispatching, None, 1),
+        );
+    });
+
+    let result = catch_unwind(AssertUnwindSafe(|| {
+        super::finalize_unwrap_dispatch_attempt(
+            request_id,
+            888,
+            super::AppliedUnwrapDispatchOutcome {
+                status: UnwrapRequestStatus::Dispatched,
+                ledger_tx_id: Some(Vec::new()),
+                error_code: None,
+            },
+        );
+    }));
+
+    assert!(result.is_err());
+    with_state(|state| {
+        let req = state.unwrap_requests.get(&request_id).expect("request");
+        assert_eq!(req.status, UnwrapRequestStatus::Dispatching);
+        assert_eq!(req.ledger_tx_id, None);
     });
 }
 
@@ -2214,8 +2367,8 @@ fn quote_wrap_request_allowed_asset_uses_floor_when_fee_sample_missing() {
     })
     .expect("quote should use floor without fee sample");
 
-    assert_eq!(out.charged_gas_price_wei, Nat::from(180_000_000_000u128));
-    assert_eq!(out.charged_fee_e8s, Nat::from(1_378_000u128));
+    assert_eq!(out.charged_gas_price_wei, Nat::from(300_000_000_000u128));
+    assert_eq!(out.charged_fee_e8s, Nat::from(1_630_000u128));
     assert_eq!(out.cycle_fee_e8s, 1_000_000);
     assert_eq!(out.fee_ledger_canister, fee_ledger);
 }
@@ -2817,6 +2970,85 @@ fn apply_post_upgrade_migrations_resyncs_gas_limit_and_fee_floors_only() {
 }
 
 #[test]
+fn apply_post_upgrade_migrations_rebuilds_icp_update_active_count() {
+    init_stable_state();
+    let current = evm_db::meta::current_schema_version();
+    with_state_mut(|state| {
+        for (idx, status) in [
+            IcpUpdateRequestStatus::Queued,
+            IcpUpdateRequestStatus::Dispatching,
+            IcpUpdateRequestStatus::Dispatched,
+            IcpUpdateRequestStatus::DispatchFailed,
+            IcpUpdateRequestStatus::DispatchUncertain,
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let mut raw = [0x39u8; 32];
+            raw[24..32].copy_from_slice(&(idx as u64).to_be_bytes());
+            let request_id = TxId(raw);
+            state.icp_update_requests.insert(
+                request_id,
+                test_icp_update_request(request_id, vec![1], "write_state", status),
+            );
+        }
+        state.icp_update_active_count.set(0);
+    });
+    let mut meta = evm_db::meta::Meta::new();
+    meta.schema_version = current.saturating_sub(1);
+    meta.last_migration_from = meta.schema_version;
+    meta.last_migration_to = meta.schema_version;
+    evm_db::meta::set_meta(meta);
+
+    super::apply_post_upgrade_migrations();
+    run_post_upgrade_migrations_until_settled();
+
+    with_state(|state| {
+        assert_eq!(*state.icp_update_active_count.get(), 2);
+    });
+    assert_icp_update_active_count_matches_scan();
+    let meta = evm_db::meta::get_meta();
+    assert_eq!(meta.schema_version, current);
+    assert!(!meta.needs_migration);
+}
+
+#[test]
+fn apply_post_upgrade_migrations_moves_tx_locs_before_enabling_v3() {
+    init_stable_state();
+    let current = evm_db::meta::current_schema_version();
+    // 512件の移行バッチを超え、v3切り替え前の途中状態も検証する。
+    let tx_ids = (0u64..513)
+        .map(|index| {
+            let mut bytes = [0x4au8; 32];
+            bytes[24..].copy_from_slice(&index.to_be_bytes());
+            TxId(bytes)
+        })
+        .collect::<Vec<_>>();
+    with_state_mut(|state| {
+        for tx_id in &tx_ids {
+            state.tx_locs.insert(*tx_id, TxLoc::included(7, 0));
+        }
+    });
+    let mut meta = evm_db::meta::Meta::new();
+    meta.schema_version = current.saturating_sub(1);
+    meta.last_migration_from = meta.schema_version;
+    meta.last_migration_to = meta.schema_version;
+    evm_db::meta::set_meta(meta);
+
+    super::apply_post_upgrade_migrations();
+
+    assert!(!evm_db::meta::tx_locs_v3_active());
+    with_state(|state| assert_eq!(state.tx_locs_v3.len(), 512));
+    run_post_upgrade_migrations_until_settled();
+    assert!(evm_db::meta::tx_locs_v3_active());
+    with_state(|state| {
+        for tx_id in &tx_ids {
+            assert_eq!(state.tx_locs_v3.get(tx_id), Some(TxLoc::included(7, 0)));
+        }
+    });
+}
+
+#[test]
 fn apply_post_upgrade_migrations_resyncs_any_stale_floor_values() {
     init_stable_state();
     let current = evm_db::meta::current_schema_version();
@@ -2868,6 +3100,47 @@ fn set_prune_policy_rejects_non_positive_max_ops() {
     };
     let err = validate_prune_policy_input(&policy).expect_err("max ops must be positive");
     assert_eq!(err, "input.prune.max_ops_per_tick.non_positive");
+}
+
+#[test]
+fn set_prune_policy_rejects_invalid_bounds() {
+    init_stable_state();
+    let valid = PrunePolicyView {
+        target_bytes: 1,
+        retain_days: 1,
+        retain_blocks: 0,
+        headroom_ratio_bps: 2000,
+        hard_emergency_ratio_bps: 9500,
+        max_ops_per_tick: super::MIN_PRUNE_MAX_OPS_PER_TICK,
+    };
+
+    let mut policy = valid.clone();
+    policy.target_bytes = 0;
+    assert_eq!(
+        validate_prune_policy_input(&policy).expect_err("target must be set"),
+        "input.prune.target_bytes.zero"
+    );
+
+    let mut policy = valid.clone();
+    policy.retain_days = 0;
+    assert_eq!(
+        validate_prune_policy_input(&policy).expect_err("retention must be set"),
+        "input.prune.retention.empty"
+    );
+
+    let mut policy = valid.clone();
+    policy.headroom_ratio_bps = 10_001;
+    assert_eq!(
+        validate_prune_policy_input(&policy).expect_err("ratio must be bounded"),
+        "input.prune.ratio.out_of_range"
+    );
+
+    let mut policy = valid;
+    policy.headroom_ratio_bps = policy.hard_emergency_ratio_bps;
+    assert_eq!(
+        validate_prune_policy_input(&policy).expect_err("ratio order must hold"),
+        "input.prune.ratio.order"
+    );
 }
 
 #[test]
@@ -3858,7 +4131,9 @@ fn record_icp_update_requests_from_block_stores_update_intent_logs() {
         assert_eq!(req.ic_caller, Some(caller_principal.as_slice().to_vec()));
         assert_eq!(req.status, IcpUpdateRequestStatus::Queued);
         assert_eq!(state.icp_update_dispatch_queue.len(), 1);
+        assert_eq!(*state.icp_update_active_count.get(), 1);
     });
+    assert_icp_update_active_count_matches_scan();
 }
 
 #[test]
@@ -3932,7 +4207,9 @@ fn record_icp_update_requests_from_block_recovers_eth_signed_sender() {
         assert_eq!(req.evm_sender, expected_sender);
         assert_eq!(req.ic_caller, None);
         assert_eq!(req.status, IcpUpdateRequestStatus::Queued);
+        assert_eq!(*state.icp_update_active_count.get(), 1);
     });
+    assert_icp_update_active_count_matches_scan();
 }
 
 #[test]
@@ -3953,6 +4230,7 @@ fn pop_next_icp_update_request_marks_dispatching() {
         let seq = meta.push();
         state.icp_update_dispatch_meta.set(meta);
         state.icp_update_dispatch_queue.insert(seq, request_id);
+        super::rebuild_icp_update_active_count(state);
     });
 
     let popped = pop_next_icp_update_request(99)
@@ -3966,7 +4244,76 @@ fn pop_next_icp_update_request_marks_dispatching() {
         assert_eq!(stored.status, IcpUpdateRequestStatus::Dispatching);
         assert_eq!(stored.call_started_at_time, 99);
         assert!(state.icp_update_dispatch_queue.is_empty());
+        assert_eq!(*state.icp_update_active_count.get(), 1);
     });
+    assert_icp_update_active_count_matches_scan();
+}
+
+#[test]
+fn pop_next_icp_update_request_quarantines_decode_failure_and_decrements_active_count() {
+    init_stable_state();
+    let request_id = TxId([0x36u8; 32]);
+    with_state_mut(|state| {
+        let mut req = test_icp_update_request(
+            request_id,
+            vec![1, 2, 3],
+            "write_state",
+            IcpUpdateRequestStatus::Queued,
+        );
+        req.error_code = Some(evm_db::chain_data::ICP_UPDATE_DECODE_FAILURE_CODE.to_string());
+        state.icp_update_requests.insert(request_id, req);
+        let mut meta = *state.icp_update_dispatch_meta.get();
+        let seq = meta.push();
+        state.icp_update_dispatch_meta.set(meta);
+        state.icp_update_dispatch_queue.insert(seq, request_id);
+        super::rebuild_icp_update_active_count(state);
+    });
+
+    let err = pop_next_icp_update_request(99).expect_err("decode marker is quarantined");
+
+    assert!(err.contains("ic_update.dispatch.quarantined"));
+    with_state(|state| {
+        let stored = state.icp_update_requests.get(&request_id).expect("stored");
+        assert_eq!(stored.status, IcpUpdateRequestStatus::DispatchFailed);
+        assert_eq!(*state.icp_update_active_count.get(), 0);
+    });
+    assert_icp_update_active_count_matches_scan();
+}
+
+#[test]
+fn finalize_icp_update_dispatch_attempt_decrements_active_count() {
+    init_stable_state();
+    let request_id = TxId([0x37u8; 32]);
+    with_state_mut(|state| {
+        state.icp_update_requests.insert(
+            request_id,
+            test_icp_update_request(
+                request_id,
+                vec![1, 2, 3],
+                "write_state",
+                IcpUpdateRequestStatus::Dispatching,
+            ),
+        );
+        super::rebuild_icp_update_active_count(state);
+    });
+
+    super::finalize_icp_update_dispatch_attempt(
+        request_id,
+        123,
+        super::AppliedIcpUpdateDispatchOutcome {
+            status: IcpUpdateRequestStatus::Dispatched,
+            reply: Some(vec![0xaa]),
+            error_code: None,
+        },
+    );
+
+    with_state(|state| {
+        let stored = state.icp_update_requests.get(&request_id).expect("stored");
+        assert_eq!(stored.status, IcpUpdateRequestStatus::Dispatched);
+        assert_eq!(stored.reply, Some(vec![0xaa]));
+        assert_eq!(*state.icp_update_active_count.get(), 0);
+    });
+    assert_icp_update_active_count_matches_scan();
 }
 
 #[test]
@@ -4138,6 +4485,121 @@ fn get_icp_update_request_returns_dispatch_result() {
 }
 
 #[test]
+fn resolve_icp_update_request_records_manual_dispatch_success() {
+    init_stable_state();
+    let request_id = TxId([0x67u8; 32]);
+    with_state_mut(|state| {
+        state.icp_update_requests.insert(
+            request_id,
+            test_icp_update_request(
+                request_id,
+                vec![1],
+                "write_state",
+                IcpUpdateRequestStatus::DispatchUncertain,
+            ),
+        );
+        super::rebuild_icp_update_active_count(state);
+    });
+
+    let view = super::resolve_icp_update_request_internal(
+        request_id,
+        super::IcpUpdateResolutionView::Dispatched {
+            reply: Some(vec![0xab]),
+        },
+        777,
+    )
+    .expect("manual resolution");
+
+    assert_eq!(view.status, super::RequestDispatchStatusView::Dispatched);
+    assert_eq!(view.reply, Some(vec![0xab]));
+    assert_eq!(view.error, None);
+    assert_eq!(view.updated_at, 777);
+    with_state(|state| {
+        let stored = state.icp_update_requests.get(&request_id).expect("stored");
+        assert_eq!(stored.status, IcpUpdateRequestStatus::Dispatched);
+        assert_eq!(*state.icp_update_active_count.get(), 0);
+    });
+    assert_icp_update_active_count_matches_scan();
+}
+
+#[test]
+fn resolve_icp_update_request_records_manual_failure() {
+    init_stable_state();
+    let request_id = TxId([0x68u8; 32]);
+    with_state_mut(|state| {
+        state.icp_update_requests.insert(
+            request_id,
+            test_icp_update_request(
+                request_id,
+                vec![1],
+                "write_state",
+                IcpUpdateRequestStatus::DispatchFailed,
+            ),
+        );
+        super::rebuild_icp_update_active_count(state);
+    });
+
+    let view = super::resolve_icp_update_request_internal(
+        request_id,
+        super::IcpUpdateResolutionView::Failed {
+            error: "operator.confirmed_failed".to_string(),
+        },
+        778,
+    )
+    .expect("manual failure");
+
+    assert_eq!(
+        view.status,
+        super::RequestDispatchStatusView::DispatchFailed
+    );
+    assert_eq!(view.reply, None);
+    assert_eq!(view.error, Some("operator.confirmed_failed".to_string()));
+    assert_eq!(view.updated_at, 778);
+}
+
+#[test]
+fn resolve_icp_update_request_rejects_non_terminal_or_large_reply() {
+    init_stable_state();
+    let request_id = TxId([0x69u8; 32]);
+    with_state_mut(|state| {
+        state.icp_update_requests.insert(
+            request_id,
+            test_icp_update_request(
+                request_id,
+                vec![1],
+                "write_state",
+                IcpUpdateRequestStatus::Queued,
+            ),
+        );
+        super::rebuild_icp_update_active_count(state);
+    });
+
+    let err = super::resolve_icp_update_request_internal(
+        request_id,
+        super::IcpUpdateResolutionView::Dispatched { reply: None },
+        779,
+    )
+    .expect_err("queued request is not manually resolvable");
+    assert_eq!(super::api_error_code(err), "request.status_not_resolvable");
+
+    with_state_mut(|state| {
+        let mut req = state.icp_update_requests.get(&request_id).expect("stored");
+        req.status = IcpUpdateRequestStatus::DispatchUncertain;
+        state.icp_update_requests.insert(request_id, req);
+        super::rebuild_icp_update_active_count(state);
+    });
+    let err = super::resolve_icp_update_request_internal(
+        request_id,
+        super::IcpUpdateResolutionView::Dispatched {
+            reply: Some(vec![0u8; MAX_RETURN_DATA + 1]),
+        },
+        780,
+    )
+    .expect_err("large reply is rejected");
+    assert_eq!(super::api_error_code(err), "arg.reply_too_large");
+}
+
+#[test]
 fn trim_icp_update_requests_removes_oldest_completed_only() {
     init_stable_state();
     with_state_mut(|state| {
@@ -4164,6 +4626,7 @@ fn trim_icp_update_requests_removes_oldest_completed_only() {
             req.updated_at = idx as u64;
             state.icp_update_requests.insert(request_id, req);
         }
+        super::rebuild_icp_update_active_count(state);
 
         super::trim_icp_update_requests(state);
 
@@ -4175,7 +4638,99 @@ fn trim_icp_update_requests_removes_oldest_completed_only() {
         let mut oldest = [0x62u8; 32];
         oldest[24..32].copy_from_slice(&0u64.to_be_bytes());
         assert!(state.icp_update_requests.get(&TxId(oldest)).is_none());
+        assert_eq!(*state.icp_update_active_count.get(), 1);
     });
+    assert_icp_update_active_count_matches_scan();
+}
+
+#[test]
+fn record_icp_update_requests_from_block_prunes_terminal_history_at_full_capacity() {
+    init_stable_state();
+    let tx_id = TxId([0x65u8; 32]);
+    let target = Principal::self_authenticating(b"update-target");
+    let caller_principal = Principal::self_authenticating(b"update-caller");
+    let caller_evm = [0x33u8; 20];
+    let method = "write_state";
+    let arg = vec![0x44, 0x49, 0x44, 0x4c];
+    with_state_mut(|state| {
+        for idx in 0..super::MAX_ICP_UPDATE_REQUESTS {
+            let idx_u64 = u64::try_from(idx).expect("test index fits u64");
+            let mut raw = [0x66u8; 32];
+            raw[24..32].copy_from_slice(&idx_u64.to_be_bytes());
+            let request_id = TxId(raw);
+            let mut req = test_icp_update_request(
+                request_id,
+                vec![2],
+                "write_state",
+                IcpUpdateRequestStatus::Dispatched,
+            );
+            req.updated_at = idx_u64;
+            state.icp_update_requests.insert(request_id, req);
+        }
+
+        let raw = encode_ic_synthetic_input(&IcSyntheticTxInput {
+            to: Some([0x44u8; 20]),
+            value: [0u8; 32],
+            gas_limit: 100_000,
+            nonce: 0,
+            max_fee_per_gas: 1,
+            max_priority_fee_per_gas: 1,
+            data: Vec::new(),
+        });
+        state.tx_store.insert(
+            tx_id,
+            StoredTxBytes::new_with_fees(
+                tx_id,
+                TxKind::IcSynthetic,
+                raw,
+                Some(caller_evm),
+                vec![0xa1],
+                caller_principal.as_slice().to_vec(),
+                1,
+                1,
+                true,
+            ),
+        );
+        let receipt = ReceiptLike {
+            tx_id,
+            block_number: 10,
+            tx_index: 0,
+            status: 1,
+            gas_used: 1,
+            effective_gas_price: 1,
+            l1_data_fee: 0,
+            operator_fee: 0,
+            total_fee: 0,
+            return_data_hash: [0u8; 32],
+            return_data: Vec::new(),
+            contract_address: None,
+            logs: vec![log_entry_from_parts(
+                ICP_UPDATE_INTENT_PRECOMPILE_ADDRESS.into_array(),
+                vec![hash::keccak256(b"KasaneIcpUpdateIntent(bytes)")],
+                icp_update_log_data(target.as_slice(), method, &arg),
+            )],
+        };
+        let ptr = state
+            .blob_store
+            .store_bytes(receipt.to_bytes().as_ref())
+            .expect("store receipt");
+        state.receipts.insert(tx_id, ptr);
+    });
+
+    super::record_icp_update_requests_from_block(&[tx_id]);
+
+    let request_id = super::derive_log_request_id(&tx_id, 0).expect("request id");
+    let max_entries = u64::try_from(super::MAX_ICP_UPDATE_REQUESTS).expect("max fits u64");
+    let mut oldest = [0x66u8; 32];
+    oldest[24..32].copy_from_slice(&0u64.to_be_bytes());
+    with_state(|state| {
+        assert_eq!(state.icp_update_requests.len(), max_entries);
+        assert!(state.icp_update_requests.get(&request_id).is_some());
+        assert!(state.icp_update_requests.get(&TxId(oldest)).is_none());
+        assert_eq!(state.icp_update_dispatch_queue.len(), 1);
+        assert_eq!(*state.icp_update_active_count.get(), 1);
+    });
+    assert_icp_update_active_count_matches_scan();
 }
 
 #[test]
@@ -4225,6 +4780,7 @@ fn recover_icp_update_dispatch_marks_dispatching_uncertain_without_requeue() {
             req.call_started_at_time = 1;
             req
         });
+        super::rebuild_icp_update_active_count(state);
     });
 
     let needs_schedule = super::recover_icp_update_dispatch_state_after_upgrade(99);
@@ -4239,7 +4795,43 @@ fn recover_icp_update_dispatch_marks_dispatching_uncertain_without_requeue() {
             Some("ic_update.dispatch_uncertain".to_string())
         );
         assert!(state.icp_update_dispatch_queue.is_empty());
+        assert_eq!(*state.icp_update_active_count.get(), 0);
     });
+    assert_icp_update_active_count_matches_scan();
+}
+
+#[test]
+fn repair_stale_operations_marks_icp_update_dispatching_uncertain_and_decrements_active_count() {
+    init_stable_state();
+    let request_id = TxId([0x38u8; 32]);
+    with_state_mut(|state| {
+        state.icp_update_requests.insert(request_id, {
+            let mut req = test_icp_update_request(
+                request_id,
+                Principal::self_authenticating(b"update-target")
+                    .as_slice()
+                    .to_vec(),
+                "write_state",
+                IcpUpdateRequestStatus::Dispatching,
+            );
+            req.updated_at = 1;
+            req
+        });
+        super::rebuild_icp_update_active_count(state);
+    });
+
+    super::repair_stale_operations(super::STALE_OPERATION_NANOS.saturating_add(2));
+
+    with_state(|state| {
+        let stored = state.icp_update_requests.get(&request_id).expect("stored");
+        assert_eq!(stored.status, IcpUpdateRequestStatus::DispatchUncertain);
+        assert_eq!(
+            stored.error_code,
+            Some("ic_update.dispatch_uncertain".to_string())
+        );
+        assert_eq!(*state.icp_update_active_count.get(), 0);
+    });
+    assert_icp_update_active_count_matches_scan();
 }
 
 #[test]
@@ -4805,16 +5397,19 @@ fn did_contains_dispatch_result_contract_shape() {
     assert!(did.contains("get_unwrap_dispatch_overview"));
     assert!(did.contains("DispatchUncertain"));
     assert!(did.contains("type IcpUpdateRequestView = record {"));
+    assert!(did.contains("type ResolveIcpUpdateRequestArgs = record {"));
+    assert!(did.contains("type IcpUpdateResolutionView = variant {"));
     assert!(did.contains("type IcpUpdateTxKindView = variant { EthSigned; IcSynthetic }"));
     assert!(did.contains("tx_kind : IcpUpdateTxKindView"));
     assert!(did.contains("evm_sender : blob"));
     assert!(did.contains("ic_caller : opt principal"));
     assert!(did.contains("get_icp_update_request : (blob) -> (opt IcpUpdateRequestView) query"));
+    assert!(did.contains("resolve_icp_update_request : (ResolveIcpUpdateRequestArgs) -> (Result_"));
     assert!(did.contains("get_update_precompile_allowlist : () -> (vec PrecompileAllowArgs) query"));
     assert!(did.contains("add_update_precompile_allowed_method : (PrecompileAllowArgs) -> (Result"));
     assert!(did.contains("remove_update_precompile_allowed_method : (PrecompileAllowArgs) -> ("));
     assert!(did.contains(
-        "rpc_eth_call_object_at : (RpcCallObjectView, RpcBlockTagView) -> (\n      Result_19,\n    ) composite_query"
+        "rpc_eth_call_object_at : (RpcCallObjectView, RpcBlockTagView) -> (\n      Result_"
     ));
     assert!(!did.contains("set_wrap_canister_id : (principal) -> (Result_15);"));
 }

@@ -1,0 +1,28 @@
+{
+  "properties_with_code": [
+    {
+      "property_id": "PROP-kasane-inv-016",
+      "text": "Query precompile must reject update calls.",
+      "type": "invariant",
+      "assertion": "forall p: query_precompile(p) && kind(p)==update => revert(p)",
+      "severity": "HIGH",
+      "covers": "SG-003",
+      "reachability": {
+        "classification": "external-reachable",
+        "entry_points": [
+          "eth_call",
+          "Precompile"
+        ],
+        "attacker_controlled": true,
+        "bug_bounty_scope": "in-scope"
+      },
+      "exploitability": "external-attack",
+      "_id_prefix": "PROP-kasane-inv-016",
+      "code_scope": {
+        "locations": [],
+        "resolution_status": "not_found",
+        "resolution_error": "Searched identifiers/terms: query_precompile, query precompile, Precompile, eth_call, update call, update. Resolution blocked because the batch constrained searches to src/, tests/, docs/API_STABILITY.md, and docs/OPERATIONS.md, but those paths do not exist in the working target (/Volumes/KINGSTON/ICP/Kasane) or provided target_workspace; unrelated paths such as crates/ were not inspected."
+      }
+    }
+  ]
+}

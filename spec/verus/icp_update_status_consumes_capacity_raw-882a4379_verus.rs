@@ -1,0 +1,5 @@
+# verus target: crates/verified-core/src/kasane_precompiles/icp_update_status_consumes_capacity.rs
+
+- verified_subject: implementation
+- contract_hash: 7997881f9a9363d2153a04db673f2a2eb8db1ce8d0a270d6c012711175aa1b48
+- semantic_hash: 585486a773d6673f580a18643931b5c93fa13dab28a373b24e80f8ab4367ea4a

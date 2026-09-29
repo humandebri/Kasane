@@ -2,139 +2,18 @@
 
 - base: origin/main
 - base_source: manual
-- check_result: fail
+- check_result: pass
 
-## changed functions
-- added crates/evm-core/src/chain.rs eth_call_object_async
-- modified crates/evm-core/src/revm_exec.rs execute_tx_on
-- added crates/evm-core/src/revm_exec.rs execute_tx_on_async
-- modified crates/evm-core/src/wrap_precompile.rs CTX::contains
-- modified crates/evm-core/src/wrap_precompile.rs CTX::run
-- modified crates/evm-core/src/wrap_precompile.rs CTX::warm_addresses
-- added crates/evm-core/src/wrap_precompile.rs IcpQueryExecutionContext::disabled
-- added crates/evm-core/src/wrap_precompile.rs icp_query_return
-- added crates/evm-core/src/wrap_precompile.rs parse_icp_query_input
-- added crates/evm-core/src/wrap_precompile.rs read_exact
-- added crates/evm-core/src/wrap_precompile.rs read_query_principal
-- added crates/evm-core/src/wrap_precompile.rs read_u32_be
-- added crates/evm-core/src/wrap_precompile.rs read_u8
-- added crates/evm-core/src/wrap_precompile.rs run_icp_query_precompile
-- added crates/evm-core/src/wrap_precompile.rs with_icp_query_detection
-- added crates/evm-core/src/wrap_precompile.rs with_icp_query_reply
-- added crates/evm-core/src/wrap_precompile_tests.rs encode_query_precompile_input
-- added crates/evm-core/src/wrap_precompile_tests.rs encode_query_precompile_input_raw
-- added crates/evm-core/src/wrap_precompile_tests.rs icp_query_parser_rejects_trailing_data_against_verified_model
-- added crates/evm-core/src/wrap_precompile_tests.rs icp_query_parser_rejects_truncated_arg_against_verified_model
-- added crates/evm-core/src/wrap_precompile_tests.rs icp_query_precompile_compact_input_decodes
-- added crates/evm-core/src/wrap_precompile_tests.rs icp_query_precompile_rejects_long_method
-- added crates/evm-core/src/wrap_precompile_tests.rs icp_query_precompile_rejects_update_kind
-- added crates/evm-core/tests/common/mod.rs run_ready_future
-- modified crates/evm-core/tests/wrap_precompile_query.rs build_call_input
-- added crates/evm-core/tests/wrap_precompile_query.rs build_call_input_to
-- added crates/evm-core/tests/wrap_precompile_query.rs encode_icp_query_input
-- added crates/evm-core/tests/wrap_precompile_query.rs setup_query_precompile_call_context
-- added crates/evm-core/tests/wrap_precompile_query.rs wrap_precompile_query_icp_query_precompile_async_rejects_value
-- added crates/evm-core/tests/wrap_precompile_query.rs wrap_precompile_query_icp_query_precompile_async_returns_resolver_reply
-- added crates/evm-core/tests/wrap_precompile_query.rs wrap_precompile_query_icp_query_precompile_async_reverts_on_resolver_error
-- added crates/evm-core/tests/wrap_precompile_query.rs wrap_precompile_query_icp_query_precompile_requires_async_context
-- modified crates/evm-db/src/memory.rs AppMemoryId::as_u8
-- modified crates/evm-db/src/stable_state.rs init_stable_state
-- modified crates/evm-db/tests/chain_data_memory_layout.rs chain_data_memory_ids_are_fixed
-- modified crates/evm-rpc-e2e/tests/wrap_unwrap_flow_e2e.rs integrated_gateway_native_deposit_and_withdrawal_paths_work
-- added crates/ic-evm-gateway/src/lib.rs add_query_precompile_allowed_method
-- added crates/ic-evm-gateway/src/lib.rs decode_query_precompile_allow_key
-- added crates/ic-evm-gateway/src/lib.rs get_query_precompile_allowlist
-- added crates/ic-evm-gateway/src/lib.rs is_query_precompile_allowed
-- added crates/ic-evm-gateway/src/lib.rs query_precompile_allow_key
-- added crates/ic-evm-gateway/src/lib.rs remove_query_precompile_allowed_method
-- added crates/ic-evm-gateway/src/lib.rs resolve_icp_query_precompile
-- added crates/ic-evm-gateway/src/lib.rs rpc_eth_call_object_with_query_precompile
-- added crates/ic-evm-gateway/src/lib.rs validate_query_precompile_allow_args
-- modified crates/ic-evm-gateway/src/tests.rs exec_error_to_code
-- added crates/ic-evm-gateway/src/tests.rs query_precompile_allow_args_follow_verified_model
-- added crates/ic-evm-gateway/src/tests.rs query_precompile_allow_key_decodes_valid_boundary
-- added crates/ic-evm-rpc/src/lib.rs rpc_eth_call_object_async
-- added crates/verified-core/src/wrap_precompile.rs compact_icp_query_input_safe_raw
-- added crates/verified-core/src/wrap_precompile.rs icp_precompile_allowlist_entry_safe_raw
-- added crates/verified-core/src/wrap_precompile.rs icp_query_execution_gate_safe_raw
-- added crates/verified-core/src/wrap_precompile.rs icp_query_gas_observation_safe_raw
-- added crates/verified-core/src/wrap_precompile.rs icp_query_update_kind_rejected_raw
+## verified ICP precompile targets
+- compact_icp_query_input_safe_raw-8605da94
+- icp_query_update_kind_rejected_raw-b2b79d8e
+- icp_query_gas_observation_safe_raw-9b7ab62f
+- icp_precompile_allowlist_entry_safe_raw-0ba30703
+- icp_query_execution_gate_safe_raw-c8c66378
+- icp_update_status_consumes_capacity_raw-882a4379
+- icp_update_capacity_accepts_raw-9d22db3f
 
-## missing targets
-- crates/evm-core/src/chain.rs eth_call_object_async
-- crates/evm-core/src/revm_exec.rs execute_tx_on
-- crates/evm-core/src/revm_exec.rs execute_tx_on_async
-- crates/evm-core/src/wrap_precompile.rs CTX::contains
-- crates/evm-core/src/wrap_precompile.rs CTX::run
-- crates/evm-core/src/wrap_precompile.rs CTX::warm_addresses
-- crates/evm-core/src/wrap_precompile.rs IcpQueryExecutionContext::disabled
-- crates/evm-core/src/wrap_precompile.rs icp_query_return
-- crates/evm-core/src/wrap_precompile.rs parse_icp_query_input
-- crates/evm-core/src/wrap_precompile.rs read_exact
-- crates/evm-core/src/wrap_precompile.rs read_query_principal
-- crates/evm-core/src/wrap_precompile.rs read_u32_be
-- crates/evm-core/src/wrap_precompile.rs read_u8
-- crates/evm-core/src/wrap_precompile.rs run_icp_query_precompile
-- crates/evm-core/src/wrap_precompile.rs with_icp_query_detection
-- crates/evm-core/src/wrap_precompile.rs with_icp_query_reply
-- crates/evm-core/src/wrap_precompile_tests.rs encode_query_precompile_input
-- crates/evm-core/src/wrap_precompile_tests.rs encode_query_precompile_input_raw
-- crates/evm-core/src/wrap_precompile_tests.rs icp_query_parser_rejects_trailing_data_against_verified_model
-- crates/evm-core/src/wrap_precompile_tests.rs icp_query_parser_rejects_truncated_arg_against_verified_model
-- crates/evm-core/src/wrap_precompile_tests.rs icp_query_precompile_compact_input_decodes
-- crates/evm-core/src/wrap_precompile_tests.rs icp_query_precompile_rejects_long_method
-- crates/evm-core/src/wrap_precompile_tests.rs icp_query_precompile_rejects_update_kind
-- crates/evm-db/src/memory.rs AppMemoryId::as_u8
-- crates/ic-evm-gateway/src/lib.rs add_query_precompile_allowed_method
-- crates/ic-evm-gateway/src/lib.rs decode_query_precompile_allow_key
-- crates/ic-evm-gateway/src/lib.rs get_query_precompile_allowlist
-- crates/ic-evm-gateway/src/lib.rs is_query_precompile_allowed
-- crates/ic-evm-gateway/src/lib.rs query_precompile_allow_key
-- crates/ic-evm-gateway/src/lib.rs remove_query_precompile_allowed_method
-- crates/ic-evm-gateway/src/lib.rs resolve_icp_query_precompile
-- crates/ic-evm-gateway/src/lib.rs rpc_eth_call_object_with_query_precompile
-- crates/ic-evm-gateway/src/lib.rs validate_query_precompile_allow_args
-- crates/ic-evm-rpc/src/lib.rs rpc_eth_call_object_async
-
-## failures
-- crates/evm-core/src/chain.rs::eth_call_object_async: missing_target
-- crates/evm-core/src/revm_exec.rs::execute_tx_on: missing_target
-- crates/evm-core/src/revm_exec.rs::execute_tx_on_async: missing_target
-- crates/evm-core/src/wrap_precompile.rs::CTX::contains: missing_target
-- crates/evm-core/src/wrap_precompile.rs::CTX::run: missing_target
-- crates/evm-core/src/wrap_precompile.rs::CTX::warm_addresses: missing_target
-- crates/evm-core/src/wrap_precompile.rs::IcpQueryExecutionContext::disabled: missing_target
-- crates/evm-core/src/wrap_precompile.rs::icp_query_return: missing_target
-- crates/evm-core/src/wrap_precompile.rs::parse_icp_query_input: missing_target
-- crates/evm-core/src/wrap_precompile.rs::read_exact: missing_target
-- crates/evm-core/src/wrap_precompile.rs::read_query_principal: missing_target
-- crates/evm-core/src/wrap_precompile.rs::read_u32_be: missing_target
-- crates/evm-core/src/wrap_precompile.rs::read_u8: missing_target
-- crates/evm-core/src/wrap_precompile.rs::run_icp_query_precompile: missing_target
-- crates/evm-core/src/wrap_precompile.rs::with_icp_query_detection: missing_target
-- crates/evm-core/src/wrap_precompile.rs::with_icp_query_reply: missing_target
-- crates/evm-core/src/wrap_precompile_tests.rs::encode_query_precompile_input: missing_target
-- crates/evm-core/src/wrap_precompile_tests.rs::encode_query_precompile_input_raw: missing_target
-- crates/evm-core/src/wrap_precompile_tests.rs::icp_query_parser_rejects_trailing_data_against_verified_model: missing_target
-- crates/evm-core/src/wrap_precompile_tests.rs::icp_query_parser_rejects_truncated_arg_against_verified_model: missing_target
-- crates/evm-core/src/wrap_precompile_tests.rs::icp_query_precompile_compact_input_decodes: missing_target
-- crates/evm-core/src/wrap_precompile_tests.rs::icp_query_precompile_rejects_long_method: missing_target
-- crates/evm-core/src/wrap_precompile_tests.rs::icp_query_precompile_rejects_update_kind: missing_target
-- crates/evm-db/src/memory.rs::AppMemoryId::as_u8: missing_target
-- crates/ic-evm-gateway/src/lib.rs::add_query_precompile_allowed_method: missing_target
-- crates/ic-evm-gateway/src/lib.rs::decode_query_precompile_allow_key: missing_target
-- crates/ic-evm-gateway/src/lib.rs::get_query_precompile_allowlist: missing_target
-- crates/ic-evm-gateway/src/lib.rs::is_query_precompile_allowed: missing_target
-- crates/ic-evm-gateway/src/lib.rs::query_precompile_allow_key: missing_target
-- crates/ic-evm-gateway/src/lib.rs::remove_query_precompile_allowed_method: missing_target
-- crates/ic-evm-gateway/src/lib.rs::resolve_icp_query_precompile: missing_target
-- crates/ic-evm-gateway/src/lib.rs::rpc_eth_call_object_with_query_precompile: missing_target
-- crates/ic-evm-gateway/src/lib.rs::validate_query_precompile_allow_args: missing_target
-- crates/ic-evm-rpc/src/lib.rs::rpc_eth_call_object_async: missing_target
-- compact_icp_query_input_safe_raw-8482ca59: contract_hash_mismatch; missing_verify_report; accepted_md_json_mismatch; contract_hash_mismatch; provider_failure:review; unsupported_generic_or_lifetime; unsupported_type
-- icp_precompile_allowlist_entry_safe_raw-744d724a: contract_hash_mismatch; missing_verify_report; accepted_md_json_mismatch; contract_hash_mismatch; provider_failure:scenarios; unsupported_generic_or_lifetime; unsupported_type
-- icp_query_execution_gate_safe_raw-c8c66378: contract_hash_mismatch; missing_verify_report; accepted_md_json_mismatch; contract_hash_mismatch; unsupported_type
-- icp_query_gas_observation_safe_raw-ae357da2: contract_hash_mismatch; missing_test_evidence_report; missing_verify_report; semantic_hash_mismatch; accepted_md_json_mismatch; contract_hash_mismatch; provider_failure:review; provider_failure:scenarios; semantic_hash_mismatch; unsupported_generic_or_lifetime; unsupported_type
-- icp_query_update_kind_rejected_raw-4de9db5f: contract_hash_mismatch; missing_verify_report; accepted_md_json_mismatch; contract_hash_mismatch; provider_failure:review; provider_failure:scenarios; unsupported_type
-
-## human required
+## verification
+- `scripts/verify-verus.sh`: 179 verified, 0 errors
+- `specgen status --check`: required by `scripts/check_icp_query_precompile_verification.sh` for each target above
+- Rust/PBT evidence is tracked in each accepted JSON entry

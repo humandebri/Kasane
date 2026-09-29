@@ -1,0 +1,100 @@
+{
+  "properties_with_code": [
+    {
+      "property_id": "PROP-kasane-inv-017",
+      "text": "Remote IC update calls must not execute inside EVM revert scope.",
+      "type": "invariant",
+      "assertion": "forall p: evm_reverts(p) => not remote_update_executed(p)",
+      "severity": "HIGH",
+      "covers": "SG-004",
+      "reachability": {
+        "classification": "external-reachable",
+        "entry_points": [
+          "Transaction",
+          "Precompile"
+        ],
+        "attacker_controlled": true,
+        "bug_bounty_scope": "in-scope"
+      },
+      "exploitability": "external-attack",
+      "_id_prefix": "PROP-kasane-inv-017",
+      "code_scope": {
+        "locations": [
+          {
+            "file": "crates/evm-core/src/kasane_precompiles.rs",
+            "symbol": "run_icp_update_intent_precompile",
+            "line_range": {
+              "start": 587,
+              "end": 645
+            },
+            "role": "primary",
+            "note": "ICP update intent precompile path that emits update intent log metadata instead of directly performing a remote IC update call."
+          },
+          {
+            "file": "crates/ic-evm-gateway/src/lib.rs",
+            "symbol": "record_icp_update_requests_from_block",
+            "line_range": {
+              "start": 4982,
+              "end": 5042
+            },
+            "role": "primary",
+            "note": "Gateway block post-processing that records ICP update requests from transaction receipt logs."
+          },
+          {
+            "file": "crates/ic-evm-gateway/src/lib.rs",
+            "symbol": "dispatch_icp_update_request_internal",
+            "line_range": {
+              "start": 5922,
+              "end": 5956
+            },
+            "role": "primary",
+            "note": "Remote IC update dispatch boundary using bounded_wait after request extraction."
+          },
+          {
+            "file": "crates/evm-core/src/kasane_precompiles.rs",
+            "symbol": "icp_update_intent_from_log",
+            "line_range": {
+              "start": 1096,
+              "end": 1128
+            },
+            "role": "callee",
+            "note": "Decodes ICP update intent logs consumed by gateway request recording."
+          },
+          {
+            "file": "crates/ic-evm-gateway/src/lib.rs",
+            "symbol": "icp_update_dispatch_tick",
+            "line_range": {
+              "start": 5385,
+              "end": 5416
+            },
+            "role": "caller",
+            "note": "Scheduler caller that pops queued update requests and invokes dispatch."
+          },
+          {
+            "file": "crates/ic-evm-gateway/src/tests.rs",
+            "symbol": "record_icp_update_requests_from_block_stores_update_intent_logs",
+            "line_range": {
+              "start": 3843,
+              "end": 3923
+            },
+            "role": "related",
+            "note": "Test coverage for recording update intent logs from blocks."
+          },
+          {
+            "file": "crates/ic-evm-gateway/src/tests.rs",
+            "symbol": "icp_update_dispatch_rejects_allowlist_miss_without_calling_target",
+            "line_range": {
+              "start": 4158,
+              "end": 4177
+            },
+            "role": "related",
+            "note": "Test coverage for preventing unauthorized remote update dispatch."
+          }
+        ],
+        "resolution_status": "resolved",
+        "resolution_error": "",
+        "resolution_method": "grep_fallback"
+      }
+    }
+  ]
+}
