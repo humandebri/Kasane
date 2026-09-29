@@ -8,6 +8,14 @@ use vstd::prelude::*;
     max_fee < base_fee as u128 ==> effective == Option::<u64>::None,
     matches!(effective, Some(_)) ==> effective.unwrap() <= max_fee,
     matches!(effective, Some(_)) ==> effective.unwrap() >= base_fee,
+    matches!(effective, Some(_)) ==> effective.unwrap() as int ==
+        (if max_fee as int <= base_fee as int + max_priority as int {
+            max_fee as int
+        } else {
+            base_fee as int + max_priority as int
+        }),
+    max_priority == max_fee && base_fee as u128 <= max_fee && max_fee <= u64::MAX as u128
+        ==> effective == Option::<u64>::Some(max_fee as u64),
 ))]
 pub fn effective_gas_price(max_fee: u128, max_priority: u128, base_fee: u64) -> Option<u64> {
     if max_priority > max_fee {
@@ -93,6 +101,7 @@ mod tests {
     fn effective_gas_price_caps_priority() {
         assert_eq!(effective_gas_price(10, 3, 5), Some(8));
         assert_eq!(effective_gas_price(7, 7, 0), Some(7));
+        assert_eq!(effective_gas_price(10, 10, 5), Some(10));
     }
 
     #[test]

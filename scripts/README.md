@@ -48,6 +48,9 @@ scripts/measure_precompile_ratio.sh
 ## By Purpose
 
 ### Pre-checks and Quality Gates
+- `bash scripts/verify-evm-proofs.sh`: joint Verus `--no-cheating` and Lean/revm gate for the EVM proof scope.
+- `bash scripts/verify-lean.sh`: Lean 4.30.0 EVM adapter model proofs, axiom audit, source drift check, and Rust/Lean boundary-case comparison. Requires `elan` with the pinned toolchain and `rustc`; see `proofs/evm/README.md`. Separate from the existing CI-equivalent command.
+- `bash scripts/verify-revm.sh`: pinned revm source/features, Lean proofs, actual journal trace comparison, official Prague state fixtures, and Kasane nested CALL/REVERT accounting. Requires Python 3 plus the Lean prerequisites; see `proofs/evm/revm-correspondence.md`.
 - `scripts/ci-local.sh`: runs in `github|smoke|all` modes via `CI_LOCAL_MODE=<mode>`
 - `scripts/ci_github_equivalent.sh`: single source of truth for the GitHub-equivalent checks used by both `.github/workflows/ci.yml` and `scripts/ci-local.sh`
   - includes Rust baseline quality gates: `rustfmt --check` for workspace Rust files except specgen-managed Verus contract targets, plus clippy with a `too_many_arguments` exception for specgen evidence functions

@@ -1922,6 +1922,7 @@ dependencies = [
  "ic-evm-tx",
  "proptest",
  "revm",
+ "serde_json",
  "smallvec",
  "verified-core",
 ]

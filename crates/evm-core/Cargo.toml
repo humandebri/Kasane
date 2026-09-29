@@ -53,6 +53,7 @@ full_state_root = []
 local-signer-bin = ["dep:alloy-signer", "dep:alloy-signer-local", "dep:alloy-consensus"]
 
 [dev-dependencies]
+serde_json = "1"
 alloy-consensus = { version = "1.5.2", default-features = false, features = ["k256", "eips-kzg-sidecar"] }
 alloy-eips = { version = "1.5.2", default-features = false, features = ["kzg-sidecar"] }
 alloy-signer = { version = "1.5.2", default-features = false }
