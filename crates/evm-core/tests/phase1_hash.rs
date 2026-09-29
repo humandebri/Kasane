@@ -57,6 +57,34 @@ fn empty_state_root_matches_ethereum_empty_trie() {
 }
 
 #[test]
+fn legacy_empty_account_does_not_change_state_root() {
+    std::thread::spawn(|| {
+        init_stable_state();
+        let addr = [0x91u8; 20];
+        let empty_root = with_state_mut(|state| compute_state_root_incremental_with(state, &[]));
+        with_state_mut(|state| {
+            state.accounts.insert(
+                make_account_key(addr),
+                AccountVal::from_parts(0, [0u8; 32], [0u8; 32]),
+            );
+        });
+        let legacy_root = with_state_mut(|state| compute_state_root_incremental_with(state, &[]));
+        assert_eq!(legacy_root, empty_root);
+
+        with_state_mut(|state| {
+            state.accounts.insert(
+                make_account_key(addr),
+                AccountVal::from_parts(1, [0u8; 32], [0u8; 32]),
+            );
+        });
+        let nonempty_root = with_state_mut(|state| compute_state_root_incremental_with(state, &[]));
+        assert_ne!(nonempty_root, empty_root);
+    })
+    .join()
+    .unwrap();
+}
+
+#[test]
 fn state_root_is_deterministic_for_same_state() {
     init_stable_state();
     let addr = [0x11u8; 20];

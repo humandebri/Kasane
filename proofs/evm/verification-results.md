@@ -16,6 +16,7 @@
 | Kasane CALL 経路 | 12 ケース成功。送信者 nonce、gas 徴収、receipt、受取残高、storage、logs を確認 |
 | Kasane CREATE/SELFDESTRUCT | 親 commit/revert の 4 ケース成功。作成先の残存、残高移動、code hash、nonce、fee を確認 |
 | untouched account の直接 commit | stable DB と state epoch は不変。touched account は書き込まれる |
+| 過去に保存された空 account | stable DB にゼロ値 account が残っていても state root は空状態と同じ。nonce が非ゼロなら root は変わる |
 | ICP update intent precompile | reverted subcall と成功した再試行の receipt log、request map を確認 |
 | `cargo test --locked -p ic-evm-core --lib revm_exec::tests` | 10 テスト成功 |
 | `cargo test --locked -p verified-core` | 32 テスト成功 |
@@ -34,4 +35,6 @@ PocketIC E2E は別 Cargo.lock を使うため、証明ゲートの Cargo 出力
 Rust と Lean の全入力での同値性、opcode 全体の証明はこの結果に含めない。
 CREATE の親 REVERT テストで、untouched account が stable DB に残る不具合を再現して修正した。
 過去の実行で既に保存された空 account をこの変更だけで削除することはない。
+この回帰テストは state root への影響だけを確認する。既存 canister の空 account 件数は
+公開 query から列挙できず、実環境の棚卸し・削除を実施した証拠ではない。
 既存依存 `proc-macro-error2` の将来互換性 warning は今回のテストでも出力された。
