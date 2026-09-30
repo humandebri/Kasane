@@ -1161,6 +1161,15 @@ fn decode_u256_return_to_u128(bytes: &[u8]) -> u128 {
 
 #[test]
 fn integrated_gateway_wrap_and_unwrap_completes_with_single_canister() {
+    integrated_wrap_and_unwrap(false);
+}
+
+#[test]
+fn integrated_gateway_upgrade_preserves_wrapped_tokens_and_unwrap() {
+    integrated_wrap_and_unwrap(true);
+}
+
+fn integrated_wrap_and_unwrap(upgrade_after_mint: bool) {
     let pic = PocketIc::new();
     let (gateway_id, fee_ledger_id) = install_integrated_pair(&pic);
     let wrap_id = gateway_id;
@@ -1203,6 +1212,43 @@ fn integrated_gateway_wrap_and_unwrap_completes_with_single_canister() {
     );
 
     let approve_nonce = gateway_expected_nonce(&pic, gateway_id, caller_evm);
+    if upgrade_after_mint {
+        // Exercise stable token code/storage and wrap configuration across the
+        // candidate's upgrade hook, before spending the existing wrapped funds.
+        let args = Some(GatewayInitArgs {
+            genesis_balances: vec![GenesisBalanceView {
+                address: caller_evm.to_vec(),
+                amount: TEST_GENESIS_BALANCE_WEI,
+            }],
+            wrap_canister_id: gateway_id,
+            wrap_factory_address: factory.to_vec(),
+            wrap_config: None,
+            query_instruction_soft_limit: None,
+            update_instruction_soft_limit: None,
+        });
+        pic.upgrade_canister(
+            gateway_id,
+            read_wasm(gateway_wasm_path()),
+            Encode!(&args).unwrap(),
+            Some(caller),
+        )
+        .unwrap();
+        settle(&pic, 6);
+        assert_eq!(
+            gateway_expected_nonce(&pic, gateway_id, caller_evm),
+            approve_nonce
+        );
+        assert_eq!(
+            wrapped_token_balance_of(&pic, gateway_id, token, caller_evm),
+            WRAP_AMOUNT_E8S
+        );
+        assert_eq!(
+            wrap_get_request(&pic, wrap_id, &wrap_ok.request_id)
+                .expect("wrap request survives upgrade")
+                .status,
+            WrapRequestStatus::Succeeded
+        );
+    }
     let approve_data = encode_approve(factory, WRAP_AMOUNT_E8S);
     let approve_gas = gateway_estimate_gas(
         &pic,

@@ -813,6 +813,108 @@ fn query_instruction_soft_limit_blocks_inclusion_in_pending_status() {
     }
 }
 
+/// Candidate-to-candidate lifecycle coverage; production-version compatibility
+/// additionally requires the deployed Wasm as the initial installation artifact.
+#[test]
+fn upgrade_and_snapshot_restore_preserve_executed_transaction_state() {
+    #[derive(CandidType)]
+    enum BlockTag {
+        Latest,
+    }
+    #[derive(CandidType, Deserialize, Debug)]
+    struct RpcError {
+        code: u32,
+        message: String,
+        error_prefix: Option<String>,
+    }
+    let pic = PocketIc::new();
+    let caller = test_caller();
+    let sender = hash::derive_evm_address_from_principal(caller.as_slice())
+        .expect("derive sender")
+        .to_vec();
+    let wrap_canister_id = pic.create_canister();
+    pic.add_cycles(wrap_canister_id, 5_000_000_000_000);
+    let init = Some(InitArgs {
+        genesis_balances: vec![GenesisBalanceView {
+            address: sender.clone(),
+            amount: 1_000_000_000_000_000_000,
+        }],
+        wrap_canister_id,
+        wrap_factory_address: TEST_WRAP_FACTORY_ADDRESS.to_vec(),
+        query_instruction_soft_limit: None,
+        update_instruction_soft_limit: None,
+    });
+    let canister_id = install_canister_with_arg(&pic, Encode!(&init).unwrap());
+    pic.set_controllers(canister_id, None, vec![caller])
+        .unwrap();
+    settle_migrations(&pic, canister_id, caller);
+    let recipient = vec![0x22; 20];
+    let balance = |address: &Vec<u8>| {
+        let out = call_query(
+            &pic,
+            canister_id,
+            "rpc_eth_get_balance",
+            Encode!(address, &BlockTag::Latest).unwrap(),
+        );
+        Decode!(&out, Result<Vec<u8>, RpcError>).unwrap().unwrap()
+    };
+    let nonce = || {
+        let out = call_query(
+            &pic,
+            canister_id,
+            "rpc_eth_get_transaction_count_at",
+            Encode!(&sender, &BlockTag::Latest).unwrap(),
+        );
+        Decode!(&out, Result<u64, RpcError>).unwrap().unwrap()
+    };
+    let submit = |n| {
+        let mut args = build_submit_ic_tx_args([0x22; 20], n);
+        args.value = candid::Nat::from(123u64);
+        let out = call_update(&pic, canister_id, "submit_ic_tx", Encode!(&args).unwrap());
+        let id = Decode!(&out, SubmitTxResult)
+            .unwrap()
+            .expect("submit transaction");
+        let receipt = wait_for_receipt(&pic, canister_id, &id);
+        assert_eq!(receipt.status, 1);
+        (id, receipt)
+    };
+    let initial_balance = balance(&sender);
+    let (id, receipt) = submit(0);
+    let sender_balance = balance(&sender);
+    let recipient_balance = balance(&recipient);
+    assert_ne!(sender_balance, initial_balance);
+    assert_eq!(nonce(), 1);
+    pic.stop_canister(canister_id, Some(caller)).unwrap();
+    let snapshot = pic
+        .take_canister_snapshot(canister_id, Some(caller), None)
+        .unwrap();
+    pic.start_canister(canister_id, Some(caller)).unwrap();
+    pic.upgrade_canister(
+        canister_id,
+        std::fs::read(wasm_path()).unwrap(),
+        Encode!(&init).unwrap(),
+        Some(caller),
+    )
+    .unwrap();
+    settle_migrations(&pic, canister_id, caller);
+    assert_eq!(balance(&sender), sender_balance);
+    assert_eq!(balance(&recipient), recipient_balance);
+    assert_eq!(nonce(), 1);
+    assert_eq!(call_get_receipt(&pic, canister_id, &id).unwrap(), receipt);
+    submit(1);
+    assert_eq!(nonce(), 2);
+    pic.stop_canister(canister_id, Some(caller)).unwrap();
+    pic.load_canister_snapshot(canister_id, Some(caller), snapshot.id)
+        .unwrap();
+    pic.start_canister(canister_id, Some(caller)).unwrap();
+    assert_eq!(balance(&sender), sender_balance);
+    assert_eq!(balance(&recipient), recipient_balance);
+    assert_eq!(nonce(), 1);
+    assert_eq!(call_get_receipt(&pic, canister_id, &id).unwrap(), receipt);
+    submit(1);
+    assert_eq!(nonce(), 2);
+}
+
 #[test]
 fn install_rejects_none_init_args() {
     let pic = PocketIc::new();

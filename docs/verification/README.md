@@ -48,3 +48,8 @@ See [implementation correspondence](../../proofs/evm/revm-correspondence.md).
 the Lean/revm gate together. The legacy gas-price property is proved independently
 in Verus and Lean; the cross-language correspondence still relies on reviewed
 argument mapping and finite execution tests.
+
+## Canister Upgrade Validation
+
+See [2026-09-30 upgrade and snapshot validation scope](mainnet-readiness-2026-09-30.md)
+for the PocketIC state-preservation tests and the remaining deployed-version migration checks.
