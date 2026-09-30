@@ -986,7 +986,7 @@ pub fn submit_tx(
             if is_dynamic_fee {
                 max_priority_fee_per_gas
             } else {
-                0
+                max_fee_per_gas
             },
             base_fee,
         )
@@ -1102,7 +1102,7 @@ pub fn submit_ic_tx_input(
             if is_dynamic_fee {
                 max_priority_fee_per_gas
             } else {
-                0
+                max_fee_per_gas
             },
             base_fee,
         )
@@ -1399,7 +1399,7 @@ pub fn produce_block(max_txs: usize) -> Result<ProduceBlockOutcome, ChainError> 
         }
         let effective = compute_effective_gas_price(
             tx_env.gas_price,
-            tx_env.gas_priority_fee.unwrap_or(0),
+            tx_env.gas_priority_fee.unwrap_or(tx_env.gas_price),
             exec_ctx.base_fee,
         );
         if effective.is_none() {
@@ -3259,7 +3259,7 @@ fn rebuild_pending_fee_index_for_base_fee(
             if stored.is_dynamic_fee {
                 stored.max_priority_fee_per_gas
             } else {
-                0
+                stored.max_fee_per_gas
             },
             base_fee,
         )
@@ -3749,7 +3749,7 @@ fn select_ready_candidates(
             if is_dynamic_fee {
                 max_priority_fee_per_gas
             } else {
-                0
+                max_fee_per_gas
             },
             base_fee,
         )

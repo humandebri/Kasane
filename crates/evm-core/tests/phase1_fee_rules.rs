@@ -1,6 +1,6 @@
 //! どこで: Phase1.3テスト / 何を: fee境界とbase_fee再評価 / なぜ: 有効手数料と順序の決定性を保証するため
 
-use alloy_consensus::{SignableTransaction, TxEip1559};
+use alloy_consensus::{SignableTransaction, TxEip1559, TxEip2930, TxLegacy};
 use alloy_eips::eip1559::{calc_next_block_base_fee, BaseFeeParams};
 use alloy_eips::eip2718::Encodable2718;
 use alloy_eips::eip2930::AccessList;
@@ -337,4 +337,165 @@ fn build_eth_signed_1559(
     let hash = tx.signature_hash();
     let signature = signer.sign_hash_sync(&hash).expect("sign");
     tx.into_signed(signature).encoded_2718()
+}
+
+fn build_eth_signed_fixed_price(nonce: u64, gas_price: u128, access_list: bool) -> Vec<u8> {
+    let signer = test_signer();
+    let legacy = TxLegacy {
+        chain_id: Some(CHAIN_ID),
+        nonce,
+        gas_price,
+        gas_limit: 21_000,
+        to: EthTxKind::Call(Address::from([0x21u8; 20])),
+        value: AlloyU256::ZERO,
+        input: Bytes::new(),
+    };
+    if access_list {
+        let tx = TxEip2930 {
+            chain_id: CHAIN_ID,
+            nonce,
+            gas_price,
+            gas_limit: legacy.gas_limit,
+            to: legacy.to,
+            value: legacy.value,
+            access_list: AccessList::default(),
+            input: legacy.input,
+        };
+        let signature = signer.sign_hash_sync(&tx.signature_hash()).expect("sign");
+        tx.into_signed(signature).encoded_2718()
+    } else {
+        let signature = signer
+            .sign_hash_sync(&legacy.signature_hash())
+            .expect("sign");
+        legacy.into_signed(signature).encoded_2718()
+    }
+}
+
+#[test]
+fn fixed_price_above_receipt_range_is_rejected_before_queueing() {
+    for access_list in [false, true] {
+        std::thread::spawn(move || {
+            init_stable_state();
+            for gas_price in [u128::from(u64::MAX) + 1, u128::MAX] {
+                let raw = build_eth_signed_fixed_price(0, gas_price, access_list);
+                assert_eq!(
+                    chain::submit_tx(TxKind::EthSigned, raw, vec![0x90]),
+                    Err(ChainError::InvalidFee)
+                );
+                with_state(|state| {
+                    assert!(state.tx_store.is_empty());
+                    assert!(state.seen_tx.is_empty());
+                    assert!(state.pending_by_sender_nonce.is_empty());
+                    assert!(state.sender_expected_nonce.is_empty());
+                    assert!(state.pending_fee_index.is_empty());
+                    assert!(state.ready_queue.is_empty());
+                });
+            }
+            // Rejection must leave nonce 0 available for a valid submission.
+            common::fund_account(test_signer().address().into_array(), u128::MAX);
+            let raw = build_eth_signed_fixed_price(0, u128::from(u64::MAX), access_list);
+            let id = chain::submit_tx(TxKind::EthSigned, raw, vec![0x90]).expect("submit boundary");
+            chain::produce_block(1).expect("execute boundary");
+            let receipt = chain::get_receipt(&id).expect("receipt");
+            assert_eq!(receipt.status, 1);
+            assert_eq!(receipt.effective_gas_price, u64::MAX);
+            assert_eq!(
+                receipt.total_fee,
+                u128::from(receipt.gas_used) * u128::from(u64::MAX)
+            );
+        })
+        .join()
+        .unwrap();
+    }
+}
+
+#[test]
+fn fixed_price_replacement_uses_gas_price() {
+    for access_list in [false, true] {
+        std::thread::spawn(move || {
+            init_stable_state();
+            let base_fee = with_state(|state| state.chain_state.get().base_fee);
+            let low_price = u128::from(base_fee) * 2;
+            let high_price = low_price + u128::from(base_fee);
+            common::fund_account(test_signer().address().into_array(), u128::MAX);
+            let old = chain::submit_tx(
+                TxKind::EthSigned,
+                build_eth_signed_fixed_price(0, low_price, access_list),
+                vec![0x91],
+            )
+            .expect("submit original");
+            let replacement = chain::submit_tx(
+                TxKind::EthSigned,
+                build_eth_signed_fixed_price(0, high_price, access_list),
+                vec![0x91],
+            )
+            .expect("replace with higher fixed price");
+            assert_eq!(
+                chain::submit_tx(
+                    TxKind::EthSigned,
+                    build_eth_signed_fixed_price(0, high_price - 1, access_list),
+                    vec![0x91],
+                ),
+                Err(ChainError::NonceConflict)
+            );
+            let old_loc = chain::get_tx_loc(&old).expect("old location");
+            assert_eq!(old_loc.kind, evm_db::chain_data::TxLocKind::Dropped);
+            assert_eq!(
+                old_loc.drop_code,
+                evm_db::chain_data::constants::DROP_CODE_REPLACED
+            );
+            let outcome = chain::produce_block(1).expect("execute replacement");
+            assert_eq!(outcome.block.tx_ids, vec![replacement]);
+            assert_eq!(
+                chain::get_receipt(&replacement)
+                    .unwrap()
+                    .effective_gas_price,
+                u64::try_from(high_price).unwrap()
+            );
+        })
+        .join()
+        .unwrap();
+    }
+}
+
+#[test]
+fn fixed_price_keeps_priority_after_base_fee_change() {
+    for access_list in [false, true] {
+        std::thread::spawn(move || {
+            init_stable_state();
+            with_state_mut(|state| {
+                let mut chain_state = *state.chain_state.get();
+                chain_state.base_fee = 1;
+                chain_state.min_gas_price = 1;
+                chain_state.min_priority_fee = 1;
+                state.chain_state.set(chain_state);
+            });
+            let caller = vec![0x92];
+            fund_principal(&caller);
+            common::fund_account(test_signer().address().into_array(), u128::MAX);
+            let dynamic = chain::submit_tx_in(TxIn::IcSynthetic {
+                caller_principal: caller,
+                canister_id: vec![0x01],
+                tx: common::build_zero_to_ic_tx_input(0, 10, 1),
+            })
+            .expect("submit dynamic");
+            let fixed = chain::submit_tx(
+                TxKind::EthSigned,
+                build_eth_signed_fixed_price(0, 4, access_list),
+                vec![0x93],
+            )
+            .expect("submit fixed");
+            with_state_mut(|state| {
+                let mut chain_state = *state.chain_state.get();
+                chain_state.base_fee = 2;
+                state.chain_state.set(chain_state);
+            });
+            let outcome = chain::produce_block(2).expect("execute after base fee change");
+            assert_eq!(outcome.block.tx_ids, vec![fixed, dynamic]);
+            assert_eq!(chain::get_receipt(&fixed).unwrap().effective_gas_price, 4);
+            assert_eq!(chain::get_receipt(&dynamic).unwrap().effective_gas_price, 3);
+        })
+        .join()
+        .unwrap();
+    }
 }

@@ -103,7 +103,7 @@ fn effective_gas_price_for_tx(
         if is_dynamic_fee {
             max_priority_fee_per_gas
         } else {
-            0
+            max_fee_per_gas
         },
         base_fee,
     )

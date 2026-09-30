@@ -30,7 +30,7 @@ use revm::interpreter::{
     CallInputs, CallOutcome, CallScheme, CreateInputs, CreateOutcome, InstructionResult,
     Interpreter, InterpreterTypes,
 };
-use revm::primitives::{Address, U256};
+use revm::primitives::{hardfork::SpecId, Address, U256};
 use revm::state::Account;
 #[cfg(not(target_arch = "wasm32"))]
 use std::cell::Cell;
@@ -44,6 +44,9 @@ thread_local! {
 }
 
 pub(crate) type StateDiff = revm::primitives::HashMap<Address, revm::state::Account>;
+
+/// Keep execution and gas semantics stable across vendored revm updates (TCB-revm).
+pub const EVM_SPEC_ID: SpecId = SpecId::PRAGUE;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ExecError {
@@ -218,7 +221,8 @@ where
     }
     let effective_gas_price = compute_effective_gas_price(
         tx_env.gas_price,
-        tx_env.gas_priority_fee.unwrap_or(0),
+        // Legacy/access-list transactions pay gas_price; their priority is not zero.
+        tx_env.gas_priority_fee.unwrap_or(tx_env.gas_price),
         exec_ctx.base_fee,
     )
     .ok_or(ExecError::InvalidGasFee)?;
@@ -235,6 +239,7 @@ where
     let mut evm = Context::mainnet()
         .with_db(db)
         .modify_cfg_chained(|cfg| {
+            cfg.set_spec_and_mainnet_gas_params(EVM_SPEC_ID);
             cfg.chain_id = CHAIN_ID;
         })
         .modify_block_chained(|block| {
