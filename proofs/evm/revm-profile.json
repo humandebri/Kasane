@@ -1,0 +1,22 @@
+{
+  "source": "https://github.com/humandebri/revm.git",
+  "declared_commit": "50405a27f57f80a96ab9d91e93180bca22217a3a",
+  "source_files": 295,
+  "source_tree_sha256": "49c6ce94724dfaa1a791a6fdaa13d4ec5873554918f70e626ef7b571b004b2f3",
+  "target": "wasm32-unknown-unknown",
+  "package": "ic-evm-gateway",
+  "features": [
+    "revm v34.0.0 (vendor/revm/crates/revm) features=[std]",
+    "revm-bytecode v8.0.0 (vendor/revm/crates/bytecode) features=[std]",
+    "revm-context v13.0.0 (vendor/revm/crates/context) features=[std]",
+    "revm-context-interface v14.0.0 (vendor/revm/crates/context/interface) features=[std]",
+    "revm-database v10.0.0 (vendor/revm/crates/database) features=[std]",
+    "revm-database-interface v9.0.0 (vendor/revm/crates/database/interface) features=[std]",
+    "revm-handler v15.0.0 (vendor/revm/crates/handler) features=[std]",
+    "revm-inspector v15.0.0 (vendor/revm/crates/inspector) features=[std]",
+    "revm-interpreter v32.0.0 (vendor/revm/crates/interpreter) features=[std]",
+    "revm-precompile v32.0.0 (vendor/revm/crates/precompile) features=[std]",
+    "revm-primitives v22.0.0 (vendor/revm/crates/primitives) features=[std]",
+    "revm-state v9.0.0 (vendor/revm/crates/state) features=[std]"
+  ]
+}
