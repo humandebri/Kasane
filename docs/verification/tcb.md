@@ -11,7 +11,7 @@ This document tracks assumptions outside the Verus proof target set. When Rust b
 
 | ID | Area | Assumption | Alternate validation |
 | --- | --- | --- | --- |
-| `TCB-revm` | `revm` | EVM execution semantics, gas use, and halt reasons match upstream behavior. | compatibility E2E, upstream `revm` tests, fixed feature checks |
+| `TCB-revm` | `revm` | Pinned Prague interpreter/journal semantics and their Rust implementation correspondence remain trusted. Kasane intentionally feature-gates some Ethereum precompiles. Lean proves a projected journal model, not all-input Rust refinement. | `bash scripts/verify-revm.sh`: source/features pin, Lean axiom audit, 9 journal differential traces plus 486 short implementation traces, 38 official Prague state vectors, Kasane CALL/CREATE/SELFDESTRUCT and precompile rollback; see `proofs/evm/revm-correspondence.md` |
 | `TCB-alloy` | `alloy-*` | RLP, signatures, and Ethereum type decode/encode match the expected specs. | existing unit/integration tests, RPC compatibility smoke |
 | `TCB-keccak` | `keccak` | hash implementation is Ethereum-compatible. | known vector tests, state-root tests |
 | `TCB-state-root` | state root/account state | Pruning proofs cover historical deletion observability, not current account state, trie, or state-root correctness. | state-root migration/unit tests, revm DB tests, operational smoke |

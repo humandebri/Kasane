@@ -27,3 +27,24 @@ scripts/verify-verus.sh
 `scripts/verify-verus.sh` enumerates `crates/verified-*/src/lib.rs` and verifies with `--no-cheating --cfg verus_keep_ghost`.
 
 CI also runs `scripts/check_verification_policy.sh`. When Rust business logic changes under `crates/*/src/*.rs`, the PR body must cite either `verified_core::<function>` or a `TCB-<id>` entry.
+
+## Lean EVM Adapter Model
+
+`proofs/evm` contains Lean 4 proofs for a mathematical model of fee arithmetic,
+state-map updates, receipt projection, and commit/error ordering. Run
+`bash scripts/verify-lean.sh`; see [scope and remaining obligations](../../proofs/evm/README.md).
+These model proofs do not remove `TCB-revm` or prove the Rust adapter equivalent
+to the model. The command also audits proof axioms, detects source drift, and
+compares boundary cases against the actual Rust pure functions. It is a separate
+local gate; existing CI does not invoke it automatically.
+
+`bash scripts/verify-revm.sh` additionally checks the pinned revm source/features,
+compares actual journal traces with Lean, and runs official Prague state fixtures
+and Kasane CALL/CREATE/SELFDESTRUCT and precompile rollback regressions.
+The stable DB adapter skips untouched accounts, including a reverted CREATE target.
+See [implementation correspondence](../../proofs/evm/revm-correspondence.md).
+
+`bash scripts/verify-evm-proofs.sh` runs the Verus implementation contracts and
+the Lean/revm gate together. The legacy gas-price property is proved independently
+in Verus and Lean; the cross-language correspondence still relies on reviewed
+argument mapping and finite execution tests.
