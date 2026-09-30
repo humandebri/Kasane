@@ -36,6 +36,77 @@ struct WrapConfigArgs {
     allowed_assets: Vec<Principal>,
 }
 
+#[derive(Clone, Debug, CandidType, Deserialize, Eq, PartialEq)]
+struct Icrc21ConsentMessageMetadata {
+    utc_offset_minutes: Option<i16>,
+    language: String,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize, Eq, PartialEq)]
+enum Icrc21DeviceSpec {
+    GenericDisplay,
+    LineDisplay(Icrc21LineDisplaySpec),
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize, Eq, PartialEq)]
+struct Icrc21LineDisplaySpec {
+    characters_per_line: u16,
+    lines_per_page: u16,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize, Eq, PartialEq)]
+struct Icrc21ConsentMessageSpec {
+    metadata: Icrc21ConsentMessageMetadata,
+    device_spec: Option<Icrc21DeviceSpec>,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize, Eq, PartialEq)]
+struct Icrc21ConsentMessageRequest {
+    arg: Vec<u8>,
+    method: String,
+    user_preferences: Icrc21ConsentMessageSpec,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize, Eq, PartialEq)]
+struct Icrc21ConsentInfo {
+    metadata: Icrc21ConsentMessageMetadata,
+    consent_message: Icrc21ConsentMessage,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize, Eq, PartialEq)]
+enum Icrc21ConsentMessage {
+    GenericDisplayMessage(String),
+    LineDisplayMessage(Icrc21LineDisplayMessage),
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize, Eq, PartialEq)]
+struct Icrc21LineDisplayMessage {
+    pages: Vec<Icrc21LineDisplayPage>,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize, Eq, PartialEq)]
+struct Icrc21LineDisplayPage {
+    lines: Vec<String>,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize, Eq, PartialEq)]
+struct Icrc21ErrorInfo {
+    description: String,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize, Eq, PartialEq)]
+enum Icrc21Error {
+    GenericError {
+        description: String,
+        error_code: Nat,
+    },
+    InsufficientPayment(Icrc21ErrorInfo),
+    UnsupportedCanisterCall(Icrc21ErrorInfo),
+    ConsentMessageUnavailable(Icrc21ErrorInfo),
+}
+
+type Icrc21ConsentMessageResponse = Result<Icrc21ConsentInfo, Icrc21Error>;
+
 const WRAP_AMOUNT_E8S: u128 = 1_000_000_000_000u128;
 const TEST_ASSET_DECIMALS: u8 = 8;
 const TEST_LEDGER_BALANCE: u128 = 10_000_000_000_000u128;
@@ -1181,6 +1252,45 @@ fn integrated_wrap_and_unwrap(upgrade_after_mint: bool) {
     let token = predict_wrapped_token_address(factory, fee_ledger_id, TEST_ASSET_DECIMALS);
 
     approve_fee_ledger_for_wrap(&pic, fee_ledger_id, wrap_id, WRAP_AMOUNT_E8S * 2);
+    let consent_args = submit_wrap_request_args(fee_ledger_id, caller_evm.to_vec());
+    let balance_before_consent = ledger_balance_of(&pic, fee_ledger_id, caller);
+    let gateway_balance_before_consent = ledger_balance_of(&pic, fee_ledger_id, gateway_id);
+    let consent_bytes = pic
+        .update_call(
+            gateway_id,
+            Principal::anonymous(),
+            "icrc21_canister_call_consent_message",
+            Encode!(&Icrc21ConsentMessageRequest {
+                method: "submit_wrap_request".into(),
+                arg: Encode!(&consent_args).unwrap(),
+                user_preferences: Icrc21ConsentMessageSpec {
+                    metadata: Icrc21ConsentMessageMetadata {
+                        language: "en".into(),
+                        utc_offset_minutes: None
+                    },
+                    device_spec: None,
+                },
+            })
+            .unwrap(),
+        )
+        .expect("anonymous consent must be available");
+    let consent = Decode!(&consent_bytes, Icrc21ConsentMessageResponse)
+        .unwrap()
+        .unwrap();
+    let Icrc21ConsentMessage::GenericDisplayMessage(text) = consent.consent_message else {
+        panic!("expected generic consent");
+    };
+    assert!(text.contains(&fee_ledger_id.to_text()));
+    assert!(text.contains(&WRAP_AMOUNT_E8S.to_string()));
+    assert!(text.contains(&hex::encode(caller_evm)));
+    assert_eq!(
+        ledger_balance_of(&pic, fee_ledger_id, caller),
+        balance_before_consent
+    );
+    assert_eq!(
+        ledger_balance_of(&pic, fee_ledger_id, gateway_id),
+        gateway_balance_before_consent
+    );
     let wrap_out = pic
         .update_call(
             wrap_id,

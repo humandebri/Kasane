@@ -3153,7 +3153,7 @@ fn inspect_message() {
     let Some(limit) = inspect_payload_limit_for_method(method.as_str()) else {
         return;
     };
-    if reject_anonymous_update().is_some() {
+    if !inspect_caller_allowed(method.as_str(), msg_caller()) {
         return;
     }
     let payload_len = inspect_payload_len();
@@ -3164,6 +3164,11 @@ fn inspect_message() {
 
 const INSPECT_TX_PAYLOAD_LIMIT: usize = MAX_TX_SIZE.saturating_mul(2);
 const INSPECT_MANAGE_PAYLOAD_LIMIT: usize = MAX_TX_SIZE.saturating_mul(8);
+
+fn inspect_caller_allowed(method: &str, caller: Principal) -> bool {
+    // ICRC-21 requires consent to be available before the wallet identifies its user.
+    method == "icrc21_canister_call_consent_message" || caller != Principal::anonymous()
+}
 
 #[derive(Clone, Copy)]
 struct InspectMethodPolicy {

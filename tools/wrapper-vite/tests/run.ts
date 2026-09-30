@@ -1,6 +1,7 @@
 // どこで: wrapperテスト / 何を: 主要ロジックのユニットテストを実行 / なぜ: request_id導出・状態統合・execution参照の退行を防ぐため
 
 import assert from "node:assert/strict";
+import { runSignerWrapTests } from "./signer-wrap";
 import { readFileSync } from "node:fs";
 import { AnonymousIdentity, type Identity } from "@icp-sdk/core/agent";
 import { Principal } from "@icp-sdk/core/principal";
@@ -1780,6 +1781,7 @@ async function main(): Promise<void> {
   await runEstimateWrapGasClientTests();
   await runEstimateUnwrapGasClientTests();
   await runWrapClientSubmitTests();
+  await runSignerWrapTests(TEST_CONFIG);
   await runWrapClientWithdrawErrorTests();
   await runUnwrapRequirementsTests();
   await runNativeWithdrawClientTests();

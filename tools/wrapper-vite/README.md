@@ -90,6 +90,9 @@ SPA fallback is configured in `public/_redirects`.
 
 - Wallet UI supports Oisy and MetaMask.
 - `wrap`, `retry`, and `withdraw` canister actions stay disabled until the Kasane canister exposes the required `ICRC-21` support.
+- Gateway consent supports `submit_wrap_request`, `submit_native_deposit`, `retry_request`, `retry_native_deposit`, `retry_native_withdrawal`, and `recover_failed_wrap`, in addition to `submit_ic_tx`. Consent is available anonymously and describes signed arguments; it does not reserve a quote or guarantee asynchronous completion.
+- Automated tests exercise the installed SignerAgent with the actual Candid actor, check the selected account, target, method, and argument bytes, and reject each operation before execution. PocketIC checks anonymous consent leaves ledger balances unchanged before wrap/unwrap execution. These checks do not replace a real Oisy approval/cancellation smoke after deployment.
+- For that smoke, use a controlled account and small amounts: verify both ledger IDs, raw base-unit amount, EVM recipient and fee caps in the wallet; cancel and confirm balances/request state stay unchanged; then approve and confirm the ledger transfer and EVM credit/mint. Check recovery against the original request and recipient rather than treating wallet approval as completion.
 - Unwrap currently uses MetaMask on Kasane testnet (`chain_id=4801360`) through `eth_sendTransaction`.
 - MetaMask unwrap tracks transaction hash, not request id.
 

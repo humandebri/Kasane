@@ -193,6 +193,26 @@ export interface HealthView {
   'last_block_time' : bigint,
   'queue_len' : bigint,
 }
+export interface IcpUpdateRequestView {
+  'request_id' : Uint8Array,
+  'status' : RequestDispatchStatusView,
+  'method' : string,
+  'updated_at' : bigint,
+  'tx_id' : Uint8Array,
+  'tx_index' : number,
+  'log_index' : number,
+  'evm_sender' : Uint8Array,
+  'error' : [] | [string],
+  'block_number' : bigint,
+  'target' : Principal,
+  'ic_caller' : [] | [Principal],
+  'tx_kind' : IcpUpdateTxKindView,
+  'reply' : [] | [Uint8Array],
+}
+export type IcpUpdateResolutionView = { 'Failed' : { 'error' : string } } |
+  { 'Dispatched' : { 'reply' : [] | [Uint8Array] } };
+export type IcpUpdateTxKindView = { 'EthSigned' : null } |
+  { 'IcSynthetic' : null };
 export interface Icrc21ConsentInfo {
   'metadata' : Icrc21ConsentMessageMetadata,
   'consent_message' : Icrc21ConsentMessage,
@@ -312,6 +332,7 @@ export type PendingStatusView = { 'Queued' : { 'seq' : bigint } } |
   { 'Included' : { 'tx_index' : number, 'block_number' : bigint } } |
   { 'Unknown' : null } |
   { 'Dropped' : { 'code' : number } };
+export interface PrecompileAllowArgs { 'method' : string, 'target' : Principal }
 export type ProduceBlockError = { 'Internal' : string } |
   { 'InvalidArgument' : string };
 export interface PrunePolicyView {
@@ -339,10 +360,6 @@ export interface PruneStatusView {
   'last_prune_at' : bigint,
   'prune_running' : boolean,
   'oldest_kept_block' : [] | [bigint],
-}
-export interface QueryPrecompileAllowArgs {
-  'method' : string,
-  'target' : Principal,
 }
 export interface QueueItemView {
   'seq' : bigint,
@@ -402,6 +419,7 @@ export interface RecoverFailedWrapArgs { 'request_id' : Uint8Array }
 export type RequestDispatchStatusView = { 'Queued' : null } |
   { 'Dispatching' : null } |
   { 'Dispatched' : null } |
+  { 'DispatchUncertain' : null } |
   { 'DispatchFailed' : null };
 export type RequestKind = { 'Wrap' : null } |
   { 'NativeDeposit' : null } |
@@ -445,6 +463,10 @@ export type RequestStatus = { 'Queued' : null } |
   { 'Failed' : null } |
   { 'Succeeded' : null } |
   { 'Running' : null };
+export interface ResolveIcpUpdateRequestArgs {
+  'request_id' : Uint8Array,
+  'resolution' : IcpUpdateResolutionView,
+}
 export type Result = { 'Ok' : null } |
   { 'Err' : string };
 export type Result_1 = { 'Ok' : null } |
@@ -467,31 +489,33 @@ export type Result_17 = { 'Ok' : QuoteWrapRequestOk } |
   { 'Err' : ApiError };
 export type Result_18 = { 'Ok' : RequestOverview } |
   { 'Err' : ApiError };
-export type Result_19 = { 'Ok' : RpcCallResultView } |
-  { 'Err' : RpcErrorView };
+export type Result_19 = { 'Ok' : IcpUpdateRequestView } |
+  { 'Err' : ApiError };
 export type Result_2 = { 'Ok' : DispatchUnwrapRequestOk } |
   { 'Err' : ApiError };
-export type Result_20 = { 'Ok' : Uint8Array } |
+export type Result_20 = { 'Ok' : RpcCallResultView } |
+  { 'Err' : RpcErrorView };
+export type Result_21 = { 'Ok' : Uint8Array } |
   { 'Err' : string };
-export type Result_21 = { 'Ok' : bigint } |
+export type Result_22 = { 'Ok' : bigint } |
   { 'Err' : RpcErrorView };
-export type Result_22 = { 'Ok' : RpcFeeHistoryView } |
+export type Result_23 = { 'Ok' : RpcFeeHistoryView } |
   { 'Err' : RpcErrorView };
-export type Result_23 = { 'Ok' : bigint } |
+export type Result_24 = { 'Ok' : bigint } |
   { 'Err' : RpcErrorView };
-export type Result_24 = { 'Ok' : Uint8Array } |
+export type Result_25 = { 'Ok' : Uint8Array } |
   { 'Err' : RpcErrorView };
-export type Result_25 = { 'Ok' : [] | [bigint] } |
+export type Result_26 = { 'Ok' : [] | [bigint] } |
   { 'Err' : string };
-export type Result_26 = { 'Ok' : EthLogsPageView } |
+export type Result_27 = { 'Ok' : EthLogsPageView } |
   { 'Err' : GetLogsErrorView };
-export type Result_27 = { 'Ok' : Uint8Array } |
+export type Result_28 = { 'Ok' : Uint8Array } |
   { 'Err' : SubmitTxError };
-export type Result_28 = { 'Ok' : SubmitNativeDepositOk } |
-  { 'Err' : ApiError };
-export type Result_29 = { 'Ok' : SubmitWrapRequestOk } |
+export type Result_29 = { 'Ok' : SubmitNativeDepositOk } |
   { 'Err' : ApiError };
 export type Result_3 = { 'Ok' : EstimateIcTxOk } |
+  { 'Err' : ApiError };
+export type Result_30 = { 'Ok' : SubmitWrapRequestOk } |
   { 'Err' : ApiError };
 export type Result_4 = { 'Ok' : bigint } |
   { 'Err' : string };
@@ -626,7 +650,11 @@ export interface WrapRuntimeConfigView {
 }
 export interface _SERVICE {
   'add_query_precompile_allowed_method' : ActorMethod<
-    [QueryPrecompileAllowArgs],
+    [PrecompileAllowArgs],
+    Result
+  >,
+  'add_update_precompile_allowed_method' : ActorMethod<
+    [PrecompileAllowArgs],
     Result
   >,
   'credit_native_deposit' : ActorMethod<
@@ -648,6 +676,10 @@ export interface _SERVICE {
   'get_block' : ActorMethod<[bigint], Result_7>,
   'get_cycle_balance' : ActorMethod<[], bigint>,
   'get_fee_policy' : ActorMethod<[], Result_8>,
+  'get_icp_update_request' : ActorMethod<
+    [Uint8Array],
+    [] | [IcpUpdateRequestView]
+  >,
   'get_native_deposit_result' : ActorMethod<
     [Uint8Array],
     [] | [RequestOverview]
@@ -657,7 +689,7 @@ export interface _SERVICE {
   'get_prune_status' : ActorMethod<[], PruneStatusView>,
   'get_query_precompile_allowlist' : ActorMethod<
     [],
-    Array<QueryPrecompileAllowArgs>
+    Array<PrecompileAllowArgs>
   >,
   'get_queue_snapshot' : ActorMethod<
     [number, [] | [bigint]],
@@ -681,6 +713,10 @@ export interface _SERVICE {
     [GetUnwrapRequirementsArgs],
     Result_10
   >,
+  'get_update_precompile_allowlist' : ActorMethod<
+    [],
+    Array<PrecompileAllowArgs>
+  >,
   'get_wrap_runtime_config' : ActorMethod<[], Result_11>,
   'health' : ActorMethod<[], HealthView>,
   'icrc10_supported_standards' : ActorMethod<[], Array<StandardRecord>>,
@@ -700,36 +736,44 @@ export interface _SERVICE {
   'quote_wrap_request' : ActorMethod<[QuoteWrapRequestArgs], Result_17>,
   'recover_failed_wrap' : ActorMethod<[RecoverFailedWrapArgs], Result_18>,
   'remove_query_precompile_allowed_method' : ActorMethod<
-    [QueryPrecompileAllowArgs],
+    [PrecompileAllowArgs],
+    Result
+  >,
+  'remove_update_precompile_allowed_method' : ActorMethod<
+    [PrecompileAllowArgs],
     Result
   >,
   'repair_stale_wrap_operations' : ActorMethod<[], Result>,
+  'resolve_icp_update_request' : ActorMethod<
+    [ResolveIcpUpdateRequestArgs],
+    Result_19
+  >,
   'retry_native_deposit' : ActorMethod<[RetryRequestArgs], Result_18>,
   'retry_native_withdrawal' : ActorMethod<[RetryRequestArgs], Result_18>,
   'retry_request' : ActorMethod<[RetryRequestArgs], Result_18>,
   'rpc_eth_block_number' : ActorMethod<[], bigint>,
-  'rpc_eth_call_object' : ActorMethod<[RpcCallObjectView], Result_19>,
+  'rpc_eth_call_object' : ActorMethod<[RpcCallObjectView], Result_20>,
   'rpc_eth_call_object_at' : ActorMethod<
     [RpcCallObjectView, RpcBlockTagView],
-    Result_19
+    Result_20
   >,
   'rpc_eth_call_object_with_query_precompile' : ActorMethod<
     [RpcCallObjectView],
-    Result_19
+    Result_20
   >,
-  'rpc_eth_call_rawtx' : ActorMethod<[Uint8Array], Result_20>,
+  'rpc_eth_call_rawtx' : ActorMethod<[Uint8Array], Result_21>,
   'rpc_eth_chain_id' : ActorMethod<[], bigint>,
-  'rpc_eth_estimate_gas_object' : ActorMethod<[RpcCallObjectView], Result_21>,
+  'rpc_eth_estimate_gas_object' : ActorMethod<[RpcCallObjectView], Result_22>,
   'rpc_eth_estimate_gas_object_at' : ActorMethod<
     [RpcCallObjectView, RpcBlockTagView],
-    Result_21
+    Result_22
   >,
   'rpc_eth_fee_history' : ActorMethod<
     [bigint, RpcBlockTagView, [] | [Array<number>]],
-    Result_22
+    Result_23
   >,
-  'rpc_eth_gas_price' : ActorMethod<[], Result_23>,
-  'rpc_eth_get_balance' : ActorMethod<[Uint8Array, RpcBlockTagView], Result_24>,
+  'rpc_eth_gas_price' : ActorMethod<[], Result_24>,
+  'rpc_eth_get_balance' : ActorMethod<[Uint8Array, RpcBlockTagView], Result_25>,
   'rpc_eth_get_block_by_number' : ActorMethod<
     [bigint, boolean],
     [] | [EthBlockView]
@@ -740,16 +784,16 @@ export interface _SERVICE {
   >,
   'rpc_eth_get_block_number_by_hash' : ActorMethod<
     [Uint8Array, number],
-    Result_25
+    Result_26
   >,
-  'rpc_eth_get_code' : ActorMethod<[Uint8Array, RpcBlockTagView], Result_24>,
+  'rpc_eth_get_code' : ActorMethod<[Uint8Array, RpcBlockTagView], Result_25>,
   'rpc_eth_get_logs_paged' : ActorMethod<
     [EthLogFilterView, [] | [EthLogsCursorView], number],
-    Result_26
+    Result_27
   >,
   'rpc_eth_get_storage_at' : ActorMethod<
     [Uint8Array, Uint8Array, RpcBlockTagView],
-    Result_24
+    Result_25
   >,
   'rpc_eth_get_transaction_by_eth_hash' : ActorMethod<
     [Uint8Array],
@@ -761,7 +805,7 @@ export interface _SERVICE {
   >,
   'rpc_eth_get_transaction_count_at' : ActorMethod<
     [Uint8Array, RpcBlockTagView],
-    Result_21
+    Result_22
   >,
   'rpc_eth_get_transaction_receipt_by_eth_hash' : ActorMethod<
     [Uint8Array],
@@ -776,16 +820,16 @@ export interface _SERVICE {
     RpcReceiptLookupView
   >,
   'rpc_eth_history_window' : ActorMethod<[], RpcHistoryWindowView>,
-  'rpc_eth_max_priority_fee_per_gas' : ActorMethod<[], Result_23>,
-  'rpc_eth_send_raw_transaction' : ActorMethod<[Uint8Array], Result_27>,
+  'rpc_eth_max_priority_fee_per_gas' : ActorMethod<[], Result_24>,
+  'rpc_eth_send_raw_transaction' : ActorMethod<[Uint8Array], Result_28>,
   'set_allowed_assets' : ActorMethod<[Array<Principal>], Result>,
   'set_fee_policy' : ActorMethod<[FeePolicyView], Result>,
   'set_log_filter' : ActorMethod<[[] | [string]], Result>,
   'set_prune_policy' : ActorMethod<[PrunePolicyView], Result>,
   'set_pruning_enabled' : ActorMethod<[boolean], Result>,
-  'submit_ic_tx' : ActorMethod<[SubmitIcTxArgsDto], Result_27>,
-  'submit_native_deposit' : ActorMethod<[SubmitNativeDepositArgs], Result_28>,
-  'submit_wrap_request' : ActorMethod<[SubmitWrapRequestArgs], Result_29>,
+  'submit_ic_tx' : ActorMethod<[SubmitIcTxArgsDto], Result_28>,
+  'submit_native_deposit' : ActorMethod<[SubmitNativeDepositArgs], Result_29>,
+  'submit_wrap_request' : ActorMethod<[SubmitWrapRequestArgs], Result_30>,
 }
 export declare const idlFactory: IDL.InterfaceFactory;
 export declare const init: (args: { IDL: typeof IDL }) => IDL.Type[];

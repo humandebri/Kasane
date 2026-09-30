@@ -71,7 +71,7 @@ const POST_UPGRADE_MIGRATION_MAX_ITERS: usize = 32;
 const POST_UPGRADE_SCHEMA_MIGRATION_STEPS: u32 = 1024;
 const POST_UPGRADE_STATE_ROOT_MIGRATION_STEPS: u32 = 1024;
 
-fn run_ready_future<F>(future: F) -> F::Output
+pub(super) fn run_ready_future<F>(future: F) -> F::Output
 where
     F: Future,
 {
@@ -1019,6 +1019,20 @@ fn reject_anonymous_principal_allows_non_anonymous() {
     let principal = Principal::self_authenticating(b"wrapper-test-caller");
     let out = reject_anonymous_principal(principal);
     assert_eq!(out, None);
+}
+
+#[test]
+fn inspect_anonymous_caller_allowed_only_for_consent() {
+    for policy in INSPECT_METHOD_POLICIES {
+        assert_eq!(
+            super::inspect_caller_allowed(policy.method, Principal::anonymous()),
+            policy.method == "icrc21_canister_call_consent_message"
+        );
+        assert!(super::inspect_caller_allowed(
+            policy.method,
+            Principal::self_authenticating(b"caller")
+        ));
+    }
 }
 
 #[test]
