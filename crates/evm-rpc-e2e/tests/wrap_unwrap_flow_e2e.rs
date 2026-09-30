@@ -385,6 +385,9 @@ enum RpcBlockTagView {
 }
 
 fn gateway_wasm_path() -> PathBuf {
+    if let Some(path) = std::env::var_os("EVM_GATEWAY_WASM") {
+        return PathBuf::from(path);
+    }
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("../../target/wasm32-unknown-unknown/release/ic_evm_gateway.wasm")
 }

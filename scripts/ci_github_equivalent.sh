@@ -33,6 +33,7 @@ scripts/check_precompile_feature_isolation.sh
 scripts/check_verification_policy.sh
 
 cargo check --workspace
+scripts/test_ic_wasm_endpoint_checker.sh
 scripts/verify-verus.sh
 
 # specgen injects Verus contract attributes into these pure target files.

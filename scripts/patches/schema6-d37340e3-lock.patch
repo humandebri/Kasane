@@ -1,0 +1,10 @@
+--- a/Cargo.lock
++++ b/Cargo.lock
+@@ -1851,6 +1851,7 @@
+  "alloy-primitives",
+  "alloy-signer",
+  "alloy-signer-local",
++ "candid",
+  "evm-db",
+  "ic-evm-core",
+  "ic-evm-rpc-types",

@@ -1,5 +1,8 @@
 # 更新・復元の検証と mainnet 移行の残件（2026-09-30）
 
+この文書は PR #100 時点の結果。以後の最終 Wasm 検査、履歴 schema 6 更新、
+外部 ledger 照合は [追加検証結果](mainnet-release-validation-2026-09-30.md) を参照。
+
 ## 対象
 
 main `ac5b5c6912a145a71aa35d014829af0e17e7edf2` を基準に、PocketIC の
