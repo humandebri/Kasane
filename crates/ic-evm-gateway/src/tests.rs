@@ -272,7 +272,7 @@ fn icrc21_submit_ic_tx_consent_decodes_precompile_unwrap() {
             method: "submit_ic_tx".to_string(),
             arg: encode_one(SubmitIcTxArgsDto {
                 to: Some(WRAP_PRECOMPILE_ADDRESS.to_vec()),
-                value: Nat::from(0u8),
+                value: Nat::from(123456789u64),
                 max_priority_fee_per_gas: Nat::from(2u8),
                 data: encode_unwrap_payload(asset, amount, recipient),
                 from: None,
@@ -299,7 +299,8 @@ fn icrc21_submit_ic_tx_consent_decodes_precompile_unwrap() {
     assert!(markdown.contains("Approve Kasane unwrap"));
     assert!(markdown.contains(&asset.to_text()));
     assert!(markdown.contains(&recipient.to_text()));
-    assert!(markdown.contains("amount_e8s: `42`"));
+    assert!(markdown.contains("amount (asset ledger base units): `42`"));
+    assert!(markdown.contains("native value (wei): `123456789`"));
 }
 
 #[test]
@@ -314,7 +315,7 @@ fn icrc21_submit_ic_tx_consent_decodes_erc20_approve() {
             method: "submit_ic_tx".to_string(),
             arg: encode_one(SubmitIcTxArgsDto {
                 to: Some(vec![0x22; 20]),
-                value: Nat::from(0u8),
+                value: Nat::from(987654321u64),
                 max_priority_fee_per_gas: Nat::from(2u8),
                 data,
                 from: None,
@@ -341,6 +342,7 @@ fn icrc21_submit_ic_tx_consent_decodes_erc20_approve() {
     assert!(markdown.contains("Approve ERC-20 allowance transaction"));
     assert!(markdown.contains("0x4444444444444444444444444444444444444444"));
     assert!(markdown.contains("amount: `42`"));
+    assert!(markdown.contains("native value (wei): `987654321`"));
 }
 
 #[test]

@@ -387,6 +387,15 @@ async function runMetaMaskHelperTests(): Promise<void> {
     walletProviderTestHooks.resolveOisyPrincipalText([{ owner: Principal.fromText("ryjl3-tyaaa-aaaaa-aaaba-cai") }]),
     "ryjl3-tyaaa-aaaaa-aaaba-cai",
   );
+  const owner = Principal.fromText("ryjl3-tyaaa-aaaaa-aaaba-cai");
+  assert.equal(walletProviderTestHooks.resolveOisyPrincipalText([
+    { owner, subaccount: new Uint8Array(32) },
+  ]), owner.toText());
+  for (const subaccount of [new Uint8Array(32).fill(1), new Uint8Array(0), new Uint8Array(31), new Uint8Array(33)]) {
+    assert.throws(() => walletProviderTestHooks.resolveOisyPrincipalText([
+      { owner, subaccount }, { owner },
+    ]), /wallet.oisy_default_account_required/);
+  }
 }
 
 async function runFinishSubmittedUnwrapRequestTests(): Promise<void> {

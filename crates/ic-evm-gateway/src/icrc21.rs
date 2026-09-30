@@ -268,8 +268,9 @@ fn describe_precompile_unwrap(tx: &IcSyntheticTxInput) -> Result<String, Icrc21E
         - method: `submit_ic_tx`\n\
         - target: `Kasane wrap precompile`\n\
         - asset principal: `{}`\n\
-        - amount_e8s: `{}`\n\
+        - amount (asset ledger base units): `{}`\n\
         - recipient principal: `{}`\n\
+        - native value (wei): `{}`\n\
         - nonce: `{}`\n\
         - gas limit: `{}`\n\
         - max fee per gas: `{}`\n\
@@ -277,6 +278,7 @@ fn describe_precompile_unwrap(tx: &IcSyntheticTxInput) -> Result<String, Icrc21E
         intent.asset_principal,
         intent.amount_e8s,
         intent.recipient_principal,
+        u256_to_decimal(&tx.value),
         tx.nonce,
         tx.gas_limit,
         tx.max_fee_per_gas,
@@ -294,13 +296,17 @@ fn describe_erc20_approve(tx: &IcSyntheticTxInput) -> Result<String, Icrc21Error
         - token address: `{}`\n\
         - spender: `0x{}`\n\
         - amount: `{}`\n\
+        - native value (wei): `{}`\n\
         - nonce: `{}`\n\
         - gas limit: `{}`\n\
         - max fee per gas: `{}`\n\
-        - max priority fee per gas: `{}`",
+        - max priority fee per gas: `{}`\n\n\
+        The calldata requests ERC-20 approve; actual effects depend on the destination contract. \
+        Native value is sent in addition to transaction gas fees.",
         format_address(tx.to),
         spender,
         approve.amount,
+        u256_to_decimal(&tx.value),
         tx.nonce,
         tx.gas_limit,
         tx.max_fee_per_gas,
@@ -342,11 +348,14 @@ struct Erc20ApproveView {
 }
 
 fn is_erc20_approve(tx: &IcSyntheticTxInput) -> bool {
-    tx.to.is_some() && tx.data.len() >= 68 && tx.data[..4] == ERC20_APPROVE_SELECTOR
+    tx.to.is_some() && decode_erc20_approve(&tx.data).is_some()
 }
 
 fn decode_erc20_approve(data: &[u8]) -> Option<Erc20ApproveView> {
-    if data.len() < 68 || data[..4] != ERC20_APPROVE_SELECTOR {
+    if data.len() != 68
+        || data[..4] != ERC20_APPROVE_SELECTOR
+        || data[4..16].iter().any(|&byte| byte != 0)
+    {
         return None;
     }
     let spender_slice = data.get(16..36)?;
@@ -369,6 +378,9 @@ fn read_principal_field(data: &[u8], offset: &mut usize) -> Option<Vec<u8>> {
     *offset += 1;
     let end = offset.checked_add(29)?;
     let field = data.get(*offset..end)?;
+    if field[len..].iter().any(|&byte| byte != 0) {
+        return None;
+    }
     *offset = end;
     Some(field.get(..len)?.to_vec())
 }
@@ -421,9 +433,13 @@ mod tests {
     use candid::{encode_one, Principal};
 
     fn consent<T: CandidType>(method: &str, args: &T) -> Icrc21ConsentMessageResponse {
+        consent_bytes(method, encode_one(args).unwrap())
+    }
+
+    fn consent_bytes(method: &str, arg: Vec<u8>) -> Icrc21ConsentMessageResponse {
         crate::tests::run_ready_future(consent_message(Icrc21ConsentMessageRequest {
             method: method.into(),
-            arg: encode_one(args).unwrap(),
+            arg,
             user_preferences: Icrc21ConsentMessageSpec {
                 metadata: Icrc21ConsentMessageMetadata {
                     language: "en".into(),
@@ -545,5 +561,113 @@ mod tests {
             .is_err());
         }
         assert!(consent("unknown_method", &42u64).is_err());
+    }
+
+    #[test]
+    fn unwrap_rejects_nonzero_principal_padding() {
+        let mut payload = vec![0; 93];
+        payload[0] = 1;
+        payload[1] = 1;
+        payload[2] = 1;
+        payload[62] = 1;
+        payload[63] = 1;
+        payload[64] = 1;
+        assert!(decode_unwrap_payload(&payload).is_some());
+        for index in (3..31).chain(65..93) {
+            let mut malformed = payload.clone();
+            malformed[index] = 1;
+            assert!(
+                decode_unwrap_payload(&malformed).is_none(),
+                "padding byte {index}"
+            );
+        }
+    }
+
+    #[test]
+    fn approve_with_extra_calldata_or_noncanonical_address_is_generic() {
+        let mut tx = IcSyntheticTxInput {
+            to: Some([0x22; 20]),
+            value: [0; 32],
+            gas_limit: 90000,
+            nonce: 1,
+            max_fee_per_gas: 3,
+            max_priority_fee_per_gas: 2,
+            data: vec![0; 68],
+        };
+        tx.data[..4].copy_from_slice(&ERC20_APPROVE_SELECTOR);
+        assert!(is_erc20_approve(&tx));
+        tx.data.push(1);
+        assert!(!is_erc20_approve(&tx));
+        tx.data.pop();
+        for index in 4..16 {
+            tx.data[index] = 1;
+            assert!(!is_erc20_approve(&tx), "address padding byte {index}");
+            tx.data[index] = 0;
+        }
+    }
+
+    #[test]
+    fn consent_rejects_every_truncated_wrap_argument() {
+        let bytes = encode_one(wrap_args()).unwrap();
+        for length in 0..bytes.len() {
+            assert!(
+                consent_bytes("submit_wrap_request", bytes[..length].to_vec()).is_err(),
+                "truncated length {length}"
+            );
+        }
+    }
+
+    #[test]
+    fn wrap_amount_and_fee_boundaries_match_execution_normalizer() {
+        let mut args = wrap_args();
+        for bit in [0, 1, 127, 128, 255, 256, 257] {
+            for below in [false, true] {
+                args.amount_e8s = Nat((num_bigint::BigUint::from(1u8) << bit) - u8::from(below));
+                let accepted =
+                    normalize_submit_wrap_request(args.clone(), Principal::anonymous()).is_ok();
+                assert_eq!(
+                    consent("submit_wrap_request", &args).is_ok(),
+                    accepted,
+                    "amount bit {bit}, below {below}"
+                );
+            }
+        }
+        args = wrap_args();
+        for value in [
+            Nat::from(u128::MAX),
+            Nat(num_bigint::BigUint::from(1u8) << 128),
+        ] {
+            args.max_fee_e8s = value.clone();
+            assert_eq!(
+                consent("submit_wrap_request", &args).is_ok(),
+                crate::nat_to_u128(&value).is_some()
+            );
+            args.max_fee_e8s = Nat::from(1u8);
+            args.quoted_gas_price_wei = value.clone();
+            assert_eq!(
+                consent("submit_wrap_request", &args).is_ok(),
+                crate::nat_to_u128(&value).is_some()
+            );
+            args.quoted_gas_price_wei = Nat::from(1u8);
+        }
+    }
+
+    #[test]
+    fn native_conversion_overflow_and_address_lengths_are_rejected() {
+        let mut args = SubmitNativeDepositArgs {
+            deposit_id: vec![0xab; 32],
+            amount_e8s: Nat::from(u128::MAX / crate::WEI_PER_E8S),
+            evm_recipient: vec![0x12; 20],
+            max_fee_e8s: Nat::from(u128::MAX),
+            fee_ledger_canister: Principal::self_authenticating(b"fee"),
+        };
+        assert!(consent("submit_native_deposit", &args).is_ok());
+        args.amount_e8s = Nat::from(u128::MAX / crate::WEI_PER_E8S + 1);
+        assert!(consent("submit_native_deposit", &args).is_err());
+        args.amount_e8s = Nat::from(1u8);
+        for length in [0, 1, 19, 21, 32] {
+            args.evm_recipient = vec![0x12; length];
+            assert!(consent("submit_native_deposit", &args).is_err());
+        }
     }
 }
