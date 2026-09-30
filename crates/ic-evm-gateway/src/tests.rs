@@ -1958,7 +1958,14 @@ fn mining_tick_does_not_reschedule_after_dropping_non_executable_tx() {
     .expect("submit_ic_tx should succeed");
 
     // 直前に最低ガス価格を引き上げ、queue内txを「実行不能」にする。
+    let request_id = TxId([0xeb; 32]);
+    let mut request = sample_wrap_request(RequestStatus::Running);
+    request.result.stage = WrapRequestStage::MintSubmitted;
+    request.result.mint_submit_status = MintSubmitStatus::Submitted;
+    request.result.mint_tx_id = Some(tx_id.0.to_vec());
+    request.result.pull_ledger_tx_id = Some(vec![1]);
     evm_db::stable_state::with_state_mut(|state| {
+        state.wrap_requests.insert(request_id, request);
         let mut chain_state = *state.chain_state.get();
         chain_state.min_gas_price = u64::MAX;
         state.chain_state.set(chain_state);
@@ -1970,6 +1977,14 @@ fn mining_tick_does_not_reschedule_after_dropping_non_executable_tx() {
         assert!(state.tx_store.get(&tx_id).is_none());
         assert!(!state.chain_state.get().mining_scheduled);
         assert!(!state.chain_state.get().is_producing);
+        let request = state.wrap_requests.get(&request_id).expect("mint request");
+        assert_eq!(request.result.status, RequestStatus::Failed);
+        assert_eq!(request.result.stage, WrapRequestStage::Failed);
+        assert!(request.result.mint_failed_recoverable);
+        assert_eq!(
+            request.result.error_code.as_deref(),
+            Some("wrap.mint_dropped")
+        );
     });
 }
 

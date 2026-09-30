@@ -141,6 +141,65 @@ struct SubmitWrapRequestArgs {
     fee_ledger_canister: Principal,
 }
 
+#[derive(Clone, Debug, CandidType, Deserialize)]
+struct RequestIdArgs {
+    request_id: Vec<u8>,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize)]
+struct FeePolicyArgs {
+    fee_ledger_canister: Principal,
+    cycle_fee_e8s: u64,
+    gas_price_buffer_bps: u32,
+}
+
+fn consent_text<T: CandidType>(
+    pic: &PocketIc,
+    gateway: Principal,
+    method: &str,
+    args: &T,
+) -> String {
+    let out = pic
+        .update_call(
+            gateway,
+            Principal::anonymous(),
+            "icrc21_canister_call_consent_message",
+            Encode!(&Icrc21ConsentMessageRequest {
+                method: method.into(),
+                arg: Encode!(args).unwrap(),
+                user_preferences: Icrc21ConsentMessageSpec {
+                    metadata: Icrc21ConsentMessageMetadata {
+                        language: "en".into(),
+                        utc_offset_minutes: None
+                    },
+                    device_spec: None,
+                },
+            })
+            .unwrap(),
+        )
+        .expect("anonymous consent");
+    let info = Decode!(&out, Icrc21ConsentMessageResponse)
+        .unwrap()
+        .unwrap();
+    match info.consent_message {
+        Icrc21ConsentMessage::GenericDisplayMessage(text) => text,
+        _ => panic!("expected generic display"),
+    }
+}
+
+fn assert_api_error(bytes: &[u8], expected: &str) {
+    let result = Decode!(bytes, Result<candid::Reserved, ApiError>).unwrap();
+    let error = match result {
+        Err(
+            ApiError::InvalidArgument(error)
+            | ApiError::Rejected(error)
+            | ApiError::Internal(error),
+        ) => error,
+        Ok(_) => panic!("expected error {expected}"),
+    };
+    assert_eq!(error.code, expected);
+}
+
 fn submit_wrap_request_args(
     fee_ledger_id: Principal,
     evm_recipient: Vec<u8>,
@@ -508,8 +567,10 @@ fn install_integrated_pair_with_native(pic: &PocketIc) -> (Principal, Principal,
     let gateway_evm = hash::derive_evm_address_from_principal(gateway_id.as_slice())
         .expect("derive integrated gateway evm address");
     let factory = predict_create_address(caller_evm, 0);
-    let fee_ledger_init = build_ledger_init(gateway_id, gateway_id, caller, TEST_LEDGER_BALANCE);
-    let native_ledger_init = build_ledger_init(gateway_id, gateway_id, caller, TEST_LEDGER_BALANCE);
+    // Gateway is a normal account with no initial collateral: deposits must
+    // actually fund it, rather than use mint/burn fee exemptions.
+    let fee_ledger_init = build_ledger_init(kasane_id, gateway_id, caller, 0);
+    let native_ledger_init = build_ledger_init(kasane_id, gateway_id, caller, 0);
     let gateway_init = Some(GatewayInitArgs {
         genesis_balances: vec![
             GenesisBalanceView {
@@ -573,14 +634,14 @@ fn set_allowed_assets(pic: &PocketIc, wrap_id: Principal, assets: Vec<Principal>
 }
 
 fn build_ledger_init(
-    gateway_id: Principal,
+    minting_owner: Principal,
     wrap_id: Principal,
     caller: Principal,
     wrap_balance: u128,
 ) -> LedgerArg {
     LedgerArg::Init(LedgerInitArgs {
         minting_account: LedgerAccount {
-            owner: gateway_id,
+            owner: minting_owner,
             subaccount: None,
         },
         fee_collector_account: None,
@@ -956,7 +1017,13 @@ fn wait_for_wrap_status(
             }
         }
     }
-    panic!("wrap request did not reach expected status; last={last:?}");
+    let mint_pending = last
+        .as_ref()
+        .and_then(|request| request.mint_tx_id.as_ref())
+        .map(|id| gateway_pending_status(pic, wrap_id, id));
+    panic!(
+        "wrap request did not reach expected status; last={last:?}; mint_pending={mint_pending:?}"
+    );
 }
 
 fn wait_for_unwrap_status(
@@ -1793,4 +1860,238 @@ fn direct_unwrap_dispatch_rejects_non_wrap_caller() {
         }
         other => panic!("unexpected dispatch result: {other:?}"),
     }
+}
+
+#[test]
+fn consent_does_not_bypass_caps_or_anonymous_asset_authorization() {
+    let pic = PocketIc::new();
+    let (gateway, ledger, native) = install_integrated_pair_with_native(&pic);
+    let caller = test_caller();
+    let evm = hash::derive_evm_address_from_principal(caller.as_slice()).unwrap();
+    approve_fee_ledger_for_wrap(&pic, ledger, gateway, WRAP_AMOUNT_E8S * 2);
+    approve_fee_ledger_for_wrap(&pic, native, gateway, WRAP_AMOUNT_E8S * 2);
+    let balances = || {
+        [
+            ledger_balance_of(&pic, ledger, caller),
+            ledger_balance_of(&pic, ledger, gateway),
+            ledger_balance_of(&pic, native, caller),
+            ledger_balance_of(&pic, native, gateway),
+        ]
+    };
+    let before = balances();
+    for gas_cap in [false, true] {
+        let mut args = submit_wrap_request_args(ledger, evm.to_vec());
+        if gas_cap {
+            args.quoted_gas_price_wei = Nat::from(0u8);
+        } else {
+            args.max_fee_e8s = Nat::from(0u8);
+        }
+        let text = consent_text(&pic, gateway, "submit_wrap_request", &args);
+        assert!(text.contains("exceeds these limits"));
+        let out = pic
+            .update_call(
+                gateway,
+                caller,
+                "submit_wrap_request",
+                Encode!(&args).unwrap(),
+            )
+            .unwrap();
+        assert_api_error(
+            &out,
+            if gas_cap {
+                "fee.gas_price_exceeded"
+            } else {
+                "fee.quote_exceeded"
+            },
+        );
+        assert_eq!(balances(), before);
+    }
+    let wrap = submit_wrap_request_args(ledger, evm.to_vec());
+    let deposit = SubmitNativeDepositArgs {
+        deposit_id: vec![0xab; 32],
+        amount_e8s: Nat::from(100u64),
+        evm_recipient: evm.to_vec(),
+        max_fee_e8s: Nat::from(0u8),
+        fee_ledger_canister: ledger,
+    };
+    consent_text(&pic, gateway, "submit_native_deposit", &deposit);
+    let out = pic
+        .update_call(
+            gateway,
+            caller,
+            "submit_native_deposit",
+            Encode!(&deposit).unwrap(),
+        )
+        .unwrap();
+    assert_api_error(&out, "fee.quote_exceeded");
+    assert_eq!(balances(), before);
+    let id = RequestIdArgs {
+        request_id: vec![0xcd; 32],
+    };
+    for (method, arg) in [
+        ("submit_wrap_request", Encode!(&wrap).unwrap()),
+        ("submit_native_deposit", Encode!(&deposit).unwrap()),
+        ("retry_request", Encode!(&id).unwrap()),
+        ("retry_native_withdrawal", Encode!(&id).unwrap()),
+        ("retry_native_deposit", Encode!(&id).unwrap()),
+        ("recover_failed_wrap", Encode!(&id).unwrap()),
+    ] {
+        assert!(
+            pic.update_call(gateway, Principal::anonymous(), method, arg)
+                .is_err(),
+            "anonymous asset ingress accepted: {method}"
+        );
+        assert_eq!(balances(), before);
+    }
+}
+
+#[test]
+fn fee_ledger_change_after_consent_rejects_before_any_debit() {
+    let pic = PocketIc::new();
+    let (gateway, old_ledger, new_ledger) = install_integrated_pair_with_native(&pic);
+    let caller = test_caller();
+    let evm = hash::derive_evm_address_from_principal(caller.as_slice()).unwrap();
+    let wrap = submit_wrap_request_args(old_ledger, evm.to_vec());
+    let deposit = SubmitNativeDepositArgs {
+        deposit_id: vec![0xab; 32],
+        amount_e8s: Nat::from(100u64),
+        evm_recipient: evm.to_vec(),
+        max_fee_e8s: Nat::from(u128::MAX),
+        fee_ledger_canister: old_ledger,
+    };
+    for ledger in [old_ledger, new_ledger] {
+        approve_fee_ledger_for_wrap(&pic, ledger, gateway, WRAP_AMOUNT_E8S * 2);
+    }
+    let balances = || {
+        [
+            ledger_balance_of(&pic, old_ledger, caller),
+            ledger_balance_of(&pic, old_ledger, gateway),
+            ledger_balance_of(&pic, new_ledger, caller),
+            ledger_balance_of(&pic, new_ledger, gateway),
+        ]
+    };
+    let before = balances();
+    let wrap_consent = consent_text(&pic, gateway, "submit_wrap_request", &wrap);
+    let native_consent = consent_text(&pic, gateway, "submit_native_deposit", &deposit);
+    let out = pic
+        .update_call(
+            gateway,
+            caller,
+            "set_fee_policy",
+            Encode!(&FeePolicyArgs {
+                fee_ledger_canister: new_ledger,
+                cycle_fee_e8s: 1_000_000,
+                gas_price_buffer_bps: 12000,
+            })
+            .unwrap(),
+        )
+        .unwrap();
+    Decode!(&out, Result<(), String>).unwrap().unwrap();
+    assert_eq!(
+        consent_text(&pic, gateway, "submit_wrap_request", &wrap),
+        wrap_consent
+    );
+    assert_eq!(
+        consent_text(&pic, gateway, "submit_native_deposit", &deposit),
+        native_consent
+    );
+    for (method, arg) in [
+        ("submit_wrap_request", Encode!(&wrap).unwrap()),
+        ("submit_native_deposit", Encode!(&deposit).unwrap()),
+    ] {
+        let out = pic.update_call(gateway, caller, method, arg).unwrap();
+        assert_api_error(&out, "fee.ledger_changed");
+        assert_eq!(balances(), before);
+    }
+}
+
+#[test]
+fn failed_mint_refunds_original_depositor_once_even_when_another_caller_recovers() {
+    let pic = PocketIc::new();
+    let (gateway, ledger) = install_integrated_pair(&pic);
+    let caller = test_caller();
+    let outsider = Principal::self_authenticating(b"recovery-trigger-only");
+    let evm = hash::derive_evm_address_from_principal(caller.as_slice()).unwrap();
+    deploy_factory(&pic, gateway, gateway);
+    approve_fee_ledger_for_wrap(&pic, ledger, gateway, WRAP_AMOUNT_E8S * 2);
+    let before = ledger_balance_of(&pic, ledger, caller);
+    assert_eq!(ledger_balance_of(&pic, ledger, gateway), 0);
+    let mut args = submit_wrap_request_args(ledger, evm.to_vec());
+    args.gas_limit = 1; // Accepted quote, but insufficient intrinsic gas for the actual mint.
+    let out = pic
+        .update_call(
+            gateway,
+            caller,
+            "submit_wrap_request",
+            Encode!(&args).unwrap(),
+        )
+        .unwrap();
+    let submitted = Decode!(&out, Result<SubmitWrapRequestOk, ApiError>)
+        .unwrap()
+        .unwrap();
+    let failed = wait_for_wrap_status(
+        &pic,
+        gateway,
+        &submitted.request_id,
+        WrapRequestStatus::Failed,
+    );
+    assert!(failed.pull_ledger_tx_id.is_some());
+    let after_pull = ledger_balance_of(&pic, ledger, caller);
+    assert_eq!(
+        before - after_pull,
+        WRAP_AMOUNT_E8S + nat_to_u128(&submitted.charged_fee_e8s) + 20
+    );
+    assert_eq!(
+        ledger_balance_of(&pic, ledger, gateway),
+        WRAP_AMOUNT_E8S + nat_to_u128(&submitted.charged_fee_e8s)
+    );
+    let id = RequestIdArgs {
+        request_id: submitted.request_id.clone(),
+    };
+    let consent = consent_text(&pic, gateway, "recover_failed_wrap", &id);
+    assert!(consent.contains("original depositor"));
+    let out = pic
+        .update_call(
+            gateway,
+            outsider,
+            "recover_failed_wrap",
+            Encode!(&id).unwrap(),
+        )
+        .unwrap();
+    let recovered = Decode!(&out, Result<RequestOverview, ApiError>)
+        .unwrap()
+        .unwrap();
+    assert!(recovered.withdraw_ledger_tx_id.is_some());
+    assert_eq!(
+        ledger_balance_of(&pic, ledger, caller) - after_pull,
+        WRAP_AMOUNT_E8S
+    );
+    assert_eq!(ledger_balance_of(&pic, ledger, outsider), 0);
+    assert_eq!(
+        ledger_balance_of(&pic, ledger, gateway),
+        nat_to_u128(&submitted.charged_fee_e8s) - 10
+    );
+    let recovered_balance = ledger_balance_of(&pic, ledger, caller);
+    let gateway_balance = ledger_balance_of(&pic, ledger, gateway);
+    let out = pic
+        .update_call(
+            gateway,
+            outsider,
+            "recover_failed_wrap",
+            Encode!(&id).unwrap(),
+        )
+        .unwrap();
+    assert_api_error(&out, "wrap.recover_already_withdrawn");
+    assert_eq!(ledger_balance_of(&pic, ledger, caller), recovered_balance);
+    assert_eq!(ledger_balance_of(&pic, ledger, gateway), gateway_balance);
+    let out = pic
+        .update_call(
+            gateway,
+            outsider,
+            "retry_native_deposit",
+            Encode!(&id).unwrap(),
+        )
+        .unwrap();
+    assert_api_error(&out, "native_deposit.retry_invalid_state");
+    assert_eq!(ledger_balance_of(&pic, ledger, caller), recovered_balance);
 }

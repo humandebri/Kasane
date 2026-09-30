@@ -5061,11 +5061,13 @@ fn mining_tick_with_timer(timer_scheduler: fn(u64), reject_provider: fn() -> Opt
             chain_state.is_producing = false;
             state.chain_state.set(chain_state);
         });
+        // A batch containing only dropped mints has no block or receipt, but
+        // its terminal transaction locations must still enable asset recovery.
+        settle_submitted_wrap_mint_receipts(current_time_nanos());
         match result {
             Ok(outcome) => {
                 record_unwrap_requests_from_block(&outcome.block.tx_ids);
                 record_icp_update_requests_from_block(&outcome.block.tx_ids);
-                settle_submitted_wrap_mint_receipts(current_time_nanos());
                 schedule_unwrap_dispatch();
                 schedule_icp_update_dispatch();
                 maybe_prune_on_block_event(outcome.block.number);
