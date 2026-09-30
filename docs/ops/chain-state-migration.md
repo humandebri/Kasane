@@ -46,9 +46,16 @@ Stop immediately and restore from the snapshot.
 ```bash
 icp canister stop -e ic <canister_id>
 icp canister snapshot restore -e ic <canister_id> <snapshot_id>
-icp canister install -e ic <canister_id> --mode reinstall --wasm <old_wasm_path>
 icp canister start -e ic <canister_id>
 ```
+
+The snapshot restores both the previous Wasm module and its heap/stable memory.
+Do not reinstall after restoring: reinstall would erase the restored state.
+See the [official snapshot documentation](https://docs.internetcomputer.org/guides/canister-management/snapshots/).
+Before reopening transaction submission, verify the restored tip, balances,
+nonces, and operational parameters against the pre-upgrade record. Reconcile
+any ledger transfers or other external effects after the snapshot separately;
+restoring this canister does not undo another canister's state.
 
 ## Notes
 - This migration does not auto-read the old 72-byte wire format.
