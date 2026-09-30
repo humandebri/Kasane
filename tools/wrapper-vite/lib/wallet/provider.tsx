@@ -70,6 +70,7 @@ type OisyAccountOwner = {
 };
 type OisyAccountLike = {
   owner: OisyAccountOwner;
+  subaccount?: Uint8Array;
 };
 
 async function resolveMetaMaskSession(chainConfig: MetaMaskChainConfig): Promise<MetaMaskSession | null> {
@@ -117,7 +118,24 @@ function resolveOisyPrincipalText(accounts: ReadonlyArray<OisyAccountLike>): str
   if (firstAccount === undefined || firstAccount.owner.isAnonymous()) {
     return null;
   }
+  // The gateway and ledger clients debit the default account only.
+  if (firstAccount.subaccount !== undefined && (
+    firstAccount.subaccount.length !== 32 || firstAccount.subaccount.some((byte) => byte !== 0)
+  )) {
+    throw new Error("wallet.oisy_default_account_required");
+  }
   return firstAccount.owner.toText();
+}
+
+async function requestOisyPrincipal(signer: Pick<Signer, "accounts" | "closeChannel">): Promise<string> {
+  try {
+    const principalText = resolveOisyPrincipalText(await signer.accounts());
+    if (principalText === null) throw new Error("wallet.oisy_account_missing");
+    return principalText;
+  } catch (error) {
+    await signer.closeChannel();
+    throw error;
+  }
 }
 
 export const WalletContext = createContext<WalletContextValue | null>(null);
@@ -183,12 +201,7 @@ export function WalletProvider(
     try {
       const baseAgent = await createOisyBaseAgent(icHost);
       const signer = createOisySigner(oisyDerivationOrigin);
-      const accounts = await signer.accounts();
-      const principalText = resolveOisyPrincipalText(accounts);
-      if (principalText === null) {
-        await signer.closeChannel();
-        throw new Error("wallet.oisy_account_missing");
-      }
+      const principalText = await requestOisyPrincipal(signer);
       const signerAgent = await SignerAgent.create({
         signer,
         account: Principal.fromText(principalText),
@@ -401,4 +414,5 @@ export function WalletProvider(
 export const walletProviderTestHooks = {
   mapPrincipalToSession,
   resolveOisyPrincipalText,
+  requestOisyPrincipal,
 };

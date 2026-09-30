@@ -71,7 +71,7 @@ const POST_UPGRADE_MIGRATION_MAX_ITERS: usize = 32;
 const POST_UPGRADE_SCHEMA_MIGRATION_STEPS: u32 = 1024;
 const POST_UPGRADE_STATE_ROOT_MIGRATION_STEPS: u32 = 1024;
 
-fn run_ready_future<F>(future: F) -> F::Output
+pub(super) fn run_ready_future<F>(future: F) -> F::Output
 where
     F: Future,
 {
@@ -272,7 +272,7 @@ fn icrc21_submit_ic_tx_consent_decodes_precompile_unwrap() {
             method: "submit_ic_tx".to_string(),
             arg: encode_one(SubmitIcTxArgsDto {
                 to: Some(WRAP_PRECOMPILE_ADDRESS.to_vec()),
-                value: Nat::from(0u8),
+                value: Nat::from(123456789u64),
                 max_priority_fee_per_gas: Nat::from(2u8),
                 data: encode_unwrap_payload(asset, amount, recipient),
                 from: None,
@@ -299,7 +299,8 @@ fn icrc21_submit_ic_tx_consent_decodes_precompile_unwrap() {
     assert!(markdown.contains("Approve Kasane unwrap"));
     assert!(markdown.contains(&asset.to_text()));
     assert!(markdown.contains(&recipient.to_text()));
-    assert!(markdown.contains("amount_e8s: `42`"));
+    assert!(markdown.contains("amount (asset ledger base units): `42`"));
+    assert!(markdown.contains("native value (wei): `123456789`"));
 }
 
 #[test]
@@ -314,7 +315,7 @@ fn icrc21_submit_ic_tx_consent_decodes_erc20_approve() {
             method: "submit_ic_tx".to_string(),
             arg: encode_one(SubmitIcTxArgsDto {
                 to: Some(vec![0x22; 20]),
-                value: Nat::from(0u8),
+                value: Nat::from(987654321u64),
                 max_priority_fee_per_gas: Nat::from(2u8),
                 data,
                 from: None,
@@ -341,6 +342,7 @@ fn icrc21_submit_ic_tx_consent_decodes_erc20_approve() {
     assert!(markdown.contains("Approve ERC-20 allowance transaction"));
     assert!(markdown.contains("0x4444444444444444444444444444444444444444"));
     assert!(markdown.contains("amount: `42`"));
+    assert!(markdown.contains("native value (wei): `987654321`"));
 }
 
 #[test]
@@ -1019,6 +1021,20 @@ fn reject_anonymous_principal_allows_non_anonymous() {
     let principal = Principal::self_authenticating(b"wrapper-test-caller");
     let out = reject_anonymous_principal(principal);
     assert_eq!(out, None);
+}
+
+#[test]
+fn inspect_anonymous_caller_allowed_only_for_consent() {
+    for policy in INSPECT_METHOD_POLICIES {
+        assert_eq!(
+            super::inspect_caller_allowed(policy.method, Principal::anonymous()),
+            policy.method == "icrc21_canister_call_consent_message"
+        );
+        assert!(super::inspect_caller_allowed(
+            policy.method,
+            Principal::self_authenticating(b"caller")
+        ));
+    }
 }
 
 #[test]
@@ -1942,7 +1958,14 @@ fn mining_tick_does_not_reschedule_after_dropping_non_executable_tx() {
     .expect("submit_ic_tx should succeed");
 
     // 直前に最低ガス価格を引き上げ、queue内txを「実行不能」にする。
+    let request_id = TxId([0xeb; 32]);
+    let mut request = sample_wrap_request(RequestStatus::Running);
+    request.result.stage = WrapRequestStage::MintSubmitted;
+    request.result.mint_submit_status = MintSubmitStatus::Submitted;
+    request.result.mint_tx_id = Some(tx_id.0.to_vec());
+    request.result.pull_ledger_tx_id = Some(vec![1]);
     evm_db::stable_state::with_state_mut(|state| {
+        state.wrap_requests.insert(request_id, request);
         let mut chain_state = *state.chain_state.get();
         chain_state.min_gas_price = u64::MAX;
         state.chain_state.set(chain_state);
@@ -1954,6 +1977,14 @@ fn mining_tick_does_not_reschedule_after_dropping_non_executable_tx() {
         assert!(state.tx_store.get(&tx_id).is_none());
         assert!(!state.chain_state.get().mining_scheduled);
         assert!(!state.chain_state.get().is_producing);
+        let request = state.wrap_requests.get(&request_id).expect("mint request");
+        assert_eq!(request.result.status, RequestStatus::Failed);
+        assert_eq!(request.result.stage, WrapRequestStage::Failed);
+        assert!(request.result.mint_failed_recoverable);
+        assert_eq!(
+            request.result.error_code.as_deref(),
+            Some("wrap.mint_dropped")
+        );
     });
 }
 

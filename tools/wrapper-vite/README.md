@@ -89,7 +89,12 @@ SPA fallback is configured in `public/_redirects`.
 ## Authentication
 
 - Wallet UI supports Oisy and MetaMask.
+- Oisy requires the first returned account to be the default account (no subaccount, or a 32-byte zero subaccount). Nondefault or malformed subaccounts are rejected because the gateway's ledger pulls use the default account.
 - `wrap`, `retry`, and `withdraw` canister actions stay disabled until the Kasane canister exposes the required `ICRC-21` support.
+- Gateway consent supports `submit_wrap_request`, `submit_native_deposit`, `retry_request`, `retry_native_deposit`, `retry_native_withdrawal`, and `recover_failed_wrap`, in addition to `submit_ic_tx`. Consent is available anonymously and describes signed arguments; it does not reserve a quote or guarantee asynchronous completion.
+- Automated tests exercise the installed SignerAgent with the actual Candid actor, check the selected account, target, method, and argument bytes, and reject each operation before execution. PocketIC checks anonymous consent leaves ledger balances unchanged before wrap/unwrap execution. These checks do not replace a real Oisy approval/cancellation smoke after deployment.
+- Additional tests reject popup failures, altered signer response fields and invalid certificates; malformed/truncated Candid, noncanonical calldata and numeric overflow; and anonymous asset updates. PocketIC checks fee/gas caps and fee-ledger changes before debit, and refund to the original depositor exactly once after a dropped mint. Ledger fixtures use a separate minting account and start gateway collateral at zero, so actual transfers and transfer fees are exercised.
+- For that smoke, use a controlled account and small amounts: verify both ledger IDs, raw base-unit amount, EVM recipient and fee caps in the wallet; cancel and confirm balances/request state stay unchanged; then approve and confirm the ledger transfer and EVM credit/mint. Check recovery against the original request and recipient rather than treating wallet approval as completion.
 - Unwrap currently uses MetaMask on Kasane testnet (`chain_id=4801360`) through `eth_sendTransaction`.
 - MetaMask unwrap tracks transaction hash, not request id.
 

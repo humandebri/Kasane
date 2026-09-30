@@ -1,6 +1,7 @@
 // どこで: wrapperテスト / 何を: 主要ロジックのユニットテストを実行 / なぜ: request_id導出・状態統合・execution参照の退行を防ぐため
 
 import assert from "node:assert/strict";
+import { runSignerWrapTests } from "./signer-wrap";
 import { readFileSync } from "node:fs";
 import { AnonymousIdentity, type Identity } from "@icp-sdk/core/agent";
 import { Principal } from "@icp-sdk/core/principal";
@@ -386,6 +387,15 @@ async function runMetaMaskHelperTests(): Promise<void> {
     walletProviderTestHooks.resolveOisyPrincipalText([{ owner: Principal.fromText("ryjl3-tyaaa-aaaaa-aaaba-cai") }]),
     "ryjl3-tyaaa-aaaaa-aaaba-cai",
   );
+  const owner = Principal.fromText("ryjl3-tyaaa-aaaaa-aaaba-cai");
+  assert.equal(walletProviderTestHooks.resolveOisyPrincipalText([
+    { owner, subaccount: new Uint8Array(32) },
+  ]), owner.toText());
+  for (const subaccount of [new Uint8Array(32).fill(1), new Uint8Array(0), new Uint8Array(31), new Uint8Array(33)]) {
+    assert.throws(() => walletProviderTestHooks.resolveOisyPrincipalText([
+      { owner, subaccount }, { owner },
+    ]), /wallet.oisy_default_account_required/);
+  }
 }
 
 async function runFinishSubmittedUnwrapRequestTests(): Promise<void> {
@@ -1780,6 +1790,7 @@ async function main(): Promise<void> {
   await runEstimateWrapGasClientTests();
   await runEstimateUnwrapGasClientTests();
   await runWrapClientSubmitTests();
+  await runSignerWrapTests(TEST_CONFIG);
   await runWrapClientWithdrawErrorTests();
   await runUnwrapRequirementsTests();
   await runNativeWithdrawClientTests();
