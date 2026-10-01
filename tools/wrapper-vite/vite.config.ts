@@ -2,10 +2,16 @@
 
 import { fileURLToPath, URL } from "node:url";
 import react from "@vitejs/plugin-react";
-import { defineConfig } from "vite";
+import { defineConfig } from "vite-plus";
 
 export default defineConfig({
   plugins: [react()],
+  lint: {
+    ignorePatterns: ["src/declarations/**", "contracts/**"],
+  },
+  fmt: {
+    ignorePatterns: ["src/declarations/**", "contracts/**", "package-lock.json"],
+  },
   build: {
     rollupOptions: {
       output: {
@@ -13,17 +19,14 @@ export default defineConfig({
           if (!id.includes("node_modules")) {
             return undefined;
           }
-          if (
-            id.includes("@icp-sdk/core")
-            || id.includes("@dfinity/ic-pub-key")
-          ) {
+          if (id.includes("@icp-sdk/core") || id.includes("@dfinity/ic-pub-key")) {
             return "auth-sdk";
           }
           if (
-            id.includes("react-router-dom")
-            || id.includes("lucide-react")
-            || id.includes("@radix-ui/")
-            || id.includes("/cmdk/")
+            id.includes("react-router-dom") ||
+            id.includes("lucide-react") ||
+            id.includes("@radix-ui/") ||
+            id.includes("/cmdk/")
           ) {
             return "ui-vendor";
           }
