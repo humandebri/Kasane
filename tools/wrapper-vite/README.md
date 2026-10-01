@@ -1,6 +1,6 @@
 # `tools/wrapper-vite`
 
-Vite and React Router dashboard for the wrapper frontend. This directory is the canonical wrapper frontend; the older `tools/wrapper` workspace has been removed.
+Vite+ and React Router dashboard for the wrapper frontend. This directory is the canonical wrapper frontend; the older `tools/wrapper` workspace has been removed.
 
 ## Source Control Policy
 
@@ -22,6 +22,8 @@ Vite and React Router dashboard for the wrapper frontend. This directory is the 
 History persistence and external datastores are outside the current scope.
 
 ## Setup
+
+Requires Node.js `^22.18.0 || ^24.11.0 || >=26.0.0` and npm. Vite+ is installed locally and pinned in `package.json` and `package-lock.json`; no global `vp` installation is needed. See the [Vite+ local CLI documentation](https://viteplus.dev/guide/local-cli).
 
 ```bash
 cd tools/wrapper-vite
@@ -79,6 +81,8 @@ Use these settings:
 - Build command: `npm run build`
 - Build output directory: `dist`
 
+`.node-version` pins Node.js 24.19.0 for the Pages build. Pages does not select Node from `package.json` engines; see the [build image documentation](https://developers.cloudflare.com/pages/configuration/build-image/). If `NODE_VERSION` is configured in the dashboard, keep it aligned with this file.
+
 SPA fallback is configured in `public/_redirects`.
 
 ## Routes
@@ -103,14 +107,19 @@ SPA fallback is configured in `public/_redirects`.
 ```bash
 npm test
 npm run lint
+npm run format:check
 npm run build
 npm run test:e2e:install
 npm run test:e2e
 ```
 
+`dev`, `build`, and `preview` use Vite+. `lint` runs Oxlint followed by the existing TypeScript check (`typecheck`). `format` writes formatting with Oxfmt; `format:check` checks without writing. Generated canister bindings and Foundry contracts are excluded from lint/format. Formatting is available separately from `test:local:preflight` to avoid reformatting existing source as part of the toolchain migration. The `tsx` unit runner and Playwright E2E runner remain unchanged.
+
 ## Playwright E2E
 
 Configuration: `playwright.config.ts`.
+
+The web server builds the frontend with Vite+ and serves it with `vp preview`, so these checks exercise the production assets and SPA routes. It uses the tracked `.env.example` values and token list fixture instead of each developer's `.env.local`. Port 4173 must be free.
 
 Covered:
 

@@ -3,6 +3,8 @@
 import { expect, test } from "@playwright/test";
 
 test("console shows center card and connect wallet entry", async ({ page }) => {
+  const startupErrors: string[] = [];
+  page.on("pageerror", (error) => startupErrors.push(error.message));
   await page.goto("/");
   await expect(page.getByText("Wrap / Unwrap Console")).toBeVisible();
   await expect(page.getByRole("button", { name: "Connect Wallet" })).toBeVisible();
@@ -11,6 +13,7 @@ test("console shows center card and connect wallet entry", async ({ page }) => {
   await expect(assetRail.getByText("Manage Tokens")).toBeVisible();
   await expect(assetRail.getByText("ICP ICRC Tokens")).toBeVisible();
   await expect(assetRail.getByText("Internet Computer")).toBeVisible();
+  expect(startupErrors).toEqual([]);
 });
 
 test("manage tokens drawer row click updates the current asset selector", async ({ page }) => {
