@@ -1,7 +1,6 @@
 // どこで: verify API認証 / 何を: HMACトークン(kid/sub/exp/scope/jti)を検証 / なぜ: 本番運用での認可・リプレイ対策を満たすため
 
 import { createHmac, timingSafeEqual } from "node:crypto";
-import type { NextRequest } from "next/server";
 import { loadConfig } from "../config";
 import { consumeVerifyReplayJti } from "../db";
 
@@ -24,7 +23,7 @@ type AuthenticateVerifyRequestOptions = {
 };
 
 export async function authenticateVerifyRequest(
-  request: NextRequest,
+  request: Request,
   options: AuthenticateVerifyRequestOptions = {}
 ): Promise<VerifyAuthContext | null> {
   const cfg = loadConfig(process.env);

@@ -1,5 +1,3 @@
-"use client";
-
 // どこで: OpsページのCycles Trend / 何を: lightweight-chartsで見やすい時系列ラインを描画 / なぜ: 既存SVGより操作性と可読性を上げるため
 
 import { ColorType, LineSeries, createChart } from "lightweight-charts";

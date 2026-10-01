@@ -19,25 +19,20 @@
     "incremental": true,
     "resolveJsonModule": true,
     "types": [
-      "node"
-    ],
-    "plugins": [
-      {
-        "name": "next"
-      }
+      "node",
+      "vite/client"
     ],
     "noEmit": true,
     "isolatedModules": true
   },
   "include": [
-    "next-env.d.ts",
     "**/*.d.ts",
     "**/*.ts",
-    "**/*.tsx",
-    ".next/types/**/*.ts",
-    ".next/dev/types/**/*.ts"
+    "**/*.tsx"
   ],
   "exclude": [
-    "node_modules"
+    "node_modules",
+    ".output",
+    "dist"
   ]
 }

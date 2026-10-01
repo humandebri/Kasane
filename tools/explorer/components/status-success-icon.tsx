@@ -1,5 +1,3 @@
-"use client";
-
 import { cilCheckCircle } from "@coreui/icons";
 import CIcon from "@coreui/icons-react";
 

@@ -4,11 +4,13 @@ The explorer reads the Postgres database maintained by `tools/indexer` and displ
 
 Current stack:
 
-- Next.js App Router
+- TanStack Start + TanStack Router (SSR on Node.js)
 - Tailwind CSS v4
 - shadcn/ui-style components added manually
 
 ## Setup
+
+Use Node.js 24 and the pinned pnpm 10.29.2.
 
 ```bash
 cd tools/explorer
@@ -38,7 +40,9 @@ Routes:
 
 - `/`
 - `/search?q=...`
+- `/blocks`
 - `/blocks/:number`
+- `/txs`
 - `/tx/:hash`
 - `/address/:hex`
 - `/principal/:text`
@@ -98,6 +102,8 @@ Search routing:
 pnpm run test
 pnpm run lint
 pnpm run build
+pnpm run test:bundle
+pnpm run start
 pnpm run verify:preflight
 pnpm run verify:submit
 pnpm run verify:worker
@@ -113,3 +119,25 @@ VERIFY_AUTH_SECRET='replace_me' \
 VERIFY_AUTH_SUB=verify-bot \
 pnpm run verify:submit
 ```
+
+## Production and migration checks
+
+`pnpm build` emits a standalone Nitro Node server at `.output/server/index.mjs` and assets in `.output/public`. Deploy the whole `.output` directory. `pnpm start` loads `.env.local` when present; explicit process environment values take precedence. Keep DB URLs and verification HMAC keys in the server environment, without a `VITE_` prefix.
+
+The existing verification worker remains a separate process (`pnpm verify:worker`). URL paths, cursor pagination, address tabs, lazy event queries, and verification API authentication remain the same.
+
+The generated `src/routeTree.gen.ts` is committed; regenerate it with `pnpm build` after changing routes. `blocks_.$number.tsx` deliberately breaks out of the block list layout so `/blocks/:number` renders its own detail view.
+
+Browser smoke tests run against production output and a disposable Postgres database:
+
+```bash
+# Only point this at an empty disposable test database.
+EXPLORER_TEST_DATABASE_URL=postgresql://localhost/explorer_test pnpm exec tsx tests/fixture-db.ts
+EXPLORER_DATABASE_URL=postgresql://localhost/explorer_test PORT=3302 pnpm start
+# In another terminal:
+EXPLORER_TEST_BASE_URL=http://localhost:3302 pnpm test:browser
+```
+
+The default browser suite works without a canister and checks database pages, tab navigation, browser history, logs form input, search, 404s, API error responses, hydration, and mobile rendering. To also check home, block detail, and transaction detail, configure the server's `EVM_CANISTER_ID` and IC host and set `EXPLORER_TEST_RPC=1` for the test command. CI runs the offline suite against Postgres 17.
+
+Visual migration comparisons use `pnpm exec vlmkit migration compare --url <baseline> --current-url <candidate> --output .local-migration/<page>`. Use the same fixture data on both servers and mask only changing timestamp cells. The Node-only principal derivation stays inside a server function; relative-time rendering uses a server-provided clock to avoid hydration differences.

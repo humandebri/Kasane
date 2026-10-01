@@ -1,5 +1,3 @@
-"use client";
-
 // どこで: HomeのLatest Transactions行 / 何を: Amount/Txn Fee をクライアントから canister query で後読み / なぜ: SSRのN+1 RPC負荷とCORS制約を避けるため
 
 import { useEffect, useState } from "react";

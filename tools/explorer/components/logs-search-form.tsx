@@ -1,9 +1,8 @@
-"use client";
-
 // どこで: Logs検索フォーム / 何を: Enter/フォーカスアウトでクエリに反映 / なぜ: 入力途中の不要な検索とエラー表示を避けるため
 
 import { useEffect, useState } from "react";
-import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { useLocation, useNavigate } from "@tanstack/react-router";
+import { parseUrlSearch } from "../lib/url-search";
 
 type LogsFilters = {
   fromBlock: string;
@@ -19,9 +18,8 @@ type Props = {
 };
 
 export function LogsSearchForm({ initialFilters }: Props) {
-  const router = useRouter();
-  const pathname = usePathname();
-  const searchParams = useSearchParams();
+  const navigate = useNavigate();
+  const location = useLocation();
   const [filters, setFilters] = useState<LogsFilters>(initialFilters);
 
   useEffect(() => {
@@ -40,12 +38,11 @@ export function LogsSearchForm({ initialFilters }: Props) {
     }
     const nextQuery = buildQuery(filters);
     const nextQueryText = nextQuery.toString();
-    const currentQueryText = searchParams.toString();
+    const currentQueryText = location.searchStr.replace(/^\?/, "");
     if (nextQueryText === currentQueryText) {
       return;
     }
-    const href = nextQueryText === "" ? pathname : `${pathname}?${nextQueryText}`;
-    router.replace(href, { scroll: false });
+    void navigate({ to: "/logs", search: parseUrlSearch(nextQueryText), replace: true, resetScroll: false });
   };
 
   return (

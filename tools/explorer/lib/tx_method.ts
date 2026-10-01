@@ -1,8 +1,9 @@
 // どこで: Explorer表示層のTx補助 / 何を: Tx selectorからMethod表示名を推定 / なぜ: 複数画面で同一ロジックを再利用するため
 
+import { toHexLower } from "./hex";
 import { inferKasaneMethodLabel } from "./kasane_wrap";
 
-export function inferMethodLabel(toHex: string | null, txSelector: Buffer | null): string {
+export function inferMethodLabel(toHex: string | null, txSelector: Uint8Array | null): string {
   if (toHex === null) {
     return "create";
   }
@@ -13,7 +14,7 @@ export function inferMethodLabel(toHex: string | null, txSelector: Buffer | null
   if (!txSelector || txSelector.length !== 4) {
     return "call";
   }
-  const selector = txSelector.toString("hex");
+  const selector = toHexLower(txSelector).slice(2);
   const known = selectorToMethodName(selector);
   return known ?? `0x${selector}`;
 }

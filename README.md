@@ -117,7 +117,7 @@ Measurement-only APIs are guarded by the `precompile-profile-admin` feature.
 | `scripts/` | local checks, smoke tests, deployment helpers, and maintenance scripts |
 | `tools/rpc-gateway/` | Ethereum JSON-RPC gateway |
 | `tools/indexer/` | Postgres-backed pull indexer |
-| `tools/explorer/` | Next.js explorer |
+| `tools/explorer/` | TanStack Start explorer |
 | `tools/wrapper-vite/` | wrapper frontend |
 
 ## Development

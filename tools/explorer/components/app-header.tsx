@@ -1,7 +1,5 @@
-"use client";
-
-import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { Link } from "@tanstack/react-router";
+import { useLocation } from "@tanstack/react-router";
 import { Badge } from "./ui/badge";
 import { Button, buttonVariants } from "./ui/button";
 import { Input } from "./ui/input";
@@ -11,10 +9,10 @@ const NAV_ITEMS = [
   { href: "/", label: "Home" },
   { href: "/ops", label: "Ops" },
   { href: "/logs", label: "Logs" },
-];
+] as const;
 
 export function AppHeader() {
-  const pathname = usePathname();
+  const pathname = useLocation({ select: (location) => location.pathname });
   if (pathname === "/") {
     return null;
   }
@@ -22,7 +20,7 @@ export function AppHeader() {
     <header className="fade-in overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
       <div className="flex flex-col gap-3 border-b border-slate-200 px-4 py-4 md:flex-row md:items-center md:justify-between">
         <div className="flex flex-wrap items-center gap-2">
-          <Link href="/" className="text-xl font-semibold tracking-tight text-slate-900 hover:underline">
+          <Link to="/" className="text-xl font-semibold tracking-tight text-slate-900 hover:underline">
             Kasane Explorer
           </Link>
           <Badge className="border-transparent bg-sky-100 text-sky-800">testnet</Badge>
@@ -31,7 +29,7 @@ export function AppHeader() {
           {NAV_ITEMS.map((item) => (
             <Link
               key={item.href}
-              href={item.href}
+              to={item.href}
               className={cn(buttonVariants({ variant: "secondary", size: "sm" }), "rounded-full bg-slate-100")}
             >
               {item.label}

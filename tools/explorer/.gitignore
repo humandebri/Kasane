@@ -1,4 +1,9 @@
 node_modules/
-.next/
+.output/
+.nitro/
+.tanstack/
+dist/
 .env.local
 tsconfig.tsbuildinfo
+.next/
+.local-migration/

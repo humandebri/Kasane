@@ -5,7 +5,7 @@ const ADDRESS_HEX_BYTES = 20;
 const TX_HASH_HEX_BYTES = 32;
 
 export function toHexLower(bytes: Uint8Array): string {
-  return HEX_PREFIX + Buffer.from(bytes).toString("hex");
+  return HEX_PREFIX + Array.from(bytes, (value) => value.toString(16).padStart(2, "0")).join("");
 }
 
 export function parseHex(input: string): Uint8Array {
@@ -16,7 +16,7 @@ export function parseHex(input: string): Uint8Array {
   if (!/^[0-9a-fA-F]+$/.test(normalized)) {
     throw new Error("hex must only include 0-9a-fA-F");
   }
-  return Uint8Array.from(Buffer.from(normalized, "hex"));
+  return Uint8Array.from(normalized.match(/../g) ?? [], (pair) => Number.parseInt(pair, 16));
 }
 
 export function normalizeHex(input: string): string {

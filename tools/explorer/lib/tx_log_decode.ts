@@ -3,6 +3,7 @@
 // なぜ: logs タブの Unknown / raw hex 中心表示を減らすため
 
 import { WRAP_PRECOMPILE_ADDRESS_HEX } from "./kasane_wrap";
+import { parseHex, toHexLower } from "./hex";
 import { Principal } from "@dfinity/principal";
 
 const TOPIC_KASANE_UNWRAP_REQUEST =
@@ -122,10 +123,10 @@ function decodeKasaneUnwrapRequest(dataHex: string): KnownLogView | null {
 }
 
 function hexToBytes(value: string): Uint8Array | null {
-  if (!/^0x[0-9a-fA-F]*$/.test(value) || value.length % 2 !== 0) {
+  if (!/^0x[0-9a-fA-F]+$/.test(value) || value.length % 2 !== 0) {
     return null;
   }
-  return Uint8Array.from(Buffer.from(value.slice(2), "hex"));
+  return parseHex(value);
 }
 
 function readLenPrefixed(
@@ -160,7 +161,7 @@ function readWord(
 }
 
 function toHex(bytes: Uint8Array): string {
-  return `0x${Buffer.from(bytes).toString("hex")}`;
+  return toHexLower(bytes);
 }
 
 function principalTextOrHex(bytes: Uint8Array): string {

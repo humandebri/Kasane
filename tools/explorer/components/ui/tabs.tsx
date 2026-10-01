@@ -1,6 +1,5 @@
 // どこで: UI共通 / 何を: Tabsコンポーネントを提供 / なぜ: Data表示切替の操作UIを統一するため
 
-"use client";
 
 import * as React from "react";
 import * as TabsPrimitive from "@radix-ui/react-tabs";

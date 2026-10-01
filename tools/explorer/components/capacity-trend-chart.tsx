@@ -1,5 +1,3 @@
-"use client";
-
 // どこで: Opsページの容量監視 / 何を: estimated/high/hard を時系列ラインで表示 / なぜ: prune効果と閾値逼迫を同時に把握するため
 
 import { ColorType, LineSeries, createChart } from "lightweight-charts";
