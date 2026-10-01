@@ -123,7 +123,7 @@ function decodeKasaneUnwrapRequest(dataHex: string): KnownLogView | null {
 }
 
 function hexToBytes(value: string): Uint8Array | null {
-  if (!/^0x[0-9a-fA-F]*$/.test(value) || value.length % 2 !== 0) {
+  if (!/^0x[0-9a-fA-F]+$/.test(value) || value.length % 2 !== 0) {
     return null;
   }
   return parseHex(value);

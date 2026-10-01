@@ -1995,6 +1995,13 @@ async function runKasaneWrapTests(): Promise<void> {
   assert.equal(known?.emitterLabel, "Wrap Precompile");
   assert.equal(known?.fields[0]?.label, "Asset ID");
   assert.equal(known?.fields[2]?.value, "7");
+  const emptyUnwrapLog = {
+    addressHex: WRAP_PRECOMPILE_ADDRESS_HEX,
+    topic0Hex: "0xfaef50ddf54b1bf879718e112b8631c1ee03bdd73f37d23a4e8c372fcf6bc548",
+    dataHex: "0x",
+  };
+  assert.equal(decodeKnownLog(emptyUnwrapLog), null);
+  assert.equal(resolveEventLabel(emptyUnwrapLog), "KasaneUnwrapRequest");
   assert.equal(
     resolveEventLabel({
       addressHex: wrapFactoryHex,
