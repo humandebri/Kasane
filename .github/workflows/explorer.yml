@@ -1,0 +1,63 @@
+name: Explorer
+on:
+  pull_request:
+    paths:
+      - 'tools/explorer/**'
+      - '.github/workflows/explorer.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  explorer:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: explorer_test
+          POSTGRES_PASSWORD: explorer_test
+          POSTGRES_DB: explorer_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    defaults:
+      run:
+        working-directory: tools/explorer
+    env:
+      EXPLORER_DATABASE_URL: postgresql://explorer_test:explorer_test@127.0.0.1:5432/explorer_test
+      EXPLORER_TEST_DATABASE_URL: postgresql://explorer_test:explorer_test@127.0.0.1:5432/explorer_test
+      EXPLORER_VERIFY_AUTH_HMAC_KEYS: test:test-build-secret-do-not-expose
+      EXPLORER_VERIFY_ENABLED: '0'
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+      - name: Install dependencies
+        run: |
+          npm install --global pnpm@10.29.2
+          pnpm install --frozen-lockfile
+      - name: Unit and HTTP regression tests
+        run: pnpm test
+      - name: Production build and type check
+        run: |
+          pnpm build
+          pnpm lint
+          pnpm test:bundle
+      - name: Browser smoke against production output
+        run: |
+          pnpm exec playwright install --with-deps chromium
+          pnpm exec tsx tests/fixture-db.ts
+          PORT=3302 pnpm start > /tmp/explorer-server.log 2>&1 &
+          server_pid=$!
+          trap 'kill "$server_pid" 2>/dev/null || true' EXIT
+          for attempt in $(seq 1 30); do
+            if curl --fail --silent http://localhost:3302/verify > /dev/null; then break; fi
+            sleep 1
+          done
+          EXPLORER_TEST_BASE_URL=http://localhost:3302 pnpm test:browser

@@ -1,6 +1,6 @@
 // どこで: Tx詳細のERC-20セクション / 何を: transferをFrom/To/For形式で表示 / なぜ: Etherscan風に可読性を上げるため
 
-import Link from "next/link";
+import { Link } from "@tanstack/react-router";
 import { shortHex } from "../lib/hex";
 
 export type Erc20TransferRowView = {
@@ -100,7 +100,7 @@ function AmountToken({ row }: { row: Erc20TransferRowView }) {
 
 function TokenLink({ tokenAddressHex, tokenSymbol }: { tokenAddressHex: string; tokenSymbol: string | null }) {
   return (
-    <Link href={`/address/${tokenAddressHex}`} className="inline-flex items-center gap-1 text-sky-700 hover:underline">
+    <Link to="/address/$hex" params={{ hex: tokenAddressHex }} className="inline-flex items-center gap-1 text-sky-700 hover:underline">
       <span>{tokenSymbol ?? shortHex(tokenAddressHex, 10)}</span>
     </Link>
   );
@@ -111,7 +111,7 @@ function AddressLink({ addressHex }: { addressHex: string }) {
   const isZeroAddress = normalized === ZERO_ADDRESS_HEX;
   const label = isZeroAddress ? `Null: ${shortHex(normalized, 6)}` : shortHex(normalized);
   return (
-    <Link href={`/address/${normalized}`} className="font-mono text-sky-700 hover:underline">
+    <Link to="/address/$hex" params={{ hex: normalized }} className="font-mono text-sky-700 hover:underline">
       {label}
     </Link>
   );

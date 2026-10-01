@@ -16,11 +16,11 @@ export type TxSummary = {
   blockNumber: bigint;
   blockTimestamp: bigint | null;
   txIndex: number;
-  callerPrincipal: Buffer | null;
-  fromAddress: Buffer;
-  toAddress: Buffer | null;
-  createdContractAddress: Buffer | null;
-  txSelector: Buffer | null;
+  callerPrincipal: Uint8Array | null;
+  fromAddress: Uint8Array;
+  toAddress: Uint8Array | null;
+  createdContractAddress: Uint8Array | null;
+  txSelector: Uint8Array | null;
   receiptStatus: number | null;
 };
 
@@ -77,10 +77,10 @@ export type TokenTransferSummary = {
   txIndex: number;
   logIndex: number;
   receiptStatus: number | null;
-  txSelector: Buffer | null;
-  tokenAddress: Buffer;
-  fromAddress: Buffer;
-  toAddress: Buffer;
+  txSelector: Uint8Array | null;
+  tokenAddress: Uint8Array;
+  fromAddress: Uint8Array;
+  toAddress: Uint8Array;
   amount: bigint;
 };
 
@@ -94,9 +94,9 @@ export type InternalTransactionSummary = {
   traceSortKey: string;
   depth: number;
   actionType: string;
-  fromAddress: Buffer;
-  toAddress: Buffer | null;
-  createdContractAddress: Buffer | null;
+  fromAddress: Uint8Array;
+  toAddress: Uint8Array | null;
+  createdContractAddress: Uint8Array | null;
   value: bigint;
   success: boolean;
   errorCode: string | null;
@@ -170,7 +170,7 @@ export type VerifiedContract = {
 };
 
 export type ContractCreationInfo = {
-  creatorAddress: Buffer;
+  creatorAddress: Uint8Array;
   creationTxHashHex: string;
 };
 
@@ -272,11 +272,11 @@ export async function getLatestTxs(limit: number): Promise<TxSummary[]> {
     blockNumber: BigInt(row.block_number),
     blockTimestamp: row.block_timestamp === null ? null : BigInt(row.block_timestamp),
     txIndex: row.tx_index,
-    callerPrincipal: row.caller_principal ?? null,
-    fromAddress: row.from_address,
-    toAddress: row.to_address ?? null,
-    createdContractAddress: row.contract_address ?? null,
-    txSelector: row.tx_selector ?? null,
+    callerPrincipal: row.caller_principal ? new Uint8Array(row.caller_principal) : null,
+    fromAddress: new Uint8Array(row.from_address),
+    toAddress: row.to_address ? new Uint8Array(row.to_address) : null,
+    createdContractAddress: row.contract_address ? new Uint8Array(row.contract_address) : null,
+    txSelector: row.tx_selector ? new Uint8Array(row.tx_selector) : null,
     receiptStatus: row.receipt_status ?? null,
   }));
 }
@@ -304,11 +304,11 @@ export async function getLatestTxsPage(limit: number, offset: number): Promise<T
     blockNumber: BigInt(row.block_number),
     blockTimestamp: row.block_timestamp === null ? null : BigInt(row.block_timestamp),
     txIndex: row.tx_index,
-    callerPrincipal: row.caller_principal ?? null,
-    fromAddress: row.from_address,
-    toAddress: row.to_address ?? null,
-    createdContractAddress: row.contract_address ?? null,
-    txSelector: row.tx_selector ?? null,
+    callerPrincipal: row.caller_principal ? new Uint8Array(row.caller_principal) : null,
+    fromAddress: new Uint8Array(row.from_address),
+    toAddress: row.to_address ? new Uint8Array(row.to_address) : null,
+    createdContractAddress: row.contract_address ? new Uint8Array(row.contract_address) : null,
+    txSelector: row.tx_selector ? new Uint8Array(row.tx_selector) : null,
     receiptStatus: row.receipt_status ?? null,
   }));
 }
@@ -336,11 +336,11 @@ export async function getLatestTxsPageByBlock(limit: number, offset: number, blo
     blockNumber: BigInt(row.block_number),
     blockTimestamp: row.block_timestamp === null ? null : BigInt(row.block_timestamp),
     txIndex: row.tx_index,
-    callerPrincipal: row.caller_principal ?? null,
-    fromAddress: row.from_address,
-    toAddress: row.to_address ?? null,
-    createdContractAddress: row.contract_address ?? null,
-    txSelector: row.tx_selector ?? null,
+    callerPrincipal: row.caller_principal ? new Uint8Array(row.caller_principal) : null,
+    fromAddress: new Uint8Array(row.from_address),
+    toAddress: row.to_address ? new Uint8Array(row.to_address) : null,
+    createdContractAddress: row.contract_address ? new Uint8Array(row.contract_address) : null,
+    txSelector: row.tx_selector ? new Uint8Array(row.tx_selector) : null,
     receiptStatus: row.receipt_status ?? null,
   }));
 }
@@ -402,11 +402,11 @@ export async function getBlockDetails(blockNumber: bigint): Promise<BlockDetails
       blockNumber: BigInt(tx.block_number),
       blockTimestamp: tx.block_timestamp === null ? null : BigInt(tx.block_timestamp),
       txIndex: tx.tx_index,
-      callerPrincipal: tx.caller_principal ?? null,
-      fromAddress: tx.from_address,
-      toAddress: tx.to_address ?? null,
-      createdContractAddress: tx.contract_address ?? null,
-      txSelector: tx.tx_selector ?? null,
+      callerPrincipal: tx.caller_principal ? new Uint8Array(tx.caller_principal) : null,
+      fromAddress: new Uint8Array(tx.from_address),
+      toAddress: tx.to_address ? new Uint8Array(tx.to_address) : null,
+      createdContractAddress: tx.contract_address ? new Uint8Array(tx.contract_address) : null,
+      txSelector: tx.tx_selector ? new Uint8Array(tx.tx_selector) : null,
       receiptStatus: tx.receipt_status ?? null,
     })),
   };
@@ -442,11 +442,11 @@ export async function getTx(txHash: Uint8Array): Promise<TxSummary | null> {
     blockNumber: BigInt(hit.block_number),
     blockTimestamp: hit.block_timestamp === null ? null : BigInt(hit.block_timestamp),
     txIndex: hit.tx_index,
-    callerPrincipal: hit.caller_principal ?? null,
-    fromAddress: hit.from_address,
-    toAddress: hit.to_address ?? null,
-    createdContractAddress: hit.contract_address ?? null,
-    txSelector: hit.tx_selector ?? null,
+    callerPrincipal: hit.caller_principal ? new Uint8Array(hit.caller_principal) : null,
+    fromAddress: new Uint8Array(hit.from_address),
+    toAddress: hit.to_address ? new Uint8Array(hit.to_address) : null,
+    createdContractAddress: hit.contract_address ? new Uint8Array(hit.contract_address) : null,
+    txSelector: hit.tx_selector ? new Uint8Array(hit.tx_selector) : null,
     receiptStatus: hit.receipt_status ?? null,
   };
 }
@@ -508,11 +508,11 @@ export async function getTxByHashOrEthHash(hash: Uint8Array): Promise<TxLookup |
     blockNumber: BigInt(hit.block_number),
     blockTimestamp: hit.block_timestamp === null ? null : BigInt(hit.block_timestamp),
     txIndex: hit.tx_index,
-    callerPrincipal: hit.caller_principal ?? null,
-    fromAddress: hit.from_address,
-    toAddress: hit.to_address ?? null,
-    createdContractAddress: hit.contract_address ?? null,
-    txSelector: hit.tx_selector ?? null,
+    callerPrincipal: hit.caller_principal ? new Uint8Array(hit.caller_principal) : null,
+    fromAddress: new Uint8Array(hit.from_address),
+    toAddress: hit.to_address ? new Uint8Array(hit.to_address) : null,
+    createdContractAddress: hit.contract_address ? new Uint8Array(hit.contract_address) : null,
+    txSelector: hit.tx_selector ? new Uint8Array(hit.tx_selector) : null,
     receiptStatus: hit.receipt_status ?? null,
   };
 }
@@ -542,11 +542,11 @@ export async function getTxsByCallerPrincipal(
     blockNumber: BigInt(row.block_number),
     blockTimestamp: row.block_timestamp === null ? null : BigInt(row.block_timestamp),
     txIndex: row.tx_index,
-    callerPrincipal: row.caller_principal ?? null,
-    fromAddress: row.from_address,
-    toAddress: row.to_address ?? null,
-    createdContractAddress: row.contract_address ?? null,
-    txSelector: row.tx_selector ?? null,
+    callerPrincipal: row.caller_principal ? new Uint8Array(row.caller_principal) : null,
+    fromAddress: new Uint8Array(row.from_address),
+    toAddress: row.to_address ? new Uint8Array(row.to_address) : null,
+    createdContractAddress: row.contract_address ? new Uint8Array(row.contract_address) : null,
+    txSelector: row.tx_selector ? new Uint8Array(row.tx_selector) : null,
     receiptStatus: row.receipt_status ?? null,
   }));
 }
@@ -580,11 +580,11 @@ export async function getTxsByAddress(
       blockNumber: BigInt(row.block_number),
       blockTimestamp: row.block_timestamp === null ? null : BigInt(row.block_timestamp),
       txIndex: row.tx_index,
-      callerPrincipal: row.caller_principal ?? null,
-      fromAddress: row.from_address,
-      toAddress: row.to_address ?? null,
-      createdContractAddress: row.contract_address ?? null,
-      txSelector: row.tx_selector ?? null,
+      callerPrincipal: row.caller_principal ? new Uint8Array(row.caller_principal) : null,
+      fromAddress: new Uint8Array(row.from_address),
+      toAddress: row.to_address ? new Uint8Array(row.to_address) : null,
+      createdContractAddress: row.contract_address ? new Uint8Array(row.contract_address) : null,
+      txSelector: row.tx_selector ? new Uint8Array(row.tx_selector) : null,
       receiptStatus: row.receipt_status ?? null,
     }));
   }
@@ -608,11 +608,11 @@ export async function getTxsByAddress(
     blockNumber: BigInt(row.block_number),
     blockTimestamp: row.block_timestamp === null ? null : BigInt(row.block_timestamp),
     txIndex: row.tx_index,
-    callerPrincipal: row.caller_principal ?? null,
-    fromAddress: row.from_address,
-    toAddress: row.to_address ?? null,
-    createdContractAddress: row.contract_address ?? null,
-    txSelector: row.tx_selector ?? null,
+    callerPrincipal: row.caller_principal ? new Uint8Array(row.caller_principal) : null,
+    fromAddress: new Uint8Array(row.from_address),
+    toAddress: row.to_address ? new Uint8Array(row.to_address) : null,
+    createdContractAddress: row.contract_address ? new Uint8Array(row.contract_address) : null,
+    txSelector: row.tx_selector ? new Uint8Array(row.tx_selector) : null,
     receiptStatus: row.receipt_status ?? null,
   }));
 }
@@ -649,10 +649,10 @@ export async function getTokenTransfersByAddress(
       txIndex: row.tx_index,
       logIndex: row.log_index,
       receiptStatus: row.receipt_status ?? null,
-      txSelector: row.tx_selector ?? null,
-      tokenAddress: row.token_address,
-      fromAddress: row.from_address,
-      toAddress: row.to_address,
+      txSelector: row.tx_selector ? new Uint8Array(row.tx_selector) : null,
+      tokenAddress: new Uint8Array(row.token_address),
+      fromAddress: new Uint8Array(row.from_address),
+      toAddress: new Uint8Array(row.to_address),
       amount: BigInt(row.amount_numeric),
     }));
   }
@@ -679,10 +679,10 @@ export async function getTokenTransfersByAddress(
     txIndex: row.tx_index,
     logIndex: row.log_index,
     receiptStatus: row.receipt_status ?? null,
-    txSelector: row.tx_selector ?? null,
-    tokenAddress: row.token_address,
-    fromAddress: row.from_address,
-    toAddress: row.to_address,
+    txSelector: row.tx_selector ? new Uint8Array(row.tx_selector) : null,
+    tokenAddress: new Uint8Array(row.token_address),
+    fromAddress: new Uint8Array(row.from_address),
+    toAddress: new Uint8Array(row.to_address),
     amount: BigInt(row.amount_numeric),
   }));
 }
@@ -739,9 +739,9 @@ export async function getInternalTxsByAddress(
     traceSortKey: row.trace_sort_key,
     depth: row.depth,
     actionType: row.action_type,
-    fromAddress: row.from_address,
-    toAddress: row.to_address,
-    createdContractAddress: row.created_contract_address,
+    fromAddress: new Uint8Array(row.from_address),
+    toAddress: row.to_address ? new Uint8Array(row.to_address) : null,
+    createdContractAddress: row.created_contract_address ? new Uint8Array(row.created_contract_address) : null,
     value: BigInt(row.value_numeric),
     success: row.success,
     errorCode: row.error_code,
@@ -1308,7 +1308,7 @@ export async function getContractCreationInfoByAddress(contractAddress: string):
     return null;
   }
   return {
-    creatorAddress: row.from_address,
+    creatorAddress: new Uint8Array(row.from_address),
     creationTxHashHex: `0x${row.tx_hash.toString("hex")}`,
   };
 }

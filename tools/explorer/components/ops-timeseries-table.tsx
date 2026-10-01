@@ -1,5 +1,3 @@
-"use client";
-
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "./ui/table";
 
 type OpsTimeseriesPoint = {

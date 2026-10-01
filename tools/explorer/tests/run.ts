@@ -4,9 +4,15 @@ import assert from "node:assert/strict";
 import { createHmac } from "node:crypto";
 import { promises as fs } from "node:fs";
 import { newDb } from "pg-mem";
-import { NextRequest } from "next/server";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
+import { createRootRoute, createRouter, createMemoryHistory, RouterContextProvider } from "@tanstack/react-router";
+import type { ReactNode } from "react";
+
+function renderWithRouter(children: ReactNode): string {
+  const router = createRouter({ routeTree: createRootRoute(), history: createMemoryHistory({ initialEntries: ["/"] }) });
+  return renderToStaticMarkup(createElement(RouterContextProvider, { router, children }));
+}
 import {
   isAddressHex,
   isTxHashHex,
@@ -358,14 +364,14 @@ async function runVerifyAuthTests(): Promise<void> {
       secret: "secretA",
       payload: { sub: "user-1", exp: Math.floor(Date.now() / 1000) + 600, scope: "verify.submit", jti: "jti-1" },
     });
-    const request = new NextRequest("http://localhost/api/verify/submit", {
+    const request = new Request("http://localhost/api/verify/submit", {
       headers: {
         authorization: `Bearer ${token}`,
       },
     });
     const auth1 = await authenticateVerifyRequest(request);
     assert.equal(auth1?.userId, "user-1");
-    const reusedReq = new NextRequest("http://localhost/api/verify/status?id=req-1", {
+    const reusedReq = new Request("http://localhost/api/verify/status?id=req-1", {
       headers: { authorization: `Bearer ${token}` },
     });
     const reusedDenied = await authenticateVerifyRequest(reusedReq);
@@ -376,7 +382,7 @@ async function runVerifyAuthTests(): Promise<void> {
       secret: "secretA",
       payload: { sub: "user-1", exp: Math.floor(Date.now() / 1000) + 600, scope: "verify.submit", jti: "jti-status" },
     });
-    const statusReq = new NextRequest("http://localhost/api/verify/status?id=req-1", {
+    const statusReq = new Request("http://localhost/api/verify/status?id=req-1", {
       headers: { authorization: `Bearer ${statusToken}` },
     });
     const statusAuth1 = await authenticateVerifyRequest(statusReq, { consumeReplay: false });
@@ -384,7 +390,7 @@ async function runVerifyAuthTests(): Promise<void> {
     assert.equal(statusAuth1?.userId, "user-1");
     assert.equal(statusAuth2?.userId, "user-1");
     const tampered = `${token}x`;
-    const tamperedReq = new NextRequest("http://localhost/api/verify/submit", {
+    const tamperedReq = new Request("http://localhost/api/verify/submit", {
       headers: { authorization: `Bearer ${tampered}` },
     });
     const tamperedAuth = await authenticateVerifyRequest(tamperedReq);
@@ -395,7 +401,7 @@ async function runVerifyAuthTests(): Promise<void> {
       secret: "secretA",
       payload: { sub: "user-1", exp: Math.floor(Date.now() / 1000) + 600, scope: "verify.read", jti: "jti-2" },
     });
-    const badScopeReq = new NextRequest("http://localhost/api/verify/submit", {
+    const badScopeReq = new Request("http://localhost/api/verify/submit", {
       headers: { authorization: `Bearer ${badScope}` },
     });
     const auth3 = await authenticateVerifyRequest(badScopeReq);
@@ -405,7 +411,7 @@ async function runVerifyAuthTests(): Promise<void> {
       secret: "secretA",
       payload: { sub: "user-1", exp: Math.floor(Date.now() / 1000) - 1, scope: "verify.submit", jti: "jti-3" },
     });
-    const expiredReq = new NextRequest("http://localhost/api/verify/submit", {
+    const expiredReq = new Request("http://localhost/api/verify/submit", {
       headers: { authorization: `Bearer ${expired}` },
     });
     const auth4 = await authenticateVerifyRequest(expiredReq);
@@ -717,6 +723,7 @@ async function runDependencyPinTests(): Promise<void> {
   };
   const pinned = packageJson.dependencies?.["@dfinity/ic-pub-key"];
   assert.equal(pinned, "1.0.1");
+  assert.equal(packageJson.dependencies?.next, undefined);
   assert.equal(packageJson.packageManager, "pnpm@10.29.2");
 
   const lockRaw = await fs.readFile(new URL("../pnpm-lock.yaml", import.meta.url), "utf8");
@@ -1201,7 +1208,7 @@ async function runDbTests(): Promise<void> {
   assert.equal((await getBlockDetails(12n))?.txs.length, 1);
   assert.equal((await getTx(Uint8Array.from(Buffer.from("1122", "hex"))))?.blockNumber, 12n);
   assert.equal((await getTx(Uint8Array.from(Buffer.from("1122", "hex"))))?.receiptStatus, 1);
-  assert.equal((await getTx(Uint8Array.from(Buffer.from("3344", "hex"))))?.createdContractAddress?.toString("hex"), "33".repeat(20));
+  assert.equal(toHexLower((await getTx(Uint8Array.from(Buffer.from("3344", "hex"))))!.createdContractAddress!), "0x" + "33".repeat(20));
   const byPrincipal = await getTxsByCallerPrincipal(Uint8Array.from([4]), 10);
   assert.equal(byPrincipal.length, 1);
   assert.equal(byPrincipal[0]?.txHashHex, "0x3344");
@@ -1230,7 +1237,8 @@ async function runDbTests(): Promise<void> {
   assert.equal(txsByAddress[0]?.txHashHex, "0x1122");
   assert.equal(txsByAddress[1]?.txHashHex, "0x3344");
   assert.equal(txsByAddress[0]?.blockTimestamp, 1000n);
-  assert.equal(txsByAddress[0]?.txSelector?.toString("hex"), "01020304");
+  assert.equal(toHexLower(txsByAddress[0]!.txSelector!), "0x01020304");
+  assert.equal(Object.getPrototypeOf(txsByAddress[0]!.txSelector!), Uint8Array.prototype);
   const next = txsByAddress[1];
   assert.ok(next);
   const page2 = await getTxsByAddress(address, 2, {
@@ -1244,7 +1252,7 @@ async function runDbTests(): Promise<void> {
   assert.equal(tokenTransfers.length, 1);
   assert.equal(tokenTransfers[0]?.txHashHex, "0x1122");
   assert.equal(tokenTransfers[0]?.blockTimestamp, 1000n);
-  assert.equal(tokenTransfers[0]?.txSelector?.toString("hex"), "01020304");
+  assert.equal(toHexLower(tokenTransfers[0]!.txSelector!), "0x01020304");
   assert.equal(tokenTransfers[0]?.amount, 250000000000000000n);
   const tokenAddress = Uint8Array.from(Buffer.from("99".repeat(20), "hex"));
   const tokenTransfersByToken = await getTokenTransfersByAddress(tokenAddress, 10, null);
@@ -1771,12 +1779,12 @@ async function runAddressViewInternalAndContractTests(): Promise<void> {
 }
 
 async function runTxHashLinkUsesParentReceiptStatusTests(): Promise<void> {
-  const succeededParentMarkup = renderToStaticMarkup(
+  const succeededParentMarkup = renderWithRouter(
     createElement(TxHashLink, { txHashHex: "0x" + "12".repeat(32), receiptStatus: 1 }, "tx")
   );
   assert.equal(succeededParentMarkup.includes("failed transaction"), false);
 
-  const failedParentMarkup = renderToStaticMarkup(
+  const failedParentMarkup = renderWithRouter(
     createElement(TxHashLink, { txHashHex: "0x" + "34".repeat(32), receiptStatus: 0 }, "tx")
   );
   assert.equal(failedParentMarkup.includes("failed transaction"), true);

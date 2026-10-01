@@ -33,7 +33,7 @@ export type KasaneActionView =
       request: UnwrapRequestView;
     };
 
-export function inferKasaneMethodLabel(toHex: string | null, txSelector: Buffer | null): string | null {
+export function inferKasaneMethodLabel(toHex: string | null, txSelector: Uint8Array | null): string | null {
   if (toHex === WRAP_PRECOMPILE_ADDRESS_HEX) {
     return "unwrap";
   }

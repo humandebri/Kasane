@@ -1,6 +1,6 @@
 // どこで: Explorer共通UI / 何を: tx hashリンクと失敗アイコン表示を共通化 / なぜ: 画面ごとの差分漏れを防ぎ一貫表示にするため
 
-import Link from "next/link";
+import { Link } from "@tanstack/react-router";
 import { AlertTriangle } from "lucide-react";
 import type { ReactNode } from "react";
 
@@ -26,7 +26,7 @@ export function TxHashLink({
           <AlertTriangle className="h-3.5 w-3.5 text-rose-600" aria-label="failed transaction" />
         </span>
       ) : null}
-      <Link href={`/tx/${txHashHex}`} className={className} title={title}>
+      <Link to="/tx/$hash" params={{ hash: txHashHex }} className={className} title={title}>
         {children ?? txHashHex}
       </Link>
     </span>

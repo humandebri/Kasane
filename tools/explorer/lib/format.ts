@@ -80,7 +80,7 @@ export function calcRoundedBps(numerator: bigint, denominator: bigint): bigint |
   return numerator < 0n ? -roundedAbs : roundedAbs;
 }
 
-export function formatTimestampWithRelativeUtc(raw: bigint | null): { relative: string; absolute: string } | null {
+export function formatTimestampWithRelativeUtc(raw: bigint | null, nowMs = Date.now()): { relative: string; absolute: string } | null {
   if (raw === null) {
     return null;
   }
@@ -89,7 +89,7 @@ export function formatTimestampWithRelativeUtc(raw: bigint | null): { relative: 
     return { relative: "unknown", absolute: `${raw.toString()} UTC` };
   }
   const date = new Date(Number(millis));
-  const nowSec = BigInt(Math.floor(Date.now() / 1000));
+  const nowSec = BigInt(Math.floor(nowMs / 1000));
   const tsSec = raw > 10_000_000_000n ? raw / 1000n : raw;
   const diffSec = tsSec - nowSec;
   const relative = formatRelativeAge(diffSec);
