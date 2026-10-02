@@ -1041,17 +1041,11 @@ async fn submit_wrap_request(args: SubmitWrapRequestArgs) -> Result<SubmitWrapRe
     let normalized = normalize_submit_wrap_request(args, caller)?;
     ensure_asset_allowed(Principal::from_slice(&normalized.asset_id))
         .map_err(|err| api_rejected(&err, &err))?;
-    let quote = quote_wrap_request_inner(normalized.gas_limit)?;
-    validate_wrap_quote_within_approval(&normalized, &quote)
-        .map_err(|err| api_rejected(&err, &err))?;
-    let charged_fee_e8s = nat_to_u128(&quote.charged_fee_e8s)
-        .ok_or_else(|| api_internal("fee.quote_out_of_range", "fee.quote_out_of_range"))?;
-    let charged_gas_price_wei = nat_to_u128(&quote.charged_gas_price_wei)
-        .ok_or_else(|| api_internal("fee.quote_out_of_range", "fee.quote_out_of_range"))?;
     let request_id = normalized.request_id;
     if let Some(existing) = existing_wrap_request_response(&normalized, caller) {
         return existing;
     }
+    let (charged_fee_e8s, charged_gas_price_wei) = prepare_wrap_submission_fee(&normalized)?;
     let fee_attempt_is_retry = with_state(|state| state.wrap_requests.get(&request_id).is_some());
     reserve_wrap_pending_submission(request_id, caller).map_err(|err| api_rejected(&err, &err))?;
     let req =
@@ -1060,18 +1054,30 @@ async fn submit_wrap_request(args: SubmitWrapRequestArgs) -> Result<SubmitWrapRe
                 clear_wrap_pending_submission(request_id);
                 api_rejected(&err, &err)
             })?;
+    let started_at = req.result.updated_at;
+    let (fee_ledger, charged_fee) =
+        saved_wrap_fee_transfer(&req).map_err(|code| api_internal(&code, &code))?;
     let fee_ledger_tx_id = attempt_icrc2_transfer_from(
         caller,
-        quote.fee_ledger_canister,
-        quote.charged_fee_e8s.clone(),
+        fee_ledger,
+        charged_fee.clone(),
         request_memo(request_id, TransferMemoKind::Fee),
         req.fee_created_at_time,
     )
     .await
     .map_err(|err| {
+        if !wrap_fee_attempt_is_current(request_id, started_at) {
+            return api_rejected("fee.attempt_superseded", "fee.attempt_superseded");
+        }
         let code = record_wrap_fee_collection_failure(request_id, &err, fee_attempt_is_retry);
         api_rejected(&code, &code)
     })?;
+    if !wrap_fee_attempt_is_current(request_id, started_at) {
+        return Err(api_rejected(
+            "fee.attempt_superseded",
+            "fee.attempt_superseded",
+        ));
+    }
     if let Err(err) = record_wrap_fee_collected(request_id, fee_ledger_tx_id.clone()) {
         clear_wrap_pending_submission(request_id);
         return Err(api_rejected(&err, &err));
@@ -1082,8 +1088,8 @@ async fn submit_wrap_request(args: SubmitWrapRequestArgs) -> Result<SubmitWrapRe
     schedule_wrap_worker();
     Ok(SubmitWrapRequestOk {
         request_id: request_id.0.to_vec(),
-        charged_fee_e8s: quote.charged_fee_e8s,
-        charged_gas_price_wei: quote.charged_gas_price_wei,
+        charged_fee_e8s: charged_fee,
+        charged_gas_price_wei: Nat::from(charged_gas_price_wei),
         fee_ledger_tx_id,
     })
 }
@@ -1222,6 +1228,46 @@ fn record_wrap_fee_collection_failure(request_id: TxId, err: &str, is_retry: boo
     code
 }
 
+fn wrap_fee_attempt_is_current(request_id: TxId, started_at: u64) -> bool {
+    with_state(|state| {
+        state.wrap_requests.get(&request_id).is_some_and(|req| {
+            req.result.fee_ledger_tx_id.is_none()
+                && req.result.updated_at == started_at
+                && matches!(
+                    req.result.status,
+                    StoredRequestStatus::Queued | StoredRequestStatus::Running
+                )
+        })
+    })
+}
+
+fn saved_wrap_fee_transfer(
+    req: &evm_db::chain_data::WrapStoredRequest,
+) -> Result<(Principal, Nat), String> {
+    let ledger = principal_from_stored_bytes(&req.fee_ledger_canister)?;
+    let amount = req
+        .result
+        .charged_fee_e8s
+        .ok_or_else(|| "fee.saved_quote_missing".to_string())?;
+    Ok((ledger, Nat::from(amount)))
+}
+
+fn recover_interrupted_wrap_fee(req: &mut evm_db::chain_data::WrapStoredRequest, now: u64) -> bool {
+    if req.result.fee_ledger_tx_id.is_none()
+        && matches!(
+            req.result.status,
+            StoredRequestStatus::Queued | StoredRequestStatus::Running
+        )
+    {
+        req.result.status = StoredRequestStatus::Failed;
+        req.result.stage = WrapRequestStage::Failed;
+        req.result.error_code = Some("fee.collection_uncertain".to_string());
+        req.result.updated_at = now;
+        return true;
+    }
+    false
+}
+
 fn normalize_submit_wrap_request(
     args: SubmitWrapRequestArgs,
     caller: Principal,
@@ -1283,6 +1329,29 @@ fn validate_wrap_quote_within_approval(
         return Err("fee.gas_price_exceeded".to_string());
     }
     Ok(())
+}
+
+fn prepare_wrap_submission_fee(
+    args: &NormalizedSubmitWrapRequest,
+) -> Result<(u128, u128), ApiError> {
+    if let Some(req) = with_state(|state| state.wrap_requests.get(&args.request_id)) {
+        let fee = req
+            .result
+            .charged_fee_e8s
+            .ok_or_else(|| api_internal("fee.saved_quote_missing", "fee.saved_quote_missing"))?;
+        let gas_price = req
+            .result
+            .charged_gas_price_wei
+            .ok_or_else(|| api_internal("fee.saved_quote_missing", "fee.saved_quote_missing"))?;
+        return Ok((fee, gas_price));
+    }
+    let quote = quote_wrap_request_inner(args.gas_limit)?;
+    validate_wrap_quote_within_approval(args, &quote).map_err(|err| api_rejected(&err, &err))?;
+    let fee = nat_to_u128(&quote.charged_fee_e8s)
+        .ok_or_else(|| api_internal("fee.quote_out_of_range", "fee.quote_out_of_range"))?;
+    let gas_price = nat_to_u128(&quote.charged_gas_price_wei)
+        .ok_or_else(|| api_internal("fee.quote_out_of_range", "fee.quote_out_of_range"))?;
+    Ok((fee, gas_price))
 }
 
 fn ensure_wrap_request_before_fee(
@@ -1670,9 +1739,6 @@ async fn submit_native_deposit(
     let max_fee_e8s = nat_to_u128(&args.max_fee_e8s).ok_or_else(|| {
         api_invalid_argument("arg.max_fee_out_of_range", "arg.max_fee_out_of_range")
     })?;
-    let (fee_policy, native_ledger) =
-        prepare_native_deposit_funding(args.fee_ledger_canister, max_fee_e8s)?;
-
     let request_id = TxId(derive_native_deposit_request_id(
         caller.as_slice(),
         args.deposit_id.as_slice(),
@@ -1682,6 +1748,12 @@ async fn submit_native_deposit(
     {
         return existing;
     }
+    let (fee_ledger_canister, charged_fee_e8s, native_ledger) =
+        prepare_native_deposit_submission_funding(
+            request_id,
+            args.fee_ledger_canister,
+            max_fee_e8s,
+        )?;
     let fee_attempt_is_retry = with_state(|state| state.wrap_requests.get(&request_id).is_some());
     reserve_wrap_pending_submission(request_id, caller).map_err(|err| api_rejected(&err, &err))?;
     let mut req = ensure_native_deposit_request_before_fee(NativeDepositRequestDraft {
@@ -1690,9 +1762,9 @@ async fn submit_native_deposit(
         native_ledger,
         amount: amount.to_vec(),
         evm_recipient: args.evm_recipient.clone(),
-        fee_ledger_canister: fee_policy.fee_ledger_canister,
+        fee_ledger_canister,
         max_fee_e8s,
-        charged_fee_e8s: fee_policy.cycle_fee_e8s,
+        charged_fee_e8s,
     })
     .map_err(|err| {
         clear_wrap_pending_submission(request_id);
@@ -1700,18 +1772,30 @@ async fn submit_native_deposit(
     })?;
 
     if req.result.fee_ledger_tx_id.is_none() {
+        let started_at = req.result.updated_at;
+        let (fee_ledger, charged_fee) =
+            saved_wrap_fee_transfer(&req).map_err(|code| api_internal(&code, &code))?;
         let fee_ledger_tx_id = attempt_icrc2_transfer_from(
             caller,
-            fee_policy.fee_ledger_canister,
-            Nat::from(fee_policy.cycle_fee_e8s),
+            fee_ledger,
+            charged_fee,
             request_memo(request_id, TransferMemoKind::Fee),
             req.fee_created_at_time,
         )
         .await
         .map_err(|err| {
+            if !wrap_fee_attempt_is_current(request_id, started_at) {
+                return api_rejected("fee.attempt_superseded", "fee.attempt_superseded");
+            }
             let code = record_wrap_fee_collection_failure(request_id, &err, fee_attempt_is_retry);
             api_rejected(&code, &code)
         })?;
+        if !wrap_fee_attempt_is_current(request_id, started_at) {
+            return Err(api_rejected(
+                "fee.attempt_superseded",
+                "fee.attempt_superseded",
+            ));
+        }
         record_native_deposit_fee_collected(request_id, fee_ledger_tx_id).map_err(|err| {
             clear_wrap_pending_submission(request_id);
             api_rejected(&err, &err)
@@ -1759,7 +1843,7 @@ async fn submit_native_deposit(
     .ok_or_else(|| api_internal("request.missing_fee_tx", "request.missing_fee_tx"))?;
     Ok(SubmitNativeDepositOk {
         request_id: request_id.0.to_vec(),
-        charged_fee_e8s: Nat::from(fee_policy.cycle_fee_e8s),
+        charged_fee_e8s: Nat::from(req.result.charged_fee_e8s.unwrap_or(0)),
         fee_ledger_tx_id,
     })
 }
@@ -1807,6 +1891,38 @@ fn prepare_native_deposit_funding(
         return Err(api_rejected("fee.quote_exceeded", "fee.quote_exceeded"));
     }
     Ok((fee_policy, native_ledger))
+}
+
+fn prepare_native_deposit_submission_funding(
+    request_id: TxId,
+    ledger: Principal,
+    max_fee: u128,
+) -> Result<(Principal, u64, Principal), ApiError> {
+    let Some(req) = with_state(|state| state.wrap_requests.get(&request_id)) else {
+        let (policy, native_ledger) = prepare_native_deposit_funding(ledger, max_fee)?;
+        return Ok((
+            policy.fee_ledger_canister,
+            policy.cycle_fee_e8s,
+            native_ledger,
+        ));
+    };
+    let (saved_ledger, amount) =
+        saved_wrap_fee_transfer(&req).map_err(|code| api_internal(&code, &code))?;
+    if saved_ledger != ledger {
+        return Err(api_rejected(
+            "request.idempotency_mismatch",
+            "request.idempotency_mismatch",
+        ));
+    }
+    let fee = nat_to_u128(&amount)
+        .and_then(|fee| u64::try_from(fee).ok())
+        .ok_or_else(|| api_internal("fee.saved_quote_missing", "fee.saved_quote_missing"))?;
+    if u128::from(fee) > max_fee {
+        return Err(api_rejected("fee.quote_exceeded", "fee.quote_exceeded"));
+    }
+    let native_ledger =
+        principal_from_stored_bytes(&req.asset_id).map_err(|code| api_internal(&code, &code))?;
+    Ok((saved_ledger, fee, native_ledger))
 }
 
 struct NativeDepositRequestDraft {
@@ -2953,6 +3069,10 @@ fn repair_stale_operations(now: u64) {
                 .map(|entry| (*entry.key(), entry.value().clone()))
                 .collect();
             for (request_id, mut req) in wrap_items {
+                if req.result.updated_at <= cutoff && recover_interrupted_wrap_fee(&mut req, now) {
+                    state.wrap_requests.insert(request_id, req);
+                    continue;
+                }
                 if req.result.withdraw_in_progress && req.result.updated_at <= cutoff {
                     req.result.withdraw_in_progress = false;
                     req.result.stage = WrapRequestStage::Failed;
@@ -3060,6 +3180,7 @@ fn repair_stale_operations(now: u64) {
 }
 
 fn recover_wrap_worker_state_after_upgrade() -> bool {
+    chain::reset_pending_wrap_mints();
     with_state_mut(|state| {
         let mut queued_ids = BTreeSet::new();
         for item in state.wrap_queue.range(..) {
@@ -3067,9 +3188,22 @@ fn recover_wrap_worker_state_after_upgrade() -> bool {
         }
 
         let mut candidates = Vec::new();
+        let mut fee_recoveries = Vec::new();
+        let mut pending_mints = Vec::new();
         for item in state.wrap_requests.range(..) {
             let request_id = *item.key();
-            let req = item.value();
+            let mut req = item.value();
+            if recover_interrupted_wrap_fee(&mut req, current_time_nanos()) {
+                fee_recoveries.push((request_id, req.clone()));
+            }
+            if req.gas_limit != 0
+                && req.result.status == StoredRequestStatus::Running
+                && req.result.mint_submit_status == MintSubmitStatus::Submitted
+            {
+                if let Some(tx_id) = req.result.mint_tx_id.clone().and_then(tx_id_from_bytes) {
+                    pending_mints.push((tx_id, request_id));
+                }
+            }
             if req.gas_limit != 0
                 && req.result.fee_ledger_tx_id.is_some()
                 && matches!(
@@ -3081,10 +3215,23 @@ fn recover_wrap_worker_state_after_upgrade() -> bool {
             }
         }
 
+        for (request_id, req) in fee_recoveries {
+            state.wrap_requests.insert(request_id, req);
+        }
+        for (tx_id, request_id) in pending_mints {
+            chain::register_pending_wrap_mint(state, tx_id, request_id);
+        }
+
         let mut meta = *state.wrap_queue_meta.get();
         for request_id in candidates {
             let mut should_queue = true;
             if let Some(mut req) = state.wrap_requests.get(&request_id) {
+                if !matches!(
+                    req.result.status,
+                    StoredRequestStatus::Queued | StoredRequestStatus::Running
+                ) {
+                    continue;
+                }
                 if req.result.status == StoredRequestStatus::Running {
                     if req.result.mint_tx_id.is_some()
                         || req.result.mint_submit_status == MintSubmitStatus::Submitted
@@ -5788,6 +5935,9 @@ fn settle_submitted_wrap_mint_receipts(now: u64) -> u64 {
             {
                 continue;
             }
+            if let Some(tx_id) = req.result.mint_tx_id.clone().and_then(tx_id_from_bytes) {
+                chain::unregister_pending_wrap_mint(tx_id);
+            }
             req.result.updated_at = now;
             match settlement {
                 WrapMintReceiptSettlement::Succeeded => {
@@ -6006,7 +6156,7 @@ async fn submit_mint_tx_internal(
             Ok(tx_id)
         }
         Err(err) => {
-            if is_duplicate_mint_submit_error(&err) && chain::get_tx_loc(&tx_id).is_some() {
+            if is_duplicate_mint_submit_error(&err) && reusable_mint_tx_location(tx_id) {
                 let tx_id = tx_id.0.to_vec();
                 record_wrap_mint_submitted(request_id, tx_id.clone())?;
                 return Ok(tx_id);
@@ -6045,6 +6195,11 @@ fn is_duplicate_mint_submit_error(err: &SubmitTxError) -> bool {
     )
 }
 
+fn reusable_mint_tx_location(tx_id: TxId) -> bool {
+    // A previously dropped mint has no future execution to observe or index.
+    chain::get_tx_loc(&tx_id).is_some_and(|loc| loc.kind != TxLocKind::Dropped)
+}
+
 #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
 fn record_wrap_mint_submitting(request_id: TxId, nonce: u64) -> Result<(), String> {
     with_state_mut(|state| {
@@ -6068,6 +6223,8 @@ fn record_wrap_mint_submitted(request_id: TxId, tx_id: Vec<u8>) -> Result<(), St
         let Some(mut req) = state.wrap_requests.get(&request_id) else {
             return Err("request.not_found".to_string());
         };
+        let mint_tx_id =
+            tx_id_from_bytes(tx_id.clone()).ok_or_else(|| "wrap.mint_tx_id_invalid".to_string())?;
         req.result.mint_tx_id = Some(tx_id);
         req.result.mint_submitted_at_time = current_time_nanos();
         req.result.mint_submit_status = MintSubmitStatus::Submitted;
@@ -6076,6 +6233,7 @@ fn record_wrap_mint_submitted(request_id: TxId, tx_id: Vec<u8>) -> Result<(), St
         req.result.error_code = None;
         let req = sanitize_wrap_request(req)?;
         state.wrap_requests.insert(request_id, req);
+        chain::register_pending_wrap_mint(state, mint_tx_id, request_id);
         Ok(())
     })
 }

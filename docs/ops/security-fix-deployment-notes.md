@@ -18,6 +18,10 @@
 
 wrap の mint receipt は 1 回に 256 件まで走査し、必要な間だけ timer で続行する。走査中に block が生成された場合は、現在の走査を完了した後で再走査する。
 
+実行中の mint は要求への逆引きを保持し、drop 時点で返金可能な状態を stable に保存する。1000件の drop 履歴が消えても、この判断は失われない。逆引きは upgrade 復旧時に stable 要求から再構築する。
+
+手数料徴収の callback が途切れた未払い要求は、10分の stale 判定後の修復、または upgrade 復旧で `fee.collection_uncertain` として再試行可能にする。受付枠と元の徴収先・徴収額・送金時刻は保持する。利用者は同じ要求を再送し、古い callback は新しい試行を上書きしない。
+
 ## 検証
 
 リポジトリ標準の `cargo check --workspace`、関連 crate のテスト、TypeScript のテストと型チェックを実行する。出金・返金・upgrade の実動作は `wrap_unwrap_flow_e2e` で公式 ICRC ledger と PocketIC 12 を使って確認する。

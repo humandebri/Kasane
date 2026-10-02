@@ -3318,6 +3318,204 @@ fn wrap_receipt_scan_rotates_through_bounded_batches() {
 }
 
 #[test]
+fn dropped_mint_remains_refundable_after_history_expiry_and_index_rebuild() {
+    init_stable_state();
+    chain::reset_pending_wrap_mints();
+    with_state_mut(|state| {
+        let mut cfg = *state.chain_state.get();
+        cfg.base_fee = 1;
+        cfg.min_gas_price = 1;
+        cfg.min_priority_fee = 1;
+        state.chain_state.set(cfg);
+        for i in 0..super::READY_CANDIDATE_LIMIT * 2 {
+            let mut id = [0u8; 32];
+            id[24..].copy_from_slice(&(i as u64).to_be_bytes());
+            state
+                .wrap_requests
+                .insert(TxId(id), sample_wrap_request(RequestStatus::Succeeded));
+        }
+    });
+    let submit = |i: u64| {
+        chain::submit_ic_tx_input(
+            vec![0x55],
+            vec![0x22],
+            IcSyntheticTxInput {
+                to: Some([0x44; 20]),
+                value: [0; 32],
+                gas_limit: 21_000,
+                nonce: 0,
+                max_fee_per_gas: 10,
+                max_priority_fee_per_gas: 9,
+                data: i.to_be_bytes().to_vec(),
+            },
+        )
+        .unwrap()
+    };
+    let mint = submit(0);
+    assert!(super::reusable_mint_tx_location(mint));
+    let request_id = TxId([0xff; 32]);
+    let mut req = sample_wrap_request(RequestStatus::Running);
+    req.result.pull_ledger_tx_id = Some(vec![1]);
+    with_state_mut(|state| {
+        state.wrap_requests.insert(request_id, req);
+    });
+    super::record_wrap_mint_submitted(request_id, mint.0.to_vec()).unwrap();
+    let sibling_id = TxId([0xfe; 32]);
+    let mut sibling = sample_wrap_request(RequestStatus::Running);
+    sibling.result.pull_ledger_tx_id = Some(vec![2]);
+    with_state_mut(|state| {
+        state.wrap_requests.insert(sibling_id, sibling);
+    });
+    super::record_wrap_mint_submitted(sibling_id, mint.0.to_vec()).unwrap();
+    // Rebuild the transient index from stable requests, as post_upgrade does.
+    chain::reset_pending_wrap_mints();
+    init_stable_state();
+    super::recover_wrap_worker_state_after_upgrade();
+    let _ = chain::produce_block(1);
+    assert_eq!(chain::get_tx_loc(&mint).unwrap().kind, TxLocKind::Dropped);
+    assert!(!super::reusable_mint_tx_location(mint));
+    // A first upgrade may encounter a mint that dropped before this patch existed.
+    with_state_mut(|state| {
+        let mut legacy = state.wrap_requests.get(&request_id).unwrap();
+        legacy.result.status = RequestStatus::Running;
+        legacy.result.mint_failed_recoverable = false;
+        state.wrap_requests.insert(request_id, legacy);
+    });
+    chain::reset_pending_wrap_mints();
+    super::recover_wrap_worker_state_after_upgrade();
+    assert_eq!(
+        with_state(|state| state.wrap_requests.get(&request_id).unwrap().result.status),
+        RequestStatus::Failed
+    );
+    assert!(with_state(|state| state.wrap_queue.is_empty()));
+    for i in 1..=evm_db::chain_data::constants::DROPPED_RING_CAPACITY + 1 {
+        submit(i);
+        let _ = chain::produce_block(1);
+    }
+    assert!(chain::get_tx_loc(&mint).is_none());
+    init_stable_state();
+    with_state(|state| {
+        let sibling = state.wrap_requests.get(&sibling_id).unwrap();
+        assert_eq!(sibling.result.status, RequestStatus::Failed);
+        assert!(sibling.result.mint_failed_recoverable);
+        let req = state.wrap_requests.get(&request_id).unwrap();
+        assert_eq!(req.result.status, RequestStatus::Failed);
+        assert_eq!(req.result.error_code.as_deref(), Some("wrap.mint_dropped"));
+        assert!(req.result.mint_failed_recoverable);
+        assert!(req.result.pull_ledger_tx_id.is_some());
+    });
+}
+
+#[test]
+fn interrupted_fee_collection_retries_saved_identity_and_rejects_old_callbacks() {
+    for native in [false, true] {
+        for upgrade in [false, true] {
+            init_stable_state();
+            let id = TxId([0xec; 32]);
+            let caller = Principal::self_authenticating(b"interrupted-fee");
+            super::reserve_wrap_pending_submission(id, caller).unwrap();
+            let mut req = sample_wrap_request(if upgrade {
+                RequestStatus::Queued
+            } else {
+                RequestStatus::Running
+            });
+            req.caller = caller.as_slice().to_vec();
+            req.gas_limit = if native { 0 } else { 21_000 };
+            req.result.fee_ledger_tx_id = None;
+            req.result.stage = WrapRequestStage::FeePending;
+            req.result.updated_at = 1;
+            let identity = (
+                req.fee_created_at_time,
+                super::saved_wrap_fee_transfer(&req).unwrap(),
+            );
+            with_state_mut(|state| {
+                state.wrap_requests.insert(id, req);
+            });
+            assert!(super::wrap_fee_attempt_is_current(id, 1));
+            if upgrade {
+                init_stable_state();
+                assert!(!super::recover_wrap_worker_state_after_upgrade());
+            } else {
+                super::repair_stale_operations(super::STALE_OPERATION_NANOS + 2);
+            }
+            assert!(!super::wrap_fee_attempt_is_current(id, 1));
+            assert!(with_state(|state| state
+                .wrap_pending_submissions
+                .get(&id)
+                .is_some()));
+            super::reserve_wrap_pending_submission(id, caller).unwrap();
+            let req = with_state(|state| state.wrap_requests.get(&id).unwrap());
+            assert_eq!(req.result.status, RequestStatus::Running);
+            // A new fee policy must not change an already admitted transfer's identity.
+            with_state_mut(|state| {
+                state
+                    .wrap_fee_policy
+                    .set(evm_db::chain_data::FeePolicyStored {
+                        fee_ledger_canister: vec![8],
+                        cycle_fee_e8s: 999,
+                        gas_price_buffer_bps: 10_000,
+                    })
+            });
+            if native {
+                let (ledger, amount, asset) = super::prepare_native_deposit_submission_funding(
+                    id,
+                    identity.1 .0,
+                    req.max_fee_e8s,
+                )
+                .unwrap();
+                assert_eq!(ledger, identity.1 .0);
+                assert_eq!(Nat::from(amount), identity.1 .1);
+                assert_eq!(asset.as_slice(), req.asset_id);
+                assert!(super::prepare_native_deposit_submission_funding(
+                    id,
+                    Principal::from_slice(&[8]),
+                    req.max_fee_e8s
+                )
+                .is_err());
+            } else {
+                let args = super::NormalizedSubmitWrapRequest {
+                    request_id: id,
+                    asset_id: req.asset_id.clone(),
+                    amount: req.amount.clone(),
+                    evm_recipient: req.evm_recipient.clone(),
+                    gas_limit: req.gas_limit,
+                    max_fee_e8s: req.max_fee_e8s,
+                    quoted_gas_price_wei: req.quoted_gas_price_wei,
+                    fee_ledger_canister: identity.1 .0,
+                };
+                assert_eq!(super::prepare_wrap_submission_fee(&args).unwrap(), (7, 8));
+            }
+            assert_eq!(
+                (
+                    req.fee_created_at_time,
+                    super::saved_wrap_fee_transfer(&req).unwrap()
+                ),
+                identity
+            );
+            assert!(!super::wrap_fee_attempt_is_current(id, 1));
+            assert!(super::wrap_fee_attempt_is_current(
+                id,
+                req.result.updated_at
+            ));
+            assert_eq!(
+                super::reserve_wrap_pending_submission(id, caller).unwrap_err(),
+                "request.in_progress"
+            );
+            super::record_wrap_fee_collected(id, vec![1]).unwrap();
+            super::clear_wrap_pending_submission(id);
+            assert!(!super::wrap_fee_attempt_is_current(
+                id,
+                req.result.updated_at
+            ));
+            assert!(with_state(|state| state
+                .wrap_pending_submissions
+                .get(&id)
+                .is_none()));
+        }
+    }
+}
+
+#[test]
 fn apply_post_upgrade_migrations_resyncs_gas_limit_and_fee_floors_only() {
     init_stable_state();
     let current = evm_db::meta::current_schema_version();

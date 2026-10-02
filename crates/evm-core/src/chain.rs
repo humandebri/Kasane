@@ -3657,11 +3657,57 @@ fn replace_pending_for_sender(
     state.metrics_state.set(metrics);
 }
 
+thread_local! {
+    // Rebuilt from stable wrap requests before workers resume after upgrade.
+    static PENDING_WRAP_MINTS: std::cell::RefCell<BTreeMap<TxId, BTreeSet<TxId>>> = const { std::cell::RefCell::new(BTreeMap::new()) };
+}
+
+pub fn register_pending_wrap_mint(state: &mut StableState, tx_id: TxId, request_id: TxId) {
+    PENDING_WRAP_MINTS.with(|index| {
+        index
+            .borrow_mut()
+            .entry(tx_id)
+            .or_default()
+            .insert(request_id)
+    });
+    if tx_locs_get(state, &tx_id).is_some_and(|loc| loc.kind == TxLocKind::Dropped) {
+        settle_pending_wrap_mint_drop(state, tx_id);
+    }
+}
+
+pub fn unregister_pending_wrap_mint(tx_id: TxId) {
+    PENDING_WRAP_MINTS.with(|index| index.borrow_mut().remove(&tx_id));
+}
+
+pub fn reset_pending_wrap_mints() {
+    PENDING_WRAP_MINTS.with(|index| index.borrow_mut().clear());
+}
+
+fn settle_pending_wrap_mint_drop(state: &mut StableState, tx_id: TxId) {
+    let request_ids = PENDING_WRAP_MINTS.with(|index| index.borrow_mut().remove(&tx_id));
+    for request_id in request_ids.into_iter().flatten() {
+        if let Some(mut req) = state.wrap_requests.get(&request_id) {
+            if req.result.status == evm_db::chain_data::RequestStatus::Running
+                && req.result.mint_tx_id.as_deref() == Some(tx_id.0.as_slice())
+                && req.result.mint_submit_status == evm_db::chain_data::MintSubmitStatus::Submitted
+            {
+                // Persist the refund decision before the bounded drop history can expire.
+                req.result.status = evm_db::chain_data::RequestStatus::Failed;
+                req.result.stage = evm_db::chain_data::WrapRequestStage::Failed;
+                req.result.error_code = Some("wrap.mint_dropped".to_string());
+                req.result.mint_failed_recoverable = true;
+                state.wrap_requests.insert(request_id, req);
+            }
+        }
+    }
+}
+
 fn mark_dropped_and_purge_payload(
     state: &mut evm_db::stable_state::StableState,
     tx_id: TxId,
     drop_code: u16,
 ) {
+    settle_pending_wrap_mint_drop(state, tx_id);
     remove_pending_fee_index_by_tx_id(state, tx_id);
     remove_eth_tx_hash_index_for_tx_id(state, tx_id);
     state.tx_store.remove(&tx_id);
