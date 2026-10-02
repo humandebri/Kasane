@@ -9,7 +9,10 @@ use evm_core::kasane_precompiles::{
 };
 use evm_core::tx_decode::decode_tx_view;
 use evm_db::chain_data::constants::CHAIN_ID;
-use evm_db::chain_data::constants::{MAX_QUEUE_SNAPSHOT_LIMIT, MAX_RETURN_DATA, MAX_TX_SIZE};
+use evm_db::chain_data::constants::{
+    MAX_PENDING_GLOBAL, MAX_PENDING_PER_PRINCIPAL, MAX_QUEUE_SNAPSHOT_LIMIT, MAX_RETURN_DATA,
+    MAX_TX_SIZE, READY_CANDIDATE_LIMIT,
+};
 use evm_db::chain_data::runtime_defaults::{DEFAULT_BLOCK_GAS_LIMIT, DEFAULT_MIN_FEE_FLOOR};
 use evm_db::chain_data::DEFAULT_MINING_INTERVAL_MS;
 use evm_db::chain_data::MIN_PRUNE_MAX_OPS_PER_TICK;
@@ -1038,17 +1041,12 @@ async fn submit_wrap_request(args: SubmitWrapRequestArgs) -> Result<SubmitWrapRe
     let normalized = normalize_submit_wrap_request(args, caller)?;
     ensure_asset_allowed(Principal::from_slice(&normalized.asset_id))
         .map_err(|err| api_rejected(&err, &err))?;
-    let quote = quote_wrap_request_inner(normalized.gas_limit)?;
-    validate_wrap_quote_within_approval(&normalized, &quote)
-        .map_err(|err| api_rejected(&err, &err))?;
-    let charged_fee_e8s = nat_to_u128(&quote.charged_fee_e8s)
-        .ok_or_else(|| api_internal("fee.quote_out_of_range", "fee.quote_out_of_range"))?;
-    let charged_gas_price_wei = nat_to_u128(&quote.charged_gas_price_wei)
-        .ok_or_else(|| api_internal("fee.quote_out_of_range", "fee.quote_out_of_range"))?;
     let request_id = normalized.request_id;
     if let Some(existing) = existing_wrap_request_response(&normalized, caller) {
         return existing;
     }
+    let (charged_fee_e8s, charged_gas_price_wei) = prepare_wrap_submission_fee(&normalized)?;
+    let fee_attempt_is_retry = with_state(|state| state.wrap_requests.get(&request_id).is_some());
     reserve_wrap_pending_submission(request_id, caller).map_err(|err| api_rejected(&err, &err))?;
     let req =
         ensure_wrap_request_before_fee(normalized, caller, charged_fee_e8s, charged_gas_price_wei)
@@ -1056,20 +1054,30 @@ async fn submit_wrap_request(args: SubmitWrapRequestArgs) -> Result<SubmitWrapRe
                 clear_wrap_pending_submission(request_id);
                 api_rejected(&err, &err)
             })?;
+    let started_at = req.result.updated_at;
+    let (fee_ledger, charged_fee) =
+        saved_wrap_fee_transfer(&req).map_err(|code| api_internal(&code, &code))?;
     let fee_ledger_tx_id = attempt_icrc2_transfer_from(
         caller,
-        quote.fee_ledger_canister,
-        quote.charged_fee_e8s.clone(),
+        fee_ledger,
+        charged_fee.clone(),
         request_memo(request_id, TransferMemoKind::Fee),
         req.fee_created_at_time,
     )
     .await
     .map_err(|err| {
-        record_wrap_request_failure(request_id, map_fee_collection_error(&err), false);
-        clear_wrap_pending_submission(request_id);
-        let code = map_fee_collection_error(&err);
+        if !wrap_fee_attempt_is_current(request_id, started_at) {
+            return api_rejected("fee.attempt_superseded", "fee.attempt_superseded");
+        }
+        let code = record_wrap_fee_collection_failure(request_id, &err, fee_attempt_is_retry);
         api_rejected(&code, &code)
     })?;
+    if !wrap_fee_attempt_is_current(request_id, started_at) {
+        return Err(api_rejected(
+            "fee.attempt_superseded",
+            "fee.attempt_superseded",
+        ));
+    }
     if let Err(err) = record_wrap_fee_collected(request_id, fee_ledger_tx_id.clone()) {
         clear_wrap_pending_submission(request_id);
         return Err(api_rejected(&err, &err));
@@ -1080,8 +1088,8 @@ async fn submit_wrap_request(args: SubmitWrapRequestArgs) -> Result<SubmitWrapRe
     schedule_wrap_worker();
     Ok(SubmitWrapRequestOk {
         request_id: request_id.0.to_vec(),
-        charged_fee_e8s: quote.charged_fee_e8s,
-        charged_gas_price_wei: quote.charged_gas_price_wei,
+        charged_fee_e8s: charged_fee,
+        charged_gas_price_wei: Nat::from(charged_gas_price_wei),
         fee_ledger_tx_id,
     })
 }
@@ -1146,10 +1154,34 @@ fn reserve_wrap_pending_submission(request_id: TxId, caller: Principal) -> Resul
                 state.wrap_pending_submissions.remove(&request_id);
             } else {
                 if existing.caller.as_slice() == caller.as_slice() {
+                    if let Some(mut req) = state.wrap_requests.get(&request_id) {
+                        if req.result.status == StoredRequestStatus::Failed
+                            && req.result.fee_ledger_tx_id.is_none()
+                        {
+                            req.result.status = StoredRequestStatus::Running;
+                            req.result.updated_at = current_time_nanos();
+                            state.wrap_requests.insert(request_id, req);
+                            return Ok(());
+                        }
+                    }
                     return Err("request.in_progress".to_string());
                 }
                 return Err("request.idempotency_mismatch".to_string());
             }
+        }
+        // Unpaid and uncertain fee attempts share the existing admission budgets.
+        if state.wrap_pending_submissions.len() >= MAX_PENDING_GLOBAL as u64 {
+            return Err("request.queue_full".to_string());
+        }
+        if state
+            .wrap_pending_submissions
+            .iter()
+            .filter(|entry| entry.value().caller.as_slice() == caller.as_slice())
+            .take(MAX_PENDING_PER_PRINCIPAL)
+            .count()
+            >= MAX_PENDING_PER_PRINCIPAL
+        {
+            return Err("request.principal_queue_full".to_string());
         }
         state.wrap_pending_submissions.insert(
             request_id,
@@ -1164,8 +1196,76 @@ fn reserve_wrap_pending_submission(request_id: TxId, caller: Principal) -> Resul
 
 fn clear_wrap_pending_submission(request_id: TxId) {
     with_state_mut(|state| {
+        // Keep unpaid records counted, including calls whose payment result is uncertain.
+        if state
+            .wrap_requests
+            .get(&request_id)
+            .is_some_and(|req| req.result.fee_ledger_tx_id.is_none())
+        {
+            return;
+        }
         state.wrap_pending_submissions.remove(&request_id);
     });
+}
+
+fn record_wrap_fee_collection_failure(request_id: TxId, err: &str, is_retry: bool) -> String {
+    let code = map_fee_collection_error(err);
+    record_wrap_request_failure(request_id, code.clone(), false);
+    // A rejection on a retry cannot disprove success of an earlier unanswered call.
+    if !is_retry && err.starts_with("ledger.transfer_from_failed:") {
+        with_state_mut(|state| {
+            if state.wrap_requests.get(&request_id).is_some_and(|req| {
+                req.result.fee_ledger_tx_id.is_none()
+                    && req.result.pull_ledger_tx_id.is_none()
+                    && req.result.mint_tx_id.is_none()
+            }) {
+                state.wrap_requests.remove(&request_id);
+                state.wrap_pending_submissions.remove(&request_id);
+            }
+        });
+    }
+    clear_wrap_pending_submission(request_id);
+    code
+}
+
+fn wrap_fee_attempt_is_current(request_id: TxId, started_at: u64) -> bool {
+    with_state(|state| {
+        state.wrap_requests.get(&request_id).is_some_and(|req| {
+            req.result.fee_ledger_tx_id.is_none()
+                && req.result.updated_at == started_at
+                && matches!(
+                    req.result.status,
+                    StoredRequestStatus::Queued | StoredRequestStatus::Running
+                )
+        })
+    })
+}
+
+fn saved_wrap_fee_transfer(
+    req: &evm_db::chain_data::WrapStoredRequest,
+) -> Result<(Principal, Nat), String> {
+    let ledger = principal_from_stored_bytes(&req.fee_ledger_canister)?;
+    let amount = req
+        .result
+        .charged_fee_e8s
+        .ok_or_else(|| "fee.saved_quote_missing".to_string())?;
+    Ok((ledger, Nat::from(amount)))
+}
+
+fn recover_interrupted_wrap_fee(req: &mut evm_db::chain_data::WrapStoredRequest, now: u64) -> bool {
+    if req.result.fee_ledger_tx_id.is_none()
+        && matches!(
+            req.result.status,
+            StoredRequestStatus::Queued | StoredRequestStatus::Running
+        )
+    {
+        req.result.status = StoredRequestStatus::Failed;
+        req.result.stage = WrapRequestStage::Failed;
+        req.result.error_code = Some("fee.collection_uncertain".to_string());
+        req.result.updated_at = now;
+        return true;
+    }
+    false
 }
 
 fn normalize_submit_wrap_request(
@@ -1231,6 +1331,29 @@ fn validate_wrap_quote_within_approval(
     Ok(())
 }
 
+fn prepare_wrap_submission_fee(
+    args: &NormalizedSubmitWrapRequest,
+) -> Result<(u128, u128), ApiError> {
+    if let Some(req) = with_state(|state| state.wrap_requests.get(&args.request_id)) {
+        let fee = req
+            .result
+            .charged_fee_e8s
+            .ok_or_else(|| api_internal("fee.saved_quote_missing", "fee.saved_quote_missing"))?;
+        let gas_price = req
+            .result
+            .charged_gas_price_wei
+            .ok_or_else(|| api_internal("fee.saved_quote_missing", "fee.saved_quote_missing"))?;
+        return Ok((fee, gas_price));
+    }
+    let quote = quote_wrap_request_inner(args.gas_limit)?;
+    validate_wrap_quote_within_approval(args, &quote).map_err(|err| api_rejected(&err, &err))?;
+    let fee = nat_to_u128(&quote.charged_fee_e8s)
+        .ok_or_else(|| api_internal("fee.quote_out_of_range", "fee.quote_out_of_range"))?;
+    let gas_price = nat_to_u128(&quote.charged_gas_price_wei)
+        .ok_or_else(|| api_internal("fee.quote_out_of_range", "fee.quote_out_of_range"))?;
+    Ok((fee, gas_price))
+}
+
 fn ensure_wrap_request_before_fee(
     args: NormalizedSubmitWrapRequest,
     caller: Principal,
@@ -1264,6 +1387,7 @@ fn ensure_wrap_request_before_fee(
                 withdraw_ledger_tx_id: None,
                 withdraw_error_code: None,
                 withdraw_in_progress: false,
+                withdraw_fee: None,
                 mint_failed_recoverable: false,
                 fee_ledger_tx_id: None,
                 charged_fee_e8s: Some(charged_fee_e8s),
@@ -1615,9 +1739,6 @@ async fn submit_native_deposit(
     let max_fee_e8s = nat_to_u128(&args.max_fee_e8s).ok_or_else(|| {
         api_invalid_argument("arg.max_fee_out_of_range", "arg.max_fee_out_of_range")
     })?;
-    let (fee_policy, native_ledger) =
-        prepare_native_deposit_funding(args.fee_ledger_canister, max_fee_e8s)?;
-
     let request_id = TxId(derive_native_deposit_request_id(
         caller.as_slice(),
         args.deposit_id.as_slice(),
@@ -1627,6 +1748,13 @@ async fn submit_native_deposit(
     {
         return existing;
     }
+    let (fee_ledger_canister, charged_fee_e8s, native_ledger) =
+        prepare_native_deposit_submission_funding(
+            request_id,
+            args.fee_ledger_canister,
+            max_fee_e8s,
+        )?;
+    let fee_attempt_is_retry = with_state(|state| state.wrap_requests.get(&request_id).is_some());
     reserve_wrap_pending_submission(request_id, caller).map_err(|err| api_rejected(&err, &err))?;
     let mut req = ensure_native_deposit_request_before_fee(NativeDepositRequestDraft {
         request_id,
@@ -1634,9 +1762,9 @@ async fn submit_native_deposit(
         native_ledger,
         amount: amount.to_vec(),
         evm_recipient: args.evm_recipient.clone(),
-        fee_ledger_canister: fee_policy.fee_ledger_canister,
+        fee_ledger_canister,
         max_fee_e8s,
-        charged_fee_e8s: fee_policy.cycle_fee_e8s,
+        charged_fee_e8s,
     })
     .map_err(|err| {
         clear_wrap_pending_submission(request_id);
@@ -1644,20 +1772,30 @@ async fn submit_native_deposit(
     })?;
 
     if req.result.fee_ledger_tx_id.is_none() {
+        let started_at = req.result.updated_at;
+        let (fee_ledger, charged_fee) =
+            saved_wrap_fee_transfer(&req).map_err(|code| api_internal(&code, &code))?;
         let fee_ledger_tx_id = attempt_icrc2_transfer_from(
             caller,
-            fee_policy.fee_ledger_canister,
-            Nat::from(fee_policy.cycle_fee_e8s),
+            fee_ledger,
+            charged_fee,
             request_memo(request_id, TransferMemoKind::Fee),
             req.fee_created_at_time,
         )
         .await
         .map_err(|err| {
-            record_wrap_request_failure(request_id, map_fee_collection_error(&err), false);
-            clear_wrap_pending_submission(request_id);
-            let code = map_fee_collection_error(&err);
+            if !wrap_fee_attempt_is_current(request_id, started_at) {
+                return api_rejected("fee.attempt_superseded", "fee.attempt_superseded");
+            }
+            let code = record_wrap_fee_collection_failure(request_id, &err, fee_attempt_is_retry);
             api_rejected(&code, &code)
         })?;
+        if !wrap_fee_attempt_is_current(request_id, started_at) {
+            return Err(api_rejected(
+                "fee.attempt_superseded",
+                "fee.attempt_superseded",
+            ));
+        }
         record_native_deposit_fee_collected(request_id, fee_ledger_tx_id).map_err(|err| {
             clear_wrap_pending_submission(request_id);
             api_rejected(&err, &err)
@@ -1705,7 +1843,7 @@ async fn submit_native_deposit(
     .ok_or_else(|| api_internal("request.missing_fee_tx", "request.missing_fee_tx"))?;
     Ok(SubmitNativeDepositOk {
         request_id: request_id.0.to_vec(),
-        charged_fee_e8s: Nat::from(fee_policy.cycle_fee_e8s),
+        charged_fee_e8s: Nat::from(req.result.charged_fee_e8s.unwrap_or(0)),
         fee_ledger_tx_id,
     })
 }
@@ -1755,6 +1893,38 @@ fn prepare_native_deposit_funding(
     Ok((fee_policy, native_ledger))
 }
 
+fn prepare_native_deposit_submission_funding(
+    request_id: TxId,
+    ledger: Principal,
+    max_fee: u128,
+) -> Result<(Principal, u64, Principal), ApiError> {
+    let Some(req) = with_state(|state| state.wrap_requests.get(&request_id)) else {
+        let (policy, native_ledger) = prepare_native_deposit_funding(ledger, max_fee)?;
+        return Ok((
+            policy.fee_ledger_canister,
+            policy.cycle_fee_e8s,
+            native_ledger,
+        ));
+    };
+    let (saved_ledger, amount) =
+        saved_wrap_fee_transfer(&req).map_err(|code| api_internal(&code, &code))?;
+    if saved_ledger != ledger {
+        return Err(api_rejected(
+            "request.idempotency_mismatch",
+            "request.idempotency_mismatch",
+        ));
+    }
+    let fee = nat_to_u128(&amount)
+        .and_then(|fee| u64::try_from(fee).ok())
+        .ok_or_else(|| api_internal("fee.saved_quote_missing", "fee.saved_quote_missing"))?;
+    if u128::from(fee) > max_fee {
+        return Err(api_rejected("fee.quote_exceeded", "fee.quote_exceeded"));
+    }
+    let native_ledger =
+        principal_from_stored_bytes(&req.asset_id).map_err(|code| api_internal(&code, &code))?;
+    Ok((saved_ledger, fee, native_ledger))
+}
+
 struct NativeDepositRequestDraft {
     request_id: TxId,
     caller: Principal,
@@ -1795,6 +1965,7 @@ fn ensure_native_deposit_request_before_fee(
                 withdraw_ledger_tx_id: None,
                 withdraw_error_code: None,
                 withdraw_in_progress: false,
+                withdraw_fee: None,
                 mint_failed_recoverable: false,
                 fee_ledger_tx_id: None,
                 charged_fee_e8s: Some(u128::from(draft.charged_fee_e8s)),
@@ -1986,6 +2157,7 @@ fn insert_unwrap_dispatch_request(
                 error_code: None,
                 updated_at: current_time_nanos(),
                 transfer_created_at_time: 0,
+                transfer_fee: None,
             },
         );
         let mut meta = *state.unwrap_dispatch_meta.get();
@@ -2045,6 +2217,7 @@ async fn attempt_icrc1_transfer(
     ledger: Principal,
     recipient: Principal,
     amount: Nat,
+    fee: u128,
     memo: Vec<u8>,
     created_at_time: u64,
 ) -> Result<Vec<u8>, String> {
@@ -2055,7 +2228,7 @@ async fn attempt_icrc1_transfer(
             subaccount: None,
         },
         amount,
-        fee: None,
+        fee: Some(Nat::from(fee)),
         memo: Some(memo),
         created_at_time: Some(created_at_time),
     };
@@ -2548,9 +2721,6 @@ async fn recover_failed_wrap(args: RecoverFailedWrapArgs) -> Result<RequestOverv
         if req.result.withdrawn || req.result.withdraw_ledger_tx_id.is_some() {
             return Err("wrap.recover_already_withdrawn".to_string());
         }
-        if req.withdraw_created_at_time == 0 {
-            req.withdraw_created_at_time = current_time_nanos();
-        }
         req.result.withdraw_in_progress = true;
         req.result.stage = WrapRequestStage::Refunding;
         req.result.updated_at = current_time_nanos();
@@ -2563,19 +2733,41 @@ async fn recover_failed_wrap(args: RecoverFailedWrapArgs) -> Result<RequestOverv
         principal_from_stored_bytes(&req.caller).map_err(|err| api_internal(&err, &err))?;
     let asset =
         principal_from_stored_bytes(&req.asset_id).map_err(|err| api_internal(&err, &err))?;
-    let transfer = attempt_icrc1_transfer(
-        asset,
-        caller,
-        Nat(BigUint::from_bytes_be(&req.amount)),
-        request_memo(request_id, TransferMemoKind::Withdraw),
-        req.withdraw_created_at_time,
-    )
+    let refund_started_at = req.result.updated_at;
+    let previous_quote = (req.result.withdraw_fee, req.withdraw_created_at_time);
+    let transfer = async {
+        if req.result.withdraw_fee.is_none() && req.withdraw_created_at_time != 0 {
+            return Err("wrap.refund.legacy_transfer_requires_reconciliation".to_string());
+        }
+        let fee = match req.result.withdraw_fee {
+            Some(fee) => fee,
+            None => fetch_icrc1_fee(asset).await?,
+        };
+        let amount = gross_transfer_receive_amount(
+            &Nat(BigUint::from_bytes_be(&req.amount)),
+            fee,
+            "wrap.refund",
+        )?;
+        let created_at_time = pin_refund_transfer_quote(request_id, req.result.updated_at, fee)?;
+        attempt_icrc1_transfer(
+            asset,
+            caller,
+            amount,
+            fee,
+            request_memo(request_id, TransferMemoKind::Withdraw),
+            created_at_time,
+        )
+        .await
+    }
     .await;
 
     with_state_mut(|state| {
         let Some(mut req) = state.wrap_requests.get(&request_id) else {
             return;
         };
+        if !req.result.withdraw_in_progress || req.result.updated_at != refund_started_at {
+            return;
+        }
         req.result.withdraw_in_progress = false;
         req.result.updated_at = current_time_nanos();
         match transfer {
@@ -2595,6 +2787,12 @@ async fn recover_failed_wrap(args: RecoverFailedWrapArgs) -> Result<RequestOverv
                 }
             }
             Err(err) => {
+                refresh_transfer_quote_after_rejection(
+                    &mut req.result.withdraw_fee,
+                    &mut req.withdraw_created_at_time,
+                    previous_quote,
+                    &err,
+                );
                 req.result.stage = WrapRequestStage::Failed;
                 req.result.withdraw_error_code = Some(clamp_error_code(err));
             }
@@ -2871,6 +3069,10 @@ fn repair_stale_operations(now: u64) {
                 .map(|entry| (*entry.key(), entry.value().clone()))
                 .collect();
             for (request_id, mut req) in wrap_items {
+                if req.result.updated_at <= cutoff && recover_interrupted_wrap_fee(&mut req, now) {
+                    state.wrap_requests.insert(request_id, req);
+                    continue;
+                }
                 if req.result.withdraw_in_progress && req.result.updated_at <= cutoff {
                     req.result.withdraw_in_progress = false;
                     req.result.stage = WrapRequestStage::Failed;
@@ -2881,6 +3083,7 @@ fn repair_stale_operations(now: u64) {
                     continue;
                 }
                 if req.result.status == StoredRequestStatus::Running
+                    && req.result.fee_ledger_tx_id.is_some()
                     && req.result.updated_at <= cutoff
                     && req.result.mint_tx_id.is_none()
                     && req.result.mint_submit_status != MintSubmitStatus::Submitted
@@ -2903,9 +3106,6 @@ fn repair_stale_operations(now: u64) {
                 if req.status == UnwrapRequestStatus::Dispatching && req.updated_at <= cutoff {
                     req.status = UnwrapRequestStatus::Queued;
                     req.updated_at = now;
-                    if req.transfer_created_at_time == 0 {
-                        req.transfer_created_at_time = now;
-                    }
                     state.unwrap_requests.insert(request_id, req);
                     unwrap_requeue.push(request_id);
                 }
@@ -2980,6 +3180,7 @@ fn repair_stale_operations(now: u64) {
 }
 
 fn recover_wrap_worker_state_after_upgrade() -> bool {
+    chain::reset_pending_wrap_mints();
     with_state_mut(|state| {
         let mut queued_ids = BTreeSet::new();
         for item in state.wrap_queue.range(..) {
@@ -2987,10 +3188,24 @@ fn recover_wrap_worker_state_after_upgrade() -> bool {
         }
 
         let mut candidates = Vec::new();
+        let mut fee_recoveries = Vec::new();
+        let mut pending_mints = Vec::new();
         for item in state.wrap_requests.range(..) {
             let request_id = *item.key();
-            let req = item.value();
+            let mut req = item.value();
+            if recover_interrupted_wrap_fee(&mut req, current_time_nanos()) {
+                fee_recoveries.push((request_id, req.clone()));
+            }
             if req.gas_limit != 0
+                && req.result.status == StoredRequestStatus::Running
+                && req.result.mint_submit_status == MintSubmitStatus::Submitted
+            {
+                if let Some(tx_id) = req.result.mint_tx_id.clone().and_then(tx_id_from_bytes) {
+                    pending_mints.push((tx_id, request_id));
+                }
+            }
+            if req.gas_limit != 0
+                && req.result.fee_ledger_tx_id.is_some()
                 && matches!(
                     item.value().result.status,
                     StoredRequestStatus::Queued | StoredRequestStatus::Running
@@ -3000,10 +3215,23 @@ fn recover_wrap_worker_state_after_upgrade() -> bool {
             }
         }
 
+        for (request_id, req) in fee_recoveries {
+            state.wrap_requests.insert(request_id, req);
+        }
+        for (tx_id, request_id) in pending_mints {
+            chain::register_pending_wrap_mint(state, tx_id, request_id);
+        }
+
         let mut meta = *state.wrap_queue_meta.get();
         for request_id in candidates {
             let mut should_queue = true;
             if let Some(mut req) = state.wrap_requests.get(&request_id) {
+                if !matches!(
+                    req.result.status,
+                    StoredRequestStatus::Queued | StoredRequestStatus::Running
+                ) {
+                    continue;
+                }
                 if req.result.status == StoredRequestStatus::Running {
                     if req.result.mint_tx_id.is_some()
                         || req.result.mint_submit_status == MintSubmitStatus::Submitted
@@ -5054,6 +5282,7 @@ fn mining_tick_with_timer(timer_scheduler: fn(u64), reject_provider: fn() -> Opt
     });
 
     if should_produce {
+        WRAP_RECEIPT_SCAN_DIRTY.with(|dirty| dirty.set(true));
         let result = chain::produce_block(evm_db::chain_data::MAX_TXS_PER_BLOCK);
 
         evm_db::stable_state::with_state_mut(|state| {
@@ -5061,9 +5290,6 @@ fn mining_tick_with_timer(timer_scheduler: fn(u64), reject_provider: fn() -> Opt
             chain_state.is_producing = false;
             state.chain_state.set(chain_state);
         });
-        // A batch containing only dropped mints has no block or receipt, but
-        // its terminal transaction locations must still enable asset recovery.
-        settle_submitted_wrap_mint_receipts(current_time_nanos());
         match result {
             Ok(outcome) => {
                 record_unwrap_requests_from_block(&outcome.block.tx_ids);
@@ -5078,10 +5304,13 @@ fn mining_tick_with_timer(timer_scheduler: fn(u64), reject_provider: fn() -> Opt
                 error!(error = ?err, "mining_tick produce_block failed");
             }
         }
-        let has_ready_tx = with_state(|state| !state.ready_queue.is_empty());
-        if has_ready_tx {
-            schedule_mining_with_timer(timer_scheduler, reject_provider);
-        }
+    }
+    settle_submitted_wrap_mint_receipts(current_time_nanos());
+    let has_ready_tx = with_state(|state| !state.ready_queue.is_empty());
+    let scan_pending = WRAP_RECEIPT_SCAN_CURSOR.with(|cursor| cursor.get().is_some())
+        || WRAP_RECEIPT_SCAN_DIRTY.with(|dirty| dirty.get());
+    if has_ready_tx || scan_pending {
+        schedule_mining_with_timer(timer_scheduler, reject_provider);
     }
 }
 
@@ -5125,6 +5354,7 @@ fn record_unwrap_requests_from_block(tx_ids: &[TxId]) {
                             error_code: None,
                             updated_at: now,
                             transfer_created_at_time: 0,
+                            transfer_fee: None,
                         },
                     );
                     let mut meta = *state.unwrap_dispatch_meta.get();
@@ -5156,6 +5386,7 @@ fn record_unwrap_requests_from_block(tx_ids: &[TxId]) {
                         error_code: None,
                         updated_at: now,
                         transfer_created_at_time: 0,
+                        transfer_fee: None,
                     },
                 );
                 let mut meta = *state.unwrap_dispatch_meta.get();
@@ -5424,9 +5655,6 @@ fn pop_next_dispatch_request(now: u64) -> Result<Option<(TxId, UnwrapDispatchReq
         }
         req.status = UnwrapRequestStatus::Dispatching;
         req.updated_at = now;
-        if req.transfer_created_at_time == 0 {
-            req.transfer_created_at_time = now;
-        }
         state.unwrap_requests.insert(request_id, req.clone());
         Ok(Some((request_id, req)))
     });
@@ -5557,11 +5785,19 @@ async fn unwrap_dispatch_tick() {
             break;
         };
 
-        finalize_unwrap_dispatch_attempt(
-            request_id,
-            current_time_nanos(),
-            dispatch_unwrap_request_internal(request_id, req).await,
-        );
+        let started_at = req.updated_at;
+        let applied = dispatch_unwrap_request_internal(request_id, req).await;
+        if with_state(|state| {
+            state
+                .unwrap_requests
+                .get(&request_id)
+                .is_some_and(|current| {
+                    current.status == UnwrapRequestStatus::Dispatching
+                        && current.updated_at == started_at
+                })
+        }) {
+            finalize_unwrap_dispatch_attempt(request_id, current_time_nanos(), applied);
+        }
 
         if with_state(|state| !state.unwrap_dispatch_queue.is_empty()) {
             schedule_unwrap_dispatch();
@@ -5623,23 +5859,46 @@ enum WrapMintReceiptSettlement {
     Failed(&'static str),
 }
 
+thread_local! {
+    static WRAP_RECEIPT_SCAN_CURSOR: std::cell::Cell<Option<TxId>> = const { std::cell::Cell::new(None) };
+    static WRAP_RECEIPT_SCAN_DIRTY: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
 fn submitted_wrap_mint_receipt_candidates() -> Vec<(TxId, TxId)> {
-    with_state(|state| {
-        state
-            .wrap_requests
-            .iter()
-            .filter_map(|entry| {
-                let req = entry.value();
-                if req.gas_limit == 0
-                    || req.result.status != StoredRequestStatus::Running
-                    || req.result.mint_submit_status != MintSubmitStatus::Submitted
-                {
-                    return None;
-                }
-                let mint_tx_id = tx_id_from_bytes(req.result.mint_tx_id.clone()?)?;
-                Some((*entry.key(), mint_tx_id))
-            })
-            .collect()
+    WRAP_RECEIPT_SCAN_CURSOR.with(|cursor| {
+        // If another block completes behind an ongoing scan, finish this cycle then rescan.
+        if cursor.get().is_none() {
+            WRAP_RECEIPT_SCAN_DIRTY.with(|dirty| dirty.set(false));
+        }
+        with_state(|state| {
+            let start = cursor
+                .get()
+                .map_or(std::ops::Bound::Unbounded, std::ops::Bound::Excluded);
+            let batch: Vec<_> = state
+                .wrap_requests
+                .range((start, std::ops::Bound::Unbounded))
+                .take(READY_CANDIDATE_LIMIT)
+                .map(|entry| (*entry.key(), entry.value()))
+                .collect();
+            // Reset after the end, so upgrade or insertions behind the cursor cannot strand requests.
+            cursor.set(if batch.len() == READY_CANDIDATE_LIMIT {
+                batch.last().map(|(id, _)| *id)
+            } else {
+                None
+            });
+            batch
+                .into_iter()
+                .filter_map(|(request_id, req)| {
+                    if req.gas_limit == 0
+                        || req.result.status != StoredRequestStatus::Running
+                        || req.result.mint_submit_status != MintSubmitStatus::Submitted
+                    {
+                        return None;
+                    }
+                    Some((request_id, tx_id_from_bytes(req.result.mint_tx_id?)?))
+                })
+                .collect()
+        })
     })
 }
 
@@ -5676,6 +5935,9 @@ fn settle_submitted_wrap_mint_receipts(now: u64) -> u64 {
             {
                 continue;
             }
+            if let Some(tx_id) = req.result.mint_tx_id.clone().and_then(tx_id_from_bytes) {
+                chain::unregister_pending_wrap_mint(tx_id);
+            }
             req.result.updated_at = now;
             match settlement {
                 WrapMintReceiptSettlement::Succeeded => {
@@ -5705,6 +5967,7 @@ async fn wrap_worker_tick() {
     while let Some(request_id) = dequeue_wrap_request() {
         let req = with_state_mut(|state| {
             let mut req = state.wrap_requests.get(&request_id)?;
+            req.result.fee_ledger_tx_id.as_ref()?;
             req.result.status = StoredRequestStatus::Running;
             req.result.updated_at = current_time_nanos();
             state.wrap_requests.insert(request_id, req.clone());
@@ -5893,7 +6156,7 @@ async fn submit_mint_tx_internal(
             Ok(tx_id)
         }
         Err(err) => {
-            if is_duplicate_mint_submit_error(&err) && chain::get_tx_loc(&tx_id).is_some() {
+            if is_duplicate_mint_submit_error(&err) && reusable_mint_tx_location(tx_id) {
                 let tx_id = tx_id.0.to_vec();
                 record_wrap_mint_submitted(request_id, tx_id.clone())?;
                 return Ok(tx_id);
@@ -5932,6 +6195,11 @@ fn is_duplicate_mint_submit_error(err: &SubmitTxError) -> bool {
     )
 }
 
+fn reusable_mint_tx_location(tx_id: TxId) -> bool {
+    // A previously dropped mint has no future execution to observe or index.
+    chain::get_tx_loc(&tx_id).is_some_and(|loc| loc.kind != TxLocKind::Dropped)
+}
+
 #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
 fn record_wrap_mint_submitting(request_id: TxId, nonce: u64) -> Result<(), String> {
     with_state_mut(|state| {
@@ -5955,6 +6223,8 @@ fn record_wrap_mint_submitted(request_id: TxId, tx_id: Vec<u8>) -> Result<(), St
         let Some(mut req) = state.wrap_requests.get(&request_id) else {
             return Err("request.not_found".to_string());
         };
+        let mint_tx_id =
+            tx_id_from_bytes(tx_id.clone()).ok_or_else(|| "wrap.mint_tx_id_invalid".to_string())?;
         req.result.mint_tx_id = Some(tx_id);
         req.result.mint_submitted_at_time = current_time_nanos();
         req.result.mint_submit_status = MintSubmitStatus::Submitted;
@@ -5963,6 +6233,7 @@ fn record_wrap_mint_submitted(request_id: TxId, tx_id: Vec<u8>) -> Result<(), St
         req.result.error_code = None;
         let req = sanitize_wrap_request(req)?;
         state.wrap_requests.insert(request_id, req);
+        chain::register_pending_wrap_mint(state, mint_tx_id, request_id);
         Ok(())
     })
 }
@@ -6011,22 +6282,78 @@ fn is_native_withdraw_dispatch_request(req: &UnwrapDispatchRequest) -> bool {
     req.asset_id.as_slice() == NATIVE_WITHDRAW_ASSET_MARKER
 }
 
+fn pin_refund_transfer_quote(request_id: TxId, started_at: u64, fee: u128) -> Result<u64, String> {
+    with_state_mut(|state| {
+        let mut current = state
+            .wrap_requests
+            .get(&request_id)
+            .ok_or_else(|| "wrap.refund.attempt_superseded".to_string())?;
+        if !current.result.withdraw_in_progress
+            || current.result.withdrawn
+            || current.result.withdraw_ledger_tx_id.is_some()
+            || current.result.updated_at != started_at
+            || current
+                .result
+                .withdraw_fee
+                .is_some_and(|saved| saved != fee)
+        {
+            return Err("wrap.refund.attempt_superseded".to_string());
+        }
+        current.result.withdraw_fee = Some(fee);
+        if current.withdraw_created_at_time == 0 {
+            current.withdraw_created_at_time = current_time_nanos();
+        }
+        let time = current.withdraw_created_at_time;
+        state.wrap_requests.insert(request_id, current);
+        Ok(time)
+    })
+}
+
+fn pin_unwrap_transfer_quote(request_id: TxId, started_at: u64, fee: u128) -> Result<u64, String> {
+    with_state_mut(|state| {
+        let mut current = state
+            .unwrap_requests
+            .get(&request_id)
+            .ok_or_else(|| "unwrap.attempt_superseded".to_string())?;
+        if current.status != UnwrapRequestStatus::Dispatching
+            || current.updated_at != started_at
+            || current.transfer_fee.is_some_and(|saved| saved != fee)
+        {
+            return Err("unwrap.attempt_superseded".to_string());
+        }
+        current.transfer_fee = Some(fee);
+        if current.transfer_created_at_time == 0 {
+            current.transfer_created_at_time = current_time_nanos();
+        }
+        let time = current.transfer_created_at_time;
+        state.unwrap_requests.insert(request_id, current);
+        Ok(time)
+    })
+}
+
 fn gross_transfer_receive_amount(
     amount: &Nat,
     fee: u128,
     code_prefix: &str,
 ) -> Result<Nat, String> {
-    let gross_amount =
-        nat_to_u128(amount).ok_or_else(|| format!("{code_prefix}.amount_out_of_range"))?;
-    let receive_amount = gross_amount
-        .checked_sub(fee)
-        .filter(|value| *value > 0)
-        .ok_or_else(|| format!("{code_prefix}.amount_not_above_fee"))?;
-    Ok(Nat(BigUint::from(receive_amount)))
+    let fee = BigUint::from(fee);
+    if amount.0 <= fee {
+        return Err(format!("{code_prefix}.amount_not_above_fee"));
+    }
+    Ok(Nat(&amount.0 - fee))
 }
 
-fn native_withdraw_gross_transfer_amount(amount: &Nat, fee: u128) -> Result<Nat, String> {
-    gross_transfer_receive_amount(amount, fee, "native_withdraw")
+fn refresh_transfer_quote_after_rejection(
+    fee: &mut Option<u128>,
+    created_at_time: &mut u64,
+    previous_quote: (Option<u128>, u64),
+    error: &str,
+) {
+    // BadFee precedes ledger deduplication, so only a first attempt can be repriced.
+    if previous_quote == (None, 0) && error.starts_with("ledger.transfer_failed:bad_fee:") {
+        *fee = None;
+        *created_at_time = 0;
+    }
 }
 
 async fn dispatch_unwrap_request_internal(
@@ -6066,37 +6393,46 @@ async fn dispatch_unwrap_request_internal(
             };
         }
     };
-    let gross_amount = Nat(BigUint::from_bytes_be(&req.amount));
-    let amount = if is_native_withdraw_dispatch_request(&req) {
-        let fee = match fetch_icrc1_fee(ledger).await {
-            Ok(fee) => fee,
-            Err(code) => {
-                return AppliedUnwrapDispatchOutcome {
-                    status: UnwrapRequestStatus::DispatchFailed,
-                    ledger_tx_id: None,
-                    error_code: Some(code),
-                };
-            }
+    let prefix = if is_native_withdraw_dispatch_request(&req) {
+        "native_withdraw"
+    } else {
+        "unwrap"
+    };
+    if req.transfer_fee.is_none() && req.transfer_created_at_time != 0 {
+        return AppliedUnwrapDispatchOutcome {
+            status: UnwrapRequestStatus::DispatchFailed,
+            ledger_tx_id: None,
+            error_code: Some(format!("{prefix}.legacy_transfer_requires_reconciliation")),
         };
-        match native_withdraw_gross_transfer_amount(&gross_amount, fee) {
-            Ok(amount) => amount,
-            Err(code) => {
-                return AppliedUnwrapDispatchOutcome {
-                    status: UnwrapRequestStatus::DispatchFailed,
-                    ledger_tx_id: None,
-                    error_code: Some(code),
-                };
+    }
+    let quote = async {
+        let fee = match req.transfer_fee {
+            Some(fee) => fee,
+            None => fetch_icrc1_fee(ledger).await?,
+        };
+        let amount =
+            gross_transfer_receive_amount(&Nat(BigUint::from_bytes_be(&req.amount)), fee, prefix)?;
+        let created_at_time = pin_unwrap_transfer_quote(request_id, req.updated_at, fee)?;
+        Ok::<_, String>((amount, fee, created_at_time))
+    }
+    .await;
+    let (amount, fee, created_at_time) = match quote {
+        Ok(quote) => quote,
+        Err(code) => {
+            return AppliedUnwrapDispatchOutcome {
+                status: UnwrapRequestStatus::DispatchFailed,
+                ledger_tx_id: None,
+                error_code: Some(code),
             }
         }
-    } else {
-        gross_amount
     };
     match attempt_icrc1_transfer(
         ledger,
         recipient,
         amount,
+        fee,
         request_memo(request_id, TransferMemoKind::Unwrap),
-        req.transfer_created_at_time,
+        created_at_time,
     )
     .await
     {
@@ -6105,11 +6441,32 @@ async fn dispatch_unwrap_request_internal(
             ledger_tx_id: Some(ledger_tx_id),
             error_code: None,
         },
-        Err(code) => AppliedUnwrapDispatchOutcome {
-            status: UnwrapRequestStatus::DispatchFailed,
-            ledger_tx_id: None,
-            error_code: Some(code),
-        },
+        Err(code) => {
+            if code.starts_with("ledger.transfer_failed:bad_fee:") {
+                with_state_mut(|state| {
+                    let Some(mut current) = state.unwrap_requests.get(&request_id) else {
+                        return;
+                    };
+                    if current.status != UnwrapRequestStatus::Dispatching
+                        || current.updated_at != req.updated_at
+                    {
+                        return;
+                    }
+                    refresh_transfer_quote_after_rejection(
+                        &mut current.transfer_fee,
+                        &mut current.transfer_created_at_time,
+                        (req.transfer_fee, req.transfer_created_at_time),
+                        &code,
+                    );
+                    state.unwrap_requests.insert(request_id, current);
+                });
+            }
+            AppliedUnwrapDispatchOutcome {
+                status: UnwrapRequestStatus::DispatchFailed,
+                ledger_tx_id: None,
+                error_code: Some(code),
+            }
+        }
     }
 }
 

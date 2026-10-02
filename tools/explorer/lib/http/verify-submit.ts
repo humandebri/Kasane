@@ -14,6 +14,7 @@ import {
   normalizeVerifySubmitInput,
 } from "../verify/normalize";
 import { createOrGetVerifyRequest } from "../verify/submit";
+import { PayloadTooLargeError, readBoundedJson } from "./bounded-body";
 
 export async function POST(request: Request) {
   const cfg = loadConfig(process.env);
@@ -27,9 +28,12 @@ export async function POST(request: Request) {
 
   let normalized;
   try {
-    const raw = await request.json();
+    const raw = await readBoundedJson(request, cfg.verifyRawPayloadLimitBytes);
     normalized = normalizeVerifySubmitInput(raw);
   } catch (err) {
+    if (err instanceof PayloadTooLargeError) {
+      return Response.json({ error: "payload too large" }, { status: 413 });
+    }
     const message = err instanceof Error ? err.message : "invalid json";
     return Response.json({ error: `invalid_input: ${message}` }, { status: 400 });
   }

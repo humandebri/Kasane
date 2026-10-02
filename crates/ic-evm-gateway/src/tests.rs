@@ -39,6 +39,7 @@ use evm_db::types::keys::{make_account_key, make_storage_key};
 use evm_db::types::values::{AccountVal, U256Val};
 use evm_db::{Memory, Storable};
 use ic_cdk::call::{CallFailed, CallPerformFailed, CallRejected, RejectCode};
+use num_bigint::BigUint;
 use std::borrow::Cow;
 use std::collections::BTreeSet;
 use std::future::Future;
@@ -611,6 +612,7 @@ fn sample_unwrap_request(
         error_code: error_code.map(str::to_string),
         updated_at,
         transfer_created_at_time: 0,
+        transfer_fee: None,
     }
 }
 
@@ -636,6 +638,7 @@ fn sample_wrap_request(status: RequestStatus) -> WrapStoredRequest {
             withdraw_ledger_tx_id: None,
             withdraw_error_code: None,
             withdraw_in_progress: false,
+            withdraw_fee: None,
             mint_failed_recoverable: false,
             fee_ledger_tx_id: Some(vec![6]),
             charged_fee_e8s: Some(7),
@@ -2558,6 +2561,7 @@ fn get_request_returns_wrap_overview_from_integrated_state() {
                     withdraw_ledger_tx_id: None,
                     withdraw_error_code: None,
                     withdraw_in_progress: false,
+                    withdraw_fee: None,
                     mint_failed_recoverable: false,
                     fee_ledger_tx_id: Some(vec![6]),
                     charged_fee_e8s: Some(7),
@@ -2611,6 +2615,7 @@ fn existing_native_deposit_response_is_idempotent_for_same_request() {
                     withdraw_ledger_tx_id: None,
                     withdraw_error_code: None,
                     withdraw_in_progress: false,
+                    withdraw_fee: None,
                     mint_failed_recoverable: false,
                     fee_ledger_tx_id: Some(vec![6]),
                     charged_fee_e8s: Some(7),
@@ -2662,6 +2667,7 @@ fn existing_native_deposit_response_rejects_idempotency_mismatch() {
                     withdraw_ledger_tx_id: None,
                     withdraw_error_code: None,
                     withdraw_in_progress: false,
+                    withdraw_fee: None,
                     mint_failed_recoverable: false,
                     fee_ledger_tx_id: Some(vec![6]),
                     charged_fee_e8s: Some(7),
@@ -2837,6 +2843,7 @@ fn get_request_returns_unwrap_dispatch_overview_from_integrated_state() {
                 error_code: Some("dispatch.failed".to_string()),
                 updated_at: 1,
                 transfer_created_at_time: 0,
+                transfer_fee: None,
             },
         );
     });
@@ -2897,6 +2904,7 @@ fn retry_unwrap_dispatch_requeues_failed_request() {
                 error_code: Some("dispatch.failed".to_string()),
                 updated_at: 1,
                 transfer_created_at_time: 0,
+                transfer_fee: None,
             },
         );
     });
@@ -2930,6 +2938,7 @@ fn internal_unwrap_dispatch_fails_invalid_integrated_ledger_without_call() {
         error_code: None,
         updated_at: 1,
         transfer_created_at_time: 1,
+        transfer_fee: None,
     };
 
     let out = run_ready_future(super::dispatch_unwrap_request_internal(request_id, req));
@@ -2951,13 +2960,559 @@ fn native_withdraw_marker_uses_gross_semantics() {
 fn native_withdraw_gross_transfer_amount_subtracts_fee() {
     let amount = Nat::from(100_000u128);
 
-    let out = super::native_withdraw_gross_transfer_amount(&amount, 10_000).expect("amount");
+    let out =
+        super::gross_transfer_receive_amount(&amount, 10_000, "native_withdraw").expect("amount");
 
     assert_eq!(out, Nat::from(90_000u128));
     assert_eq!(
-        super::native_withdraw_gross_transfer_amount(&amount, 100_000).expect_err("fee"),
+        super::gross_transfer_receive_amount(&amount, 100_000, "native_withdraw").expect_err("fee"),
         "native_withdraw.amount_not_above_fee"
     );
+}
+
+#[test]
+fn wrapped_withdrawal_and_refund_fees_cannot_spend_other_users_backing() {
+    for prefix in ["unwrap", "wrap.refund"] {
+        let gross = Nat::from(1_000u128);
+        let receive = super::gross_transfer_receive_amount(&gross, 100, prefix).expect("receive");
+        assert_eq!(receive, Nat::from(900u128));
+        assert_eq!(receive.0 + BigUint::from(100u128), gross.0);
+        assert_eq!(
+            super::gross_transfer_receive_amount(&gross, 0, prefix).unwrap(),
+            gross
+        );
+        for fee in [1_000, 1_001] {
+            assert_eq!(
+                super::gross_transfer_receive_amount(&gross, fee, prefix).unwrap_err(),
+                format!("{prefix}.amount_not_above_fee")
+            );
+        }
+        let large = Nat(BigUint::from(1u8) << 200usize);
+        assert_eq!(
+            super::gross_transfer_receive_amount(&large, 100, prefix)
+                .unwrap()
+                .0
+                + BigUint::from(100u128),
+            large.0
+        );
+    }
+}
+
+#[test]
+fn legacy_uncertain_unwrap_is_not_resent_with_changed_amount() {
+    init_stable_state();
+    let mut req = sample_unwrap_request(UnwrapRequestStatus::Dispatching, None, 1);
+    req.asset_id = Principal::self_authenticating(b"ledger")
+        .as_slice()
+        .to_vec();
+    req.recipient = Principal::self_authenticating(b"recipient")
+        .as_slice()
+        .to_vec();
+    req.transfer_created_at_time = 123;
+    let out = run_ready_future(super::dispatch_unwrap_request_internal(
+        TxId([0xfa; 32]),
+        req,
+    ));
+    assert_eq!(out.status, UnwrapRequestStatus::DispatchFailed);
+    assert_eq!(
+        out.error_code.as_deref(),
+        Some("unwrap.legacy_transfer_requires_reconciliation")
+    );
+}
+
+#[test]
+fn transfer_quotes_survive_retry_and_reject_stale_fee_responses() {
+    init_stable_state();
+    let id = TxId([0xfb; 32]);
+    let mut refund = sample_wrap_request(RequestStatus::Failed);
+    refund.result.withdraw_in_progress = true;
+    refund.result.updated_at = 1;
+    with_state_mut(|state| {
+        state.unwrap_requests.insert(
+            id,
+            sample_unwrap_request(UnwrapRequestStatus::Dispatching, None, 1),
+        );
+        state.wrap_requests.insert(id, refund);
+    });
+    let unwrap_time = super::pin_unwrap_transfer_quote(id, 1, 100).unwrap();
+    let refund_time = super::pin_refund_transfer_quote(id, 1, 100).unwrap();
+    init_stable_state();
+    assert_eq!(
+        super::pin_unwrap_transfer_quote(id, 1, 100).unwrap(),
+        unwrap_time
+    );
+    assert_eq!(
+        super::pin_refund_transfer_quote(id, 1, 100).unwrap(),
+        refund_time
+    );
+    assert!(super::pin_unwrap_transfer_quote(id, 1, 200).is_err());
+    assert!(super::pin_refund_transfer_quote(id, 1, 200).is_err());
+    with_state_mut(|state| {
+        let mut unwrap = state.unwrap_requests.get(&id).unwrap();
+        unwrap.updated_at = 2;
+        state.unwrap_requests.insert(id, unwrap);
+        let mut refund = state.wrap_requests.get(&id).unwrap();
+        refund.result.updated_at = 2;
+        state.wrap_requests.insert(id, refund);
+    });
+    assert!(super::pin_unwrap_transfer_quote(id, 1, 100).is_err());
+    assert!(super::pin_refund_transfer_quote(id, 1, 100).is_err());
+    with_state_mut(|state| {
+        let mut unwrap = state.unwrap_requests.get(&id).unwrap();
+        unwrap.status = UnwrapRequestStatus::Dispatched;
+        state.unwrap_requests.insert(id, unwrap);
+        let mut refund = state.wrap_requests.get(&id).unwrap();
+        refund.result.withdrawn = true;
+        refund.result.withdraw_in_progress = false;
+        state.wrap_requests.insert(id, refund);
+    });
+    assert!(super::pin_unwrap_transfer_quote(id, 2, 100).is_err());
+    assert!(super::pin_refund_transfer_quote(id, 2, 100).is_err());
+    with_state(|state| {
+        assert_eq!(
+            state.unwrap_requests.get(&id).unwrap().transfer_fee,
+            Some(100)
+        );
+        assert_eq!(
+            state.wrap_requests.get(&id).unwrap().result.withdraw_fee,
+            Some(100)
+        );
+    });
+}
+
+#[test]
+fn uncertain_fee_failures_remain_counted_even_after_a_definitive_retry_error() {
+    init_stable_state();
+    let caller = Principal::self_authenticating(b"unpaid");
+    for i in 0..super::MAX_PENDING_PER_PRINCIPAL {
+        let id = TxId(hash::keccak256(&i.to_be_bytes()));
+        super::reserve_wrap_pending_submission(id, caller).unwrap();
+        let mut req = sample_wrap_request(RequestStatus::Failed);
+        req.caller = caller.as_slice().to_vec();
+        req.result.fee_ledger_tx_id = None;
+        with_state_mut(|state| {
+            state.wrap_requests.insert(id, req);
+        });
+        super::record_wrap_fee_collection_failure(id, "ledger.call_failed:unknown", false);
+    }
+    assert_eq!(
+        super::reserve_wrap_pending_submission(TxId([0xfc; 32]), caller).unwrap_err(),
+        "request.principal_queue_full"
+    );
+    let retry = TxId(hash::keccak256(&0usize.to_be_bytes()));
+    super::reserve_wrap_pending_submission(retry, caller).unwrap();
+    assert_eq!(
+        super::reserve_wrap_pending_submission(retry, caller).unwrap_err(),
+        "request.in_progress"
+    );
+    super::record_wrap_fee_collection_failure(
+        retry,
+        "ledger.transfer_from_failed:insufficient_allowance:0",
+        true,
+    );
+    assert!(with_state(|state| state
+        .wrap_requests
+        .get(&retry)
+        .is_some()
+        && state.wrap_pending_submissions.get(&retry).is_some()));
+    with_state_mut(|state| {
+        let mut req = state.wrap_requests.get(&retry).unwrap();
+        req.result.updated_at = 1;
+        state.wrap_requests.insert(retry, req);
+    });
+    super::repair_stale_operations(super::STALE_OPERATION_NANOS + 2);
+    assert!(with_state(|state| state.wrap_queue.is_empty()));
+    assert!(!super::recover_wrap_worker_state_after_upgrade());
+    super::record_wrap_fee_collected(retry, vec![1]).unwrap();
+    super::clear_wrap_pending_submission(retry);
+    super::reserve_wrap_pending_submission(TxId([0xfc; 32]), caller).unwrap();
+    with_state(|state| {
+        assert_eq!(
+            state.wrap_pending_submissions.len(),
+            super::MAX_PENDING_PER_PRINCIPAL as u64
+        )
+    });
+}
+
+#[test]
+fn first_fee_rejections_do_not_exhaust_admission_or_accumulate_unpaid_records() {
+    init_stable_state();
+    let caller = Principal::self_authenticating(b"rejected-unpaid");
+    for gas_limit in [0, 21_000] {
+        for i in 0..super::MAX_PENDING_PER_PRINCIPAL * 2 + 1 {
+            let id = TxId(hash::keccak256(&i.to_be_bytes()));
+            super::reserve_wrap_pending_submission(id, caller).unwrap();
+            let mut req = sample_wrap_request(RequestStatus::Queued);
+            req.caller = caller.as_slice().to_vec();
+            req.gas_limit = gas_limit;
+            req.result.fee_ledger_tx_id = None;
+            req.result.pull_ledger_tx_id = None;
+            req.result.mint_tx_id = None;
+            with_state_mut(|state| {
+                state.wrap_requests.insert(id, req);
+            });
+            let error = if i % 2 == 0 {
+                "ledger.transfer_from_failed:insufficient_funds:0"
+            } else {
+                "ledger.transfer_from_failed:insufficient_allowance:0"
+            };
+            assert_eq!(
+                super::record_wrap_fee_collection_failure(id, error, false),
+                format!("fee.{error}")
+            );
+            with_state(|state| {
+                assert_eq!(state.wrap_pending_submissions.len(), 0);
+                assert_eq!(state.wrap_requests.len(), 0);
+            });
+        }
+    }
+    // A decode failure is not proof of non-payment, even on the first attempt.
+    let id = TxId([0xfe; 32]);
+    super::reserve_wrap_pending_submission(id, caller).unwrap();
+    let mut req = sample_wrap_request(RequestStatus::Queued);
+    req.result.fee_ledger_tx_id = None;
+    with_state_mut(|state| {
+        state.wrap_requests.insert(id, req);
+    });
+    super::record_wrap_fee_collection_failure(id, "ledger.decode_failed:invalid_reply", false);
+    init_stable_state();
+    super::record_wrap_fee_collection_failure(id, "ledger.transfer_from_failed:too_old", true);
+    assert!(with_state(|state| state.wrap_requests.get(&id).is_some()
+        && state.wrap_pending_submissions.get(&id).is_some()));
+}
+
+#[test]
+fn bad_fee_after_an_unanswered_transfer_preserves_refund_and_unwrap_identity() {
+    init_stable_state();
+    let id = TxId([0xfd; 32]);
+    let mut refund = sample_wrap_request(RequestStatus::Failed);
+    refund.result.withdraw_in_progress = true;
+    refund.result.updated_at = 1;
+    refund.result.withdraw_fee = None;
+    refund.withdraw_created_at_time = 0;
+    with_state_mut(|state| {
+        state.wrap_requests.insert(id, refund);
+        state.unwrap_requests.insert(
+            id,
+            sample_unwrap_request(UnwrapRequestStatus::Dispatching, None, 1),
+        );
+    });
+    let unwrap_time = super::pin_unwrap_transfer_quote(id, 1, 100).unwrap();
+    let refund_time = super::pin_refund_transfer_quote(id, 1, 100).unwrap();
+    // Simulate a successful ledger debit with no recorded response, then an upgrade.
+    init_stable_state();
+    with_state_mut(|state| {
+        let mut unwrap = state.unwrap_requests.get(&id).unwrap();
+        let mut refund = state.wrap_requests.get(&id).unwrap();
+        for error in [
+            "ledger.call_failed:unknown",
+            "ledger.decode_failed:invalid_reply",
+            "ledger.transfer_failed:bad_fee:200",
+            "ledger.transfer_failed:too_old",
+        ] {
+            let previous = (unwrap.transfer_fee, unwrap.transfer_created_at_time);
+            super::refresh_transfer_quote_after_rejection(
+                &mut unwrap.transfer_fee,
+                &mut unwrap.transfer_created_at_time,
+                previous,
+                error,
+            );
+            let previous = (refund.result.withdraw_fee, refund.withdraw_created_at_time);
+            super::refresh_transfer_quote_after_rejection(
+                &mut refund.result.withdraw_fee,
+                &mut refund.withdraw_created_at_time,
+                previous,
+                error,
+            );
+        }
+        assert_eq!(
+            (unwrap.transfer_fee, unwrap.transfer_created_at_time),
+            (Some(100), unwrap_time)
+        );
+        assert_eq!(
+            (refund.result.withdraw_fee, refund.withdraw_created_at_time),
+            (Some(100), refund_time)
+        );
+        state.unwrap_requests.insert(id, unwrap);
+        state.wrap_requests.insert(id, refund);
+    });
+    assert!(super::pin_unwrap_transfer_quote(id, 1, 200).is_err());
+    assert!(super::pin_refund_transfer_quote(id, 1, 200).is_err());
+    assert_eq!(
+        super::pin_unwrap_transfer_quote(id, 1, 100).unwrap(),
+        unwrap_time
+    );
+    assert_eq!(
+        super::pin_refund_transfer_quote(id, 1, 100).unwrap(),
+        refund_time
+    );
+}
+
+#[test]
+fn first_bad_fee_allows_requoting_but_other_first_errors_and_legacy_quotes_do_not() {
+    for (previous, error, expected) in [
+        ((None, 0), "ledger.transfer_failed:bad_fee:200", (None, 0)),
+        ((None, 0), "ledger.call_failed:unknown", (Some(100), 123)),
+        (
+            (None, 0),
+            "ledger.decode_failed:invalid_reply",
+            (Some(100), 123),
+        ),
+        (
+            (None, 123),
+            "ledger.transfer_failed:bad_fee:200",
+            (Some(100), 123),
+        ),
+        (
+            (Some(100), 0),
+            "ledger.transfer_failed:bad_fee:200",
+            (Some(100), 123),
+        ),
+    ] {
+        let (mut fee, mut time) = (Some(100), 123);
+        super::refresh_transfer_quote_after_rejection(&mut fee, &mut time, previous, error);
+        assert_eq!((fee, time), expected);
+    }
+}
+
+#[test]
+fn wrap_receipt_scan_rotates_through_bounded_batches() {
+    init_stable_state();
+    super::WRAP_RECEIPT_SCAN_CURSOR.with(|cursor| cursor.set(None));
+    with_state_mut(|state| {
+        for i in 0..super::READY_CANDIDATE_LIMIT + 1 {
+            let mut id = [0u8; 32];
+            id[24..].copy_from_slice(&(i as u64).to_be_bytes());
+            let mut req = sample_wrap_request(RequestStatus::Succeeded);
+            if i == super::READY_CANDIDATE_LIMIT {
+                req.result.status = RequestStatus::Running;
+                req.result.mint_submit_status = MintSubmitStatus::Submitted;
+                req.result.mint_tx_id = Some(vec![0xfe; 32]);
+            }
+            state.wrap_requests.insert(TxId(id), req);
+        }
+    });
+    set_migration_not_pending_for_test();
+    with_state_mut(|state| {
+        let mut chain = *state.chain_state.get();
+        chain.auto_production_enabled = true;
+        state.chain_state.set(chain);
+    });
+    super::mining_tick_with_timer(no_timer_for_test, no_reject_for_test);
+    assert!(with_state(|state| state.chain_state.get().mining_scheduled));
+    let candidates = super::submitted_wrap_mint_receipt_candidates();
+    assert_eq!(candidates.len(), 1);
+    assert_eq!(candidates[0].1, TxId([0xfe; 32]));
+    assert!(super::WRAP_RECEIPT_SCAN_CURSOR
+        .with(|cursor| cursor.get())
+        .is_none());
+    super::WRAP_RECEIPT_SCAN_CURSOR.with(|cursor| cursor.set(Some(TxId([0; 32]))));
+    super::WRAP_RECEIPT_SCAN_DIRTY.with(|dirty| dirty.set(true));
+    while super::WRAP_RECEIPT_SCAN_CURSOR.with(|cursor| cursor.get().is_some()) {
+        super::submitted_wrap_mint_receipt_candidates();
+    }
+    assert!(super::WRAP_RECEIPT_SCAN_DIRTY.with(|dirty| dirty.get()));
+    super::mining_tick_with_timer(no_timer_for_test, no_reject_for_test);
+    assert!(!super::WRAP_RECEIPT_SCAN_DIRTY.with(|dirty| dirty.get()));
+    assert!(super::WRAP_RECEIPT_SCAN_CURSOR.with(|cursor| cursor.get().is_some()));
+}
+
+#[test]
+fn dropped_mint_remains_refundable_after_history_expiry_and_index_rebuild() {
+    init_stable_state();
+    chain::reset_pending_wrap_mints();
+    with_state_mut(|state| {
+        let mut cfg = *state.chain_state.get();
+        cfg.base_fee = 1;
+        cfg.min_gas_price = 1;
+        cfg.min_priority_fee = 1;
+        state.chain_state.set(cfg);
+        for i in 0..super::READY_CANDIDATE_LIMIT * 2 {
+            let mut id = [0u8; 32];
+            id[24..].copy_from_slice(&(i as u64).to_be_bytes());
+            state
+                .wrap_requests
+                .insert(TxId(id), sample_wrap_request(RequestStatus::Succeeded));
+        }
+    });
+    let submit = |i: u64| {
+        chain::submit_ic_tx_input(
+            vec![0x55],
+            vec![0x22],
+            IcSyntheticTxInput {
+                to: Some([0x44; 20]),
+                value: [0; 32],
+                gas_limit: 21_000,
+                nonce: 0,
+                max_fee_per_gas: 10,
+                max_priority_fee_per_gas: 9,
+                data: i.to_be_bytes().to_vec(),
+            },
+        )
+        .unwrap()
+    };
+    let mint = submit(0);
+    assert!(super::reusable_mint_tx_location(mint));
+    let request_id = TxId([0xff; 32]);
+    let mut req = sample_wrap_request(RequestStatus::Running);
+    req.result.pull_ledger_tx_id = Some(vec![1]);
+    with_state_mut(|state| {
+        state.wrap_requests.insert(request_id, req);
+    });
+    super::record_wrap_mint_submitted(request_id, mint.0.to_vec()).unwrap();
+    let sibling_id = TxId([0xfe; 32]);
+    let mut sibling = sample_wrap_request(RequestStatus::Running);
+    sibling.result.pull_ledger_tx_id = Some(vec![2]);
+    with_state_mut(|state| {
+        state.wrap_requests.insert(sibling_id, sibling);
+    });
+    super::record_wrap_mint_submitted(sibling_id, mint.0.to_vec()).unwrap();
+    // Rebuild the transient index from stable requests, as post_upgrade does.
+    chain::reset_pending_wrap_mints();
+    init_stable_state();
+    super::recover_wrap_worker_state_after_upgrade();
+    let _ = chain::produce_block(1);
+    assert_eq!(chain::get_tx_loc(&mint).unwrap().kind, TxLocKind::Dropped);
+    assert!(!super::reusable_mint_tx_location(mint));
+    // A first upgrade may encounter a mint that dropped before this patch existed.
+    with_state_mut(|state| {
+        let mut legacy = state.wrap_requests.get(&request_id).unwrap();
+        legacy.result.status = RequestStatus::Running;
+        legacy.result.mint_failed_recoverable = false;
+        state.wrap_requests.insert(request_id, legacy);
+    });
+    chain::reset_pending_wrap_mints();
+    super::recover_wrap_worker_state_after_upgrade();
+    assert_eq!(
+        with_state(|state| state.wrap_requests.get(&request_id).unwrap().result.status),
+        RequestStatus::Failed
+    );
+    assert!(with_state(|state| state.wrap_queue.is_empty()));
+    for i in 1..=evm_db::chain_data::constants::DROPPED_RING_CAPACITY + 1 {
+        submit(i);
+        let _ = chain::produce_block(1);
+    }
+    assert!(chain::get_tx_loc(&mint).is_none());
+    init_stable_state();
+    with_state(|state| {
+        let sibling = state.wrap_requests.get(&sibling_id).unwrap();
+        assert_eq!(sibling.result.status, RequestStatus::Failed);
+        assert!(sibling.result.mint_failed_recoverable);
+        let req = state.wrap_requests.get(&request_id).unwrap();
+        assert_eq!(req.result.status, RequestStatus::Failed);
+        assert_eq!(req.result.error_code.as_deref(), Some("wrap.mint_dropped"));
+        assert!(req.result.mint_failed_recoverable);
+        assert!(req.result.pull_ledger_tx_id.is_some());
+    });
+}
+
+#[test]
+fn interrupted_fee_collection_retries_saved_identity_and_rejects_old_callbacks() {
+    for native in [false, true] {
+        for upgrade in [false, true] {
+            init_stable_state();
+            let id = TxId([0xec; 32]);
+            let caller = Principal::self_authenticating(b"interrupted-fee");
+            super::reserve_wrap_pending_submission(id, caller).unwrap();
+            let mut req = sample_wrap_request(if upgrade {
+                RequestStatus::Queued
+            } else {
+                RequestStatus::Running
+            });
+            req.caller = caller.as_slice().to_vec();
+            req.gas_limit = if native { 0 } else { 21_000 };
+            req.result.fee_ledger_tx_id = None;
+            req.result.stage = WrapRequestStage::FeePending;
+            req.result.updated_at = 1;
+            let identity = (
+                req.fee_created_at_time,
+                super::saved_wrap_fee_transfer(&req).unwrap(),
+            );
+            with_state_mut(|state| {
+                state.wrap_requests.insert(id, req);
+            });
+            assert!(super::wrap_fee_attempt_is_current(id, 1));
+            if upgrade {
+                init_stable_state();
+                assert!(!super::recover_wrap_worker_state_after_upgrade());
+            } else {
+                super::repair_stale_operations(super::STALE_OPERATION_NANOS + 2);
+            }
+            assert!(!super::wrap_fee_attempt_is_current(id, 1));
+            assert!(with_state(|state| state
+                .wrap_pending_submissions
+                .get(&id)
+                .is_some()));
+            super::reserve_wrap_pending_submission(id, caller).unwrap();
+            let req = with_state(|state| state.wrap_requests.get(&id).unwrap());
+            assert_eq!(req.result.status, RequestStatus::Running);
+            // A new fee policy must not change an already admitted transfer's identity.
+            with_state_mut(|state| {
+                state
+                    .wrap_fee_policy
+                    .set(evm_db::chain_data::FeePolicyStored {
+                        fee_ledger_canister: vec![8],
+                        cycle_fee_e8s: 999,
+                        gas_price_buffer_bps: 10_000,
+                    })
+            });
+            if native {
+                let (ledger, amount, asset) = super::prepare_native_deposit_submission_funding(
+                    id,
+                    identity.1 .0,
+                    req.max_fee_e8s,
+                )
+                .unwrap();
+                assert_eq!(ledger, identity.1 .0);
+                assert_eq!(Nat::from(amount), identity.1 .1);
+                assert_eq!(asset.as_slice(), req.asset_id);
+                assert!(super::prepare_native_deposit_submission_funding(
+                    id,
+                    Principal::from_slice(&[8]),
+                    req.max_fee_e8s
+                )
+                .is_err());
+            } else {
+                let args = super::NormalizedSubmitWrapRequest {
+                    request_id: id,
+                    asset_id: req.asset_id.clone(),
+                    amount: req.amount.clone(),
+                    evm_recipient: req.evm_recipient.clone(),
+                    gas_limit: req.gas_limit,
+                    max_fee_e8s: req.max_fee_e8s,
+                    quoted_gas_price_wei: req.quoted_gas_price_wei,
+                    fee_ledger_canister: identity.1 .0,
+                };
+                assert_eq!(super::prepare_wrap_submission_fee(&args).unwrap(), (7, 8));
+            }
+            assert_eq!(
+                (
+                    req.fee_created_at_time,
+                    super::saved_wrap_fee_transfer(&req).unwrap()
+                ),
+                identity
+            );
+            assert!(!super::wrap_fee_attempt_is_current(id, 1));
+            assert!(super::wrap_fee_attempt_is_current(
+                id,
+                req.result.updated_at
+            ));
+            assert_eq!(
+                super::reserve_wrap_pending_submission(id, caller).unwrap_err(),
+                "request.in_progress"
+            );
+            super::record_wrap_fee_collected(id, vec![1]).unwrap();
+            super::clear_wrap_pending_submission(id);
+            assert!(!super::wrap_fee_attempt_is_current(
+                id,
+                req.result.updated_at
+            ));
+            assert!(with_state(|state| state
+                .wrap_pending_submissions
+                .get(&id)
+                .is_none()));
+        }
+    }
 }
 
 #[test]
@@ -3827,10 +4382,21 @@ fn with_state_mut_blocks_avoid_async_and_timer_side_effects() {
     let source = include_str!("lib.rs");
     for (start, _) in source.match_indices("with_state_mut(|") {
         let tail = &source[start..];
-        let Some(rel_end) = tail.find("});") else {
+        let Some(body_start) = tail.find('{') else {
             continue;
         };
-        let end = start + rel_end + 3;
+        let mut depth = 0usize;
+        let end = tail[body_start..]
+            .char_indices()
+            .find_map(|(offset, ch)| {
+                match ch {
+                    '{' => depth += 1,
+                    '}' => depth -= 1,
+                    _ => {}
+                }
+                (depth == 0).then_some(start + body_start + offset + 1)
+            })
+            .expect("balanced with_state_mut closure");
         let segment = &source[start..end];
         assert!(
             !segment.contains("ic_cdk_timers::set_timer("),
@@ -4994,6 +5560,7 @@ fn raw_stable_corruption_does_not_trap_query_or_dispatch_for_unwrap_request() {
         error_code: Some("wrap.integration.gateway.raw-corrupt.7f3e2c1b".to_string()),
         updated_at: 987_654_333,
         transfer_created_at_time: 987_654_334,
+        transfer_fee: None,
     };
     let encoded = request.to_bytes().into_owned();
     with_state_mut(|state| {
@@ -5359,6 +5926,7 @@ fn quarantine_decode_failed_unwrap_requests_marks_dead_letter_and_dequeues() {
                 error_code: None,
                 updated_at: 1,
                 transfer_created_at_time: 0,
+                transfer_fee: None,
             },
         );
     });

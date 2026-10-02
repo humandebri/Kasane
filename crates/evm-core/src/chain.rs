@@ -38,6 +38,7 @@ use evm_db::Storable;
 use revm::context_interface::transaction::{AccessList, AccessListItem};
 use revm::database::CacheDB;
 use revm::database_interface::DatabaseCommit;
+use revm::handler::MainContext;
 use revm::primitives::Address;
 use revm::primitives::Bytes as RevmBytes;
 use revm::primitives::TxKind as RevmTxKind;
@@ -1003,12 +1004,19 @@ pub fn submit_tx(
             base_fee,
         )?;
         if replaced.is_none() {
-            enforce_pending_caps(state, sender_key, &caller_principal, effective_gas_price)?;
+            enforce_pending_caps(
+                state,
+                sender_key,
+                &caller_principal,
+                effective_gas_price,
+                &tx_env,
+            )?;
         }
         let pending_key = SenderNonceKey::new(sender_key.0, tx_env.nonce);
         if state.pending_by_sender_nonce.get(&pending_key).is_some() {
             return Err(ChainError::NonceConflict);
         }
+        state.sender_expected_nonce.insert(sender_key, tx_env.nonce);
         state.seen_tx.insert(tx_id, 1);
         state.tx_store.insert(tx_id, envelope.clone());
         insert_eth_tx_hash_index_for_envelope(state, tx_id, envelope);
@@ -1115,12 +1123,19 @@ pub fn submit_ic_tx_input(
                 sender_key,
                 caller_principal.as_slice(),
                 effective_gas_price,
+                &decode_tx(
+                    TxKind::IcSynthetic,
+                    Address::from(caller_evm),
+                    &envelope.raw,
+                )
+                .map_err(|_| ChainError::DecodeFailed)?,
             )?;
         }
         let pending_key = SenderNonceKey::new(sender_key.0, nonce);
         if state.pending_by_sender_nonce.get(&pending_key).is_some() {
             return Err(ChainError::NonceConflict);
         }
+        state.sender_expected_nonce.insert(sender_key, nonce);
         state.seen_tx.insert(tx_id, 1);
         state.tx_store.insert(tx_id, envelope);
         state.pending_current_by_sender.insert(sender_key, tx_id);
@@ -3139,6 +3154,7 @@ fn enforce_pending_caps(
     sender: SenderKey,
     caller_principal: &[u8],
     incoming_effective_gas_price: u64,
+    incoming: &revm::context::TxEnv,
 ) -> Result<(), ChainError> {
     let lowest_effective_gas_price = state.pending_fee_index.range(..).next().map(|entry| {
         let mut fee = [0u8; 8];
@@ -3164,6 +3180,49 @@ fn enforce_pending_caps(
         }
         verified_core::queue::PendingCapDecision::GlobalFull => Err(ChainError::QueueFull),
         verified_core::queue::PendingCapDecision::EvictLowest => {
+            // An unpaid or intrinsically invalid transaction must not evict admitted work.
+            let invalid = || {
+                ChainError::ExecFailed(Some(ExecError::TxError(
+                    OpTransactionError::TxPrecheckFailed,
+                )))
+            };
+            let context = revm::context::Context::mainnet()
+                .modify_cfg_chained(|cfg| {
+                    cfg.set_spec_and_mainnet_gas_params(crate::revm_exec::EVM_SPEC_ID);
+                    cfg.chain_id = evm_db::chain_data::constants::CHAIN_ID;
+                })
+                .modify_block_chained(|block| {
+                    block.gas_limit = state.chain_state.get().block_gas_limit;
+                    block.basefee = state.chain_state.get().base_fee;
+                })
+                .with_tx(incoming.clone());
+            if incoming.gas_limit > state.chain_state.get().block_gas_limit
+                || revm::handler::validation::validate_tx_env(
+                    context,
+                    crate::revm_exec::EVM_SPEC_ID,
+                )
+                .is_err()
+                || revm::handler::validation::validate_initial_tx_gas(
+                    incoming,
+                    crate::revm_exec::EVM_SPEC_ID,
+                    false,
+                )
+                .is_err()
+            {
+                return Err(invalid());
+            }
+            let required = U256::from(incoming.gas_price)
+                .checked_mul(U256::from(incoming.gas_limit))
+                .and_then(|gas| gas.checked_add(incoming.value))
+                .ok_or_else(invalid)?;
+            let balance = state
+                .accounts
+                .get(&make_account_key(sender.0))
+                .map(|account| U256::from_be_bytes(account.balance()))
+                .unwrap_or(U256::ZERO);
+            if balance < required {
+                return Err(invalid());
+            }
             evict_lowest_fee_pending(state, incoming_effective_gas_price)
         }
     }
@@ -3567,6 +3626,16 @@ fn finalize_pending_for_sender(
     if bump_expected_nonce {
         tx_submit::bump_expected_nonce_on_included(state, sender);
     }
+    if state.pending_current_by_sender.get(&sender).is_none() {
+        let durable_nonce = state
+            .accounts
+            .get(&make_account_key(sender.0))
+            .map(|account| account.nonce())
+            .unwrap_or(0);
+        if state.sender_expected_nonce.get(&sender) == Some(durable_nonce) {
+            state.sender_expected_nonce.remove(&sender);
+        }
+    }
 }
 
 fn replace_pending_for_sender(
@@ -3588,11 +3657,57 @@ fn replace_pending_for_sender(
     state.metrics_state.set(metrics);
 }
 
+thread_local! {
+    // Rebuilt from stable wrap requests before workers resume after upgrade.
+    static PENDING_WRAP_MINTS: std::cell::RefCell<BTreeMap<TxId, BTreeSet<TxId>>> = const { std::cell::RefCell::new(BTreeMap::new()) };
+}
+
+pub fn register_pending_wrap_mint(state: &mut StableState, tx_id: TxId, request_id: TxId) {
+    PENDING_WRAP_MINTS.with(|index| {
+        index
+            .borrow_mut()
+            .entry(tx_id)
+            .or_default()
+            .insert(request_id)
+    });
+    if tx_locs_get(state, &tx_id).is_some_and(|loc| loc.kind == TxLocKind::Dropped) {
+        settle_pending_wrap_mint_drop(state, tx_id);
+    }
+}
+
+pub fn unregister_pending_wrap_mint(tx_id: TxId) {
+    PENDING_WRAP_MINTS.with(|index| index.borrow_mut().remove(&tx_id));
+}
+
+pub fn reset_pending_wrap_mints() {
+    PENDING_WRAP_MINTS.with(|index| index.borrow_mut().clear());
+}
+
+fn settle_pending_wrap_mint_drop(state: &mut StableState, tx_id: TxId) {
+    let request_ids = PENDING_WRAP_MINTS.with(|index| index.borrow_mut().remove(&tx_id));
+    for request_id in request_ids.into_iter().flatten() {
+        if let Some(mut req) = state.wrap_requests.get(&request_id) {
+            if req.result.status == evm_db::chain_data::RequestStatus::Running
+                && req.result.mint_tx_id.as_deref() == Some(tx_id.0.as_slice())
+                && req.result.mint_submit_status == evm_db::chain_data::MintSubmitStatus::Submitted
+            {
+                // Persist the refund decision before the bounded drop history can expire.
+                req.result.status = evm_db::chain_data::RequestStatus::Failed;
+                req.result.stage = evm_db::chain_data::WrapRequestStage::Failed;
+                req.result.error_code = Some("wrap.mint_dropped".to_string());
+                req.result.mint_failed_recoverable = true;
+                state.wrap_requests.insert(request_id, req);
+            }
+        }
+    }
+}
+
 fn mark_dropped_and_purge_payload(
     state: &mut evm_db::stable_state::StableState,
     tx_id: TxId,
     drop_code: u16,
 ) {
+    settle_pending_wrap_mint_drop(state, tx_id);
     remove_pending_fee_index_by_tx_id(state, tx_id);
     remove_eth_tx_hash_index_for_tx_id(state, tx_id);
     state.tx_store.remove(&tx_id);
@@ -3616,6 +3731,11 @@ fn push_dropped_ring(state: &mut evm_db::stable_state::StableState, tx_id: TxId)
             if let Some(loc) = tx_locs_get(state, &evicted_tx_id) {
                 if loc.kind == TxLocKind::Dropped {
                     tx_locs_remove(state, &evicted_tx_id);
+                    if state.tx_store.get(&evicted_tx_id).is_none()
+                        && state.pending_meta_by_tx_id.get(&evicted_tx_id).is_none()
+                    {
+                        state.seen_tx.remove(&evicted_tx_id);
+                    }
                 }
             }
         }

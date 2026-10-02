@@ -195,6 +195,7 @@ export type PendingStatusView =
   | { Unknown: null };
 
 type ExplorerActorMethods = {
+  rpc_eth_chain_id: () => Promise<bigint>;
   rpc_eth_block_number: () => Promise<bigint>;
   get_receipt: (txId: Uint8Array) => Promise<Result<ReceiptView, LookupError>>;
   rpc_eth_get_block_by_number: (number: bigint, fullTx: boolean) => Promise<[] | [EthBlockView]>;
@@ -223,6 +224,10 @@ type ExplorerActorMethods = {
 };
 
 let cachedActor: ExplorerActorMethods | null = null;
+
+export async function getRpcChainId(): Promise<bigint> {
+  return (await getActor()).rpc_eth_chain_id();
+}
 
 export async function getRpcHeadNumber(): Promise<bigint> {
   return (await getActor()).rpc_eth_block_number();
@@ -573,6 +578,7 @@ const idlFactory: IDL.InterfaceFactory = ({ IDL }) => {
   const rpcErrorView = IDL.Record({ code: IDL.Nat32, message: IDL.Text });
 
   return IDL.Service({
+    rpc_eth_chain_id: IDL.Func([], [IDL.Nat64], ["query"]),
     rpc_eth_block_number: IDL.Func([], [IDL.Nat64], ["query"]),
     expected_nonce_by_address: IDL.Func([IDL.Vec(IDL.Nat8)], [IDL.Variant({ Ok: IDL.Nat64, Err: IDL.Text })], ["query"]),
     get_receipt: IDL.Func([IDL.Vec(IDL.Nat8)], [IDL.Variant({ Ok: receiptView, Err: lookupError })], ["query"]),

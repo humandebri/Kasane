@@ -896,6 +896,119 @@ fn wrap_precompile_burns_contract_balance_when_called_through_forwarder() {
 }
 
 #[test]
+fn withdrawal_precompiles_reject_delegated_call_contexts() {
+    for native in [false, true] {
+        for opcode in [0xf1, 0xf2, 0xf4, 0xfa] {
+            std::thread::spawn(move || {
+                init_stable_state();
+                relax_fee_floor_for_tests();
+                set_runtime_config(RuntimeConfigV1::new(
+                    candid::Principal::self_authenticating(b"withdraw-call-context"),
+                    TEST_FACTORY_ADDRESS,
+                ));
+                let principal = vec![0x31];
+                let caller = hash::derive_evm_address_from_principal(&principal).unwrap();
+                common::fund_account(caller, 1_000_000_000_000_000_000);
+                let target = if native {
+                    NATIVE_WITHDRAW_PRECOMPILE_ADDRESS
+                } else {
+                    WRAP_PRECOMPILE_ADDRESS
+                };
+                // Copy calldata, invoke the selected scheme, and persist its success bit.
+                let mut code = hex::decode("36600060003760006000366000").unwrap();
+                if opcode == 0xf1 || opcode == 0xf2 {
+                    code.push(0x34); // CALLVALUE
+                }
+                code.push(0x73);
+                code.extend_from_slice(target.as_slice());
+                code.extend([0x62, 0x03, 0x00, 0x00, opcode, 0x60, 0, 0x55, 0]);
+                common::install_contract(FORWARDER_ADDRESS, &code);
+                // A delegate call inherits the victim; CALL/CALLCODE use the contract.
+                let owner = if opcode == 0xf4 {
+                    caller
+                } else {
+                    FORWARDER_ADDRESS
+                };
+                if !native {
+                    seed_unwrap_burn_state(owner);
+                }
+                let value = if native {
+                    U256::from(evm_core::kasane_precompiles::WEI_PER_E8S)
+                } else {
+                    U256::ZERO
+                };
+                let tx_id = chain::submit_ic_tx_input(
+                    principal,
+                    vec![0xa0],
+                    IcSyntheticTxInput {
+                        to: Some(FORWARDER_ADDRESS),
+                        value: value.to_be_bytes(),
+                        gas_limit: 300_000,
+                        nonce: 0,
+                        max_fee_per_gas: 2_000_000_000,
+                        max_priority_fee_per_gas: 1_000_000_000,
+                        data: if native {
+                            encode_native_withdraw_input()
+                        } else {
+                            encode_unwrap_input()
+                        },
+                    },
+                )
+                .unwrap();
+                chain::produce_block(1).unwrap();
+                let receipt = chain::get_receipt(&tx_id).unwrap();
+                assert_eq!(receipt.status, 1);
+                let allowed = opcode == 0xf1;
+                let mut db = evm_core::revm_db::RevmStableDb;
+                use revm::Database;
+                assert_eq!(
+                    db.storage(Address::new(FORWARDER_ADDRESS), U256::ZERO)
+                        .unwrap(),
+                    U256::from(u8::from(allowed))
+                );
+                assert_eq!(
+                    receipt
+                        .logs
+                        .iter()
+                        .filter(|log| log.address == target)
+                        .count(),
+                    usize::from(allowed)
+                );
+                if native {
+                    assert_eq!(
+                        db.basic(Address::new(FORWARDER_ADDRESS))
+                            .unwrap()
+                            .unwrap()
+                            .balance,
+                        if allowed { U256::ZERO } else { value }
+                    );
+                } else {
+                    let remaining = if allowed {
+                        U256::ZERO
+                    } else {
+                        U256::from(TEST_AMOUNT)
+                    };
+                    assert_eq!(read_token_storage(U256::from(2)), remaining);
+                    assert_eq!(
+                        read_token_storage(address_mapping_slot(Address::new(owner), 3)),
+                        remaining
+                    );
+                    assert_eq!(
+                        read_token_storage(allowance_slot(
+                            Address::new(owner),
+                            Address::new(TEST_FACTORY_ADDRESS)
+                        )),
+                        remaining
+                    );
+                }
+            })
+            .join()
+            .unwrap();
+        }
+    }
+}
+
+#[test]
 fn icp_update_intent_precompile_emits_log_when_called_through_forwarder() {
     setup_query_precompile_call_context();
     allow_icp_update_method("write_state");

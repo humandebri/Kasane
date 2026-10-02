@@ -68,6 +68,28 @@ try {
   const invalidInputToken = token("owner", "invalid-input");
   assert.equal((await submit(request("/api/verify/submit", invalidInputToken, "{"))).status, 400);
   assert.equal((await submit(request("/api/verify/submit", invalidInputToken, "{"))).status, 401);
+  const previousLimit = process.env.EXPLORER_VERIFY_MAX_PAYLOAD_BYTES;
+  process.env.EXPLORER_VERIFY_MAX_PAYLOAD_BYTES = "1024";
+  let bodyReads = 0;
+  let bodyCancelled = false;
+  const oversizedBody = new ReadableStream<Uint8Array>({
+    pull(controller) { bodyReads++; controller.enqueue(new Uint8Array(1024)); },
+    cancel() { bodyCancelled = true; },
+  }, { highWaterMark: 0 });
+  try {
+    const oversized = new Request("http://localhost/api/verify/submit", {
+      method: "POST",
+      headers: { authorization: `Bearer ${token("owner", "oversized-input")}` },
+      body: oversizedBody,
+      duplex: "half",
+    } as RequestInit);
+    assert.equal((await submit(oversized)).status, 413);
+    assert.equal(bodyReads, 2);
+    assert.equal(bodyCancelled, true);
+  } finally {
+    if (previousLimit === undefined) delete process.env.EXPLORER_VERIFY_MAX_PAYLOAD_BYTES;
+    else process.env.EXPLORER_VERIFY_MAX_PAYLOAD_BYTES = previousLimit;
+  }
   await pool.query("INSERT INTO verify_requests(id,contract_address,chain_id,submitted_by,status,input_hash,payload_compressed,created_at,updated_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)", ["job", "0x" + "11".repeat(20), 0, "owner", "queued", "hash", Buffer.from("payload"), 1, 1]);
   const ownerToken = token("owner", "status-repeatable");
   const response = await status(request("/api/verify/status?id=job", ownerToken));

@@ -13,14 +13,13 @@ pub enum NonceRuleError {
     Conflict,
 }
 
-pub fn expected_nonce_for_sender(state: &mut StableState, sender: SenderKey) -> u64 {
+pub fn expected_nonce_for_sender(state: &StableState, sender: SenderKey) -> u64 {
     // gap不許可のため、submit時に期待nonceを固定し、実行/ドロップ時にのみ進める。
     if let Some(value) = state.sender_expected_nonce.get(&sender) {
         return value;
     }
-    let nonce = account_nonce_from_state(state, sender);
-    state.sender_expected_nonce.insert(sender, nonce);
-    nonce
+    // Rejected submissions must not allocate persistent sender records.
+    account_nonce_from_state(state, sender)
 }
 
 pub fn finalize_pending_for_sender_without_nonce_bump(

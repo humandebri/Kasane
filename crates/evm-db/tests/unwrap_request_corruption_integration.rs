@@ -22,6 +22,7 @@ fn sample_request() -> UnwrapDispatchRequest {
         error_code: Some("wrap.integration.sample".to_string()),
         updated_at: 123_456_799,
         transfer_created_at_time: 123_456_800,
+        transfer_fee: None,
     }
 }
 

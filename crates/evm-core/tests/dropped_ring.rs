@@ -46,6 +46,12 @@ fn dropped_ring_keeps_tx_locs_bounded() {
             .filter(|entry| entry.value().kind == TxLocKind::Dropped)
             .count();
         assert!(dropped_count <= usize::try_from(DROPPED_RING_CAPACITY).unwrap_or(usize::MAX));
+        assert!(state.seen_tx.len() <= DROPPED_RING_CAPACITY + 1);
+        assert!(state.seen_tx.get(&submitted[0]).is_none());
+        assert!(state
+            .seen_tx
+            .get(submitted.last().expect("queued transaction"))
+            .is_some());
     });
 
     let oldest = submitted[0];
@@ -108,4 +114,23 @@ fn dropped_ring_does_not_remove_included_or_queued() {
 
     let after = chain::get_tx_loc(&included_tx).expect("included must remain");
     assert_eq!(after.kind, TxLocKind::Included);
+}
+
+#[test]
+fn unfunded_drops_do_not_retain_sender_nonce_records() {
+    init_stable_state();
+    relax_fee_floor_for_tests();
+    for caller in 1..=8u8 {
+        chain::submit_tx_in(TxIn::IcSynthetic {
+            caller_principal: vec![caller],
+            canister_id: vec![0x22],
+            tx: build_ic_tx_input_with_fee(3_000_000_000, 3_000_000_000, 0),
+        })
+        .unwrap();
+    }
+    let _ = chain::produce_block(8);
+    with_state(|state| {
+        assert!(state.pending_current_by_sender.is_empty());
+        assert!(state.sender_expected_nonce.is_empty());
+    });
 }

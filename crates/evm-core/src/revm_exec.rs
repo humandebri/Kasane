@@ -312,11 +312,12 @@ where
             }
         };
 
+    // Rejected results must not leak state into the next transaction's shared cache.
+    validate_execution_result_sizes(&output, &logs)?;
+
     let mut state_diff = collect_state_diff(result.state);
     add_base_fee_portion_to_recipient(&mut state_diff, gas_used, exec_ctx.base_fee);
     commit_state_diff(&mut evm, state_diff.clone());
-
-    validate_execution_result_sizes(&output, &logs)?;
 
     let fee_breakdown = FeeBreakdown {
         l1_data_fee: 0,

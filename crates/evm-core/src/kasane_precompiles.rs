@@ -11,7 +11,7 @@ use revm::{
         journaled_state::account::JournaledAccountTr, ContextTr, JournalTr, LocalContextTr,
     },
     handler::{EthPrecompiles, PrecompileProvider},
-    interpreter::{CallInputs, Gas, InstructionResult, InterpreterResult},
+    interpreter::{CallInputs, CallScheme, CallValue, Gas, InstructionResult, InterpreterResult},
     primitives::{Address, Bytes, Log, B256, U256},
 };
 use std::boxed::Box;
@@ -414,6 +414,13 @@ fn run_wrap_precompile<CTX: ContextTr>(
     if inputs.is_static {
         return precompile_fail(context, gas_limit, "wrap.precompile.static_disallowed");
     }
+    if !is_direct_asset_call(inputs, WRAP_PRECOMPILE_ADDRESS) {
+        return precompile_fail(
+            context,
+            gas_limit,
+            "wrap.precompile.call_context_disallowed",
+        );
+    }
 
     let input = inputs.input.bytes(context);
     let parsed = match parse_input(&input) {
@@ -469,6 +476,13 @@ fn run_native_withdraw_precompile<CTX: ContextTr>(
             "native_withdraw.precompile.static_disallowed",
         );
     }
+    if !is_direct_asset_call(inputs, NATIVE_WITHDRAW_PRECOMPILE_ADDRESS) {
+        return precompile_fail(
+            context,
+            gas_limit,
+            "native_withdraw.precompile.call_context_disallowed",
+        );
+    }
 
     let input = inputs.input.bytes(context);
     let recipient = match parse_native_withdraw_input(&input) {
@@ -510,6 +524,14 @@ fn run_native_withdraw_precompile<CTX: ContextTr>(
         };
     }
     out
+}
+
+fn is_direct_asset_call(inputs: &CallInputs, address: Address) -> bool {
+    // CALLCODE transfers to self; DELEGATECALL inherits another frame's authority/value.
+    inputs.scheme == CallScheme::Call
+        && inputs.target_address == address
+        && inputs.bytecode_address == address
+        && matches!(inputs.value, CallValue::Transfer(_))
 }
 
 fn run_icp_query_precompile<CTX: ContextTr>(

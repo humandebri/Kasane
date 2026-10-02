@@ -71,7 +71,8 @@ import {
 import { authenticateVerifyRequest } from "../lib/verify/auth";
 import { isRuntimeMatch } from "../lib/verify/compile";
 import { medianBigInt } from "../lib/verify/metrics";
-import { executeVerifyJob, isVerifyServiceError } from "../lib/verify/service";
+import { readBoundedJson, PayloadTooLargeError } from "../lib/http/bounded-body";
+import { executeVerifyJob, isVerifyServiceError, verifyServiceTestHooks } from "../lib/verify/service";
 import { buildVerifyAuthToken } from "../lib/verify/token";
 import { getExtendedTokenMeta, getTokenMeta } from "../lib/token_meta";
 import { createOrGetVerifyRequest } from "../lib/verify/submit";
@@ -345,6 +346,56 @@ async function runVerifyServiceInvalidInputMapTests(): Promise<void> {
     }
     return err.code === "invalid_input";
   });
+}
+
+async function runVerifyBoundaryTests(): Promise<void> {
+  let reads = 0;
+  let cancelled = false;
+  const body = new ReadableStream<Uint8Array>({
+    pull(controller) {
+      reads += 1;
+      controller.enqueue(new Uint8Array(1024));
+    },
+    cancel() { cancelled = true; },
+  }, { highWaterMark: 0 });
+  const request = new Request("http://localhost/verify", {
+    method: "POST", body, duplex: "half",
+  } as RequestInit);
+  await assert.rejects(readBoundedJson(request, 1024), PayloadTooLargeError);
+  assert.equal(reads, 2);
+  assert.equal(cancelled, true);
+  assert.deepEqual(await readBoundedJson(new Request("http://localhost/verify", {
+    method: "POST", body: '{"text":"日本語"}',
+  }), 100), { text: "日本語" });
+  const input: VerifySubmitInput = {
+    chainId: 1, contractAddress: "0x" + "11".repeat(20),
+    compilerVersion: "0.8.30", optimizerEnabled: true, optimizerRuns: 200,
+    evmVersion: null, sourceBundle: { "A.sol": "contract A {}" },
+    contractName: "A", constructorArgsHex: "0x",
+  };
+  let runtimeCalls = 0;
+  verifyServiceTestHooks.setDepsForTest({
+    getChainId: async () => 2n,
+    getRuntimeCode: async () => { runtimeCalls++; return new Uint8Array(); },
+    getDeployInput: async () => ({ found: false, txInput: null }),
+    checkSourcify: async () => "not_found",
+  });
+  try {
+    await assert.rejects(executeVerifyJob(input), (err: unknown) =>
+      isVerifyServiceError(err) && err.code === "invalid_input" && err.message.includes("chainId"));
+    assert.equal(runtimeCalls, 0);
+    verifyServiceTestHooks.setDepsForTest({
+      getChainId: async () => { throw new Error("unavailable"); },
+      getRuntimeCode: async () => { runtimeCalls++; return new Uint8Array(); },
+      getDeployInput: async () => ({ found: false, txInput: null }),
+      checkSourcify: async () => "not_found",
+    });
+    await assert.rejects(executeVerifyJob(input), (err: unknown) =>
+      isVerifyServiceError(err) && err.code === "rpc_unavailable");
+    assert.equal(runtimeCalls, 0);
+  } finally {
+    verifyServiceTestHooks.resetDepsForTest();
+  }
 }
 
 async function runVerifyAuthTests(): Promise<void> {
@@ -2113,6 +2164,7 @@ runHexTests()
   .then(runVerifyNormalizeTests)
   .then(runVerifyRuntimeMatchTests)
   .then(runVerifyServiceInvalidInputMapTests)
+  .then(runVerifyBoundaryTests)
   .then(runVerifyAuthTests)
   .then(runVerifyRequestLifecycleTests)
   .then(runVerifyMetricsTests)
