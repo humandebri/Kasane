@@ -53,3 +53,6 @@ argument mapping and finite execution tests.
 
 See [2026-09-30 upgrade and snapshot validation scope](mainnet-readiness-2026-09-30.md)
 for the PocketIC state-preservation tests and the remaining deployed-version migration checks.
+
+See [final release and historical schema-6 validation](mainnet-release-validation-2026-09-30.md)
+for checks against the postprocessed artifact and the remaining production data requirements.

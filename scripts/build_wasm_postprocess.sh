@@ -26,8 +26,12 @@ if [[ ! -f "${DID_FILE}" ]]; then
 fi
 
 if ! command -v ic-wasm >/dev/null 2>&1; then
-  echo "[postprocess] installing ic-wasm"
-  cargo install ic-wasm --locked
+  echo "[postprocess] installing ic-wasm 0.10.0 for shrink/optimize"
+  cargo install ic-wasm --version 0.10.0 --locked
+fi
+if [[ "$(ic-wasm --version)" != "ic-wasm 0.10.0" ]]; then
+  echo "[postprocess] shrink/optimize requires ic-wasm 0.10.0; install that version before running" >&2
+  exit 1
 fi
 
 WORK_DIR="$(dirname "${OUTPUT_WASM}")"
@@ -106,7 +110,8 @@ if [[ -n "${CHECK_ENDPOINTS_EXCLUDE}" ]]; then
   ' "${DID_FILE}" > "${CHECK_DID_FILE}"
 fi
 
-check_cmd=("ic-wasm" "${OUTPUT_WASM}" "check-endpoints" "--candid" "${CHECK_DID_FILE}")
+ENDPOINT_CHECKER="$(bash "${SCRIPT_DIR}/prepare_ic_wasm_endpoint_checker.sh")"
+check_cmd=("${ENDPOINT_CHECKER}" "${OUTPUT_WASM}" "check-endpoints" "--candid" "${CHECK_DID_FILE}")
 HIDDEN_FILE=""
 if [[ -n "${CHECK_ENDPOINTS_HIDDEN}" ]]; then
   HIDDEN_FILE="$(mktemp -t ic_evm_gateway.hidden.XXXXXX.txt)"

@@ -3,6 +3,14 @@
 Shortest guide for operational scripts in this directory.
 If unsure, run the commands in the order below.
 
+## Release artifact and historical upgrade checks
+
+- `bash scripts/test_ic_wasm_endpoint_checker.sh`: test the official ic-wasm 0.11.1 checker with the composite-query classification patch, including rejection of missing, unexpected, and incorrectly classified exports. The source archive checksum and dependency lock are pinned. Transformation still uses the existing ic-wasm 0.10 tool.
+- `bash scripts/release_wasm_guard.sh`: build and check the final postprocessed production Wasm using that checker.
+- `EVM_GATEWAY_WASM=/absolute/path/to/final.wasm`: select the artifact for all installs/upgrades in `rpc_compat_e2e` and `wrap_unwrap_flow_e2e`.
+- `bash scripts/run_schema6_upgrade_e2e.sh`: reconstruct the historical schema-6 commit, seed transactions in PocketIC, upgrade to the final Wasm, check migration/state preservation, and restore the old snapshot. This reconstructed artifact is not the unidentified deployed Wasm.
+- [Recorded results and remaining production data requirements](../docs/verification/mainnet-release-validation-2026-09-30.md).
+
 ## Prerequisites
 - Working directory: repository root (`Kasane/`)
 - Main dependencies: `cargo`, `icp`, `node`, `npm`, `python`

@@ -1,0 +1,65 @@
+--- a/src/check_endpoints/candid/mod.rs
++++ b/src/check_endpoints/candid/mod.rs
+@@ -65,8 +65,9 @@
+             .iter()
+             .filter_map(|(name, maybe_function)| {
+                 if let TypeInner::Func(Function { modes, .. }) = maybe_function.as_ref() {
+-                    if modes.contains(&FuncMode::Query) || modes.contains(&FuncMode::CompositeQuery)
+-                    {
++                    if modes.contains(&FuncMode::CompositeQuery) {
++                        Some(CanisterEndpoint::CompositeQuery(name.to_string()))
++                    } else if modes.contains(&FuncMode::Query) {
+                         Some(CanisterEndpoint::Query(name.to_string()))
+                     } else {
+                         Some(CanisterEndpoint::Update(name.to_string()))
+@@ -80,3 +81,50 @@
+         Ok(endpoints)
+     }
+ }
++
++#[cfg(test)]
++mod composite_query_tests {
++    use super::*;
++
++    #[test]
++    fn preserves_all_candid_endpoint_modes() {
++        let parser = CandidParser::from(CandidSource::Text(
++            "service : { read : () -> () query; nested : () -> () composite_query; write : () -> (); }",
++        ));
++        let expected = BTreeSet::from([
++            CanisterEndpoint::Query("read".into()),
++            CanisterEndpoint::CompositeQuery("nested".into()),
++            CanisterEndpoint::Update("write".into()),
++        ]);
++        assert_eq!(parser.parse().unwrap(), expected);
++        assert!(!expected.contains(&CanisterEndpoint::Query("nested".into())));
++    }
++
++    #[test]
++    fn rejects_missing_extra_and_wrong_mode_exports() {
++        use crate::check_endpoints::check_endpoints;
++        use walrus::{FunctionBuilder, RawCustomSection};
++        for (nested_export, extra_export, succeeds) in [
++            (Some("canister_composite_query nested"), false, true),
++            (Some("canister_query nested"), false, false),
++            (Some("canister_update nested"), false, false),
++            (None, false, false),
++            (Some("canister_composite_query nested"), true, false),
++        ] {
++            let mut module = Module::default();
++            module.customs.add(RawCustomSection {
++                name: "icp:public candid:service".into(),
++                data: b"service : { nested : () -> () composite_query; }".to_vec(),
++            });
++            for name in nested_export.into_iter().chain(
++                extra_export.then_some("canister_update extra"),
++            ) {
++                let function = FunctionBuilder::new(&mut module.types, &[], &[])
++                    .finish(vec![], &mut module.funcs);
++                module.exports.add(name, function);
++            }
++            assert_eq!(check_endpoints(&module, None, None).is_ok(), succeeds);
++        }
++    }
++
++}

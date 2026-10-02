@@ -243,6 +243,9 @@ struct SubmitIcTxArgsDto {
 }
 
 fn wasm_path() -> PathBuf {
+    if let Some(path) = std::env::var_os("EVM_GATEWAY_WASM") {
+        return PathBuf::from(path);
+    }
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("..")
         .join("..")
@@ -288,7 +291,10 @@ fn settle_migrations(pic: &PocketIc, _canister_id: Principal, _caller: Principal
 }
 
 fn install_canister_with_arg(pic: &PocketIc, init_arg: Vec<u8>) -> Principal {
-    let path = wasm_path();
+    install_canister_with_wasm_arg(pic, init_arg, wasm_path())
+}
+
+fn install_canister_with_wasm_arg(pic: &PocketIc, init_arg: Vec<u8>, path: PathBuf) -> Principal {
     if !path.exists() {
         panic!("wasm not found: build ic-evm-gateway first: {:?}", path);
     }
@@ -813,10 +819,15 @@ fn query_instruction_soft_limit_blocks_inclusion_in_pending_status() {
     }
 }
 
-/// Candidate-to-candidate lifecycle coverage; production-version compatibility
-/// additionally requires the deployed Wasm as the initial installation artifact.
+/// Set EVM_GATEWAY_INITIAL_WASM to exercise an older installation artifact.
+/// Production compatibility requires that artifact to match the deployed module.
 #[test]
 fn upgrade_and_snapshot_restore_preserve_executed_transaction_state() {
+    #[derive(CandidType, Deserialize, Debug)]
+    struct MigrationStatus {
+        schema_version: u32,
+        needs_migration: bool,
+    }
     #[derive(CandidType)]
     enum BlockTag {
         Latest,
@@ -844,10 +855,23 @@ fn upgrade_and_snapshot_restore_preserve_executed_transaction_state() {
         query_instruction_soft_limit: None,
         update_instruction_soft_limit: None,
     });
-    let canister_id = install_canister_with_arg(&pic, Encode!(&init).unwrap());
+    let initial_wasm = std::env::var_os("EVM_GATEWAY_INITIAL_WASM")
+        .map(PathBuf::from)
+        .unwrap_or_else(wasm_path);
+    let canister_id = install_canister_with_wasm_arg(&pic, Encode!(&init).unwrap(), initial_wasm);
     pic.set_controllers(canister_id, None, vec![caller])
         .unwrap();
     settle_migrations(&pic, canister_id, caller);
+    let migration_status = |id| {
+        let out = call_query(&pic, id, "get_ops_status", Encode!().unwrap());
+        Decode!(&out, MigrationStatus).unwrap()
+    };
+    let reference_id = install_canister_with_arg(&pic, Encode!(&init).unwrap());
+    settle_migrations(&pic, reference_id, caller);
+    let expected_status = migration_status(reference_id);
+    assert!(!expected_status.needs_migration);
+    let initial_status = migration_status(canister_id);
+    assert!(!initial_status.needs_migration);
     let recipient = vec![0x22; 20];
     let balance = |address: &Vec<u8>| {
         let out = call_query(
@@ -897,6 +921,13 @@ fn upgrade_and_snapshot_restore_preserve_executed_transaction_state() {
     )
     .unwrap();
     settle_migrations(&pic, canister_id, caller);
+    let upgraded_status = migration_status(canister_id);
+    println!("schema upgrade: {initial_status:?} -> {upgraded_status:?}");
+    assert!(!upgraded_status.needs_migration);
+    assert_eq!(
+        upgraded_status.schema_version,
+        expected_status.schema_version
+    );
     assert_eq!(balance(&sender), sender_balance);
     assert_eq!(balance(&recipient), recipient_balance);
     assert_eq!(nonce(), 1);
@@ -907,6 +938,12 @@ fn upgrade_and_snapshot_restore_preserve_executed_transaction_state() {
     pic.load_canister_snapshot(canister_id, Some(caller), snapshot.id)
         .unwrap();
     pic.start_canister(canister_id, Some(caller)).unwrap();
+    let restored_status = migration_status(canister_id);
+    assert_eq!(
+        restored_status.schema_version,
+        initial_status.schema_version
+    );
+    assert!(!restored_status.needs_migration);
     assert_eq!(balance(&sender), sender_balance);
     assert_eq!(balance(&recipient), recipient_balance);
     assert_eq!(nonce(), 1);
