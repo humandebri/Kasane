@@ -747,6 +747,7 @@ fn wrap_stored_request_roundtrip() {
             withdraw_ledger_tx_id: Some(vec![10]),
             withdraw_error_code: None,
             withdraw_in_progress: false,
+            withdraw_fee: Some(10),
             mint_failed_recoverable: true,
             fee_ledger_tx_id: Some(vec![11]),
             charged_fee_e8s: Some(12),
@@ -760,6 +761,7 @@ fn wrap_stored_request_roundtrip() {
     };
 
     let decoded = WrapStoredRequest::from_bytes(request.to_bytes());
+    assert_eq!(decoded.result.withdraw_fee, Some(10));
     assert_eq!(decoded.caller, request.caller);
     assert_eq!(decoded.asset_id, request.asset_id);
     assert_eq!(decoded.fee_ledger_canister, request.fee_ledger_canister);
@@ -813,6 +815,7 @@ fn wrap_stored_request_worst_case_fits_stable_bound() {
             withdraw_ledger_tx_id: Some(vec![0x77; 128]),
             withdraw_error_code: Some("w".repeat(160)),
             withdraw_in_progress: true,
+            withdraw_fee: None,
             mint_failed_recoverable: true,
             fee_ledger_tx_id: Some(vec![0x88; 128]),
             charged_fee_e8s: Some(u128::MAX),

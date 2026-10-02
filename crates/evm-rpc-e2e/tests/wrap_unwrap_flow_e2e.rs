@@ -1514,7 +1514,7 @@ fn integrated_wrap_and_unwrap(upgrade_after_mint: bool) {
     assert!(unwrap_overview.ledger_tx_id.is_some());
     assert_eq!(
         ledger_balance_of(&pic, fee_ledger_id, recipient) - recipient_before,
-        WRAP_AMOUNT_E8S
+        WRAP_AMOUNT_E8S - 10
     );
     assert_eq!(
         wrapped_token_balance_of(&pic, gateway_id, token, caller_evm),
@@ -1823,7 +1823,7 @@ fn unwrap_dispatch_marks_request_failed_when_asset_ledger_is_missing() {
         .error
         .expect("unwrap failure should expose an error");
     assert!(
-        error.code.starts_with("ledger.call_failed:"),
+        error.code.starts_with("ledger.fee_call_failed:"),
         "unexpected unwrap failure code: {}",
         error.code
     );
@@ -2064,12 +2064,12 @@ fn failed_mint_refunds_original_depositor_once_even_when_another_caller_recovers
     assert!(recovered.withdraw_ledger_tx_id.is_some());
     assert_eq!(
         ledger_balance_of(&pic, ledger, caller) - after_pull,
-        WRAP_AMOUNT_E8S
+        WRAP_AMOUNT_E8S - 10
     );
     assert_eq!(ledger_balance_of(&pic, ledger, outsider), 0);
     assert_eq!(
         ledger_balance_of(&pic, ledger, gateway),
-        nat_to_u128(&submitted.charged_fee_e8s) - 10
+        nat_to_u128(&submitted.charged_fee_e8s)
     );
     let recovered_balance = ledger_balance_of(&pic, ledger, caller);
     let gateway_balance = ledger_balance_of(&pic, ledger, gateway);

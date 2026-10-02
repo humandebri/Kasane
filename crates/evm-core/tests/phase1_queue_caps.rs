@@ -129,6 +129,33 @@ fn higher_fee_tx_evicts_lowest_fee_when_global_pending_cap_is_reached() {
         }
     });
 
+    let high_sender = hash::derive_evm_address_from_principal(&caller_high).expect("sender");
+    let err = chain::submit_tx_in(TxIn::IcSynthetic {
+        caller_principal: caller_high.clone(),
+        canister_id: canister.clone(),
+        tx: common::build_ic_tx_input([0x10u8; 20], 0, 10_000_000_000, 5_000_000_000),
+    })
+    .expect_err("unfunded transaction must not evict");
+    assert!(matches!(err, ChainError::ExecFailed(_)));
+    assert_eq!(
+        chain::get_tx_loc(&low_fee_tx_id).expect("preserved").kind,
+        TxLocKind::Queued
+    );
+    common::fund_account(high_sender, 1_000_000_000_000_000_000);
+    let mut invalid_gas = common::build_ic_tx_input([0x10u8; 20], 0, 10_000_000_000, 5_000_000_000);
+    invalid_gas.gas_limit = 1;
+    assert!(matches!(
+        chain::submit_tx_in(TxIn::IcSynthetic {
+            caller_principal: caller_high.clone(),
+            canister_id: canister.clone(),
+            tx: invalid_gas,
+        }),
+        Err(ChainError::ExecFailed(_))
+    ));
+    assert_eq!(
+        chain::get_tx_loc(&low_fee_tx_id).expect("preserved").kind,
+        TxLocKind::Queued
+    );
     let accepted = chain::submit_tx_in(TxIn::IcSynthetic {
         caller_principal: caller_high,
         canister_id: canister,

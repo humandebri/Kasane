@@ -1,6 +1,7 @@
 // どこで: verify実行サービス / 何を: コンパイル・on-chain照合・補助照合を統合 / なぜ: API/ワーカーから同一ロジックを再利用するため
 
-import { getRpcCode } from "../rpc";
+import { getRpcChainId, getRpcCode } from "../rpc";
+import { normalizeVerifySubmitInput } from "./normalize";
 import { parseAddressHex, toHexLower } from "../hex";
 import { getDeployTxInputByContractAddress } from "../db";
 import { compileVerifyInput, isRuntimeMatch } from "./compile";
@@ -9,12 +10,14 @@ import type { SourcifyStatus } from "./sourcify";
 import type { VerifyExecutionResult, VerifyJobErrorCode, VerifySubmitInput } from "./types";
 
 type VerifyDeps = {
+  getChainId: () => Promise<bigint>;
   getRuntimeCode: (address: Uint8Array) => Promise<Uint8Array>;
   getDeployInput: (address: Uint8Array) => Promise<{ found: boolean; txInput: Uint8Array | null }>;
   checkSourcify: (chainId: number, contractAddress: string) => Promise<SourcifyStatus>;
 };
 
 const defaultDeps: VerifyDeps = {
+  getChainId: getRpcChainId,
   getRuntimeCode: getRpcCode,
   getDeployInput: getDeployTxInputByContractAddress,
   checkSourcify: querySourcifyStatus,
@@ -24,6 +27,20 @@ let depsForTest: VerifyDeps | null = null;
 
 export async function executeVerifyJob(input: VerifySubmitInput): Promise<VerifyExecutionResult> {
   const deps = depsForTest ?? defaultDeps;
+  try {
+    input = normalizeVerifySubmitInput(input);
+  } catch (err) {
+    throw mkVerifyError("invalid_input", err instanceof Error ? err.message : String(err));
+  }
+  let chainId: bigint;
+  try {
+    chainId = await deps.getChainId();
+  } catch {
+    throw mkVerifyError("rpc_unavailable", "failed to fetch chain ID");
+  }
+  if (chainId !== BigInt(input.chainId)) {
+    throw mkVerifyError("invalid_input", "chainId does not match the configured RPC chain");
+  }
   let compiled;
   try {
     compiled = await compileVerifyInput(input);

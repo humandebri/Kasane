@@ -72,6 +72,7 @@ fn nonce_gap_is_rejected() {
     })
     .expect_err("nonce gap");
     assert_eq!(err, ChainError::NonceGap);
+    with_state_mut(|state| assert_eq!(state.sender_expected_nonce.len(), 0));
 }
 
 #[test]

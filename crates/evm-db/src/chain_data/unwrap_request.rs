@@ -51,6 +51,7 @@ pub struct UnwrapDispatchRequest {
     pub error_code: Option<String>,
     pub updated_at: u64,
     pub transfer_created_at_time: u64,
+    pub transfer_fee: Option<u128>,
 }
 
 impl Storable for UnwrapDispatchRequest {
@@ -90,6 +91,7 @@ impl UnwrapDispatchRequest {
             error_code: Some(UNWRAP_DECODE_FAILURE_CODE.to_string()),
             updated_at: 0,
             transfer_created_at_time: 0,
+            transfer_fee: None,
         }
     }
 
@@ -116,7 +118,7 @@ impl UnwrapDispatchRequest {
             return None;
         }
         let mut out = Vec::with_capacity(256);
-        out.push(2u8);
+        out.push(3u8);
         write_bytes(&mut out, &self.asset_id)?;
         out.extend_from_slice(&self.amount);
         write_bytes(&mut out, &self.recipient)?;
@@ -137,6 +139,13 @@ impl UnwrapDispatchRequest {
         }
         out.extend_from_slice(&self.updated_at.to_be_bytes());
         out.extend_from_slice(&self.transfer_created_at_time.to_be_bytes());
+        match self.transfer_fee {
+            Some(fee) => {
+                out.push(1);
+                out.extend_from_slice(&fee.to_be_bytes());
+            }
+            None => out.push(0),
+        }
         let checksum = crc32_ieee(&out);
         out.extend_from_slice(&checksum.to_be_bytes());
         Some(out)
@@ -146,7 +155,7 @@ impl UnwrapDispatchRequest {
         let mut offset = 0usize;
         let version = *data.get(offset)?;
         offset += 1;
-        if version != 1 && version != 2 {
+        if version != 1 && version != 2 && version != 3 {
             return None;
         }
         let asset_id = read_bytes(data, &mut offset, MAX_BLOB_LEN)?;
@@ -177,10 +186,26 @@ impl UnwrapDispatchRequest {
             _ => return None,
         };
         let updated_at = read_u64(data, &mut offset)?;
-        let transfer_created_at_time = if version == 2 {
+        let transfer_created_at_time = if version >= 2 {
             read_u64(data, &mut offset)?
         } else {
             0
+        };
+        let transfer_fee = if version >= 3 {
+            let tag = *data.get(offset)?;
+            offset += 1;
+            match tag {
+                0 => None,
+                1 => {
+                    let end = offset.checked_add(16)?;
+                    let fee = u128::from_be_bytes(data.get(offset..end)?.try_into().ok()?);
+                    offset = end;
+                    Some(fee)
+                }
+                _ => return None,
+            }
+        } else {
+            None
         };
         let remaining = data.len().checked_sub(offset)?;
         if remaining != CHECKSUM_LEN {
@@ -202,6 +227,7 @@ impl UnwrapDispatchRequest {
             error_code,
             updated_at,
             transfer_created_at_time,
+            transfer_fee,
         })
     }
 }
@@ -273,15 +299,34 @@ mod tests {
             error_code: Some("wrap.sample".to_string()),
             updated_at: 11,
             transfer_created_at_time: 12,
+            transfer_fee: None,
         }
     }
 
     #[test]
     fn unwrap_request_roundtrip_with_checksum() {
-        let req = sample_request();
+        let mut req = sample_request();
+        req.transfer_fee = Some(10);
         let bytes = req.to_bytes().into_owned();
         let decoded = UnwrapDispatchRequest::from_bytes(Cow::Owned(bytes));
         assert_eq!(decoded, req);
+    }
+
+    #[test]
+    fn unwrap_request_decodes_previous_versions_without_a_fee_quote() {
+        for version in [1, 2] {
+            let mut req = sample_request();
+            if version == 1 {
+                req.transfer_created_at_time = 0;
+            }
+            let mut bytes = req.to_bytes().into_owned();
+            // Legacy layouts end before the optional fee (and, in v1, the timestamp).
+            bytes.truncate(bytes.len() - 5 - if version == 1 { 8 } else { 0 });
+            bytes[0] = version;
+            let checksum = super::crc32_ieee(&bytes);
+            bytes.extend_from_slice(&checksum.to_be_bytes());
+            assert_eq!(UnwrapDispatchRequest::from_bytes(Cow::Owned(bytes)), req);
+        }
     }
 
     #[test]

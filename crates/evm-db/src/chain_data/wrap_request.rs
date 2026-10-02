@@ -62,6 +62,8 @@ pub struct WrapRequestResult {
     #[serde(default)]
     pub withdraw_in_progress: bool,
     #[serde(default)]
+    pub withdraw_fee: Option<u128>,
+    #[serde(default)]
     pub mint_failed_recoverable: bool,
     #[serde(default)]
     pub fee_ledger_tx_id: Option<Vec<u8>>,
@@ -243,6 +245,7 @@ impl WrapStoredRequest {
                 withdraw_ledger_tx_id: None,
                 withdraw_error_code: None,
                 withdraw_in_progress: false,
+                withdraw_fee: None,
                 mint_failed_recoverable: false,
                 fee_ledger_tx_id: None,
                 charged_fee_e8s: Some(0),
@@ -316,4 +319,57 @@ fn crc32_ieee(data: &[u8]) -> u32 {
         }
     }
     !crc
+}
+
+#[cfg(test)]
+mod fee_quote_compatibility_tests {
+    use super::*;
+    #[derive(CandidType)]
+    struct LegacyWrapRequestResult {
+        pub status: RequestStatus,
+        pub pull_ledger_tx_id: Option<Vec<u8>>,
+        pub mint_tx_id: Option<Vec<u8>>,
+        pub error_code: Option<String>,
+        pub withdrawn: bool,
+        pub withdraw_ledger_tx_id: Option<Vec<u8>>,
+        pub withdraw_error_code: Option<String>,
+        pub withdraw_in_progress: bool,
+        pub mint_failed_recoverable: bool,
+        pub fee_ledger_tx_id: Option<Vec<u8>>,
+        pub charged_fee_e8s: Option<u128>,
+        pub charged_gas_price_wei: Option<u128>,
+        pub stage: WrapRequestStage,
+        pub updated_at: u64,
+        pub mint_nonce: Option<u64>,
+        pub mint_submitted_at_time: u64,
+        pub mint_submit_status: MintSubmitStatus,
+    }
+
+    #[test]
+    fn legacy_refund_result_decodes_without_a_pinned_fee() {
+        let legacy = LegacyWrapRequestResult {
+            status: RequestStatus::Failed,
+            pull_ledger_tx_id: None,
+            mint_tx_id: None,
+            error_code: None,
+            withdrawn: false,
+            withdraw_ledger_tx_id: None,
+            withdraw_error_code: None,
+            withdraw_in_progress: false,
+            mint_failed_recoverable: false,
+            fee_ledger_tx_id: None,
+            charged_fee_e8s: None,
+            charged_gas_price_wei: None,
+            stage: WrapRequestStage::Refunding,
+            updated_at: 0,
+            mint_nonce: None,
+            mint_submitted_at_time: 0,
+            mint_submit_status: MintSubmitStatus::NotSubmitted,
+        };
+        let bytes = candid::encode_one(legacy).unwrap();
+        let result: WrapRequestResult = candid::decode_one(&bytes).unwrap();
+        assert_eq!(result.status, RequestStatus::Failed);
+        assert_eq!(result.stage, WrapRequestStage::Refunding);
+        assert_eq!(result.withdraw_fee, None);
+    }
 }

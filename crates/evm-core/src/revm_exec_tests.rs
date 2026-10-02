@@ -59,6 +59,141 @@ fn validate_execution_result_sizes_rejects_large_return_data() {
 }
 
 #[test]
+fn oversized_execution_does_not_modify_shared_cache_or_stable_state() {
+    use super::{execute_tx_on, BlockExecContext, ExecPath};
+    use crate::{kasane_precompiles::PrecompileAccess, revm_db::RevmStableDb};
+    use evm_db::chain_data::constants::{CHAIN_ID, MAX_LOGS_PER_TX, MAX_LOG_DATA};
+    use evm_db::chain_data::TxId;
+    use revm::{
+        context::TxEnv,
+        database::CacheDB,
+        primitives::TxKind,
+        state::{Account, Bytecode},
+        Database, DatabaseCommit,
+    };
+
+    let mut exits = vec![vec![0x61, 0x80, 0x01, 0x60, 0, 0xf3]];
+    let log_size = u16::try_from(MAX_LOG_DATA + 1).unwrap().to_be_bytes();
+    exits.push(vec![0x61, log_size[0], log_size[1], 0x60, 0, 0xa0, 0]);
+    let mut many_logs = Vec::new();
+    for _ in 0..=MAX_LOGS_PER_TX {
+        many_logs.extend([0x60, 0, 0x60, 0, 0xa0]);
+    }
+    many_logs.push(0);
+    exits.push(many_logs);
+    for exit in exits {
+        std::thread::spawn(move || {
+            init_stable_state();
+            let sender = Address::with_last_byte(0x11);
+            let contract = Address::with_last_byte(0x22);
+            let recipient = Address::with_last_byte(0x33);
+            let mut code = hex::decode("60016000556000600060006000600773").unwrap();
+            code.extend_from_slice(recipient.as_slice());
+            code.extend([0x61, 0xff, 0xff, 0xf1, 0x50]);
+            code.extend(exit);
+            let mut db = RevmStableDb;
+            for (address, balance, code) in [(sender, 1_000_000_000, vec![]), (contract, 100, code)]
+            {
+                let bytecode = Bytecode::new_raw(RevmBytes::from(code));
+                let mut account = Account::from(AccountInfo {
+                    balance: U256::from(balance),
+                    code_hash: bytecode.hash_slow(),
+                    code: Some(bytecode),
+                    ..Default::default()
+                });
+                account.mark_touch();
+                db.commit(revm::primitives::HashMap::from_iter([(address, account)]));
+            }
+            let mut cache = CacheDB::new(db);
+            let tx = TxEnv::builder()
+                .caller(sender)
+                .nonce(0)
+                .chain_id(Some(CHAIN_ID))
+                .kind(TxKind::Call(contract))
+                .gas_limit(500_000)
+                .gas_price(2)
+                .build()
+                .unwrap();
+            let ctx = BlockExecContext {
+                block_number: 1,
+                timestamp: 1,
+                base_fee: 1,
+                block_gas_limit: 1_000_000,
+            };
+            assert_eq!(
+                execute_tx_on(
+                    &mut cache,
+                    TxId([1; 32]),
+                    0,
+                    tx,
+                    &ctx,
+                    ExecPath::UserTx,
+                    false,
+                    None,
+                    PrecompileAccess::wrap_side_effects()
+                )
+                .err()
+                .unwrap(),
+                ExecError::ResultTooLarge
+            );
+            assert_eq!(cache.basic(sender).unwrap().unwrap().nonce, 0);
+            assert_eq!(
+                cache.basic(sender).unwrap().unwrap().balance,
+                U256::from(1_000_000_000)
+            );
+            assert_eq!(
+                cache.basic(contract).unwrap().unwrap().balance,
+                U256::from(100)
+            );
+            assert_eq!(cache.storage(contract, U256::ZERO).unwrap(), U256::ZERO);
+            assert_eq!(
+                cache
+                    .basic(recipient)
+                    .unwrap()
+                    .map(|a| a.balance)
+                    .unwrap_or_default(),
+                U256::ZERO
+            );
+            let control = TxEnv::builder()
+                .caller(sender)
+                .nonce(0)
+                .chain_id(Some(CHAIN_ID))
+                .kind(TxKind::Call(recipient))
+                .gas_limit(21_000)
+                .gas_price(2)
+                .value(U256::from(3))
+                .build()
+                .unwrap();
+            let (_, diff) = execute_tx_on(
+                &mut cache,
+                TxId([2; 32]),
+                0,
+                control,
+                &ctx,
+                ExecPath::UserTx,
+                false,
+                None,
+                PrecompileAccess::wrap_side_effects(),
+            )
+            .unwrap();
+            let mut stable = RevmStableDb;
+            stable.commit(diff);
+            assert_eq!(
+                stable.basic(recipient).unwrap().unwrap().balance,
+                U256::from(3)
+            );
+            assert_eq!(
+                stable.basic(contract).unwrap().unwrap().balance,
+                U256::from(100)
+            );
+            assert_eq!(stable.storage(contract, U256::ZERO).unwrap(), U256::ZERO);
+        })
+        .join()
+        .unwrap();
+    }
+}
+
+#[test]
 fn base_fee_credit_creates_recipient_when_missing_from_state_diff() {
     init_stable_state();
     let mut state = StateDiff::default();

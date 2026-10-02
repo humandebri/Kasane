@@ -1122,6 +1122,28 @@ async function testWorkerBodyLimit(): Promise<void> {
     { EVM_CANISTER_ID: "aaaaa-aa", RPC_GATEWAY_MAX_HTTP_BODY_SIZE: "1024" }
   );
   assert.equal(res.status, 413);
+  let reads = 0;
+  let canceled = false;
+  const stream = new ReadableStream<Uint8Array>({
+    pull(controller) {
+      reads += 1;
+      controller.enqueue(new Uint8Array(1024));
+    },
+    cancel() {
+      canceled = true;
+    },
+  }, { highWaterMark: 0 });
+  const streamed = new Request("https://rpc-staging.kasane.network", {
+    method: "POST",
+    body: stream,
+    duplex: "half",
+  } as RequestInit);
+  const streamedResponse = await worker.fetch(streamed, {
+    EVM_CANISTER_ID: "aaaaa-aa", RPC_GATEWAY_MAX_HTTP_BODY_SIZE: "1024",
+  });
+  assert.equal(streamedResponse.status, 413);
+  assert.equal(canceled, true);
+  assert.equal(reads, 2);
 }
 
 function testRpcErrorPrefixPassthrough(): void {

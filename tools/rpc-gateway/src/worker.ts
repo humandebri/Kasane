@@ -28,9 +28,29 @@ export async function readWorkerBody(request: Request): Promise<string> {
       throw new Error("payload too large");
     }
   }
-  const body = await request.arrayBuffer();
-  if (body.byteLength > CONFIG.maxHttpBodySize) {
-    throw new Error("payload too large");
+  if (!request.body) {
+    return "";
   }
-  return new TextDecoder().decode(body);
+  const reader = request.body.getReader();
+  const decoder = new TextDecoder();
+  const parts: string[] = [];
+  let size = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) {
+        break;
+      }
+      size += value.byteLength;
+      if (size > CONFIG.maxHttpBodySize) {
+        await reader.cancel();
+        throw new Error("payload too large");
+      }
+      parts.push(decoder.decode(value, { stream: true }));
+    }
+    parts.push(decoder.decode());
+    return parts.join("");
+  } finally {
+    reader.releaseLock();
+  }
 }
