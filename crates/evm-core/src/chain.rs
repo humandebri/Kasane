@@ -51,6 +51,12 @@ use std::cell::RefCell;
 use std::cmp::Reverse;
 use std::collections::{BTreeMap, BTreeSet, BinaryHeap};
 
+mod query_tx;
+pub use query_tx::{
+    expire_query_tx, finish_query_tx_call, interrupt_query_tx_after_upgrade, pending_query_tx,
+    produce_block, require_no_pending_query_tx, start_query_tx_call,
+};
+
 const OPS_WARN_RATE_LIMIT_SECS: u64 = 60;
 const CALLER_EVM_CACHE_CAPACITY: usize = 4096;
 #[cfg(not(target_arch = "wasm32"))]
@@ -206,6 +212,7 @@ pub enum ChainError {
     InvariantViolation(String),
     NoExecutableTx,
     MintOverflow,
+    QueryTxBusy,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -837,6 +844,7 @@ pub fn get_prune_status() -> PruneStatus {
 }
 
 pub fn prune_tick() -> Result<PruneResult, ChainError> {
+    require_no_pending_query_tx()?;
     let should_run = with_state_mut(|state| {
         let estimated_kept_bytes = recompute_estimated_kept_bytes(state);
         let mut config = *state.prune_config.get();
@@ -1171,6 +1179,7 @@ pub fn submit_ic_tx_input(
 }
 
 pub fn credit_balance(address: [u8; 20], amount: u128) -> Result<(), ChainError> {
+    require_no_pending_query_tx()?;
     let key = make_account_key(address);
     let changed = with_state_mut(|state| {
         let existing = state.accounts.get(&key);
@@ -1197,6 +1206,7 @@ pub fn credit_native_deposit(
     recipient: [u8; 20],
     amount_wei: [u8; 32],
 ) -> Result<(), ChainError> {
+    require_no_pending_query_tx()?;
     let key = TxId(request_id);
     let record = NativeCreditRecord::new(recipient, amount_wei);
     let amount = u128_from_u256_bytes(amount_wei).ok_or(ChainError::MintOverflow)?;
@@ -1252,24 +1262,41 @@ pub fn expected_nonce_for_sender_view(sender: [u8; 20]) -> u64 {
     })
 }
 
-pub fn produce_block(max_txs: usize) -> Result<ProduceBlockOutcome, ChainError> {
+fn produce_block_inner(
+    max_txs: usize,
+    query_session: Option<&evm_db::chain_data::QueryTxSession>,
+) -> Result<ProduceBlockOutcome, ChainError> {
     // どこで: ブロック組成前の候補デコード段 / 何を: 無効Txデコード処理数を制限 / なぜ: 署名不正スパムで命令を使い切らないため
     const MAX_DECODE_DROPS_PER_BLOCK: usize =
         evm_db::chain_data::DEFAULT_MAX_DECODE_DROPS_PER_BLOCK;
-    if !verified_core::block::valid_block_limit(max_txs) {
-        return Err(ChainError::InvalidLimit);
-    }
     let head = with_state(|state| *state.head.get());
     let number = verified_core::block::next_block_number(head.number);
     let timestamp =
         verified_core::block::next_block_timestamp(head.timestamp, crate::time::now_sec());
     let parent_hash = head.block_hash;
+    let mut number = number;
+    let mut timestamp = timestamp;
+    if let Some(job) = query_session {
+        number = job.block_number;
+        timestamp = job.timestamp;
+    }
     let exec_ctx = with_state(|state| BlockExecContext {
         block_number: number,
         timestamp,
         base_fee: state.chain_state.get().base_fee,
         block_gas_limit: state.chain_state.get().block_gas_limit,
     });
+    let exec_ctx = if let Some(job) = query_session {
+        BlockExecContext {
+            block_number: number,
+            timestamp,
+            base_fee: job.base_fee,
+            block_gas_limit: job.block_gas_limit,
+        }
+    } else {
+        exec_ctx
+    };
+    let mut deferred_query_tx = None;
     let mut included_tx_ids: Vec<TxId> = Vec::new();
     let mut dropped_total = 0u64;
     let mut dropped_by_code = [0u64; evm_db::chain_data::metrics::DROP_CODE_SLOTS];
@@ -1294,7 +1321,11 @@ pub fn produce_block(max_txs: usize) -> Result<ProduceBlockOutcome, ChainError> 
     let mut decode_drops_by_principal: BTreeMap<Vec<u8>, u16> = BTreeMap::new();
     let mut reserved_icp_update_intents = 0usize;
     with_state(|state| {
-        tx_ids = select_ready_candidates(state, state.chain_state.get().base_fee, max_txs);
+        tx_ids = if let Some(job) = query_session {
+            vec![TxId(job.tx_id)]
+        } else {
+            select_ready_candidates(state, state.chain_state.get().base_fee, max_txs)
+        };
     });
     if tx_ids.is_empty() {
         return Err(ChainError::QueueEmpty);
@@ -1485,6 +1516,9 @@ pub fn produce_block(max_txs: usize) -> Result<ProduceBlockOutcome, ChainError> 
 
     if staged_txs.is_empty() {
         apply_drops_only(&staged_drops, &dropped_by_code);
+        if query_session.is_some_and(|j| staged_drops.iter().any(|d| d.tx_id.0 == j.tx_id)) {
+            with_state_mut(query_tx::clear_query_tx);
+        }
         return Err(ChainError::NoExecutableTx);
     }
 
@@ -1539,11 +1573,23 @@ pub fn produce_block(max_txs: usize) -> Result<ProduceBlockOutcome, ChainError> 
             ExecPath::UserTx,
             false,
             remaining_instruction_budget,
-            PrecompileAccess::wrap_side_effects_with_icp_update_reserved(
-                reserved_icp_update_intents,
-            ),
+            PrecompileAccess::block_query(reserved_icp_update_intents),
         );
         let outcome = match execution {
+            Err(ExecError::ExternalQuery(request)) => {
+                if query_session
+                    .is_some_and(|job| job.phase == evm_db::chain_data::QueryTxPhase::Ready)
+                {
+                    return Err(ChainError::ExecFailed(Some(ExecError::SnapshotChanged)));
+                }
+                if included_tx_ids.is_empty() {
+                    apply_drops_only(&staged_drops, &dropped_by_code);
+                    query_tx::reserve_query_tx(tx_id, Some(request), &exec_ctx)?;
+                    return Err(ChainError::QueryTxBusy);
+                }
+                deferred_query_tx = Some(tx_id);
+                break;
+            }
             Ok((value, user_diff)) => {
                 collect_touched_addresses(
                     &user_diff,
@@ -1654,6 +1700,9 @@ pub fn produce_block(max_txs: usize) -> Result<ProduceBlockOutcome, ChainError> 
 
     if included_tx_ids.is_empty() {
         apply_drops_only(&staged_drops, &dropped_by_code);
+        if query_session.is_some() {
+            with_state_mut(query_tx::clear_query_tx);
+        }
         return Err(ChainError::NoExecutableTx);
     }
 
@@ -1826,7 +1875,19 @@ pub fn produce_block(max_txs: usize) -> Result<ProduceBlockOutcome, ChainError> 
         metrics.record_included(block.tx_ids.len() as u64);
         metrics.record_block(number, timestamp, block.tx_ids.len() as u64, dropped_total);
         state.metrics_state.set(metrics);
+        if query_session.is_some() {
+            query_tx::clear_query_tx(state);
+        }
     });
+    if let Some(tx_id) = deferred_query_tx {
+        let next_ctx = BlockExecContext {
+            block_number: number.saturating_add(1),
+            timestamp: timestamp.saturating_add(1),
+            base_fee: with_state(|state| state.chain_state.get().base_fee),
+            ..exec_ctx
+        };
+        query_tx::reserve_query_tx(tx_id, None, &next_ctx)?;
+    }
 
     Ok(ProduceBlockOutcome {
         block,
@@ -1980,6 +2041,12 @@ pub fn eth_call(raw_tx: Vec<u8>) -> Result<Vec<u8>, ChainError> {
 }
 
 pub fn eth_call_object(input: CallObjectInput) -> Result<CallObjectResult, ChainError> {
+    eth_call_object_with_access(input, PrecompileAccess::wrap_side_effects())
+}
+fn eth_call_object_with_access(
+    input: CallObjectInput,
+    access: PrecompileAccess,
+) -> Result<CallObjectResult, ChainError> {
     if input.data.len() > MAX_TX_SIZE {
         return Err(ChainError::TxTooLarge);
     }
@@ -2067,7 +2134,7 @@ pub fn eth_call_object(input: CallObjectInput) -> Result<CallObjectResult, Chain
         ExecPath::UserTx,
         false,
         instruction_soft_limit,
-        PrecompileAccess::wrap_side_effects(),
+        access,
     )
     .map_err(|err| ChainError::ExecFailed(Some(err)))?;
     let revert_data = if outcome.receipt.status == 0 && !outcome.return_data.is_empty() {
@@ -2085,7 +2152,18 @@ pub fn eth_call_object(input: CallObjectInput) -> Result<CallObjectResult, Chain
 
 pub async fn eth_call_object_async<R, Fut>(
     input: CallObjectInput,
+    resolver: R,
+) -> Result<CallObjectResult, ChainError>
+where
+    R: FnMut(IcpQueryRequest) -> Fut,
+    Fut: core::future::Future<Output = Result<Vec<u8>, String>>,
+{
+    eth_call_object_async_with_access(input, resolver, PrecompileAccess::icp_query()).await
+}
+async fn eth_call_object_async_with_access<R, Fut>(
+    input: CallObjectInput,
     mut resolver: R,
+    access: PrecompileAccess,
 ) -> Result<CallObjectResult, ChainError>
 where
     R: FnMut(IcpQueryRequest) -> Fut,
@@ -2169,6 +2247,7 @@ where
     let instruction_soft_limit = query_instruction_soft_limit();
     let mut db = CacheDB::new(crate::revm_db::RevmStableDb);
     let query_snapshot = QueryCallSnapshot::capture();
+    let tx_snapshot = query_tx::query_tx_snapshot();
     let (outcome, _) = execute_tx_on_async(
         &mut db,
         tx_id,
@@ -2178,10 +2257,12 @@ where
         ExecPath::UserTx,
         false,
         instruction_soft_limit,
-        PrecompileAccess::icp_query(),
+        access,
         &mut resolver,
         || {
-            if QueryCallSnapshot::capture() == query_snapshot {
+            if QueryCallSnapshot::capture() == query_snapshot
+                && query_tx::query_tx_snapshot() == tx_snapshot
+            {
                 Ok(())
             } else {
                 Err(ExecError::SnapshotChanged)
@@ -2201,6 +2282,68 @@ where
         return_data: outcome.return_data,
         revert_data,
     })
+}
+
+pub async fn eth_estimate_gas_object_async<R, Fut>(
+    input: CallObjectInput,
+    mut resolver: R,
+) -> Result<u64, ChainError>
+where
+    R: FnMut(IcpQueryRequest) -> Fut,
+    Fut: core::future::Future<Output = Result<Vec<u8>, String>>,
+{
+    use crate::kasane_precompiles::{with_icp_query_reply, IcpQueryReply};
+    let upper_bound = input
+        .gas_limit
+        .unwrap_or_else(|| with_state(|s| s.chain_state.get().block_gas_limit));
+    let cache = std::rc::Rc::new(RefCell::new(None));
+    let capture = cache.clone();
+    let mut upper = input.clone();
+    upper.gas_limit = Some(upper_bound);
+    let outcome = eth_call_object_async_with_access(
+        upper,
+        |request| {
+            let future = resolver(request.clone());
+            let cache = capture.clone();
+            async move {
+                let reply = future.await;
+                *cache.borrow_mut() = Some((request, reply.clone()));
+                reply
+            }
+        },
+        PrecompileAccess::block_query(0),
+    )
+    .await?;
+    if outcome.status != 1 {
+        return Err(ChainError::ExecFailed(Some(ExecError::TxError(
+            OpTransactionError::TxExecutionFailed,
+        ))));
+    }
+    let reply = cache.borrow().clone();
+    let mut low = 0u64;
+    let mut high = upper_bound;
+    while high.saturating_sub(low) > 1 {
+        let mid = low + (high - low) / 2;
+        let mut candidate = input.clone();
+        candidate.gas_limit = Some(mid);
+        let run = || eth_call_object_with_access(candidate, PrecompileAccess::block_query(0));
+        let result = if let Some((request, result)) = reply.as_ref() {
+            let value = match result {
+                Ok(v) => IcpQueryReply::Ok(v.clone()),
+                Err(e) => IcpQueryReply::Err(e.clone()),
+            };
+            with_icp_query_reply(request.clone(), value, run)
+        } else {
+            run()
+        };
+        match result {
+            Ok(outcome) if outcome.status == 1 => high = mid,
+            Ok(_) => low = mid,
+            Err(err) if is_estimate_candidate_failure(&err) => low = mid,
+            Err(err) => return Err(err),
+        }
+    }
+    Ok(high)
 }
 
 pub fn eth_estimate_gas_object(input: CallObjectInput) -> Result<u64, ChainError> {
@@ -2613,6 +2756,7 @@ pub fn get_pruned_eth_tx_id_by_hash(eth_tx_hash: &TxId) -> Option<TxId> {
 }
 
 pub fn prune_blocks(retain: u64, max_ops: u32) -> Result<PruneResult, ChainError> {
+    require_no_pending_query_tx()?;
     if retain == 0 || max_ops == 0 {
         return Err(ChainError::InvalidLimit);
     }
@@ -3243,7 +3387,17 @@ fn evict_lowest_fee_pending(
     state: &mut evm_db::stable_state::StableState,
     incoming_effective_gas_price: u64,
 ) -> Result<(), ChainError> {
-    let Some(entry) = state.pending_fee_index.range(..).next() else {
+    let reserved = state
+        .query_tx_state
+        .get()
+        .session
+        .as_ref()
+        .map(|j| TxId(j.tx_id));
+    let Some(entry) = state
+        .pending_fee_index
+        .range(..)
+        .find(|e| Some(e.value()) != reserved)
+    else {
         return Err(ChainError::QueueFull);
     };
     let key = *entry.key();
@@ -3598,6 +3752,15 @@ fn apply_nonce_and_replacement(
     effective_gas_price: u64,
     base_fee: u64,
 ) -> Result<Option<TxId>, ChainError> {
+    if let Some(job) = state.query_tx_state.get().session.as_ref() {
+        if state
+            .pending_by_sender_nonce
+            .get(&SenderNonceKey::new(sender.0, nonce))
+            == Some(TxId(job.tx_id))
+        {
+            return Err(ChainError::QueryTxBusy);
+        }
+    }
     let replaced = match tx_submit::apply_nonce_and_replacement(
         state,
         sender,

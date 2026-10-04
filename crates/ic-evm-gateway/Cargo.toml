@@ -48,3 +48,15 @@ tracing-subscriber = { version = "0.3.20", features = ["fmt", "json", "env-filte
 name = "export_did"
 path = "src/bin/export_did.rs"
 required-features = ["did-gen"]
+
+[[example]]
+name = "icp_update_receiver"
+crate-type = ["cdylib"]
+
+[[example]]
+name = "query_price_oracle"
+crate-type = ["cdylib"]
+
+[[example]]
+name = "bridge_delay_ledger"
+crate-type = ["cdylib"]

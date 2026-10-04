@@ -13,6 +13,7 @@ E2E_TIMEOUT_SECONDS="${E2E_TIMEOUT_SECONDS:-120}"
 # rpc_compat_e2e loads Foundry build artifacts at compile time via include_str!.
 (cd "${REPO_ROOT}/tools/wrapper-vite/contracts" && forge build)
 cargo build -p ic-evm-gateway --target wasm32-unknown-unknown --release
+cargo build -p ic-evm-gateway --example icp_update_receiver --target wasm32-unknown-unknown --release
 (
   cd "${REPO_ROOT}/crates/evm-rpc-e2e"
   TEST_CMD=(cargo test --test rpc_compat_e2e -- --test-threads=1)

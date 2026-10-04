@@ -110,6 +110,7 @@ fn allow_icp_update_method(method: &str) {
 
 fn test_icp_update_request(request_id: TxId) -> IcpUpdateDispatchRequest {
     IcpUpdateDispatchRequest {
+        mode: evm_db::chain_data::IcpUpdateMode::Envelope,
         target: query_target().as_slice().to_vec(),
         method: "write_state".to_string(),
         arg: vec![0x44],
@@ -1349,6 +1350,28 @@ fn icp_update_intent_capacity_does_not_limit_eth_call() {
     .expect("eth_call");
 
     assert_eq!(out.status, 1);
+}
+
+#[test]
+fn icp_update_intent_rejects_unknown_allowlist_mode() {
+    setup_query_precompile_call_context();
+    with_state_mut(|state| {
+        state.icp_update_precompile_allowlist.insert(
+            precompile_allow_key(query_target().as_slice(), "write_state"),
+            255,
+        );
+    });
+    common::install_contract(
+        FORWARDER_ADDRESS,
+        &forwarder_runtime_bytecode_to(ICP_UPDATE_INTENT_PRECOMPILE_ADDRESS.into_array()),
+    );
+    let out = chain::eth_call_object(build_call_input_to(
+        FORWARDER_ADDRESS,
+        encode_icp_update_input("write_state", &[0x44]),
+        [0u8; 32],
+    ))
+    .expect("eth_call");
+    assert_eq!(out.status, 0);
 }
 
 #[test]

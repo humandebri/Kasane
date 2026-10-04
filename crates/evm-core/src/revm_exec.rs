@@ -231,6 +231,9 @@ where
         state
             .icp_update_precompile_allowlist
             .iter()
+            .filter(|entry| {
+                verified_core::kasane_precompiles::icp_update_mode_valid(u64::from(entry.value()))
+            })
             .map(|entry| entry.key().clone())
             .collect::<BTreeSet<Vec<u8>>>()
     });

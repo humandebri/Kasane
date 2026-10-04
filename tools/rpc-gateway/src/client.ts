@@ -182,6 +182,7 @@ type Methods = {
   rpc_eth_call_object_at: (call: CallObject, tag: BlockTag) => Promise<CallResult>;
   rpc_eth_estimate_gas_object: (call: CallObject) => Promise<Nat64Result>;
   rpc_eth_estimate_gas_object_at: (call: CallObject, tag: BlockTag) => Promise<Nat64Result>;
+  rpc_eth_estimate_gas_object_at_with_query_precompile: (call: CallObject, tag: BlockTag) => Promise<Nat64Result>;
   rpc_eth_max_priority_fee_per_gas: () => Promise<NatResult>;
   rpc_eth_fee_history: (
     blockCount: bigint,

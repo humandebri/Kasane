@@ -29,6 +29,31 @@ pub const ICP_QUERY_KIND_QUERY: u64 = 0;
 #[cfg_attr(verus_keep_ghost, verus_verify)]
 pub const ICP_PRECOMPILE_KIND_UPDATE: u64 = 1;
 #[cfg_attr(verus_keep_ghost, verus_verify)]
+pub const ICP_UPDATE_MODE_ENVELOPE: u64 = 1;
+#[cfg_attr(verus_keep_ghost, verus_verify)]
+pub const ICP_UPDATE_MODE_RAW_CANDID: u64 = 2;
+
+#[cfg_attr(verus_keep_ghost, verus_spec(valid => ensures
+    valid == (mode == 1 || mode == 2),
+))]
+pub fn icp_update_mode_valid(mode: u64) -> bool {
+    mode == ICP_UPDATE_MODE_ENVELOPE || mode == ICP_UPDATE_MODE_RAW_CANDID
+}
+
+#[cfg_attr(verus_keep_ghost, verus_spec(allowed => ensures
+    allowed == ((requested == 1 || requested == 2) && (existing == 0 || existing == requested)),
+))]
+pub fn icp_update_mode_registration_allowed(existing: u64, requested: u64) -> bool {
+    icp_update_mode_valid(requested) && (existing == 0 || existing == requested)
+}
+
+#[cfg_attr(verus_keep_ghost, verus_spec(allowed => ensures
+    allowed == ((saved == 1 || saved == 2) && registered == saved),
+))]
+pub fn icp_update_mode_dispatch_allowed(registered: u64, saved: u64) -> bool {
+    icp_update_mode_valid(saved) && registered == saved
+}
+#[cfg_attr(verus_keep_ghost, verus_verify)]
 pub const ICP_QUERY_BASE_GAS: u64 = 50_000;
 #[cfg_attr(verus_keep_ghost, verus_verify)]
 pub const ICP_QUERY_INPUT_BYTE_GAS: u64 = 16;
@@ -218,4 +243,26 @@ pub fn wrap_precompile_gas_observation_safe_raw(
             || log_data_len_a > log_data_len_b
             || field_count_a > field_count_b)
             || gas_a <= gas_b)
+}
+
+#[cfg_attr(verus_keep_ghost, verus_spec(allowed => ensures
+    allowed == (calling && expected_attempt == actual_attempt),
+))]
+pub fn query_tx_callback_allowed(
+    expected_attempt: u64,
+    actual_attempt: u64,
+    calling: bool,
+) -> bool {
+    calling && expected_attempt == actual_attempt
+}
+
+#[cfg_attr(verus_keep_ghost, verus_spec(allowed => ensures
+    allowed == (ready && snapshot_matches && transaction_matches),
+))]
+pub fn query_tx_commit_allowed(
+    ready: bool,
+    snapshot_matches: bool,
+    transaction_matches: bool,
+) -> bool {
+    ready && snapshot_matches && transaction_matches
 }

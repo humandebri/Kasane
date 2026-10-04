@@ -81,17 +81,23 @@ export function computeRequiredAllowances(args: {
   feeLedgerCanister: string;
   amount: bigint;
   totalFeeE8s: bigint;
+  assetTransferFee: bigint;
+  feeTransferFee: bigint;
 }): { requiredAssetAllowance: bigint; requiredFeeAllowance: bigint } {
   const feeAllowanceWithHeadroom = ceilMulRatio(args.totalFeeE8s, 10_500n, 10_000n) + 1_000_000n;
+  const minimumFeeAllowance = args.totalFeeE8s + args.feeTransferFee;
+  const requiredFee =
+    feeAllowanceWithHeadroom > minimumFeeAllowance ? feeAllowanceWithHeadroom : minimumFeeAllowance;
+  const requiredAsset = args.amount + args.assetTransferFee;
   if (args.assetLedgerCanister === args.feeLedgerCanister) {
     return {
-      requiredAssetAllowance: args.amount + feeAllowanceWithHeadroom,
+      requiredAssetAllowance: requiredAsset + requiredFee,
       requiredFeeAllowance: 0n,
     };
   }
   return {
-    requiredAssetAllowance: args.amount,
-    requiredFeeAllowance: feeAllowanceWithHeadroom,
+    requiredAssetAllowance: requiredAsset,
+    requiredFeeAllowance: requiredFee,
   };
 }
 

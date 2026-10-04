@@ -90,6 +90,8 @@ pub enum AppMemoryId {
     PrunedEthTxHashIndex = 76,
     PrunedMarkerBlockIndex = 77,
     PrunedMarkerEthHashByTxId = 78,
+    QueryTxState = 79,
+    TxQueryPrecompileAllowlist = 80,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -99,7 +101,7 @@ pub struct MemoryRegionInfo {
     pub include_in_estimate: bool,
 }
 
-const ALL_MEMORY_REGIONS: [MemoryRegionInfo; 79] = [
+const ALL_MEMORY_REGIONS: [MemoryRegionInfo; 81] = [
     MemoryRegionInfo {
         id: AppMemoryId::Upgrades,
         name: "Upgrades",
@@ -495,6 +497,16 @@ const ALL_MEMORY_REGIONS: [MemoryRegionInfo; 79] = [
         name: "PrunedMarkerEthHashByTxId",
         include_in_estimate: true,
     },
+    MemoryRegionInfo {
+        id: AppMemoryId::QueryTxState,
+        name: "QueryTxState",
+        include_in_estimate: true,
+    },
+    MemoryRegionInfo {
+        id: AppMemoryId::TxQueryPrecompileAllowlist,
+        name: "TxQueryPrecompileAllowlist",
+        include_in_estimate: false,
+    },
 ];
 
 impl AppMemoryId {
@@ -579,6 +591,8 @@ impl AppMemoryId {
             AppMemoryId::PrunedEthTxHashIndex => 76,
             AppMemoryId::PrunedMarkerBlockIndex => 77,
             AppMemoryId::PrunedMarkerEthHashByTxId => 78,
+            AppMemoryId::QueryTxState => 79,
+            AppMemoryId::TxQueryPrecompileAllowlist => 80,
         }
     }
 

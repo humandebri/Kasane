@@ -338,3 +338,43 @@ proptest! {
         );
     }
 }
+
+#[test]
+fn update_modes_accept_only_known_values_and_matching_registrations() {
+    use verified_core::kasane_precompiles::{
+        icp_update_mode_dispatch_allowed, icp_update_mode_registration_allowed,
+        icp_update_mode_valid,
+    };
+    for existing in 0..=255u64 {
+        for requested in 0..=255u64 {
+            let valid = requested == 1 || requested == 2;
+            assert_eq!(icp_update_mode_valid(requested), valid);
+            assert_eq!(
+                icp_update_mode_registration_allowed(existing, requested),
+                valid && (existing == 0 || existing == requested)
+            );
+            assert_eq!(
+                icp_update_mode_dispatch_allowed(existing, requested),
+                valid && existing == requested
+            );
+        }
+    }
+}
+
+proptest::proptest! {
+    #[test]
+    fn query_callbacks_require_same_attempt_and_calling(expected in proptest::prelude::any::<u64>(), actual in proptest::prelude::any::<u64>(), calling in proptest::prelude::any::<bool>()) {
+        proptest::prop_assert_eq!(verified_core::kasane_precompiles::query_tx_callback_allowed(expected,actual,calling), expected == actual && calling);
+    }
+}
+
+proptest::proptest! {
+    #[test]
+    fn committed_query_cannot_commit_again(ready in proptest::prelude::any::<bool>(), snapshot in proptest::prelude::any::<bool>(), transaction in proptest::prelude::any::<bool>()) {
+        let first=verified_core::kasane_precompiles::query_tx_commit_allowed(ready,snapshot,transaction);
+        let cleared_ready=ready && !first;
+        let second=verified_core::kasane_precompiles::query_tx_commit_allowed(cleared_ready,snapshot,transaction);
+        proptest::prop_assert!(!(first && second));
+        proptest::prop_assert_eq!(first,ready && snapshot && transaction);
+    }
+}

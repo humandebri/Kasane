@@ -135,6 +135,10 @@ export const idlFactory = ({ IDL }) => {
     'DispatchUncertain' : IDL.Null,
     'DispatchFailed' : IDL.Null,
   });
+  const IcpUpdateModeView = IDL.Variant({
+    'RawCandid' : IDL.Null,
+    'Envelope' : IDL.Null,
+  });
   const IcpUpdateTxKindView = IDL.Variant({
     'EthSigned' : IDL.Null,
     'IcSynthetic' : IDL.Null,
@@ -147,6 +151,7 @@ export const idlFactory = ({ IDL }) => {
     'tx_id' : IDL.Vec(IDL.Nat8),
     'tx_index' : IDL.Nat32,
     'log_index' : IDL.Nat32,
+    'mode' : IcpUpdateModeView,
     'evm_sender' : IDL.Vec(IDL.Nat8),
     'error' : IDL.Opt(IDL.Text),
     'block_number' : IDL.Nat64,
@@ -161,11 +166,21 @@ export const idlFactory = ({ IDL }) => {
     'Succeeded' : IDL.Null,
     'Running' : IDL.Null,
   });
+  const WrapRetryAsset = IDL.Record({
+    'caller' : IDL.Principal,
+    'asset_id' : IDL.Principal,
+    'amount' : IDL.Nat,
+  });
   const RequestKind = IDL.Variant({
     'Wrap' : IDL.Null,
     'NativeDeposit' : IDL.Null,
     'Unwrap' : IDL.Null,
     'NativeWithdrawal' : IDL.Null,
+  });
+  const RecoveryAction = IDL.Variant({
+    'RefundWrap' : IDL.Null,
+    'RetryWrap' : IDL.Null,
+    'RetryNativeDeposit' : IDL.Null,
   });
   const RequestStageView = IDL.Variant({
     'Queued' : IDL.Null,
@@ -187,11 +202,13 @@ export const idlFactory = ({ IDL }) => {
     'request_id' : IDL.Vec(IDL.Nat8),
     'status' : RequestStatus,
     'recoverable' : IDL.Bool,
+    'retry_asset' : IDL.Opt(WrapRetryAsset),
     'charged_fee_e8s' : IDL.Opt(IDL.Nat),
     'withdraw_in_progress' : IDL.Bool,
     'withdraw_ledger_tx_id' : IDL.Opt(IDL.Vec(IDL.Nat8)),
     'kind' : RequestKind,
     'dispatch_status' : IDL.Opt(RequestDispatchStatusView),
+    'recovery_action' : IDL.Opt(RecoveryAction),
     'error' : IDL.Opt(ApiErrorDetail),
     'dispatch_error' : IDL.Opt(IDL.Text),
     'stage' : IDL.Opt(RequestStageView),
@@ -241,6 +258,21 @@ export const idlFactory = ({ IDL }) => {
     }),
     'Unknown' : IDL.Null,
     'Dropped' : IDL.Record({ 'code' : IDL.Nat16 }),
+  });
+  const QueryTxPhase = IDL.Variant({
+    'Calling' : IDL.Null,
+    'Reserved' : IDL.Null,
+    'Ready' : IDL.Null,
+    'Waiting' : IDL.Null,
+  });
+  const PendingQueryTxView = IDL.Record({
+    'method' : IDL.Text,
+    'tx_id' : IDL.Vec(IDL.Nat8),
+    'attempt_id' : IDL.Nat64,
+    'deadline' : IDL.Nat64,
+    'error' : IDL.Opt(IDL.Text),
+    'target' : IDL.Opt(IDL.Principal),
+    'phase' : QueryTxPhase,
   });
   const PruneStatusView = IDL.Record({
     'pruning_enabled' : IDL.Bool,
@@ -316,6 +348,11 @@ export const idlFactory = ({ IDL }) => {
   const Result_10 = IDL.Variant({
     'Ok' : GetUnwrapRequirementsOk,
     'Err' : ApiError,
+  });
+  const UpdatePrecompileAllowedView = IDL.Record({
+    'method' : IDL.Text,
+    'mode' : IcpUpdateModeView,
+    'target' : IDL.Principal,
   });
   const WrapRuntimeConfigView = IDL.Record({
     'native_ledger_canister' : IDL.Principal,
@@ -738,6 +775,16 @@ export const idlFactory = ({ IDL }) => {
         [Result],
         [],
       ),
+    'add_raw_update_precompile_allowed_method' : IDL.Func(
+        [PrecompileAllowArgs],
+        [Result],
+        [],
+      ),
+    'add_tx_query_precompile_allowed_method' : IDL.Func(
+        [PrecompileAllowArgs],
+        [Result],
+        [],
+      ),
     'add_update_precompile_allowed_method' : IDL.Func(
         [PrecompileAllowArgs],
         [Result],
@@ -789,6 +836,11 @@ export const idlFactory = ({ IDL }) => {
         [PendingStatusView],
         ['query'],
       ),
+    'get_pending_query_tx' : IDL.Func(
+        [],
+        [IDL.Opt(PendingQueryTxView)],
+        ['query'],
+      ),
     'get_prune_status' : IDL.Func([], [PruneStatusView], ['query']),
     'get_query_precompile_allowlist' : IDL.Func(
         [],
@@ -804,6 +856,11 @@ export const idlFactory = ({ IDL }) => {
     'get_request' : IDL.Func(
         [IDL.Vec(IDL.Nat8)],
         [IDL.Opt(RequestOverview)],
+        ['query'],
+      ),
+    'get_tx_query_precompile_allowlist' : IDL.Func(
+        [],
+        [IDL.Vec(PrecompileAllowArgs)],
         ['query'],
       ),
     'get_unwrap_dispatch_overview' : IDL.Func(
@@ -828,7 +885,7 @@ export const idlFactory = ({ IDL }) => {
       ),
     'get_update_precompile_allowlist' : IDL.Func(
         [],
-        [IDL.Vec(PrecompileAllowArgs)],
+        [IDL.Vec(UpdatePrecompileAllowedView)],
         ['query'],
       ),
     'get_wrap_runtime_config' : IDL.Func([], [Result_11], ['query']),
@@ -868,6 +925,11 @@ export const idlFactory = ({ IDL }) => {
         [Result],
         [],
       ),
+    'remove_tx_query_precompile_allowed_method' : IDL.Func(
+        [PrecompileAllowArgs],
+        [Result],
+        [],
+      ),
     'remove_update_precompile_allowed_method' : IDL.Func(
         [PrecompileAllowArgs],
         [Result],
@@ -882,6 +944,7 @@ export const idlFactory = ({ IDL }) => {
     'retry_native_deposit' : IDL.Func([RetryRequestArgs], [Result_18], []),
     'retry_native_withdrawal' : IDL.Func([RetryRequestArgs], [Result_18], []),
     'retry_request' : IDL.Func([RetryRequestArgs], [Result_18], []),
+    'retry_wrap_request' : IDL.Func([RetryRequestArgs], [Result_18], []),
     'rpc_eth_block_number' : IDL.Func([], [IDL.Nat64], ['query']),
     'rpc_eth_call_object' : IDL.Func(
         [RpcCallObjectView],
@@ -913,6 +976,11 @@ export const idlFactory = ({ IDL }) => {
         [RpcCallObjectView, RpcBlockTagView],
         [Result_22],
         ['query'],
+      ),
+    'rpc_eth_estimate_gas_object_at_with_query_precompile' : IDL.Func(
+        [RpcCallObjectView, RpcBlockTagView],
+        [Result_22],
+        ['composite_query'],
       ),
     'rpc_eth_fee_history' : IDL.Func(
         [IDL.Nat64, RpcBlockTagView, IDL.Opt(IDL.Vec(IDL.Float64))],

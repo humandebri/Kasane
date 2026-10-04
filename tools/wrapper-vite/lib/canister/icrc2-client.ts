@@ -44,10 +44,8 @@ type Icrc2Actor = ActorSubclass<{
     created_at_time: [] | [bigint];
   }) => Promise<ApproveResult>;
   icrc1_balance_of: (account: Account) => Promise<bigint>;
-  icrc2_allowance: (args: {
-    account: Account;
-    spender: Account;
-  }) => Promise<AllowanceResult>;
+  icrc2_allowance: (args: { account: Account; spender: Account }) => Promise<AllowanceResult>;
+  icrc1_fee: () => Promise<bigint>;
   icrc1_metadata: () => Promise<Array<[string, MetadataValue]>>;
 }>;
 
@@ -80,16 +78,34 @@ const icrc2IdlFactory: IDL.InterfaceFactory = ({ IDL: I }) => {
   return I.Service({
     icrc2_approve: I.Func([ApproveArgs], [I.Variant({ Ok: I.Nat, Err: ApproveError })], []),
     icrc1_balance_of: I.Func([Account], [I.Nat], ["query"]),
-    icrc2_allowance: I.Func([I.Record({ account: Account, spender: Account })], [I.Record({
-      allowance: I.Nat,
-      expires_at: I.Opt(I.Nat64),
-    })], ["query"]),
-    icrc1_metadata: I.Func([], [I.Vec(I.Tuple(I.Text, I.Variant({
-      Int: I.Int,
-      Nat: I.Nat,
-      Blob: I.Vec(I.Nat8),
-      Text: I.Text,
-    })))], ["query"]),
+    icrc2_allowance: I.Func(
+      [I.Record({ account: Account, spender: Account })],
+      [
+        I.Record({
+          allowance: I.Nat,
+          expires_at: I.Opt(I.Nat64),
+        }),
+      ],
+      ["query"],
+    ),
+    icrc1_fee: I.Func([], [I.Nat], ["query"]),
+    icrc1_metadata: I.Func(
+      [],
+      [
+        I.Vec(
+          I.Tuple(
+            I.Text,
+            I.Variant({
+              Int: I.Int,
+              Nat: I.Nat,
+              Blob: I.Vec(I.Nat8),
+              Text: I.Text,
+            }),
+          ),
+        ),
+      ],
+      ["query"],
+    ),
   });
 };
 
@@ -263,3 +279,11 @@ export const icrcClientTestHooks = {
   decodeLedgerDecimals,
   decodeLedgerText,
 };
+
+export async function getLedgerFee(ledgerCanisterId: string): Promise<bigint> {
+  const actor = await createQueryActor<Icrc2Actor>({
+    canisterId: ledgerCanisterId,
+    idlFactory: icrc2IdlFactory,
+  });
+  return actor.icrc1_fee();
+}

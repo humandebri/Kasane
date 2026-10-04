@@ -49,8 +49,8 @@ scripts/measure_precompile_ratio.sh
 
 ### Pre-checks and Quality Gates
 - `bash scripts/verify-evm-proofs.sh`: joint Verus `--no-cheating` and Lean/revm gate for the EVM proof scope.
-- `bash scripts/verify-lean.sh`: Lean 4.30.0 EVM adapter model proofs, axiom audit, source drift check, and Rust/Lean boundary-case comparison. Requires `elan` with the pinned toolchain and `rustc`; see `proofs/evm/README.md`. Separate from the existing CI-equivalent command.
-- `bash scripts/verify-revm.sh`: pinned revm source/features, Lean proofs, journal trace comparison, official Prague state fixtures, and Kasane CALL/CREATE/SELFDESTRUCT/precompile rollback checks. Requires Python 3 plus the Lean prerequisites; see `proofs/evm/revm-correspondence.md`.
+- `bash scripts/verify-lean.sh`: Lean 4.30.0 EVM adapter model proofs, axiom audit, `leanchecker` recheck, source drift check, and 439 Rust/Lean boundary cases. Requires `elan` with the pinned toolchain and `rustc`; see `proofs/evm/README.md`. Separate from the existing CI-equivalent command.
+- `bash scripts/verify-revm.sh`: pinned revm source/features, Lean proofs, 402 result-size/asset-admission comparisons, rejected-result retry, journal trace comparison, official Prague state fixtures, and Kasane CALL/CREATE/SELFDESTRUCT/precompile authorization/rollback checks. CI runs this in the separate `evm-proofs` job. Requires Python 3 plus the Lean prerequisites; see `proofs/evm/revm-correspondence.md`.
 - `scripts/ci-local.sh`: runs in `github|smoke|all` modes via `CI_LOCAL_MODE=<mode>`
 - `scripts/ci_github_equivalent.sh`: single source of truth for the GitHub-equivalent checks used by both `.github/workflows/ci.yml` and `scripts/ci-local.sh`
   - includes Rust baseline quality gates: `rustfmt --check` for workspace Rust files except specgen-managed Verus contract targets, plus clippy with a `too_many_arguments` exception for specgen evidence functions
@@ -200,3 +200,5 @@ scripts/verify_submit_after_deploy.sh
 3. If needed, run `scripts/local_indexer_smoke.sh`
 
 If a heavy script fails, break verification into standalone scripts for faster root-cause isolation.
+
+`scripts/run_query_tx_e2e.sh` builds the gateway and ordinary-query price fixture, then verifies replicated query, storage and payment in one real tx through PocketIC 12. Set `POCKET_IC_BIN` to a compatible binary.

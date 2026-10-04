@@ -130,6 +130,7 @@ cargo test -p verified-core --locked --lib --tests
 cargo test -p evm-db -p ic-evm-core -p ic-evm-gateway --locked --lib --tests
 cargo test --manifest-path crates/evm-rpc-e2e/Cargo.toml --no-run --locked
 cargo build --release --target wasm32-unknown-unknown -p ic-evm-gateway --locked
+cargo build --release --target wasm32-unknown-unknown -p ic-evm-gateway --example bridge_delay_ledger --locked
 
 . scripts/prepare_ci_icrc1_ledger_wasm.sh
 if [[ -n "${POCKET_IC_BIN:-}" ]] && ! "${POCKET_IC_BIN}" --version 2>/dev/null | grep -Eq '^pocket-ic-server 12\.'; then
@@ -140,6 +141,7 @@ if [[ -z "${POCKET_IC_BIN:-}" && -x "crates/evm-rpc-e2e/pocket-ic" ]] \
   export POCKET_IC_BIN="${PWD}/crates/evm-rpc-e2e/pocket-ic"
 fi
 cargo test --manifest-path crates/evm-rpc-e2e/Cargo.toml --test wrap_unwrap_flow_e2e --locked -- --test-threads=1
+scripts/run_query_tx_e2e.sh
 
 (cd tools/wrapper-vite/contracts && forge test -vv)
 

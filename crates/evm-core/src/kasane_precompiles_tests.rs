@@ -573,6 +573,103 @@ fn unwrap_owner_uses_current_call_frame_caller() {
     assert_eq!(unwrap_owner(&inputs), frame_caller);
 }
 
+#[test]
+fn lean_asset_call_vectors() {
+    use revm::context::{Context, ContextTr, LocalContextTr};
+    use revm::database::InMemoryDB;
+    use revm::handler::MainContext;
+    use std::fmt::Write;
+
+    let mut vectors = String::new();
+    let mut admitted = 0;
+    for (id, address, prefix) in [
+        (1, WRAP_PRECOMPILE_ADDRESS, "wrap"),
+        (2, NATIVE_WITHDRAW_PRECOMPILE_ADDRESS, "native_withdraw"),
+    ] {
+        for (label, scheme) in [
+            ("call", CallScheme::Call),
+            ("callCode", CallScheme::CallCode),
+            ("delegateCall", CallScheme::DelegateCall),
+            ("staticCall", CallScheme::StaticCall),
+        ] {
+            for target_matches in [false, true] {
+                for bytecode_matches in [false, true] {
+                    for transfers in [false, true] {
+                        for is_static in [false, true] {
+                            for allow_external in [false, true] {
+                                let inputs = CallInputs {
+                                    input: CallInput::Bytes(Bytes::new()),
+                                    return_memory_offset: 0..0,
+                                    gas_limit: 300_000,
+                                    bytecode_address: if bytecode_matches {
+                                        address
+                                    } else {
+                                        Address::ZERO
+                                    },
+                                    known_bytecode: None,
+                                    target_address: if target_matches {
+                                        address
+                                    } else {
+                                        Address::ZERO
+                                    },
+                                    caller: Address::with_last_byte(0x22),
+                                    value: if transfers {
+                                        CallValue::Transfer(U256::ZERO)
+                                    } else {
+                                        CallValue::Apparent(U256::ZERO)
+                                    },
+                                    scheme,
+                                    is_static,
+                                };
+                                let mut context = Context::mainnet().with_db(InMemoryDB::default());
+                                let result = if id == 1 {
+                                    super::run_wrap_precompile(
+                                        &mut context,
+                                        &inputs,
+                                        allow_external,
+                                    )
+                                } else {
+                                    super::run_native_withdraw_precompile(
+                                        &mut context,
+                                        &inputs,
+                                        allow_external,
+                                    )
+                                };
+                                assert_eq!(
+                                    result.result,
+                                    revm::interpreter::InstructionResult::PrecompileError
+                                );
+                                let reason =
+                                    context.local_mut().take_precompile_error_context().unwrap();
+                                // Empty ABI reaches parsing only when the admission guards pass.
+                                let allowed = reason == format!("{prefix}.arg.abi_invalid");
+                                assert!(
+                                    allowed
+                                        || [
+                                            format!("{prefix}.precompile.query_disallowed"),
+                                            format!("{prefix}.precompile.static_disallowed"),
+                                            format!("{prefix}.precompile.call_context_disallowed"),
+                                        ]
+                                        .contains(&reason),
+                                    "unexpected rejection: {reason}"
+                                );
+                                assert!(context.journaled_state.logs.is_empty());
+                                assert!(context.journaled_state.state.is_empty());
+                                admitted += usize::from(allowed);
+                                writeln!(vectors, "asset {id} {label} {target_matches} {bytecode_matches} {transfers} {is_static} {allow_external} {allowed}").unwrap();
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    assert_eq!(admitted, 2);
+    if let Ok(path) = std::env::var("KASANE_AUTHORIZATION_VECTORS") {
+        std::fs::write(path, vectors).unwrap();
+    }
+}
+
 fn encode_compact(asset: Vec<u8>, amount: [u8; 32], recipient: Vec<u8>) -> Vec<u8> {
     fn encode_principal(bytes: Vec<u8>) -> Vec<u8> {
         let mut out = vec![0u8; 1 + MAX_PRINCIPAL_LEN];

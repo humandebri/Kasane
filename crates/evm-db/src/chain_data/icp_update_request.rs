@@ -17,6 +17,32 @@ pub const MAX_ICP_UPDATE_REQUESTS: usize = 10_000;
 pub const ICP_UPDATE_DECODE_FAILURE_CODE: &str = "stable.decode.icp_update_request";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum IcpUpdateMode {
+    Envelope,
+    RawCandid,
+}
+
+impl IcpUpdateMode {
+    pub fn to_u8(self) -> u8 {
+        match self {
+            Self::Envelope => verified_core::kasane_precompiles::ICP_UPDATE_MODE_ENVELOPE as u8,
+            Self::RawCandid => verified_core::kasane_precompiles::ICP_UPDATE_MODE_RAW_CANDID as u8,
+        }
+    }
+
+    pub fn from_u8(value: u8) -> Option<Self> {
+        if !verified_core::kasane_precompiles::icp_update_mode_valid(u64::from(value)) {
+            return None;
+        }
+        match value {
+            1 => Some(Self::Envelope),
+            2 => Some(Self::RawCandid),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum IcpUpdateRequestStatus {
     Queued,
     Dispatching,
@@ -56,6 +82,7 @@ impl IcpUpdateRequestStatus {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct IcpUpdateDispatchRequest {
+    pub mode: IcpUpdateMode,
     pub request_id: TxId,
     pub tx_id: TxId,
     pub block_number: u64,
@@ -103,6 +130,7 @@ impl Storable for IcpUpdateDispatchRequest {
 impl IcpUpdateDispatchRequest {
     fn decode_failure_placeholder() -> Self {
         Self {
+            mode: IcpUpdateMode::Envelope,
             target: vec![0u8],
             method: "decode_failure".to_string(),
             arg: Vec::new(),
@@ -154,7 +182,8 @@ impl IcpUpdateDispatchRequest {
             return None;
         }
         let mut out = Vec::with_capacity(128 + self.arg.len());
-        out.push(2u8);
+        out.push(3u8);
+        out.push(self.mode.to_u8());
         out.extend_from_slice(&self.request_id.0);
         out.extend_from_slice(&self.tx_id.0);
         out.extend_from_slice(&self.block_number.to_be_bytes());
@@ -198,9 +227,15 @@ impl IcpUpdateDispatchRequest {
         let mut offset = 0usize;
         let version = *data.get(offset)?;
         offset += 1;
-        if version != 2 {
-            return None;
-        }
+        let mode = match version {
+            2 => IcpUpdateMode::Envelope,
+            3 => {
+                let mode = IcpUpdateMode::from_u8(*data.get(offset)?)?;
+                offset += 1;
+                mode
+            }
+            _ => return None,
+        };
         let request_id = TxId(read_array::<32>(data, &mut offset)?);
         let tx_id = TxId(read_array::<32>(data, &mut offset)?);
         let block_number = read_u64(data, &mut offset)?;
@@ -264,6 +299,7 @@ impl IcpUpdateDispatchRequest {
             return None;
         }
         Some(Self {
+            mode,
             request_id,
             tx_id,
             block_number,
@@ -326,7 +362,7 @@ fn read_u64(data: &[u8], offset: &mut usize) -> Option<u64> {
     Some(u64::from_be_bytes(raw.try_into().ok()?))
 }
 
-fn crc32_ieee(data: &[u8]) -> u32 {
+pub(super) fn crc32_ieee(data: &[u8]) -> u32 {
     let mut crc = !0u32;
     for byte in data.iter().copied() {
         crc ^= u32::from(byte);
@@ -348,6 +384,7 @@ mod tests {
     #[test]
     fn icp_update_request_roundtrips() {
         let req = IcpUpdateDispatchRequest {
+            mode: super::IcpUpdateMode::Envelope,
             request_id: TxId([9u8; 32]),
             tx_id: TxId([8u8; 32]),
             block_number: 12,
@@ -366,8 +403,38 @@ mod tests {
             call_started_at_time: 10,
         };
 
-        let decoded = IcpUpdateDispatchRequest::from_bytes(Cow::Owned(req.to_bytes().into_owned()));
-        assert_eq!(decoded, req);
+        for mode in [
+            super::IcpUpdateMode::Envelope,
+            super::IcpUpdateMode::RawCandid,
+        ] {
+            let mut req = req.clone();
+            req.mode = mode;
+            let decoded =
+                IcpUpdateDispatchRequest::from_bytes(Cow::Owned(req.to_bytes().into_owned()));
+            assert_eq!(decoded, req);
+        }
+
+        // v2 had no mode byte; existing requests must remain Envelope requests.
+        let mut legacy = req.encode_checked().expect("encode");
+        legacy.remove(1);
+        legacy[0] = 2;
+        rewrite_checksum(&mut legacy);
+        assert_eq!(IcpUpdateDispatchRequest::decode_checked(&legacy), Some(req));
+    }
+
+    fn rewrite_checksum(bytes: &mut [u8]) {
+        let end = bytes.len() - super::CHECKSUM_LEN;
+        let checksum = super::crc32_ieee(&bytes[..end]);
+        bytes[end..].copy_from_slice(&checksum.to_be_bytes());
+    }
+
+    #[test]
+    fn icp_update_request_rejects_unknown_mode_with_valid_checksum() {
+        let req = IcpUpdateDispatchRequest::decode_failure_placeholder();
+        let mut bytes = req.encode_checked().expect("encode");
+        bytes[1] = 255;
+        rewrite_checksum(&mut bytes);
+        assert!(IcpUpdateDispatchRequest::decode_checked(&bytes).is_none());
     }
 
     #[test]
