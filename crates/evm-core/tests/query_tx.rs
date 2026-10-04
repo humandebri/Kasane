@@ -102,6 +102,34 @@ fn complete(value: Result<Vec<u8>, String>) {
         value
     ));
 }
+
+#[test]
+fn query_tx_zero_block_limit_does_not_change_a_waiting_session() {
+    let (_, principal) = setup();
+    assert_eq!(chain::produce_block(0), Err(ChainError::InvalidLimit));
+    tx(principal, CONTRACT, 0, 2, input());
+    assert_eq!(chain::produce_block(1), Err(ChainError::QueryTxBusy));
+    let waiting = chain::pending_query_tx().unwrap();
+    assert_eq!(chain::produce_block(0), Err(ChainError::InvalidLimit));
+    assert_eq!(chain::pending_query_tx(), Some(waiting));
+}
+
+#[test]
+fn query_tx_missing_payload_clears_the_ready_session_without_execution() {
+    let (caller, principal) = setup();
+    let id = tx(principal, CONTRACT, 0, 2, input());
+    assert_eq!(chain::produce_block(1), Err(ChainError::QueryTxBusy));
+    complete(Ok(reply(42)));
+    with_state_mut(|state| {
+        state.tx_store.remove(&id);
+    });
+    assert_eq!(chain::produce_block(1), Err(ChainError::NoExecutableTx));
+    assert!(chain::pending_query_tx().is_none());
+    assert!(chain::get_receipt(&id).is_none());
+    assert_eq!(nonce(caller), 0);
+    assert_eq!(slot(), U256::ZERO);
+}
+
 #[test]
 fn query_tx_price_updates_storage_and_blocks_other_transactions() {
     let (caller, p) = setup();

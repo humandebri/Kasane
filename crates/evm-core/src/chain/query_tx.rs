@@ -218,9 +218,16 @@ pub fn produce_block(max_txs: usize) -> Result<ProduceBlockOutcome, ChainError> 
     if !verified_core::block::valid_block_limit(max_txs) {
         return Err(ChainError::InvalidLimit);
     }
-    let Some(job) = pending_query_tx() else {
+    if with_state(|s| s.query_tx_state.get().session.is_none()) {
         return produce_block_inner(max_txs, None);
-    };
+    }
+    produce_query_block()
+}
+
+// Keep the owned session and its reply buffers off the ordinary block path.
+#[inline(never)]
+fn produce_query_block() -> Result<ProduceBlockOutcome, ChainError> {
+    let job = pending_query_tx().expect("pending query transaction");
     match job.phase {
         QueryTxPhase::Waiting | QueryTxPhase::Calling => Err(ChainError::QueryTxBusy),
         QueryTxPhase::Reserved => {

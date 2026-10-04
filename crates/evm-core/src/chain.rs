@@ -1269,9 +1269,6 @@ fn produce_block_inner(
     // どこで: ブロック組成前の候補デコード段 / 何を: 無効Txデコード処理数を制限 / なぜ: 署名不正スパムで命令を使い切らないため
     const MAX_DECODE_DROPS_PER_BLOCK: usize =
         evm_db::chain_data::DEFAULT_MAX_DECODE_DROPS_PER_BLOCK;
-    if !verified_core::block::valid_block_limit(max_txs) {
-        return Err(ChainError::InvalidLimit);
-    }
     let head = with_state(|state| *state.head.get());
     let number = verified_core::block::next_block_number(head.number);
     let timestamp =
@@ -1324,7 +1321,7 @@ fn produce_block_inner(
     let mut decode_drops_by_principal: BTreeMap<Vec<u8>, u16> = BTreeMap::new();
     let mut reserved_icp_update_intents = 0usize;
     with_state(|state| {
-        tx_ids = if let Some(job) = state.query_tx_state.get().session.as_ref() {
+        tx_ids = if let Some(job) = query_session {
             vec![TxId(job.tx_id)]
         } else {
             select_ready_candidates(state, state.chain_state.get().base_fee, max_txs)
@@ -1519,7 +1516,7 @@ fn produce_block_inner(
 
     if staged_txs.is_empty() {
         apply_drops_only(&staged_drops, &dropped_by_code);
-        if pending_query_tx().is_some_and(|j| staged_drops.iter().any(|d| d.tx_id.0 == j.tx_id)) {
+        if query_session.is_some_and(|j| staged_drops.iter().any(|d| d.tx_id.0 == j.tx_id)) {
             with_state_mut(query_tx::clear_query_tx);
         }
         return Err(ChainError::NoExecutableTx);
@@ -1703,9 +1700,7 @@ fn produce_block_inner(
 
     if included_tx_ids.is_empty() {
         apply_drops_only(&staged_drops, &dropped_by_code);
-        if query_session.is_some()
-            || pending_query_tx().is_some_and(|j| staged_drops.iter().any(|d| d.tx_id.0 == j.tx_id))
-        {
+        if query_session.is_some() {
             with_state_mut(query_tx::clear_query_tx);
         }
         return Err(ChainError::NoExecutableTx);
