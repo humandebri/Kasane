@@ -20,6 +20,13 @@ benches:
       heap_increase: 0
       stable_memory_increase: 0
     scopes: {}
+  produce_block_funded_path:
+    total:
+      calls: 1
+      instructions: 20439285
+      heap_increase: 6
+      stable_memory_increase: 128
+    scopes: {}
   produce_block_path:
     total:
       calls: 1

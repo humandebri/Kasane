@@ -7,7 +7,7 @@ use candid::Principal;
 use evm_core::chain;
 use evm_core::tx_decode::IcSyntheticTxInput;
 use evm_core::tx_decode::{decode_eth_raw_tx, decode_ic_synthetic_header};
-use evm_db::stable_state::with_state_mut;
+use evm_db::stable_state::{with_state, with_state_mut};
 use evm_db::types::keys::make_account_key;
 use evm_db::types::values::AccountVal;
 use ic_evm_rpc_types::RpcCallObjectView;
@@ -17,6 +17,7 @@ use std::sync::OnceLock;
 static NONCE_SEQ: AtomicU64 = AtomicU64::new(0);
 const UNSUPPORTED_TYPED_4844_PREFIX: [u8; 1] = [0x03];
 const ETH_CALL_FROM: [u8; 20] = [0x77u8; 20];
+const BENCH_CALLER_BALANCE_WEI: u128 = 1_000_000_000_000_000_000;
 const BENCH_LEGACY_RAW_TX: [u8; 104] = [
     248, 102, 128, 132, 119, 53, 148, 0, 130, 82, 8, 148, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17,
     17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 128, 128, 131, 10, 214, 118, 160, 231, 214, 114, 181,
@@ -66,10 +67,47 @@ fn decode_eth_unsupported_typed_reject_path() -> BenchResult {
 
 #[bench(raw)]
 fn produce_block_path() -> BenchResult {
-    let _ = submit_synthetic_tx();
+    // Preserve the historical empty-queue measurement: its fee is below the floor.
+    assert_eq!(submit_synthetic_tx(), Err(chain::ChainError::InvalidFee));
     bench_fn(|| {
-        let _ = chain::produce_block(1);
+        assert!(
+            matches!(chain::produce_block(1), Err(chain::ChainError::QueueEmpty)),
+            "benchmark queue must remain empty"
+        );
     })
+}
+
+#[bench(raw)]
+fn produce_block_funded_path() -> BenchResult {
+    let caller = Principal::self_authenticating(b"canbench-caller");
+    let address = evm_core::hash::derive_evm_address_from_principal(caller.as_slice())
+        .expect("derive benchmark caller");
+    chain::credit_balance(address, BENCH_CALLER_BALANCE_WEI).expect("fund benchmark caller");
+    let mut tx = build_ic_tx_input(NONCE_SEQ.fetch_add(1, Ordering::Relaxed));
+    with_state(|state| {
+        let config = state.chain_state.get();
+        tx.max_priority_fee_per_gas = u128::from(config.min_priority_fee);
+        tx.max_fee_per_gas = (u128::from(config.base_fee) + tx.max_priority_fee_per_gas)
+            .max(u128::from(config.min_gas_price));
+    });
+    let canister = Principal::self_authenticating(b"canbench-canister");
+    let tx_id =
+        chain::submit_ic_tx_input(caller.as_slice().to_vec(), canister.as_slice().to_vec(), tx)
+            .expect("submit funded benchmark transaction");
+    let mut outcome = None;
+    let result = bench_fn(|| {
+        outcome = Some(chain::produce_block(1).expect("produce funded benchmark block"));
+    });
+    let outcome = outcome.expect("benchmark block outcome");
+    assert_eq!(outcome.block.tx_ids, vec![tx_id]);
+    assert_eq!(outcome.dropped, 0);
+    assert_eq!(
+        chain::get_receipt(&tx_id)
+            .expect("benchmark receipt")
+            .status,
+        1
+    );
+    result
 }
 
 #[bench(raw)]
