@@ -16,7 +16,7 @@ use evm_core::chain;
 use evm_core::chain::{ChainError, ExecResult, TxIn};
 use evm_core::hash;
 use evm_core::kasane_precompiles::{
-    ICP_UPDATE_INTENT_PRECOMPILE_ADDRESS, NATIVE_WITHDRAW_PRECOMPILE_ADDRESS,
+    precompile_allow_key, ICP_UPDATE_INTENT_PRECOMPILE_ADDRESS, NATIVE_WITHDRAW_PRECOMPILE_ADDRESS,
     WRAP_PRECOMPILE_ADDRESS,
 };
 use evm_core::revm_exec::{ExecError, OpHaltReason, OpTransactionError};
@@ -646,6 +646,8 @@ fn sample_wrap_request(status: RequestStatus) -> WrapStoredRequest {
             stage: WrapRequestStage::FeeCollected,
             updated_at: 3,
             mint_nonce: None,
+            worker_generation: None,
+            mint_rejection_confirmed: None,
             mint_submitted_at_time: 0,
             mint_submit_status: MintSubmitStatus::NotSubmitted,
         },
@@ -699,6 +701,7 @@ fn test_icp_update_request(
     status: IcpUpdateRequestStatus,
 ) -> IcpUpdateDispatchRequest {
     IcpUpdateDispatchRequest {
+        mode: evm_db::chain_data::IcpUpdateMode::Envelope,
         request_id,
         tx_id: TxId([0x51u8; 32]),
         block_number: 7,
@@ -1385,6 +1388,7 @@ fn wrap_mint_submit_outcome_waits_for_receipt() {
 
     super::apply_wrap_execution_outcome(
         request_id,
+        0,
         super::WrapExecutionOutcome {
             status: RequestStatus::Running,
             pull_ledger_tx_id: Some(vec![0x01]),
@@ -2569,6 +2573,8 @@ fn get_request_returns_wrap_overview_from_integrated_state() {
                     stage: WrapRequestStage::Succeeded,
                     updated_at: 3,
                     mint_nonce: None,
+                    worker_generation: None,
+                    mint_rejection_confirmed: None,
                     mint_submitted_at_time: 0,
                     mint_submit_status: MintSubmitStatus::NotSubmitted,
                 },
@@ -2623,6 +2629,8 @@ fn existing_native_deposit_response_is_idempotent_for_same_request() {
                     stage: WrapRequestStage::Succeeded,
                     updated_at: 3,
                     mint_nonce: None,
+                    worker_generation: None,
+                    mint_rejection_confirmed: None,
                     mint_submitted_at_time: 0,
                     mint_submit_status: MintSubmitStatus::NotSubmitted,
                 },
@@ -2675,6 +2683,8 @@ fn existing_native_deposit_response_rejects_idempotency_mismatch() {
                     stage: WrapRequestStage::Succeeded,
                     updated_at: 3,
                     mint_nonce: None,
+                    worker_generation: None,
+                    mint_rejection_confirmed: None,
                     mint_submitted_at_time: 0,
                     mint_submit_status: MintSubmitStatus::NotSubmitted,
                 },
@@ -3359,14 +3369,14 @@ fn dropped_mint_remains_refundable_after_history_expiry_and_index_rebuild() {
     with_state_mut(|state| {
         state.wrap_requests.insert(request_id, req);
     });
-    super::record_wrap_mint_submitted(request_id, mint.0.to_vec()).unwrap();
+    super::record_wrap_mint_submitted(request_id, 0, mint.0.to_vec()).unwrap();
     let sibling_id = TxId([0xfe; 32]);
     let mut sibling = sample_wrap_request(RequestStatus::Running);
     sibling.result.pull_ledger_tx_id = Some(vec![2]);
     with_state_mut(|state| {
         state.wrap_requests.insert(sibling_id, sibling);
     });
-    super::record_wrap_mint_submitted(sibling_id, mint.0.to_vec()).unwrap();
+    super::record_wrap_mint_submitted(sibling_id, 0, mint.0.to_vec()).unwrap();
     // Rebuild the transient index from stable requests, as post_upgrade does.
     chain::reset_pending_wrap_mints();
     init_stable_state();
@@ -4662,6 +4672,9 @@ fn record_icp_update_requests_from_block_stores_update_intent_logs() {
     let method = "write_state";
     let arg = vec![0x44, 0x49, 0x44, 0x4c];
     with_state_mut(|state| {
+        state
+            .icp_update_precompile_allowlist
+            .insert(precompile_allow_key(target.as_slice(), method), 2);
         let raw = encode_ic_synthetic_input(&IcSyntheticTxInput {
             to: Some([0x44u8; 20]),
             value: [0u8; 32],
@@ -4716,6 +4729,7 @@ fn record_icp_update_requests_from_block_stores_update_intent_logs() {
     let request_id = super::derive_log_request_id(&tx_id, 0).expect("request id");
     with_state(|state| {
         let req = state.icp_update_requests.get(&request_id).expect("request");
+        assert_eq!(req.mode, super::IcpUpdateMode::RawCandid);
         assert_eq!(req.target, target.as_slice());
         assert_eq!(req.method, method);
         assert_eq!(req.arg, arg);
@@ -4753,6 +4767,9 @@ fn record_icp_update_requests_from_block_recovers_eth_signed_sender() {
         0x06, 0x66, 0xd2, 0x14, 0xe3,
     ];
     with_state_mut(|state| {
+        state
+            .icp_update_precompile_allowlist
+            .insert(precompile_allow_key(target.as_slice(), method), 1);
         state.tx_store.insert(
             tx_id,
             StoredTxBytes::new_with_fees(
@@ -4985,6 +5002,91 @@ fn icp_update_dispatch_rejects_allowlist_miss_without_calling_target() {
     assert_eq!(out.status, IcpUpdateRequestStatus::DispatchFailed);
     assert_eq!(out.reply, None);
     assert_eq!(out.error_code, Some("ic_update.allowlist_miss".to_string()));
+}
+
+#[test]
+fn update_precompile_registration_preserves_mode_and_rejects_conflicts() {
+    use super::IcpUpdateMode;
+    init_stable_state();
+    let target = Principal::self_authenticating(b"raw-public-target");
+    let key = precompile_allow_key(target.as_slice(), "echo");
+    for mode in [IcpUpdateMode::Envelope, IcpUpdateMode::RawCandid] {
+        with_state_mut(|state| {
+            state.icp_update_precompile_allowlist.remove(&key);
+        });
+        super::store_update_precompile_allowed_method(key.clone(), mode).expect("register");
+        super::store_update_precompile_allowed_method(key.clone(), mode).expect("idempotent");
+        let other = match mode {
+            IcpUpdateMode::Envelope => IcpUpdateMode::RawCandid,
+            IcpUpdateMode::RawCandid => IcpUpdateMode::Envelope,
+        };
+        assert_eq!(
+            super::store_update_precompile_allowed_method(key.clone(), other),
+            Err("ic_update.mode_conflict".to_string())
+        );
+        assert_eq!(
+            super::update_precompile_mode(target.as_slice(), "echo"),
+            Some(mode)
+        );
+        let list = super::get_update_precompile_allowlist();
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0].mode, mode.into());
+    }
+    for invalid in [0, 3, 255] {
+        with_state_mut(|state| {
+            state
+                .icp_update_precompile_allowlist
+                .insert(key.clone(), invalid);
+        });
+        assert_eq!(
+            super::update_precompile_mode(target.as_slice(), "echo"),
+            None
+        );
+        assert_eq!(
+            super::store_update_precompile_allowed_method(key.clone(), IcpUpdateMode::RawCandid),
+            Err("ic_update.mode_conflict".to_string())
+        );
+    }
+}
+
+#[test]
+fn icp_update_dispatch_rejects_changed_or_invalid_mode_without_calling_target() {
+    use super::IcpUpdateMode;
+    init_stable_state();
+    let target = Principal::self_authenticating(b"raw-public-target");
+    let key = precompile_allow_key(target.as_slice(), "echo");
+    for saved in [IcpUpdateMode::Envelope, IcpUpdateMode::RawCandid] {
+        let mut req = test_icp_update_request(
+            TxId([0x2du8; 32]),
+            target.as_slice().to_vec(),
+            "echo",
+            IcpUpdateRequestStatus::Dispatching,
+        );
+        req.mode = saved;
+        for registered in [0, 1, 2, 255] {
+            if registered == saved.to_u8() {
+                continue;
+            }
+            with_state_mut(|state| {
+                state.icp_update_precompile_allowlist.remove(&key);
+                if registered != 0 {
+                    state
+                        .icp_update_precompile_allowlist
+                        .insert(key.clone(), registered);
+                }
+            });
+            let out = run_ready_future(super::dispatch_icp_update_request_internal(req.clone()));
+            assert_eq!(out.status, IcpUpdateRequestStatus::DispatchFailed);
+            assert_eq!(
+                out.error_code.as_deref(),
+                Some(if registered == 1 || registered == 2 {
+                    "ic_update.mode_mismatch"
+                } else {
+                    "ic_update.allowlist_miss"
+                })
+            );
+        }
+    }
 }
 
 #[test]
@@ -5250,6 +5352,9 @@ fn record_icp_update_requests_from_block_prunes_terminal_history_at_full_capacit
     let method = "write_state";
     let arg = vec![0x44, 0x49, 0x44, 0x4c];
     with_state_mut(|state| {
+        state
+            .icp_update_precompile_allowlist
+            .insert(precompile_allow_key(target.as_slice(), method), 1);
         for idx in 0..super::MAX_ICP_UPDATE_REQUESTS {
             let idx_u64 = u64::try_from(idx).expect("test index fits u64");
             let mut raw = [0x66u8; 32];
@@ -5961,7 +6066,11 @@ fn quarantine_decode_failed_unwrap_requests_marks_dead_letter_and_dequeues() {
 
 #[test]
 fn did_contains_dispatch_result_contract_shape() {
-    let did = include_str!("../evm_canister.did");
+    let did_owned = include_str!("../evm_canister.did")
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    let did = did_owned.as_str();
     assert!(did.contains("type UnwrapDispatchOverviewView = record {"));
     assert!(did.contains("type ApiError = variant {"));
     assert!(did.contains("type StandardRecord = record {"));
@@ -5984,6 +6093,9 @@ fn did_contains_dispatch_result_contract_shape() {
     assert!(did.contains("DispatchNativeWithdrawalRequestArgs"));
     assert!(did.contains("get_request : (blob) -> (opt RequestOverview) query"));
     assert!(did.contains("get_native_deposit_result : (blob) -> (opt RequestOverview) query"));
+    assert!(did.contains("retry_wrap_request : (RetryRequestArgs) -> (Result_"));
+    assert!(did.contains("recovery_action : opt RecoveryAction"));
+    assert!(did.contains("retry_asset : opt WrapRetryAsset"));
     assert!(did.contains("retry_request : (RetryRequestArgs) -> (Result_"));
     assert!(did.contains("retry_native_deposit : (RetryRequestArgs) -> (Result_"));
     assert!(did.contains("retry_native_withdrawal : (RetryRequestArgs) -> (Result_"));
@@ -6004,11 +6116,380 @@ fn did_contains_dispatch_result_contract_shape() {
     assert!(did.contains("ic_caller : opt principal"));
     assert!(did.contains("get_icp_update_request : (blob) -> (opt IcpUpdateRequestView) query"));
     assert!(did.contains("resolve_icp_update_request : (ResolveIcpUpdateRequestArgs) -> (Result_"));
-    assert!(did.contains("get_update_precompile_allowlist : () -> (vec PrecompileAllowArgs) query"));
+    let allowlist = did_method_statement(
+        include_str!("../evm_canister.did"),
+        "get_update_precompile_allowlist",
+    )
+    .expect("update precompile allowlist method");
+    assert!(allowlist.starts_with("get_update_precompile_allowlist : () -> ("));
+    assert!(allowlist.contains("vec UpdatePrecompileAllowedView"));
+    assert!(allowlist.ends_with(" query;"));
+    assert!(
+        did.contains("add_raw_update_precompile_allowed_method : (PrecompileAllowArgs) -> (Result")
+    );
     assert!(did.contains("add_update_precompile_allowed_method : (PrecompileAllowArgs) -> (Result"));
     assert!(did.contains("remove_update_precompile_allowed_method : (PrecompileAllowArgs) -> ("));
-    assert!(did.contains(
-        "rpc_eth_call_object_at : (RpcCallObjectView, RpcBlockTagView) -> (\n      Result_"
-    ));
+    assert!(did.contains("rpc_eth_call_object_at : (RpcCallObjectView, RpcBlockTagView) -> ("));
     assert!(!did.contains("set_wrap_canister_id : (principal) -> (Result_15);"));
+}
+
+#[test]
+fn bridge_stale_callbacks_cannot_change_new_mint_or_enable_refund() {
+    init_stable_state();
+    let id = TxId([0x9a; 32]);
+    with_state_mut(|s| {
+        s.wrap_requests
+            .insert(id, sample_wrap_request(RequestStatus::Queued));
+    });
+    let old = super::claim_wrap_request(id).unwrap();
+    let old_generation = old.result.worker_generation.unwrap();
+    assert!(
+        super::claim_wrap_request(id).is_none(),
+        "duplicate worker claim"
+    );
+    super::repair_stale_operations(old.result.updated_at + super::STALE_OPERATION_NANOS + 1);
+    assert!(super::record_wrap_pull_success(id, old_generation, vec![1]).is_err());
+    let new = super::claim_wrap_request(id).unwrap();
+    let generation = new.result.worker_generation.unwrap();
+    super::record_wrap_pull_success(id, generation, vec![1]).unwrap();
+    super::record_wrap_mint_submitting(id, generation, 100).unwrap();
+    let mint = TxId([0x9b; 32]);
+    super::record_wrap_mint_submitted(id, generation, mint.0.to_vec()).unwrap();
+    assert!(super::record_wrap_mint_submitting(id, old_generation, 101).is_err());
+    assert!(super::record_wrap_mint_submitted(id, old_generation, vec![0x9c; 32]).is_err());
+    for outcome in [
+        super::wrap_failed(Some(vec![1]), "old_failure".into(), true),
+        super::WrapExecutionOutcome {
+            status: RequestStatus::Running,
+            pull_ledger_tx_id: Some(vec![2]),
+            mint_tx_id: Some(vec![0x9c; 32]),
+            error_code: None,
+            mint_failed_recoverable: false,
+        },
+    ] {
+        super::apply_wrap_execution_outcome(id, old_generation, outcome);
+    }
+    let req = with_state(|s| s.wrap_requests.get(&id).unwrap());
+    assert_eq!(req.result.mint_nonce, Some(100));
+    assert_eq!(req.result.mint_tx_id, Some(mint.0.to_vec()));
+    assert_eq!(req.result.status, RequestStatus::Running);
+    assert!(!super::wrap_mint_refund_safe(&req));
+    assert_eq!(super::wrap_recovery_action(&req), None);
+    assert!(super::record_wrap_mint_submitted(id, generation, vec![0x9c; 32]).is_err());
+}
+
+#[test]
+fn bridge_refund_requires_proof_that_mint_cannot_succeed() {
+    init_stable_state();
+    let mut req = sample_wrap_request(RequestStatus::Failed);
+    req.result.pull_ledger_tx_id = Some(vec![1]);
+    req.result.mint_failed_recoverable = true;
+    assert_eq!(
+        super::wrap_recovery_action(&req),
+        Some(super::RecoveryAction::RefundWrap)
+    );
+    req.result.mint_nonce = Some(100);
+    assert!(
+        !super::wrap_mint_refund_safe(&req),
+        "legacy nonce without submission proof is uncertain"
+    );
+    req.result.mint_rejection_confirmed = Some(true);
+    assert!(super::wrap_mint_refund_safe(&req));
+    req.result.mint_submit_status = MintSubmitStatus::Submitting;
+    assert!(!super::wrap_mint_refund_safe(&req));
+    let mint = TxId([0x9d; 32]);
+    req.result.mint_tx_id = Some(mint.0.to_vec());
+    req.result.mint_submit_status = MintSubmitStatus::Submitted;
+    assert!(
+        !super::wrap_mint_refund_safe(&req),
+        "unknown transaction must not refund"
+    );
+    store_fake_receipt(mint, 1);
+    assert!(
+        !super::wrap_mint_refund_safe(&req),
+        "successful mint must not refund"
+    );
+    store_fake_receipt(mint, 0);
+    assert!(super::wrap_mint_refund_safe(&req));
+    req.result.withdraw_in_progress = true;
+    assert_eq!(super::wrap_recovery_action(&req), None);
+    let dropped = TxId([0x9e; 32]);
+    req.result.mint_tx_id = Some(dropped.0.to_vec());
+    with_state_mut(|s| {
+        s.tx_locs.insert(dropped, TxLoc::dropped(1));
+    });
+    assert!(super::wrap_mint_refund_safe(&req));
+}
+
+#[test]
+fn bridge_retry_preserves_funding_and_transfer_identity() {
+    init_stable_state();
+    let id = TxId([0x9f; 32]);
+    let caller = Principal::self_authenticating(b"bridge-owner");
+    let mut original = sample_wrap_request(RequestStatus::Failed);
+    original.caller = caller.as_slice().to_vec();
+    original.result.error_code =
+        Some("ledger.transfer_from_failed:insufficient_allowance:0".into());
+    assert_eq!(
+        super::wrap_recovery_action(&original),
+        Some(super::RecoveryAction::RetryWrap)
+    );
+    with_state_mut(|s| {
+        s.wrap_requests.insert(id, original.clone());
+    });
+    assert_eq!(
+        super::requeue_failed_wrap(id, Principal::anonymous()),
+        Err("request.unauthorized".into())
+    );
+    assert_eq!(
+        super::requeue_failed_wrap(id, Principal::self_authenticating(b"other")),
+        Err("request.unauthorized".into())
+    );
+    super::requeue_failed_wrap(id, caller).unwrap();
+    super::requeue_failed_wrap(id, caller).unwrap();
+    assert_eq!(with_state(|s| s.wrap_queue.len()), 1);
+    let req = super::claim_wrap_request(id).unwrap();
+    super::requeue_failed_wrap(id, caller).unwrap();
+    assert_eq!(
+        with_state(|s| s.wrap_queue.len()),
+        1,
+        "running retry must not add queue entries"
+    );
+    assert_eq!(
+        req.result.fee_ledger_tx_id,
+        original.result.fee_ledger_tx_id
+    );
+    assert_eq!(req.result.charged_fee_e8s, original.result.charged_fee_e8s);
+    assert_eq!(req.pull_created_at_time, original.pull_created_at_time);
+    assert_eq!(req.amount, original.amount);
+    assert_eq!(req.evm_recipient, original.evm_recipient);
+    super::apply_wrap_execution_outcome(
+        id,
+        req.result.worker_generation.unwrap(),
+        super::wrap_failed(None, "ledger.transfer_from_failed:too_old".into(), false),
+    );
+    assert_eq!(
+        super::requeue_failed_wrap(id, caller),
+        Err("wrap.retry_invalid_state".into())
+    );
+    assert_eq!(
+        super::wrap_recovery_action(&with_state(|s| s.wrap_requests.get(&id).unwrap())),
+        None
+    );
+}
+
+#[test]
+fn bridge_generation_exhaustion_stops_claims_and_retries() {
+    init_stable_state();
+    let id = TxId([0xa0; 32]);
+    let mut req = sample_wrap_request(RequestStatus::Queued);
+    req.result.worker_generation = Some(u64::MAX);
+    with_state_mut(|s| {
+        s.wrap_requests.insert(id, req);
+    });
+    assert!(super::claim_wrap_request(id).is_none());
+    let req = with_state(|s| s.wrap_requests.get(&id).unwrap());
+    assert_eq!(req.result.status, RequestStatus::Failed);
+    assert_eq!(req.result.worker_generation, Some(u64::MAX));
+    assert_eq!(
+        req.result.error_code.as_deref(),
+        Some("wrap.generation_exhausted")
+    );
+    assert_eq!(super::wrap_recovery_action(&req), None);
+}
+
+#[test]
+fn bridge_native_deposit_uses_credit_retry_only() {
+    let mut req = sample_wrap_request(RequestStatus::Failed);
+    req.gas_limit = 0;
+    req.result.pull_ledger_tx_id = Some(vec![1]);
+    req.result.mint_failed_recoverable = true;
+    assert_eq!(
+        super::wrap_recovery_action(&req),
+        Some(super::RecoveryAction::RetryNativeDeposit)
+    );
+    assert!(!super::wrap_retry_eligible(&req));
+    req.result.pull_ledger_tx_id = None;
+    assert_eq!(super::wrap_recovery_action(&req), None);
+}
+
+#[test]
+fn bridge_unwrap_readiness_accepts_uint256_allowance_and_balance() {
+    let amount = Nat::from(100u8);
+    let unlimited = Nat((num_bigint::BigUint::from(1u8) << 256usize) - 1u8);
+    for allowance in [amount.clone(), Nat::from(u128::MAX), unlimited.clone()] {
+        assert_eq!(
+            super::unwrap_readiness(&unlimited, &allowance, &amount),
+            super::UnwrapReadiness::Ready
+        );
+    }
+    assert_eq!(
+        super::unwrap_readiness(&unlimited, &Nat::from(99u8), &amount),
+        super::UnwrapReadiness::InsufficientAllowance
+    );
+    assert_eq!(
+        super::unwrap_readiness(&Nat::from(99u8), &unlimited, &amount),
+        super::UnwrapReadiness::InsufficientBalance
+    );
+}
+
+fn pending_query_fixture() {
+    use evm_db::chain_data::{QueryTxPhase, QueryTxSession, QueryTxState};
+    with_state_mut(|s| {
+        s.query_tx_state.set(QueryTxState {
+            version: 1,
+            next_attempt_id: 2,
+            session: Some(QueryTxSession {
+                attempt_id: 1,
+                tx_id: [9; 32],
+                phase: QueryTxPhase::Calling,
+                block_number: 1,
+                timestamp: 1,
+                base_fee: 1,
+                block_gas_limit: 30_000_000,
+                snapshot: [0; 32],
+                update_active_count: 0,
+                target: vec![1],
+                method: "price".into(),
+                arg: vec![],
+                started_at: 1,
+                deadline: 2_000_000_001,
+                reply: None,
+            }),
+        });
+    });
+}
+#[test]
+fn native_pulled_deposit_stays_queued_until_query_tx_finishes() {
+    assert_native_pulled_deposit_resumes(false);
+}
+
+#[test]
+fn native_pulled_deposit_resumes_after_upgrade_without_duplicate_credit() {
+    assert_native_pulled_deposit_resumes(true);
+}
+
+fn assert_native_pulled_deposit_resumes(after_upgrade: bool) {
+    init_stable_state();
+    let id = TxId([0xa3; 32]);
+    let mut req = sample_wrap_request(RequestStatus::Running);
+    req.gas_limit = 0;
+    req.amount = super::u256_from_u128(3).to_vec();
+    req.result.stage = WrapRequestStage::Pulled;
+    req.result.pull_ledger_tx_id = Some(vec![1]);
+    let recipient = req.evm_recipient.clone();
+    with_state_mut(|s| {
+        s.wrap_requests.insert(id, req);
+    });
+    pending_query_fixture();
+    let amount = super::native_deposit_amount_wei_bytes(&Nat::from(3u8)).unwrap();
+    super::finalize_native_deposit_credit(id, &recipient, amount).unwrap();
+    if after_upgrade {
+        init_stable_state();
+        chain::interrupt_query_tx_after_upgrade();
+        assert!(super::recover_wrap_worker_state_after_upgrade());
+        assert!(super::recover_wrap_worker_state_after_upgrade());
+    }
+    run_ready_future(super::wrap_worker_tick());
+    with_state(|s| {
+        let req = s.wrap_requests.get(&id).unwrap();
+        assert_eq!(req.result.status, RequestStatus::Running);
+        assert_eq!(req.result.stage, WrapRequestStage::Pulled);
+        assert_eq!(req.result.worker_generation, None);
+        assert_eq!(s.wrap_queue.len(), 1);
+    });
+    with_state_mut(|s| {
+        let mut q = s.query_tx_state.get().clone();
+        q.session = None;
+        s.query_tx_state.set(q);
+    });
+    run_ready_future(super::wrap_worker_tick());
+    // A stale queue entry must not credit the deposit twice.
+    super::enqueue_wrap_request_once(id);
+    run_ready_future(super::wrap_worker_tick());
+    with_state(|s| {
+        assert!(s.wrap_queue.is_empty());
+        assert_eq!(
+            s.wrap_requests.get(&id).unwrap().result.status,
+            RequestStatus::Succeeded
+        );
+        let mut addr = [0; 20];
+        addr.copy_from_slice(&recipient);
+        assert_eq!(
+            s.accounts
+                .get(&evm_db::types::keys::make_account_key(addr))
+                .unwrap()
+                .balance(),
+            amount
+        );
+    });
+}
+#[test]
+fn ready_query_replay_is_scheduled_without_normal_mining_delay() {
+    init_stable_state();
+    pending_query_fixture();
+    assert!(chain::finish_query_tx_call(1, 2, Ok(vec![42])));
+    super::schedule_mining_with_timer(test_record_mining_delay, || None);
+    QUERY_REPLAY_DELAY.with(|v| assert_eq!(v.get(), Some(0)));
+}
+thread_local! { static QUERY_REPLAY_DELAY: std::cell::Cell<Option<u64>> = const { std::cell::Cell::new(None) }; }
+fn test_record_mining_delay(delay: u64) {
+    QUERY_REPLAY_DELAY.with(|v| v.set(Some(delay)));
+}
+
+#[test]
+fn ready_query_can_recover_sticky_timer_flags_after_trap() {
+    init_stable_state();
+    pending_query_fixture();
+    assert!(chain::finish_query_tx_call(1, 2, Ok(vec![42])));
+    with_state_mut(|s| {
+        let mut c = *s.chain_state.get();
+        c.mining_scheduled = true;
+        c.is_producing = true;
+        s.chain_state.set(c);
+    });
+    super::repair_query_mining_schedule();
+    super::schedule_mining_with_timer(test_record_mining_delay, || None);
+    QUERY_REPLAY_DELAY.with(|v| assert_eq!(v.get(), Some(0)));
+    assert_eq!(chain::pending_query_tx().unwrap().attempt_id, 1);
+}
+
+#[test]
+fn bridge_refund_reservation_reads_receipt_before_mutable_state_borrow() {
+    init_stable_state();
+    let id = TxId([0xb1; 32]);
+    let mint = TxId([0xb2; 32]);
+    let mut req = sample_wrap_request(RequestStatus::Failed);
+    req.result.pull_ledger_tx_id = Some(vec![1]);
+    req.result.mint_tx_id = Some(mint.0.to_vec());
+    req.result.mint_submit_status = MintSubmitStatus::Submitted;
+    req.result.mint_failed_recoverable = true;
+    with_state_mut(|s| {
+        s.wrap_requests.insert(id, req);
+    });
+    assert!(super::reserve_wrap_refund(id).is_err());
+    store_fake_receipt(mint, 1);
+    assert!(super::reserve_wrap_refund(id).is_err());
+    store_fake_receipt(mint, 0);
+    let reserved = super::reserve_wrap_refund(id).unwrap();
+    assert!(reserved.result.withdraw_in_progress);
+    assert_eq!(reserved.result.stage, WrapRequestStage::Refunding);
+    assert_eq!(reserved.result.worker_generation, Some(1));
+    assert!(super::reserve_wrap_refund(id).is_err());
+}
+
+#[test]
+fn paused_query_keeps_saved_response_and_does_not_seal() {
+    init_stable_state();
+    pending_query_fixture();
+    assert!(chain::finish_query_tx_call(1, 2, Ok(vec![42])));
+    let head = with_state(|s| *s.head.get());
+    super::mining_tick_with_timer(test_record_mining_delay, || Some("ops.paused".into()));
+    assert_eq!(with_state(|s| *s.head.get()), head);
+    assert_eq!(chain::pending_query_tx().unwrap().reply, Some(Ok(vec![42])));
+    assert!(chain::expire_query_tx(2_000_000_001));
+    assert_eq!(
+        chain::pending_query_tx().unwrap().reply,
+        Some(Err("ic_query.timeout".into()))
+    );
 }

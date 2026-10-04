@@ -1,6 +1,7 @@
 // どこで: wrapperテスト / 何を: 主要ロジックのユニットテストを実行 / なぜ: request_id導出・状態統合・execution参照の退行を防ぐため
 
 import assert from "node:assert/strict";
+import { runBridgeRecoveryTests } from "./bridge-recovery";
 import { runSignerWrapTests } from "./signer-wrap";
 import { readFileSync } from "node:fs";
 import { AnonymousIdentity, type Identity } from "@icp-sdk/core/agent";
@@ -195,6 +196,8 @@ async function runExecutionBranchTests(): Promise<void> {
       kind: { Unwrap: null },
       request_id: requestId,
       status: { Succeeded: null },
+      recovery_action: [],
+      retry_asset: [],
       recoverable: false,
       error: [],
       stage: [],
@@ -221,6 +224,8 @@ async function runExecutionBranchTests(): Promise<void> {
       kind: { Wrap: null },
       request_id: requestId,
       status: { Failed: null },
+      recovery_action: [],
+      retry_asset: [],
       recoverable: true,
       error: [{ code: "wrap_failed", message: "wrap_failed" }],
       stage: [{ Failed: null }],
@@ -255,6 +260,8 @@ async function runExecutionBranchTests(): Promise<void> {
         kind: { Wrap: null },
         request_id: requestId,
         status: { Failed: null },
+        recovery_action: noBytes,
+        retry_asset: noBytes,
         recoverable: true,
         error: noError,
         stage: noDispatchStatus,
@@ -303,8 +310,10 @@ async function runAllowanceTests(): Promise<void> {
     feeLedgerCanister: "b",
     amount: 200n,
     totalFeeE8s: 50n,
+    assetTransferFee: 10n,
+    feeTransferFee: 10n,
   });
-  assert.equal(separate.requiredAssetAllowance, 200n);
+  assert.equal(separate.requiredAssetAllowance, 210n);
   assert.equal(separate.requiredFeeAllowance, 1_000_053n);
 
   const merged = computeRequiredAllowances({
@@ -312,8 +321,10 @@ async function runAllowanceTests(): Promise<void> {
     feeLedgerCanister: "a",
     amount: 200n,
     totalFeeE8s: 50n,
+    assetTransferFee: 10n,
+    feeTransferFee: 10n,
   });
-  assert.equal(merged.requiredAssetAllowance, 1_000_253n);
+  assert.equal(merged.requiredAssetAllowance, 1_000_263n);
   assert.equal(merged.requiredFeeAllowance, 0n);
 }
 
@@ -841,6 +852,7 @@ async function runWrapClientSubmitTests(): Promise<void> {
         },
       };
     },
+    retry_wrap_request: async () => { throw new Error("unused"); },
     retry_request: async () => {
       throw new Error("unused retry_request");
     },
@@ -876,6 +888,7 @@ async function runWrapClientSubmitTests(): Promise<void> {
     submit_wrap_request: async () => {
       throw new Error("unused submit_wrap_request");
     },
+    retry_wrap_request: async () => { throw new Error("unused"); },
     retry_request: async () => {
       throw new Error("unused retry_request");
     },
@@ -920,6 +933,7 @@ async function runWrapClientWithdrawErrorTests(): Promise<void> {
     submit_wrap_request: async () => {
       throw new Error("unused submit_wrap_request");
     },
+    retry_wrap_request: async () => { throw new Error("unused"); },
     retry_request: async () => {
       throw new Error("unused retry_request");
     },
@@ -1771,6 +1785,7 @@ async function runWrapperClientFeeTests(): Promise<void> {
 }
 
 async function main(): Promise<void> {
+  await runBridgeRecoveryTests();
   await runUtilsTests();
   await runRequestIdTests();
   await runMergeTests();

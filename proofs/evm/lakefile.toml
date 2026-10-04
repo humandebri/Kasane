@@ -1,6 +1,6 @@
 name = "kasane-evm-proofs"
 version = "0.1.0"
-defaultTargets = ["KasaneEvm", "vectors", "journal-vectors"]
+defaultTargets = ["KasaneEvm", "vectors", "journal-vectors", "adapter-vectors"]
 
 [[lean_lib]]
 name = "KasaneEvm"
@@ -12,3 +12,7 @@ root = "Main"
 [[lean_exe]]
 name = "journal-vectors"
 root = "JournalVectors"
+
+[[lean_exe]]
+name = "adapter-vectors"
+root = "AdapterVectors"

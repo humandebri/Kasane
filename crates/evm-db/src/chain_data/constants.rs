@@ -46,6 +46,7 @@ pub const DROP_CODE_RESULT_TOO_LARGE: u16 = 7;
 pub const DROP_CODE_BLOCK_GAS_EXCEEDED: u16 = 8;
 pub const DROP_CODE_INSTRUCTION_BUDGET: u16 = 9;
 pub const DROP_CODE_EXEC_PRECHECK: u16 = 10;
+pub const DROP_CODE_QUERY_INTERRUPTED: u16 = 11;
 pub const DROPPED_RING_CAPACITY: u64 = 1_000;
 
 // logs/receiptの上限

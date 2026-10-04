@@ -8,7 +8,8 @@ import { idlFactory } from "../src/declarations/evm_canister/evm_canister.did.js
 import type { WrapperConfig } from "../lib/config";
 import { walletProviderTestHooks } from "../lib/wallet/provider";
 import {
-  retryFailedUnwrap, retryNativeDeposit, retryNativeWithdrawal,
+  retryFailedUnwrap,
+  retryFailedWrap, retryNativeDeposit, retryNativeWithdrawal,
   submitNativeDeposit, submitWrapRequest, withdrawFailedWrap, wrapClientTestHooks,
 } from "../lib/canister/wrap-client";
 
@@ -95,6 +96,7 @@ export async function runSignerWrapTests(config: WrapperConfig): Promise<void> {
       run: () => submitNativeDeposit({ depositId: requestId, amountE8s: 123n,
         evmRecipient: recipient, maxFeeE8s: 987n, feeLedgerCanister: fee.toText() }, caller),
     },
+    { method: "retry_wrap_request", arg: { request_id: requestId }, run: () => retryFailedWrap(requestId, caller) },
     { method: "retry_request", arg: { request_id: requestId }, run: () => retryFailedUnwrap(requestId, caller) },
     { method: "retry_native_deposit", arg: { request_id: requestId }, run: () => retryNativeDeposit(requestId, caller) },
     { method: "retry_native_withdrawal", arg: { request_id: requestId }, run: () => retryNativeWithdrawal(requestId, caller) },

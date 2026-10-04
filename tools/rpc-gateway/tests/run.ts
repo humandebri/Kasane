@@ -43,6 +43,12 @@ import { identityFromPem } from "../src/identity.js";
 import { __test_resolve_cors_allow_origin } from "../src/server.js";
 import worker from "../src/worker.js";
 
+function testQueryAwareEstimateGasBinding(): void {
+  const service = idlFactory({ IDL }).display();
+  assert.ok(service.includes("rpc_eth_estimate_gas_object_at_with_query_precompile"));
+  assert.ok(service.includes("composite_query"));
+}
+
 function testHex(): void {
   assert.equal(toDataHex(Uint8Array.from([0, 1, 255])), "0x0001ff");
   assert.equal(toQuantityHex(0n), "0x0");
@@ -1184,6 +1190,7 @@ testHex();
 testJsonRpc();
 testOpsStatusCandidProjection();
 testEthCallAtCandidIsCompositeQuery();
+testQueryAwareEstimateGasBinding();
 testConfigIdentityPem();
 testConfigCorsOrigins();
 testConfigLogsBlockhashScanLimit();

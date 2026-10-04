@@ -1,4 +1,35 @@
-# ローカル検証結果 — 2026-09-29
+# ローカル検証結果 — 2026-10-03
+
+Git `32160d7ec8c3e90f5730ef36ec4107b724229d2c` と検査時点の作業差分が対象。
+再現時の対応元は `model-sources.sha256` の 9 ファイルで固定する。
+並行した query/update 変更が hash に含まれるが、その全挙動を Lean で証明した結果ではない。
+
+| コマンド / 検査 | 結果 |
+| --- | --- |
+| `cargo check --workspace` | 成功 |
+| `cargo clippy --locked -p ic-evm-core --lib --tests -- -D warnings` | 成功 |
+| `bash scripts/verify-revm.sh` | 成功 |
+| Lean 4.30.0 ビルド | 明示的な定理 97 個（従来比 +61） |
+| 公理監査 | 生成補題を含む 255 定理宣言を監査。標準論理公理のみ。`sorryAx`・独自公理・native evaluation 公理なし |
+| 公理監査の拒否確認 | `.lake/` 内の一時的な負例で `sorry`・独自公理・`decide +native` に依存する証明がすべて拒否されることを確認 |
+| `lake env leanchecker KasaneEvm` | 成功。保存済み証明を Lean kernel で再検査 |
+| 純粋 Rust 関数と Lean | 439 ケース一致 |
+| Rust サイズ検証関数と Lean | 146 ケース一致。output/log 数/topics/data の上下境界と、2 個目の log だけが不正なケース |
+| 両資産 precompile の入口と Lean | 256 ケース一致。4 CALL scheme × target/bytecode 一致 × Transfer/Apparent × static × 外部許可、2 precompile。全ケースで account/log の副作用なし、許可時だけ空 ABI の parse エラーへ進む |
+| journal / Prague / Kasane 回帰 | 9 journal traces、486 short implementation traces、38 Prague fixtures、CALL/CREATE/SELFDESTRUCT と precompile rollback/authorization の既存回帰が成功 |
+| サイズ超過後の共有 cache と再試行 | RETURN/REVERT 出力超過、log data 超過、log 数超過を検査。sender nonce/balance、contract storage/balance、recipient balance、stable state epoch と手数料受取 account の不変、後続送金の永続化を確認 |
+| `bash scripts/verify-verus.sh` | 未検証。`verus` 実行バイナリが見つからず終了。下記 2026-09-29 の結果を今回の再検証結果には含めない |
+
+CI に `evm-proofs` job を追加し、同じ `verify-revm.sh` を実行する設定にした。
+GitHub Actions 上の実行、全 CI、Wasm/PocketIC、本番 deploy は今回の検証に含めない。
+本番 Rust の挙動を変更せず、証明・比較テスト・回帰テスト・検証ゲートを更新した。
+既存依存 `proc-macro-error2` の将来互換性 warning が出力された。
+
+`Refinement.lean` は **Lean の journal と論理 storage map の対応**を全入力で証明する。
+Rust からの翻訳、実際の diff の完全性、stable memory/codec、opcode 全体、非同期 ledger/IC runtime、
+CREATE/SELFDESTRUCT のモデル意味論は依然として未証明。
+
+## 過去の検証結果 — 2026-09-29
 
 対象・対応元の固定値は `model-sources.sha256` / `revm-profile.json`、
 意味上の範囲は `revm-correspondence.md` を参照。

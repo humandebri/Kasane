@@ -6,7 +6,6 @@ import { idlFactory as wrapIdlFactory } from "@/src/declarations/evm_canister/ev
 import type {
   ApiError as ApiErrorWire,
   _SERVICE as WrapService,
-  RequestKind as RequestKindVariant,
   RequestOverview as RequestOverviewWire,
   RequestStatus as RequestStatusVariant,
 } from "@/src/declarations/evm_canister/evm_canister.did";
@@ -32,6 +31,7 @@ type QueryActorLike = {
   get_wrap_runtime_config: PlainActorMethod<WrapService["get_wrap_runtime_config"]>;
 };
 type SubmitActorLike = {
+  retry_wrap_request: PlainActorMethod<WrapService["retry_wrap_request"]>;
   retry_request: PlainActorMethod<WrapService["retry_request"]>;
   retry_native_deposit: PlainActorMethod<WrapService["retry_native_deposit"]>;
   retry_native_withdrawal: PlainActorMethod<WrapService["retry_native_withdrawal"]>;
@@ -123,16 +123,42 @@ export async function getExecutionResult(
   if (!value) {
     return null;
   }
-    return {
-      status: decodeExecutionStatus(value.status),
-      ledgerTxId: value.ledger_tx_id[0] ?? value.pull_ledger_tx_id[0] ?? null,
-      errorCode: value.error[0]?.code ?? null,
-      mintFailedRecoverable: inferMintRecoverable(value),
-      withdrawn: value.withdrawn ?? value.withdraw_ledger_tx_id.length > 0,
-      withdrawLedgerTxId: value.withdraw_ledger_tx_id[0] ?? null,
-      withdrawErrorCode: value.withdraw_error?.[0]?.code ?? null,
-    };
-  }
+  return decodeExecutionResult(value);
+}
+
+function decodeExecutionResult(value: RequestOverviewWire): WrapExecutionResult {
+  return {
+    requestKind:
+      "Wrap" in value.kind
+        ? "Wrap"
+        : "NativeDeposit" in value.kind
+          ? "NativeDeposit"
+          : "NativeWithdrawal" in value.kind
+            ? "NativeWithdrawal"
+            : "Unwrap",
+    recoveryAction: value.recovery_action?.[0]
+      ? "RetryWrap" in value.recovery_action[0]
+        ? "RetryWrap"
+        : "RetryNativeDeposit" in value.recovery_action[0]
+          ? "RetryNativeDeposit"
+          : "RefundWrap"
+      : null,
+    retryAsset: value.retry_asset?.[0]
+      ? {
+          assetId: value.retry_asset[0].asset_id.toText(),
+          amount: value.retry_asset[0].amount,
+          caller: value.retry_asset[0].caller.toText(),
+        }
+      : null,
+    status: decodeExecutionStatus(value.status),
+    ledgerTxId: value.ledger_tx_id[0] ?? value.pull_ledger_tx_id[0] ?? null,
+    errorCode: value.error[0]?.code ?? null,
+    mintFailedRecoverable: inferMintRecoverable(value),
+    withdrawn: value.withdrawn ?? value.withdraw_ledger_tx_id.length > 0,
+    withdrawLedgerTxId: value.withdraw_ledger_tx_id[0] ?? null,
+    withdrawErrorCode: value.withdraw_error?.[0]?.code ?? null,
+  };
+}
 
 export async function withdrawFailedWrap(
   requestId: Uint8Array,
@@ -160,6 +186,15 @@ export async function retryFailedUnwrap(
   if ("Err" in out) {
     throw new Error(decodeApiError(out.Err));
   }
+  return out.Ok.request_id;
+}
+
+export async function retryFailedWrap(
+  requestId: Uint8Array,
+  caller: AuthenticatedCaller | Identity,
+): Promise<Uint8Array> {
+  const out = await (await getSubmitActor(caller)).retry_wrap_request({ request_id: requestId });
+  if ("Err" in out) throw new Error(decodeApiError(out.Err));
   return out.Ok.request_id;
 }
 
@@ -321,20 +356,14 @@ export async function quoteNativeWithdrawal(args: {
   };
 }
 
-export async function getNativeDepositResult(requestId: Uint8Array): Promise<WrapExecutionResult | null> {
+export async function getNativeDepositResult(
+  requestId: Uint8Array,
+): Promise<WrapExecutionResult | null> {
   const [value] = await (await getQueryActor()).get_native_deposit_result(requestId);
   if (!value) {
     return null;
   }
-  return {
-    status: decodeExecutionStatus(value.status),
-    ledgerTxId: value.ledger_tx_id[0] ?? value.pull_ledger_tx_id[0] ?? null,
-    errorCode: value.error[0]?.code ?? null,
-    mintFailedRecoverable: inferMintRecoverable(value),
-    withdrawn: value.withdrawn ?? value.withdraw_ledger_tx_id.length > 0,
-    withdrawLedgerTxId: value.withdraw_ledger_tx_id[0] ?? null,
-    withdrawErrorCode: value.withdraw_error?.[0]?.code ?? null,
-  };
+  return decodeExecutionResult(value);
 }
 
 export async function getUnwrapRequirements(args: {

@@ -215,6 +215,8 @@ pub struct KasanePrecompileProvider {
     inner: EthPrecompiles,
     access: PrecompileAccess,
     update_allowlist: BTreeSet<Vec<u8>>,
+    query_allowlist: Option<BTreeSet<Vec<u8>>>,
+    frozen_update_active_count: Option<usize>,
     icp_update_intent_reserved: Option<usize>,
 }
 
@@ -222,6 +224,7 @@ pub struct KasanePrecompileProvider {
 pub struct PrecompileAccess {
     pub wrap_side_effects: bool,
     pub icp_query: bool,
+    pub icp_query_tx: bool,
     pub icp_update_intent: bool,
     pub icp_update_intent_reserved: Option<usize>,
 }
@@ -231,6 +234,7 @@ impl PrecompileAccess {
         Self {
             wrap_side_effects: false,
             icp_query: false,
+            icp_query_tx: false,
             icp_update_intent: false,
             icp_update_intent_reserved: None,
         }
@@ -240,6 +244,7 @@ impl PrecompileAccess {
         Self {
             wrap_side_effects: true,
             icp_query: false,
+            icp_query_tx: false,
             icp_update_intent: true,
             icp_update_intent_reserved: None,
         }
@@ -249,8 +254,17 @@ impl PrecompileAccess {
         Self {
             wrap_side_effects: true,
             icp_query: false,
+            icp_query_tx: false,
             icp_update_intent: true,
             icp_update_intent_reserved: Some(reserved),
+        }
+    }
+
+    pub const fn block_query(reserved: usize) -> Self {
+        Self {
+            icp_query: true,
+            icp_query_tx: true,
+            ..Self::wrap_side_effects_with_icp_update_reserved(reserved)
         }
     }
 
@@ -258,6 +272,7 @@ impl PrecompileAccess {
         Self {
             wrap_side_effects: false,
             icp_query: true,
+            icp_query_tx: false,
             icp_update_intent: false,
             icp_update_intent_reserved: None,
         }
@@ -273,7 +288,31 @@ impl KasanePrecompileProvider {
         access: PrecompileAccess,
         update_allowlist: BTreeSet<Vec<u8>>,
     ) -> Self {
+        let (query_allowlist, frozen_update_active_count) = if access.icp_query_tx {
+            evm_db::stable_state::with_state(|state| {
+                (
+                    Some(
+                        state
+                            .tx_query_precompile_allowlist
+                            .iter()
+                            .map(|e| e.key().clone())
+                            .collect(),
+                    ),
+                    state
+                        .query_tx_state
+                        .get()
+                        .session
+                        .as_ref()
+                        .filter(|s| s.phase == evm_db::chain_data::QueryTxPhase::Ready)
+                        .map(|s| usize::try_from(s.update_active_count).unwrap_or(usize::MAX)),
+                )
+            })
+        } else {
+            (None, None)
+        };
         Self {
+            query_allowlist,
+            frozen_update_active_count,
             inner: EthPrecompiles::default(),
             access,
             update_allowlist,
@@ -316,11 +355,15 @@ where
                 context,
                 inputs,
                 self.access.icp_query,
+                self.query_allowlist.as_ref(),
             )),
             ICP_UPDATE_INTENT_PRECOMPILE_ADDRESS => {
                 let remaining_capacity = self.icp_update_intent_reserved.map(|reserved| {
-                    let existing = evm_db::stable_state::with_state(|state| {
-                        usize::try_from(*state.icp_update_active_count.get()).unwrap_or(usize::MAX)
+                    let existing = self.frozen_update_active_count.unwrap_or_else(|| {
+                        evm_db::stable_state::with_state(|state| {
+                            usize::try_from(*state.icp_update_active_count.get())
+                                .unwrap_or(usize::MAX)
+                        })
                     });
                     let journaled = context
                         .journal()
@@ -538,6 +581,7 @@ fn run_icp_query_precompile<CTX: ContextTr>(
     context: &mut CTX,
     inputs: &CallInputs,
     allow_external: bool,
+    allowlist: Option<&BTreeSet<Vec<u8>>>,
 ) -> InterpreterResult {
     let gas_limit = inputs.gas_limit;
     if !allow_external {
@@ -552,6 +596,20 @@ fn run_icp_query_precompile<CTX: ContextTr>(
         Ok(value) => value,
         Err(code) => return precompile_fail(context, gas_limit, code),
     };
+    if allowlist
+        .is_some_and(|list| !list.contains(&precompile_allow_key(&request.target, &request.method)))
+    {
+        return precompile_fail(context, gas_limit, "ic_query.tx_allowlist_miss");
+    }
+    let minimum_gas = ICP_QUERY_BASE_GAS
+        .saturating_add(ICP_QUERY_INPUT_BYTE_GAS.saturating_mul(input.len() as u64));
+    if gas_limit < minimum_gas {
+        return InterpreterResult {
+            result: InstructionResult::PrecompileOOG,
+            gas: Gas::new(gas_limit),
+            output: Bytes::new(),
+        };
+    }
     let reply = match resolve_icp_query_reply(request) {
         Ok(value) => value,
         Err("ic_query.pending") => return precompile_fail(context, gas_limit, "ic_query.pending"),
@@ -579,6 +637,7 @@ fn resolve_icp_query_reply(request: IcpQueryRequest) -> Result<IcpQueryReply, &'
             }
             IcpQueryMode::Reply { expected, reply } => {
                 if request != *expected {
+                    ctx.pending = Some(request);
                     return Err("ic_query.request_mismatch");
                 }
                 Ok(reply.clone())

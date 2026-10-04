@@ -118,7 +118,10 @@ pub async fn consent_message(request: Icrc21ConsentMessageRequest) -> Icrc21Cons
         "submit_native_deposit" => {
             describe_native_deposit(decode_arg(&request.arg, "submit_native_deposit")?)?
         }
-        "retry_request" | "retry_native_withdrawal" | "retry_native_deposit" => {
+        "retry_request"
+        | "retry_native_withdrawal"
+        | "retry_native_deposit"
+        | "retry_wrap_request" => {
             let args: RetryRequestArgs = decode_arg(&request.arg, &request.method)?;
             describe_request_action(&request.method, args.request_id)?
         }
@@ -212,6 +215,11 @@ fn describe_request_action(method: &str, request_id: Vec<u8>) -> Result<String, 
             "Request a refund of the recorded asset amount to the original \
             depositor's default ledger account after a failed wrap. The fee already charged is \
             not refunded. This does not mint wrapped tokens or debit your wallet again."
+        }
+        "retry_wrap_request" => {
+            "Retry the recorded asset pull and wrap using the original transfer identity. \
+            This can debit the original depositor for the asset amount plus its ledger transfer fee. \
+            The Bridge fee already collected is not charged again; asset, amount, and recipient do not change."
         }
         "retry_native_deposit" => {
             "Retry credit of the recorded deposit to its original EVM \
@@ -537,6 +545,7 @@ mod tests {
     fn recovery_consent_is_available_without_request_state() {
         for method in [
             "retry_request",
+            "retry_wrap_request",
             "retry_native_withdrawal",
             "retry_native_deposit",
             "recover_failed_wrap",
@@ -548,6 +557,11 @@ mod tests {
             assert!(text.contains(method));
             assert!(text.contains(&"cd".repeat(32)));
             assert!(text.contains("ineligible request"));
+            if method == "retry_wrap_request" {
+                assert!(text.contains("original transfer identity"));
+                assert!(text.contains("not charged again"));
+                assert!(text.contains("can debit"));
+            }
             if method == "recover_failed_wrap" {
                 assert!(text.contains("original depositor"));
                 assert!(text.contains("not refunded"));

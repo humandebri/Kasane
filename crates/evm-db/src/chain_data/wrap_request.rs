@@ -78,6 +78,10 @@ pub struct WrapRequestResult {
     #[serde(default)]
     pub mint_nonce: Option<u64>,
     #[serde(default)]
+    pub worker_generation: Option<u64>,
+    #[serde(default)]
+    pub mint_rejection_confirmed: Option<bool>,
+    #[serde(default)]
     pub mint_submitted_at_time: u64,
     #[serde(default)]
     pub mint_submit_status: MintSubmitStatus,
@@ -253,6 +257,8 @@ impl WrapStoredRequest {
                 stage: WrapRequestStage::Failed,
                 updated_at: 0,
                 mint_nonce: None,
+                worker_generation: None,
+                mint_rejection_confirmed: None,
                 mint_submitted_at_time: 0,
                 mint_submit_status: MintSubmitStatus::NotSubmitted,
             },
@@ -371,5 +377,8 @@ mod fee_quote_compatibility_tests {
         assert_eq!(result.status, RequestStatus::Failed);
         assert_eq!(result.stage, WrapRequestStage::Refunding);
         assert_eq!(result.withdraw_fee, None);
+        assert_eq!(result.mint_rejection_confirmed, None);
+        assert_eq!(result.worker_generation, None);
+        assert_eq!(result.worker_generation.unwrap_or(0), 0);
     }
 }

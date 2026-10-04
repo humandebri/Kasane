@@ -15,6 +15,10 @@ export type SubmitResponse = {
   dispatchStatus: DispatchStatus;
 };
 
+export type RequestKind = "Wrap" | "NativeDeposit" | "Unwrap" | "NativeWithdrawal";
+export type RecoveryAction = "RetryWrap" | "RetryNativeDeposit" | "RefundWrap";
+export type RetryAsset = { assetId: string; amount: bigint; caller: string };
+
 export type StatusResponse = {
   kind: "request";
   requestId: string;
@@ -22,6 +26,9 @@ export type StatusResponse = {
   executionStatus: ExecutionStatus | null;
   ledgerTxId: string | null;
   errorCode: string | null;
+  requestKind?: RequestKind;
+  recoveryAction?: RecoveryAction | null;
+  retryAsset?: RetryAsset | null;
   mintFailedRecoverable: boolean;
   withdrawn: boolean;
   withdrawLedgerTxId: string | null;
@@ -52,6 +59,9 @@ export type WrapExecutionResult = {
   status: ExecutionStatus;
   ledgerTxId: Uint8Array | null;
   errorCode: string | null;
+  requestKind?: RequestKind;
+  recoveryAction?: RecoveryAction | null;
+  retryAsset?: RetryAsset | null;
   mintFailedRecoverable: boolean;
   withdrawn: boolean;
   withdrawLedgerTxId: Uint8Array | null;

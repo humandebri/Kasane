@@ -755,6 +755,8 @@ fn wrap_stored_request_roundtrip() {
             stage: WrapRequestStage::Failed,
             updated_at: 14,
             mint_nonce: Some(15),
+            worker_generation: Some(17),
+            mint_rejection_confirmed: None,
             mint_submitted_at_time: 16,
             mint_submit_status: MintSubmitStatus::Submitted,
         },
@@ -770,6 +772,7 @@ fn wrap_stored_request_roundtrip() {
     assert_eq!(decoded.result.status, RequestStatus::Failed);
     assert_eq!(decoded.result.stage, WrapRequestStage::Failed);
     assert_eq!(decoded.result.mint_nonce, Some(15));
+    assert_eq!(decoded.result.worker_generation, Some(17));
     assert!(decoded.result.withdrawn);
     assert!(decoded.result.mint_failed_recoverable);
 }
@@ -823,6 +826,8 @@ fn wrap_stored_request_worst_case_fits_stable_bound() {
             stage: WrapRequestStage::Refunded,
             updated_at: u64::MAX,
             mint_nonce: Some(u64::MAX),
+            worker_generation: Some(u64::MAX),
+            mint_rejection_confirmed: Some(true),
             mint_submitted_at_time: u64::MAX,
             mint_submit_status: MintSubmitStatus::Submitted,
         },

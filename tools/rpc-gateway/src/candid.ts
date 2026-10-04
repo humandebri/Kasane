@@ -232,6 +232,11 @@ export const idlFactory: IDL.InterfaceFactory = ({ IDL }) => {
       [IDL.Variant({ Ok: IDL.Nat64, Err: RpcErrorView })],
       ["query"]
     ),
+    rpc_eth_estimate_gas_object_at_with_query_precompile: IDL.Func(
+      [RpcCallObjectView, RpcBlockTagView],
+      [IDL.Variant({ Ok: IDL.Nat64, Err: RpcErrorView })],
+      ["composite_query"]
+    ),
     rpc_eth_estimate_gas_object_at: IDL.Func(
       [RpcCallObjectView, RpcBlockTagView],
       [IDL.Variant({ Ok: IDL.Nat64, Err: RpcErrorView })],

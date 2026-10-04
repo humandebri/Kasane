@@ -183,6 +183,7 @@ type HealthView = record {
   last_block_time : nat64;
   queue_len : nat64;
 };
+type IcpUpdateModeView = variant { RawCandid; Envelope };
 type IcpUpdateRequestView = record {
   request_id : blob;
   status : RequestDispatchStatusView;
@@ -191,6 +192,7 @@ type IcpUpdateRequestView = record {
   tx_id : blob;
   tx_index : nat32;
   log_index : nat32;
+  mode : IcpUpdateModeView;
   evm_sender : blob;
   error : opt text;
   block_number : nat64;
@@ -315,6 +317,15 @@ type OpsStatusView = record {
   config : OpsConfigView;
   decode_failure_count : nat64;
 };
+type PendingQueryTxView = record {
+  method : text;
+  tx_id : blob;
+  attempt_id : nat64;
+  deadline : nat64;
+  error : opt text;
+  target : opt principal;
+  phase : QueryTxPhase;
+};
 type PendingStatusView = variant {
   Queued : record { seq : nat64 };
   Included : record { tx_index : nat32; block_number : nat64 };
@@ -359,6 +370,7 @@ type PruneStatusView = record {
   prune_running : bool;
   oldest_kept_block : opt nat64;
 };
+type QueryTxPhase = variant { Calling; Reserved; Ready; Waiting };
 type QueueItemView = record { seq : nat64; tx_id : blob; kind : TxKindView };
 type QueueSnapshotView = record {
   next_cursor : opt nat64;
@@ -407,6 +419,7 @@ type ReceiptView = record {
   contract_address : opt blob;
 };
 type RecoverFailedWrapArgs = record { request_id : blob };
+type RecoveryAction = variant { RefundWrap; RetryWrap; RetryNativeDeposit };
 type RequestDispatchStatusView = variant {
   Queued;
   Dispatching;
@@ -419,11 +432,13 @@ type RequestOverview = record {
   request_id : blob;
   status : RequestStatus;
   recoverable : bool;
+  retry_asset : opt WrapRetryAsset;
   charged_fee_e8s : opt nat;
   withdraw_in_progress : bool;
   withdraw_ledger_tx_id : opt blob;
   kind : RequestKind;
   dispatch_status : opt RequestDispatchStatusView;
+  recovery_action : opt RecoveryAction;
   error : opt ApiErrorDetail;
   dispatch_error : opt text;
   stage : opt RequestStageView;
@@ -596,12 +611,22 @@ type UnwrapReadiness = variant {
   InsufficientBalance;
   Ready;
 };
+type UpdatePrecompileAllowedView = record {
+  method : text;
+  mode : IcpUpdateModeView;
+  target : principal;
+};
 type WrapConfigArgs = record {
   native_ledger_canister : principal;
   allowed_assets : vec principal;
   fee_ledger_canister : principal;
   gas_price_buffer_bps : nat32;
   cycle_fee_e8s : nat64;
+};
+type WrapRetryAsset = record {
+  caller : principal;
+  asset_id : principal;
+  amount : nat;
 };
 type WrapRuntimeConfigView = record {
   native_ledger_canister : principal;
@@ -611,6 +636,8 @@ type WrapRuntimeConfigView = record {
 };
 service : (opt InitArgs) -> {
   add_query_precompile_allowed_method : (PrecompileAllowArgs) -> (Result);
+  add_raw_update_precompile_allowed_method : (PrecompileAllowArgs) -> (Result);
+  add_tx_query_precompile_allowed_method : (PrecompileAllowArgs) -> (Result);
   add_update_precompile_allowed_method : (PrecompileAllowArgs) -> (Result);
   clear_precompile_profile : () -> (Result);
   credit_native_deposit : (blob, blob, nat) -> (Result_1);
@@ -629,19 +656,23 @@ service : (opt InitArgs) -> {
   get_native_deposit_result : (blob) -> (opt RequestOverview) query;
   get_ops_status : () -> (OpsStatusView) query;
   get_pending : (blob) -> (PendingStatusView) query;
+  get_pending_query_tx : () -> (opt PendingQueryTxView) query;
   get_precompile_profile : () -> (vec PrecompileProfileView) query;
   get_prune_status : () -> (PruneStatusView) query;
   get_query_precompile_allowlist : () -> (vec PrecompileAllowArgs) query;
   get_queue_snapshot : (nat32, opt nat64) -> (QueueSnapshotView) query;
   get_receipt : (blob) -> (Result_9) query;
   get_request : (blob) -> (opt RequestOverview) query;
+  get_tx_query_precompile_allowlist : () -> (vec PrecompileAllowArgs) query;
   get_unwrap_dispatch_overview : (blob) -> (
       opt UnwrapDispatchOverviewView,
     ) query;
   get_unwrap_request_ids_by_eth_tx_hash : (blob) -> (vec blob) query;
   get_unwrap_request_ids_by_tx_id : (blob) -> (vec blob) query;
   get_unwrap_requirements : (GetUnwrapRequirementsArgs) -> (Result_10) query;
-  get_update_precompile_allowlist : () -> (vec PrecompileAllowArgs) query;
+  get_update_precompile_allowlist : () -> (
+      vec UpdatePrecompileAllowedView,
+    ) query;
   get_wrap_runtime_config : () -> (Result_11) query;
   health : () -> (HealthView) query;
   icrc10_supported_standards : () -> (vec StandardRecord) query;
@@ -660,12 +691,14 @@ service : (opt InitArgs) -> {
   quote_wrap_request : (QuoteWrapRequestArgs) -> (Result_18) query;
   recover_failed_wrap : (RecoverFailedWrapArgs) -> (Result_19);
   remove_query_precompile_allowed_method : (PrecompileAllowArgs) -> (Result);
+  remove_tx_query_precompile_allowed_method : (PrecompileAllowArgs) -> (Result);
   remove_update_precompile_allowed_method : (PrecompileAllowArgs) -> (Result);
   repair_stale_wrap_operations : () -> (Result);
   resolve_icp_update_request : (ResolveIcpUpdateRequestArgs) -> (Result_20);
   retry_native_deposit : (RetryRequestArgs) -> (Result_19);
   retry_native_withdrawal : (RetryRequestArgs) -> (Result_19);
   retry_request : (RetryRequestArgs) -> (Result_19);
+  retry_wrap_request : (RetryRequestArgs) -> (Result_19);
   rpc_eth_block_number : () -> (nat64) query;
   rpc_eth_call_object : (RpcCallObjectView) -> (Result_14) query;
   rpc_eth_call_object_at : (RpcCallObjectView, RpcBlockTagView) -> (
@@ -680,6 +713,10 @@ service : (opt InitArgs) -> {
   rpc_eth_estimate_gas_object_at : (RpcCallObjectView, RpcBlockTagView) -> (
       Result_22,
     ) query;
+  rpc_eth_estimate_gas_object_at_with_query_precompile : (
+      RpcCallObjectView,
+      RpcBlockTagView,
+    ) -> (Result_22) composite_query;
   rpc_eth_fee_history : (nat64, RpcBlockTagView, opt vec float64) -> (
       Result_23,
     ) query;

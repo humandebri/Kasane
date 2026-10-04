@@ -222,6 +222,9 @@ fn execution_error(prefix: &str, message: impl Into<String>) -> RpcErrorView {
 fn execution_error_for_chain_error(default_prefix: &str, err: chain::ChainError) -> RpcErrorView {
     let prefix = match &err {
         chain::ChainError::ExecFailed(Some(ExecError::SnapshotChanged)) => "exec.snapshot.changed",
+        chain::ChainError::ExecFailed(Some(ExecError::ExternalQuery(_))) => {
+            "ic_query.request_mismatch"
+        }
         _ => default_prefix,
     };
     execution_error(prefix, format!("eth_call_object failed: {err:?}"))
@@ -380,6 +383,30 @@ pub fn rpc_eth_estimate_gas_object_at(
             let window = rpc_eth_history_window();
             if number == window.latest {
                 return rpc_eth_estimate_gas_object(call);
+            }
+            unsupported_historical_exec_gas(number)
+        }
+    }
+}
+pub async fn rpc_eth_estimate_gas_object_at_async<R, Fut>(
+    call: RpcCallObjectView,
+    tag: RpcBlockTagView,
+    mut resolver: R,
+) -> Result<u64, RpcErrorView>
+where
+    R: FnMut(evm_core::kasane_precompiles::IcpQueryRequest) -> Fut,
+    Fut: core::future::Future<Output = Result<Vec<u8>, String>>,
+{
+    match tag {
+        RpcBlockTagView::Latest
+        | RpcBlockTagView::Pending
+        | RpcBlockTagView::Safe
+        | RpcBlockTagView::Finalized => estimate_gas_async(call, &mut resolver).await,
+        RpcBlockTagView::Earliest => unsupported_historical_exec_gas(0),
+        RpcBlockTagView::Number(number) => {
+            let window = rpc_eth_history_window();
+            if number == window.latest {
+                return estimate_gas_async(call, &mut resolver).await;
             }
             unsupported_historical_exec_gas(number)
         }
@@ -1511,6 +1538,32 @@ fn receipt_lookup_status(tx_id: TxId) -> RpcReceiptLookupView {
         };
     }
     RpcReceiptLookupView::NotFound
+}
+
+async fn estimate_gas_async<R, Fut>(
+    call: RpcCallObjectView,
+    resolver: R,
+) -> Result<u64, RpcErrorView>
+where
+    R: FnMut(evm_core::kasane_precompiles::IcpQueryRequest) -> Fut,
+    Fut: core::future::Future<Output = Result<Vec<u8>, String>>,
+{
+    let input = call_object_to_input(call)
+        .map_err(|message| invalid_error("invalid.call_object", message))?;
+    chain::eth_estimate_gas_object_async(input, resolver)
+        .await
+        .map_err(|err| {
+            let prefix = match &err {
+                chain::ChainError::ExecFailed(Some(ExecError::ExternalQuery(_))) => {
+                    "ic_query.request_mismatch"
+                }
+                chain::ChainError::ExecFailed(Some(ExecError::SnapshotChanged)) => {
+                    "exec.snapshot.changed"
+                }
+                _ => "exec.eth_estimate_gas_object.failed",
+            };
+            execution_error(prefix, format!("{err:?}"))
+        })
 }
 
 #[cfg(test)]

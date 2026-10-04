@@ -6,7 +6,7 @@ import type {
   WrapActionStep,
   WrapFormState,
 } from "@/components/dashboard-ui/types";
-import { approveLedgerSpend, getLedgerAllowance } from "@/lib/canister/icrc2-client";
+import { approveLedgerSpend, getLedgerAllowance, getLedgerFee } from "@/lib/canister/icrc2-client";
 import {
   getMaxPriorityFeePerGasWei,
   getUnwrapRequestIdsByEthTxHash,
@@ -18,6 +18,8 @@ import {
   quoteNativeWithdrawal,
   quoteWrapRequest,
   retryFailedUnwrap,
+  retryFailedWrap,
+  retryNativeDeposit,
   submitNativeDeposit,
   submitWrapRequest,
   withdrawFailedWrap,
@@ -58,19 +60,24 @@ type AppConfig = ReturnType<typeof loadConfig>;
 const NATIVE_DEPOSIT_DRAFT_STORAGE_KEY = "kasane.native_deposit_drafts.v1";
 
 type StatusTrackerState = {
-  status: { requestId: string } | null;
-  setStatus: (value: {
-    kind: "request";
-    requestId: string;
-    dispatchStatus: null;
-    executionStatus: null;
-    ledgerTxId: null;
-    errorCode: null;
-    mintFailedRecoverable: false;
-    withdrawn: false;
-    withdrawLedgerTxId: null;
-    withdrawErrorCode: null;
-  } | null) => void;
+  status: Pick<
+    import("@/lib/types").StatusResponse,
+    "requestId" | "recoveryAction" | "retryAsset" | "requestKind"
+  > | null;
+  setStatus: (
+    value: {
+      kind: "request";
+      requestId: string;
+      dispatchStatus: null;
+      executionStatus: null;
+      ledgerTxId: null;
+      errorCode: null;
+      mintFailedRecoverable: false;
+      withdrawn: false;
+      withdrawLedgerTxId: null;
+      withdrawErrorCode: null;
+    } | null,
+  ) => void;
   setMessage: (value: string | null) => void;
   refreshStatus: (requestIdHex: string, background?: boolean) => Promise<boolean>;
   setAutoPolling: (value: boolean) => void;
@@ -236,6 +243,59 @@ async function finishSubmittedWrapRequest(args: {
   await args.startPollingSubmittedRequest(args.requestIdHex);
 }
 
+async function retryBridgeRequest(
+  args: {
+    status: NonNullable<StatusTrackerState["status"]>;
+    principalText: string;
+    spenderCanisterId: string;
+    caller: AuthenticatedCaller;
+  },
+  deps = {
+    getLedgerFee,
+    getLedgerAllowance,
+    approveLedgerSpend,
+    retryFailedWrap,
+    retryNativeDeposit,
+    retryFailedUnwrap,
+  },
+): Promise<Uint8Array> {
+  const { status, caller } = args;
+  const id = parseRequestIdHex(status.requestId);
+  if (status.recoveryAction === "RetryNativeDeposit") {
+    return deps.retryNativeDeposit(id, caller);
+  }
+  if (status.recoveryAction === "RetryWrap") {
+    const asset = status.retryAsset;
+    if (
+      !asset ||
+      asset.caller !== args.principalText ||
+      caller.principalText !== args.principalText
+    ) {
+      throw new Error("request.unauthorized");
+    }
+    const required = asset.amount + (await deps.getLedgerFee(asset.assetId));
+    if (!args.spenderCanisterId) throw new Error("config.invalid");
+    const allowance = await deps.getLedgerAllowance({
+      ledgerCanisterId: asset.assetId,
+      ownerPrincipalText: asset.caller,
+      spenderCanisterId: args.spenderCanisterId,
+    });
+    if (allowance < required) {
+      await deps.approveLedgerSpend({
+        ledgerCanisterId: asset.assetId,
+        spenderCanisterId: args.spenderCanisterId,
+        amount: required,
+        caller,
+      });
+    }
+    return deps.retryFailedWrap(id, caller);
+  }
+  if (status.requestKind !== "Unwrap" && status.requestKind !== "NativeWithdrawal") {
+    throw new Error("request.retry_invalid_state");
+  }
+  return deps.retryFailedUnwrap(id, caller);
+}
+
 export function useWrapperActions(params: {
   cfg: AppConfig | null;
   configError: string | null;
@@ -308,29 +368,35 @@ export function useWrapperActions(params: {
     return caller;
   }
 
-  const queryAndStartPolling = useCallback(async (trackingIdHex: string): Promise<void> => {
-    const ok = await params.tracker.refreshStatus(trackingIdHex);
-    if (ok) {
-      params.tracker.setAutoPolling(true);
-    }
-  }, [params.tracker]);
+  const queryAndStartPolling = useCallback(
+    async (trackingIdHex: string): Promise<void> => {
+      const ok = await params.tracker.refreshStatus(trackingIdHex);
+      if (ok) {
+        params.tracker.setAutoPolling(true);
+      }
+    },
+    [params.tracker],
+  );
 
-  const startPollingSubmittedRequest = useCallback(async (requestIdHex: string): Promise<void> => {
-    params.tracker.setStatus({
-      kind: "request",
-      requestId: requestIdHex,
-      dispatchStatus: null,
-      executionStatus: null,
-      ledgerTxId: null,
-      errorCode: null,
-      mintFailedRecoverable: false,
-      withdrawn: false,
-      withdrawLedgerTxId: null,
-      withdrawErrorCode: null,
-    });
-    params.tracker.setAutoPolling(true);
-    await params.tracker.refreshStatus(requestIdHex, true);
-  }, [params.tracker]);
+  const startPollingSubmittedRequest = useCallback(
+    async (requestIdHex: string): Promise<void> => {
+      params.tracker.setStatus({
+        kind: "request",
+        requestId: requestIdHex,
+        dispatchStatus: null,
+        executionStatus: null,
+        ledgerTxId: null,
+        errorCode: null,
+        mintFailedRecoverable: false,
+        withdrawn: false,
+        withdrawLedgerTxId: null,
+        withdrawErrorCode: null,
+      });
+      params.tracker.setAutoPolling(true);
+      await params.tracker.refreshStatus(requestIdHex, true);
+    },
+    [params.tracker],
+  );
 
   async function resolveUnwrapRequestIdHexByEthTxHash(ethTxHash: Uint8Array): Promise<string> {
     for (let attempt = 0; attempt < 20; attempt += 1) {
@@ -436,11 +502,13 @@ export function useWrapperActions(params: {
         });
       }
       unwrapTarget = bytesToHex(WRAP_PRECOMPILE_ADDRESS);
-      unwrapData = bytesToHex(toSubmitIcTxData({
-        assetId,
-        amount,
-        recipient,
-      }));
+      unwrapData = bytesToHex(
+        toSubmitIcTxData({
+          assetId,
+          amount,
+          recipient,
+        }),
+      );
     }
     const unwrapEstimate = await estimateMetaMaskUnwrapTransaction({
       rpcUrl: params.cfg.kasaneRpcUrl,
@@ -536,14 +604,8 @@ export function useWrapperActions(params: {
         if (params.forms.wrapGasEstimateStatus !== "ready") {
           throw new Error(params.forms.wrapGasEstimateError ?? "wrap.gas_estimate_failed");
         }
-        gasLimit = parsePositiveU64(
-          params.forms.wrapForm.gasLimit,
-          "validation.gas_limit.invalid",
-        );
-        evmNonce = parseU64(
-          params.forms.wrapForm.evmNonce,
-          "validation.evm_nonce.invalid",
-        );
+        gasLimit = parsePositiveU64(params.forms.wrapForm.gasLimit, "validation.gas_limit.invalid");
+        evmNonce = parseU64(params.forms.wrapForm.evmNonce, "validation.evm_nonce.invalid");
         const wrapQuote = await quoteWrapRequest({
           assetId,
           amountE8s: amount,
@@ -561,17 +623,26 @@ export function useWrapperActions(params: {
         setWrapGasDetails(null);
       } else {
         const priorityFeeWei = await getMaxPriorityFeePerGasWei().catch(() => null);
-        setWrapGasDetails(priorityFeeWei === null ? null : {
-          chargedGasPriceWei,
-          maxPriorityFeePerGasWei: priorityFeeWei,
-        });
+        setWrapGasDetails(
+          priorityFeeWei === null
+            ? null
+            : {
+                chargedGasPriceWei,
+                maxPriorityFeePerGasWei: priorityFeeWei,
+              },
+        );
       }
-      setWrapFeeEstimateText(
-        `estimated fee: ${formatE8sToIcpText4(quote.chargedFeeE8s)} ICP`,
-      );
+      setWrapFeeEstimateText(`estimated fee: ${formatE8sToIcpText4(quote.chargedFeeE8s)} ICP`);
 
       updateWrapActionStep("checking_allowance");
+      const assetTransferFee = await getLedgerFee(assetId);
+      const feeTransferFee =
+        assetId === quote.feeLedgerCanister
+          ? assetTransferFee
+          : await getLedgerFee(quote.feeLedgerCanister);
       const required = computeRequiredAllowances({
+        assetTransferFee,
+        feeTransferFee,
         assetLedgerCanister: assetId,
         feeLedgerCanister: quote.feeLedgerCanister,
         amount,
@@ -621,23 +692,29 @@ export function useWrapperActions(params: {
           })
         : null;
       const submitResult = isNativeDeposit
-        ? await submitNativeDeposit({
-          depositId: nativeDepositDraft?.depositId ?? createNativeDepositId(),
-          amountE8s: amount,
-          evmRecipient,
-          maxFeeE8s: quote.chargedFeeE8s,
-          feeLedgerCanister: quote.feeLedgerCanister,
-        }, caller)
-        : await submitWrapRequest({
-          assetId,
-          amountE8s: amount,
-          evmRecipient,
-          evmNonce: evmNonce ?? 0n,
-          gasLimit: gasLimit ?? 0n,
-          maxFeeE8s: quote.chargedFeeE8s,
-          quotedGasPriceWei: chargedGasPriceWei ?? 0n,
-          feeLedgerCanister: quote.feeLedgerCanister,
-        }, caller);
+        ? await submitNativeDeposit(
+            {
+              depositId: nativeDepositDraft?.depositId ?? createNativeDepositId(),
+              amountE8s: amount,
+              evmRecipient,
+              maxFeeE8s: quote.chargedFeeE8s,
+              feeLedgerCanister: quote.feeLedgerCanister,
+            },
+            caller,
+          )
+        : await submitWrapRequest(
+            {
+              assetId,
+              amountE8s: amount,
+              evmRecipient,
+              evmNonce: evmNonce ?? 0n,
+              gasLimit: gasLimit ?? 0n,
+              maxFeeE8s: quote.chargedFeeE8s,
+              quotedGasPriceWei: chargedGasPriceWei ?? 0n,
+              feeLedgerCanister: quote.feeLedgerCanister,
+            },
+            caller,
+          );
       const requestIdHex = bytesToHex(submitResult.requestId);
       await finishSubmittedWrapRequest({
         requestIdHex,
@@ -651,7 +728,9 @@ export function useWrapperActions(params: {
         await params.forms.refreshWrapNonce().catch(() => undefined);
       }
       updateWrapActionStep("done");
-      params.tracker.setMessage(`wrap.submit.success fee=${submitResult.chargedFeeE8s.toString()}e8s`);
+      params.tracker.setMessage(
+        `wrap.submit.success fee=${submitResult.chargedFeeE8s.toString()}e8s`,
+      );
     } catch (error) {
       updateWrapActionStep("error");
       if (
@@ -672,9 +751,7 @@ export function useWrapperActions(params: {
           return;
         }
       }
-      params.tracker.setMessage(
-        error instanceof Error ? error.message : "wrap_submit_failed",
-      );
+      params.tracker.setMessage(error instanceof Error ? error.message : "wrap_submit_failed");
     } finally {
       setSubmitLoading(false);
     }
@@ -702,9 +779,14 @@ export function useWrapperActions(params: {
         setWrapFeeEstimateText(null);
         return;
       }
-      amountE8s = amountText === ""
-        ? 1n
-        : parseTokenAmount(amountText, params.forms.wrapAssetDecimals, "validation.amount.invalid");
+      amountE8s =
+        amountText === ""
+          ? 1n
+          : parseTokenAmount(
+              amountText,
+              params.forms.wrapAssetDecimals,
+              "validation.amount.invalid",
+            );
       evmRecipientBytes = hexToBytes(evmRecipient);
     } catch {
       setWrapFeeEstimate(null);
@@ -761,9 +843,7 @@ export function useWrapperActions(params: {
           chargedGasPriceWei: quote.chargedGasPriceWei,
           maxPriorityFeePerGasWei: priorityFeeWei,
         });
-        setWrapFeeEstimateText(
-          `estimated fee: ${formatE8sToIcpText4(quote.chargedFeeE8s)} ICP`,
-        );
+        setWrapFeeEstimateText(`estimated fee: ${formatE8sToIcpText4(quote.chargedFeeE8s)} ICP`);
       })
       .catch(() => {
         if (!cancelled) {
@@ -800,10 +880,10 @@ export function useWrapperActions(params: {
       setWithdrawLoading(true);
       params.tracker.setMessage(null);
       const caller = await requireCaller();
-      await withdrawFailedWrap(
-        parseRequestIdHex(params.tracker.status.requestId),
-        caller,
-      );
+      if (params.tracker.status.recoveryAction !== "RefundWrap") {
+        throw new Error("wrap.recover_invalid_state");
+      }
+      await withdrawFailedWrap(parseRequestIdHex(params.tracker.status.requestId), caller);
       await queryAndStartPolling(params.tracker.status.requestId);
       params.tracker.setMessage("withdraw.success");
     } catch (error) {
@@ -825,10 +905,12 @@ export function useWrapperActions(params: {
       setRetryLoading(true);
       params.tracker.setMessage(null);
       const caller = await requireCaller();
-      const requestId = await retryFailedUnwrap(
-        parseRequestIdHex(params.tracker.status.requestId),
+      const requestId = await retryBridgeRequest({
+        status: params.tracker.status,
+        principalText: params.oisySession.principalText,
+        spenderCanisterId: params.cfg?.wrapCanisterId.trim() ?? "",
         caller,
-      );
+      });
       await queryAndStartPolling(bytesToHex(requestId));
       params.tracker.setMessage("retry.success");
     } catch (error) {
@@ -856,6 +938,7 @@ export function useWrapperActions(params: {
 }
 
 export const wrapperActionsTestHooks = {
+  retryBridgeRequest,
   clearNativeDepositDraft,
   finishSubmittedWrapRequest,
   finishSubmittedUnwrapRequest,
