@@ -60,6 +60,9 @@ jobs:
           auto-config: false
           use-mathlib-cache: false
 
+      - name: Fetch locked Rust dependencies
+        run: cargo fetch --locked
+
       - name: Verify model proofs and Rust correspondence
         run: bash scripts/verify-revm.sh
 
