@@ -24,7 +24,7 @@ def current_profile():
     source = next(line.removeprefix("Source: ") for line in provenance.splitlines() if line.startswith("Source: "))
     commit = next(line.removeprefix("Pinned commit: ") for line in provenance.splitlines() if line.startswith("Pinned commit: "))
     output = subprocess.check_output([
-        "cargo", "tree", "--locked", "--offline", "-p", "ic-evm-gateway",
+        "cargo", "--color", "never", "tree", "--locked", "--offline", "-p", "ic-evm-gateway",
         "--target", "wasm32-unknown-unknown", "-e", "normal,build",
         "--prefix", "none", "--format", "{p} features=[{f}]",
     ], cwd=ROOT, text=True)
