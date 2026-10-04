@@ -193,6 +193,8 @@ export interface HealthView {
   'last_block_time' : bigint,
   'queue_len' : bigint,
 }
+export type IcpUpdateModeView = { 'RawCandid' : null } |
+  { 'Envelope' : null };
 export interface IcpUpdateRequestView {
   'request_id' : Uint8Array,
   'status' : RequestDispatchStatusView,
@@ -201,6 +203,7 @@ export interface IcpUpdateRequestView {
   'tx_id' : Uint8Array,
   'tx_index' : number,
   'log_index' : number,
+  'mode' : IcpUpdateModeView,
   'evm_sender' : Uint8Array,
   'error' : [] | [string],
   'block_number' : bigint,
@@ -328,6 +331,15 @@ export interface OpsStatusView {
   'config' : OpsConfigView,
   'decode_failure_count' : bigint,
 }
+export interface PendingQueryTxView {
+  'method' : string,
+  'tx_id' : Uint8Array,
+  'attempt_id' : bigint,
+  'deadline' : bigint,
+  'error' : [] | [string],
+  'target' : [] | [Principal],
+  'phase' : QueryTxPhase,
+}
 export type PendingStatusView = { 'Queued' : { 'seq' : bigint } } |
   { 'Included' : { 'tx_index' : number, 'block_number' : bigint } } |
   { 'Unknown' : null } |
@@ -361,6 +373,10 @@ export interface PruneStatusView {
   'prune_running' : boolean,
   'oldest_kept_block' : [] | [bigint],
 }
+export type QueryTxPhase = { 'Calling' : null } |
+  { 'Reserved' : null } |
+  { 'Ready' : null } |
+  { 'Waiting' : null };
 export interface QueueItemView {
   'seq' : bigint,
   'tx_id' : Uint8Array,
@@ -416,6 +432,9 @@ export interface ReceiptView {
   'contract_address' : [] | [Uint8Array],
 }
 export interface RecoverFailedWrapArgs { 'request_id' : Uint8Array }
+export type RecoveryAction = { 'RefundWrap' : null } |
+  { 'RetryWrap' : null } |
+  { 'RetryNativeDeposit' : null };
 export type RequestDispatchStatusView = { 'Queued' : null } |
   { 'Dispatching' : null } |
   { 'Dispatched' : null } |
@@ -429,11 +448,13 @@ export interface RequestOverview {
   'request_id' : Uint8Array,
   'status' : RequestStatus,
   'recoverable' : boolean,
+  'retry_asset' : [] | [WrapRetryAsset],
   'charged_fee_e8s' : [] | [bigint],
   'withdraw_in_progress' : boolean,
   'withdraw_ledger_tx_id' : [] | [Uint8Array],
   'kind' : RequestKind,
   'dispatch_status' : [] | [RequestDispatchStatusView],
+  'recovery_action' : [] | [RecoveryAction],
   'error' : [] | [ApiErrorDetail],
   'dispatch_error' : [] | [string],
   'stage' : [] | [RequestStageView],
@@ -635,12 +656,22 @@ export type UnwrapReadiness = { 'TokenNotDeployed' : null } |
   { 'InsufficientAllowance' : null } |
   { 'InsufficientBalance' : null } |
   { 'Ready' : null };
+export interface UpdatePrecompileAllowedView {
+  'method' : string,
+  'mode' : IcpUpdateModeView,
+  'target' : Principal,
+}
 export interface WrapConfigArgs {
   'native_ledger_canister' : Principal,
   'allowed_assets' : Array<Principal>,
   'fee_ledger_canister' : Principal,
   'gas_price_buffer_bps' : number,
   'cycle_fee_e8s' : bigint,
+}
+export interface WrapRetryAsset {
+  'caller' : Principal,
+  'asset_id' : Principal,
+  'amount' : bigint,
 }
 export interface WrapRuntimeConfigView {
   'native_ledger_canister' : Principal,
@@ -650,6 +681,14 @@ export interface WrapRuntimeConfigView {
 }
 export interface _SERVICE {
   'add_query_precompile_allowed_method' : ActorMethod<
+    [PrecompileAllowArgs],
+    Result
+  >,
+  'add_raw_update_precompile_allowed_method' : ActorMethod<
+    [PrecompileAllowArgs],
+    Result
+  >,
+  'add_tx_query_precompile_allowed_method' : ActorMethod<
     [PrecompileAllowArgs],
     Result
   >,
@@ -686,6 +725,7 @@ export interface _SERVICE {
   >,
   'get_ops_status' : ActorMethod<[], OpsStatusView>,
   'get_pending' : ActorMethod<[Uint8Array], PendingStatusView>,
+  'get_pending_query_tx' : ActorMethod<[], [] | [PendingQueryTxView]>,
   'get_prune_status' : ActorMethod<[], PruneStatusView>,
   'get_query_precompile_allowlist' : ActorMethod<
     [],
@@ -697,6 +737,10 @@ export interface _SERVICE {
   >,
   'get_receipt' : ActorMethod<[Uint8Array], Result_9>,
   'get_request' : ActorMethod<[Uint8Array], [] | [RequestOverview]>,
+  'get_tx_query_precompile_allowlist' : ActorMethod<
+    [],
+    Array<PrecompileAllowArgs>
+  >,
   'get_unwrap_dispatch_overview' : ActorMethod<
     [Uint8Array],
     [] | [UnwrapDispatchOverviewView]
@@ -715,7 +759,7 @@ export interface _SERVICE {
   >,
   'get_update_precompile_allowlist' : ActorMethod<
     [],
-    Array<PrecompileAllowArgs>
+    Array<UpdatePrecompileAllowedView>
   >,
   'get_wrap_runtime_config' : ActorMethod<[], Result_11>,
   'health' : ActorMethod<[], HealthView>,
@@ -739,6 +783,10 @@ export interface _SERVICE {
     [PrecompileAllowArgs],
     Result
   >,
+  'remove_tx_query_precompile_allowed_method' : ActorMethod<
+    [PrecompileAllowArgs],
+    Result
+  >,
   'remove_update_precompile_allowed_method' : ActorMethod<
     [PrecompileAllowArgs],
     Result
@@ -751,6 +799,7 @@ export interface _SERVICE {
   'retry_native_deposit' : ActorMethod<[RetryRequestArgs], Result_18>,
   'retry_native_withdrawal' : ActorMethod<[RetryRequestArgs], Result_18>,
   'retry_request' : ActorMethod<[RetryRequestArgs], Result_18>,
+  'retry_wrap_request' : ActorMethod<[RetryRequestArgs], Result_18>,
   'rpc_eth_block_number' : ActorMethod<[], bigint>,
   'rpc_eth_call_object' : ActorMethod<[RpcCallObjectView], Result_20>,
   'rpc_eth_call_object_at' : ActorMethod<
@@ -765,6 +814,10 @@ export interface _SERVICE {
   'rpc_eth_chain_id' : ActorMethod<[], bigint>,
   'rpc_eth_estimate_gas_object' : ActorMethod<[RpcCallObjectView], Result_22>,
   'rpc_eth_estimate_gas_object_at' : ActorMethod<
+    [RpcCallObjectView, RpcBlockTagView],
+    Result_22
+  >,
+  'rpc_eth_estimate_gas_object_at_with_query_precompile' : ActorMethod<
     [RpcCallObjectView, RpcBlockTagView],
     Result_22
   >,

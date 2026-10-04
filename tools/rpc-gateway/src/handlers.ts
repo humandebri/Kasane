@@ -477,7 +477,7 @@ async function onEstimateGas(id: string | number | null, params: unknown): Promi
     return makeInvalidParams(id, error);
   }
   const actor = await getActor();
-  const out = await actor.rpc_eth_estimate_gas_object_at(candidCall, tag);
+  const out = await actor.rpc_eth_estimate_gas_object_at_with_query_precompile(candidCall, tag);
   return "Err" in out ? mapRpcError(id, out.Err, "estimate failed") : makeSuccess(id, toQuantityHex(out.Ok));
 }
 

@@ -292,6 +292,12 @@ enum WrapRequestStatus {
     Failed,
 }
 
+#[derive(Clone, Debug, CandidType, Deserialize)]
+struct RetryRequestArgs {
+    request_id: Vec<u8>,
+}
+type RecoverFailedWrapArgs = RetryRequestArgs;
+
 #[derive(Clone, Debug, CandidType, Deserialize, Eq, PartialEq)]
 struct RequestOverview {
     kind: RequestKind,
@@ -553,6 +559,13 @@ fn install_integrated_pair(pic: &PocketIc) -> (Principal, Principal) {
 }
 
 fn install_integrated_pair_with_native(pic: &PocketIc) -> (Principal, Principal, Principal) {
+    install_integrated_pair_with_wasm(pic, gateway_wasm_path())
+}
+
+fn install_integrated_pair_with_wasm(
+    pic: &PocketIc,
+    wasm_path: PathBuf,
+) -> (Principal, Principal, Principal) {
     let gateway_id = pic.create_canister();
     let fee_ledger_id = pic.create_canister();
     let native_ledger_id = pic.create_canister();
@@ -609,7 +622,7 @@ fn install_integrated_pair_with_native(pic: &PocketIc) -> (Principal, Principal,
     );
     pic.install_canister(
         gateway_id,
-        read_wasm(gateway_wasm_path()),
+        read_wasm(wasm_path),
         Encode!(&gateway_init).expect("encode gateway init"),
         None,
     );
@@ -2094,4 +2107,415 @@ fn failed_mint_refunds_original_depositor_once_even_when_another_caller_recovers
         .unwrap();
     assert_api_error(&out, "native_deposit.retry_invalid_state");
     assert_eq!(ledger_balance_of(&pic, ledger, caller), recovered_balance);
+}
+
+fn bridge_retry_fixture(
+    pic: &PocketIc,
+) -> (
+    Principal,
+    Principal,
+    Principal,
+    [u8; 20],
+    [u8; 20],
+    Vec<u8>,
+    Nat,
+) {
+    bridge_retry_fixture_with_wasm(pic, gateway_wasm_path())
+}
+
+fn bridge_retry_fixture_with_wasm(
+    pic: &PocketIc,
+    wasm: PathBuf,
+) -> (
+    Principal,
+    Principal,
+    Principal,
+    [u8; 20],
+    [u8; 20],
+    Vec<u8>,
+    Nat,
+) {
+    let (gateway, fee_ledger, _) = install_integrated_pair_with_wasm(pic, wasm);
+    let caller = test_caller();
+    let caller_evm = hash::derive_evm_address_from_principal(caller.as_slice()).unwrap();
+    let factory = deploy_factory(pic, gateway, gateway);
+    let asset = pic.create_canister();
+    pic.add_cycles(asset, 5_000_000_000_000);
+    pic.install_canister(
+        asset,
+        read_wasm(mock_ledger_wasm_path()),
+        Encode!(&build_ledger_init(
+            Principal::self_authenticating(b"asset-minter"),
+            gateway,
+            caller,
+            0
+        ))
+        .unwrap(),
+        None,
+    );
+    pic.update_call(
+        gateway,
+        caller,
+        "set_allowed_assets",
+        Encode!(&vec![fee_ledger, asset]).unwrap(),
+    )
+    .unwrap();
+    approve_fee_ledger_for_wrap(pic, fee_ledger, gateway, WRAP_AMOUNT_E8S * 2);
+    // Exact asset amount is insufficient: the official ledger also charges 10.
+    approve_fee_ledger_for_wrap(pic, asset, gateway, WRAP_AMOUNT_E8S);
+    let mut args = submit_wrap_request_args(fee_ledger, caller_evm.to_vec());
+    args.asset_id = asset;
+    let out = pic
+        .update_call(
+            gateway,
+            caller,
+            "submit_wrap_request",
+            Encode!(&args).unwrap(),
+        )
+        .unwrap();
+    let accepted = Decode!(&out, Result<SubmitWrapRequestOk, ApiError>)
+        .unwrap()
+        .unwrap();
+    let failed = wait_for_wrap_status(
+        pic,
+        gateway,
+        &accepted.request_id,
+        WrapRequestStatus::Failed,
+    );
+    assert!(failed
+        .error
+        .unwrap()
+        .code
+        .contains("insufficient_allowance"));
+    assert!(failed.fee_ledger_tx_id.is_some());
+    assert!(failed.pull_ledger_tx_id.is_none());
+    (
+        gateway,
+        fee_ledger,
+        asset,
+        caller_evm,
+        factory,
+        accepted.request_id,
+        accepted.charged_fee_e8s,
+    )
+}
+
+#[test]
+fn bridge_retry_wrap_charges_once_and_accepts_unlimited_approval() {
+    let pic = PocketIc::new();
+    let (gateway, fee_ledger, asset, caller_evm, factory, id, charged_fee) =
+        bridge_retry_fixture(&pic);
+    let caller = test_caller();
+    let fee_before = ledger_balance_of(&pic, fee_ledger, caller);
+    let asset_before = ledger_balance_of(&pic, asset, caller);
+    let retry_args = RetryRequestArgs {
+        request_id: id.clone(),
+    };
+    let unauthorized = pic
+        .update_call(
+            gateway,
+            Principal::self_authenticating(b"other"),
+            "retry_wrap_request",
+            Encode!(&retry_args).unwrap(),
+        )
+        .unwrap();
+    assert_api_error(&unauthorized, "request.unauthorized");
+    let anon = pic.update_call(
+        gateway,
+        Principal::anonymous(),
+        "retry_wrap_request",
+        Encode!(&retry_args).unwrap(),
+    );
+    assert!(anon.is_err(), "anonymous ingress must be rejected");
+    approve_fee_ledger_for_wrap(&pic, asset, gateway, WRAP_AMOUNT_E8S + 10);
+    let approved_before = ledger_balance_of(&pic, asset, caller);
+    for _ in 0..2 {
+        let out = pic
+            .update_call(
+                gateway,
+                caller,
+                "retry_wrap_request",
+                Encode!(&retry_args).unwrap(),
+            )
+            .unwrap();
+        // The second call may arrive after completion and must never mint again.
+        let result = Decode!(&out, Result<RequestOverview, ApiError>).unwrap();
+        if let Err(error) = result {
+            assert!(matches!(error, ApiError::Rejected(_)));
+        }
+    }
+    let succeeded = wait_for_wrap_status(&pic, gateway, &id, WrapRequestStatus::Succeeded);
+    assert!(succeeded.pull_ledger_tx_id.is_some());
+    assert_eq!(ledger_balance_of(&pic, fee_ledger, caller), fee_before);
+    assert_eq!(
+        ledger_balance_of(&pic, fee_ledger, gateway),
+        nat_to_u128(&charged_fee)
+    );
+    assert_eq!(
+        approved_before - ledger_balance_of(&pic, asset, caller),
+        WRAP_AMOUNT_E8S + 10
+    );
+    assert_eq!(asset_before - approved_before, 10, "approval fee only");
+    let token = predict_wrapped_token_address(factory, asset, TEST_ASSET_DECIMALS);
+    assert_eq!(
+        wrapped_token_balance_of(&pic, gateway, token, caller_evm),
+        WRAP_AMOUNT_E8S
+    );
+    let mut data = encode_approve(factory, 0);
+    data[36..68].fill(0xff);
+    let tx = submit_ic_tx(
+        &pic,
+        gateway,
+        SubmitIcTxArgsDto {
+            to: Some(token.to_vec()),
+            from: None,
+            value: Nat::from(0u8),
+            data,
+            nonce: gateway_expected_nonce(&pic, gateway, caller_evm),
+            gas_limit: 200_000,
+            max_fee_per_gas: Nat::from(gateway_gas_price(&pic, gateway)),
+            max_priority_fee_per_gas: Nat::from(gateway_priority_fee(&pic, gateway)),
+        },
+    );
+    assert_eq!(wait_for_receipt(&pic, gateway, &tx).status, 1);
+    let ready = wrap_get_unwrap_requirements(
+        &pic,
+        gateway,
+        &GetUnwrapRequirementsArgs {
+            asset_id: asset,
+            amount_e8s: Nat::from(WRAP_AMOUNT_E8S),
+            caller_evm_address: caller_evm.to_vec(),
+        },
+    )
+    .unwrap();
+    assert_eq!(ready.readiness, UnwrapReadiness::Ready);
+    assert_eq!(
+        ready.allowance,
+        Nat::parse(
+            b"115792089237316195423570985008687907853269984665640564039457584007913129639935"
+        )
+        .unwrap()
+    );
+    let refund = pic
+        .update_call(
+            gateway,
+            caller,
+            "recover_failed_wrap",
+            Encode!(&RecoverFailedWrapArgs { request_id: id }).unwrap(),
+        )
+        .unwrap();
+    assert_api_error(&refund, "wrap.recover_invalid_state");
+    settle(&pic, 10);
+    assert_eq!(
+        wrapped_token_balance_of(&pic, gateway, token, caller_evm),
+        WRAP_AMOUNT_E8S
+    );
+}
+
+#[test]
+fn bridge_retry_too_old_never_creates_a_fresh_transfer() {
+    let pic = PocketIc::new();
+    let (gateway, fee_ledger, asset, _, _, id, _) = bridge_retry_fixture(&pic);
+    approve_fee_ledger_for_wrap(&pic, asset, gateway, WRAP_AMOUNT_E8S + 10);
+    let caller = test_caller();
+    let fee_before = ledger_balance_of(&pic, fee_ledger, caller);
+    let asset_before = ledger_balance_of(&pic, asset, caller);
+    pic.advance_time(std::time::Duration::from_secs(3 * 24 * 60 * 60));
+    let out = pic
+        .update_call(
+            gateway,
+            caller,
+            "retry_wrap_request",
+            Encode!(&RetryRequestArgs {
+                request_id: id.clone()
+            })
+            .unwrap(),
+        )
+        .unwrap();
+    Decode!(&out, Result<RequestOverview, ApiError>)
+        .unwrap()
+        .unwrap();
+    let failed = wait_for_wrap_status(&pic, gateway, &id, WrapRequestStatus::Failed);
+    assert!(failed.error.unwrap().code.contains("too_old"));
+    let out = pic
+        .update_call(
+            gateway,
+            caller,
+            "retry_wrap_request",
+            Encode!(&RetryRequestArgs { request_id: id }).unwrap(),
+        )
+        .unwrap();
+    assert_api_error(&out, "wrap.retry_invalid_state");
+    assert_eq!(ledger_balance_of(&pic, fee_ledger, caller), fee_before);
+    assert_eq!(ledger_balance_of(&pic, asset, caller), asset_before);
+}
+
+#[test]
+#[ignore = "requires BRIDGE_LEGACY_GATEWAY_WASM built before the Bridge fix"]
+fn bridge_upgrade_legacy_failed_wrap_can_retry_without_recharging() {
+    let legacy = PathBuf::from(
+        std::env::var_os("BRIDGE_LEGACY_GATEWAY_WASM").expect("legacy gateway artifact"),
+    );
+    let pic = PocketIc::new();
+    let (gateway, fee_ledger, asset, caller_evm, factory, id, _) =
+        bridge_retry_fixture_with_wasm(&pic, legacy);
+    let fee_before = ledger_balance_of(&pic, fee_ledger, test_caller());
+    let args = Some(GatewayInitArgs {
+        genesis_balances: vec![GenesisBalanceView {
+            address: caller_evm.to_vec(),
+            amount: TEST_GENESIS_BALANCE_WEI,
+        }],
+        wrap_canister_id: gateway,
+        wrap_factory_address: factory.to_vec(),
+        wrap_config: None,
+        query_instruction_soft_limit: None,
+        update_instruction_soft_limit: None,
+    });
+    pic.upgrade_canister(
+        gateway,
+        read_wasm(gateway_wasm_path()),
+        Encode!(&args).unwrap(),
+        Some(test_caller()),
+    )
+    .unwrap();
+    // Let the upgrade's schema migration finish before retrying a write.
+    settle(&pic, 4);
+    approve_fee_ledger_for_wrap(&pic, asset, gateway, WRAP_AMOUNT_E8S + 10);
+    let out = pic
+        .update_call(
+            gateway,
+            test_caller(),
+            "retry_wrap_request",
+            Encode!(&RetryRequestArgs {
+                request_id: id.clone()
+            })
+            .unwrap(),
+        )
+        .unwrap();
+    Decode!(&out, Result<RequestOverview, ApiError>)
+        .unwrap()
+        .unwrap();
+    wait_for_wrap_status(&pic, gateway, &id, WrapRequestStatus::Succeeded);
+    assert_eq!(
+        ledger_balance_of(&pic, fee_ledger, test_caller()),
+        fee_before
+    );
+    assert_eq!(
+        wrapped_token_balance_of(
+            &pic,
+            gateway,
+            predict_wrapped_token_address(factory, asset, TEST_ASSET_DECIMALS),
+            caller_evm
+        ),
+        WRAP_AMOUNT_E8S
+    );
+}
+
+#[derive(Clone, Copy, CandidType, Deserialize)]
+enum BridgeDelayMode {
+    Pull,
+    Metadata,
+    FailedMetadata,
+}
+#[derive(Clone, CandidType, Deserialize)]
+struct BridgeDelayState {
+    pulls: u64,
+    transfer_attempts: u64,
+    metadata_calls: u64,
+}
+
+#[test]
+fn bridge_delayed_worker_reply_cannot_mint_twice_or_refund() {
+    for mode in [
+        BridgeDelayMode::Pull,
+        BridgeDelayMode::Metadata,
+        BridgeDelayMode::FailedMetadata,
+    ] {
+        let pic = PocketIc::new();
+        let (gateway, fee_ledger) = install_integrated_pair(&pic);
+        let caller = test_caller();
+        let caller_evm = hash::derive_evm_address_from_principal(caller.as_slice()).unwrap();
+        let factory = deploy_factory(&pic, gateway, gateway);
+        let asset = pic.create_canister();
+        pic.add_cycles(asset, 5_000_000_000_000);
+        let wasm = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../target/wasm32-unknown-unknown/release/examples/bridge_delay_ledger.wasm");
+        pic.install_canister(asset, read_wasm(wasm), Encode!().unwrap(), None);
+        pic.update_call(asset, caller, "configure", Encode!(&mode).unwrap())
+            .unwrap();
+        set_allowed_assets(&pic, gateway, vec![asset, fee_ledger]);
+        approve_fee_ledger_for_wrap(&pic, fee_ledger, gateway, WRAP_AMOUNT_E8S * 2);
+        let mut args = submit_wrap_request_args(fee_ledger, caller_evm.to_vec());
+        args.asset_id = asset;
+        let out = pic
+            .update_call(
+                gateway,
+                caller,
+                "submit_wrap_request",
+                Encode!(&args).unwrap(),
+            )
+            .unwrap();
+        let accepted = Decode!(&out, Result<SubmitWrapRequestOk, ApiError>)
+            .unwrap()
+            .unwrap();
+        let read_state = || {
+            let out = pic
+                .query_call(asset, caller, "delay_state", Encode!().unwrap())
+                .unwrap();
+            Decode!(&out, BridgeDelayState).unwrap()
+        };
+        let mut waiting = false;
+        for _ in 0..40 {
+            pic.advance_time(Duration::from_secs(1));
+            pic.tick();
+            let state = read_state();
+            waiting = match mode {
+                BridgeDelayMode::Pull => state.transfer_attempts == 1,
+                _ => state.metadata_calls == 1,
+            };
+            if waiting {
+                break;
+            }
+        }
+        assert!(waiting, "old worker must await the ledger response; state pulls={} metadata={} transfer_attempts={} request={:?}", read_state().pulls, read_state().metadata_calls, read_state().transfer_attempts, wrap_get_request(&pic, gateway, &accepted.request_id));
+        pic.advance_time(Duration::from_secs(601));
+        pic.update_call(
+            gateway,
+            caller,
+            "repair_stale_wrap_operations",
+            Encode!().unwrap(),
+        )
+        .unwrap();
+        let completed = wait_for_wrap_status(
+            &pic,
+            gateway,
+            &accepted.request_id,
+            WrapRequestStatus::Succeeded,
+        );
+        let mint = completed.mint_tx_id.clone();
+        pic.update_call(asset, caller, "release", Encode!().unwrap())
+            .unwrap();
+        settle(&pic, 20);
+        let after = wrap_get_request(&pic, gateway, &accepted.request_id).unwrap();
+        assert_eq!(after.status, WrapRequestStatus::Succeeded);
+        assert_eq!(after.mint_tx_id, mint);
+        assert_eq!(read_state().pulls, 1);
+        let token = predict_wrapped_token_address(factory, asset, TEST_ASSET_DECIMALS);
+        assert_eq!(
+            wrapped_token_balance_of(&pic, gateway, token, caller_evm),
+            WRAP_AMOUNT_E8S
+        );
+        let refund = pic
+            .update_call(
+                gateway,
+                caller,
+                "recover_failed_wrap",
+                Encode!(&RetryRequestArgs {
+                    request_id: accepted.request_id
+                })
+                .unwrap(),
+            )
+            .unwrap();
+        assert_api_error(&refund, "wrap.recover_invalid_state");
+    }
 }

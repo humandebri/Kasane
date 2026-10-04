@@ -78,7 +78,7 @@ export function RequestStatusModal(props: {
             <p className="mt-2 break-all font-mono text-xs text-zinc-600">
               {props.status?.kind === "transaction"
                 ? props.status.transactionHash
-                : props.status?.requestId ?? props.requestIdLabel ?? "(request_id missing)"}
+                : (props.status?.requestId ?? props.requestIdLabel ?? "(request_id missing)")}
             </p>
           </div>
           <Button size="sm" variant="outline" onClick={props.onClose}>Close</Button>
@@ -187,21 +187,36 @@ export function RequestStatusModal(props: {
                   </div>
                   <KeyValue label="ledger_tx_id" value={props.status.ledgerTxId} />
                   <KeyValue label="error_code" value={props.status.errorCode} />
+                  {props.status.requestKind === "Wrap" &&
+                  props.status.errorCode?.includes("too_old") ? (
+                    <p className="text-sm text-zinc-700">
+                      Transfer expired. Verify the ledger transaction before retrying.
+                    </p>
+                  ) : null}
                   <KeyValue label="withdrawn" value={String(props.status.withdrawn)} />
                   <KeyValue label="withdraw_error_code" value={props.status.withdrawErrorCode} />
-                  {props.status.dispatchStatus !== null
-                  && props.status.executionStatus === "Failed"
-                  && !props.status.mintFailedRecoverable ? (
+                  {props.status.recoveryAction === "RetryWrap" ||
+                  props.status.recoveryAction === "RetryNativeDeposit" ||
+                  (props.status.dispatchStatus !== null &&
+                    props.status.executionStatus === "Failed" &&
+                    (props.status.requestKind === "Unwrap" ||
+                      props.status.requestKind === "NativeWithdrawal")) ? (
                     <Button
                       variant="outline"
                       className="w-full"
                       onClick={props.onRetry}
                       disabled={props.retryLoading || !props.walletConnected}
                     >
-                      {props.retryLoading ? "Retrying..." : "Retry Failed Unwrap"}
+                      {props.retryLoading
+                        ? "Retrying..."
+                        : props.status.recoveryAction === "RetryWrap"
+                          ? "Retry Failed Wrap"
+                          : props.status.recoveryAction === "RetryNativeDeposit"
+                            ? "Retry Native Deposit"
+                            : "Retry Failed Unwrap"}
                     </Button>
                   ) : null}
-                  {props.status.mintFailedRecoverable && !props.status.withdrawn ? (
+                  {props.status.recoveryAction === "RefundWrap" && !props.status.withdrawn ? (
                     <Button
                       variant="outline"
                       className="w-full"

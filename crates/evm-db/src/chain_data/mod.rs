@@ -16,7 +16,9 @@ pub mod ops_metrics;
 pub mod ordering;
 pub mod prune_config;
 pub mod prune_state;
+pub mod query_tx;
 pub mod queue;
+pub use query_tx::{QueryTxPhase, QueryTxSession, QueryTxState};
 pub mod receipt;
 pub mod runtime_config;
 pub mod runtime_defaults;
@@ -37,8 +39,8 @@ pub use constants::{
 };
 pub use dropped_ring::{DroppedRingStateV1, DROPPED_RING_STATE_SIZE_U32};
 pub use icp_update_request::{
-    IcpUpdateDispatchRequest, IcpUpdateRequestStatus, ICP_UPDATE_DECODE_FAILURE_CODE,
-    MAX_ICP_UPDATE_REQUESTS,
+    IcpUpdateDispatchRequest, IcpUpdateMode, IcpUpdateRequestStatus,
+    ICP_UPDATE_DECODE_FAILURE_CODE, MAX_ICP_UPDATE_REQUESTS,
 };
 pub use internal_trace::{
     InternalTrace, InternalTraceActionKind, InternalTraceSet, MAX_INTERNAL_TRACES_PER_TX_U32,

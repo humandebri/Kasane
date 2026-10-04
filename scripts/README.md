@@ -567,3 +567,5 @@ TypesAnalysisの隔離候補を構築し、Charon standalone ML testsも明示�
 `bash scripts/verify-std-cell-get-state.sh` は実Cell::getの10 main文と2文unwind、layout/metadata/型代入・実UnsafeCell::getの19文を同一新規抽出から監査し、両生成物のbyte一致を検査する。caller/calleeの状態を接続したscalar IRの5主定理と1helper、9schema拒否、公理監査/leanchecker、3禁止公理拒否、2状態変更の正対照/2偽観測拒否を含む。物理field参照・read・retag/provenance・Rust unwind/UBの意味論対応は未証明で、Rust/Cell対応定理0件。範囲は `proofs/extraction/tool-patches/std-cell-get-state-profile.json`。
 
 `bash scripts/diagnose-std-cell-replace.sh` は固定実Cell::replaceの全main28文/nested unwind20文、新値Move前のdrop flagクリア、Mut/TwoPhaseMut、元Destruct trait、Drop中の再unwind terminateを新規抽出で監査する。11コピー変更を拒否し、既存Cell get/UnsafeCell get/mem replaceの3生成IRとのbyte一致も確認する。成功経路だけのIRやdrop無効果を仮定せず、新規形式定理0件。範囲は `proofs/extraction/tool-patches/std-cell-replace-protocol-profile.json`。
+
+`scripts/run_query_tx_e2e.sh` builds the gateway and ordinary-query price fixture, then verifies replicated query, storage and payment in one real tx through PocketIC 12. Set `POCKET_IC_BIN` to a compatible binary.

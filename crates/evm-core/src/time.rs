@@ -23,13 +23,13 @@ pub(crate) fn now_sec() -> u64 {
 
 #[cfg(target_arch = "wasm32")]
 #[allow(dead_code)]
-fn now_ns() -> u64 {
+pub(crate) fn now_ns() -> u64 {
     ic_cdk::api::time()
 }
 
 #[cfg(not(target_arch = "wasm32"))]
 #[allow(dead_code)]
-fn now_ns() -> u64 {
+pub(crate) fn now_ns() -> u64 {
     let nanos_u128 = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|duration| duration.as_nanos())

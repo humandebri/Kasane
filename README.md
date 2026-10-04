@@ -81,16 +81,35 @@ Filter APIs, subscriptions, mempool APIs, and block-hash indexed block lookups a
 
 - The ABI is a compact binary payload: `version`, `kind`, `target_principal`, `method`, and raw Candid argument bytes.
 - v1 is query-only. `kind=1` update calls are rejected because EVM transaction revert semantics do not make external IC side effects atomic.
-- Allowed `(target, method)` pairs are controller-managed and must refer to query or composite query methods.
+- Separate controller-managed allowlists authorize eth_call (query or composite query) and transactions (ordinary query only). The tx allowlist is initially empty.
 - The composite query entrypoint calls allowlisted methods with bounded wait and a 1 second timeout, returning raw Candid reply bytes.
-- Each `eth_call` may invoke the ICP query precompile at most once. A second call reverts with `ic_query.call_limit`.
+- Each eth_call or tx may invoke it at most once; a second call fails with `ic_query.call_limit`.
+- Transactions reserve EVM state, make one replicated IC call with a fixed 2 second bounded wait, and replay with the raw response before sealing a single-tx block. Callback and session state survive upgrades without resending.
+- `eth_estimateGas` obtains one query response and reuses it during binary search. See [query tx usage and recovery](docs/query-tx.md).
 - Two-pass execution compares the initial and post-query snapshots, including chain state, runtime config, allowlist fingerprint, and `evm_state_epoch`.
 
 `0x00000000000000000000000000000000ffff0004` is reserved for ICP update intents.
 
 - The ABI uses the same compact payload shape with `kind=1`.
 - Execution records an allowlisted update intent log; the remote IC update call is dispatched after block production.
-- Allowed `(target, method)` pairs are controller-managed with `add_update_precompile_allowed_method` and `remove_update_precompile_allowed_method`.
+- Controller-managed `(target, method)` registrations select one argument mode:
+  - `Envelope`: `add_update_precompile_allowed_method` sends `IcpUpdateEnvelopeV1`, including the EVM sender, optional IC caller, request identity, and original argument bytes.
+  - `RawCandid`: `add_raw_update_precompile_allowed_method` forwards the supplied Candid argument bytes unchanged, allowing existing canister APIs to be called without a Kasane-specific wrapper.
+- Only register raw methods that are safe for **any EVM user to invoke with arbitrary arguments as the Kasane canister**. The remote IC `caller` is Kasane, not the user or Solidity contract. Raw registration is not per-user authorization; do not expose ledger transfers or privileged administration through it.
+- Re-registering the same mode is idempotent; changing an existing mode returns `ic_update.mode_conflict`. Remove it with `remove_update_precompile_allowed_method` before registering the other mode.
+- `get_update_precompile_allowlist` and `get_icp_update_request` expose `mode`. Requests retain the mode selected when their block commits. Dispatch rechecks the registration; a removed target fails with `ic_update.allowlist_miss`, and a changed mode fails with `ic_update.mode_mismatch` without sending the call.
+- Calls remain asynchronous and execute after the EVM block commits. Check the request result separately from the EVM receipt. `DispatchUncertain` is not retried automatically, and remote effects cannot be rolled back by an EVM revert.
+- Request storage version 3 records the mode. Existing version 2 requests decode as `Envelope`; no bulk migration is needed. Once version 3 records are written, an older binary cannot safely read them, so a simple binary downgrade is unsupported.
+
+Example controller registration for a public service (replace both principals):
+
+```bash
+dfx canister call <KASANE_CANISTER> add_raw_update_precompile_allowed_method \
+  '(record { target = principal "<PUBLIC_SERVICE_PRINCIPAL>"; method = "echo_raw" })'
+dfx canister call --query <KASANE_CANISTER> get_update_precompile_allowlist '()'
+```
+
+The Solidity input stays `version=1`, `kind=1`, target principal, method, and raw Candid arguments. Raw arguments and replies are Candid bytes, not Solidity ABI values.
 
 The default build disables precompiles that require unsupported or intentionally excluded upstream feature sets:
 

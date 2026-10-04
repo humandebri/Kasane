@@ -39,7 +39,8 @@ pub fn mark_decode_failure(label: &'static [u8], fail_closed: bool) {
 // - 全体整合性に直結する状態と admission control に効くキーは fail-closed に倒す。
 // - needs_migration を立て、制御プレーン介入までデータプレーン更新を停止させる。
 fn is_fail_closed_label(label: &'static [u8]) -> bool {
-    label == b"state_root_meta"
+    label == b"query_tx_state"
+        || label == b"state_root_meta"
         || label == b"chain_state"
         || label == b"head"
         || label == b"state_root_journal_inconsistent"

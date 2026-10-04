@@ -65,6 +65,8 @@ export type RequestStatusPanelView = {
   executionStatus: ExecutionStatus | null;
   ledgerTxId: string | null;
   errorCode: string | null;
+  requestKind?: import("@/lib/types").RequestKind;
+  recoveryAction?: import("@/lib/types").RecoveryAction | null;
   mintFailedRecoverable: boolean;
   withdrawn: boolean;
   withdrawLedgerTxId: string | null;

@@ -1132,3 +1132,337 @@ fn build_submit_ic_contract_tx_args(
         gas_limit,
     }
 }
+
+#[derive(Clone, Copy, Debug, CandidType, Deserialize, PartialEq, Eq)]
+enum UpdateMode {
+    Envelope,
+    RawCandid,
+}
+
+#[derive(Debug, CandidType, Deserialize, PartialEq, Eq)]
+enum UpdateDispatchStatus {
+    Queued,
+    Dispatching,
+    Dispatched,
+    DispatchFailed,
+    DispatchUncertain,
+}
+
+#[derive(Debug, CandidType, Deserialize)]
+struct UpdateRequest {
+    mode: UpdateMode,
+    status: UpdateDispatchStatus,
+    reply: Option<Vec<u8>>,
+    error: Option<String>,
+}
+
+#[derive(Debug, CandidType, Deserialize)]
+struct UpdateAllowed {
+    target: Principal,
+    method: String,
+    mode: UpdateMode,
+}
+
+#[derive(Debug, CandidType, Deserialize)]
+struct UpdateEchoReply {
+    caller: Principal,
+    arg: Vec<u8>,
+}
+
+#[derive(Debug, CandidType, Deserialize)]
+struct UpdateEnvelope {
+    version: u8,
+    request_id: Vec<u8>,
+    evm_sender: Vec<u8>,
+    ic_caller: Option<Principal>,
+    arg: Vec<u8>,
+}
+
+fn update_request(pic: &PocketIc, canister: Principal, id: &[u8]) -> Option<UpdateRequest> {
+    let bytes = call_query(
+        pic,
+        canister,
+        "get_icp_update_request",
+        Encode!(&id.to_vec()).unwrap(),
+    );
+    Decode!(&bytes, Option<UpdateRequest>).unwrap()
+}
+
+fn update_receiver(pic: &PocketIc) -> Principal {
+    let receiver = pic.create_canister();
+    pic.add_cycles(receiver, 5_000_000_000_000);
+    let path = wasm_path()
+        .parent()
+        .unwrap()
+        .join("examples/icp_update_receiver.wasm");
+    pic.install_canister(
+        receiver,
+        std::fs::read(path).expect("build receiver example first"),
+        Encode!().unwrap(),
+        None,
+    );
+    receiver
+}
+
+fn receiver_calls(pic: &PocketIc, receiver: Principal) -> u64 {
+    Decode!(
+        &call_query(pic, receiver, "call_count", Encode!().unwrap()),
+        u64
+    )
+    .unwrap()
+}
+
+fn enqueue_update(
+    pic: &PocketIc,
+    canister: Principal,
+    receiver: Principal,
+    method: &str,
+    nonce: u64,
+    arg: &[u8],
+) -> Vec<u8> {
+    let mut data = encode_icp_query_precompile_input(receiver, method, arg);
+    data[1] = 1; // Same v1 compact payload, update kind.
+    let args = build_submit_ic_contract_tx_args(
+        Some(evm_core::kasane_precompiles::ICP_UPDATE_INTENT_PRECOMPILE_ADDRESS.into_array()),
+        nonce,
+        data,
+        300_000,
+    );
+    let result = call_update(pic, canister, "submit_ic_tx", Encode!(&args).unwrap());
+    let tx_id = Decode!(&result, SubmitTxResult)
+        .unwrap()
+        .expect("submit update intent");
+    pic.advance_time(Duration::from_secs(2));
+    for _ in 0..30 {
+        pic.tick();
+        if let Ok(receipt) = call_get_receipt(pic, canister, &tx_id) {
+            assert_eq!(receipt.status, 1);
+            assert_eq!(receipt.logs.len(), 1);
+            let mut identity = tx_id.clone();
+            identity.extend_from_slice(&0u32.to_be_bytes());
+            return hash::keccak256(&identity).to_vec();
+        }
+    }
+    panic!("update intent was not included");
+}
+
+#[test]
+fn icp_update_modes_send_exact_arguments_and_preserve_pending_requests_on_upgrade() {
+    for (mode, method, register) in [
+        (
+            UpdateMode::Envelope,
+            "echo_envelope",
+            "add_update_precompile_allowed_method",
+        ),
+        (
+            UpdateMode::RawCandid,
+            "echo_raw",
+            "add_raw_update_precompile_allowed_method",
+        ),
+    ] {
+        let pic = PocketIc::new();
+        let canister = install_canister(&pic);
+        let receiver = update_receiver(&pic);
+        let allow = QueryPrecompileAllowArgs {
+            target: receiver,
+            method: method.to_string(),
+        };
+        let bytes = call_update(&pic, canister, register, Encode!(&allow).unwrap());
+        Decode!(&bytes, Result<(), String>)
+            .unwrap()
+            .expect("register mode");
+        let entries = call_query(
+            &pic,
+            canister,
+            "get_update_precompile_allowlist",
+            Encode!().unwrap(),
+        );
+        let entries = Decode!(&entries, Vec<UpdateAllowed>).unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].target, receiver);
+        assert_eq!(entries[0].method, method);
+        assert_eq!(entries[0].mode, mode);
+        let original = Encode!(&42u64, &"公開メソッド\0".to_string()).unwrap();
+        let id = enqueue_update(&pic, canister, receiver, method, 0, &original);
+        let pending = update_request(&pic, canister, &id).expect("pending request");
+        assert_eq!(pending.mode, mode);
+        assert_eq!(pending.status, UpdateDispatchStatus::Queued);
+        assert_eq!(receiver_calls(&pic, receiver), 0);
+        let init = Some(InitArgs {
+            genesis_balances: vec![GenesisBalanceView {
+                address: hash::derive_evm_address_from_principal(test_caller().as_slice())
+                    .unwrap()
+                    .to_vec(),
+                amount: 1_000_000_000_000_000_000,
+            }],
+            wrap_canister_id: receiver,
+            wrap_factory_address: TEST_WRAP_FACTORY_ADDRESS.to_vec(),
+            query_instruction_soft_limit: None,
+            update_instruction_soft_limit: None,
+        });
+        pic.upgrade_canister(
+            canister,
+            std::fs::read(wasm_path()).unwrap(),
+            Encode!(&init).unwrap(),
+            Some(test_caller()),
+        )
+        .unwrap();
+        let restored = update_request(&pic, canister, &id).unwrap();
+        assert_eq!(restored.mode, mode);
+        assert_eq!(restored.status, UpdateDispatchStatus::Queued);
+        let mut completed = None;
+        for _ in 0..50 {
+            pic.advance_time(Duration::from_millis(100));
+            pic.tick();
+            let request = update_request(&pic, canister, &id).unwrap();
+            if request.status == UpdateDispatchStatus::Dispatched {
+                completed = Some(request);
+                break;
+            }
+            assert!(
+                matches!(
+                    request.status,
+                    UpdateDispatchStatus::Queued | UpdateDispatchStatus::Dispatching
+                ),
+                "unexpected dispatch result: {request:?}"
+            );
+        }
+        let request = completed.expect("dispatch completed");
+        assert_eq!(request.error, None);
+        let reply = Decode!(&request.reply.unwrap(), UpdateEchoReply).unwrap();
+        assert_eq!(reply.caller, canister);
+        match mode {
+            UpdateMode::RawCandid => assert_eq!(reply.arg, original),
+            UpdateMode::Envelope => {
+                let envelope = Decode!(&reply.arg, UpdateEnvelope).unwrap();
+                assert_eq!(envelope.version, 1);
+                assert_eq!(envelope.request_id, id);
+                assert_eq!(envelope.ic_caller, Some(test_caller()));
+                assert_eq!(
+                    envelope.evm_sender,
+                    hash::derive_evm_address_from_principal(test_caller().as_slice()).unwrap()
+                );
+                assert_eq!(envelope.arg, original);
+            }
+        }
+        pic.advance_time(Duration::from_secs(60));
+        for _ in 0..5 {
+            pic.tick();
+        }
+        assert_eq!(receiver_calls(&pic, receiver), 1, "no duplicate dispatch");
+    }
+}
+
+#[test]
+fn icp_update_pending_raw_request_is_not_sent_after_allowlist_removal_or_mode_change() {
+    for change_mode in [false, true] {
+        let pic = PocketIc::new();
+        let canister = install_canister(&pic);
+        let receiver = update_receiver(&pic);
+        let allow = QueryPrecompileAllowArgs {
+            target: receiver,
+            method: "echo_raw".to_string(),
+        };
+        let bytes = call_update(
+            &pic,
+            canister,
+            "add_raw_update_precompile_allowed_method",
+            Encode!(&allow).unwrap(),
+        );
+        Decode!(&bytes, Result<(), String>).unwrap().unwrap();
+        let arg = Encode!(&42u64, &"public".to_string()).unwrap();
+        let id = enqueue_update(&pic, canister, receiver, "echo_raw", 0, &arg);
+        let bytes = call_update(
+            &pic,
+            canister,
+            "remove_update_precompile_allowed_method",
+            Encode!(&allow).unwrap(),
+        );
+        Decode!(&bytes, Result<(), String>).unwrap().unwrap();
+        if change_mode {
+            let bytes = call_update(
+                &pic,
+                canister,
+                "add_update_precompile_allowed_method",
+                Encode!(&allow).unwrap(),
+            );
+            Decode!(&bytes, Result<(), String>).unwrap().unwrap();
+        }
+        let mut failed = None;
+        for _ in 0..50 {
+            pic.advance_time(Duration::from_millis(100));
+            pic.tick();
+            let req = update_request(&pic, canister, &id).unwrap();
+            assert_eq!(req.mode, UpdateMode::RawCandid);
+            if req.status == UpdateDispatchStatus::DispatchFailed {
+                failed = Some(req);
+                break;
+            }
+        }
+        let failed = failed.expect("revoked request must fail");
+        assert_eq!(
+            failed.error.as_deref(),
+            Some(if change_mode {
+                "ic_update.mode_mismatch"
+            } else {
+                "ic_update.allowlist_miss"
+            })
+        );
+        assert_eq!(receiver_calls(&pic, receiver), 0);
+    }
+}
+
+#[test]
+fn icp_update_raw_registration_requires_controller_and_explicit_mode_switch() {
+    let pic = PocketIc::new();
+    let canister = install_canister(&pic);
+    let receiver = update_receiver(&pic);
+    let allow = QueryPrecompileAllowArgs {
+        target: receiver,
+        method: "echo_raw".to_string(),
+    };
+    let non_controller = Principal::self_authenticating(b"raw-non-controller");
+    let bytes = call_update_as(
+        &pic,
+        canister,
+        non_controller,
+        "add_raw_update_precompile_allowed_method",
+        Encode!(&allow).unwrap(),
+    );
+    assert_eq!(
+        Decode!(&bytes, Result<(), String>).unwrap(),
+        Err("auth.controller_required".to_string())
+    );
+    let raw_register = || {
+        Decode!(&call_update(&pic, canister,
+        "add_raw_update_precompile_allowed_method", Encode!(&allow).unwrap()), Result<(), String>)
+        .unwrap()
+    };
+    raw_register().unwrap();
+    raw_register().unwrap();
+    let bytes = call_update(
+        &pic,
+        canister,
+        "add_update_precompile_allowed_method",
+        Encode!(&allow).unwrap(),
+    );
+    assert_eq!(
+        Decode!(&bytes, Result<(), String>).unwrap(),
+        Err("ic_update.mode_conflict".to_string())
+    );
+    let bytes = call_update(
+        &pic,
+        canister,
+        "remove_update_precompile_allowed_method",
+        Encode!(&allow).unwrap(),
+    );
+    Decode!(&bytes, Result<(), String>).unwrap().unwrap();
+    let bytes = call_update(
+        &pic,
+        canister,
+        "add_update_precompile_allowed_method",
+        Encode!(&allow).unwrap(),
+    );
+    Decode!(&bytes, Result<(), String>).unwrap().unwrap();
+    assert_eq!(raw_register(), Err("ic_update.mode_conflict".to_string()));
+}

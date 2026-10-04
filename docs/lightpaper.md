@@ -98,33 +98,13 @@ Kasane uses an **EIP-1559-style fee model**. Key points:
    - Supported: Legacy / EIP-2930 / EIP-1559  
    - Not supported: EIP-4844 (type=0x03), EIP-7702 (type=0x04)
 
-### 6) (Future feature) Update/query precompile
+### 6) IC query transactions and update intents
 
-This section describes a **future design** and is **not available in the current Testnet Alpha**.  
-The goal is to allow EVM execution to reach ICP canister functionality via precompiles, in two tracks:
+The query precompile supports ordinary IC queries inside EVM transactions. Execution detects a request, discards provisional effects, reserves the transaction and its block context, then makes one replicated inter-canister call with a fixed two-second bounded wait. The saved response is injected into execution against the same starting state. The final state, nonce, fees, receipt and single-transaction block commit together.
 
-1. `update_call` via a router canister  
-2. Synchronous `query_call` during transaction execution (with strict time/size limits)
+Earlier ordinary transactions seal first. Later transactions remain queued while the query is pending. Native deposits pulled during this interval are credited after it finishes. Late or duplicate callbacks are ignored by attempt ID and phase; upgrade interrupts rather than resends the call. A controller-managed tx allowlist authorizes ordinary query methods only. Target implementations and upgrade controllers are part of the trust boundary because ordinary inter-canister calls cannot enforce a query-only method. Remote prices may change; contracts must check freshness, deadlines and slippage.
 
-Planned `update_call` flow:
-
-1. A precompile forwards requests from EVM transactions to a router canister
-2. The router canister performs an `update_call` to the target canister
-3. Results are returned in a traceable way (e.g., status/outbox-style reference)
-
-Planned `query_call` flow:
-
-1. During tx execution, synchronously call `query_call` on the target canister
-2. Enforce upper bounds on response time and response size
-3. Treat limit violations or invalid responses as EVM-side failures (revert / precompile error)
-
-For safe rollout, we plan a guarded introduction:
-
-1. Control the initial set of allowed target canisters/methods (phased release)
-2. Enforce rate limits and cycle budgets
-3. Explicit payload size limits and timeouts
-
-With this feature, Kasane aims to evolve from “an EVM-compatible chain” into an EVM execution environment that can directly incorporate IC functionality.
+Update intents are recorded by execution and dispatched after block commit. Their external effects do not participate in EVM revert atomicity. See [query tx operations](query-tx.md) for ABI, estimation and recovery.
 
 ### 7) (Work in progress) Wrap / Unwrap flow overview
 

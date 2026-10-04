@@ -66,6 +66,8 @@ pub type StateRootGcQueue = StableBTreeMap<u64, HashKey, VMem>;
 pub type NativeCreditRecords = StableBTreeMap<TxId, NativeCreditRecord, VMem>;
 
 pub struct StableState {
+    pub query_tx_state: StableCell<crate::chain_data::QueryTxState, VMem>,
+    pub tx_query_precompile_allowlist: QueryPrecompileAllowlist,
     pub accounts: Accounts,
     pub storage: Storage,
     pub codes: Codes,
@@ -292,9 +294,17 @@ pub fn init_stable_state() {
     let state_root_gc_state =
         StableCell::init(get_memory(AppMemoryId::StateRootGcState), GcStateV1::new());
     let native_credit_records = StableBTreeMap::init(get_memory(AppMemoryId::NativeCreditRecords));
+    let query_tx_state = StableCell::init(
+        get_memory(AppMemoryId::QueryTxState),
+        crate::chain_data::QueryTxState::default(),
+    );
+    let tx_query_precompile_allowlist =
+        StableBTreeMap::init(get_memory(AppMemoryId::TxQueryPrecompileAllowlist));
     let evm_state_epoch = StableCell::init(get_memory(AppMemoryId::EvmStateEpoch), 0u64);
     STABLE_STATE.with(|s| {
         *s.borrow_mut() = Some(StableState {
+            query_tx_state,
+            tx_query_precompile_allowlist,
             accounts,
             storage,
             codes,

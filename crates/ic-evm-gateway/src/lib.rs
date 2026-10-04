@@ -17,9 +17,9 @@ use evm_db::chain_data::runtime_defaults::{DEFAULT_BLOCK_GAS_LIMIT, DEFAULT_MIN_
 use evm_db::chain_data::DEFAULT_MINING_INTERVAL_MS;
 use evm_db::chain_data::MIN_PRUNE_MAX_OPS_PER_TICK;
 use evm_db::chain_data::{
-    BlockData, FeePolicyStored, IcpUpdateDispatchRequest, IcpUpdateRequestStatus, MigrationPhase,
-    MintSubmitStatus, OpsMode, ReceiptLike, RequestStatus as StoredRequestStatus, RuntimeConfigV1,
-    TxId, TxKind, TxLoc, TxLocKind, UnwrapDispatchRequest, UnwrapRequestStatus,
+    BlockData, FeePolicyStored, IcpUpdateDispatchRequest, IcpUpdateMode, IcpUpdateRequestStatus,
+    MigrationPhase, MintSubmitStatus, OpsMode, ReceiptLike, RequestStatus as StoredRequestStatus,
+    RuntimeConfigV1, TxId, TxKind, TxLoc, TxLocKind, UnwrapDispatchRequest, UnwrapRequestStatus,
     WrapEvmConfigStored, WrapPendingSubmission, WrapRequestStage, ICP_UPDATE_DECODE_FAILURE_CODE,
     LOG_CONFIG_FILTER_MAX, MAX_ICP_UPDATE_REQUESTS, UNWRAP_DECODE_FAILURE_CODE,
 };
@@ -45,6 +45,8 @@ use tiny_keccak::{Hasher, Keccak};
 use tracing::{error, info, warn};
 
 mod icrc21;
+mod query_tx;
+use query_tx::{require_execution_config_write, PendingQueryTxView};
 
 #[cfg(not(target_arch = "wasm32"))]
 use std::io::{self, Write};
@@ -141,8 +143,31 @@ pub struct PrecompileAllowedView {
     pub method: String,
 }
 
+#[derive(Clone, Copy, Debug, CandidType, Deserialize, Eq, PartialEq)]
+pub enum IcpUpdateModeView {
+    Envelope,
+    RawCandid,
+}
+
+impl From<IcpUpdateMode> for IcpUpdateModeView {
+    fn from(mode: IcpUpdateMode) -> Self {
+        match mode {
+            IcpUpdateMode::Envelope => Self::Envelope,
+            IcpUpdateMode::RawCandid => Self::RawCandid,
+        }
+    }
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize, Eq, PartialEq)]
+pub struct UpdatePrecompileAllowedView {
+    pub target: Principal,
+    pub method: String,
+    pub mode: IcpUpdateModeView,
+}
+
 #[derive(Clone, Debug, CandidType, Deserialize, Eq, PartialEq)]
 pub struct IcpUpdateRequestView {
+    pub mode: IcpUpdateModeView,
     pub request_id: Vec<u8>,
     pub tx_id: Vec<u8>,
     pub block_number: u64,
@@ -462,6 +487,20 @@ pub enum RequestStageView {
     DispatchFailed,
 }
 
+#[derive(Clone, Copy, Debug, CandidType, Deserialize, Eq, PartialEq)]
+pub enum RecoveryAction {
+    RetryWrap,
+    RetryNativeDeposit,
+    RefundWrap,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize)]
+pub struct WrapRetryAsset {
+    pub asset_id: Principal,
+    pub amount: Nat,
+    pub caller: Principal,
+}
+
 #[derive(Clone, Debug, CandidType, Deserialize)]
 pub struct RequestOverview {
     pub kind: RequestKind,
@@ -474,6 +513,8 @@ pub struct RequestOverview {
     pub mint_tx_id: Option<Vec<u8>>,
     pub withdraw_ledger_tx_id: Option<Vec<u8>>,
     pub recoverable: bool,
+    pub recovery_action: Option<RecoveryAction>,
+    pub retry_asset: Option<WrapRetryAsset>,
     pub withdrawn: bool,
     pub withdraw_in_progress: bool,
     pub withdraw_error: Option<RequestErrorView>,
@@ -644,18 +685,19 @@ fn is_query_precompile_allowed(target: &[u8], method: &str) -> bool {
     with_state(|state| state.query_precompile_allowlist.get(&key).is_some())
 }
 
-fn is_update_precompile_allowed(target: &[u8], method: &str) -> bool {
+fn update_precompile_mode(target: &[u8], method: &str) -> Option<IcpUpdateMode> {
     if target.is_empty()
         || target.len() > 29
         || method.is_empty()
         || method.len() > 64
         || !method.is_ascii()
     {
-        return false;
+        return None;
     }
     let target = Principal::from_slice(target);
     let key = precompile_allow_key_for_principal(target, method);
-    with_state(|state| state.icp_update_precompile_allowlist.get(&key).is_some())
+    with_state(|state| state.icp_update_precompile_allowlist.get(&key))
+        .and_then(IcpUpdateMode::from_u8)
 }
 
 fn validate_evm_address(bytes: &[u8], code: &str) -> Result<(), String> {
@@ -1395,6 +1437,8 @@ fn ensure_wrap_request_before_fee(
                 stage: WrapRequestStage::FeePending,
                 updated_at: now,
                 mint_nonce: None,
+                worker_generation: None,
+                mint_rejection_confirmed: None,
                 mint_submitted_at_time: 0,
                 mint_submit_status: MintSubmitStatus::NotSubmitted,
             },
@@ -1649,6 +1693,16 @@ async fn quote_native_withdrawal(
     })
 }
 
+fn unwrap_readiness(balance: &Nat, allowance: &Nat, amount: &Nat) -> UnwrapReadiness {
+    if balance.0 < amount.0 {
+        UnwrapReadiness::InsufficientBalance
+    } else if allowance.0 < amount.0 {
+        UnwrapReadiness::InsufficientAllowance
+    } else {
+        UnwrapReadiness::Ready
+    }
+}
+
 #[ic_cdk::query]
 fn get_unwrap_requirements(
     args: GetUnwrapRequirementsArgs,
@@ -1683,21 +1737,7 @@ fn get_unwrap_requirements(
     let balance = fetch_erc20_balance(&token_address, &args.caller_evm_address)?;
     let allowance =
         fetch_erc20_allowance(&token_address, &args.caller_evm_address, &factory_address)?;
-    let balance_u128 = nat_to_u128(&balance)
-        .ok_or_else(|| api_internal("erc20.balance_out_of_range", "erc20.balance_out_of_range"))?;
-    let allowance_u128 = nat_to_u128(&allowance).ok_or_else(|| {
-        api_internal(
-            "erc20.allowance_out_of_range",
-            "erc20.allowance_out_of_range",
-        )
-    })?;
-    let readiness = if balance_u128 < amount {
-        UnwrapReadiness::InsufficientBalance
-    } else if allowance_u128 < amount {
-        UnwrapReadiness::InsufficientAllowance
-    } else {
-        UnwrapReadiness::Ready
-    };
+    let readiness = unwrap_readiness(&balance, &allowance, &Nat::from(amount));
     Ok(GetUnwrapRequirementsOk {
         factory_address,
         wrapped_token_address: Some(token_address),
@@ -1973,6 +2013,8 @@ fn ensure_native_deposit_request_before_fee(
                 stage: WrapRequestStage::FeePending,
                 updated_at: now,
                 mint_nonce: None,
+                worker_generation: None,
+                mint_rejection_confirmed: None,
                 mint_submitted_at_time: 0,
                 mint_submit_status: MintSubmitStatus::NotSubmitted,
             },
@@ -2010,6 +2052,14 @@ fn record_native_deposit_pulled(
         let Some(mut req) = state.wrap_requests.get(&request_id) else {
             return Err("request.not_found".to_string());
         };
+        if req
+            .result
+            .pull_ledger_tx_id
+            .as_ref()
+            .is_some_and(|saved| saved != &pull_ledger_tx_id)
+        {
+            return Err("wrap.pull_identity_conflict".to_string());
+        }
         req.result.pull_ledger_tx_id = Some(pull_ledger_tx_id);
         req.result.stage = WrapRequestStage::Pulled;
         req.result.updated_at = current_time_nanos();
@@ -2025,6 +2075,10 @@ fn finalize_native_deposit_credit(
     evm_recipient: &[u8],
     amount_wei: [u8; 32],
 ) -> Result<(), ApiError> {
+    if chain::pending_query_tx().is_some() {
+        enqueue_wrap_request_once(request_id);
+        return Ok(());
+    }
     let outcome = {
         let mut recipient = [0u8; 20];
         recipient.copy_from_slice(evm_recipient);
@@ -2446,12 +2500,20 @@ fn get_query_precompile_allowlist() -> Vec<PrecompileAllowedView> {
 }
 
 #[ic_cdk::query]
-fn get_update_precompile_allowlist() -> Vec<PrecompileAllowedView> {
+fn get_update_precompile_allowlist() -> Vec<UpdatePrecompileAllowedView> {
     with_state(|state| {
         state
             .icp_update_precompile_allowlist
             .iter()
-            .filter_map(|entry| decode_precompile_allow_key_for_principal(entry.key()))
+            .filter_map(|entry| {
+                let allowed = decode_precompile_allow_key_for_principal(entry.key())?;
+                let mode = IcpUpdateMode::from_u8(entry.value())?;
+                Some(UpdatePrecompileAllowedView {
+                    target: allowed.target,
+                    method: allowed.method,
+                    mode: mode.into(),
+                })
+            })
             .collect()
     })
 }
@@ -2491,6 +2553,16 @@ fn get_request(request_id: Vec<u8>) -> Option<RequestOverview> {
                 mint_tx_id: result.mint_tx_id.clone(),
                 withdraw_ledger_tx_id: result.withdraw_ledger_tx_id.clone(),
                 recoverable: result.mint_failed_recoverable,
+                recovery_action: wrap_recovery_action(&req),
+                retry_asset: if wrap_recovery_action(&req) == Some(RecoveryAction::RetryWrap) {
+                    Some(WrapRetryAsset {
+                        asset_id: principal_from_stored_bytes(&req.asset_id).ok()?,
+                        amount: Nat(BigUint::from_bytes_be(&req.amount)),
+                        caller: principal_from_stored_bytes(&req.caller).ok()?,
+                    })
+                } else {
+                    None
+                },
                 withdrawn: result.withdrawn,
                 withdraw_in_progress: result.withdraw_in_progress,
                 withdraw_error: result
@@ -2521,6 +2593,8 @@ fn get_request(request_id: Vec<u8>) -> Option<RequestOverview> {
                 mint_tx_id: None,
                 withdraw_ledger_tx_id: None,
                 recoverable: req.status == UnwrapRequestStatus::DispatchFailed,
+                recovery_action: None,
+                retry_asset: None,
                 withdrawn: false,
                 withdraw_in_progress: req.status == UnwrapRequestStatus::Dispatching,
                 withdraw_error: req.error_code.as_deref().map(request_error_view),
@@ -2613,6 +2687,7 @@ fn resolve_icp_update_request_internal(
 fn icp_update_request_to_view(req: IcpUpdateDispatchRequest) -> IcpUpdateRequestView {
     let target = Principal::from_slice(&req.target);
     IcpUpdateRequestView {
+        mode: req.mode.into(),
         request_id: req.request_id.0.to_vec(),
         tx_id: req.tx_id.0.to_vec(),
         block_number: req.block_number,
@@ -2633,6 +2708,130 @@ fn icp_update_request_to_view(req: IcpUpdateDispatchRequest) -> IcpUpdateRequest
     }
 }
 
+fn wrap_mint_refund_safe(req: &evm_db::chain_data::WrapStoredRequest) -> bool {
+    match req.result.mint_tx_id.as_ref() {
+        None => {
+            req.result.mint_submit_status == MintSubmitStatus::NotSubmitted
+                && (req.result.mint_nonce.is_none()
+                    || req.result.mint_rejection_confirmed == Some(true))
+        }
+        Some(bytes) => {
+            let Some(tx_id) = tx_id_from_bytes(bytes.clone()) else {
+                return false;
+            };
+            match chain::get_receipt(&tx_id) {
+                Some(receipt) => receipt.status != 1,
+                None => chain::get_tx_loc(&tx_id).is_some_and(|loc| loc.kind == TxLocKind::Dropped),
+            }
+        }
+    }
+}
+
+fn wrap_retry_eligible(req: &evm_db::chain_data::WrapStoredRequest) -> bool {
+    req.gas_limit != 0
+        && req.result.fee_ledger_tx_id.is_some()
+        && req.result.pull_ledger_tx_id.is_none()
+        && req.result.mint_tx_id.is_none()
+        && req.result.mint_nonce.is_none()
+        && req.result.mint_submit_status == MintSubmitStatus::NotSubmitted
+        && !req.result.withdrawn
+        && !req.result.withdraw_in_progress
+        && req.result.withdraw_ledger_tx_id.is_none()
+        && !req
+            .result
+            .error_code
+            .as_deref()
+            .is_some_and(|code| code.contains("too_old") || code == "wrap.generation_exhausted")
+}
+
+fn wrap_recovery_action(req: &evm_db::chain_data::WrapStoredRequest) -> Option<RecoveryAction> {
+    if req.result.status != StoredRequestStatus::Failed
+        || req.result.withdrawn
+        || req.result.withdraw_in_progress
+        || req.result.withdraw_ledger_tx_id.is_some()
+    {
+        return None;
+    }
+    if req.gas_limit == 0 {
+        return (req.result.mint_failed_recoverable && req.result.pull_ledger_tx_id.is_some())
+            .then_some(RecoveryAction::RetryNativeDeposit);
+    }
+    if wrap_retry_eligible(req) {
+        return Some(RecoveryAction::RetryWrap);
+    }
+    (req.result.mint_failed_recoverable
+        && req.result.pull_ledger_tx_id.is_some()
+        && wrap_mint_refund_safe(req))
+    .then_some(RecoveryAction::RefundWrap)
+}
+
+// A new owner invalidates callbacks committed before an inter-canister await.
+fn advance_wrap_generation(req: &mut evm_db::chain_data::WrapStoredRequest) -> bool {
+    match req.result.worker_generation.unwrap_or(0).checked_add(1) {
+        Some(next) => {
+            req.result.worker_generation = Some(next);
+            true
+        }
+        None => {
+            req.result.status = StoredRequestStatus::Failed;
+            req.result.stage = WrapRequestStage::Failed;
+            req.result.error_code = Some("wrap.generation_exhausted".to_string());
+            req.result.mint_failed_recoverable = false;
+            false
+        }
+    }
+}
+
+fn requeue_failed_wrap(request_id: TxId, caller: Principal) -> Result<(), String> {
+    let queued = with_state_mut(|state| {
+        let mut req = state
+            .wrap_requests
+            .get(&request_id)
+            .ok_or("request.not_found")?;
+        if req.caller != caller.as_slice() || caller == Principal::anonymous() {
+            return Err("request.unauthorized".to_string());
+        }
+        if !wrap_retry_eligible(&req) {
+            return Err("wrap.retry_invalid_state".to_string());
+        }
+        if matches!(
+            req.result.status,
+            StoredRequestStatus::Queued | StoredRequestStatus::Running
+        ) {
+            return Ok(false);
+        }
+        if req.result.status != StoredRequestStatus::Failed {
+            return Err("wrap.retry_invalid_state".to_string());
+        }
+        if !advance_wrap_generation(&mut req) {
+            state.wrap_requests.insert(request_id, req);
+            return Err("wrap.generation_exhausted".to_string());
+        }
+        req.result.status = StoredRequestStatus::Queued;
+        req.result.stage = WrapRequestStage::FeeCollected;
+        req.result.error_code = None;
+        req.result.updated_at = current_time_nanos();
+        state.wrap_requests.insert(request_id, req);
+        Ok(true)
+    })?;
+    if queued {
+        enqueue_wrap_request_once(request_id);
+    }
+    Ok(())
+}
+
+#[ic_cdk::update]
+fn retry_wrap_request(args: RetryRequestArgs) -> Result<RequestOverview, ApiError> {
+    reject_data_plane_write()?;
+    let request_id = tx_id_from_bytes(args.request_id)
+        .ok_or_else(|| api_invalid_argument("arg.request_id_invalid", "arg.request_id_invalid"))?;
+    requeue_failed_wrap(request_id, ic_cdk::api::msg_caller()).map_err(|e| api_rejected(&e, &e))?;
+    #[cfg(target_arch = "wasm32")]
+    schedule_wrap_worker();
+    get_request(request_id.0.to_vec())
+        .ok_or_else(|| api_internal("request.not_found", "request.not_found"))
+}
+
 #[ic_cdk::update]
 fn retry_request(args: RetryRequestArgs) -> Result<RequestOverview, ApiError> {
     reject_data_plane_write()?;
@@ -2647,6 +2846,8 @@ fn retry_native_withdrawal(args: RetryRequestArgs) -> Result<RequestOverview, Ap
 
 #[ic_cdk::update]
 fn retry_native_deposit(args: RetryRequestArgs) -> Result<RequestOverview, ApiError> {
+    chain::require_no_pending_query_tx()
+        .map_err(|_| api_rejected("ic_query.tx_busy", "ic_query.tx_busy"))?;
     reject_data_plane_write()?;
     let request_id = tx_id_from_bytes(args.request_id)
         .ok_or_else(|| api_invalid_argument("arg.request_id_invalid", "arg.request_id_invalid"))?;
@@ -2699,12 +2900,11 @@ fn retry_native_deposit(args: RetryRequestArgs) -> Result<RequestOverview, ApiEr
         .ok_or_else(|| api_internal("request.not_found", "request.not_found"))
 }
 
-#[ic_cdk::update]
-async fn recover_failed_wrap(args: RecoverFailedWrapArgs) -> Result<RequestOverview, ApiError> {
-    reject_data_plane_write()?;
-    let request_id = tx_id_from_bytes(args.request_id)
-        .ok_or_else(|| api_invalid_argument("arg.request_id_invalid", "arg.request_id_invalid"))?;
-    let req_result = with_state_mut(|state| {
+fn reserve_wrap_refund(request_id: TxId) -> Result<evm_db::chain_data::WrapStoredRequest, String> {
+    // Receipt reads borrow state too. No await separates proof from reservation.
+    let mint_refund_safe = with_state(|state| state.wrap_requests.get(&request_id))
+        .is_some_and(|req| wrap_mint_refund_safe(&req));
+    with_state_mut(|state| {
         let Some(mut req) = state.wrap_requests.get(&request_id) else {
             return Err("request.not_found".to_string());
         };
@@ -2712,6 +2912,7 @@ async fn recover_failed_wrap(args: RecoverFailedWrapArgs) -> Result<RequestOverv
             || req.result.status != StoredRequestStatus::Failed
             || !req.result.mint_failed_recoverable
             || req.result.pull_ledger_tx_id.is_none()
+            || !mint_refund_safe
         {
             return Err("wrap.recover_invalid_state".to_string());
         }
@@ -2721,12 +2922,24 @@ async fn recover_failed_wrap(args: RecoverFailedWrapArgs) -> Result<RequestOverv
         if req.result.withdrawn || req.result.withdraw_ledger_tx_id.is_some() {
             return Err("wrap.recover_already_withdrawn".to_string());
         }
+        if !advance_wrap_generation(&mut req) {
+            state.wrap_requests.insert(request_id, req);
+            return Err("wrap.generation_exhausted".to_string());
+        }
         req.result.withdraw_in_progress = true;
         req.result.stage = WrapRequestStage::Refunding;
         req.result.updated_at = current_time_nanos();
         state.wrap_requests.insert(request_id, req.clone());
         Ok(req)
-    });
+    })
+}
+
+#[ic_cdk::update]
+async fn recover_failed_wrap(args: RecoverFailedWrapArgs) -> Result<RequestOverview, ApiError> {
+    reject_data_plane_write()?;
+    let request_id = tx_id_from_bytes(args.request_id)
+        .ok_or_else(|| api_invalid_argument("arg.request_id_invalid", "arg.request_id_invalid"))?;
+    let req_result = reserve_wrap_refund(request_id);
     let req = req_result.map_err(|err| api_rejected(&err, &err))?;
 
     let caller =
@@ -2888,7 +3101,7 @@ fn set_fee_policy(args: FeePolicyArgs) -> Result<(), String> {
     if let Some(reason) = reject_anonymous_update() {
         return Err(reason);
     }
-    require_control_plane_write()?;
+    require_execution_config_write()?;
     validate_set_fee_policy(&args)?;
     with_state_mut(|state| {
         state.wrap_fee_policy.set(FeePolicyStored {
@@ -2905,7 +3118,7 @@ fn set_allowed_assets(assets: Vec<Principal>) -> Result<(), String> {
     if let Some(reason) = reject_anonymous_update() {
         return Err(reason);
     }
-    require_control_plane_write()?;
+    require_execution_config_write()?;
     validate_allowed_assets(&assets)?;
     with_state_mut(|state| {
         while let Some(entry) = state.wrap_allowed_assets.range(..).next() {
@@ -2926,7 +3139,7 @@ fn add_query_precompile_allowed_method(args: PrecompileAllowArgs) -> Result<(), 
     if let Some(reason) = reject_anonymous_update() {
         return Err(reason);
     }
-    require_control_plane_write()?;
+    require_execution_config_write()?;
     validate_query_precompile_allow_args(&args)?;
     let key = precompile_allow_key_for_principal(args.target, &args.method);
     with_state_mut(|state| {
@@ -2940,7 +3153,7 @@ fn remove_query_precompile_allowed_method(args: PrecompileAllowArgs) -> Result<(
     if let Some(reason) = reject_anonymous_update() {
         return Err(reason);
     }
-    require_control_plane_write()?;
+    require_execution_config_write()?;
     validate_query_precompile_allow_args(&args)?;
     let key = precompile_allow_key_for_principal(args.target, &args.method);
     with_state_mut(|state| {
@@ -2951,16 +3164,47 @@ fn remove_query_precompile_allowed_method(args: PrecompileAllowArgs) -> Result<(
 
 #[ic_cdk::update]
 fn add_update_precompile_allowed_method(args: PrecompileAllowArgs) -> Result<(), String> {
+    register_update_precompile_allowed_method(args, IcpUpdateMode::Envelope)
+}
+
+#[ic_cdk::update]
+fn add_raw_update_precompile_allowed_method(args: PrecompileAllowArgs) -> Result<(), String> {
+    register_update_precompile_allowed_method(args, IcpUpdateMode::RawCandid)
+}
+
+fn register_update_precompile_allowed_method(
+    args: PrecompileAllowArgs,
+    mode: IcpUpdateMode,
+) -> Result<(), String> {
     if let Some(reason) = reject_anonymous_update() {
         return Err(reason);
     }
-    require_control_plane_write()?;
+    require_execution_config_write()?;
     validate_update_precompile_allow_args(&args)?;
     let key = precompile_allow_key_for_principal(args.target, &args.method);
+    store_update_precompile_allowed_method(key, mode)
+}
+
+fn store_update_precompile_allowed_method(key: Vec<u8>, mode: IcpUpdateMode) -> Result<(), String> {
     with_state_mut(|state| {
-        state.icp_update_precompile_allowlist.insert(key, 1);
-    });
-    Ok(())
+        let existing = state
+            .icp_update_precompile_allowlist
+            .get(&key)
+            .map(u64::from);
+        if existing
+            .is_some_and(|value| !verified_core::kasane_precompiles::icp_update_mode_valid(value))
+            || !verified_core::kasane_precompiles::icp_update_mode_registration_allowed(
+                existing.unwrap_or(0),
+                u64::from(mode.to_u8()),
+            )
+        {
+            return Err("ic_update.mode_conflict".to_string());
+        }
+        state
+            .icp_update_precompile_allowlist
+            .insert(key, mode.to_u8());
+        Ok(())
+    })
 }
 
 #[ic_cdk::update]
@@ -2968,7 +3212,7 @@ fn remove_update_precompile_allowed_method(args: PrecompileAllowArgs) -> Result<
     if let Some(reason) = reject_anonymous_update() {
         return Err(reason);
     }
-    require_control_plane_write()?;
+    require_execution_config_write()?;
     validate_update_precompile_allow_args(&args)?;
     let key = precompile_allow_key_for_principal(args.target, &args.method);
     with_state_mut(|state| {
@@ -3005,6 +3249,7 @@ fn post_upgrade(args: Option<InitArgs>) {
     }
     observe_cycles();
     let data_plane_enabled = reject_write_reason().is_none();
+    chain::interrupt_query_tx_after_upgrade();
     reset_mining_schedule_after_upgrade();
     restore_unwrap_dispatch_after_upgrade(data_plane_enabled);
     restore_icp_update_dispatch_after_upgrade(data_plane_enabled);
@@ -3020,6 +3265,7 @@ fn reset_mining_schedule_after_upgrade() {
         let mut chain_state = *state.chain_state.get();
         // upgrade後はタイマー実体が失われるため、予約フラグを初期化して再登録可能にする。
         chain_state.mining_scheduled = false;
+        chain_state.is_producing = false;
         state.chain_state.set(chain_state);
     });
 }
@@ -3082,12 +3328,17 @@ fn repair_stale_operations(now: u64) {
                     });
                     continue;
                 }
-                if req.result.status == StoredRequestStatus::Running
+                if req.gas_limit != 0
+                    && req.result.status == StoredRequestStatus::Running
                     && req.result.fee_ledger_tx_id.is_some()
                     && req.result.updated_at <= cutoff
                     && req.result.mint_tx_id.is_none()
                     && req.result.mint_submit_status != MintSubmitStatus::Submitted
                 {
+                    if !advance_wrap_generation(&mut req) {
+                        state.wrap_requests.insert(request_id, req);
+                        continue;
+                    }
                     req.result.status = StoredRequestStatus::Queued;
                     req.result.updated_at = now;
                     let _ = sanitize_wrap_request(req.clone()).map(|clean| {
@@ -3196,6 +3447,13 @@ fn recover_wrap_worker_state_after_upgrade() -> bool {
             if recover_interrupted_wrap_fee(&mut req, current_time_nanos()) {
                 fee_recoveries.push((request_id, req.clone()));
             }
+            if req.gas_limit == 0
+                && req.result.status == StoredRequestStatus::Running
+                && req.result.stage == WrapRequestStage::Pulled
+                && req.result.pull_ledger_tx_id.is_some()
+            {
+                candidates.push(request_id);
+            }
             if req.gas_limit != 0
                 && req.result.status == StoredRequestStatus::Running
                 && req.result.mint_submit_status == MintSubmitStatus::Submitted
@@ -3232,12 +3490,17 @@ fn recover_wrap_worker_state_after_upgrade() -> bool {
                 ) {
                     continue;
                 }
-                if req.result.status == StoredRequestStatus::Running {
+                // Native deposits resume credit from Running/Pulled, without a wrap claim.
+                if req.gas_limit != 0 && req.result.status == StoredRequestStatus::Running {
                     if req.result.mint_tx_id.is_some()
                         || req.result.mint_submit_status == MintSubmitStatus::Submitted
                     {
                         should_queue = false;
                     } else {
+                        if !advance_wrap_generation(&mut req) {
+                            state.wrap_requests.insert(request_id, req);
+                            continue;
+                        }
                         req.result.status = StoredRequestStatus::Queued;
                     }
                     state.wrap_requests.insert(request_id, req);
@@ -3406,11 +3669,23 @@ struct InspectMethodPolicy {
 
 const INSPECT_METHOD_POLICIES: &[InspectMethodPolicy] = &[
     InspectMethodPolicy {
+        method: "add_tx_query_precompile_allowed_method",
+        payload_limit: INSPECT_MANAGE_PAYLOAD_LIMIT,
+    },
+    InspectMethodPolicy {
+        method: "remove_tx_query_precompile_allowed_method",
+        payload_limit: INSPECT_MANAGE_PAYLOAD_LIMIT,
+    },
+    InspectMethodPolicy {
         method: "add_query_precompile_allowed_method",
         payload_limit: INSPECT_MANAGE_PAYLOAD_LIMIT,
     },
     InspectMethodPolicy {
         method: "add_update_precompile_allowed_method",
+        payload_limit: INSPECT_MANAGE_PAYLOAD_LIMIT,
+    },
+    InspectMethodPolicy {
+        method: "add_raw_update_precompile_allowed_method",
         payload_limit: INSPECT_MANAGE_PAYLOAD_LIMIT,
     },
     InspectMethodPolicy {
@@ -3459,6 +3734,10 @@ const INSPECT_METHOD_POLICIES: &[InspectMethodPolicy] = &[
     },
     InspectMethodPolicy {
         method: "retry_native_withdrawal",
+        payload_limit: INSPECT_MANAGE_PAYLOAD_LIMIT,
+    },
+    InspectMethodPolicy {
+        method: "retry_wrap_request",
         payload_limit: INSPECT_MANAGE_PAYLOAD_LIMIT,
     },
     InspectMethodPolicy {
@@ -3661,6 +3940,7 @@ fn credit_native_deposit_internal(
     amount: [u8; 32],
 ) -> Result<(), ApiError> {
     chain::credit_native_deposit(request, to, amount).map_err(|err| match err {
+        chain::ChainError::QueryTxBusy => api_rejected("ic_query.tx_busy", "ic_query.tx_busy"),
         chain::ChainError::TxAlreadySeen => api_rejected(
             "native_deposit.idempotency_mismatch",
             "native_deposit.idempotency_mismatch",
@@ -3922,7 +4202,7 @@ fn set_prune_policy(policy: PrunePolicyView) -> Result<(), String> {
         return Err(reason);
     }
     validate_prune_policy_input(&policy)?;
-    require_control_plane_write()?;
+    require_execution_config_write()?;
     let core_policy = evm_db::chain_data::PrunePolicy {
         target_bytes: policy.target_bytes,
         retain_days: policy.retain_days,
@@ -3959,7 +4239,7 @@ fn set_pruning_enabled(enabled: bool) -> Result<(), String> {
     if let Some(reason) = reject_anonymous_update() {
         return Err(reason);
     }
-    require_control_plane_write()?;
+    require_execution_config_write()?;
     chain::set_pruning_enabled(enabled).map_err(|_| "set_pruning_enabled failed".to_string())?;
     Ok(())
 }
@@ -5176,6 +5456,7 @@ fn run_cycle_observer_once() -> CycleObserverTickOutcome {
         repair_stale_operations(current_time_nanos());
     }
     if schedule_mining_called {
+        repair_query_mining_schedule();
         schedule_mining();
     }
     info!(
@@ -5205,7 +5486,21 @@ fn schedule_mining() {
     schedule_mining_with_timer(install_mining_timer, reject_write_reason);
 }
 
+fn repair_query_mining_schedule() {
+    if chain::pending_query_tx()
+        .is_some_and(|job| job.phase == evm_db::chain_data::QueryTxPhase::Ready)
+    {
+        // A trapped timer rolls its scheduling flags back; the saved reply must remain executable.
+        reset_mining_schedule_after_upgrade();
+    }
+}
+
 fn schedule_mining_with_timer(timer_scheduler: fn(u64), reject_provider: fn() -> Option<String>) {
+    if chain::pending_query_tx()
+        .is_some_and(|j| j.phase == evm_db::chain_data::QueryTxPhase::Calling)
+    {
+        return;
+    }
     if reject_provider().is_some() {
         return;
     }
@@ -5220,7 +5515,19 @@ fn schedule_mining_with_timer(timer_scheduler: fn(u64), reject_provider: fn() ->
         }
         chain_state.mining_scheduled = true;
         state.chain_state.set(chain_state);
-        Some(DEFAULT_MINING_INTERVAL_MS)
+        Some(
+            if state
+                .query_tx_state
+                .get()
+                .session
+                .as_ref()
+                .is_some_and(|job| job.phase == evm_db::chain_data::QueryTxPhase::Ready)
+            {
+                0
+            } else {
+                DEFAULT_MINING_INTERVAL_MS
+            },
+        )
     });
     if let Some(interval_ms) = interval_ms {
         timer_scheduler(interval_ms);
@@ -5238,7 +5545,7 @@ fn should_prune_on_block_event(block_number: u64) -> bool {
 }
 
 fn maybe_prune_on_block_event(block_number: u64) {
-    if !should_prune_on_block_event(block_number) {
+    if chain::pending_query_tx().is_some() || !should_prune_on_block_event(block_number) {
         return;
     }
     if let Err(err) = chain::prune_tick() {
@@ -5261,6 +5568,7 @@ fn mining_tick_with_timer(timer_scheduler: fn(u64), reject_provider: fn() -> Opt
         });
         return;
     }
+    chain::expire_query_tx(current_time_nanos());
     let should_produce = evm_db::stable_state::with_state_mut(|state| {
         let mut chain_state = *state.chain_state.get();
         chain_state.mining_scheduled = false;
@@ -5298,6 +5606,9 @@ fn mining_tick_with_timer(timer_scheduler: fn(u64), reject_provider: fn() -> Opt
                 schedule_icp_update_dispatch();
                 maybe_prune_on_block_event(outcome.block.number);
             }
+            Err(chain::ChainError::QueryTxBusy) => {
+                query_tx::schedule_query_dispatch();
+            }
             Err(chain::ChainError::NoExecutableTx) | Err(chain::ChainError::QueueEmpty) => {}
             Err(err) => {
                 MINING_ERROR_COUNT.fetch_add(1, Ordering::Relaxed);
@@ -5306,6 +5617,17 @@ fn mining_tick_with_timer(timer_scheduler: fn(u64), reject_provider: fn() -> Opt
         }
     }
     settle_submitted_wrap_mint_receipts(current_time_nanos());
+    if chain::pending_query_tx().is_some_and(|job| {
+        matches!(
+            job.phase,
+            evm_db::chain_data::QueryTxPhase::Waiting | evm_db::chain_data::QueryTxPhase::Calling
+        )
+    }) {
+        return;
+    }
+    if chain::pending_query_tx().is_none() && with_state(|s| !s.wrap_queue.is_empty()) {
+        schedule_wrap_worker();
+    }
     let has_ready_tx = with_state(|state| !state.ready_queue.is_empty());
     let scan_pending = WRAP_RECEIPT_SCAN_CURSOR.with(|cursor| cursor.get().is_some())
         || WRAP_RECEIPT_SCAN_DIRTY.with(|dirty| dirty.get());
@@ -5426,11 +5748,20 @@ fn record_icp_update_requests_from_block(tx_ids: &[TxId]) {
                 if state.icp_update_requests.get(&request_id).is_some() {
                     return;
                 }
+                let key = precompile_allow_key(&intent.target, &intent.method);
+                let Some(mode) = state
+                    .icp_update_precompile_allowlist
+                    .get(&key)
+                    .and_then(IcpUpdateMode::from_u8)
+                else {
+                    return;
+                };
                 let now = current_time_nanos();
                 store_icp_update_request(
                     state,
                     request_id,
                     IcpUpdateDispatchRequest {
+                        mode,
                         target: intent.target.clone(),
                         method: intent.method.clone(),
                         arg: intent.arg.clone(),
@@ -5961,23 +6292,80 @@ fn settle_submitted_wrap_mint_receipts(now: u64) -> u64 {
     settled
 }
 
+fn claim_wrap_request(request_id: TxId) -> Option<evm_db::chain_data::WrapStoredRequest> {
+    with_state_mut(|state| {
+        let mut req = state.wrap_requests.get(&request_id)?;
+        if req.gas_limit == 0
+            || req.result.status != StoredRequestStatus::Queued
+            || req.result.fee_ledger_tx_id.is_none()
+            || req.result.mint_tx_id.is_some()
+            || req.result.withdrawn
+            || req.result.withdraw_in_progress
+        {
+            return None;
+        }
+        if !advance_wrap_generation(&mut req) {
+            state.wrap_requests.insert(request_id, req);
+            return None;
+        }
+        req.result.status = StoredRequestStatus::Running;
+        req.result.updated_at = current_time_nanos();
+        state.wrap_requests.insert(request_id, req.clone());
+        Some(req)
+    })
+}
+
+fn wrap_attempt_current(req: &evm_db::chain_data::WrapStoredRequest, generation: u64) -> bool {
+    req.result.worker_generation.unwrap_or(0) == generation
+        && req.result.status == StoredRequestStatus::Running
+        && !req.result.withdrawn
+        && !req.result.withdraw_in_progress
+}
+
+fn current_wrap_attempt(
+    request_id: TxId,
+    generation: u64,
+) -> Result<evm_db::chain_data::WrapStoredRequest, String> {
+    with_state(|state| state.wrap_requests.get(&request_id))
+        .filter(|req| wrap_attempt_current(req, generation))
+        .ok_or_else(|| "wrap.attempt_superseded".to_string())
+}
+
 #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
 async fn wrap_worker_tick() {
     WRAP_WORKER_SCHEDULED.store(false, Ordering::SeqCst);
+    if chain::pending_query_tx().is_some() {
+        return;
+    }
     while let Some(request_id) = dequeue_wrap_request() {
-        let req = with_state_mut(|state| {
-            let mut req = state.wrap_requests.get(&request_id)?;
-            req.result.fee_ledger_tx_id.as_ref()?;
-            req.result.status = StoredRequestStatus::Running;
-            req.result.updated_at = current_time_nanos();
-            state.wrap_requests.insert(request_id, req.clone());
-            Some(req)
+        // Deferred deposits remain Running/Pulled and cannot use the Queued wrap claim.
+        let deposit = with_state(|state| state.wrap_requests.get(&request_id)).filter(|req| {
+            req.gas_limit == 0
+                && req.result.status == StoredRequestStatus::Running
+                && req.result.stage == WrapRequestStage::Pulled
+                && req.result.fee_ledger_tx_id.is_some()
+                && req.result.pull_ledger_tx_id.is_some()
+                && req.result.mint_tx_id.is_none()
+                && !req.result.withdrawn
+                && !req.result.withdraw_in_progress
         });
-        let Some(req) = req else {
+        if let Some(req) = deposit {
+            if let Ok(amount) =
+                native_deposit_amount_wei_bytes(&Nat(BigUint::from_bytes_be(&req.amount)))
+            {
+                let _ = finalize_native_deposit_credit(request_id, &req.evm_recipient, amount);
+            }
+            if with_state(|s| !s.wrap_queue.is_empty()) {
+                schedule_wrap_worker();
+            }
+            break;
+        }
+        let Some(req) = claim_wrap_request(request_id) else {
             continue;
         };
+        let generation = req.result.worker_generation.unwrap_or(0);
         let outcome = execute_wrap_request(request_id, req).await;
-        apply_wrap_execution_outcome(request_id, outcome);
+        apply_wrap_execution_outcome(request_id, generation, outcome);
         if with_state(|state| !state.wrap_queue_meta.get().is_empty()) {
             schedule_wrap_worker();
         }
@@ -5999,6 +6387,7 @@ async fn execute_wrap_request(
     request_id: TxId,
     req: evm_db::chain_data::WrapStoredRequest,
 ) -> WrapExecutionOutcome {
+    let generation = req.result.worker_generation.unwrap_or(0);
     let caller = match principal_from_stored_bytes(&req.caller) {
         Ok(caller) => caller,
         Err(code) => return wrap_failed(None, code, false),
@@ -6012,6 +6401,7 @@ async fn execute_wrap_request(
         None => {
             mark_wrap_stage(
                 request_id,
+                generation,
                 WrapRequestStage::PullPending,
                 StoredRequestStatus::Running,
             );
@@ -6023,9 +6413,14 @@ async fn execute_wrap_request(
                 req.pull_created_at_time,
             )
             .await;
+            if let Err(code) = current_wrap_attempt(request_id, generation) {
+                return wrap_failed(None, code, false);
+            }
             match pull {
                 Ok(tx_id) => {
-                    if let Err(code) = record_wrap_pull_success(request_id, tx_id.clone()) {
+                    if let Err(code) =
+                        record_wrap_pull_success(request_id, generation, tx_id.clone())
+                    {
                         return wrap_failed(None, code, false);
                     }
                     tx_id
@@ -6034,7 +6429,7 @@ async fn execute_wrap_request(
             }
         }
     };
-    let mint = submit_mint_tx_internal(request_id, &req).await;
+    let mint = submit_mint_tx_internal(request_id, generation, &req).await;
     match mint {
         Ok(mint_tx_id) => WrapExecutionOutcome {
             status: StoredRequestStatus::Running,
@@ -6063,11 +6458,19 @@ fn wrap_failed(
 }
 
 #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
-fn mark_wrap_stage(request_id: TxId, stage: WrapRequestStage, status: StoredRequestStatus) {
+fn mark_wrap_stage(
+    request_id: TxId,
+    generation: u64,
+    stage: WrapRequestStage,
+    status: StoredRequestStatus,
+) {
     with_state_mut(|state| {
         let Some(mut req) = state.wrap_requests.get(&request_id) else {
             return;
         };
+        if !wrap_attempt_current(&req, generation) {
+            return;
+        }
         req.result.status = status;
         req.result.stage = stage;
         req.result.updated_at = current_time_nanos();
@@ -6078,12 +6481,19 @@ fn mark_wrap_stage(request_id: TxId, stage: WrapRequestStage, status: StoredRequ
 }
 
 #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
-fn record_wrap_pull_success(request_id: TxId, pull_ledger_tx_id: Vec<u8>) -> Result<(), String> {
+fn record_wrap_pull_success(
+    request_id: TxId,
+    generation: u64,
+    pull_ledger_tx_id: Vec<u8>,
+) -> Result<(), String> {
     let pull_ledger_tx_id = validated_ledger_tx_id(pull_ledger_tx_id)?;
     let out = with_state_mut(|state| {
         let Some(mut req) = state.wrap_requests.get(&request_id) else {
             return Err("request.not_found".to_string());
         };
+        if !wrap_attempt_current(&req, generation) {
+            return Err("wrap.attempt_superseded".to_string());
+        }
         req.result.pull_ledger_tx_id = Some(pull_ledger_tx_id);
         req.result.stage = WrapRequestStage::Pulled;
         req.result.updated_at = current_time_nanos();
@@ -6099,6 +6509,7 @@ fn record_wrap_pull_success(request_id: TxId, pull_ledger_tx_id: Vec<u8>) -> Res
 #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
 async fn submit_mint_tx_internal(
     request_id: TxId,
+    generation: u64,
     req: &evm_db::chain_data::WrapStoredRequest,
 ) -> Result<Vec<u8>, String> {
     if let Some(tx_id) = req.result.mint_tx_id.clone() {
@@ -6106,6 +6517,10 @@ async fn submit_mint_tx_internal(
     }
     let factory = expected_wrap_factory_address()?;
     let token_decimals = fetch_asset_decimals(&req.asset_id).await?;
+    let req = current_wrap_attempt(request_id, generation)?;
+    if let Some(tx_id) = req.result.mint_tx_id.clone() {
+        return Ok(tx_id);
+    }
     let data = encode_factory_mint_for_asset_call_data(
         &req.asset_id,
         token_decimals,
@@ -6118,7 +6533,6 @@ async fn submit_mint_tx_internal(
         .result
         .mint_nonce
         .unwrap_or_else(|| chain::expected_nonce_for_sender_view(wrap_evm));
-    record_wrap_mint_submitting(request_id, nonce)?;
     let charged_gas_price_wei = req.result.charged_gas_price_wei.unwrap_or(0);
     let suggested_priority_fee_wei =
         ic_evm_rpc::rpc_eth_max_priority_fee_per_gas().map_err(|err| {
@@ -6145,6 +6559,7 @@ async fn submit_mint_tx_internal(
         &tx,
         wrap_evm,
     );
+    record_wrap_mint_submitting(request_id, generation, nonce)?;
     let submit = submit_ic_tx_internal(
         ic_cdk::api::canister_self().as_slice().to_vec(),
         "wrap_mint",
@@ -6152,14 +6567,35 @@ async fn submit_mint_tx_internal(
     );
     match submit {
         Ok(tx_id) => {
-            record_wrap_mint_submitted(request_id, tx_id.clone())?;
+            record_wrap_mint_submitted(request_id, generation, tx_id.clone())?;
             Ok(tx_id)
         }
         Err(err) => {
-            if is_duplicate_mint_submit_error(&err) && reusable_mint_tx_location(tx_id) {
+            if is_duplicate_mint_submit_error(&err)
+                && (reusable_mint_tx_location(tx_id)
+                    || chain::get_tx_loc(&tx_id).is_some_and(|loc| loc.kind == TxLocKind::Dropped))
+            {
                 let tx_id = tx_id.0.to_vec();
-                record_wrap_mint_submitted(request_id, tx_id.clone())?;
+                record_wrap_mint_submitted(request_id, generation, tx_id.clone())?;
                 return Ok(tx_id);
+            }
+            if !is_duplicate_mint_submit_error(&err)
+                && matches!(
+                    &err,
+                    SubmitTxError::InvalidArgument(_) | SubmitTxError::Rejected(_)
+                )
+            {
+                with_state_mut(|state| {
+                    if let Some(mut current) = state.wrap_requests.get(&request_id) {
+                        if wrap_attempt_current(&current, generation)
+                            && current.result.mint_tx_id.is_none()
+                        {
+                            current.result.mint_submit_status = MintSubmitStatus::NotSubmitted;
+                            current.result.mint_rejection_confirmed = Some(true);
+                            state.wrap_requests.insert(request_id, current);
+                        }
+                    }
+                });
             }
             Err(format!(
                 "evm_gateway.submit_failed:{}",
@@ -6201,12 +6637,25 @@ fn reusable_mint_tx_location(tx_id: TxId) -> bool {
 }
 
 #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
-fn record_wrap_mint_submitting(request_id: TxId, nonce: u64) -> Result<(), String> {
+fn record_wrap_mint_submitting(
+    request_id: TxId,
+    generation: u64,
+    nonce: u64,
+) -> Result<(), String> {
     with_state_mut(|state| {
         let Some(mut req) = state.wrap_requests.get(&request_id) else {
             return Err("request.not_found".to_string());
         };
+        if !wrap_attempt_current(&req, generation) {
+            return Err("wrap.attempt_superseded".to_string());
+        }
+        if req.result.mint_tx_id.is_some()
+            || req.result.mint_nonce.is_some_and(|saved| saved != nonce)
+        {
+            return Err("wrap.mint_identity_conflict".to_string());
+        }
         req.result.mint_nonce = Some(nonce);
+        req.result.mint_rejection_confirmed = Some(false);
         req.result.mint_submit_status = MintSubmitStatus::Submitting;
         req.result.stage = WrapRequestStage::MintSubmitting;
         req.result.updated_at = current_time_nanos();
@@ -6217,7 +6666,11 @@ fn record_wrap_mint_submitting(request_id: TxId, nonce: u64) -> Result<(), Strin
 }
 
 #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
-fn record_wrap_mint_submitted(request_id: TxId, tx_id: Vec<u8>) -> Result<(), String> {
+fn record_wrap_mint_submitted(
+    request_id: TxId,
+    generation: u64,
+    tx_id: Vec<u8>,
+) -> Result<(), String> {
     let tx_id = validated_ledger_tx_id(tx_id)?;
     with_state_mut(|state| {
         let Some(mut req) = state.wrap_requests.get(&request_id) else {
@@ -6225,6 +6678,17 @@ fn record_wrap_mint_submitted(request_id: TxId, tx_id: Vec<u8>) -> Result<(), St
         };
         let mint_tx_id =
             tx_id_from_bytes(tx_id.clone()).ok_or_else(|| "wrap.mint_tx_id_invalid".to_string())?;
+        if !wrap_attempt_current(&req, generation) {
+            return Err("wrap.attempt_superseded".to_string());
+        }
+        if req
+            .result
+            .mint_tx_id
+            .as_ref()
+            .is_some_and(|saved| saved != &tx_id)
+        {
+            return Err("wrap.mint_identity_conflict".to_string());
+        }
         req.result.mint_tx_id = Some(tx_id);
         req.result.mint_submitted_at_time = current_time_nanos();
         req.result.mint_submit_status = MintSubmitStatus::Submitted;
@@ -6248,11 +6712,23 @@ fn submit_error_to_code(error: SubmitTxError) -> String {
 }
 
 #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
-fn apply_wrap_execution_outcome(request_id: TxId, outcome: WrapExecutionOutcome) {
+fn apply_wrap_execution_outcome(request_id: TxId, generation: u64, outcome: WrapExecutionOutcome) {
     with_state_mut(|state| {
         let Some(mut req) = state.wrap_requests.get(&request_id) else {
             return;
         };
+        if !wrap_attempt_current(&req, generation) {
+            return;
+        }
+        if req.result.mint_tx_id.is_some()
+            && (outcome.status == StoredRequestStatus::Failed
+                || outcome
+                    .mint_tx_id
+                    .as_ref()
+                    .is_some_and(|id| Some(id) != req.result.mint_tx_id.as_ref()))
+        {
+            return;
+        }
         req.result.status = outcome.status;
         if outcome.pull_ledger_tx_id.is_some() {
             req.result.pull_ledger_tx_id = outcome.pull_ledger_tx_id;
@@ -6473,17 +6949,31 @@ async fn dispatch_unwrap_request_internal(
 async fn dispatch_icp_update_request_internal(
     req: IcpUpdateDispatchRequest,
 ) -> AppliedIcpUpdateDispatchOutcome {
-    if !is_update_precompile_allowed(&req.target, &req.method) {
+    let mode = update_precompile_mode(&req.target, &req.method);
+    if !verified_core::kasane_precompiles::icp_update_mode_dispatch_allowed(
+        mode.map(|value| u64::from(value.to_u8())).unwrap_or(0),
+        u64::from(req.mode.to_u8()),
+    ) {
         return AppliedIcpUpdateDispatchOutcome {
             status: IcpUpdateRequestStatus::DispatchFailed,
             reply: None,
-            error_code: Some("ic_update.allowlist_miss".to_string()),
+            error_code: Some(
+                if mode.is_some() {
+                    "ic_update.mode_mismatch"
+                } else {
+                    "ic_update.allowlist_miss"
+                }
+                .to_string(),
+            ),
         };
     }
     let target = Principal::from_slice(&req.target);
-    let envelope = icp_update_envelope(&req);
-    let response = Call::bounded_wait(target, &req.method)
-        .with_arg(envelope)
+    let call = Call::bounded_wait(target, &req.method);
+    let call = match req.mode {
+        IcpUpdateMode::Envelope => call.with_arg(icp_update_envelope(&req)),
+        IcpUpdateMode::RawCandid => call.take_raw_args(req.arg),
+    };
+    let response = call
         .change_timeout(ICP_UPDATE_DISPATCH_TIMEOUT_SECONDS)
         .await;
     match response {
