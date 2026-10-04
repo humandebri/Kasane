@@ -53,6 +53,8 @@ Rust パスは `vendor/revm/crates/` が起点。
 | `inner.rs` の `logs.truncate` | `rollback_logs` | checkpoint 前の logs のみ保存 |
 | `handler/src/frame.rs` の CALL return | `parent_revert_after_child_commit` / `child_revert_preserves_parent` | 子 commit 後も親 REVERT で戻す |
 | `handler/src/pre_execution.rs` の nonce/fee | `call_rollback_preserves_transaction_accounting` | CALL checkpoint 外の観測。順序はコード確認と実行テスト |
+| `inner.rs::sstore` / `transfer_loaded` | `trace_conserves_balance` / `trace_preserves_bounds` | 有効な任意長 trace の残高合計と U256 範囲。2 account の projection に限る |
+| journal の storage 変更と undo | `Refinement.forward_storage_projection` / `rollback_storage_projection` | journal モデルと論理 map モデルの対応。実際の Rust diff 生成は未証明 |
 
 `rollback_trace` と `revert_at_checkpoint` は任意の有限な有効 action 列に対する証明。
 各 action の逆操作も証明しており、「巻き戻しが正しい」という公理は置かない。
@@ -68,6 +70,10 @@ Rust パスは `vendor/revm/crates/` が起点。
 
 1. vendored tree・本番 features・対応元ファイル・公式 fixtures の hash 確認。
 2. Lean ビルドと全宣言の公理監査、既存の純粋関数 439 ケース比較。
+   `leanchecker KasaneEvm` で保存済み証明も再検査する。
+   実際のサイズ検証関数 146 ケースと両資産 precompile の入口 256 ケースを Lean と比較する。
+   資産入口の比較は空 ABI を入力し、入口を通過した場合だけ ABI エラーに到達することを確認する。
+   全ケースで journal の account と log が空であり、ABI 以後の処理には進まない。
 3. 実際の `JournalInner` の `sstore` / `transfer_loaded` / checkpoint 操作と Lean を比較。
    初期 storage 3 通り × 移転額 3 通り、各 5 時点の storage 2 slot・残高・log 数/内容/順序・depth。
    合計 9 traces / 45 observations を完全一致で照合する。
@@ -81,6 +87,9 @@ Rust パスは `vendor/revm/crates/` が起点。
    commit/revert を stable DB まで検査。
    untouched account の commit skip と、REVERT 後の nonce・fee を別途検査。
    ICP update intent precompile の reverted subcall と再試行も実行する。
+   資産 precompile の CALL/CALLCODE/DELEGATECALL/STATICCALL も実際の EVM で検査する。
+7. 出力超過（RETURN と REVERT）・log data 超過・log 数超過の拒否を共有 cache で実行し、
+   sender nonce/balance・contract storage/balance・recipient balance の不変と後続送金を確認する。
 
 Kasane テストは毎回独立した thread-local stable memory を使う。
 `init_stable_state` は領域を開き直す処理であり、再呼び出しは消去にならない。
@@ -116,6 +125,14 @@ byte codec と code hash 判定を含む Rust アダプタ全体の refinement �
 
 ## 残る証明義務と opcode 検証の評価
 
+2026-10-03 の証明更新では、サイズ検証を commit 前へ移した現行実装に `finish` を合わせた。
+旧 `size_error_after_commit` を残さず、`size_error_preserves_state` とモデル中の全エラーの
+状態保存・拒否後の再試行を証明した。資産入口の直接 CALL 制限もモデル化した。
+`Refinement` は Lean 内の journal と論理 storage map の対応を証明し、任意の有効 trace の
+巻き戻し後に全キーが復元されることを導く。Rust の機械的抽出や全入力 refinement は追加していない。
+並行した query allowlist/update mode 選別・query transaction snapshot・最低 gas 検査の差分も
+対応元の hash に含むが、これらの非同期制御は今回の Lean 定理の対象外。
+
 今回は **モデルの証明＋実ソースの対応レビュー＋実装との有限比較**。
 Rust 全入力での journal/DB refinement、言語意味論、コンパイラ/Wasm の保存性は未証明。
 hash 一致やテストの成功を refinement proof と呼ばない。
@@ -143,5 +160,8 @@ python3 scripts/check_revm_verification_profile.py --print-current > proofs/evm/
 ```
 
 `model-sources.sha256` もレビュー後に更新する。fixtures は改変せず、差替え時に取得 commit・
-SHA256SUMS・件数を更新する。Lean/profile ゲートは独立したローカルコマンド。
+SHA256SUMS・件数を更新する。Lean/profile ゲートは独立したローカルコマンドであり、
+CI の `evm-proofs` job でも実行する。
 Rust integration tests は既存 CI の `cargo test ... --tests` にも含まれる。
+
+実JUMPDESTについて、実Interpreter/Gas構造体を含むRust抽出生成本体の全入力恒等性と任意値観測保存の2定理を `../extraction/u256-lean/RevmJumpdestCorrespondence.lean` に追加した。`scripts/verify-revm-jumpdest-experimental.sh` が再抽出から独立カーネルまで検査する。使用する未使用trait節除去の意味論保存、Rust有効型/heap状態への対応、EVMディスパッチのgas/PC効果は未証明であり、JUMPDEST全体や全命令の実装対応完了とは扱わない。

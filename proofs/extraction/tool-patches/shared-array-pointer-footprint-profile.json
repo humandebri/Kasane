@@ -1,0 +1,14 @@
+{
+  "candidate": "Necessary shared-array/NonNull pointer footprint MODEL obligations; source allocation/origin/LLVM refinement remains unproved",
+  "sha256": {
+    "proofs/extraction/operator-lean/SharedArrayPointerFootprint.lean": "9bdc808973a11424121450bdbb0079530dfb58b89fe6a9d2a0fe451cc3e47267",
+    "proofs/extraction/operator-lean/SharedArrayPointerFootprintAudit.lean": "559cbcb182bf47e067d8d3f45d52d01de00c7ef1e02c428cfbb40961266b4a0a",
+    "scripts/diagnose-shared-array-pointer-footprint.sh": "02ab7987ca3fa14675572d8d0b279ab3f678717e5ebd06ce96ff1ba7ff0faf49",
+    "proofs/extraction/operator-lean/lean-toolchain": "efac0b94923b2d8b6840cd35be9177ad0fc5ab2332f4f4311c98712cee92fdee",
+    "/Users/0xhude/.rustup/toolchains/nightly-2026-09-17-aarch64-apple-darwin/lib/rustlib/src/rust/library/core/src/ptr/mod.rs": "1d11fc57101369e1ffb5a15e5b7ee08da3a8ee72bd563995798c30a2be2b71f5",
+    "/Users/0xhude/.rustup/toolchains/nightly-2026-09-17-aarch64-apple-darwin/lib/rustlib/src/rust/library/core/src/ptr/non_null.rs": "7e9d25db28609d885f527f6bdb26d9a6d49679c618a55c0836c4b64f5490c5b3",
+    "/Users/0xhude/.rustup/toolchains/nightly-2026-09-17-aarch64-apple-darwin/lib/rustlib/src/rust/library/core/src/fmt/mod.rs": "ab918e40543739be20757973f0d4abefcd9624d3759a64fc4147f1d8fc4bc035"
+  },
+  "validation": "Fourteen necessary pointer-footprint MODEL theorems built and checked under warningAsError, namespace-wide axiom audit allowing only propext/Quot.sound/Classical.choice, and leanchecker kernel validation. Injected axiom, sorry and native_decide rejected by audit; an attempted non-null-only positive read proof rejected by Lean. All counts/byte sizes are arbitrary Nat in the footprint model, not finite probes. Retain preserves pointer address/offset/provenance/read footprint/alignment/write permissions by model definition. Positive array count entails first-element necessary read footprint, empty extent rejects positive read, zero-byte footprint needs non-null, temporal revocation leaves a non-null carrier but rejects positive read. Alias resolution is an explicit lawful adapter parameter; mapping actual interpreter IDs to Rust pointers remains unproved. Model counterexamples refute address-only provenance identity and symbolic-content-ID-only address identity. Fixed Rust source ptr/mod.rs explicitly leaves validity/aliasing rules incomplete; ReadFootprint does not prove initialization/type validity/aliasing/concurrency or safe pointer-to-reference creation. Aeneas pointer extraction remains strictly disabled; no new actual Rust correspondence theorem or completed Lean source extraction claimed.",
+  "scope": "Model theorems only. No Rust pointer extractor replacement or new source-to-Lean all-input theorem."
+}

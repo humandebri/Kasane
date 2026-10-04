@@ -1,0 +1,104 @@
+{
+  "status": "actual-step-dispatch-extraction-diagnostic-only",
+  "sha256": {
+    "scripts/diagnose-revm-step-dispatch.sh": "6c020b40d71ecaefaeeb9ca36e8c6a8ab50eca328ee782c87ab2fcd545ac8c19",
+    "scripts/audit_revm_step_llbc.py": "c516c82b7420a29ee5f577b9276d88e1e4beb136ffba2529359a0d06fc585131",
+    "scripts/audit_jumpdest_llbc.py": "bebda492743155794ad89349ff3e68c90687552c971a8e859db8a85f93af8504",
+    "Cargo.lock": "272266f066e89637bca1791b96688d42f4fe3e1b01a5148e25b84138bc6c3168",
+    "Cargo.toml": "0876fd470e9375dc9010dac89b618433fe1ba0e2f2eb75a19303897fd690922e",
+    "crates/evm-core/Cargo.toml": "0abb0cd0e354eda71055ba76497ce4d37841a71a6befaee11e1d49db01152b8a",
+    "vendor/revm/crates/interpreter/src/interpreter.rs": "2a1dad3fb124e80a338101a84d425c3281189079785a8cc170818ed349d852e6",
+    "vendor/revm/crates/interpreter/src/instructions.rs": "708e2c64d378ea62e1eb926249013332915c440600c32872c44a3201c19343ad",
+    "vendor/revm/crates/interpreter/src/instruction_context.rs": "4257a57a5dd9109ef4d10263771c519a32008b3c6dc05202f7ae9644307f41ae",
+    "vendor/revm/crates/interpreter/src/gas.rs": "37bd04874bbbb90907785aaf7b18a5ede114cf005c2b8db6433b2dd7fb9e6db8",
+    "vendor/revm/crates/interpreter/src/interpreter_types.rs": "de97652bfd5486d6c64bb36e7cacb45f211ff627c99d2dbd55421e8c97de1271",
+    "vendor/revm/crates/interpreter/src/interpreter/ext_bytecode.rs": "d8fa04110130ef9340ac6179a683a1322e243fb31a363acc9802f41087ef6545",
+    "vendor/revm/crates/interpreter/src/interpreter_action.rs": "56298dca357cde9cf2f3806205041ac0c5b8f8a1931cd5735ffe892f2bfba595",
+    ".local/proof-tools/charon-gat-candidate/charon": "8f772feb4b6ca69410c9f11b3b0c9dff36eb30c9c7a5f83f3d35dd578d93212e",
+    ".local/proof-tools/charon-gat-candidate/charon-driver": "3c9d5a113be5b70c45cf0e55c30f993654586f7cfa70b7b9bbbba6ad4cc3da76",
+    ".local/proof-tools/aeneas-source/src/_build/default/main.exe": "a74ca1f3c07a4826e702df85aecab56fc684e7091ffcc4841e99ecd517f0a44e",
+    ".local/proof-tools/aeneas-source/src/symbolic/SymbolicToPureTypes.ml": "35107f4f7c87ec6d57f62a83c5a063eb2e024115b64f9d69e9a3341b009d25ce",
+    ".local/proof-tools/charon-source/charon/src/transform/simplify_output/remove_unused_clauses.rs": "aea4e265123850f4a261bcd9d4bfccd8057e5f4e3d9571758253d2c7bf556b59",
+    ".local/proof-tools/aeneas-fn-region/aeneas": "5d1494305042ac6c3ecd3bc04f760dbcfe522c80cb79bc3b8d23411a5c46ffed",
+    "proofs/extraction/tool-patches/fn-region-profile.json": "5707816fbc797a391f308b617ff6e123fd68cc045d06bcfd1e136289c7bd670c",
+    ".local/proof-tools/aeneas-fn-value/aeneas": "3f3fea9127b7de6dac693f0cadfa6cf4571ca6d39d44bba218a1307576c55e76",
+    "proofs/extraction/tool-patches/fn-value-profile.json": "66bb879eaefbe8007130d51bc3a9ed1df7b94905a73ea097929a7f1c61ec7da1",
+    ".local/proof-tools/aeneas-array-nonnull-pure/aeneas": "7ce8d3741bde7f13c9451a59f66800b47be6bc0ebe547e24a69166cb56de3b1e",
+    "proofs/extraction/tool-patches/array-nonnull-pure-profile.json": "778a5c6f9238e88fe1b50c0761a135ff369510d958a284de42e01ab047eeda6b",
+    ".local/proof-tools/aeneas-source/src/interp/InterpStatements.ml": "44408a52013c9ae01932e2705c8745dc3f6b2c2d7cb0a4074f6ba38b2a1081c0",
+    ".local/proof-tools/aeneas-source/src/interp/InterpUtils.ml": "1b9b5f83f0db600a1c569ada08aba9c525e79b7bda14abd3d43b6e9a057c6473",
+    ".local/proof-tools/aeneas-source/src/llbc/TypesUtils.ml": "cd08219d33dca74d029720f3e81e569a61450f3716829d41fba388cbe9c7ed93",
+    ".local/proof-tools/aeneas-source/src/symbolic/SymbolicAst.ml": "7d433eebae05bd0b8e7d5a13982c4eb7df26c4e2b5de4cccb14dfedf6280745c"
+  },
+  "rust": "nightly-2026-09-17",
+  "observation": {
+    "transparent_functions": 6,
+    "step_top_level_call_order": [
+      "revm_interpreter::interpreter_types::Jumps::opcode",
+      "revm_interpreter::interpreter_types::Jumps::relative_jump",
+      "core::array::as_slice",
+      "core::slice::get_unchecked",
+      "revm_interpreter::instructions::static_gas",
+      "revm_interpreter::gas::record_cost_unsafe",
+      "revm_interpreter::interpreter::halt_oog"
+    ],
+    "pc_increment": 1,
+    "execute_on_oog_false": true,
+    "callback_rust_safe": true,
+    "callback_lifetime_binders": 1,
+    "callback_context_bound_region": [
+      0,
+      0
+    ],
+    "indirect_call_preserved": true,
+    "stored_callback_origin": "self.fn_",
+    "context_origin": "ctx",
+    "mutable_context_fields": 2,
+    "semantic_equivalence_proved": false
+  },
+  "accepted_lean_artifacts": 0,
+  "new_execution_theorems": 0,
+  "semantic_equivalence_proved": false,
+  "scope": "Production evm-core manifest/root Cargo.lock, promoted MIR, unused-clause removal explicitly enabled, actual step/static_gas/record_cost_unsafe/halt_oog/execute/halt bodies and transparent actual Interpreter/Instruction/Gas types. Other bytecode trait and std operations remain abstract/opaque; no callback substitution or LLBC rewrite.",
+  "ordering": "Actual source reads opcode then relative_jump(1), array slice/get_unchecked opcode index, static_gas and wrapping gas subtraction, execute only if OOG bool false, otherwise halt_oog calls spend_all then halt. This is an AST/call-order witness audit, not Rust operational-semantics or dynamic-control-flow proof.",
+  "callback_obligation": "Instruction.fn_ has safe Rust ABI, one higher-ranked lifetime binder and one InstructionContext input using Bound(0,0), unit return. Actual execute calls stored function pointer dynamically. Strict base Aeneas rejects this type in SymbolicToPureTypes.ml190 before generating Lean. A supported pure callback must represent backward state/host updates from mutable Context, preserve binder/ABI and indirect target semantics; plain Context-to-unit arrow is insufficient.",
+  "remaining": "Callable function-pointer borrow/backward-state translation and dynamic call support; trait clause erasure and extractor correctness; bytecode raw-pointer opcode/relative_jump/provenance/padding; array index bound; static instruction table correspondence, gas/PC ordering and OOG effects, actual Rust/LLVM/Wasm/IC semantics.",
+  "validation": "Fresh six-body extraction; source/type/call-order/branch/ABI/lifetime audit; nine reordered call/PC increment/OOG polarity/indirect callback/unsafe ABI/erased lifetime/stored-field/context-argument/callee witness mutations rejected; strict expected rejection with no Lean output. Four fixed borrow-only routes reproduce distinct expected rejections; fn-value/latest candidates reach actual indirect call. No Pure/borrow acceptance, no new executable instruction theorem.",
+  "borrow_routes": {
+    "base": {
+      "binary": ".local/proof-tools/aeneas-source/src/_build/default/main.exe",
+      "expected_markers": [
+        "Internal error",
+        "interpreter.rs",
+        "InterpUtils.ml, line 151"
+      ]
+    },
+    "fn-region": {
+      "binary": ".local/proof-tools/aeneas-fn-region/aeneas",
+      "expected_markers": [
+        "Unreachable",
+        "interpreter.rs",
+        "InterpExpansion.ml, line 731"
+      ]
+    },
+    "fn-value": {
+      "binary": ".local/proof-tools/aeneas-fn-value/aeneas",
+      "expected_markers": [
+        "Function pointers are not supported yet",
+        "instructions.rs",
+        "InterpStatements.ml, line 1254"
+      ]
+    },
+    "array-nonnull-pure": {
+      "binary": ".local/proof-tools/aeneas-array-nonnull-pure/aeneas",
+      "expected_markers": [
+        "Function pointers are not supported yet",
+        "instructions.rs",
+        "InterpStatements.ml, line 1254"
+      ]
+    }
+  },
+  "borrow_observation": "No Pure backend used for official -borrow-check. Base rejects fresh symbolic callback value as non-rty at step array field expansion; existing fn-region candidate gets past that check then fails greedy expansion; existing fn-value and latest array-nonnull-pure candidates reach actual Instruction::execute FnOpDynamic and reject it. This is confirmed reaching a later stage, not a complete borrow-check pass or executable callback support. No candidate binary/source changed.",
+  "callback_implementation_obligation": "Both concrete and symbolic evaluators reject FnOpDynamic. symbolic_fun_call_inst.call_kind and SymbolicAst.call_id.Fun identify regular fn_ptr_kind only. Existing signature decomposition depends on per-declaration effect information. A supported symbolic indirect call must carry the actual evaluated callback value and its signature/effects, instantiate locally bound callback lifetimes, retain borrow abstractions/backward outputs and generate an application of that value. Inventing a function declaration ID or translating only the forward unit result would lose required information.",
+  "callback_value_obligation": "Actual execute copies self.fn_ field zero to local3, moves original ctx local2 to local4, dynamically calls moved local3 with moved local4 and writes unit result to local0. Both stored and evaluated callback types equal the original FnPtr, with H/WIRE/component type arguments [1,0,2..9] and one locally bound lifetime for two mutable Context fields. Origin and binding audit is not an operational semantics or compiler proof."
+}

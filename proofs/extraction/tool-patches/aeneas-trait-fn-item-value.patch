@@ -1,0 +1,135 @@
+--- a/src/pure/Pure.ml
++++ b/src/pure/Pure.ml
+@@ -1284,6 +1284,8 @@
+ and projection = { adt_id : type_id; field_id : field_id }
+ 
+ and qualif_id =
++  | RustTraitFnItemValue of (rust_trait_fn_item[@opaque]) * (T.region list[@opaque])
++      (** Source type binder and erased value-region arguments remain distinct. *)
+   | FunOrOp of fun_or_op_id  (** A function or an operation *)
+   | Global of global_decl_id
+   | AdtCons of adt_cons_id  (** A function or ADT constructor identifier *)
+--- a/src/pure/PureTypeCheck.ml
++++ b/src/pure/PureTypeCheck.ml
+@@ -10,6 +10,25 @@
+ 
+     This function should only be used for "regular" ADTs, where the number of
+     fields is fixed: it shouldn't be used for arrays, slices, etc. *)
++(* This sanity check retains both source type metadata and value-region
++   instantiation. Self and dictionary captures use normal Pure generic args. *)
++let rust_trait_fn_item_value_type_matches crate (metadata : rust_trait_fn_item) value_regions (generics : generic_args) (ty : ty) =
++  let ids=List.map(fun (r : T.region_param) -> T.RegionId.to_int r.index) metadata.item_regions in
++  let scoped=List.for_all(function T.RStatic -> true
++    | T.RVar(T.Bound(0,id)) -> 0<=T.RegionId.to_int id && T.RegionId.to_int id<List.length ids
++    | _ -> false) metadata.item_region_args in
++  let erased=List.map(fun _ -> T.RErased) metadata.item_region_args in
++  ids=List.init(List.length ids) Fun.id && scoped && erased=value_regions
++  && Charon.Substitute.lookup_method_sig crate metadata.item_trait_id metadata.item_method_id<>None
++  && generics.const_generics=[] && List.length generics.types=1
++  && ty=TAdt(TBuiltin(TRustTraitFnItem metadata),generics)
++  && match generics.trait_refs with
++     | [tr] -> tr.trait_decl_ref.trait_decl_id=metadata.item_trait_id
++         && tr.trait_decl_ref.decl_generics.types=generics.types
++         && tr.trait_decl_ref.decl_generics.const_generics=[]
++         && tr.trait_decl_ref.decl_generics.trait_refs=[]
++     | _ -> false
++
+ let get_adt_field_types (span : Meta.span)
+     (type_decls : type_decl TypeDeclId.Map.t) (type_id : type_id)
+     (variant_id : VariantId.id option) (generics : generic_args) : ty list =
+@@ -197,6 +216,9 @@
+       check_texpr span ctx body
+   | Qualif qualif -> (
+       match qualif.id with
++      | RustTraitFnItemValue(metadata,value_regions) ->
++          [%pure_type_check] span (rust_trait_fn_item_value_type_matches
++            ctx.decls_ctx.crate metadata value_regions qualif.generics e.ty)
+       | FunOrOp _ -> () (* TODO *)
+       | Global _ -> () (* TODO *)
+       | TraitConst _ -> () (* TODO *)
+--- a/src/pure/PrintPure.ml
++++ b/src/pure/PrintPure.ml
+@@ -1055,6 +1055,10 @@
+       | Qualif qualif -> (
+           (* Qualifier case *)
+           match qualif.id with
++          | RustTraitFnItemValue(metadata,value_regions) ->
++              ("RustTraitFnItemValue(" ^ show_rust_trait_fn_item metadata ^ ";"
++               ^ String.concat "," (List.map T.show_region value_regions) ^ ")",
++               generic_args_to_strings env true qualif.generics,false)
+           | FunOrOp fun_id ->
+               let generics = generic_args_to_strings env true qualif.generics in
+               let qualif_s = fun_or_op_id_to_string env fun_id in
+--- a/src/pure/PureMicroPassesAnnots.ml
++++ b/src/pure/PureMicroPassesAnnots.ml
+@@ -355,7 +355,7 @@
+               (* The type is statically known because of the trait ref *)
+               [%sanity_check] span (List.length known_args_tys = 1);
+               (known_f_ty, known_args_tys, false)
+-          | Proj _ | ScalarValProj _ | TraitConst _ ->
++          | RustTraitFnItemValue _ | Proj _ | ScalarValProj _ | TraitConst _ ->
+               (* Being conservative here *)
+               (hole, mk_holes (), false)
+           | LoopOp -> (hole, mk_holes (), false)
+--- a/src/pure/ReorderDecls.ml
++++ b/src/pure/ReorderDecls.ml
+@@ -39,6 +39,7 @@
+         | ScalarValProj _
+         | TraitConst _
+         | MkDynTrait _
++        | RustTraitFnItemValue _
+         | LoopOp -> ()
+         | FunOrOp (Fun fid) -> (
+             match fid with
+--- a/src/extract/Extract.ml
++++ b/src/extract/Extract.ml
+@@ -776,6 +776,8 @@
+   | Qualif qualif -> (
+       (* Top-level qualifier *)
+       match (qualif.id, out_ty) with
++      | RustTraitFnItemValue _, _ ->
++          [%craise] span "Retained Rust trait function-item value requires verified callable extraction"
+       | FunOrOp fun_id, _ ->
+           extract_function_call span ctx fmt ~inside ~inside_do fun_id
+             qualif.generics args
+--- a/src/symbolic/SymbolicToPureExpressions.ml
++++ b/src/symbolic/SymbolicToPureExpressions.ml
+@@ -17,6 +17,28 @@
+      && InterpExpressions.fnptr_transmute_representation_supported src dst)
+     "Unsupported Pure function-pointer transmute representation";
+   CastRustFnPtrTransmute(translate_ty src,translate_ty dst)
++
++(* The source constant's body regions have undergone normal erasure.
++   Preserve that value instantiation separately from its higher-ranked type. *)
++let translate_rust_trait_fn_item_value span crate raw_ty (value : T.fn_ptr) expected_ty =
++  [%cassert_opt_span] span (Config.backend ()=Config.Lean)
++    "Trait function-item values require Lean";
++  let source=match raw_ty with T.TFnDef f -> f
++    | _ -> [%craise_opt_span] span "Unsupported trait function-item value type" in
++  let metadata,_=[%unwrap_opt_span] span (split_open_trait_fn_item source)
++    "Unsupported trait function-item value template" in
++  let source_value=source.binder_value in
++  let expected_regions=List.map(fun _ -> T.RErased) source_value.generics.regions in
++  [%cassert_opt_span] span
++    (value.kind=source_value.kind && value.generics={source_value.generics with regions=expected_regions}
++     && Charon.Substitute.lookup_fndef_sig crate source<>None)
++    "Trait function-item value identity/instantiation mismatch";
++  let ty=translate_sty span raw_ty in
++  [%cassert_opt_span] span (ty=expected_ty) "Trait function-item value expected type mismatch";
++  let generics=match ty with TAdt(TBuiltin(TRustTraitFnItem _),g) -> g | _ -> [%craise_opt_span] span "Unsupported trait function-item Pure type" in
++  [%cassert_opt_span] span (PureTypeCheck.rust_trait_fn_item_value_type_matches
++    crate metadata value.generics.regions generics ty) "Malformed trait function-item value captures";
++  {e=Qualif{id=RustTraitFnItemValue(metadata,value.generics.regions);generics};ty}
+ 
+ let translate_fn_ptr_kind (ctx : bs_ctx) (id : A.fn_ptr_kind) : fn_ptr_kind =
+   match id with
+@@ -1653,6 +1675,9 @@
+         let qualif : texpr = { e = Qualif qualif; ty = mk_arrow v.ty dyn_ty } in
+         let e = [%add_loc] mk_app ctx.span qualif v in
+         (e, false)
++    | VaFnDef ({kind=T.TraitMethod _;_} as value) ->
++        (translate_rust_trait_fn_item_value (Some ctx.span) ctx.decls_ctx.crate
++          sv.sv_ty value var.ty,false)
+     | VaFnDef { kind; generics } ->
+         let id = translate_fn_ptr_kind ctx kind in
+         let generics = ctx_translate_fwd_generic_args ctx generics in

@@ -1,0 +1,171 @@
+--- a/src/symbolic/SymbolicToPureTypes.ml
++++ b/src/symbolic/SymbolicToPureTypes.ml
+@@ -362,54 +362,6 @@
+ 
+     Remark: this is not symbolic to pure but LLBC to pure. Still, I don't see
+     the point of moving this definition for now. *)
+-let translate_type_decl (ctx : Contexts.decls_ctx) (def : T.type_decl) :
+-    type_decl =
+-  [%ltrace
+-    let ctx = Print.Contexts.decls_ctx_to_fmt_env ctx in
+-    "\n" ^ Print.type_decl_to_string ctx def];
+-  let env = Print.Contexts.decls_ctx_to_fmt_env ctx in
+-  let def_id = def.T.def_id in
+-  let name = Print.name_to_string env def.item_meta.name in
+-  let span = def.item_meta.span in
+-  let source_name = List.filter_map
+-    (function T.PeIdent (n, _) -> Some n | _ -> None) def.item_meta.name in
+-  if source_name = ["core"; "num"; "error"; "TryFromIntError"] then (
+-    [%cassert] span (Config.backend () = Config.Lean)
+-      "TryFromIntError source candidate requires Lean";
+-    [%cassert] span (TypesAnalysis.supported_try_from_int_error ctx.crate.type_decls def)
+-      "Unsupported TryFromIntError source definition");
+-
+-  (* Can't translate types with nested borrows for now *)
+-  [%cassert] span
+-    (not
+-       (TypesUtils.type_decl_has_nested_mut_borrows (Some span)
+-          ctx.type_ctx.type_infos def))
+-    "ADTs containing nested mutable borrows are not supported yet";
+-  let generics, preds = translate_generic_params (Some span) def.generics in
+-  [%ldebug
+-    let ctx = PrintPure.decls_ctx_to_fmt_env ctx in
+-    "translated generic_params:\n"
+-    ^ PrintPure.generic_params_to_string ctx generics];
+-  let explicit_info = compute_explicit_info generics [] in
+-  [%ldebug "explicit info:\n" ^ show_explicit_info explicit_info];
+-  let kind = translate_type_decl_kind span def.T.kind in
+-  let item_meta = def.item_meta in
+-  (* Lookup the builtin information, if there is *)
+-  let builtin_info =
+-    match_name_find_opt ctx def.item_meta.name
+-      (ExtractBuiltin.builtin_types_map ())
+-  in
+-  {
+-    def_id;
+-    name;
+-    item_meta;
+-    builtin_info;
+-    generics;
+-    explicit_info;
+-    llbc_generics = def.generics;
+-    kind;
+-    preds;
+-  }
+ 
+ let translate_type_id (span : Meta.span option) (tref : T.type_decl_ref) :
+     type_id =
+@@ -508,6 +460,8 @@
+           let subst = make_subst_from_generics sg.generics generics in
+           ty_substitute subst sigs.ty
+       | T.TraitMethod _ -> [%craise_opt_span] span "Unimplemented")
++  | TFnPtr s when not (supported_closed_rust_fnptr s) ->
++      translate_dynamic_rust_fnptr span decls_ctx s
+   | TFnPtr s -> translate_closed_rust_fnptr span s
+   | TDynTrait { binder } ->
+       let params, _predicates =
+@@ -1349,6 +1303,104 @@
+       in
+       { info with is_rec = info.is_rec && gid = None }
+ 
++and translate_dynamic_rust_fnptr (span : Meta.span option)
++    (decls_ctx : C.decls_ctx) (pointer : T.fun_sig T.region_binder) : ty =
++  [%cassert_opt_span] span (Config.backend () = Config.Lean)
++    "Dynamic function pointer lowering requires Lean";
++  let actual_span = [%unwrap_opt_span] span span "Callback type requires source span" in
++  let type_ids = ref T.TypeVarId.Set.empty in
++  let visitor = object
++    inherit [_] T.iter_ty as super
++    method! visit_ty () ty =
++      (match ty with
++       | T.TVar (T.Free id) -> type_ids := T.TypeVarId.Set.add id !type_ids
++       | T.TVar (T.Bound _) | T.TFnPtr _ | T.TTraitType _ | T.TDynTrait _
++       | T.TFnDef _ -> [%craise_opt_span] span "Unsupported callback capture or nested signature"
++       | _ -> ());
++      super#visit_ty () ty
++    method! visit_generic_args () args =
++      [%cassert_opt_span] span (args.const_generics = [] && args.trait_refs = [])
++        "Callback const/trait captures are not supported";
++      super#visit_generic_args () args
++  end in
++  visitor#visit_fun_sig () pointer.binder_value;
++  let types = List.map (fun index ->
++    { T.index; name = "callback_type"; variance = T.Invariant })
++    (T.TypeVarId.Set.elements !type_ids) in
++  let signature = InterpStatements.dynamic_borrow_signature actual_span types [] (T.TFnPtr pointer) in
++  let ctx = InterpUtils.initialize_eval_ctx span decls_ctx [] types [] C.empty_marked_ids in
++  let args = TypesUtils.generic_args_of_params span signature.item_binder_params in
++  let inst = InterpUtils.instantiate_fun_sig span ctx args T.Self signature in
++  let dsg = translate_inst_fun_sig_with_effects span decls_ctx
++      (function
++        | None -> { can_fail = true; can_diverge = true; is_rec = false }
++        | Some _ -> { can_fail = false; can_diverge = true; is_rec = false })
++      (fun _ -> "dynamic callback type") inst signature.item_binder_value.output
++      (List.map (fun _ -> None) signature.item_binder_value.inputs) in
++  mk_arrows dsg.fwd_inputs (compute_output_ty_from_decomposed dsg)
++
++let translate_type_decl (ctx : Contexts.decls_ctx) (def : T.type_decl) :
++    type_decl =
++  [%ltrace
++    let ctx = Print.Contexts.decls_ctx_to_fmt_env ctx in
++    "\n" ^ Print.type_decl_to_string ctx def];
++  let env = Print.Contexts.decls_ctx_to_fmt_env ctx in
++  let def_id = def.T.def_id in
++  let name = Print.name_to_string env def.item_meta.name in
++  let span = def.item_meta.span in
++  let source_name = List.filter_map
++    (function T.PeIdent (n, _) -> Some n | _ -> None) def.item_meta.name in
++  if source_name = ["core"; "num"; "error"; "TryFromIntError"] then (
++    [%cassert] span (Config.backend () = Config.Lean)
++      "TryFromIntError source candidate requires Lean";
++    [%cassert] span (TypesAnalysis.supported_try_from_int_error ctx.crate.type_decls def)
++      "Unsupported TryFromIntError source definition");
++
++  (* Can't translate types with nested borrows for now *)
++  [%cassert] span
++    (not
++       (TypesUtils.type_decl_has_nested_mut_borrows (Some span)
++          ctx.type_ctx.type_infos def))
++    "ADTs containing nested mutable borrows are not supported yet";
++  let generics, preds = translate_generic_params (Some span) def.generics in
++  [%ldebug
++    let ctx = PrintPure.decls_ctx_to_fmt_env ctx in
++    "translated generic_params:\n"
++    ^ PrintPure.generic_params_to_string ctx generics];
++  let explicit_info = compute_explicit_info generics [] in
++  [%ldebug "explicit info:\n" ^ show_explicit_info explicit_info];
++  let field (f : T.field) : field =
++    match f.field_ty with
++    | T.TFnPtr pointer when not (supported_closed_rust_fnptr pointer) ->
++        { field_name = (if f.is_positional then None else Some f.field_name);
++          field_ty = translate_dynamic_rust_fnptr (Some span) ctx pointer;
++          field_attr_info = f.attr_info }
++    | _ -> translate_field span f in
++  let kind = match def.T.kind with
++    | T.Struct fields -> Struct (List.map field fields)
++    | T.Enum variants -> Enum (List.map (fun (v : T.variant) ->
++        let translated = translate_variant span { v with fields = [] } in
++        { translated with fields = List.map field v.fields }) variants)
++    | _ -> translate_type_decl_kind span def.T.kind in
++  let item_meta = def.item_meta in
++  (* Lookup the builtin information, if there is *)
++  let builtin_info =
++    match_name_find_opt ctx def.item_meta.name
++      (ExtractBuiltin.builtin_types_map ())
++  in
++  {
++    def_id;
++    name;
++    item_meta;
++    builtin_info;
++    generics;
++    explicit_info;
++    llbc_generics = def.generics;
++    kind;
++    preds;
++  }
++
++
+ (** Simply calls [translate_fwd_ty] *)
+ let ctx_translate_fwd_ty (ctx : bs_ctx) (ty : T.ty) : ty =
+   translate_fwd_ty (Some ctx.span) ctx.decls_ctx ty

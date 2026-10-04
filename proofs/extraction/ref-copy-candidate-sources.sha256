@@ -1,0 +1,4 @@
+d5516d088e1ae688c600b3d2b297615a6e58edb50969e055d0b8bf77a8573f2b  proofs/extraction/tool-patches/aeneas-immediate-ref-copy-fusion.patch
+ae85bbb447e678caa64210e296e3ab4013f49771e8dfd4cfdf8ac5cd90769787  proofs/extraction/tool-patches/tests/RefCopyRegression.ml
+a162e8fae8eecc4ecb76ff054c50967b98e78f823be27c10a89a4c4cf98aee00  proofs/extraction/tool-patches/fixtures/revm-promoted-mut.json
+0d538f86140ee7e9ca7f8a5fd955db0ffddb533f431ab2d7e2b9354dbe31f33a  .local/proof-tools/charon-source/charon/src/ast/bodies/expressions.rs

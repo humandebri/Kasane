@@ -1,0 +1,37 @@
+{
+  "candidate": "Unadopted U32 constant range borrow/outlive classification only",
+  "base_tool_profile": "build-profile.json",
+  "guard": "U32 scalar base, integer U32 endpoint values and types, 0 <= lower <= upper < 2^32. Does not alter input types, ranges or value operations.",
+  "native_tests": "Actual Nanoseconds 0..999999999 and four boundary ranges across four borrow contexts: 20 borrow/outlive comparison pairs; 12 strict negatives. Both actual typed scalar/Nanoseconds transmute bodies, local places, signature types and unsafe flags checked.",
+  "scope": "Only removes the first range-type borrow-analysis failure in an isolated binary. Full preserved range fails at Pure type conversion; opaque range type with actual casts fails at symbolic unary evaluation. No unsafe conversion or code correspondence theorem added.",
+  "not_proved": [
+    "General type-analysis semantic preservation (candidate test coverage only)",
+    "Refinement-type extraction/codegen and Rust TPattern validity/unsafe transmute",
+    "Native/Wasm compiler and Rust/Lean correspondence, all EVM and IC/ICRC ledger external behavior"
+  ],
+  "failures": {
+    "fixed_full": "llbc/TypesAnalysis.ml:486 unsupported TPattern",
+    "candidate_full": "symbolic/SymbolicToPureTypes.ml:195 unsupported TPattern",
+    "both_opaque": "interp/InterpExpressions.ml:983 rejects both actual transmute directions"
+  },
+  "sha256": {
+    "proofs/extraction/tool-patches/aeneas-u32-range-borrow-analysis.patch": "22a60030e0a36c3c2cff364306b2709675920846a66ca484a2573be4a4a40264",
+    "proofs/extraction/tool-patches/tests/U32PatternAnalysisRegression.ml": "e46c00268c2f026deb7ca61b4196f5765b52dcac078a150eec1e88bdfb23c3cc",
+    "scripts/build-u32-range-analysis-candidate.sh": "b9f37dc6b2f65f699ccb4f47b9a23eefcb83105532445d129bfec58303fc4703",
+    "scripts/verify-u32-range-analysis-candidate.sh": "1b9c5fb8965c7a25e2a51abc8e1d95165e6fea32187edfdde65bf5ec10d6c922",
+    ".local/proof-tools/aeneas-u32-range-analysis/aeneas": "71f2fbecff40987ad6f7a84b6ad2afc7c0cda49ba3f57c04ba4f6c1b11d1fbca",
+    ".local/proof-tools/aeneas-u32-range-analysis/check": "ae58b19b75fdd12c69ad7dc7b06aadc645ee76ecc6d895c9e44260b9248cee8e",
+    ".local/proof-tools/aeneas-source/src/llbc/TypesAnalysis.ml": "9d4c6eb7be147df8a9fdc1cf486adadf3fc2da4a478a050ed1f0207f0368fd7b",
+    ".local/proof-tools/aeneas-source/src/symbolic/SymbolicToPureTypes.ml": "35107f4f7c87ec6d57f62a83c5a063eb2e024115b64f9d69e9a3341b009d25ce",
+    ".local/proof-tools/aeneas-source/src/interp/InterpExpressions.ml": "0d0ca6dfcc7fc6e4174c5b1097a54eb1f24777243ab56b2b152349be8ec1624e",
+    ".local/proof-tools/aeneas-source/src/Main.ml": "41e7556907d3a134efc33c777035958d56bf1e30f1e988bed2a6dec8cba37def"
+  },
+  "rust_primary_sources": {
+    "/Users/0xhude/.rustup/toolchains/nightly-2026-09-17-aarch64-apple-darwin/lib/rustlib/src/rust/library/core/src/time.rs": "54659df6f5b6168b53a682df2f92b47540443bc333a0a40bb2ef13a16ab12358",
+    "/Users/0xhude/.rustup/toolchains/nightly-2026-09-17-aarch64-apple-darwin/lib/rustlib/src/rust/library/core/src/num/niche_types.rs": "1a74080c73dd7687b08e667d5611d4068a1b7556311f0b58e44edadb17d0a160",
+    "/Users/0xhude/.rustup/toolchains/nightly-2026-09-17-aarch64-apple-darwin/lib/rustlib/src/rust/library/core/src/convert/num.rs": "8dbf6c64681e2dee556e0844eef3e53d62a40df0280d25f469352870a401e034",
+    "/Users/0xhude/.rustup/toolchains/nightly-2026-09-17-aarch64-apple-darwin/lib/rustlib/src/rust/library/core/src/num/error.rs": "7447f99e89ce2f0163c83cbe177008c3b789b8129602099dfe9dc3f02909baff",
+    "/Users/0xhude/.rustup/toolchains/nightly-2026-09-17-aarch64-apple-darwin/lib/rustlib/src/rust/library/core/src/result.rs": "7f23a9f38da4fc06aaee76066e468d51d4da279f2325f44a8335186420f9ee6c"
+  },
+  "validation": "Fresh clean full/opaque extraction: 12 structured bodies including both actual cast functions. Newly built native checker confirms exact range/signatures/body shape, 20 comparison pairs and 12 strict negatives. Fixed/candidate strict failures and no generated Lean outputs verified. Fixed source and binary hashes retained; prior Duration source/refinement gate revalidated. Full Aeneas suite and semantic preservation unproved."
+}

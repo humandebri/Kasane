@@ -1,0 +1,116 @@
+--- a/src/llbc/TypesAnalysis.ml
++++ b/src/llbc/TypesAnalysis.ml
+@@ -257,6 +257,12 @@
+           | _ -> false)
+       | _ -> false)
+   | _ -> false
++
++(* The constructor uses the same layout guard with reversed types. Its pure
++   interpretation is partial: invalid range inputs are undefined, not Rust panic. *)
++let supported_nanoseconds_construct (decls : type_decl TypeDeclId.Map.t)
++    (src : ty) (tgt : ty) : bool =
++  supported_nanoseconds_read decls tgt src
+ 
+ let analyze_full_ty (span : Meta.span option) (updated : bool ref)
+     (infos : type_infos) (ty_info : partial_type_info) (ty : ty) :
+--- a/src/pure/Pure.ml
++++ b/src/pure/Pure.ml
+@@ -1214,6 +1214,7 @@
+   | Cast of cast_kind
+   | ArrayToSlice
+   | NanosecondsRead
++  | NanosecondsConstruct
+ 
+ and cast_kind =
+   | CastLit of literal_type * literal_type
+--- a/src/pure/PrintPure.ml
++++ b/src/pure/PrintPure.ml
+@@ -909,6 +909,7 @@
+   | Cast kind -> cast_kind_to_string env kind
+   | ArrayToSlice -> "array_to_slice"
+   | NanosecondsRead -> "nanoseconds_read"
++  | NanosecondsConstruct -> "nanoseconds_construct"
+ 
+ let binop_to_string (env : fmt_env) (binop : binop) =
+   let int_ty_to_string int_ty = "::<" ^ integer_type_to_string int_ty ^ ">" in
+--- a/src/extract/ExtractBase.ml
++++ b/src/extract/ExtractBase.ml
+@@ -937,7 +937,7 @@
+       match backend () with
+       | Lean -> "-."
+       | _ -> int_name int_ty ^ "_neg")
+-  | NanosecondsRead -> raise (Failure "NanosecondsRead uses dedicated extraction")
++  | NanosecondsRead | NanosecondsConstruct -> raise (Failure "NanosecondsRead uses dedicated extraction")
+   | ArrayToSlice -> (
+       match backend () with
+       | Lean -> "Std.Array.to_slice"
+--- a/src/interp/InterpExpressions.ml
++++ b/src/interp/InterpExpressions.ml
+@@ -975,7 +975,8 @@
+         | Cast (CastScalar (_, tgt_ty)), _ -> TScalar tgt_ty
+         | Cast (CastTransmute (src, tgt)), operand_ty
+           when Config.backend () = Config.Lean && operand_ty = src
+-            && TypesAnalysis.supported_nanoseconds_read ctx.type_ctx.type_decls src tgt -> tgt
++            && (TypesAnalysis.supported_nanoseconds_read ctx.type_ctx.type_decls src tgt
++                || TypesAnalysis.supported_nanoseconds_construct ctx.type_ctx.type_decls src tgt) -> tgt
+         | Cast (CastUnsize (ty0, ty1, _)), _ ->
+             (* If the following function succeeds, then it means the cast is well-formed
+            (otherwise it throws an exception) *)
+--- a/src/symbolic/SymbolicToPureExpressions.ml
++++ b/src/symbolic/SymbolicToPureExpressions.ml
+@@ -558,6 +558,13 @@
+             let dest = mk_tpat_from_fvar dest_mplace dest in
+             (ctx, Unop (Neg int_ty), effect_info, args, [], dest)
+         | _ -> [%craise] ctx.span "Unreachable")
++    | S.Unop (E.Cast (CastTransmute (src, tgt)))
++      when Config.backend () = Config.Lean
++        && TypesAnalysis.supported_nanoseconds_construct ctx.decls_ctx.crate.type_decls src tgt ->
++        let effect_info = { can_fail = true; can_diverge = false; is_rec = false } in
++        let ctx, dest = fresh_var_for_symbolic_value call.dest ctx in
++        let dest = mk_tpat_from_fvar dest_mplace dest in
++        (ctx, Unop NanosecondsConstruct, effect_info, args, [], dest)
+     | S.Unop (E.Cast (CastTransmute (src, tgt)))
+       when Config.backend () = Config.Lean
+         && TypesAnalysis.supported_nanoseconds_read ctx.decls_ctx.crate.type_decls src tgt ->
+--- a/src/extract/Extract.ml
++++ b/src/extract/Extract.ml
+@@ -573,6 +573,17 @@
+       F.pp_print_space fmt ();
+       extract_expr ~inside:true arg;
+       if inside then F.pp_print_string fmt ")"
++  | NanosecondsConstruct ->
++      [%cassert] span (backend () = Lean) "Nanoseconds construct candidate requires Lean";
++      let extract_arg () =
++        F.pp_print_string fmt "(";
++        extract_expr ~inside:false arg;
++        F.pp_print_string fmt ")" in
++      F.pp_print_string fmt "(if rangeValid : ";
++      extract_arg ();
++      F.pp_print_string fmt ".val ≤ 999999999 then Result.ok ⟨";
++      extract_arg ();
++      F.pp_print_string fmt ", Nat.zero_le _, rangeValid⟩ else Result.fail Error.undef)"
+   | NanosecondsRead ->
+       [%cassert] span (backend () = Lean) "Nanoseconds read candidate requires Lean";
+       F.pp_print_string fmt "(";
+--- a/src/pure/PureMicroPassesGeneral.ml
++++ b/src/pure/PureMicroPassesGeneral.ml
+@@ -723,7 +723,7 @@
+ let lift_unop (unop : unop) : bool =
+   match unop with
+   | Not None -> false
+-  | Not (Some _) | Neg _ | Cast _ | ArrayToSlice | NanosecondsRead -> true
++  | Not (Some _) | Neg _ | Cast _ | ArrayToSlice | NanosecondsRead | NanosecondsConstruct -> true
+ 
+ (** A helper predicate *)
+ let inline_unop unop = not (lift_unop unop)
+--- a/src/pure/PureMicroPassesAnnots.ml
++++ b/src/pure/PureMicroPassesAnnots.ml
+@@ -303,7 +303,7 @@
+               | Fun fid -> begin compute_known_tys_from_fun_id qualif fid end
+               | Unop unop -> begin
+                   match unop with
+-                  | Not _ | Neg _ | Cast _ | ArrayToSlice | NanosecondsRead ->
++                  | Not _ | Neg _ | Cast _ | ArrayToSlice | NanosecondsRead | NanosecondsConstruct ->
+                       (known_f_ty, known_args_tys, false)
+                 end
+               | Binop _ -> (known_f_ty, known_args_tys, false)

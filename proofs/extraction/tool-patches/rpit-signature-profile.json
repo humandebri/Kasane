@@ -1,0 +1,52 @@
+{
+  "status": "unadopted-direct-declared-rpitit-return-preservation-candidate",
+  "sha256": {
+    ".local/proof-tools/charon-rpit-signature-candidate/charon": "8f772feb4b6ca69410c9f11b3b0c9dff36eb30c9c7a5f83f3d35dd578d93212e",
+    ".local/proof-tools/charon-rpit-signature-candidate/charon-driver": "2e545c54d83cf189251dac78bf48550b48466c344221e3ee72c83c3d669838d8",
+    "proofs/extraction/tool-patches/charon-rpitit-declared-return.patch": "bddc8f9b4b0e9fada9cdda2e2c9b68ca6d19555d846b78b9505caf6681e80cce",
+    ".local/proof-tools/charon-source/charon/src/bin/charon-driver/translate/translate_items.rs": "699298b456f3f4390cc0e7ee9e1d4908eb467d7d1380b3f753f6bbac7f37a944",
+    ".local/proof-tools/charon-source/charon/src/bin/charon-driver/hax/types/ty.rs": "f7ceb3d92e033f46a1ef1d55a6805a33feadb025b83301bc32626f174b6e693f",
+    ".local/proof-tools/aeneas-source/src/interp/InterpBorrowsCore.ml": "26e0cd3c822c1fe863ea0ad57e093a189f028fd7b82eaf5fa0ed8c2d5d65e270",
+    "proofs/extraction/gat-override-rust/Cargo.lock": "8343b29cae0eefb0668d3a8505c92404b50822c8699366a602be96dbc3a3ec94",
+    "proofs/extraction/gat-override-rust/Cargo.toml": "1b55fe3a240f20dd76ff5d845ebc790574b7a10e11d084dba07fb691bc05603d",
+    "proofs/extraction/gat-override-rust/lib.rs": "387c443146e3da635ce430ab28b17ad7325fb6e697f50a63c1c4fe7dc7dc2f5f"
+  },
+  "based_on": "gat-closed-item-equality-profile.json",
+  "rust": "nightly-2026-09-17",
+  "scope": "Only direct raw Rustc trait-method output Alias Projection with RPITIT Trait metadata identifying this exact method. Reconstructs actual projection through existing trait-proof/type-id/generic argument translators inside declared method binder. Does not replace default function/implementation concrete signatures or infer unconditional default equalities. Nested RPITIT/other aliases unchanged. Transform correctness unproved.",
+  "override_probe": {
+    "native_tests": 2,
+    "default_output": "borrowed &[u8] from input",
+    "override_output": "owned Vec<u8> [7,8,9]",
+    "old_trait_signature": "default &[u8], inconsistent with generic GAT destination",
+    "candidate_trait_signature": "Self::slice_len_ty bound method lifetime",
+    "candidate_default_signature": "borrowed &[u8], unchanged",
+    "candidate_impl_associated_types": [
+      "borrowed &[u8]",
+      "owned Vec<u8>"
+    ]
+  },
+  "all_instructions": {
+    "fresh_extraction": "passed clean 236 structured bodies; unchanged 150 opcode table inventory",
+    "borrow_check": "passes prior call destination type mismatch then stops at Deref; InterpBorrowsCore.ml:476 requires whole TTraitType equality without comparing lifetime arguments",
+    "proof": "none; symbolic borrow and Pure/Lean GAT interpretation incomplete"
+  },
+  "regression": {
+    "rust_passed": 529,
+    "ui_ignored": 4,
+    "snapshot_mode": "IN_CI=1; no snapshot update",
+    "cargo_target": "unset CARGO_TARGET_DIR; own tool/fixture build directories",
+    "clippy": "all-targets -D warnings passed; no autofix",
+    "ocaml": "dune runtest --force passed byte/native; 924 JSON and 924 Postcard loads, 2 cross-format tests, 8 name-matcher executions"
+  },
+  "fixed_tools": "all fixed sources and binaries restored; candidates isolated; default gates use prior versions",
+  "remaining": [
+    "Formal preservation of binder/projection/override semantics",
+    "Nested return shapes and full GAT support",
+    "Aeneas GAT lifetime/borrow projection comparison",
+    "Pure/Lean constraints and associated type interpretation",
+    "Unsafe stack, real host, gas/exception and instruction proofs",
+    "Production-root, compiler/native/Wasm and external IC/ledger correspondence"
+  ],
+  "boundary_regression": "plain/rpit/named/mixed clean extraction; parameter-dependent GAT remains rejected, invalid output not consumed"
+}

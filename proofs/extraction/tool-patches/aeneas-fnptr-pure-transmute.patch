@@ -1,0 +1,86 @@
+--- a/src/pure/Pure.ml
++++ b/src/pure/Pure.ml
+@@ -1240,6 +1240,8 @@
+   | NanosecondsConstruct
+ 
+ and cast_kind =
++  | CastRustFnPtrTransmute of ty * ty
++      (** Retained representation transmute; no unsafe-call validity implied. *)
+   | CastRustFnItem of ty * ty
+       (** Retained item-to-pointer coercion; endpoints are substitution-visible. *)
+   | CastLit of literal_type * literal_type
+--- a/src/pure/PrintPure.ml
++++ b/src/pure/PrintPure.ml
+@@ -891,8 +891,10 @@
+   | Pure fid -> pure_builtin_fun_id_to_string fid
+ 
+ let cast_kind_to_string (env : fmt_env) (kind : cast_kind) : string =
++  let prefix=match kind with CastRustFnPtrTransmute _ -> "transmute" | _ -> "cast" in
+   let src, tgt =
+     match kind with
++    | CastRustFnPtrTransmute (src,tgt) -> (ty_to_string env false src,ty_to_string env false tgt)
+     | CastRustFnItem (src,tgt) -> (ty_to_string env false src,ty_to_string env false tgt)
+     | CastLit (src, tgt) ->
+         (literal_type_to_string src, literal_type_to_string tgt)
+@@ -905,7 +907,7 @@
+         in
+         (mk src src_mut, mk tgt tgt_mut)
+   in
+-  "cast<" ^ src ^ "," ^ tgt ^ ">"
++  prefix ^ "<" ^ src ^ "," ^ tgt ^ ">"
+ 
+ let unop_to_string (env : fmt_env) (unop : unop) : string =
+   match unop with
+--- a/src/extract/Extract.ml
++++ b/src/extract/Extract.ml
+@@ -402,6 +402,8 @@
+     (extract_expr : inside:bool -> texpr -> unit) (fmt : F.formatter)
+     ~(inside : bool) (kind : cast_kind) (arg : texpr) : unit =
+   match kind with
++  | CastRustFnPtrTransmute _ ->
++      [%craise] span "Retained Rust function-pointer transmute requires verified callable extraction"
+   | CastRustFnItem _ ->
+       [%craise] span "Retained Rust function-item coercion requires verified callable extraction"
+   | CastLit (src, tgt) ->
+@@ -428,6 +430,8 @@
+     (extract_expr : inside:bool -> texpr -> unit) (fmt : F.formatter)
+     ~(inside : bool) (kind : cast_kind) (arg : texpr) : unit =
+   match kind with
++  | CastRustFnPtrTransmute _ ->
++      [%craise] span "Retained Rust function-pointer transmute requires verified callable extraction"
+   | CastRustFnItem _ ->
+       [%craise] span "Retained Rust function-item coercion requires verified callable extraction"
+   | CastLit (src, tgt) ->
+--- a/src/symbolic/SymbolicToPureExpressions.ml
++++ b/src/symbolic/SymbolicToPureExpressions.ml
+@@ -8,6 +8,15 @@
+ 
+ (** The local logger *)
+ let log = Logging.symbolic_to_pure_expressions_log
++
++(* Preserve endpoint types and the operation; call ABI/receiver validity is
++   separate from the already guarded pointer representation cast. *)
++let translate_rust_fnptr_transmute span translate_ty src dst =
++  [%cassert_opt_span] span
++    (Config.backend ()=Config.Lean
++     && InterpExpressions.fnptr_transmute_representation_supported src dst)
++    "Unsupported Pure function-pointer transmute representation";
++  CastRustFnPtrTransmute(translate_ty src,translate_ty dst)
+ 
+ let translate_fn_ptr_kind (ctx : bs_ctx) (id : A.fn_ptr_kind) : fn_ptr_kind =
+   match id with
+@@ -621,7 +630,13 @@
+               (* We shouldn't get there: this case should have been detected before
+                and handled in [translate_cast_unsize] *)
+               [%internal_error] ctx.span
+-          | CastTransmute _ -> [%craise] ctx.span "Unsupported: transmute"
++          | CastTransmute (src_ty,tgt_ty) ->
++              let kind=translate_rust_fnptr_transmute (Some ctx.span)
++                (translate_sty (Some ctx.span)) src_ty tgt_ty in
++              let src=match kind with CastRustFnPtrTransmute(src,_) -> src | _ -> [%internal_error] ctx.span in
++              [%cassert] ctx.span (match args with [arg] -> arg.ty=src | _ -> false)
++                "Pure function-pointer transmute operand mismatch";
++              (kind,false)
+           | CastConcretize _ ->
+               [%craise] ctx.span "Unsupported: `dyn Trait` concretization"
+         in

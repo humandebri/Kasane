@@ -1,0 +1,902 @@
+[
+  {
+    "opcode_name": "STOP",
+    "actual_function": "control::stop",
+    "base_static_gas_expression": "0",
+    "opcode_byte": 0
+  },
+  {
+    "opcode_name": "ADD",
+    "actual_function": "arithmetic::add",
+    "base_static_gas_expression": "3",
+    "opcode_byte": 1
+  },
+  {
+    "opcode_name": "MUL",
+    "actual_function": "arithmetic::mul",
+    "base_static_gas_expression": "5",
+    "opcode_byte": 2
+  },
+  {
+    "opcode_name": "SUB",
+    "actual_function": "arithmetic::sub",
+    "base_static_gas_expression": "3",
+    "opcode_byte": 3
+  },
+  {
+    "opcode_name": "DIV",
+    "actual_function": "arithmetic::div",
+    "base_static_gas_expression": "5",
+    "opcode_byte": 4
+  },
+  {
+    "opcode_name": "SDIV",
+    "actual_function": "arithmetic::sdiv",
+    "base_static_gas_expression": "5",
+    "opcode_byte": 5
+  },
+  {
+    "opcode_name": "MOD",
+    "actual_function": "arithmetic::rem",
+    "base_static_gas_expression": "5",
+    "opcode_byte": 6
+  },
+  {
+    "opcode_name": "SMOD",
+    "actual_function": "arithmetic::smod",
+    "base_static_gas_expression": "5",
+    "opcode_byte": 7
+  },
+  {
+    "opcode_name": "ADDMOD",
+    "actual_function": "arithmetic::addmod",
+    "base_static_gas_expression": "8",
+    "opcode_byte": 8
+  },
+  {
+    "opcode_name": "MULMOD",
+    "actual_function": "arithmetic::mulmod",
+    "base_static_gas_expression": "8",
+    "opcode_byte": 9
+  },
+  {
+    "opcode_name": "EXP",
+    "actual_function": "arithmetic::exp",
+    "base_static_gas_expression": "gas::EXP",
+    "opcode_byte": 10
+  },
+  {
+    "opcode_name": "SIGNEXTEND",
+    "actual_function": "arithmetic::signextend",
+    "base_static_gas_expression": "5",
+    "opcode_byte": 11
+  },
+  {
+    "opcode_name": "LT",
+    "actual_function": "bitwise::lt",
+    "base_static_gas_expression": "3",
+    "opcode_byte": 16
+  },
+  {
+    "opcode_name": "GT",
+    "actual_function": "bitwise::gt",
+    "base_static_gas_expression": "3",
+    "opcode_byte": 17
+  },
+  {
+    "opcode_name": "SLT",
+    "actual_function": "bitwise::slt",
+    "base_static_gas_expression": "3",
+    "opcode_byte": 18
+  },
+  {
+    "opcode_name": "SGT",
+    "actual_function": "bitwise::sgt",
+    "base_static_gas_expression": "3",
+    "opcode_byte": 19
+  },
+  {
+    "opcode_name": "EQ",
+    "actual_function": "bitwise::eq",
+    "base_static_gas_expression": "3",
+    "opcode_byte": 20
+  },
+  {
+    "opcode_name": "ISZERO",
+    "actual_function": "bitwise::iszero",
+    "base_static_gas_expression": "3",
+    "opcode_byte": 21
+  },
+  {
+    "opcode_name": "AND",
+    "actual_function": "bitwise::bitand",
+    "base_static_gas_expression": "3",
+    "opcode_byte": 22
+  },
+  {
+    "opcode_name": "OR",
+    "actual_function": "bitwise::bitor",
+    "base_static_gas_expression": "3",
+    "opcode_byte": 23
+  },
+  {
+    "opcode_name": "XOR",
+    "actual_function": "bitwise::bitxor",
+    "base_static_gas_expression": "3",
+    "opcode_byte": 24
+  },
+  {
+    "opcode_name": "NOT",
+    "actual_function": "bitwise::not",
+    "base_static_gas_expression": "3",
+    "opcode_byte": 25
+  },
+  {
+    "opcode_name": "BYTE",
+    "actual_function": "bitwise::byte",
+    "base_static_gas_expression": "3",
+    "opcode_byte": 26
+  },
+  {
+    "opcode_name": "SHL",
+    "actual_function": "bitwise::shl",
+    "base_static_gas_expression": "3",
+    "opcode_byte": 27
+  },
+  {
+    "opcode_name": "SHR",
+    "actual_function": "bitwise::shr",
+    "base_static_gas_expression": "3",
+    "opcode_byte": 28
+  },
+  {
+    "opcode_name": "SAR",
+    "actual_function": "bitwise::sar",
+    "base_static_gas_expression": "3",
+    "opcode_byte": 29
+  },
+  {
+    "opcode_name": "CLZ",
+    "actual_function": "bitwise::clz",
+    "base_static_gas_expression": "5",
+    "opcode_byte": 30
+  },
+  {
+    "opcode_name": "KECCAK256",
+    "actual_function": "system::keccak256",
+    "base_static_gas_expression": "gas::KECCAK256",
+    "opcode_byte": 32
+  },
+  {
+    "opcode_name": "ADDRESS",
+    "actual_function": "system::address",
+    "base_static_gas_expression": "2",
+    "opcode_byte": 48
+  },
+  {
+    "opcode_name": "BALANCE",
+    "actual_function": "host::balance",
+    "base_static_gas_expression": "20",
+    "opcode_byte": 49
+  },
+  {
+    "opcode_name": "ORIGIN",
+    "actual_function": "tx_info::origin",
+    "base_static_gas_expression": "2",
+    "opcode_byte": 50
+  },
+  {
+    "opcode_name": "CALLER",
+    "actual_function": "system::caller",
+    "base_static_gas_expression": "2",
+    "opcode_byte": 51
+  },
+  {
+    "opcode_name": "CALLVALUE",
+    "actual_function": "system::callvalue",
+    "base_static_gas_expression": "2",
+    "opcode_byte": 52
+  },
+  {
+    "opcode_name": "CALLDATALOAD",
+    "actual_function": "system::calldataload",
+    "base_static_gas_expression": "3",
+    "opcode_byte": 53
+  },
+  {
+    "opcode_name": "CALLDATASIZE",
+    "actual_function": "system::calldatasize",
+    "base_static_gas_expression": "2",
+    "opcode_byte": 54
+  },
+  {
+    "opcode_name": "CALLDATACOPY",
+    "actual_function": "system::calldatacopy",
+    "base_static_gas_expression": "3",
+    "opcode_byte": 55
+  },
+  {
+    "opcode_name": "CODESIZE",
+    "actual_function": "system::codesize",
+    "base_static_gas_expression": "2",
+    "opcode_byte": 56
+  },
+  {
+    "opcode_name": "CODECOPY",
+    "actual_function": "system::codecopy",
+    "base_static_gas_expression": "3",
+    "opcode_byte": 57
+  },
+  {
+    "opcode_name": "GASPRICE",
+    "actual_function": "tx_info::gasprice",
+    "base_static_gas_expression": "2",
+    "opcode_byte": 58
+  },
+  {
+    "opcode_name": "EXTCODESIZE",
+    "actual_function": "host::extcodesize",
+    "base_static_gas_expression": "20",
+    "opcode_byte": 59
+  },
+  {
+    "opcode_name": "EXTCODECOPY",
+    "actual_function": "host::extcodecopy",
+    "base_static_gas_expression": "20",
+    "opcode_byte": 60
+  },
+  {
+    "opcode_name": "RETURNDATASIZE",
+    "actual_function": "system::returndatasize",
+    "base_static_gas_expression": "2",
+    "opcode_byte": 61
+  },
+  {
+    "opcode_name": "RETURNDATACOPY",
+    "actual_function": "system::returndatacopy",
+    "base_static_gas_expression": "3",
+    "opcode_byte": 62
+  },
+  {
+    "opcode_name": "EXTCODEHASH",
+    "actual_function": "host::extcodehash",
+    "base_static_gas_expression": "400",
+    "opcode_byte": 63
+  },
+  {
+    "opcode_name": "BLOCKHASH",
+    "actual_function": "host::blockhash",
+    "base_static_gas_expression": "20",
+    "opcode_byte": 64
+  },
+  {
+    "opcode_name": "COINBASE",
+    "actual_function": "block_info::coinbase",
+    "base_static_gas_expression": "2",
+    "opcode_byte": 65
+  },
+  {
+    "opcode_name": "TIMESTAMP",
+    "actual_function": "block_info::timestamp",
+    "base_static_gas_expression": "2",
+    "opcode_byte": 66
+  },
+  {
+    "opcode_name": "NUMBER",
+    "actual_function": "block_info::block_number",
+    "base_static_gas_expression": "2",
+    "opcode_byte": 67
+  },
+  {
+    "opcode_name": "DIFFICULTY",
+    "actual_function": "block_info::difficulty",
+    "base_static_gas_expression": "2",
+    "opcode_byte": 68
+  },
+  {
+    "opcode_name": "GASLIMIT",
+    "actual_function": "block_info::gaslimit",
+    "base_static_gas_expression": "2",
+    "opcode_byte": 69
+  },
+  {
+    "opcode_name": "CHAINID",
+    "actual_function": "block_info::chainid",
+    "base_static_gas_expression": "2",
+    "opcode_byte": 70
+  },
+  {
+    "opcode_name": "SELFBALANCE",
+    "actual_function": "host::selfbalance",
+    "base_static_gas_expression": "5",
+    "opcode_byte": 71
+  },
+  {
+    "opcode_name": "BASEFEE",
+    "actual_function": "block_info::basefee",
+    "base_static_gas_expression": "2",
+    "opcode_byte": 72
+  },
+  {
+    "opcode_name": "BLOBHASH",
+    "actual_function": "tx_info::blob_hash",
+    "base_static_gas_expression": "3",
+    "opcode_byte": 73
+  },
+  {
+    "opcode_name": "BLOBBASEFEE",
+    "actual_function": "block_info::blob_basefee",
+    "base_static_gas_expression": "2",
+    "opcode_byte": 74
+  },
+  {
+    "opcode_name": "POP",
+    "actual_function": "stack::pop",
+    "base_static_gas_expression": "2",
+    "opcode_byte": 80
+  },
+  {
+    "opcode_name": "MLOAD",
+    "actual_function": "memory::mload",
+    "base_static_gas_expression": "3",
+    "opcode_byte": 81
+  },
+  {
+    "opcode_name": "MSTORE",
+    "actual_function": "memory::mstore",
+    "base_static_gas_expression": "3",
+    "opcode_byte": 82
+  },
+  {
+    "opcode_name": "MSTORE8",
+    "actual_function": "memory::mstore8",
+    "base_static_gas_expression": "3",
+    "opcode_byte": 83
+  },
+  {
+    "opcode_name": "SLOAD",
+    "actual_function": "host::sload",
+    "base_static_gas_expression": "50",
+    "opcode_byte": 84
+  },
+  {
+    "opcode_name": "SSTORE",
+    "actual_function": "host::sstore",
+    "base_static_gas_expression": "0",
+    "opcode_byte": 85
+  },
+  {
+    "opcode_name": "JUMP",
+    "actual_function": "control::jump",
+    "base_static_gas_expression": "8",
+    "opcode_byte": 86
+  },
+  {
+    "opcode_name": "JUMPI",
+    "actual_function": "control::jumpi",
+    "base_static_gas_expression": "10",
+    "opcode_byte": 87
+  },
+  {
+    "opcode_name": "PC",
+    "actual_function": "control::pc",
+    "base_static_gas_expression": "2",
+    "opcode_byte": 88
+  },
+  {
+    "opcode_name": "MSIZE",
+    "actual_function": "memory::msize",
+    "base_static_gas_expression": "2",
+    "opcode_byte": 89
+  },
+  {
+    "opcode_name": "GAS",
+    "actual_function": "system::gas",
+    "base_static_gas_expression": "2",
+    "opcode_byte": 90
+  },
+  {
+    "opcode_name": "JUMPDEST",
+    "actual_function": "control::jumpdest",
+    "base_static_gas_expression": "1",
+    "opcode_byte": 91
+  },
+  {
+    "opcode_name": "TLOAD",
+    "actual_function": "host::tload",
+    "base_static_gas_expression": "100",
+    "opcode_byte": 92
+  },
+  {
+    "opcode_name": "TSTORE",
+    "actual_function": "host::tstore",
+    "base_static_gas_expression": "100",
+    "opcode_byte": 93
+  },
+  {
+    "opcode_name": "MCOPY",
+    "actual_function": "memory::mcopy",
+    "base_static_gas_expression": "3",
+    "opcode_byte": 94
+  },
+  {
+    "opcode_name": "PUSH0",
+    "actual_function": "stack::push0",
+    "base_static_gas_expression": "2",
+    "opcode_byte": 95
+  },
+  {
+    "opcode_name": "PUSH1",
+    "actual_function": "stack::push::<1, _, _>",
+    "base_static_gas_expression": "3",
+    "opcode_byte": 96
+  },
+  {
+    "opcode_name": "PUSH2",
+    "actual_function": "stack::push::<2, _, _>",
+    "base_static_gas_expression": "3",
+    "opcode_byte": 97
+  },
+  {
+    "opcode_name": "PUSH3",
+    "actual_function": "stack::push::<3, _, _>",
+    "base_static_gas_expression": "3",
+    "opcode_byte": 98
+  },
+  {
+    "opcode_name": "PUSH4",
+    "actual_function": "stack::push::<4, _, _>",
+    "base_static_gas_expression": "3",
+    "opcode_byte": 99
+  },
+  {
+    "opcode_name": "PUSH5",
+    "actual_function": "stack::push::<5, _, _>",
+    "base_static_gas_expression": "3",
+    "opcode_byte": 100
+  },
+  {
+    "opcode_name": "PUSH6",
+    "actual_function": "stack::push::<6, _, _>",
+    "base_static_gas_expression": "3",
+    "opcode_byte": 101
+  },
+  {
+    "opcode_name": "PUSH7",
+    "actual_function": "stack::push::<7, _, _>",
+    "base_static_gas_expression": "3",
+    "opcode_byte": 102
+  },
+  {
+    "opcode_name": "PUSH8",
+    "actual_function": "stack::push::<8, _, _>",
+    "base_static_gas_expression": "3",
+    "opcode_byte": 103
+  },
+  {
+    "opcode_name": "PUSH9",
+    "actual_function": "stack::push::<9, _, _>",
+    "base_static_gas_expression": "3",
+    "opcode_byte": 104
+  },
+  {
+    "opcode_name": "PUSH10",
+    "actual_function": "stack::push::<10, _, _>",
+    "base_static_gas_expression": "3",
+    "opcode_byte": 105
+  },
+  {
+    "opcode_name": "PUSH11",
+    "actual_function": "stack::push::<11, _, _>",
+    "base_static_gas_expression": "3",
+    "opcode_byte": 106
+  },
+  {
+    "opcode_name": "PUSH12",
+    "actual_function": "stack::push::<12, _, _>",
+    "base_static_gas_expression": "3",
+    "opcode_byte": 107
+  },
+  {
+    "opcode_name": "PUSH13",
+    "actual_function": "stack::push::<13, _, _>",
+    "base_static_gas_expression": "3",
+    "opcode_byte": 108
+  },
+  {
+    "opcode_name": "PUSH14",
+    "actual_function": "stack::push::<14, _, _>",
+    "base_static_gas_expression": "3",
+    "opcode_byte": 109
+  },
+  {
+    "opcode_name": "PUSH15",
+    "actual_function": "stack::push::<15, _, _>",
+    "base_static_gas_expression": "3",
+    "opcode_byte": 110
+  },
+  {
+    "opcode_name": "PUSH16",
+    "actual_function": "stack::push::<16, _, _>",
+    "base_static_gas_expression": "3",
+    "opcode_byte": 111
+  },
+  {
+    "opcode_name": "PUSH17",
+    "actual_function": "stack::push::<17, _, _>",
+    "base_static_gas_expression": "3",
+    "opcode_byte": 112
+  },
+  {
+    "opcode_name": "PUSH18",
+    "actual_function": "stack::push::<18, _, _>",
+    "base_static_gas_expression": "3",
+    "opcode_byte": 113
+  },
+  {
+    "opcode_name": "PUSH19",
+    "actual_function": "stack::push::<19, _, _>",
+    "base_static_gas_expression": "3",
+    "opcode_byte": 114
+  },
+  {
+    "opcode_name": "PUSH20",
+    "actual_function": "stack::push::<20, _, _>",
+    "base_static_gas_expression": "3",
+    "opcode_byte": 115
+  },
+  {
+    "opcode_name": "PUSH21",
+    "actual_function": "stack::push::<21, _, _>",
+    "base_static_gas_expression": "3",
+    "opcode_byte": 116
+  },
+  {
+    "opcode_name": "PUSH22",
+    "actual_function": "stack::push::<22, _, _>",
+    "base_static_gas_expression": "3",
+    "opcode_byte": 117
+  },
+  {
+    "opcode_name": "PUSH23",
+    "actual_function": "stack::push::<23, _, _>",
+    "base_static_gas_expression": "3",
+    "opcode_byte": 118
+  },
+  {
+    "opcode_name": "PUSH24",
+    "actual_function": "stack::push::<24, _, _>",
+    "base_static_gas_expression": "3",
+    "opcode_byte": 119
+  },
+  {
+    "opcode_name": "PUSH25",
+    "actual_function": "stack::push::<25, _, _>",
+    "base_static_gas_expression": "3",
+    "opcode_byte": 120
+  },
+  {
+    "opcode_name": "PUSH26",
+    "actual_function": "stack::push::<26, _, _>",
+    "base_static_gas_expression": "3",
+    "opcode_byte": 121
+  },
+  {
+    "opcode_name": "PUSH27",
+    "actual_function": "stack::push::<27, _, _>",
+    "base_static_gas_expression": "3",
+    "opcode_byte": 122
+  },
+  {
+    "opcode_name": "PUSH28",
+    "actual_function": "stack::push::<28, _, _>",
+    "base_static_gas_expression": "3",
+    "opcode_byte": 123
+  },
+  {
+    "opcode_name": "PUSH29",
+    "actual_function": "stack::push::<29, _, _>",
+    "base_static_gas_expression": "3",
+    "opcode_byte": 124
+  },
+  {
+    "opcode_name": "PUSH30",
+    "actual_function": "stack::push::<30, _, _>",
+    "base_static_gas_expression": "3",
+    "opcode_byte": 125
+  },
+  {
+    "opcode_name": "PUSH31",
+    "actual_function": "stack::push::<31, _, _>",
+    "base_static_gas_expression": "3",
+    "opcode_byte": 126
+  },
+  {
+    "opcode_name": "PUSH32",
+    "actual_function": "stack::push::<32, _, _>",
+    "base_static_gas_expression": "3",
+    "opcode_byte": 127
+  },
+  {
+    "opcode_name": "DUP1",
+    "actual_function": "stack::dup::<1, _, _>",
+    "base_static_gas_expression": "3",
+    "opcode_byte": 128
+  },
+  {
+    "opcode_name": "DUP2",
+    "actual_function": "stack::dup::<2, _, _>",
+    "base_static_gas_expression": "3",
+    "opcode_byte": 129
+  },
+  {
+    "opcode_name": "DUP3",
+    "actual_function": "stack::dup::<3, _, _>",
+    "base_static_gas_expression": "3",
+    "opcode_byte": 130
+  },
+  {
+    "opcode_name": "DUP4",
+    "actual_function": "stack::dup::<4, _, _>",
+    "base_static_gas_expression": "3",
+    "opcode_byte": 131
+  },
+  {
+    "opcode_name": "DUP5",
+    "actual_function": "stack::dup::<5, _, _>",
+    "base_static_gas_expression": "3",
+    "opcode_byte": 132
+  },
+  {
+    "opcode_name": "DUP6",
+    "actual_function": "stack::dup::<6, _, _>",
+    "base_static_gas_expression": "3",
+    "opcode_byte": 133
+  },
+  {
+    "opcode_name": "DUP7",
+    "actual_function": "stack::dup::<7, _, _>",
+    "base_static_gas_expression": "3",
+    "opcode_byte": 134
+  },
+  {
+    "opcode_name": "DUP8",
+    "actual_function": "stack::dup::<8, _, _>",
+    "base_static_gas_expression": "3",
+    "opcode_byte": 135
+  },
+  {
+    "opcode_name": "DUP9",
+    "actual_function": "stack::dup::<9, _, _>",
+    "base_static_gas_expression": "3",
+    "opcode_byte": 136
+  },
+  {
+    "opcode_name": "DUP10",
+    "actual_function": "stack::dup::<10, _, _>",
+    "base_static_gas_expression": "3",
+    "opcode_byte": 137
+  },
+  {
+    "opcode_name": "DUP11",
+    "actual_function": "stack::dup::<11, _, _>",
+    "base_static_gas_expression": "3",
+    "opcode_byte": 138
+  },
+  {
+    "opcode_name": "DUP12",
+    "actual_function": "stack::dup::<12, _, _>",
+    "base_static_gas_expression": "3",
+    "opcode_byte": 139
+  },
+  {
+    "opcode_name": "DUP13",
+    "actual_function": "stack::dup::<13, _, _>",
+    "base_static_gas_expression": "3",
+    "opcode_byte": 140
+  },
+  {
+    "opcode_name": "DUP14",
+    "actual_function": "stack::dup::<14, _, _>",
+    "base_static_gas_expression": "3",
+    "opcode_byte": 141
+  },
+  {
+    "opcode_name": "DUP15",
+    "actual_function": "stack::dup::<15, _, _>",
+    "base_static_gas_expression": "3",
+    "opcode_byte": 142
+  },
+  {
+    "opcode_name": "DUP16",
+    "actual_function": "stack::dup::<16, _, _>",
+    "base_static_gas_expression": "3",
+    "opcode_byte": 143
+  },
+  {
+    "opcode_name": "SWAP1",
+    "actual_function": "stack::swap::<1, _, _>",
+    "base_static_gas_expression": "3",
+    "opcode_byte": 144
+  },
+  {
+    "opcode_name": "SWAP2",
+    "actual_function": "stack::swap::<2, _, _>",
+    "base_static_gas_expression": "3",
+    "opcode_byte": 145
+  },
+  {
+    "opcode_name": "SWAP3",
+    "actual_function": "stack::swap::<3, _, _>",
+    "base_static_gas_expression": "3",
+    "opcode_byte": 146
+  },
+  {
+    "opcode_name": "SWAP4",
+    "actual_function": "stack::swap::<4, _, _>",
+    "base_static_gas_expression": "3",
+    "opcode_byte": 147
+  },
+  {
+    "opcode_name": "SWAP5",
+    "actual_function": "stack::swap::<5, _, _>",
+    "base_static_gas_expression": "3",
+    "opcode_byte": 148
+  },
+  {
+    "opcode_name": "SWAP6",
+    "actual_function": "stack::swap::<6, _, _>",
+    "base_static_gas_expression": "3",
+    "opcode_byte": 149
+  },
+  {
+    "opcode_name": "SWAP7",
+    "actual_function": "stack::swap::<7, _, _>",
+    "base_static_gas_expression": "3",
+    "opcode_byte": 150
+  },
+  {
+    "opcode_name": "SWAP8",
+    "actual_function": "stack::swap::<8, _, _>",
+    "base_static_gas_expression": "3",
+    "opcode_byte": 151
+  },
+  {
+    "opcode_name": "SWAP9",
+    "actual_function": "stack::swap::<9, _, _>",
+    "base_static_gas_expression": "3",
+    "opcode_byte": 152
+  },
+  {
+    "opcode_name": "SWAP10",
+    "actual_function": "stack::swap::<10, _, _>",
+    "base_static_gas_expression": "3",
+    "opcode_byte": 153
+  },
+  {
+    "opcode_name": "SWAP11",
+    "actual_function": "stack::swap::<11, _, _>",
+    "base_static_gas_expression": "3",
+    "opcode_byte": 154
+  },
+  {
+    "opcode_name": "SWAP12",
+    "actual_function": "stack::swap::<12, _, _>",
+    "base_static_gas_expression": "3",
+    "opcode_byte": 155
+  },
+  {
+    "opcode_name": "SWAP13",
+    "actual_function": "stack::swap::<13, _, _>",
+    "base_static_gas_expression": "3",
+    "opcode_byte": 156
+  },
+  {
+    "opcode_name": "SWAP14",
+    "actual_function": "stack::swap::<14, _, _>",
+    "base_static_gas_expression": "3",
+    "opcode_byte": 157
+  },
+  {
+    "opcode_name": "SWAP15",
+    "actual_function": "stack::swap::<15, _, _>",
+    "base_static_gas_expression": "3",
+    "opcode_byte": 158
+  },
+  {
+    "opcode_name": "SWAP16",
+    "actual_function": "stack::swap::<16, _, _>",
+    "base_static_gas_expression": "3",
+    "opcode_byte": 159
+  },
+  {
+    "opcode_name": "LOG0",
+    "actual_function": "host::log::<0, _>",
+    "base_static_gas_expression": "gas::LOG",
+    "opcode_byte": 160
+  },
+  {
+    "opcode_name": "LOG1",
+    "actual_function": "host::log::<1, _>",
+    "base_static_gas_expression": "gas::LOG",
+    "opcode_byte": 161
+  },
+  {
+    "opcode_name": "LOG2",
+    "actual_function": "host::log::<2, _>",
+    "base_static_gas_expression": "gas::LOG",
+    "opcode_byte": 162
+  },
+  {
+    "opcode_name": "LOG3",
+    "actual_function": "host::log::<3, _>",
+    "base_static_gas_expression": "gas::LOG",
+    "opcode_byte": 163
+  },
+  {
+    "opcode_name": "LOG4",
+    "actual_function": "host::log::<4, _>",
+    "base_static_gas_expression": "gas::LOG",
+    "opcode_byte": 164
+  },
+  {
+    "opcode_name": "CREATE",
+    "actual_function": "contract::create::<_, false, _>",
+    "base_static_gas_expression": "0",
+    "opcode_byte": 240
+  },
+  {
+    "opcode_name": "CALL",
+    "actual_function": "contract::call",
+    "base_static_gas_expression": "40",
+    "opcode_byte": 241
+  },
+  {
+    "opcode_name": "CALLCODE",
+    "actual_function": "contract::call_code",
+    "base_static_gas_expression": "40",
+    "opcode_byte": 242
+  },
+  {
+    "opcode_name": "RETURN",
+    "actual_function": "control::ret",
+    "base_static_gas_expression": "0",
+    "opcode_byte": 243
+  },
+  {
+    "opcode_name": "DELEGATECALL",
+    "actual_function": "contract::delegate_call",
+    "base_static_gas_expression": "40",
+    "opcode_byte": 244
+  },
+  {
+    "opcode_name": "CREATE2",
+    "actual_function": "contract::create::<_, true, _>",
+    "base_static_gas_expression": "0",
+    "opcode_byte": 245
+  },
+  {
+    "opcode_name": "STATICCALL",
+    "actual_function": "contract::static_call",
+    "base_static_gas_expression": "40",
+    "opcode_byte": 250
+  },
+  {
+    "opcode_name": "REVERT",
+    "actual_function": "control::revert",
+    "base_static_gas_expression": "0",
+    "opcode_byte": 253
+  },
+  {
+    "opcode_name": "INVALID",
+    "actual_function": "control::invalid",
+    "base_static_gas_expression": "0",
+    "opcode_byte": 254
+  },
+  {
+    "opcode_name": "SELFDESTRUCT",
+    "actual_function": "host::selfdestruct",
+    "base_static_gas_expression": "0",
+    "opcode_byte": 255
+  }
+]

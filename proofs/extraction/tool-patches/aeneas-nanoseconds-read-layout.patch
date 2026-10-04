@@ -1,0 +1,143 @@
+--- a/src/llbc/TypesAnalysis.ml
++++ b/src/llbc/TypesAnalysis.ml
+@@ -215,6 +215,46 @@
+           lo.ty = ty && hi.ty = ty && Z.sign lo_value >= 0
+           && Z.leq lo_value hi_value
+           && Z.lt hi_value (Z.shift_left Z.one 32)
++      | _ -> false)
++  | _ -> false
++
++(* Isolated native-target candidate: only the actual transparent Nanoseconds read.
++   The reverse unsafe constructor remains unsupported; no validity is invented. *)
++let supported_nanoseconds_read (decls : type_decl TypeDeclId.Map.t)
++    (src : ty) (tgt : ty) : bool =
++  let u32 = TScalar (TInteger (Unsigned U32)) in
++  let chosen_four (s : size) = match s.chosen with
++    | Some (SizeExprConstant {kind = CInteger (UnsignedInteger (Usize, n));
++                             ty = TScalar (TInteger (Unsigned Usize))}) -> Z.equal n (Z.of_int 4)
++    | _ -> false in
++  let layout_ok (target, (l : layout)) =
++    target = "aarch64-apple-darwin" && chosen_four l.size && chosen_four l.align
++    && l.repr.transparent && l.repr.align_modif = None
++    && l.repr.repr_algo = Rust && l.repr.explicit_discr_type = None
++    && l.inhabited = InhabitedPredicateTrue
++    && (match l.discriminator, l.variant_layouts with
++        | Some (Known variant), [Some v] ->
++            VariantId.to_int variant = 0 && v.inhabited = InhabitedPredicateTrue
++            && v.tagger = [] && (match v.field_offsets with
++               | [{chosen = Some 0; _}] -> true | _ -> false)
++        | _ -> false) in
++  match src with
++  | TAdt {id; builtin = None; generics} when tgt = u32
++      && generics = Charon.TypesUtils.empty_generic_args -> (
++      match TypeDeclId.Map.find_opt id decls with
++      | Some d when d.generics = Charon.TypesUtils.empty_generic_params
++          && d.ptr_metadata = NoMetadata
++          && List.filter_map (function PeIdent (n, _) -> Some n | _ -> None)
++               d.item_meta.name = ["core"; "num"; "niche_types"; "Nanoseconds"]
++          && d.layout <> [] && List.for_all layout_ok d.layout -> (
++          match d.kind with
++          | Struct [{field_ty = TPattern (base, (Range (lo, hi) as pat)); _}] ->
++              supported_u32_range_pattern base pat
++              && (match lo.kind, hi.kind with
++                  | CInteger (UnsignedInteger (U32, lo)), CInteger (UnsignedInteger (U32, hi)) ->
++                      Z.equal lo Z.zero && Z.equal hi (Z.of_int 999999999)
++                  | _ -> false)
++          | _ -> false)
+       | _ -> false)
+   | _ -> false
+ 
+--- a/src/pure/Pure.ml
++++ b/src/pure/Pure.ml
+@@ -1213,6 +1213,7 @@
+   | Neg of integer_type
+   | Cast of cast_kind
+   | ArrayToSlice
++  | NanosecondsRead
+ 
+ and cast_kind =
+   | CastLit of literal_type * literal_type
+--- a/src/pure/PrintPure.ml
++++ b/src/pure/PrintPure.ml
+@@ -908,6 +908,7 @@
+   | Neg _ -> "-"
+   | Cast kind -> cast_kind_to_string env kind
+   | ArrayToSlice -> "array_to_slice"
++  | NanosecondsRead -> "nanoseconds_read"
+ 
+ let binop_to_string (env : fmt_env) (binop : binop) =
+   let int_ty_to_string int_ty = "::<" ^ integer_type_to_string int_ty ^ ">" in
+--- a/src/extract/ExtractBase.ml
++++ b/src/extract/ExtractBase.ml
+@@ -937,6 +937,7 @@
+       match backend () with
+       | Lean -> "-."
+       | _ -> int_name int_ty ^ "_neg")
++  | NanosecondsRead -> raise (Failure "NanosecondsRead uses dedicated extraction")
+   | ArrayToSlice -> (
+       match backend () with
+       | Lean -> "Std.Array.to_slice"
+--- a/src/interp/InterpExpressions.ml
++++ b/src/interp/InterpExpressions.ml
+@@ -973,6 +973,9 @@
+         | Neg OPanic, (TScalar (TInteger (Signed _)) as lty) -> lty
+         | Neg OPanic, (TScalar (TInteger (Unsigned _)) as lty) -> lty
+         | Cast (CastScalar (_, tgt_ty)), _ -> TScalar tgt_ty
++        | Cast (CastTransmute (src, tgt)), operand_ty
++          when Config.backend () = Config.Lean && operand_ty = src
++            && TypesAnalysis.supported_nanoseconds_read ctx.type_ctx.type_decls src tgt -> tgt
+         | Cast (CastUnsize (ty0, ty1, _)), _ ->
+             (* If the following function succeeds, then it means the cast is well-formed
+            (otherwise it throws an exception) *)
+--- a/src/symbolic/SymbolicToPureExpressions.ml
++++ b/src/symbolic/SymbolicToPureExpressions.ml
+@@ -558,6 +558,13 @@
+             let dest = mk_tpat_from_fvar dest_mplace dest in
+             (ctx, Unop (Neg int_ty), effect_info, args, [], dest)
+         | _ -> [%craise] ctx.span "Unreachable")
++    | S.Unop (E.Cast (CastTransmute (src, tgt)))
++      when Config.backend () = Config.Lean
++        && TypesAnalysis.supported_nanoseconds_read ctx.decls_ctx.crate.type_decls src tgt ->
++        let effect_info = { can_fail = false; can_diverge = false; is_rec = false } in
++        let ctx, dest = fresh_var_for_symbolic_value call.dest ctx in
++        let dest = mk_tpat_from_fvar dest_mplace dest in
++        (ctx, Unop NanosecondsRead, effect_info, args, [], dest)
+     | S.Unop (E.Cast kind) -> begin
+         let kind, can_fail =
+           match kind with
+--- a/src/extract/Extract.ml
++++ b/src/extract/Extract.ml
+@@ -573,6 +573,11 @@
+       F.pp_print_space fmt ();
+       extract_expr ~inside:true arg;
+       if inside then F.pp_print_string fmt ")"
++  | NanosecondsRead ->
++      [%cassert] span (backend () = Lean) "Nanoseconds read candidate requires Lean";
++      F.pp_print_string fmt "(";
++      extract_expr ~inside:false arg;
++      F.pp_print_string fmt ").val"
+   | Cast kind -> extract_cast_kind span extract_expr fmt ~inside kind arg
+ 
+ (** Format a binary operation
+--- a/src/pure/PureMicroPassesGeneral.ml
++++ b/src/pure/PureMicroPassesGeneral.ml
+@@ -723,7 +723,7 @@
+ let lift_unop (unop : unop) : bool =
+   match unop with
+   | Not None -> false
+-  | Not (Some _) | Neg _ | Cast _ | ArrayToSlice -> true
++  | Not (Some _) | Neg _ | Cast _ | ArrayToSlice | NanosecondsRead -> true
+ 
+ (** A helper predicate *)
+ let inline_unop unop = not (lift_unop unop)
+--- a/src/pure/PureMicroPassesAnnots.ml
++++ b/src/pure/PureMicroPassesAnnots.ml
+@@ -303,7 +303,7 @@
+               | Fun fid -> begin compute_known_tys_from_fun_id qualif fid end
+               | Unop unop -> begin
+                   match unop with
+-                  | Not _ | Neg _ | Cast _ | ArrayToSlice ->
++                  | Not _ | Neg _ | Cast _ | ArrayToSlice | NanosecondsRead ->
+                       (known_f_ty, known_args_tys, false)
+                 end
+               | Binop _ -> (known_f_ty, known_args_tys, false)

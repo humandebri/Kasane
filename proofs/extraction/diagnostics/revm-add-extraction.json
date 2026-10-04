@@ -1,0 +1,160 @@
+{
+  "status": "failed-extraction-not-proof",
+  "source_sha256": {
+    "vendor/revm/crates/interpreter/src/instructions/arithmetic.rs": "a8e27a55eae651d10329c7f6963c81b1f393013066d301744281490c58fcc0cc",
+    "vendor/revm/crates/interpreter/src/instructions/macros.rs": "03a7be6e8a52404302da914f86d1b189c39d338c1484ea6b11c9639fe6a64fe9",
+    "vendor/revm/crates/interpreter/src/interpreter_types.rs": "de97652bfd5486d6c64bb36e7cacb45f211ff627c99d2dbd55421e8c97de1271",
+    "vendor/revm/crates/interpreter/src/interpreter/stack.rs": "72221bb70c5912cc3030db224ae0a3e63bbd40023f642351f0250494cfe40c8d"
+  },
+  "root_add_actual_body": {
+    "root_manifest": "crates/evm-core/Cargo.toml",
+    "root_lock_sha256": "272266f066e89637bca1791b96688d42f4fe3e1b01a5148e25b84138bc6c3168",
+    "include": [
+      "revm_interpreter::instructions::arithmetic::add"
+    ],
+    "exclude": [
+      "revm_interpreter::interpreter_types::StackTr::top",
+      "revm_interpreter::interpreter_types::MemoryTr::slice_len"
+    ],
+    "charon": "LLBC with three GAT warnings",
+    "aeneas": "Can't copy a mutable borrow",
+    "source": "instructions/macros.rs:134",
+    "stage": "InterpExpressions.ml:197"
+  },
+  "concrete_eth_interpreter": {
+    "manifest": "ignored .local/proof-tools/revm-concrete-probe/Cargo.toml",
+    "root_and_probe_revm_feature": "revm-interpreter 32.0.0 std",
+    "ruint": "1.20.0 alloc,alloy-rlp,serde,std",
+    "charon": "monomorphized ADD/SUB LLBC extraction succeeded",
+    "aeneas": "internal error in update_array_default",
+    "source": "core/src/array/mod.rs:382-384",
+    "stage": "PrePasses.ml:167",
+    "limit": "standalone probe dependency graph is not proven identical to production root"
+  },
+  "after_array_default_patch": {
+    "binary_sha256": "a74ca1f3c07a4826e702df85aecab56fc684e7091ffcc4841e99ecd517f0a44e",
+    "same_full_mono_llbc": "array-default prepass passes; fails at llbc/TypesAnalysis.ml:229 because a mutable region is RErased",
+    "source": "core/src/option.rs:598",
+    "metadata_root_cause": "Unreachable empty polymorphic Index-related impl survives Charon mono while its trait declaration is absent; not an actual Default-array semantic error.",
+    "referenced_invalid_impl": "still rejected by prepass in regression fixture",
+    "partial_mut_probe": {
+      "charon": "monomorphize-mut=all extracts with 5 GAT warnings; not a clean verified extraction",
+      "aeneas": "still stops at instructions/macros.rs:134 copying a mutable borrow, InterpExpressions.ml:197",
+      "scope": "No Copy-to-Move replacement or pointer axioms introduced; ADD/SUB instruction source correspondence remains unproved."
+    },
+    "reproduction": "scripts/verify-array-default-regression.sh uses exact fixed LLBC fixture and a referenced-invalid negative mutation; it tests prepass handling only, not instruction correctness."
+  },
+  "promoted_mir_partial_mut_probe": {
+    "charon": "promoted MIR with monomorphize-mut=all extracts with 5 GAT warnings; not a clean verified extraction",
+    "aeneas": "same mutable-borrow Copy failure in instructions/macros.rs:134, InterpExpressions.ml:197",
+    "observed_llbc": "_21 = copy context.interpreter; _15 = &two-phase-mut (*_21).stack; popn_top(move _15)",
+    "scope": "The copied mutable Interpreter reference is a temporary leading to a stack reborrow. No reference-copy semantic support or copy-to-move rewrite has been introduced."
+  },
+  "immediate_ref_copy_fusion_candidate": {
+    "status": "not-adopted-not-an-instruction-proof",
+    "patch": "proofs/extraction/tool-patches/aeneas-immediate-ref-copy-fusion.patch",
+    "patch_sha256": "d5516d088e1ae688c600b3d2b297615a6e58edb50969e055d0b8bf77a8573f2b",
+    "test": "Same promoted-MIR partial-mut ADD/SUB LLBC with five Charon GAT warnings; candidate native tool built successfully. Actual ADD/SUB and their two wrappers reached symbolic translation.",
+    "next_failure": "MemoryTr associated-type generics unsupported at SymbolicToPure.ml:224; interpreter_types.rs:83.",
+    "guard": "Adjacent NoRetag reference copy and reborrow only; temporary has no uses elsewhere; operand metadata restricted. No global Copy-to-Move rewrite.",
+    "small_actual_rust_probe": "Several independent simple/generic nested-reference programs extracted successfully but their original LLBC did not contain the reference-copy pattern. They do not validate the candidate transformation.",
+    "validation_remaining": [
+      "Semantic preservation of pointer identity, lifetimes, retagging and metadata",
+      "Existing extraction/proof regression gates with candidate binary"
+    ],
+    "decision": "Restored the previously pinned six-patch tool. Candidate is retained only as an unapplied diagnostic patch. No extra trusted transformation admitted.",
+    "scope": "Whole ADD/SUB, all EVM instructions and native/Wasm correspondence remain unproved.",
+    "guard_regressions": {
+      "status": "passed",
+      "actual_add_sub_copies": 6,
+      "negative_cases": 12,
+      "mutations": [
+        "additional-use",
+        "retag",
+        "nonadjacent",
+        "destination-alias",
+        "unsupported-metadata",
+        "self-copy"
+      ],
+      "expected_negative_behavior": "Entire mutated function structurally unchanged by candidate prepass",
+      "reproduction": "bash scripts/verify-ref-copy-candidate.sh",
+      "fixture": "Fixed promoted MIR partial-mut actual ADD/SUB LLBC with five Charon GAT warnings; standalone probe graph, not the production root graph",
+      "semantics_proof": "not-proved",
+      "fixture_sha256": "a162e8fae8eecc4ecb76ff054c50967b98e78f823be27c10a89a4c4cf98aee00",
+      "test_source_sha256": "ae85bbb447e678caa64210e296e3ab4013f49771e8dfd4cfdf8ac5cd90769787",
+      "fixed_tool_preservation": "Source SHA-256 and all three experimental binary SHA-256 entries matched before/after gate.",
+      "probe_source_sha256": {
+        ".local/proof-tools/revm-concrete-probe/Cargo.toml": "69c693528a7545549008b1419ae8cda88a70a0e1b2ad80300f725afcfc258692",
+        ".local/proof-tools/revm-concrete-probe/Cargo.lock": "9e55dca1c9fe509ff432f95f0738d017638f0dfe94da62a525a56d7088dfb467"
+      }
+    },
+    "primary_aliasing_source": "Fixed Charon ast/bodies/expressions.rs WithRetag explicitly distinguishes retagging under the Rust aliasing model. The negative test preserves YesRetag unchanged.",
+    "fragment_model": {
+      "file": "proofs/extraction/operator-lean/RefCopyFragment.lean",
+      "sha256": "ab3c8fa2d66f8ab2bffe697bfd7c3beb6d561dc6ffab39fbfdc8fb9a33076041",
+      "explicit_theorems": 4,
+      "audited_theorem_declarations": 18,
+      "scope": "Model local pointer store, constant/from-pointer metadata, arbitrary projection and arbitrary borrow operation returning success/failure and World effects. Original NoRetag copy/reborrow and fused source reborrow have the same observation after hiding the dead temporary.",
+      "quantification": "All locals, pointer identities and metadata, ids, metadata mode, worlds, fault types, project functions and borrow functions; no axioms for project/borrow.",
+      "kernel_recheck": "passed",
+      "negative_tests": "axiom/sorry/native evaluation all rejected",
+      "reproduction": "bash scripts/verify-ref-copy-fragment.sh",
+      "not_proved": [
+        "Rust pointer validity/lifetimes/provenance semantics",
+        "LLBC operation correspondence to the fragment definitions",
+        "OCaml pass correctness or mapping actual compound places into this model",
+        "Charon translation correctness",
+        "Full instruction execution correspondence"
+      ],
+      "decision": "Model prerequisites only; no candidate adoption."
+    }
+  },
+  "memory_gat_frontend_diagnosis": {
+    "status": "not-resolved",
+    "observed_fixed_fixture": "translated trait 7 MemoryTr has_errors=true; a deduplicated type is Error(\"Can't compute Self::Type0\"). Five Charon warnings are extraction errors, not just an Aeneas backend gap.",
+    "primary_source": "charon/src/transform/normalize/expand_associated_types.rs:1119 explicitly reports that GATs cannot work with lift-associated-types imposed by preset=aeneas; fallback inserts TyKind::Error.",
+    "opaque_trait_trial": {
+      "manifest": ".local/proof-tools/revm-concrete-probe/Cargo.toml",
+      "flags": [
+        "--preset=aeneas",
+        "--mir=promoted",
+        "--monomorphize-mut=all",
+        "--error-on-warnings",
+        "--exclude=revm_interpreter::interpreter_types::MemoryTr"
+      ],
+      "exit_code": 101,
+      "error": "could not translate defaulted associated type; corresponding trait decl caused errors or was declared opaque",
+      "source": "vendor/revm/crates/interpreter/src/interpreter_types.rs:141:55",
+      "stage": "translating SharedMemory implementation",
+      "proof_use": "none; failed diagnostic trial, no accepted LLBC"
+    },
+    "next_requirement": "Preserve and correctly translate GAT/RPITIT binders and equality constraints in Charon before extending Lean extraction; do not erase unsupported type constraints or consume Error placeholders.",
+    "minimal_reproduction": {
+      "manifest": "proofs/extraction/gat-diagnostic-rust/Cargo.toml",
+      "source": "proofs/extraction/gat-diagnostic-rust/lib.rs",
+      "features": [
+        "plain",
+        "rpit",
+        "named"
+      ],
+      "rust_checks": "all three passed on fixed nightly",
+      "plain_control": "Charon and Aeneas clean extraction passed; this changes the return type and is not a replacement for real MemoryTr or a proof of its behavior.",
+      "rpit": "Same impl Deref<Target=[u8]> + lifetime default return shape as actual MemoryTr; fixed Charon returns 101 with five GAT lifting errors.",
+      "named": "Explicit type Slice<lifetime>: Deref<Target=[u8]> fails with two GAT lifting errors; failure does not depend on RPITIT syntax alone.",
+      "source_inspection": "expand_associated_types.rs lookup_path_on_trait_ref returns None unconditionally for TraitRefKind::ItemClause; type constraint paths do not encode GAT arguments. This is the missing operation, not an unknown revm runtime call.",
+      "reproduction": "bash scripts/diagnose-revm-gat.sh",
+      "proof_use": "none; regression of a known unsupported feature; no production sources or fixed tools changed.",
+      "invalid_output_handling": "Fixed Charon emits LLBC even on exit 101; both cases have top-level has_errors=true and error metadata on traits/impls. Reproduction asserts these flags and does not pass failed LLBC to Aeneas.",
+      "result": "passed diagnostic reproduction; no extra instruction theorem"
+    },
+    "closed_item_equality_candidate": {
+      "patch": "proofs/extraction/tool-patches/charon-gat-closed-item-equality.patch",
+      "profile": "proofs/extraction/tool-patches/gat-closed-item-equality-profile.json",
+      "status": "unadopted; native build passed; clean actual ADD/SUB LLBC, no Error types; MemoryTr GAT binder preserved",
+      "tests": "plain/rpit/named all succeed without errors; mixed u8/u16 GAT succeeds; type-parameter-dependent GAT remains rejected",
+      "scope": "No constraints removed or replaced by axioms; only existing closed equality for exact Self clause. Not full GAT support, not proof of frontend transform correctness.",
+      "remaining": "Lean GAT and mutable borrow support; translator correctness and instruction correspondence unproved",
+      "regression": "Patched-source Rust tests 529 passed, 4 existing ignored; OCaml forced JSON/Postcard/cross-format/name-matcher tests passed in byte/native modes; all-targets Clippy -D warnings passed. Initial shared-target run invalid; fixed tools restored and all tests rerun isolated."
+    }
+  }
+}

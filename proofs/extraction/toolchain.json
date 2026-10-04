@@ -1,0 +1,37 @@
+{
+  "aeneas": "nightly-2026.10.03-557eff8",
+  "rust": "nightly-2026-09-17",
+  "lean": "leanprover/lean4:v4.31.0",
+  "platforms": {
+    "Darwin-arm64": {
+      "tools": {
+        "url": "https://github.com/AeneasVerif/aeneas/releases/download/nightly-2026.10.03-557eff8/aeneas-macos-aarch64.tar.gz",
+        "sha256": "f3d04890e91e5b2ebbb82ace68f5ec0f4a500d00497c87704733ca23d1d55762"
+      },
+      "backend": {
+        "url": "https://github.com/AeneasVerif/aeneas/releases/download/nightly-2026.10.03-557eff8/lean-build-aeneas-arm64-apple-darwin24.6.0.tar.gz",
+        "sha256": "12ab9f600c2e265ccd8bfb3f60eb73706fb4243d67893da223b3051c11f5b49b"
+      }
+    },
+    "Linux-x86_64": {
+      "tools": {
+        "url": "https://github.com/AeneasVerif/aeneas/releases/download/nightly-2026.10.03-557eff8/aeneas-linux-x86_64.tar.gz",
+        "sha256": "e2ee0933cba4aa51f811ec7a0d1e99d2b345412875b1973dea16399c90c5f01f"
+      },
+      "backend": {
+        "url": "https://github.com/AeneasVerif/aeneas/releases/download/nightly-2026.10.03-557eff8/lean-build-aeneas-x86_64-unknown-linux-gnu.tar.gz",
+        "sha256": "0e434f794a94c0a54928fc7304826baf01ac4afcdcc4385412be278bf295c69b"
+      }
+    },
+    "Linux-aarch64": {
+      "tools": {
+        "url": "https://github.com/AeneasVerif/aeneas/releases/download/nightly-2026.10.03-557eff8/aeneas-linux-aarch64.tar.gz",
+        "sha256": "83b97bc6e9172d0cd546fd3813b9f2d59be69b247d56fcf5fa399f22a927b391"
+      },
+      "backend": {
+        "url": "https://github.com/AeneasVerif/aeneas/releases/download/nightly-2026.10.03-557eff8/lean-build-aeneas-aarch64-unknown-linux-gnu.tar.gz",
+        "sha256": "abbc257d511fb1550edb8cba9e2c76c8f55d35dc2b1315ff96c4d6a41549d399"
+      }
+    }
+  }
+}

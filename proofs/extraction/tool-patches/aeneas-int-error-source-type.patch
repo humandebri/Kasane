@@ -1,0 +1,69 @@
+--- a/src/llbc/TypesAnalysis.ml
++++ b/src/llbc/TypesAnalysis.ml
+@@ -263,6 +263,34 @@
+ let supported_nanoseconds_construct (decls : type_decl TypeDeclId.Map.t)
+     (src : ty) (tgt : ty) : bool =
+   supported_nanoseconds_read decls tgt src
++
++(* Reject opaque/changed error definitions before bypassing the Unit builtin. *)
++let supported_try_from_int_error (decls : type_decl TypeDeclId.Map.t)
++    (d : type_decl) : bool =
++  let names (d : type_decl) = List.filter_map
++    (function PeIdent (n, _) -> Some n | _ -> None) d.item_meta.name in
++  let empty (d : type_decl) = d.generics = Charon.TypesUtils.empty_generic_params
++                && d.ptr_metadata = NoMetadata in
++  names d = ["core"; "num"; "error"; "TryFromIntError"] && empty d
++  && (match d.kind with
++      | Struct [{field_ty = TAdt {id; builtin = None; generics}; _}]
++        when generics = Charon.TypesUtils.empty_generic_args -> (
++          match TypeDeclId.Map.find_opt id decls with
++          | Some payload when names payload = ["core"; "num"; "error"; "IntErrorKind"]
++              && empty payload -> (
++              match payload.kind with
++              | Enum variants ->
++                  let expected = ["Empty"; "InvalidDigit"; "PosOverflow";
++                                  "NegOverflow"; "Zero"; "NotAPowerOfTwo"] in
++                  List.length variants = List.length expected
++                  && List.for_all2 (fun (i, (v : variant)) name ->
++                       v.variant_name = name && v.fields = []
++                       && VariantId.to_int v.id = i
++                       && v.discriminant = SignedInteger (Isize, Z.of_int i))
++                       (List.mapi (fun i v -> i, v) variants) expected
++              | _ -> false)
++          | _ -> false)
++      | _ -> false)
+ 
+ let analyze_full_ty (span : Meta.span option) (updated : bool ref)
+     (infos : type_infos) (ty_info : partial_type_info) (ty : ty) :
+--- a/src/symbolic/SymbolicToPureTypes.ml
++++ b/src/symbolic/SymbolicToPureTypes.ml
+@@ -308,6 +308,14 @@
+   let def_id = def.T.def_id in
+   let name = Print.name_to_string env def.item_meta.name in
+   let span = def.item_meta.span in
++  let source_name = List.filter_map
++    (function T.PeIdent (n, _) -> Some n | _ -> None) def.item_meta.name in
++  if source_name = ["core"; "num"; "error"; "TryFromIntError"] then (
++    [%cassert] span (Config.backend () = Config.Lean)
++      "TryFromIntError source candidate requires Lean";
++    [%cassert] span (TypesAnalysis.supported_try_from_int_error ctx.crate.type_decls def)
++      "Unsupported TryFromIntError source definition");
++
+   (* Can't translate types with nested borrows for now *)
+   [%cassert] span
+     (not
+--- a/src/extract/ExtractBuiltin.ml
++++ b/src/extract/ExtractBuiltin.ml
+@@ -170,7 +170,11 @@
+                   ]);
+          };
+        ])
+-  @ mk_lean_only lean_builtin_types
++  @ mk_lean_only
++      (List.filter
++         (fun (info : Pure.builtin_type_info) ->
++           info.rust_name <> parse_pattern "core::num::error::TryFromIntError")
++         lean_builtin_types)
+ 
+ let mk_builtin_types_map () =
+   NameMatcherMap.of_list

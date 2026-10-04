@@ -1,0 +1,101 @@
+{
+  "status": "unadopted-candidate-clean-frontend-only",
+  "fixed_charon_commit": "c8f15d7d658c86a95658f71ad99cddd4be002e04",
+  "rust": "nightly-2026-09-17",
+  "sha256": {
+    ".local/proof-tools/charon-gat-candidate/charon": "8f772feb4b6ca69410c9f11b3b0c9dff36eb30c9c7a5f83f3d35dd578d93212e",
+    ".local/proof-tools/charon-gat-candidate/charon-driver": "3c9d5a113be5b70c45cf0e55c30f993654586f7cfa70b7b9bbbba6ad4cc3da76",
+    "proofs/extraction/tool-patches/charon-gat-closed-item-equality.patch": "36af98a3f16049f1e49b2d0abb896a10a90a43eeb13b1e5d63b8a74295c10863",
+    "proofs/extraction/gat-diagnostic-rust/lib.rs": "0deea7e1fa28393306fffeb0ae1358f9aec98f8cbab56f98862ca3aad312ca14",
+    "proofs/extraction/gat-boundary-rust/lib.rs": "ba99d77f35b62f66262204f051b1cb3c99a42d53d7dc5432f08c3b3e90505242",
+    "proofs/extraction/gat-diagnostic-rust/Cargo.toml": "672d3fc1081e6af536b331c97d0591ad39cb0b15925ad7a22366043c47b846fc",
+    "proofs/extraction/gat-diagnostic-rust/Cargo.lock": "c8a1620bb91d69cfd9a0ffbe21c84edc22f97587486e1dc0d41b43af15658b22",
+    "proofs/extraction/gat-boundary-rust/Cargo.toml": "7fbcd7b7369c3a9c224eb1a968afb3df3c32f93c7578b946064a283e8f43521c",
+    "proofs/extraction/gat-boundary-rust/Cargo.lock": "103ac235ec5602946fa1bc81174e1c127e09a8a5d7dc5f270cb692b4f274035d",
+    "proofs/extraction/tool-patches/fixtures/revm-gat-closed-candidate.json": "df1bca85c7fdcc7992b4824aecec0a5bd2b8658145204ac3ff9f8eba94b89b06"
+  },
+  "scope": "Only closed type equalities explicitly declared for the exact Self item clause; matching trait, associated item and clause ids, no parent-path lookup, no parameter-dependent type substitution, no inferred or erased constraints. Reads pre-update trait snapshot because in-place traversal removes/rewrites declarations.",
+  "minimal_examples": {
+    "plain": {
+      "exit": 0,
+      "errors": [],
+      "has_errors": false
+    },
+    "rpit": {
+      "exit": 0,
+      "errors": [],
+      "has_errors": false
+    },
+    "named": {
+      "exit": 0,
+      "errors": [],
+      "has_errors": false
+    }
+  },
+  "boundary_examples": {
+    "dependent": {
+      "rust_exit": 0,
+      "charon_exit": 101,
+      "errors": [
+        "error: GATs cannot work with the `--lift-associated-types` option (implied by `--preset=aeneas`). Either stop using this option or `--exclude` this trait.",
+        "error: GATs cannot work with the `--lift-associated-types` option (implied by `--preset=aeneas`). Either stop using this option or `--exclude` this trait.",
+        "error: could not compile `kasane-gat-boundary` (lib)"
+      ],
+      "has_errors": true
+    },
+    "mixed": {
+      "rust_exit": 0,
+      "charon_exit": 0,
+      "errors": [],
+      "has_errors": false
+    }
+  },
+  "actual_revm_add_sub": {
+    "charon_exit": 0,
+    "has_errors": false,
+    "Error_nodes": 0,
+    "MemoryTr_GAT_types": 1,
+    "GAT_region_parameters": 1,
+    "production_root_correspondence": "not-proved; separate concrete probe graph",
+    "proof": "none; extraction success only"
+  },
+  "backend": "Candidate RPITIT LLBC has no frontend errors; fixed Aeneas rejects preserved GAT at SymbolicToPure.ml:224. No Lean instruction correspondence.",
+  "remaining": [
+    "Proof of transformation/constraint preservation",
+    "Parameter-dependent GAT substitution",
+    "Aeneas GAT support",
+    "Actual instruction/native/Wasm correspondence"
+  ],
+  "fixed_tools": "original driver and source restored; candidate isolated in .local/proof-tools/charon-gat-candidate",
+  "regression_validation": {
+    "rust": {
+      "status": "passed-on-patched-source",
+      "unit": 20,
+      "cargo": 11,
+      "crate_data": 17,
+      "layout": 1,
+      "name_matcher": 2,
+      "ui_passed": 478,
+      "ui_ignored": 4,
+      "total_passed": 529,
+      "snapshot_mode": "IN_CI=1; expected snapshots compared",
+      "cargo_target_handling": "CARGO_TARGET_DIR unset; tool and fixtures use their own existing .cargo/config.toml target directories"
+    },
+    "ocaml": {
+      "status": "passed-dune-runtest-force-on-candidate-generated-UI-fixtures",
+      "modes": [
+        "byte",
+        "native"
+      ],
+      "json_loads_total": 924,
+      "postcard_loads_total": 924,
+      "cross_format_error_tests": 2,
+      "name_matcher_suites": 4,
+      "name_matcher_executions": 8,
+      "formatting": "make wrapper attempted ocamlformat, which is unavailable; semantic dune runtest was rerun separately and passed"
+    },
+    "clippy": "all-targets passed with -D warnings; no autofix",
+    "first_attempt": "Shared CARGO_TARGET_DIR caused fixture cargo clean to delete shared build outputs. First integration run invalid. Fixed binaries restored from saved copies; pinned hashes matched. All suites rerun with separate existing target directories. No production source change."
+  },
+  "typeinfo_predicate_proof": "proofs/extraction/typeinfo-profile.json; eight all-input actual source predicate theorems, audit/kernel/negative gates passed; actual AST flag computation and whole normalization transform still unproved"
+}

@@ -1,0 +1,39 @@
+{
+  "candidate_profile": "tool-patches/nanoseconds-construct-profile.json",
+  "rust_toolchain": "nightly-2026-09-17",
+  "overflow_checks": true,
+  "mode": "Actual full range-typed Nano/Duration and both typed transmute bodies plus TimeStamp Add/Sub; partial native-layout interpretation, no Nano external model",
+  "explicit_source_theorems": 19,
+  "refinement_theorems": 5,
+  "audit_theorem_declarations": 86,
+  "structured_functions": 10,
+  "structured_global_initializers": 2,
+  "interfaces": {
+    "TryFromIntError": "Local generated IntErrorKind alias retains actual one-field payload instead of backend Unit; source/model refinement unproved",
+    "Debug/unwrap": "Local explicit Unit Formatter and return/panic observation model; formatting/unwinding refinement unproved"
+  },
+  "unproved": [
+    "Candidate translation/layout and partial-transmute semantic preservation",
+    "Full undefined Rust behaviors on invalid constructor inputs",
+    "TryFromIntError/Debug/unwrap actual formatting, unwind and observable runtime correspondence",
+    "Compiler/native/Wasm correspondence",
+    "All EVM and IC/ICRC ledger async external behavior"
+  ],
+  "sha256": {
+    "proofs/extraction/operator-lean/LedgerDurationFull/Types.lean": "a3d9c273b6e8df30e9d027421e063b5eb3676292fc538ae6abb359753cace43e",
+    "proofs/extraction/operator-lean/LedgerDurationFull/Funs.lean": "067624a1abc4caca8ad5054726e9a676224a98a69afec8a90a994a0b2f173f1f",
+    "proofs/extraction/operator-lean/LedgerDurationFull/FunsExternal.lean": "aba1341994e329c39bed806677364bd4a785c256e485e7ee034610c2dc85b9b1",
+    "proofs/extraction/operator-lean/LedgerDurationFullCorrespondence.lean": "bff3de09e855fdfe3e3a224c18a2d95ab4ec6ee409090d0e00727979b99598c1",
+    "proofs/extraction/operator-lean/LedgerDurationFullRefinement.lean": "d11762d6bcc5491d474fbe443769a20b5d8d6d2439667dbc3a680781b9cbc207",
+    "proofs/extraction/operator-lean/LedgerDurationFullAudit.lean": "8c40da5c7e6b2a9bf2417e33871b94ac5c4503fee12b88d5f88300a000b84346",
+    "proofs/extraction/operator-lean/LedgerDurationModel.lean": "b429dcd2adb9bac5e1abe958afc050154e25ef57f2a4178cc43b97778b1670cf",
+    "scripts/verify-ledger-duration-full.sh": "e9a2f619ba63c712a200051ab17ee204556089a34116c9810ce598be2ef994d2"
+  },
+  "rust_primary_sources": {
+    "/Users/0xhude/.rustup/toolchains/nightly-2026-09-17-aarch64-apple-darwin/lib/rustlib/src/rust/library/core/src/time.rs": "54659df6f5b6168b53a682df2f92b47540443bc333a0a40bb2ef13a16ab12358",
+    "/Users/0xhude/.rustup/toolchains/nightly-2026-09-17-aarch64-apple-darwin/lib/rustlib/src/rust/library/core/src/num/niche_types.rs": "1a74080c73dd7687b08e667d5611d4068a1b7556311f0b58e44edadb17d0a160",
+    "/Users/0xhude/.rustup/toolchains/nightly-2026-09-17-aarch64-apple-darwin/lib/rustlib/src/rust/library/core/src/convert/num.rs": "8dbf6c64681e2dee556e0844eef3e53d62a40df0280d25f469352870a401e034",
+    "/Users/0xhude/.rustup/toolchains/nightly-2026-09-17-aarch64-apple-darwin/lib/rustlib/src/rust/library/core/src/num/error.rs": "7447f99e89ce2f0163c83cbe177008c3b789b8129602099dfe9dc3f02909baff",
+    "/Users/0xhude/.rustup/toolchains/nightly-2026-09-17-aarch64-apple-darwin/lib/rustlib/src/rust/library/core/src/result.rs": "7f23a9f38da4fc06aaee76066e468d51d4da279f2325f44a8335186420f9ee6c"
+  }
+}

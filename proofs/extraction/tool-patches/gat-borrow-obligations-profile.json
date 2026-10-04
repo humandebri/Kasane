@@ -1,0 +1,46 @@
+{
+  "status": "conditional-model-obligations-and-strict-failure-diagnostic-only",
+  "sha256": {
+    ".local/proof-tools/aeneas-gat-diagnostic/aeneas": "5618171728673de7f40c8e32d1040c819e4a886663179087c297e48f3007dfca",
+    ".local/proof-tools/aeneas-source/src/Main.ml": "41e7556907d3a134efc33c777035958d56bf1e30f1e988bed2a6dec8cba37def",
+    ".local/proof-tools/aeneas-source/src/interp/InterpBorrowsCore.ml": "26e0cd3c822c1fe863ea0ad57e093a189f028fd7b82eaf5fa0ed8c2d5d65e270",
+    ".local/proof-tools/aeneas-source/src/llbc/TypesAnalysis.ml": "9d4c6eb7be147df8a9fdc1cf486adadf3fc2da4a478a050ed1f0207f0368fd7b",
+    "proofs/extraction/tool-patches/aeneas-gat-comparison-diagnostic.patch": "38e3ab9dcecaf1659a1435c7bced771c2556384e50dc3c056eb18dd7537897ae",
+    "proofs/extraction/operator-lean/GatBorrowFootprint.lean": "ae42fe92d99bcd66ef43c28280ff962c836df0355af4c63bb38f7733170e7ea3",
+    "proofs/extraction/operator-lean/GatBorrowAudit.lean": "cc3bc57cef380cab4908a9a0507d2a1603c28e2504423ec2dd5ba2b2028461a8",
+    "proofs/extraction/tool-patches/tests/GatBorrowAnalysisRegression.ml": "905ae08ce6c34152fab6caff798d6edc1bd0730f6aec1622b00d76570a0690b6",
+    ".local/proof-tools/gat-borrow-analysis/check": "97cb6a4739c91e5e8499899d75b382e01b3a1fdd5cb2eccdc87858426573300d"
+  },
+  "diagnostic": "Adds trace logging before the original type-equality sanity check; no relaxed check or borrow interpretation. Dedicated runner built from original Main plus fixed six patches/ref-copy candidate/diagnostic patch. Fixed main executable and sources preserved.",
+  "actual_observation": {
+    "first": "TraitClause0::slice_len_ty<'1>",
+    "second": "TraitClause0::slice_len_ty<'3>",
+    "erased_types_equal": true,
+    "contains_borrow_flags": [
+      false,
+      false
+    ],
+    "original_failure": "Deref; TTraitType whole-equality sanity check. TypesAnalysis skips GAT arguments/hidden borrow content.",
+    "direct_fixed_type_analysis": {
+      "default_function_contains_borrow": true,
+      "corresponding_declared_GAT_contains_borrow": false,
+      "source": "GatBorrowAnalysisRegression.ml; original TypesAnalysis.analyze_ty, empty ADT table sufficient for primitive &[u8]/abstract GAT signatures"
+    }
+  },
+  "model": {
+    "explicit_theorems": 11,
+    "support": "Arbitrary shared predicate of actually borrowed positions in one chosen type family/value, under two region views. Mapping Rust/LLBC types and borrow occurrences to these positions is not supplied or proved.",
+    "proved": "All support/selection predicates: actual intersection implies potential-position overlap; potential disjointness and containment are sufficient; complete-support equivalence; unused-support behavior; counterexamples to ignoring all lifetimes and to equating unused lifetimes with actual borrows.",
+    "not_proved": [
+      "OCaml compare_rtys correspondence",
+      "Sound footprint enumeration including trait/type argument/captured borrows",
+      "Lifetime-family/implementation parametricity and type constraint interpretation",
+      "Rust pointer/provenance/lifetime semantics",
+      "All EVM instruction and external IC/ledger correspondence"
+    ],
+    "axiom_audit_theorem_declarations": 11,
+    "kernel_recheck": "passed",
+    "negative_tests": "axiom/sorry/native all rejected"
+  },
+  "scope": "Prerequisites only, not new actual instruction theorems; no checker patch adopted."
+}

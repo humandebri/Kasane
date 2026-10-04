@@ -1,0 +1,15 @@
+--- a/src/llbc/FunsAnalysis.ml
++++ b/src/llbc/FunsAnalysis.ml
+@@ -181,9 +181,9 @@
+           method! visit_Call env call on_unwind =
+             (match call.func with
+             | FnOpDynamic _ ->
+-                (* Ignoring this: we lookup the called function upon creating
+-                   the closure *)
+-                ()
++                (* An evaluated callback has no statically known implementation. *)
++                self#may_fail true;
++                can_diverge := true
+             | FnOpRegular func -> (
+                 match func.kind with
+                 | Fun id -> self#visit_fid env id

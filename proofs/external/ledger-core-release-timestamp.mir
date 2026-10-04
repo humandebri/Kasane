@@ -1,0 +1,93 @@
+fn timestamp::<impl at rs/ledger_suite/common/ledger_core/src/timestamp.rs:65:1: 65:33>::add(_1: TimeStamp, _2: Duration) -> TimeStamp {
+    debug self => _1;
+    debug d => _2;
+    let mut _0: timestamp::TimeStamp;
+    let mut _3: u64;
+    let mut _4: u64;
+    let mut _5: u64;
+    let mut _6: std::result::Result<u64, std::num::TryFromIntError>;
+    let mut _7: u128;
+    let mut _8: &std::time::Duration;
+
+    bb0: {
+        StorageLive(_3);
+        StorageLive(_4);
+        _4 = copy (_1.0: u64);
+        StorageLive(_5);
+        StorageLive(_6);
+        StorageLive(_7);
+        StorageLive(_8);
+        _8 = &_2;
+        _7 = Duration::as_nanos(move _8) -> [return: bb1, unwind unreachable];
+    }
+
+    bb1: {
+        StorageDead(_8);
+        _6 = <u128 as TryInto<u64>>::try_into(move _7) -> [return: bb2, unwind unreachable];
+    }
+
+    bb2: {
+        StorageDead(_7);
+        _5 = Result::<u64, std::num::TryFromIntError>::unwrap(move _6) -> [return: bb3, unwind unreachable];
+    }
+
+    bb3: {
+        StorageDead(_6);
+        _3 = core::num::<impl u64>::saturating_add(move _4, move _5) -> [return: bb4, unwind unreachable];
+    }
+
+    bb4: {
+        StorageDead(_5);
+        StorageDead(_4);
+        _0 = TimeStamp { timestamp_nanos: move _3 };
+        StorageDead(_3);
+        return;
+    }
+}
+
+fn timestamp::<impl at rs/ledger_suite/common/ledger_core/src/timestamp.rs:77:1: 77:33>::sub(_1: TimeStamp, _2: Duration) -> TimeStamp {
+    debug self => _1;
+    debug d => _2;
+    let mut _0: timestamp::TimeStamp;
+    let mut _3: u64;
+    let mut _4: u64;
+    let mut _5: u64;
+    let mut _6: std::result::Result<u64, std::num::TryFromIntError>;
+    let mut _7: u128;
+    let mut _8: &std::time::Duration;
+
+    bb0: {
+        StorageLive(_3);
+        StorageLive(_4);
+        _4 = copy (_1.0: u64);
+        StorageLive(_5);
+        StorageLive(_6);
+        StorageLive(_7);
+        StorageLive(_8);
+        _8 = &_2;
+        _7 = Duration::as_nanos(move _8) -> [return: bb1, unwind unreachable];
+    }
+
+    bb1: {
+        StorageDead(_8);
+        _6 = <u128 as TryInto<u64>>::try_into(move _7) -> [return: bb2, unwind unreachable];
+    }
+
+    bb2: {
+        StorageDead(_7);
+        _5 = Result::<u64, std::num::TryFromIntError>::unwrap(move _6) -> [return: bb3, unwind unreachable];
+    }
+
+    bb3: {
+        StorageDead(_6);
+        _3 = core::num::<impl u64>::saturating_sub(move _4, move _5) -> [return: bb4, unwind unreachable];
+    }
+
+    bb4: {
+        StorageDead(_5);
+        StorageDead(_4);
+        _0 = TimeStamp { timestamp_nanos: move _3 };
+        StorageDead(_3);
+        return;
+    }
+}

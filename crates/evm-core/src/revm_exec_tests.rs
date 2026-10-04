@@ -72,7 +72,11 @@ fn oversized_execution_does_not_modify_shared_cache_or_stable_state() {
         Database, DatabaseCommit,
     };
 
-    let mut exits = vec![vec![0x61, 0x80, 0x01, 0x60, 0, 0xf3]];
+    let return_size = u16::try_from(MAX_RETURN_DATA + 1).unwrap().to_be_bytes();
+    let mut exits = vec![
+        vec![0x61, return_size[0], return_size[1], 0x60, 0, 0xf3],
+        vec![0x61, return_size[0], return_size[1], 0x60, 0, 0xfd],
+    ];
     let log_size = u16::try_from(MAX_LOG_DATA + 1).unwrap().to_be_bytes();
     exits.push(vec![0x61, log_size[0], log_size[1], 0x60, 0, 0xa0, 0]);
     let mut many_logs = Vec::new();
@@ -104,6 +108,7 @@ fn oversized_execution_does_not_modify_shared_cache_or_stable_state() {
                 account.mark_touch();
                 db.commit(revm::primitives::HashMap::from_iter([(address, account)]));
             }
+            let epoch = evm_db::stable_state::current_evm_state_epoch();
             let mut cache = CacheDB::new(db);
             let tx = TxEnv::builder()
                 .caller(sender)
@@ -136,6 +141,8 @@ fn oversized_execution_does_not_modify_shared_cache_or_stable_state() {
                 .unwrap(),
                 ExecError::ResultTooLarge
             );
+            assert_eq!(evm_db::stable_state::current_evm_state_epoch(), epoch);
+            assert!(cache.basic(FEE_RECIPIENT).unwrap().is_none());
             assert_eq!(cache.basic(sender).unwrap().unwrap().nonce, 0);
             assert_eq!(
                 cache.basic(sender).unwrap().unwrap().balance,
@@ -204,6 +211,58 @@ fn base_fee_credit_creates_recipient_when_missing_from_state_diff() {
     let expected = u128::from(21_000u64).saturating_mul(u128::from(1_000_000_000u64));
     assert_eq!(account.info.balance, U256::from(expected));
     assert!(account.is_touched());
+}
+
+#[test]
+fn lean_result_size_vectors() {
+    use evm_db::chain_data::constants::{MAX_LOGS_PER_TX, MAX_LOG_DATA, MAX_LOG_TOPICS};
+    use std::fmt::Write;
+
+    let mut vectors = String::new();
+    let mut accepted = 0;
+    for output in [0, MAX_RETURN_DATA - 1, MAX_RETURN_DATA, MAX_RETURN_DATA + 1] {
+        for count in [0, MAX_LOGS_PER_TX - 1, MAX_LOGS_PER_TX, MAX_LOGS_PER_TX + 1] {
+            for topics in [0, MAX_LOG_TOPICS, MAX_LOG_TOPICS + 1] {
+                for data in [0, MAX_LOG_DATA, MAX_LOG_DATA + 1] {
+                    let log = LogEntry::new_unchecked(
+                        Address::ZERO,
+                        vec![B256::ZERO; topics],
+                        vec![0; data].into(),
+                    );
+                    let result =
+                        validate_execution_result_sizes(&vec![0; output], &vec![log; count]);
+                    if let Err(error) = &result {
+                        assert_eq!(error, &ExecError::ResultTooLarge);
+                    }
+                    accepted += usize::from(result.is_ok());
+                    writeln!(
+                        vectors,
+                        "size {output} {count} {topics} {data} {}",
+                        result.is_ok()
+                    )
+                    .unwrap();
+                }
+            }
+        }
+    }
+    assert_eq!(accepted, 51);
+    // Check every log, including a later oversized entry after an admissible one.
+    for (topics, data) in [(MAX_LOG_TOPICS + 1, 0), (0, MAX_LOG_DATA + 1)] {
+        let logs = vec![
+            LogEntry::new_unchecked(Address::ZERO, vec![], Bytes::new()),
+            LogEntry::new_unchecked(
+                Address::ZERO,
+                vec![B256::ZERO; topics],
+                vec![0; data].into(),
+            ),
+        ];
+        let result = validate_execution_result_sizes(&[], &logs);
+        assert_eq!(result, Err(ExecError::ResultTooLarge));
+        writeln!(vectors, "mixed {topics} {data} {}", result.is_ok()).unwrap();
+    }
+    if let Ok(path) = std::env::var("KASANE_SIZE_VECTORS") {
+        std::fs::write(path, vectors).unwrap();
+    }
 }
 
 #[test]

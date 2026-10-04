@@ -1,0 +1,10 @@
+{
+  "source_profile": "../ledger-time-profile.json",
+  "successful_extraction": [
+    "TimeStamp::from_nanos_since_unix_epoch",
+    "TimeStamp::as_nanos_since_unix_epoch",
+    "TimeStamp::new (checked and wrapping profiles)"
+  ],
+  "duration_add_sub": "Charon extraction succeeds when Duration/Nanoseconds are included; Aeneas stops on unsupported constrained scalar TPattern(U32, Range 0..999999999). No constraint-erasing replacement or axiom introduced.",
+  "scope": "Native validation crate with exact fixed timestamp.rs and selected official direct dependencies; not full IC workspace or source-to-Wasm correspondence."
+}

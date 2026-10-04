@@ -1,0 +1,33 @@
+{
+  "source": "Pinned Rust unwrap_failed, unwrap, timestamp/Duration, Nano and error; 14 structured bodies",
+  "scope": "Forty named conditional theorems; retain source panic_fmt argument and dynamic Debug dispatch. Foreign constructors retain callbacks/template as explicit models; formatter writer/flags, unsafe pointer layout, panic/unwind/destructors, Rust/LLBC/Lean translator preservation and native/Wasm/IC/ledger external behavior remain unproved. No full EVM instruction proof. Finite Rust/Miri checks are not universal proofs.",
+  "sha256": {
+    "proofs/extraction/operator-lean/LedgerPanicPayload/Funs.lean": "0dd873ca8830d6375be9e53ef5eab0f9b16bbb3581927f8515dd912544d2eb8a",
+    "proofs/extraction/operator-lean/LedgerPanicPayload/FunsExternal.lean": "361f5aabde088bc028d74db1a8bb0a9a87353c78ebe08b8a4e73c29ac1d5e919",
+    "proofs/extraction/operator-lean/LedgerPanicPayload/Types.lean": "19aa6fc8061f468af6a2e14b742c2269548856ed05c52aec48e011686b115c0c",
+    "proofs/extraction/operator-lean/LedgerPanicPayloadCorrespondence.lean": "e97822bb1e728c216c05b4a49b64e12f89bcf4c306ed603561582692adece48b",
+    "proofs/extraction/operator-lean/LedgerPanicPayloadRefinement.lean": "eab72b9f5df59101a27c6ad4ea445fbf47155c4fe7f4b7fde3828ca7efb30d79",
+    "proofs/extraction/operator-lean/PanicPayloadCorrespondence.lean": "130effae8b33254555f3457ba4dc74dcde4ea935e12795917d369af0f9da8c6f",
+    "proofs/extraction/operator-lean/LedgerPanicPayloadAudit.lean": "1012cdc73c8ea5584621ae4a2bbd9ac24e535dbe652506b2cec5b55e1b0b6a21",
+    "proofs/extraction/operator-lean/LedgerDurationModel.lean": "b429dcd2adb9bac5e1abe958afc050154e25ef57f2a4178cc43b97778b1670cf",
+    "scripts/verify-ledger-panic-payload.sh": "9fd5ebf94571ea773651aeb45a8acc11355f8783a298aae01ce0d9a825931da1",
+    "proofs/extraction/ledger-time-rust/tests/dyn_debug_source.rs": "435f01f1f28b68fe84bb0db35c22dc221779402b79c262613e57e564ff26a218",
+    "proofs/extraction/operator-lean/LedgerUnwrapFailed/Funs.lean": "666e6fd6eed35cf71a4cd2de868062b0dd99e4d62c0b74545a6074e3d6950ee0",
+    "proofs/extraction/operator-lean/LedgerUnwrapFailed/FunsExternal.lean": "455787b4a82307e46b31eedf3555e1b7868680851ace4973a8172ecea2f61715",
+    "proofs/extraction/operator-lean/LedgerUnwrapFailed/Types.lean": "575febb0e05d756defd84d497d1504a8dfafeda294e53aa632c202277c38ca01",
+    "proofs/extraction/operator-lean/LedgerUnwrapFailedCorrespondence.lean": "cf7e9beecf33e73e807ce7b60c848b88bfeda809b18be3fb5573868ef1969d2f",
+    "proofs/extraction/operator-lean/LedgerUnwrapFailedRefinement.lean": "f068bfd8275ec43d8ad473621a87837369489a3e3b93cef514337c5aab41a2ee",
+    "proofs/extraction/operator-lean/DynDebugCorrespondence.lean": "88f8a108b19ff974a8cbfdb3458a6c2396688ee5827de3962a90d367df6b46d7",
+    "proofs/extraction/operator-lean/LedgerUnwrapFailedAudit.lean": "c0301988eaeb92945c92dbb79c30698e362e703d3940194e06f108a6832873f2"
+  },
+  "rust_primary_sources": {
+    "/Users/0xhude/.rustup/toolchains/nightly-2026-09-17-aarch64-apple-darwin/lib/rustlib/src/rust/library/core/src/time.rs": "54659df6f5b6168b53a682df2f92b47540443bc333a0a40bb2ef13a16ab12358",
+    "/Users/0xhude/.rustup/toolchains/nightly-2026-09-17-aarch64-apple-darwin/lib/rustlib/src/rust/library/core/src/num/niche_types.rs": "1a74080c73dd7687b08e667d5611d4068a1b7556311f0b58e44edadb17d0a160",
+    "/Users/0xhude/.rustup/toolchains/nightly-2026-09-17-aarch64-apple-darwin/lib/rustlib/src/rust/library/core/src/convert/num.rs": "8dbf6c64681e2dee556e0844eef3e53d62a40df0280d25f469352870a401e034",
+    "/Users/0xhude/.rustup/toolchains/nightly-2026-09-17-aarch64-apple-darwin/lib/rustlib/src/rust/library/core/src/num/error.rs": "7447f99e89ce2f0163c83cbe177008c3b789b8129602099dfe9dc3f02909baff",
+    "/Users/0xhude/.rustup/toolchains/nightly-2026-09-17-aarch64-apple-darwin/lib/rustlib/src/rust/library/core/src/result.rs": "7f23a9f38da4fc06aaee76066e468d51d4da279f2325f44a8335186420f9ee6c",
+    "/Users/0xhude/.rustup/toolchains/nightly-2026-09-17-aarch64-apple-darwin/lib/rustlib/src/rust/library/core/src/fmt/rt.rs": "7a7dd4b1640a734fcb82f178ab69868b8f2f624a8c1f5a6fcf85002f4e2e4423",
+    "/Users/0xhude/.rustup/toolchains/nightly-2026-09-17-aarch64-apple-darwin/lib/rustlib/src/rust/library/core/src/fmt/mod.rs": "ab918e40543739be20757973f0d4abefcd9624d3759a64fc4147f1d8fc4bc035"
+  },
+  "validation": "Full gate passed: Rust/Miri dynamic Debug and unwrap; fresh clean fourteen-body source LLBC; exact four deliberate option differences vs ordinary preset; unchanged Types/Funs; retained panic_fmt single argument; native 27 Dyn occurrences, eleven malformed predicates/three backends/twenty-two Debug declaration negatives; fifty-two option mutations rejected before output; forty named conditional theorems and 153 audited theorem declarations; warning-as-error, independent kernel and axiom/sorry/native negatives. Final Rust test formatting-only change passed rustfmt check plus focused Rust/Miri rerun."
+}

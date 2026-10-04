@@ -1,0 +1,39 @@
+{
+  "source_profile": "ledger-time-profile.json",
+  "rust_toolchain": "nightly-2026-09-17",
+  "overflow_checks": true,
+  "mode": "conditional split extraction; no tool patch or generated source edits",
+  "explicit_theorems": 15,
+  "scope": "Actual unchanged TimeStamp Add/Sub, u128-to-u64 conversion and wrappers, with explicitly modeled Duration and Debug/unwrap interfaces. All model inputs: success iff Duration nanos <= u64::MAX; saturation or panic, and total u64-nanos wrappers. This is not full Rust/std/IC/ledger/Wasm correspondence.",
+  "unproved": [
+    "Duration range-typed Nanoseconds source refinement (full extraction rejects TPattern)",
+    "Unit formatter/Debug and unwrap observation model refinement to Rust formatting, panic text/unwinding and backend interface",
+    "TryFromIntError transparent single-field/newtype payload adaptation; pipeline and Rustc/Charon/Aeneas semantic preservation",
+    "Whole IC/ledger asynchronous external behavior, full Wasm and all EVM instruction correspondence"
+  ],
+  "interfaces": {
+    "Duration": "U64 seconds, U32 nanos, proof nanos < 10^9; model from_nanos/as_nanos",
+    "TryFromIntError": "Local alias to generated IntErrorKind preserves one-field payload instead of builtin Unit erasure",
+    "Debug/unwrap": "Local explicit Unit formatter model; unwrap returns Ok payload or Error.panic, ignores formatting; deliberately shadows builtin Formatter axiom without modifying generated files"
+  },
+  "sha256": {
+    "proofs/extraction/operator-lean/LedgerDurationExtract/Types.lean": "8ac2d1fd6b8eea2b4a81bdcedee6912925902ebd00d91ece6786a072faa49c43",
+    "proofs/extraction/operator-lean/LedgerDurationExtract/Funs.lean": "b2cab2eafe5d08edfbe3dafd035577be074c0a509807298664111537d0018181",
+    "proofs/extraction/operator-lean/LedgerDurationExtract/TypesExternal.lean": "6f9b6dfc051486d4f262e280d76f76175308499cb31858e66b4a72df51778a59",
+    "proofs/extraction/operator-lean/LedgerDurationExtract/FunsExternal.lean": "11454f181e6f43498edf7b4027892b567fb7d21c980fe951acae4545a05733ca",
+    "proofs/extraction/operator-lean/LedgerDurationCorrespondence.lean": "33ce55b116d21b4598c76de8415762948743523be9c798fc93ed9e4925048531",
+    "proofs/extraction/operator-lean/LedgerDurationAudit.lean": "c63174f8f956436633977f6684f9b220bd151d487cb12e1a85277c3de1abda9a",
+    "proofs/extraction/ledger-time-rust/tests/duration.rs": "6c56547ef3159c9cf1a591a4a1600f6304acec063f1fab9bbeb1ae8af1cd6894",
+    "scripts/verify-ledger-duration-conditional.sh": "1398a0b6effceb1d5b897928c9600e2a671ec9a9acfcee401e925778794fdcb1",
+    "proofs/extraction/operator-lean/LedgerDurationModel.lean": "b429dcd2adb9bac5e1abe958afc050154e25ef57f2a4178cc43b97778b1670cf"
+  },
+  "rust_primary_sources": {
+    "/Users/0xhude/.rustup/toolchains/nightly-2026-09-17-aarch64-apple-darwin/lib/rustlib/src/rust/library/core/src/time.rs": "54659df6f5b6168b53a682df2f92b47540443bc333a0a40bb2ef13a16ab12358",
+    "/Users/0xhude/.rustup/toolchains/nightly-2026-09-17-aarch64-apple-darwin/lib/rustlib/src/rust/library/core/src/num/niche_types.rs": "1a74080c73dd7687b08e667d5611d4068a1b7556311f0b58e44edadb17d0a160",
+    "/Users/0xhude/.rustup/toolchains/nightly-2026-09-17-aarch64-apple-darwin/lib/rustlib/src/rust/library/core/src/convert/num.rs": "8dbf6c64681e2dee556e0844eef3e53d62a40df0280d25f469352870a401e034",
+    "/Users/0xhude/.rustup/toolchains/nightly-2026-09-17-aarch64-apple-darwin/lib/rustlib/src/rust/library/core/src/num/error.rs": "7447f99e89ce2f0163c83cbe177008c3b789b8129602099dfe9dc3f02909baff",
+    "/Users/0xhude/.rustup/toolchains/nightly-2026-09-17-aarch64-apple-darwin/lib/rustlib/src/rust/library/core/src/result.rs": "7f23a9f38da4fc06aaee76066e468d51d4da279f2325f44a8335186420f9ee6c"
+  },
+  "audit_theorem_declarations": 59,
+  "validation": "Two native Rust boundary tests, fresh clean LLBC and identical generated files, full-Duration TPattern rejection, 15 explicit model theorems / 59 audited declarations, warning-as-error, independent kernel recheck, axiom/sorry/native negatives passed."
+}

@@ -1,0 +1,161 @@
+--- a/src/pure/Pure.ml
++++ b/src/pure/Pure.ml
+@@ -686,6 +686,7 @@
+     (* Note: the `de_bruijn_id`s are incorrect, see comment on `translate_region_binder` *)
+   | ParentClause of trait_instance_id * trait_decl_id * trait_clause_id
+   | BuiltinOrAuto of builtin_impl_data
++  | Dyn
+   | UnknownTrait of string
+ 
+ and type_id = TAdtId of type_decl_id | TTuple | TBuiltin of builtin_ty
+--- a/src/pure/PrintPure.ml
++++ b/src/pure/PrintPure.ml
+@@ -389,6 +389,7 @@
+       let clause_id = trait_clause_id_to_string env clause_id in
+       "parent(" ^ inst_id ^ ")::" ^ clause_id
+   | BuiltinOrAuto data -> builtin_impl_data_to_string data
++  | Dyn -> "DYN"
+   | UnknownTrait msg -> "UNKNOWN(" ^ msg ^ ")"
+ 
+ and trait_clause_to_string (env : fmt_env) (clause : trait_param) : string =
+--- a/src/symbolic/SymbolicToPureTypes.ml
++++ b/src/symbolic/SymbolicToPureTypes.ml
+@@ -129,7 +129,7 @@
+   | ItemClause _ ->
+       (* `ItemClause`s are removed by Charon's `--remove-associated-types`, except for GATs *)
+       [%craise_opt_span] span "Generic Associated Types are not supported yet"
+-  | Dyn -> [%craise_opt_span] span "Dynamic trait types are not supported yet"
++  | T.Dyn -> Dyn
+   | UnknownTrait s -> [%craise_opt_span] span ("Unknown trait found: " ^ s)
+ 
+ (** Translate a signature type - TODO: factor out the different translation
+@@ -188,8 +188,34 @@
+       TTraitType (trait_ref, type_name)
+   | TFnDef _ | TFnPtr _ ->
+       [%craise_opt_span] span "Arrow types are not supported yet"
+-  | TDynTrait _ ->
+-      [%craise_opt_span] span "Dynamic trait types are not supported yet"
++  | TDynTrait { binder } ->
++      let p = binder.binder_params in
++      let is_self depth = function T.TVar (T.Bound (d, id)) when d = depth ->
++        T.TypeVarId.to_int id = 0 | _ -> false in
++      [%cassert_opt_span] span
++        (Config.backend () = Config.Lean && p.regions = [] &&
++         List.length p.types = 1 && T.TypeVarId.to_int (List.hd p.types).index = 0 &&
++         p.const_generics = [] && p.regions_outlive = [] &&
++         p.trait_type_constraints = [] && is_self 0 binder.binder_value &&
++         List.length p.types_outlive = 1 &&
++         List.for_all (fun rb -> rb.T.binder_regions = [] &&
++           is_self 1 (fst rb.binder_value)) p.types_outlive &&
++         List.length p.trait_clauses = 1)
++        "Unsupported dynamic predicate";
++      let clauses = List.map (fun (c : T.trait_param) ->
++        let tr = c.trait.binder_value in
++        [%cassert_opt_span] span
++          (c.trait.binder_regions = [] && tr.generics.regions = [] &&
++           tr.generics.const_generics = [] && tr.generics.trait_refs = [] &&
++           List.length tr.generics.types = 1 &&
++           is_self 1 (List.hd tr.generics.types))
++          "Unsupported dynamic predicate clause";
++        let pure_tr = translate_trait_decl_ref span (translate_sty span) tr in
++        { clause_id = c.clause_id; trait_id = pure_tr.trait_decl_id;
++          generics = pure_tr.decl_generics }) p.trait_clauses in
++      let types = List.map (fun (p : T.type_param) ->
++        { index = p.index; name = p.name }) p.types in
++      TDynTrait { params = { types; const_generics = []; trait_clauses = clauses } }
+   | TError _ ->
+       [%craise_opt_span] span "Found type error in the output of charon"
+   | _ -> [%craise_opt_span] span ("unsupported type: " ^ T.show_ty ty)
+--- a/src/extract/ExtractTypes.ml
++++ b/src/extract/ExtractTypes.ml
+@@ -726,6 +726,21 @@
+       F.pp_print_string fmt name;
+       extract_generic_args span ctx fmt no_params_tys generics;
+       if inside then F.pp_print_string fmt ")"
++  | Dyn ->
++      let decl = TraitDeclId.Map.find trait_ref.trait_decl_id ctx.crate.trait_decls in
++      [%cassert] span
++        (backend () = Lean && TypesAnalysis.supported_dynamic_debug_decl
++          ctx.crate.type_decls decl)
++        "Unsupported dynamic trait instance";
++      (match trait_ref.decl_generics with
++      | {types = [TDynTrait {params = {types = [_]; const_generics = [];
++            trait_clauses = [clause]}}]; const_generics = []; trait_refs = []}
++        when clause.trait_id = trait_ref.trait_decl_id -> ()
++      | _ -> [%craise] span "Unsupported dynamic Debug instance shape");
++      F.pp_print_string fmt "({ fmt := (fun (d : ";
++      extract_ty span ctx fmt no_params_tys ~inside:false
++        (List.hd trait_ref.decl_generics.types);
++      F.pp_print_string fmt ") f => d.inst.fmt d.value f) })"
+   | UnknownTrait _ ->
+       (* This is an error case *)
+       [%admit_raise] span "Unexpected" fmt
+--- a/src/llbc/TypesAnalysis.ml
++++ b/src/llbc/TypesAnalysis.ml
+@@ -5,6 +5,50 @@
+ open SCC
+ 
+ let log = Logging.types_analysis_log
++
++(* Only the pinned object-safe Debug interface is supported by this candidate. *)
++let supported_dynamic_debug_decl (types : type_decl TypeDeclId.Map.t)
++    (d : LlbcAst.trait_decl) : bool =
++  let names n = List.filter_map
++    (function PeIdent (s, _) -> Some s | _ -> None) n in
++  let named id name = match TypeDeclId.Map.find_opt id types with
++    | Some t -> names t.item_meta.name = name | None -> false in
++  let no_extra (g : generic_params) =
++    g.types = [] && g.const_generics = [] && g.trait_clauses = [] &&
++    g.regions_outlive = [] && g.types_outlive = [] && g.trait_type_constraints = [] in
++  let formatter = function
++    | TAdt r -> named r.id ["core"; "fmt"; "Formatter"] &&
++        List.length r.generics.regions = 1 && r.generics.types = [] &&
++        r.generics.const_generics = [] && r.generics.trait_refs = []
++    | _ -> false in
++  let error = function
++    | TAdt r -> named r.id ["core"; "fmt"; "Error"] &&
++        r.generics = empty_generic_args
++    | _ -> false in
++  let output = function
++    | TAdt r -> named r.id ["core"; "result"; "Result"] &&
++        r.generics.regions = [] && r.generics.const_generics = [] &&
++        r.generics.trait_refs = [] &&
++        (match r.generics.types with [u; e] -> ty_is_unit u && error e | _ -> false)
++    | _ -> false in
++  let method_ok (rb : LlbcAst.trait_method binder) =
++    let m : LlbcAst.trait_method = rb.binder_value in
++    m.LlbcAst.name = "fmt" && m.default = None &&
++    no_extra rb.binder_params && List.length rb.binder_params.regions = 3 &&
++    not m.signature.is_unsafe && m.signature.abi = AbiRust &&
++    not m.signature.is_variadic && output m.signature.output &&
++    (match m.signature.inputs with
++      | [TRef (_, TVar (Free i), RShared); TRef (_, f, RMut)] ->
++          TypeVarId.to_int i = 0 && formatter f
++      | _ -> false) in
++  names d.item_meta.name = ["core"; "fmt"; "Debug"] && not d.is_unsafe &&
++  d.implied_clauses = [] && AssocConstId.Map.is_empty d.consts &&
++  AssocTypeId.Map.is_empty d.types && TraitMethodId.Map.cardinal d.methods = 1 &&
++  List.for_all method_ok (TraitMethodId.Map.values d.methods) &&
++  (match d.generics.types with [p] -> TypeVarId.to_int p.index = 0 && p.name = "Self"
++    | _ -> false) &&
++  no_extra {d.generics with types = []} && d.generics.regions = []
++
+ 
+ type subtype_info = {
+   under_borrow : bool;  (** Are we inside a borrow? *)
+--- a/src/symbolic/SymbolicToPure.ml
++++ b/src/symbolic/SymbolicToPure.ml
+@@ -187,6 +187,13 @@
+ 
+ let translate_trait_decl (ctx : Contexts.decls_ctx) (trait_decl : A.trait_decl)
+     : trait_decl =
++  let source_names = List.filter_map
++    (function T.PeIdent (n, _) -> Some n | _ -> None) trait_decl.item_meta.name in
++  if source_names = ["core"; "fmt"; "Debug"] then
++    [%cassert] trait_decl.item_meta.span
++      (Config.backend () = Config.Lean &&
++       TypesAnalysis.supported_dynamic_debug_decl ctx.crate.type_decls trait_decl)
++      "Unsupported dynamic Debug source declaration";
+   let {
+     def_id;
+     item_meta;

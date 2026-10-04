@@ -33,10 +33,13 @@ CI also runs `scripts/check_verification_policy.sh`. When Rust business logic ch
 `proofs/evm` contains Lean 4 proofs for a mathematical model of fee arithmetic,
 state-map updates, receipt projection, and commit/error ordering. Run
 `bash scripts/verify-lean.sh`; see [scope and remaining obligations](../../proofs/evm/README.md).
+It also proves balance/bound preservation in the projected journal, write-list
+composition and replay idempotence, precommit rejection/retry safety, asset CALL
+admission, and correspondence between the Lean journal and logical storage maps.
 These model proofs do not remove `TCB-revm` or prove the Rust adapter equivalent
 to the model. The command also audits proof axioms, detects source drift, and
 compares boundary cases against the actual Rust pure functions. It is a separate
-local gate; existing CI does not invoke it automatically.
+local gate; CI's `evm-proofs` job invokes it through `verify-revm.sh`.
 
 `bash scripts/verify-revm.sh` additionally checks the pinned revm source/features,
 compares actual journal traces with Lean, and runs official Prague state fixtures
@@ -53,3 +56,7 @@ argument mapping and finite execution tests.
 
 See [2026-09-30 upgrade and snapshot validation scope](mainnet-readiness-2026-09-30.md)
 for the PocketIC state-preservation tests and the remaining deployed-version migration checks.
+
+Rust由来の定義との全入力対応13関数とruint桁演算2関数は `proofs/extraction/README.md`、
+固定ledgerモデルとrevm命令抽出の未解決義務は `proofs/external/README.md` に記録する。
+Verus固定版をmacOS arm64へ導入し、分離基準版で198件、原作業ツリーで204件の契約を再検証した。

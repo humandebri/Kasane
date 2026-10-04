@@ -1,0 +1,143 @@
+{
+  "status": "three-route-actual-body-extraction-diagnostic-only",
+  "sha256": {
+    "scripts/diagnose-revm-jumpdest.sh": "17d159e95d954fb34fe6f68cc1cbd56f031e17bdf0af0a487f3592622a15ad94",
+    "scripts/audit_jumpdest_llbc.py": "bebda492743155794ad89349ff3e68c90687552c971a8e859db8a85f93af8504",
+    "Cargo.lock": "272266f066e89637bca1791b96688d42f4fe3e1b01a5148e25b84138bc6c3168",
+    "crates/evm-core/Cargo.toml": "0abb0cd0e354eda71055ba76497ce4d37841a71a6befaee11e1d49db01152b8a",
+    "proofs/extraction/revm-instruction-rust/Cargo.toml": "2484a31090c5bffdc8065e658ee2f59782e121c3496063265f04483ee62ec685",
+    "proofs/extraction/revm-instruction-rust/Cargo.lock": "f89cdb50faee3b3556a5b2689fc8c40b8222276458744792e926258ebaf87523",
+    "proofs/extraction/revm-instruction-rust/lib.rs": "c280681e5b9ef240392780ffaa2246d739fe9db3aa4fa85c233d8633e7dad8a5",
+    "vendor/revm/crates/interpreter/src/instructions/control.rs": "371b7f8b45a4b3bc98bb5092048284996a2e57401369741642cdbd9a3db90f13",
+    "vendor/revm/crates/interpreter/src/instruction_context.rs": "4257a57a5dd9109ef4d10263771c519a32008b3c6dc05202f7ae9644307f41ae",
+    "vendor/revm/crates/interpreter/src/interpreter_types.rs": "de97652bfd5486d6c64bb36e7cacb45f211ff627c99d2dbd55421e8c97de1271",
+    "vendor/revm/crates/interpreter/src/interpreter.rs": "2a1dad3fb124e80a338101a84d425c3281189079785a8cc170818ed349d852e6",
+    ".local/proof-tools/charon-gat-candidate/charon": "8f772feb4b6ca69410c9f11b3b0c9dff36eb30c9c7a5f83f3d35dd578d93212e",
+    ".local/proof-tools/charon-gat-candidate/charon-driver": "3c9d5a113be5b70c45cf0e55c30f993654586f7cfa70b7b9bbbba6ad4cc3da76",
+    ".local/proof-tools/aeneas-source/src/_build/default/main.exe": "a74ca1f3c07a4826e702df85aecab56fc684e7091ffcc4841e99ecd517f0a44e",
+    ".local/proof-tools/aeneas-source/src/llbc/TypesAnalysis.ml": "9d4c6eb7be147df8a9fdc1cf486adadf3fc2da4a478a050ed1f0207f0368fd7b",
+    ".local/proof-tools/aeneas-source/src/symbolic/SymbolicToPure.ml": "8bece0a41d34437d016c4604e0981671a2ecfa790f4bc76e0c68dd15d1516a1b",
+    ".local/proof-tools/charon-source/charon/src/options.rs": "487c8cbf6fdd75c9b79600bb5258c823cc80ff43971210424184f82da40b151e",
+    ".local/proof-tools/charon-source/charon/src/transform/normalize/partial_monomorphization.rs": "d49cc9ba9c13a3d8d7b2fcfdb4787373d2674551dd0345ff56fe91faa7bd5d0d",
+    ".local/proof-tools/charon-source/charon/src/transform/normalize/expand_associated_types.rs": "f1079eca671ce748017f482511e6388403dcf447edbdc75176b49f7848d2f2b9",
+    ".local/proof-tools/aeneas-source/src/pure/Pure.ml": "29646c70cd19906ee8838d769b27eb03faa6f2f08ee773de83df85bb5162221e"
+  },
+  "rust": "nightly-2026-09-17",
+  "observations": {
+    "generic": {
+      "transparent_bodies": 1,
+      "actual_leaf_unit_only": true,
+      "context_mutable_reference_fields": 2,
+      "context_lifetime_binders": 1,
+      "context_reference_regions": [
+        {
+          "Var": {
+            "Free": 0
+          }
+        },
+        {
+          "Var": {
+            "Free": 0
+          }
+        }
+      ],
+      "traits": 16,
+      "gat_metadata": {
+        "name": "slice_len_ty",
+        "binder_counts": {
+          "regions": 1,
+          "types": 0,
+          "const_generics": 0,
+          "trait_clauses": 0,
+          "regions_outlive": 0,
+          "types_outlive": 1,
+          "trait_type_constraints": 1
+        },
+        "default_present": true,
+        "implied_deref_clauses": 1
+      },
+      "semantic_equivalence_proved": false
+    },
+    "mono": {
+      "transparent_bodies": 2,
+      "actual_leaf_unit_only": true,
+      "context_mutable_reference_fields": 2,
+      "context_lifetime_binders": 0,
+      "context_reference_regions": [
+        "Erased",
+        "Erased"
+      ],
+      "traits": 0,
+      "gat_metadata": null,
+      "semantic_equivalence_proved": false
+    },
+    "partial": {
+      "transparent_bodies": 1,
+      "actual_leaf_unit_only": true,
+      "context_mutable_reference_fields": 2,
+      "context_lifetime_binders": 1,
+      "context_reference_regions": [
+        {
+          "Var": {
+            "Free": 0
+          }
+        },
+        {
+          "Var": {
+            "Free": 0
+          }
+        }
+      ],
+      "traits": 16,
+      "gat_metadata": {
+        "name": "slice_len_ty",
+        "binder_counts": {
+          "regions": 1,
+          "types": 0,
+          "const_generics": 0,
+          "trait_clauses": 0,
+          "regions_outlive": 0,
+          "types_outlive": 1,
+          "trait_type_constraints": 1
+        },
+        "default_present": true,
+        "implied_deref_clauses": 1
+      },
+      "semantic_equivalence_proved": false
+    }
+  },
+  "generic_scope": "Actual source JUMPDEST from production evm-core manifest/root Cargo.lock. Unused Interpreter internals explicitly opaque. Generic trait/GAT metadata preserved; one transparent unit-only instruction body. Aeneas translates the body then rejects MemoryTr associated-type declaration at SymbolicToPure.ml224.",
+  "mono_scope": "Existing exact concrete EthInterpreter/DummyHost JUMPDEST wrapper in diagnostic corpus with its separate locked dependency graph; full --monomorphize. Two transparent bodies, zero traits. Context loses lifetime binder and both mutable-reference fields have Erased regions. Strict Aeneas type analysis rejects at TypesAnalysis.ml229 before body translation. No lifetime invention, ignored erased region or LLBC rewrite.",
+  "remaining": "Preserve lifetime information while specializing type/trait arguments, or support preserved generic GAT declarations correctly. Then prove actual borrower/type/extractor correspondence, dispatch/base gas/PC behavior and whole EVM/native/Wasm effects.",
+  "validation": "Three freshly extracted actual-body routes with exact unit-only statements and Context region/binder audit; GAT binder/constraint/default/bound inventory checked in generic and partial routes; 19 copied-witness changes rejected. All three strict Aeneas rejections reproduced with no Lean artifact. No tool binary patched and no new instruction theorem.",
+  "accepted_lean_artifacts": 0,
+  "new_instruction_theorems": 0,
+  "semantic_equivalence_proved": false,
+  "additional_requested_optimization_probe": {
+    "options": [
+      "--mir=optimized",
+      "--monomorphize",
+      "--rustc-arg=-Zmir-opt-level=3",
+      "--rustc-arg=-Copt-level=3",
+      "--opaque=Interpreter",
+      "--opaque=DummyHost"
+    ],
+    "observation": {
+      "transparent_bodies": 2,
+      "actual_leaf_unit_only": true,
+      "context_mutable_reference_fields": 2,
+      "context_lifetime_binders": 0,
+      "context_reference_regions": [
+        "Erased",
+        "Erased"
+      ],
+      "traits": 0,
+      "semantic_equivalence_proved": false,
+      "gat_metadata": null
+    },
+    "rejection": "TypesAnalysis.ml229, instruction_context.rs; no accepted Lean output",
+    "scope": "Requested compiler flags in Charon diagnostic; no compiler optimization equivalence or production configuration correspondence claimed."
+  },
+  "partial_scope": "Actual production-root JUMPDEST with --monomorphize-mut=all; existing partial mutability specialization factors mutable-containing generic types and retains Context Free0 lifetime. MemoryTr slice_len_ty GAT remains with one lifetime binder, one type-outlives bound, one equality constraint, a default, and an implied Deref clause. Aeneas strictly rejects GAT declaration before any Lean artifact; this is not full specialization of arbitrary type or trait arguments.",
+  "gat_source_obligation": "MemoryTr::slice_len returns impl Deref<Target=[u8]> + receiver lifetime. LLBC retains the compiler-associated lifetime-indexed slice_len_ty and its bounds/default. Aeneas SymbolicToPure rejects parametrized or implied-bound associated types; Pure.trait_decl.types only records an ID/name pair. A supported translation must preserve lifetime/return origin, associated type default and Deref target bound, plus trait implementation use; suppressing warnings or dropping metadata does not close that obligation."
+}

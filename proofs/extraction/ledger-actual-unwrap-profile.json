@@ -1,0 +1,24 @@
+{
+  "source": "Fixed standard Rust Result.unwrap plus ledger timestamp and Duration; clean thirteen structured bodies including two globals",
+  "scope": "Nineteen conditional Duration and five refinement theorems now use unchanged generated source unwrap, rather than handwritten unwrap model. Six Never/source unwrap theorems; arbitrary Never continuations cannot return, failure and divergence preserved. Remaining explicit external observations: Debug formatter and unwrap_failed = panic; message formatting/unwind/destructors unproved. Rust-to-LLBC-to-Lean semantic preservation and native/Wasm runtime, every EVM instruction and IC/ledger external behavior remain unproved. Exact source UTF-8 bytes emitted unchanged; finite tests are not all-input proofs.",
+  "sha256": {
+    "proofs/extraction/operator-lean/LedgerActualUnwrap/Types.lean": "b419ee2bb52a96513c3a0adf1e75f753aa8031e656d46817001ad87446710d71",
+    "proofs/extraction/operator-lean/LedgerActualUnwrap/Funs.lean": "a1dd41f6b03bd756115d337f9f6e4275c7a77d2c6f8a059bbf6991da17245abb",
+    "proofs/extraction/operator-lean/LedgerActualUnwrap/FunsExternal.lean": "38d52345e9610f10b5df84e416adba3ec7627af6d227a704abfbee522c409140",
+    "proofs/extraction/operator-lean/LedgerActualUnwrapCorrespondence.lean": "936cd30082366e8ab026af982a48c212870fafa211a828b372e1a2f566982db1",
+    "proofs/extraction/operator-lean/LedgerActualUnwrapRefinement.lean": "3f41c3db7b5e8af1b4abe525872990ff406418964381769dd950915897c3a263",
+    "proofs/extraction/operator-lean/LedgerActualUnwrapAudit.lean": "2bcbcdc49725d143ead41e150305b5715097a45457208ddede2b844230a16c1e",
+    "proofs/extraction/operator-lean/NeverCallCorrespondence.lean": "234b4a681be80a582a8359a71fd5dccdeef9649a3ba8ae0ae39167d7f0a61361",
+    "proofs/extraction/operator-lean/LedgerDurationModel.lean": "b429dcd2adb9bac5e1abe958afc050154e25ef57f2a4178cc43b97778b1670cf",
+    "scripts/verify-ledger-actual-unwrap.sh": "d203ef347b02f902f8e630f1fefd15c835db32a5a90253253fb6596f151fda59",
+    "proofs/extraction/ledger-time-rust/tests/unwrap_source.rs": "c3902d23c214b7fe35d40a15577920160d129222c368cbd0e2ca765abe36fdf3"
+  },
+  "rust_primary_sources": {
+    "/Users/0xhude/.rustup/toolchains/nightly-2026-09-17-aarch64-apple-darwin/lib/rustlib/src/rust/library/core/src/time.rs": "54659df6f5b6168b53a682df2f92b47540443bc333a0a40bb2ef13a16ab12358",
+    "/Users/0xhude/.rustup/toolchains/nightly-2026-09-17-aarch64-apple-darwin/lib/rustlib/src/rust/library/core/src/num/niche_types.rs": "1a74080c73dd7687b08e667d5611d4068a1b7556311f0b58e44edadb17d0a160",
+    "/Users/0xhude/.rustup/toolchains/nightly-2026-09-17-aarch64-apple-darwin/lib/rustlib/src/rust/library/core/src/convert/num.rs": "8dbf6c64681e2dee556e0844eef3e53d62a40df0280d25f469352870a401e034",
+    "/Users/0xhude/.rustup/toolchains/nightly-2026-09-17-aarch64-apple-darwin/lib/rustlib/src/rust/library/core/src/num/error.rs": "7447f99e89ce2f0163c83cbe177008c3b789b8129602099dfe9dc3f02909baff",
+    "/Users/0xhude/.rustup/toolchains/nightly-2026-09-17-aarch64-apple-darwin/lib/rustlib/src/rust/library/core/src/result.rs": "7f23a9f38da4fc06aaee76066e468d51d4da279f2325f44a8335186420f9ee6c"
+  },
+  "validation": "Complete gate passed: six Rust tests and three Miri tests; fresh clean thirteen-body LLBC with exact Never call and both unwrap variants/on_unwind retained; unchanged generated Types/Funs; preceding candidate fallthrough failure reproduced; malformed type/layout strict failures; inherited Nano/error shape checks; all other Lean builtin functions unchanged; sixteen literal byte emissions; nineteen conditional plus five refinement plus six Never/unwrap theorems; 115 audited declarations, warning-as-error, independent kernel recheck and axiom/sorry/native negatives."
+}

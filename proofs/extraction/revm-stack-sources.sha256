@@ -1,0 +1,4 @@
+272266f066e89637bca1791b96688d42f4fe3e1b01a5148e25b84138bc6c3168  Cargo.lock
+0abb0cd0e354eda71055ba76497ce4d37841a71a6befaee11e1d49db01152b8a  crates/evm-core/Cargo.toml
+72221bb70c5912cc3030db224ae0a3e63bbd40023f642351f0250494cfe40c8d  vendor/revm/crates/interpreter/src/interpreter/stack.rs
+4ed81260ea01abfc586d916b1b10ba6d0ce0f046188a0ae3afa2d27dd78a3012  vendor/revm/crates/interpreter/src/instruction_result.rs

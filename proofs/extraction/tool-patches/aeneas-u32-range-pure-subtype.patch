@@ -1,0 +1,139 @@
+--- a/src/pure/Pure.ml
++++ b/src/pure/Pure.ml
+@@ -86,6 +86,7 @@
+   | TFuel  (** TODO: move this to Literal? *)
+   | TArray
+   | TSlice
++  | TU32Range
+   | TStr
+   | TRawPtr of mutability
+       (** The bool Raw pointers don't make sense in the pure world, but we don't
+--- a/src/pure/PureTypeCheck.ml
++++ b/src/pure/PureTypeCheck.ml
+@@ -66,7 +66,7 @@
+           if variant_id = fuel_zero_id then []
+           else if variant_id = fuel_succ_id then [ mk_fuel_ty ]
+           else [%craise] span "Unreachable: improper variant id for fuel type"
+-      | TArray | TSlice | TStr | TRawPtr _ ->
++      | TArray | TSlice | TStr | TRawPtr _ | TU32Range ->
+           (* Array: when not symbolic values (for instance, because of aggregates),
+              the array expressions are introduced as struct updates *)
+           [%craise] span "Attempting to access the fields of an opaque type")
+--- a/src/pure/PrintPure.ml
++++ b/src/pure/PrintPure.ml
+@@ -278,6 +278,7 @@
+   | TArray -> "Array"
+   | TSlice -> "Slice"
+   | TStr -> "Str"
++  | TU32Range -> "U32Range"
+   | TRawPtr Mut -> "MutRawPtr"
+   | TRawPtr Const -> "ConstRawPtr"
+ 
+@@ -509,7 +510,7 @@
+   | TBuiltin aty -> (
+       (* Builtin type *)
+       match aty with
+-      | TArray | TSlice | TStr | TRawPtr _ ->
++      | TArray | TSlice | TStr | TRawPtr _ | TU32Range ->
+           (* Those types are opaque: we can't get there *)
+           [%craise_opt_span] span "Unreachable"
+       | TResult ->
+@@ -562,7 +563,7 @@
+   | TBuiltin aty -> (
+       (* Builtin type *)
+       match aty with
+-      | TFuel | TArray | TSlice | TStr ->
++      | TFuel | TArray | TSlice | TStr | TU32Range ->
+           (* Opaque types: we can't get there *)
+           [%craise_opt_span] span "Unreachable"
+       | TResult | TError | TSum | TLoopResult | TRawPtr _ ->
+@@ -635,7 +636,7 @@
+     | TAdt (TBuiltin aty, _) -> (
+         (* Builtin type *)
+         match aty with
+-        | TRawPtr _ ->
++        | TRawPtr _ | TU32Range ->
+             (* This type is opaque: we can't get there *)
+             [%craise_opt_span] span "Unreachable"
+         | TResult ->
+--- a/src/extract/ExtractBase.ml
++++ b/src/extract/ExtractBase.ml
+@@ -1141,6 +1141,7 @@
+         (TLoopResult, "ControlFlow");
+         (TFuel, "Nat");
+         (TArray, "Array");
++        (TU32Range, "U32Range");
+         (TSlice, "Slice");
+         (TStr, "Str");
+         (TRawPtr Mut, "MutRawPtr");
+@@ -2011,6 +2012,7 @@
+           | TBuiltin TSum -> "s"
+           | TBuiltin TLoopResult -> "r"
+           | TBuiltin TArray -> "a"
++          | TBuiltin TU32Range -> "r"
+           | TBuiltin TSlice -> "s"
+           | TBuiltin TStr -> "s"
+           | TBuiltin (TRawPtr _) -> "p"
+--- a/src/extract/ExtractTypes.ml
++++ b/src/extract/ExtractTypes.ml
+@@ -333,6 +333,19 @@
+   [%ldebug "ty: " ^ ty_to_string ctx ty];
+   let extract_rec = extract_ty span ctx fmt no_params_tys in
+   match ty with
++  | TAdt (TBuiltin TU32Range,
++      { types = []; trait_refs = [];
++        const_generics = [CgValue (VScalar (UnsignedInteger (U32, lo)));
++                          CgValue (VScalar (UnsignedInteger (U32, hi)))] }) ->
++      [%cassert] span (backend () = Lean) "U32 range extraction requires Lean";
++      [%cassert] span
++        (Z.sign lo >= 0 && Z.leq lo hi && Z.lt hi (Z.shift_left Z.one 32))
++        "Malformed U32 range bounds";
++      F.pp_print_string fmt
++        ("{ rangeValue : Std.U32 // " ^ Z.to_string lo
++         ^ " ≤ rangeValue.val ∧ rangeValue.val ≤ " ^ Z.to_string hi ^ " }")
++  | TAdt (TBuiltin TU32Range, _) ->
++      [%craise] span "Malformed U32 range generic arguments"
+   | TAdt (type_id, generics) -> (
+       [%ldebug "ADT case"];
+       let has_params = generics <> empty_generic_args in
+--- a/src/symbolic/SymbolicToPureTypes.ml
++++ b/src/symbolic/SymbolicToPureTypes.ml
+@@ -134,6 +134,20 @@
+ 
+ (** Translate a signature type - TODO: factor out the different translation
+     functions *)
++let translate_u32_range (span : Meta.span option) (base : T.ty)
++    (pat : T.type_pattern) : ty =
++  [%cassert_opt_span] span (Config.backend () = Config.Lean)
++    "U32 range extraction is supported only by the Lean candidate";
++  [%cassert_opt_span] span (TypesAnalysis.supported_u32_range_pattern base pat)
++    "Unsupported or malformed U32 range";
++  match pat with
++  | T.Range (lo, hi) ->
++      TAdt (TBuiltin TU32Range,
++        { types = []; trait_refs = [];
++          const_generics = [translate_constant_expr_kind span lo.kind;
++                            translate_constant_expr_kind span hi.kind] })
++  | _ -> [%craise_opt_span] span "Unsupported U32 range pattern"
++
+ let rec translate_sty (span : Meta.span option) (ty : T.ty) : ty =
+   let translate = translate_sty in
+   match ty with
+@@ -169,6 +183,8 @@
+       TVar var
+       (* Note: the `de_bruijn_id`s are incorrect, see comment on `translate_region_binder` *)
+   | TScalar ty -> TLiteral (translate_literal_type ty)
++  | TPattern (base, pat) when TypesAnalysis.supported_u32_range_pattern base pat ->
++      translate_u32_range span base pat
+   | TNever -> TNever
+   | TRef (_, rty, _) -> translate span rty
+   | TRawPtr (ty, rkind) ->
+@@ -378,6 +394,8 @@
+   | TVar var -> TVar var
+   | TNever -> TNever
+   | TScalar scalar_ty -> TLiteral (translate_literal_type scalar_ty)
++  | TPattern (base, pat) when TypesAnalysis.supported_u32_range_pattern base pat ->
++      translate_u32_range span base pat
+   | TRef (_, rty, _) -> translate rty
+   | TRawPtr (ty, rkind) ->
+       let mut =

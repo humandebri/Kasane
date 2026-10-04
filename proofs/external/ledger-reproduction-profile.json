@@ -1,0 +1,68 @@
+{
+  "source_commit": "cf41372e3d4dc1accfe2c09a7969f8bddc729dc1",
+  "image_tag": "ghcr.io/dfinity/ic-build:a72bab43cf0ba5a4de20cacc82247b38c64a779ace23157d0aa200d3af7c41d1",
+  "image_reference": "ghcr.io/dfinity/ic-build@sha256:0a0cff0b12c7586c2f312c739176924edf0c9e71df92f382eba836913da9f1c6",
+  "image_variant_digest": "sha256:2ba7ece4c0cfcd063f5dadb6c49f959be235ddaf536a62fb438b45a339c00055",
+  "platform": "linux/amd64",
+  "bazel_version": "8.6.0",
+  "rust_version": "1.93.1",
+  "bazel_target": "//rs/ledger_suite/icrc1/ledger:ledger_canister.wasm.gz",
+  "build_configuration": [
+    "local",
+    "stamped"
+  ],
+  "image_tag_input_sha256": {
+    "rust-toolchain.toml": "d36412d0cccd51a98842c1f447ae13757d8f3a5927d49f0c34ddc6481bec7d70",
+    "ci/container/Dockerfile": "c2907f933c47198ba57bac701a8b8c6d3e0d750b9b542475fff64e98a8472e8d",
+    "ci/container/files/containers.conf": "f5ce9a90757d85c0da86f63c8818dcfc36b4d5b09b68ed1259c0f408fd463d8a",
+    "ci/container/files/gitconfig": "cff8d400f0afa885b33f7a729cf04435c3419cd797c3cce2c4799b895f1e2389",
+    "ci/container/files/packages.common": "92e9e117592b4252b9a1b73d75d7fd3cdc8b09376f26b8c524b84c5867430be7",
+    "ci/container/files/packages.dev": "8ee23056c3e64c7cbba1901bca32046a01384319b9686c5848d443fe6757bfbc",
+    "ci/container/files/zshrc": "d1631804f7022a483225abc94c174e2f6069c7fb2a85ec830302335faf681ff8"
+  },
+  "build_input_sha256": {
+    "rust-toolchain.toml": "d36412d0cccd51a98842c1f447ae13757d8f3a5927d49f0c34ddc6481bec7d70",
+    ".bazelversion": "4a0dcdd04283b2bb2122080f03d0058cf6ad7a98731afab1530d59a7f3737dfe",
+    "ci/container/Dockerfile": "c2907f933c47198ba57bac701a8b8c6d3e0d750b9b542475fff64e98a8472e8d",
+    "ci/container/get-image-tag.sh": "21792d6ad82acb107cf44e025ce3d593f4f4f2b1a29ecb9f96d70dffb0ff4ff8",
+    "ci/container/build-ic.sh": "a28e94d409c0393388e4572dfc3276256075b584153dda57692248791c8a1a9f",
+    "bazel/canisters.bzl": "2e2f5c9f0571c2444a35e6151aa50bf2479eae0b1d3017640f02ba7cc2b80d14",
+    "bazel/workspace_status.sh": "e9f35730b095fe156ada931a88684ddf91085e5ae91ee8fff7c6fdb34bcb48f2",
+    "bazel/conf/.bazelrc.build": "71465c274e5faab5977b27db8e97a3ff5750bcc144d7ab3a870efdcd1f63ad4f",
+    "bazel/conf/.bazelrc.internal": "4b5697e3af5b5c7c4ad9f0f55f58ebceb7d1c382c36389393c69c1acb0df6849",
+    "rs/ledger_suite/icrc1/ledger/BUILD.bazel": "32a6e9a1de8537373af6847a42b9c3f9663a4ad5295e37ccbeda6e853636def2",
+    "rs/ledger_suite/icrc1/ledger/ledger.did": "02a42599e3d2036a19dcfa53db04ad5a5271b0bd78ac1a5986b3dd361f33a99c",
+    "Cargo.lock": "4e804c61d9f7c0229561ebda745b6e8ca522830e2444ab863f2c7e8d47d82b7f",
+    "MODULE.bazel": "eb22fb98dd08a449b28cdaaa4fb122c3adc94c4d47350ef102de4acf87b96877",
+    "bazel/rust.MODULE.bazel": "794761fd269ca3f3420288164bc1883626aaa6e4b14dd41164eec18ab653dfd3",
+    "publish/canisters/BUILD.bazel": "43b7fdd4ca1997032344e01e9a6cb5071101834c0e1c547299eb24365418ca94"
+  },
+  "status": "completed_byte_identical",
+  "container": "kasane-ledger-repro-cf41372",
+  "container_resources": {
+    "cpus": 4,
+    "memory": "8g"
+  },
+  "metadata_audit": "fixed artifact commit and Candid bytes match source; seven wrong/malformed/duplicate metadata controls rejected and changed artifact rejected by full-byte comparator",
+  "reproducible_build_byte_equality": "verified: full uncompressed Wasm byte equality with committed bundle",
+  "compiler_or_ic_semantic_equivalence": "unproved",
+  "release_stdlib_source": {
+    ".local/proof-tools/ledger-rust-1.93.1-source/fmt/mod.rs": "ff56f0d7f3ce245b6171f2b742bfa07e1a7596158e43a9917a0340c7e9eb8a27",
+    ".local/proof-tools/ledger-rust-1.93.1-source/fmt/rt.rs": "7a7dd4b1640a734fcb82f178ab69868b8f2f624a8c1f5a6fcf85002f4e2e4423",
+    ".local/proof-tools/ledger-rust-1.93.1-source/ptr/non_null.rs": "b7a81d53f4e72493b41f825175d330c36338a4adb5df9fffbda2efa6154d068e",
+    ".local/proof-tools/ledger-rust-1.93.1-source/time.rs": "16fb635647ac6989bae2e8db0c59dde048c9cc70a1dd0f26403507b0bd24bc2e"
+  },
+  "stdlib_version_correspondence": "unproved: official Wasm build uses Rust1.93.1; existing Charon extraction uses nightly2026-09-17. NonNull1.93.1 uses rustc_layout_scalar_valid_range_start(1) and a plain const raw-pointer field; extraction nightly uses a NotNull pattern field.",
+  "tooling_sha256": {
+    "scripts/audit_icrc_ledger_artifact.py": "bf82c2bfcf38d4b6b96e4111bbd589c34f06054e4758fe5fa35739d1934b81ec",
+    "scripts/test_icrc_ledger_artifact_metadata.py": "acf5c7dd34d6e8f4d1cfe1fef0ca4451db906704011e92e50a7a41b478649e49",
+    "scripts/reproduce_icrc_ledger_wasm.sh": "1a8b23e6557379154c83a70b0a8695f85075b9de313f538341a791194d29dfbc"
+  },
+  "rebuilt_wasm_sha256": "a273d741019b4324b22e2e64cfb0239de148ae9693e8801102a04118dfd383c0",
+  "build_elapsed_seconds": 736.183,
+  "build_actions": 1575,
+  "source_clean_after_build": true,
+  "container_final_state": "stopped; retained for ongoing proof work",
+  "wasm_target": "wasm32-unknown-unknown",
+  "extraction_target_correspondence": "unproved: official artifact targets wasm32; existing fixed formatting extraction/layout profile targets aarch64-apple-darwin."
+}

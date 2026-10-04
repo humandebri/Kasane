@@ -1,0 +1,45 @@
+{
+  "source_profile": "ledger-time-profile.json",
+  "rust_toolchain": "nightly-2026-09-17",
+  "overflow_checks": true,
+  "mode": "Unchanged actual Duration type, from_nanos/as_nanos, two constants, TimeStamp Add/Sub and wrappers; opaque constrained Nanoseconds boundary",
+  "explicit_theorems": 19,
+  "audit_theorem_declarations": 86,
+  "structured_functions": 8,
+  "structured_global_initializers": 2,
+  "scope": "All model-valid Duration inputs: actual as_nanos checked arithmetic cannot overflow; actual from_nanos preserves exact quotient/remainder, roundtrips and always meets the modeled unsafe constructor precondition. Extracted TimeStamp success/panic iff, saturating add/sub and total u64-nanos wrappers. Conditional on explicit Nanoseconds and Debug/unwrap interfaces, not full std/Rust/Wasm/IC/EVM proof.",
+  "interfaces": {
+    "Nanoseconds": "U32 value with proof value < 10^9; modeled new_unchecked returns value on valid input and Error.undef otherwise, as_inner returns stored U32. Refinement of Rust transmute/validity/provenance is unproved.",
+    "TryFromIntError": "Local alias to generated IntErrorKind preserves one-field payload instead of builtin Unit erasure",
+    "Debug/unwrap": "Local explicit Unit formatter model; unwrap returns Ok payload or Error.panic, ignores formatting; deliberately shadows builtin Formatter axiom without modifying generated files"
+  },
+  "unproved": [
+    "Actual range-typed Nanoseconds TPattern and unsafe transmute refinement; full extraction still rejected",
+    "TryFromIntError payload/newtype adaptation and Debug/unwrap model versus real panic text/unwinding",
+    "Rustc/Charon/Aeneas semantic preservation and source-to-native/Wasm compilation",
+    "All EVM instructions and IC/ICRC ledger async external behavior"
+  ],
+  "sha256": {
+    "proofs/extraction/operator-lean/LedgerDurationSource/Types.lean": "44196a87bae64847d92b3d1c975534f9102260998701ae40fde0958611c4fb48",
+    "proofs/extraction/operator-lean/LedgerDurationSource/Funs.lean": "a50fb2f51cdf14fcb60281628ffbd7ab469787a8af7ac2630aec3362a1d68284",
+    "proofs/extraction/operator-lean/LedgerDurationSource/TypesExternal.lean": "d26a14fb52e1c8a0f180f69a305ba68ff7e4f7f47be9954533ef9e3e11bbcdd1",
+    "proofs/extraction/operator-lean/LedgerDurationSource/FunsExternal.lean": "1a6e87319f2a3f435dadc6ce4add26546388f4f5e66dc3bf86c22fc0a7ad219d",
+    "proofs/extraction/operator-lean/LedgerDurationSourceCorrespondence.lean": "f102079029260f2b1a29704be2890703f64592ea4174d5ca2b6463b17bf98e43",
+    "proofs/extraction/operator-lean/LedgerDurationSourceAudit.lean": "182dbfd688455d751ce4f239b68ec1f8447558363477e9ac137c42116b34cb3a",
+    "proofs/extraction/ledger-time-rust/tests/duration_source.rs": "a076070ac8eed2e012efc5a14060eb09cd99870f4aea248e35dd4eb1fc03f506",
+    "scripts/verify-ledger-duration-source.sh": "7708278ec6d279f8f11f029ef1fe2deef8f98bca63064a882a3c787310df155e",
+    "proofs/extraction/operator-lean/LedgerDurationModel.lean": "b429dcd2adb9bac5e1abe958afc050154e25ef57f2a4178cc43b97778b1670cf",
+    "proofs/extraction/operator-lean/LedgerDurationExtract/TypesExternal.lean": "6f9b6dfc051486d4f262e280d76f76175308499cb31858e66b4a72df51778a59",
+    "proofs/extraction/operator-lean/LedgerDurationRefinement.lean": "af351eaa9cdc94b568cc1318132455bb33940edb93926381604331fc6e7a6542"
+  },
+  "rust_primary_sources": {
+    "/Users/0xhude/.rustup/toolchains/nightly-2026-09-17-aarch64-apple-darwin/lib/rustlib/src/rust/library/core/src/time.rs": "54659df6f5b6168b53a682df2f92b47540443bc333a0a40bb2ef13a16ab12358",
+    "/Users/0xhude/.rustup/toolchains/nightly-2026-09-17-aarch64-apple-darwin/lib/rustlib/src/rust/library/core/src/num/niche_types.rs": "1a74080c73dd7687b08e667d5611d4068a1b7556311f0b58e44edadb17d0a160",
+    "/Users/0xhude/.rustup/toolchains/nightly-2026-09-17-aarch64-apple-darwin/lib/rustlib/src/rust/library/core/src/convert/num.rs": "8dbf6c64681e2dee556e0844eef3e53d62a40df0280d25f469352870a401e034",
+    "/Users/0xhude/.rustup/toolchains/nightly-2026-09-17-aarch64-apple-darwin/lib/rustlib/src/rust/library/core/src/num/error.rs": "7447f99e89ce2f0163c83cbe177008c3b789b8129602099dfe9dc3f02909baff",
+    "/Users/0xhude/.rustup/toolchains/nightly-2026-09-17-aarch64-apple-darwin/lib/rustlib/src/rust/library/core/src/result.rs": "7f23a9f38da4fc06aaee76066e468d51d4da279f2325f44a8335186420f9ee6c"
+  },
+  "explicit_refinement_theorems": 5,
+  "refinement_scope": "Type representation maps are inverse; extracted actual Duration numeric functions refine the earlier model under the same explicit constrained Nanoseconds boundary. No actual Rust transmute/refinement theorem.",
+  "validation": "Fresh clean extraction: eight structured functions, two global initializers, real Duration structure and opaque constrained Nanoseconds. Identical generated files; three Rust boundary tests; 19 conditional source theorems and five model-refinement theorems; 86 declaration axiom audit; warning-as-error; independent kernel rechecks; axiom/sorry/native negatives; full TPattern extraction rejection. Prior conditional-model gate also revalidated."
+}

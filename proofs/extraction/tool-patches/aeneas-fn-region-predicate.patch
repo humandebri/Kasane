@@ -1,0 +1,46 @@
+--- a/src/llbc/TypesUtils.ml
++++ b/src/llbc/TypesUtils.ml
+@@ -77,7 +77,33 @@
+   let obj =
+     object
+       inherit [_] iter_ty as super
+-      method! visit_region _ r = if pred r then raise Found
++      method! visit_region scopes r =
++        match scopes,r with
++        | Some scopes,RVar(Bound(depth,id)) ->
++            if depth < 0 || RegionId.to_int id < 0 then
++              raise (Failure "Out-of-scope function region predicate");
++            (match List.nth_opt scopes depth with
++             | Some count when RegionId.to_int id < count -> ()
++             | _ -> raise (Failure "Out-of-scope function region predicate"))
++        | _ -> if pred r then raise Found
++      method! visit_TFnDef scopes fn =
++        super#visit_TFnDef (Some(Option.value scopes ~default:[])) fn
++      method! visit_TFnPtr scopes fn =
++        super#visit_TFnPtr (Some(Option.value scopes ~default:[])) fn
++      method! visit_region_binder visit_value scopes x =
++        let scopes = Option.map (fun scopes ->
++          let ids = List.map (fun (p : region_param) -> RegionId.to_int p.index) x.binder_regions in
++          if ids <> List.init (List.length ids) Fun.id then
++            raise (Failure "Malformed function region predicate binder");
++          List.length ids :: scopes) scopes in
++        super#visit_region_binder visit_value scopes x
++      method! visit_binder visit_value scopes x =
++        let scopes = Option.map (fun scopes ->
++          let ids = List.map (fun (p : region_param) -> RegionId.to_int p.index) x.binder_params.regions in
++          if ids <> List.init (List.length ids) Fun.id then
++            raise (Failure "Malformed function region predicate binder");
++          List.length ids :: scopes) scopes in
++        super#visit_binder visit_value scopes x
+ 
+       method! visit_TDynTrait env tr =
+         (* Ignore the dyn traits by default *)
+@@ -86,7 +112,7 @@
+     end
+   in
+   try
+-    obj#visit_ty () ty;
++    obj#visit_ty None ty;
+     false
+   with Found -> true
+ 

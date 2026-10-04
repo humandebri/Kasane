@@ -1,0 +1,64 @@
+--- a/src/interp/InterpExpressions.ml
++++ b/src/interp/InterpExpressions.ml
+@@ -770,6 +770,39 @@
+           snd last_field ))
+     else [%craise] span (mk_msg ())
+ 
++(* Only exact signatures are admitted. The cast and function identity remain
++   in the symbolic AST; no callable Pure value is emitted by this check. *)
++let fn_item_reification_signature_matches (crate : LlbcAst.crate) (src : ty)
++    (dst : ty) : bool =
++  let arity_matches (params : generic_params) (args : generic_args) =
++    List.length params.regions = List.length args.regions
++    && List.length params.types = List.length args.types
++    && List.length params.const_generics = List.length args.const_generics
++    && List.length params.trait_clauses = List.length args.trait_refs
++  in
++  let item_args_match (item : fn_ptr region_binder) =
++    match item.binder_value.kind with
++    | Fun id -> (match LlbcAst.FunDeclId.Map.find_opt id crate.fun_decls with
++        | Some decl -> arity_matches decl.generics item.binder_value.generics
++        | None -> false)
++    | TraitMethod (tr, id) ->
++        tr.trait_decl_ref.binder_regions = []
++        && (match Substitute.lookup_method_sig crate
++              tr.trait_decl_ref.binder_value.id id with
++            | Some bound ->
++                arity_matches bound.item_binder_params tr.trait_decl_ref.binder_value.generics
++                && arity_matches bound.item_binder_value.binder_params item.binder_value.generics
++            | None -> false)
++  in
++  match (src, dst) with
++  | TFnDef item, TFnPtr target ->
++      TypesUtils.ty_is_rty src && TypesUtils.ty_is_rty dst
++      && target.binder_value.abi = AbiRust
++      && not target.binder_value.is_variadic
++      && item_args_match item
++      && Substitute.lookup_fndef_sig crate item = Some target
++  | _ -> false
++
+ let eval_unary_op_symbolic (config : config) (span : Meta.span) (unop : unop)
+     (op : operand) (ctx : eval_ctx) :
+     (tvalue, eval_error) result
+@@ -979,6 +1012,12 @@
+             let _ = cast_unsize_to_modified_fields span ctx ty0 ty1 in
+             ty1
+         | Cast (CastRawPtr (_, tgt_ty)), _ -> tgt_ty
++        | Cast (CastFnPtr (src_ty, tgt_ty)), (TFnDef _ as value_ty) ->
++            [%cassert] span
++              (src_ty = value_ty
++              && fn_item_reification_signature_matches ctx.crate src_ty tgt_ty)
++              "Unsupported function item reification signature";
++            tgt_ty
+         | _ ->
+             [%craise] span
+               ("Invalid input for unop: " ^ unop_to_string ctx unop ^ " on "
+--- a/src/interp/InterpExpressions.mli
++++ b/src/interp/InterpExpressions.mli
+@@ -99,3 +99,6 @@
+   ty ->
+   ty ->
+   (type_decl_id * generic_args * FieldId.id * ty * ty) option
++
++(** Exact Rust function-item signature guard; no callable pointer semantics. *)
++val fn_item_reification_signature_matches : LlbcAst.crate -> ty -> ty -> bool

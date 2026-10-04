@@ -1,0 +1,50 @@
+--- a/src/llbc/TypesUtils.ml
++++ b/src/llbc/TypesUtils.ml
+@@ -54,7 +54,37 @@
+   let obj =
+     object
+       inherit [_] iter_ty as super
+-      method! visit_region _env r = add_region r
++      method! visit_region scopes r =
++        match (scopes, r) with
++        | Some scopes, RVar (Bound (depth, id)) ->
++            if depth < 0 || RegionId.to_int id < 0 then
++              raise (Failure "Out-of-scope function region inventory");
++            (match List.nth_opt scopes depth with
++             | Some count when RegionId.to_int id < count -> ()
++             | _ -> raise (Failure "Out-of-scope function region inventory"))
++        | _ -> add_region r
++
++      method! visit_TFnDef scopes fn =
++        super#visit_TFnDef (Some (Option.value scopes ~default:[])) fn
++
++      method! visit_TFnPtr scopes fn =
++        super#visit_TFnPtr (Some (Option.value scopes ~default:[])) fn
++
++      method! visit_region_binder visit_value scopes x =
++        let scopes = Option.map (fun scopes ->
++          let ids = List.map (fun (p : region_param) -> RegionId.to_int p.index) x.binder_regions in
++          if ids <> List.init (List.length ids) Fun.id then
++            raise (Failure "Malformed function region inventory binder");
++          List.length ids :: scopes) scopes in
++        super#visit_region_binder visit_value scopes x
++
++      method! visit_binder visit_value scopes x =
++        let scopes = Option.map (fun scopes ->
++          let ids = List.map (fun (p : region_param) -> RegionId.to_int p.index) x.binder_params.regions in
++          if ids <> List.init (List.length ids) Fun.id then
++            raise (Failure "Malformed function region inventory binder");
++          List.length ids :: scopes) scopes in
++        super#visit_binder visit_value scopes x
+ 
+       method! visit_TDynTrait env tr =
+         (* Ignore the dyn traits by default *)
+@@ -63,7 +93,7 @@
+     end
+   in
+   (* Explore the type *)
+-  obj#visit_ty () ty;
++  obj#visit_ty None ty;
+   (* Return the set of accumulated regions *)
+   !s
+ 

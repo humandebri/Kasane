@@ -1,0 +1,7 @@
+04c8b631058eccdebe345b1f140088bedd4672c73133c129b83e6770640f5a50  .local/proof-tools/charon-source/charon/Cargo.toml
+58fbd8bc3532e841d453211ad5e6956dd9fcfa5bd30381c84db182b427354960  .local/proof-tools/charon-source/charon/Cargo.lock
+799791c4b0fca18e4f2e7dd162924fdd8bb1a8ab9cc7b82519a6097303e615ec  .local/proof-tools/charon-source/charon/src/ast/type_level/type_info.rs
+8ac181debe1a54b8d423289fd58b6b047794c2cff9651be44671d6bb9ae06817  .local/proof-tools/charon-source/charon/src/ast/type_level/vars.rs
+3bb672a47aab056ba32ebfbcfeea65c753044e0d3d641456704e3df4fead3dd1  /Users/0xhude/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/bitflags-2.9.1/src/lib.rs
+645b13af0c7302258df61239073a4b8203d09f27b6c17f8a6f1f8c3e427f5334  /Users/0xhude/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/bitflags-2.9.1/src/internal.rs
+78ba06e1a5830b36960adf9bd79aaf47d783b9b8a0f1fa33b0d7a340c15fd1d1  /Users/0xhude/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/bitflags-2.9.1/src/public.rs

@@ -1,0 +1,132 @@
+{
+  "status": "experimental-u256-add-sub-and-revm-gas-all-input-source-arithmetic-correspondence",
+  "aeneas_commit": "557eff8",
+  "charon_commit": "c8f15d7d658c86a95658f71ad99cddd4be002e04",
+  "ocaml": "5.3.0",
+  "opam": {
+    "version": "2.6.0",
+    "sha256": "b57ed6cc082e560063989a285c59786b7c670087da2d317a87e4ba4c7973e71f"
+  },
+  "pkgconf": "3.0.7",
+  "gmp": "6.3.0",
+  "native_source_archives_sha256": {
+    "aeneas": "6a172ec6384352dc05818dced462f82a9016e802e1c8bd132aa20505f7a927ae",
+    "charon": "8fb8d08240affd9db31d92dc2eac80048ea6be45979d62cbaa975be2e1c5db92",
+    "pkgconf": "c926ff491cbd9a331a589160811bd97ab1749b4d5198a519338f2cdfabe6940a",
+    "gmp": "a3c2b80201b89e68616f4ad30bc66aee4927c3ce50e33929ca819d5c43538898"
+  },
+  "charon_patch_validation": {
+    "cargo_build": "passed",
+    "u256_llbc": "passed",
+    "u256_aeneas": "generated-with-unknown-definitions",
+    "unknown_definitions": [
+      "core::ub_checks::check_language_ub",
+      "core::num::{usize}::div_ceil"
+    ],
+    "full_tool_tests": "passed-make-test-including-rust-and-ocaml",
+    "panic_normalization_regression": "passed-on-real-u256-llbc",
+    "additional_std_include": "generated-without-axiom-declarations-after-ub-session-patch",
+    "ub_session_regression": "passed-enabled-and-disabled",
+    "clippy_binaries": "passed",
+    "ui_tests": {
+      "passed": 478,
+      "ignored": 4
+    },
+    "make_clippy": "stopped-at-no-vcs-for-archive-source",
+    "all_targets_clippy": "passed-no-autofix"
+  },
+  "aeneas_source_build": "passed",
+  "aeneas_lean_ub_add_patch": "built-and-u256-generated-definitions-kernel-checked",
+  "u256_proofs": {
+    "explicit_theorems": 29,
+    "axiom_audit_theorem_declarations": 83,
+    "kernel_recheck": "passed-after-selected-foreign-root-patch",
+    "scope": "all-input extracted wrapping U256 add/sub integer value correspondence, loop balances and totality; native/Wasm and translator correctness are trusted boundaries"
+  },
+  "experimental_binary_sha256": {
+    "target/debug/charon": "8f772feb4b6ca69410c9f11b3b0c9dff36eb30c9c7a5f83f3d35dd578d93212e",
+    "target/debug/charon-driver": "089173e7d6d7d1d71d5c7e51dfff33abfeb26997e5aa3cb9d458c94d26fda14a",
+    ".local/proof-tools/aeneas-source/src/_build/default/main.exe": "a74ca1f3c07a4826e702df85aecab56fc684e7091ffcc4841e99ecd517f0a44e"
+  },
+  "ruint_sources_sha256": {
+    "src/lib.rs": "0edd811599fb2915b9e0ab3f005506699038020a7b2ebfa5f129aa2f72339e01",
+    "src/add.rs": "5b313794fe78bf875d348fd37e82ecd9e135031b6a0c40da6a0e5879c65f3179",
+    "src/macros.rs": "f0e4e01da01326a2226352baa75fc3c72a2f39406f0bd1e4792416a9450b4f3a",
+    "src/algorithms/add.rs": "af2faf9eb57105865d319ef483b64a065c92a92baf9ee76ef4b0b9cc2b48819d",
+    "src/bits.rs": "64804a0e352648288577193b0cfdaf301dda09f836da91a1e1b20adfc1f3de88"
+  },
+  "aeneas_selected_foreign_roots_patch": "built; same actual Gas LLBC before/after regression passed; prior U256 regeneration and all-input proofs unchanged",
+  "revm_gas_proofs": {
+    "explicit_theorems": 2,
+    "combined_axiom_audit_theorem_declarations": 95,
+    "scope": "all inputs of actual fixed root-profile Gas record_cost and record_cost_unsafe; return flag, remaining and preservation of limit/refund/memory; not whole EVM instruction execution",
+    "kernel_recheck": "passed",
+    "negative_axiom_tests": "axiom/sorry/native evaluation rejected"
+  },
+  "revm_result_proofs": {
+    "explicit_theorems": 3,
+    "variants": 32,
+    "functions": 4,
+    "combined_axiom_audit_theorem_declarations": 226,
+    "kernel_recheck": "passed",
+    "scope": "actual fixed root-profile InstructionResult success/revert/error classification completeness and disjointness; exact success and revert constructor sets; not halt or journal implementation correspondence",
+    "negative_axiom_tests": "axiom/sorry/native evaluation rejected"
+  },
+  "ledger_time_proofs": {
+    "explicit_theorems": 12,
+    "combined_axiom_audit_theorem_declarations": 267,
+    "kernel_recheck": "passed-checked-and-wrapping",
+    "scope": "Fixed-release unchanged TimeStamp source; all-input constructor/accessor, checked new success/error conditions, wrapping new result modulo 2^64 and exact success domain; separate locked validation dependency graph; not Add/Sub Duration or actual ledger/Wasm.",
+    "negative_axiom_tests": "axiom/sorry/native evaluation rejected"
+  },
+  "bitwise_proofs": {
+    "explicit_theorems": 11,
+    "functions": 3,
+    "combined_axiom_audit_theorem_declarations": 311,
+    "kernel_recheck": "passed",
+    "scope": "Actual fixed ruint 1.20.0 inherent const bitand/bitor/bitxor methods, same production features; all 256-bit inputs, array safety, termination, every limb and all 256 bit positions. Not trait assignment, EVM stack/gas/exception or native/Wasm correspondence.",
+    "negative_axiom_tests": "axiom/sorry/native evaluation rejected"
+  },
+  "pre_step_fields_aeneas_sha256": "3a689d8c657cabdf4133bbb59e235ac73fc0e5bbc828ff57437da629011e0564",
+  "aeneas_step_fields_patch": "Both fields added to actual Step trait and scalar instances, existing scalar models reused, isolated backend build passed; actual U256 trait AND/OR/XOR regenerated and all-input loop/bit correspondence kernel-checked.",
+  "operator_extraction": {
+    "functions": [
+      "U256 operator &",
+      "U256 operator |",
+      "U256 operator ^",
+      "their owned and shared trait assignments",
+      "u64 trait assignments"
+    ],
+    "status": "actual U256 trait operator all-input loop termination, array safety, every limb and all 256-bit positions proved",
+    "explicit_theorems": 15,
+    "axiom_audit_theorem_declarations": 44,
+    "backend_build": "passed-1711-jobs",
+    "operator_package_build": "passed-1714-jobs",
+    "regression": "Prior inherent bitwise and U256 add/sub gates passed with new binary and unchanged released backend; 311 combined declarations audited.",
+    "patch_sha256": "c4d877437c15c4e8b4ea65955419ea5762b1dfc864a53187d8ad758a5ab36815",
+    "released_backend_iter_sha256": "217d948452df9ccd6d48b43b01718913274f06bed2d7eb1b144ab258a99f2865",
+    "experimental_backend": "aeneas-source/backends/lean; release backend left unchanged",
+    "scope": "Actual fixed ruint U256 &/|/^ owned trait operators through owned/shared assignments and four-step Range iterator loops; all 256-bit inputs, termination, limb result and every bit. Aeneas Range/array/scalar models and translations trusted; EVM stack/gas/exception and native/Wasm correspondence unproved.",
+    "negative_axiom_tests": "Full all-input trait-proof namespace rejects axiom/sorry/native evaluation",
+    "kernel_recheck": "passed"
+  },
+  "pre_array_default_aeneas_sha256": "c1543597c54f61475a6bcce69ce5ff1fffac85bd56d9a281cbacbceef12a3f69",
+  "aeneas_array_default_unreferenced_impl_patch": {
+    "status": "native build passed; same concrete ADD/SUB LLBC passes array-default prepass, then fails downstream at erased-region type analysis",
+    "patch_sha256": "6a4368720e05649be17eee3a1837530c3cd9f8124d7c52566f530d99b605e654",
+    "scope": "Only skips matching Default-array analysis for absent trait declarations when impl is not referenced in declaration groups/types/functions/globals/traits/other impls and has no methods. Metadata and all reachable bodies are preserved.",
+    "negative_test": "Adding invalid impl to ordered_decls still rejects it in PrePasses.ml.",
+    "regression": "U256 add/sub gate and full trait AND/OR/XOR gate passed regeneration, warning checks, audits (311 and 44 declarations) and kernel rechecks.",
+    "full_aeneas_test_suite": "not-run-for-this-patch",
+    "instruction_correspondence": "unproved"
+  },
+  "stack_proofs": {
+    "explicit_theorems": 6,
+    "stdlib_vec_source_sha256": "d5e1d700f953dfa118a2686b90271013151e2f8c718f1e07c41cfda33d6b336e",
+    "status": "fixed production-root extraction regenerated identically; six all-input proofs warning checked and kernel rechecked",
+    "scope": "Actual fixed production root-profile Stack len, is_empty and peek over all abstract Vec states and all usize top offsets; exact returned word or StackUnderflow. Pop/push/dup/exchange, memory capacity, EVM instruction integration and native/Wasm correspondence remain unproved.",
+    "combined_axiom_audit_theorem_declarations": 140,
+    "kernel_recheck": "passed",
+    "negative_axiom_tests": "axiom/sorry/native evaluation rejected"
+  }
+}

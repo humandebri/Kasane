@@ -1,0 +1,40 @@
+{
+  "candidate_profile": "tool-patches/int-error-source-profile.json",
+  "rust_toolchain": "nightly-2026-09-17",
+  "overflow_checks": true,
+  "mode": "Actual generated TryFromIntError payload type, full Nano/Duration/TimeStamp graph; no handwritten error alias or Nano model",
+  "explicit_source_theorems": 19,
+  "refinement_theorems": 5,
+  "audit_theorem_declarations": 86,
+  "structured_functions": 10,
+  "structured_global_initializers": 2,
+  "interfaces": {
+    "Debug/unwrap": "Local explicit Unit Formatter and return/panic observation model; formatting/unwinding refinement unproved"
+  },
+  "unproved": [
+    "Candidate translation/layout and partial-transmute semantic preservation",
+    "Full undefined Rust behaviors on invalid constructor inputs",
+    "Source newtype simplification and Debug/unwrap formatting, unwind and observable runtime correspondence",
+    "Compiler/native/Wasm correspondence",
+    "All EVM and IC/ICRC ledger async external behavior"
+  ],
+  "sha256": {
+    "proofs/extraction/operator-lean/LedgerDurationTypedError/Types.lean": "f1794c56c70f6b5674c22f9d6ad256cf9356a8278d05ca919ebc44e8ca64038d",
+    "proofs/extraction/operator-lean/LedgerDurationTypedError/Funs.lean": "4d835e22cc4b1f33a9d6c4a163c3bec55ecbf9bd96b67e01eb82e40a4420b32b",
+    "proofs/extraction/operator-lean/LedgerDurationTypedError/FunsExternal.lean": "eda9b71b1caff802710e287d4364dcb43f042d38f9c1885be1c5c973156d161c",
+    "proofs/extraction/operator-lean/LedgerDurationTypedErrorCorrespondence.lean": "ecfaf4fec0a97d53a8dc67c2d6df22002976cf76bd525ac68d6ccb7cebe0b956",
+    "proofs/extraction/operator-lean/LedgerDurationTypedErrorRefinement.lean": "42bd3ebc8396106edc510c5c9e8e246e71d0321d787f7daf9425891d5aec66e4",
+    "proofs/extraction/operator-lean/LedgerDurationTypedErrorAudit.lean": "c008d1dd09528a1a4ab2d703bb8789ebeea9b8ac51e34d318854859f6596cd6f",
+    "proofs/extraction/operator-lean/LedgerDurationModel.lean": "b429dcd2adb9bac5e1abe958afc050154e25ef57f2a4178cc43b97778b1670cf",
+    "scripts/verify-ledger-duration-typed-error.sh": "05fd40cdfaad29169b876e1858dae4ed8ac9a34be852fbeb450d131a4092baab",
+    "proofs/extraction/ledger-time-rust/tests/int_error_source.rs": "e7e4a4fae7cfeb970fff0f360054e21c63b73a3e1848fcdab1ba50cc4680dfc7"
+  },
+  "rust_primary_sources": {
+    "/Users/0xhude/.rustup/toolchains/nightly-2026-09-17-aarch64-apple-darwin/lib/rustlib/src/rust/library/core/src/time.rs": "54659df6f5b6168b53a682df2f92b47540443bc333a0a40bb2ef13a16ab12358",
+    "/Users/0xhude/.rustup/toolchains/nightly-2026-09-17-aarch64-apple-darwin/lib/rustlib/src/rust/library/core/src/num/niche_types.rs": "1a74080c73dd7687b08e667d5611d4068a1b7556311f0b58e44edadb17d0a160",
+    "/Users/0xhude/.rustup/toolchains/nightly-2026-09-17-aarch64-apple-darwin/lib/rustlib/src/rust/library/core/src/convert/num.rs": "8dbf6c64681e2dee556e0844eef3e53d62a40df0280d25f469352870a401e034",
+    "/Users/0xhude/.rustup/toolchains/nightly-2026-09-17-aarch64-apple-darwin/lib/rustlib/src/rust/library/core/src/num/error.rs": "7447f99e89ce2f0163c83cbe177008c3b789b8129602099dfe9dc3f02909baff",
+    "/Users/0xhude/.rustup/toolchains/nightly-2026-09-17-aarch64-apple-darwin/lib/rustlib/src/rust/library/core/src/result.rs": "7f23a9f38da4fc06aaee76066e468d51d4da279f2325f44a8335186420f9ee6c"
+  },
+  "validation": "Fresh error-free LLBC with exact real types, both cast bodies and twelve structured functions including two globals; unchanged Lean output with generated TryFromIntError, no handwritten error alias or Nano model. Nineteen conditional plus five refinement theorems, eighty-six audited declarations, warning-as-error/kernel and axiom/sorry/native negative controls passed. Thirteen shape negatives and unchanged other Lean registrations; malformed/opaque LLBC guard rejects after successful decoding; preceding candidate omission reproduced. Actual error payload seven boundary inputs pass Rust/Miri, sampling only."
+}

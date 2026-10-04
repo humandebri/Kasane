@@ -1,0 +1,87 @@
+--- a/src/llbc/TypesUtils.ml
++++ b/src/llbc/TypesUtils.ml
+@@ -356,6 +356,62 @@
+ let ty_has_mut_borrows (infos : TypesAnalysis.type_infos) (ty : ty) : bool =
+   ty_has_mut_borrow_for_region_in_pred infos (fun _ -> true) ty
+ 
++(* Function types keep locally bound lifetimes. Validate their scopes instead
++   of treating local Bound variables as free regions of the surrounding value. *)
++let fn_regions_are_rty (ty : ty) : bool =
++  let visitor = object
++    inherit [_] iter_ty as super
++    method! visit_region scopes r =
++      match r with
++      | RStatic | RVar (Free _) -> ()
++      | RVar (Bound (depth, id)) ->
++          if depth < 0 || RegionId.to_int id < 0 then raise Found;
++          if depth < 0 then [%craise_opt_span] None "Out-of-scope function region";
++          (match List.nth_opt scopes depth with
++           | Some count when RegionId.to_int id < count -> ()
++           | _ -> raise Found)
++      | RErased -> raise Found
++      | RBody _ -> [%craise_opt_span] None "unsupported: Body region"
++    method! visit_region_binder visit_value scopes x =
++      let indices = List.map (fun (p : region_param) -> RegionId.to_int p.index) x.binder_regions in
++      if indices <> List.init (List.length indices) Fun.id then raise Found;
++      super#visit_region_binder visit_value (List.length indices :: scopes) x
++    method! visit_binder visit_value scopes x =
++      let indices = List.map (fun (p : region_param) -> RegionId.to_int p.index) x.binder_params.regions in
++      if indices <> List.init (List.length indices) Fun.id then raise Found;
++      super#visit_binder visit_value (List.length indices :: scopes) x
++    method! visit_TDynTrait scopes tr =
++      if Config.type_analysis_ignore_dyn then ()
++      else super#visit_TDynTrait scopes tr
++  end in
++  try visitor#visit_ty [] ty; true with Found -> false
++
++(* Erase outer/body regions, while retaining regions scoped by local binders. *)
++let erase_regions_preserve_fn_binders ty =
++  let visitor = object
++    inherit [_] map_ty as super
++    method! visit_region scopes r =
++      match r with
++      | RVar (Bound (depth, id)) ->
++          if depth < 0 then [%craise_opt_span] None "Out-of-scope function region";
++          (match List.nth_opt scopes depth with
++           | Some count when depth >= 0 && RegionId.to_int id >= 0
++               && RegionId.to_int id < count -> r
++           | _ -> [%craise_opt_span] None "Out-of-scope function region")
++      | _ -> RErased
++    method! visit_region_binder visit_value scopes x =
++      let ids = List.map (fun (p : region_param) -> RegionId.to_int p.index) x.binder_regions in
++      if ids <> List.init (List.length ids) Fun.id then
++        [%craise_opt_span] None "Malformed function region binder";
++      super#visit_region_binder visit_value (List.length ids :: scopes) x
++    method! visit_binder visit_value scopes x =
++      let ids = List.map (fun (p : region_param) -> RegionId.to_int p.index) x.binder_params.regions in
++      if ids <> List.init (List.length ids) Fun.id then
++        [%craise_opt_span] None "Malformed function region binder";
++      super#visit_binder visit_value (List.length ids :: scopes) x
++  end in
++  visitor#visit_ty [] ty
++
+ (** Small helper *)
+ let raise_if_not_rty_visitor =
+   object
+@@ -367,6 +421,12 @@
+       | RStatic | RVar (Free _) -> ()
+       | RBody _ -> [%craise_opt_span] None "unsupported: Body region"
+ 
++    method! visit_TFnDef _ fn =
++      if not (fn_regions_are_rty (TFnDef fn)) then raise Found
++
++    method! visit_TFnPtr _ fn =
++      if not (fn_regions_are_rty (TFnPtr fn)) then raise Found
++
+     method! visit_TDynTrait env tr =
+       (* Ignore dyn traits by default *)
+       if Config.type_analysis_ignore_dyn then ()
+@@ -374,7 +434,7 @@
+   end
+ 
+ (** Return [true] if the type is a region type (i.e., it doesn't contain erased
+-    regions), and only contains free regions) *)
++    regions), and only contains free regions outside function-type binders) *)
+ let ty_is_rty (ty : ty) : bool =
+   try
+     raise_if_not_rty_visitor#visit_ty () ty;

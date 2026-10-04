@@ -4,6 +4,12 @@
 use vstd::prelude::*;
 
 #[cfg_attr(verus_keep_ghost, verus_spec(effective => ensures
+    effective.is_none() == (
+        max_priority > max_fee
+        || max_fee < base_fee as u128
+        || (max_fee > u64::MAX as u128
+            && base_fee as int + max_priority as int > u64::MAX as int)
+    ),
     max_priority > max_fee ==> effective == Option::<u64>::None,
     max_fee < base_fee as u128 ==> effective == Option::<u64>::None,
     matches!(effective, Some(_)) ==> effective.unwrap() <= max_fee,
@@ -26,7 +32,12 @@ pub fn effective_gas_price(max_fee: u128, max_priority: u128, base_fee: u64) -> 
         return None;
     }
     let capped = max_fee.min(base_fee.saturating_add(max_priority));
-    u64::try_from(capped).ok()
+    // Keep the narrowing check explicit for Rust-to-Lean extraction.
+    if capped > u128::from(u64::MAX) {
+        None
+    } else {
+        Some(capped as u64)
+    }
 }
 
 #[cfg_attr(verus_keep_ghost, verus_spec(satisfied => ensures
@@ -109,6 +120,15 @@ mod tests {
         assert_eq!(effective_gas_price(10, 11, 0), None);
         assert_eq!(effective_gas_price(9, 0, 10), None);
         assert_eq!(effective_gas_price(u128::MAX, u128::MAX, u64::MAX), None);
+    }
+
+    #[test]
+    fn effective_gas_price_checks_the_capped_u64_boundary() {
+        let max = u128::from(u64::MAX);
+        assert_eq!(effective_gas_price(max, max, 0), Some(u64::MAX));
+        assert_eq!(effective_gas_price(max + 1, max + 1, 0), None);
+        assert_eq!(effective_gas_price(max + 1, 0, u64::MAX), Some(u64::MAX));
+        assert_eq!(effective_gas_price(max + 1, 1, u64::MAX), None);
     }
 
     #[test]

@@ -1,0 +1,12 @@
+[package]
+name="kasane-ledger-timestamp-probe"
+version="0.1.0"
+edition="2021"
+[workspace]
+[lib]
+path="lib.rs"
+[dependencies]
+candid={version="=0.10.22"}
+ic-stable-structures={version="=0.6.8"}
+minicbor={version="=0.19.1",features=["alloc", "derive"]}
+serde={version="=1.0.228",features=["derive"]}

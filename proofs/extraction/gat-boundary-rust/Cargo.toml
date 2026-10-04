@@ -1,0 +1,11 @@
+[package]
+name = "kasane-gat-boundary"
+version = "0.1.0"
+edition = "2021"
+[workspace]
+[lib]
+path = "lib.rs"
+[features]
+default = []
+dependent = []
+mixed = []

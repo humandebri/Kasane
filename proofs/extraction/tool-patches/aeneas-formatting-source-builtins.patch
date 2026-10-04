@@ -1,0 +1,27 @@
+--- a/src/extract/ExtractBuiltin.ml
++++ b/src/extract/ExtractBuiltin.ml
+@@ -173,7 +173,9 @@
+   @ mk_lean_only
+       (List.filter
+          (fun (info : Pure.builtin_type_info) ->
+-           info.rust_name <> parse_pattern "core::num::error::TryFromIntError")
++           not (List.mem info.rust_name (List.map parse_pattern
++             ["core::num::error::TryFromIntError";
++              "core::fmt::Arguments"; "core::fmt::rt::Argument"])))
+          lean_builtin_types)
+ 
+ let mk_builtin_types_map () =
+@@ -882,8 +884,11 @@
+                  ])
+              all_int_names)
+       @ List.filter
+-          (fun (pattern, _) -> pattern <>
+-            parse_pattern "core::result::{core::result::Result<@T, @E>}::unwrap")
++          (fun (pattern, _) -> not (List.mem pattern (List.map parse_pattern
++            ["core::result::{core::result::Result<@T, @E>}::unwrap";
++             "core::fmt::rt::{core::fmt::rt::Argument<'0>}::new_debug";
++             "core::fmt::rt::{core::fmt::rt::Argument<'0>}::new_display";
++             "core::fmt::{core::fmt::Arguments<'a>}::new"])))
+           lean_builtin_funs)
+ 
+ let builtin_funs : unit -> (pattern * Pure.builtin_fun_info) list =

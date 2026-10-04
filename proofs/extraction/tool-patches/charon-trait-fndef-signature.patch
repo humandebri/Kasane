@@ -1,0 +1,28 @@
+--- a/src/charon/charon-ml/src/Substitute.ml
++++ b/src/charon/charon-ml/src/Substitute.ml
+@@ -695,7 +695,24 @@
+       in
+       (* Rebind everything *)
+       Some { binder_regions = fn_ptr.binder_regions; binder_value = fn_sig }
+-  | _ -> None
++  | TraitMethod (trait_ref, method_id) ->
++      (* Higher-ranked trait references need their own instantiation, not a
++         discarded binder. The function-item binder is retained below. *)
++      if trait_ref.trait_decl_ref.binder_regions <> [] then None
++      else
++        let pred = trait_ref.trait_decl_ref.binder_value in
++        let* bound_sig = lookup_method_sig crate pred.id method_id in
++        let method_sig =
++          apply_args_to_item_binder trait_ref.kind pred.generics
++            (st_substitute_visitor#visit_binder
++               st_substitute_visitor#visit_fun_sig)
++            bound_sig
++        in
++        let fn_sig =
++          apply_args_to_binder fn_ptr.binder_value.generics
++            st_substitute_visitor#visit_fun_sig method_sig
++        in
++        Some { binder_regions = fn_ptr.binder_regions; binder_value = fn_sig }
+ 
+ (* Construct a set of generic arguments in the scope of `params` that matches
+    `params` and feeds each required parameter with itself. E.g. given

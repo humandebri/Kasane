@@ -1,0 +1,16 @@
+--- a/src/charon/charon-ml/src/Substitute.ml
++++ b/src/charon/charon-ml/src/Substitute.ml
+@@ -263,7 +263,12 @@
+   }
+ 
+ let erase_regions_subst : subst =
+-  { empty_subst with r_subst = (fun _ -> RErased) }
++  { empty_subst with
++    r_subst = (function
++      (* shift_subst decrements local binder variables before this callback,
++         then restores the depth. They are not free variables to erase. *)
++      | Bound (depth, _) as var when depth < 0 -> RVar var
++      | _ -> RErased) }
+ 
+ (** Erase the region variables in a type *)
+ let erase_regions (ty : ty) : ty = ty_substitute erase_regions_subst ty

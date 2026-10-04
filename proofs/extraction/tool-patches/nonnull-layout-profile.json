@@ -1,0 +1,20 @@
+{
+  "candidate": "Auxiliary source NonNull declaration/layout diagnostic with finite array-ref representation probes",
+  "sha256": {
+    "scripts/diagnose-ledger-nonnull-layout.sh": "03d9958ac9ce50f7b21514c52f9a052b560db49a7ac2d2344cc1044fd992a3d7",
+    "scripts/diagnose-ledger-fn-item-value.sh": "e228bcb9237055bb749218fb3acbcfcd303b84dbb61c06bd4290026d2a8ce418",
+    "proofs/extraction/ledger-time-rust/tests/array_nonnull_source.rs": "9ece7c30309092280cffa794f56d508910585146d2f8e397c57ac9f5c0edb4eb",
+    "proofs/extraction/tool-patches/tests/empty_array_nonnull_fail.rs": "5e12543756590fc0118ab874ac6cac91901ba4507ca0979c6ccfcbaef671e9a9",
+    "target/debug/charon": "8f772feb4b6ca69410c9f11b3b0c9dff36eb30c9c7a5f83f3d35dd578d93212e",
+    "/Users/0xhude/.rustup/toolchains/nightly-2026-09-17-aarch64-apple-darwin/lib/rustlib/src/rust/library/core/src/fmt/mod.rs": "ab918e40543739be20757973f0d4abefcd9624d3759a64fc4147f1d8fc4bc035",
+    "/Users/0xhude/.rustup/toolchains/nightly-2026-09-17-aarch64-apple-darwin/lib/rustlib/src/rust/library/core/src/ptr/non_null.rs": "7e9d25db28609d885f527f6bdb26d9a6d49679c618a55c0836c4b64f5490c5b3",
+    "/Users/0xhude/.rustup/toolchains/nightly-2026-09-17-aarch64-apple-darwin/lib/rustlib/src/rust/library/core/src/primitive_docs.rs": "7f2255abc6cd81d0186c4d9bbc9bb5dfa97be5e6b000f28bc7b9ba14bec484c5"
+  },
+  "scope": "Actual additional source include; no LLBC rewrite, no numeric generic layout assertion, no native classifier/unsafe pointer/Pure/Lean/Rust correspondence theorem. Finite Rust/Miri observations only.",
+  "validation": "Full source-layout diagnostic passed. Fresh baseline NonNull opaque/no layout vs additional include transparent Struct(pointer: pattern raw const T NotNull) and symbolic SizeOf/AlignOf field guarantees verified. Exactly one include/destination difference; all other source options identical, borrowck/typecheck/normalization/body-lifetime/panic/layout computation flags retained;17 clean bodies in both extracts. Twelve copied source-schema negatives rejected by Python diagnostic only. Five finite array reference-to-NonNull probes passed on fixed Rust and Miri: bytes,empty array without dereference,ZST/aligned elements,nested shared-reference payload. Miri-only empty u8-array dereference rejects Undefined Behavior invalid &u8. No actual fixed-core extraction refinement,Pure cast lowering,numerical generic layout,heap/provenance/lifetime or external execution theorem claimed. Previous16/17 Aeneas candidate unchanged.",
+  "last_source_artifact": {
+    "path": ".local/proof-tools/ledger-nonnull-layout/LedgerNonNullLayoutSource.llbc",
+    "sha256": "c0ba0c381fa24e8f47ed7076a1ff5804326eae74d29dafe472e1caa5dfa7ff7f",
+    "scope": "Snapshot of last fresh additional-include extraction; CLI temporary destination differs on subsequent runs. No input rewriting."
+  }
+}

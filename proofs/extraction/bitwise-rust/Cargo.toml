@@ -1,0 +1,12 @@
+[package]
+name = "kasane-bitwise-extracted"
+version = "0.1.0"
+edition = "2021"
+
+[workspace]
+
+[lib]
+path = "lib.rs"
+
+[dependencies]
+ruint = { version = "=1.20.0", default-features = false, features = ["std", "serde", "alloy-rlp"] }

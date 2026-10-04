@@ -1,0 +1,52 @@
+--- a/charon/src/bin/charon-driver/translate/translate_items.rs
++++ b/charon/src/bin/charon-driver/translate/translate_items.rs
+@@ -965,8 +965,48 @@
+                             });
+                             // `skip_binder` is allowed because `translate_binder_for_def` puts the
+                             // late bound params in scope.
+-                            let signature =
++                            let mut signature =
+                                 bt_ctx.translate_fun_sig(span, f.sig().hax_skip_binder_ref())?;
++                            // A declared RPITIT return is an associated type, even
++                            // when this method has a default concrete hidden type.
++                            // Overrides may choose another implementation of it.
++                            let method_def_id = item_def_id.real_rust_def_id();
++                            let raw_sig = bt_ctx.tcx.fn_sig(method_def_id).instantiate_identity();
++                            if let ty::Alias(_, alias) = raw_sig.skip_binder().output().kind()
++                                && let ty::AliasTyKind::Projection { def_id } = alias.kind
++                                && let ty::AssocKind::Type {
++                                    data:
++                                        ty::AssocTypeData::Rpitit(ty::ImplTraitInTraitData::Trait {
++                                            fn_def_id,
++                                            ..
++                                        }),
++                                } = bt_ctx.tcx.associated_item(def_id).kind
++                                && fn_def_id == method_def_id
++                            {
++                                let projection = hax::ItemRef::translate_projection(
++                                    bt_ctx.hax_state_with_id(),
++                                    def_id,
++                                    alias.args,
++                                );
++                                let trait_ref = bt_ctx.translate_trait_proof(
++                                    span,
++                                    projection
++                                        .in_trait
++                                        .as_ref()
++                                        .expect("RPITIT projection without trait"),
++                                )?;
++                                let type_id = bt_ctx.translate_assoc_type_id(
++                                    trait_ref.trait_id(),
++                                    &projection.def_id,
++                                )?;
++                                let args = bt_ctx.translate_generic_args(
++                                    span,
++                                    &projection.generic_args,
++                                    &projection.trait_proofs,
++                                )?;
++                                signature.output =
++                                    TyKind::TraitType(trait_ref, type_id, args).into_ty();
++                            }
+                             Ok(TraitMethod {
+                                 name: item_name,
+                                 item_meta: method_item_meta,

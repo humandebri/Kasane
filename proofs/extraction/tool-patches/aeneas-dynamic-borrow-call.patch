@@ -1,0 +1,107 @@
+--- a/src/interp/InterpStatements.ml
++++ b/src/interp/InterpStatements.ml
+@@ -456,8 +456,37 @@
+   in
+   List.fold_left insert_abs ctx (List.combine rg_ids empty_absl)
+ 
++let dynamic_borrow_signature span types const_generics ty : bound_fun_sig =
++  let pointer = match ty with
++    | TFnPtr pointer -> pointer
++    | _ -> [%craise] span "Dynamic callee is not a function pointer" in
++  let sg = pointer.binder_value in
++  [%cassert] span
++    (not sg.is_unsafe && sg.abi = AbiRust && not sg.is_variadic
++     && List.length pointer.binder_regions = 1
++     && (List.hd pointer.binder_regions).index = RegionId.of_int 0
++     && List.length sg.inputs = 1 && ty_is_unit sg.output)
++    "Unsupported dynamic borrow callback signature";
++  (match sg.inputs with
++   | [ TAdt { generics = { regions = [ RVar (Bound (0, id)) ]; _ }; _ } ]
++       when id = RegionId.of_int 0 -> ()
++   | _ -> [%craise] span "Dynamic callback must take a locally bound ADT context");
++  let visitor = object
++    inherit [_] map_ty
++    method! visit_region _ region = match region with
++      | RVar (Bound (0, id)) when id = RegionId.of_int 0 -> RVar (Free id)
++      | _ -> [%craise] span "Captured/erased dynamic callback region unsupported"
++  end in
++  let sg = visitor#visit_fun_sig () sg in
++  let params = { empty_generic_params with
++    regions = pointer.binder_regions;
++    types = types;
++    const_generics = const_generics } in
++  { item_binder_params = params; item_binder_value = sg }
++
+ type symbolic_fun_call_inst = {
+-  call_kind : fn_ptr_kind;
++  call_kind : fn_ptr_kind option;
++  evaluated_callback : tvalue option;
+   call_generics : generic_args;
+   call_span : Meta.span;
+   call_sig : bound_fun_sig;
+@@ -470,7 +499,8 @@
+     ~(tr_self : trait_ref_kind) (signature : bound_fun_sig) :
+     symbolic_fun_call_inst =
+   {
+-    call_kind;
++    call_kind = Some call_kind;
++    evaluated_callback = None;
+     call_generics;
+     call_span;
+     call_sig = signature;
+@@ -1251,7 +1281,20 @@
+     (call : call) : stl_cm_fun =
+  fun ctx ->
+   match call.func with
+-  | FnOpDynamic _ -> [%craise] span "Function pointers are not supported yet"
++  | FnOpDynamic operand ->
++      if not !Config.borrow_check then
++        [%craise] span "Dynamic callback synthesis is not implemented";
++      let values, ctx, cc = eval_operands config span [ operand ] ctx in
++      let callback = match values with [ v ] -> v | _ -> [%internal_error] span in
++      let signature = dynamic_borrow_signature span ctx.type_vars ctx.const_generic_vars callback.ty in
++      let args = generic_args_of_params (Some span) signature.item_binder_params in
++      let inst = instantiate_fun_sig (Some span) ctx args Self signature in
++      let call_info = { call_kind = None; evaluated_callback = Some callback;
++        call_generics = args; call_span = span; call_sig = signature;
++        call_inst_sig = inst } in
++      let results, next_cc =
++        eval_function_call_symbolic_from_inst_sig config call_info call.args call.dest ctx in
++      (results, cc_comp cc next_cc)
+   | FnOpRegular func ->
+       [%ltrace
+         "function call:\n- call: " ^ call_to_string ctx call ^ "\n- fn_ptr : "
+@@ -1381,7 +1424,7 @@
+     (call_info.call_inst_sig.output :: call_info.call_inst_sig.inputs);
+   [%ltrace
+     "- fid: "
+-    ^ fn_ptr_kind_to_string ctx fid
++    ^ (match fid with Some fid -> fn_ptr_kind_to_string ctx fid | None -> "dynamic callback")
+     ^ "\n- inst_sg:\n"
+     ^ inst_fun_sig_to_string ctx inst_sg
+     ^ "\n- call.generics:\n"
+@@ -1489,8 +1532,12 @@
+   (* Synthesize the symbolic AST *)
+   let cc =
+     cc_comp cc
+-      (S.synthesize_regular_function_call span fid call_id ctx sg inst_sg
+-         abs_ids generics args args_places ret_spc dest_place)
++      (match fid, call_info.evaluated_callback with
++       | Some fid, None ->
++           S.synthesize_regular_function_call span fid call_id ctx sg inst_sg
++             abs_ids generics args args_places ret_spc dest_place
++       | None, Some _ when !Config.borrow_check -> fun expr -> expr
++       | _ -> [%craise] span "Dynamic callback synthesis is not implemented")
+   in
+ 
+   (* Move the return value to its destination *)
+--- a/src/interp/InterpStatements.mli
++++ b/src/interp/InterpStatements.mli
+@@ -50,3 +50,7 @@
+ 
+ (** Evaluate a function body *)
+ val eval_function_body : config -> block -> stl_cm_fun
++
++(** Prepare the supported borrow-only callback signature; does not synthesize a call. *)
++val dynamic_borrow_signature :
++  Meta.span -> type_param list -> const_generic_param list -> ty -> bound_fun_sig

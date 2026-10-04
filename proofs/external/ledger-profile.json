@@ -1,0 +1,44 @@
+{
+  "ledger_release": "ledger-suite-icrc-2026-03-09",
+  "source_commit": "cf41372e3d4dc1accfe2c09a7969f8bddc729dc1",
+  "bundled_wasm": "third_party/dfinity/ledger-suite-icrc-2026-03-09/ic-icrc1-ledger.wasm",
+  "wasm_sha256": "a273d741019b4324b22e2e64cfb0239de148ae9693e8801102a04118dfd383c0",
+  "reviewed_sources": [
+    {
+      "path": "rs/ledger_suite/common/ledger_canister_core/src/ledger.rs",
+      "url": "https://raw.githubusercontent.com/dfinity/ic/cf41372e3d4dc1accfe2c09a7969f8bddc729dc1/rs/ledger_suite/common/ledger_canister_core/src/ledger.rs",
+      "sha256": "4819913a3693eb86c74bee40298d7d130a538658c0f7fa02cadf39480baa41b4"
+    },
+    {
+      "path": "rs/ledger_suite/icrc1/ledger/src/main.rs",
+      "url": "https://raw.githubusercontent.com/dfinity/ic/cf41372e3d4dc1accfe2c09a7969f8bddc729dc1/rs/ledger_suite/icrc1/ledger/src/main.rs",
+      "sha256": "0fa4be3cf958c93f78e1cdfbe70d4adccfb68bd6c20601494c154b34a6847eb0"
+    },
+    {
+      "path": "rs/ledger_suite/icrc1/ledger/src/lib.rs",
+      "url": "https://raw.githubusercontent.com/dfinity/ic/cf41372e3d4dc1accfe2c09a7969f8bddc729dc1/rs/ledger_suite/icrc1/ledger/src/lib.rs",
+      "sha256": "ba063782c3a31daf37eb7bb4750c8abdfb0f8a8ca2e087551bee56c80d2a1b80"
+    },
+    {
+      "path": "rs/ledger_suite/common/ledger_core/src/timestamp.rs",
+      "url": "https://raw.githubusercontent.com/dfinity/ic/cf41372e3d4dc1accfe2c09a7969f8bddc729dc1/rs/ledger_suite/common/ledger_core/src/timestamp.rs",
+      "sha256": "fa0bb78b3dc1194697227c74c7d311602bb4224955b4088eeba943d11feb8dad"
+    }
+  ],
+  "source_to_wasm_equivalence": "unproved",
+  "rust_to_lean_equivalence": "unproved",
+  "time_arithmetic_review": {
+    "timestamp_add": "saturating_add after checked Duration.as_nanos() narrowing to u64 with unwrap",
+    "timestamp_sub": "saturating_sub after checked Duration.as_nanos() narrowing to u64 with unwrap",
+    "lean_model": "proofs/evm/KasaneEvm/LedgerSaturation.lean",
+    "rust_correspondence": "unproved; this is a source-reviewed model refinement",
+    "duration_precondition": "Duration.as_nanos() <= u64::MAX for conversion not to panic"
+  },
+  "artifact_reproducibility": {
+    "status": "full-byte-equality-verified",
+    "profile": "proofs/external/ledger-reproduction-profile.json",
+    "wasm_sha256": "a273d741019b4324b22e2e64cfb0239de148ae9693e8801102a04118dfd383c0",
+    "compiler_semantics": "unproved",
+    "extraction_stdlib_version_correspondence": "unproved: officialRust1.93.1 vs extractionnightly2026-09-17"
+  }
+}

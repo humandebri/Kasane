@@ -1,0 +1,41 @@
+--- a/src/llbc/TypesUtils.ml
++++ b/src/llbc/TypesUtils.ml
+@@ -382,9 +382,38 @@
+   with Found -> false
+ 
+ (** Small helper *)
++(* Function value types retain local binders but reject free lifetimes. *)
++let fn_regions_are_ety ty =
++  let visitor = object
++    inherit [_] iter_ty as super
++    method! visit_region scopes r =
++      match r with
++      | RErased | RStatic -> ()
++      | RVar (Bound (depth,id)) ->
++          if depth < 0 || RegionId.to_int id < 0 then raise Found;
++          (match List.nth_opt scopes depth with
++           | Some count when RegionId.to_int id < count -> ()
++           | _ -> raise Found)
++      | RVar (Free _) -> raise Found
++      | RBody _ -> [%craise_opt_span] None "unsupported: Body region"
++    method! visit_region_binder visit_value scopes x =
++      let ids = List.map (fun (p : region_param) -> RegionId.to_int p.index) x.binder_regions in
++      if ids <> List.init (List.length ids) Fun.id then raise Found;
++      super#visit_region_binder visit_value (List.length ids :: scopes) x
++    method! visit_binder visit_value scopes x =
++      let ids = List.map (fun (p : region_param) -> RegionId.to_int p.index) x.binder_params.regions in
++      if ids <> List.init (List.length ids) Fun.id then raise Found;
++      super#visit_binder visit_value (List.length ids :: scopes) x
++  end in
++  try visitor#visit_ty [] ty; true with Found -> false
++
+ let raise_if_not_erased_ty_visitor =
+   object
+     inherit [_] iter_ty
++    method! visit_TFnDef _ fn =
++      if not (fn_regions_are_ety (TFnDef fn)) then raise Found
++    method! visit_TFnPtr _ fn =
++      if not (fn_regions_are_ety (TFnPtr fn)) then raise Found
+ 
+     method! visit_region _ r =
+       match r with

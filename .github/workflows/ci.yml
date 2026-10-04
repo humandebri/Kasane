@@ -11,6 +11,58 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  rust-lean-correspondence:
+    name: Extracted Rust all-input proofs
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Setup Elan
+        uses: leanprover/lean-action@v1
+        with:
+          lake-package-directory: proofs/evm
+          auto-config: false
+          use-mathlib-cache: false
+
+      - name: Install pinned proof translator
+        run: bash scripts/install-aeneas.sh
+
+      - name: Verify extracted definitions and all-input correspondence
+        run: bash scripts/verify-rust-lean.sh
+
+  evm-proofs:
+    name: Lean EVM proofs and correspondence
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Cache Rust artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ". -> target/evm-proof"
+
+      - name: Setup pinned Lean toolchain
+        uses: leanprover/lean-action@v1
+        with:
+          lake-package-directory: proofs/evm
+          auto-config: false
+          use-mathlib-cache: false
+
+      - name: Verify model proofs and Rust correspondence
+        run: bash scripts/verify-revm.sh
+
   checks:
     name: Rust checks and tests
     runs-on: ubuntu-latest

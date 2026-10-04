@@ -1,0 +1,4 @@
+*.llbc
+lean/.lake/
+u256-lean/.lake/
+operator-lean/.lake/
