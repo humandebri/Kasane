@@ -42,7 +42,9 @@ theorem forward_storage_projection (s : World) (actions : List Action) :
       rw [he]
       exact ih _
     | transfer amount =>
-      simpa [forwardWrites, run, storageMap, step] using ih (step s (.transfer amount))
+      change applyWrites (storageMap s) (forwardWrites rest) =
+        storageMap (run (step s (.transfer amount)) rest).1
+      exact ih (step s (.transfer amount))
 
 /-- Reverse journal entries produce the same storage observation as undo. -/
 theorem rollback_storage_projection (s : World) (entries : List Entry) :
@@ -59,8 +61,9 @@ theorem rollback_storage_projection (s : World) (entries : List Entry) :
       rw [he]
       exact ih _
     | balanceTransfer amount =>
-      simpa [rollbackWrites, undo, storageMap, undoEntry] using
-        ih (undoEntry s (.balanceTransfer amount))
+      change applyWrites (storageMap s) (rollbackWrites rest) =
+        storageMap (undo (undoEntry s (.balanceTransfer amount)) rest)
+      exact ih (undoEntry s (.balanceTransfer amount))
 
 /-- This closes the rollback assumption for the modeled storage write list. -/
 theorem forward_then_rollback_restores_storage (s : World) (actions : List Action)

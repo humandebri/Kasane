@@ -1,0 +1,147 @@
+--- a/src/pure/Pure.ml
++++ b/src/pure/Pure.ml
+@@ -78,7 +78,11 @@
+     - [Fuel]: the fuel, to control recursion (some theorem provers like Coq
+       don't support semantic termination, in which case we can use a fuel
+       parameter to do partial verification) *)
++type closed_fnptr_signature = T.fun_sig T.region_binder [@@deriving show, ord]
++
++(* Source signature marker; no callable lowering is asserted. *)
+ type builtin_ty =
++  | TRustFnPtr of closed_fnptr_signature
+   | TResult
+   | TSum  (** sum type with two variants: left and right *)
+   | TLoopResult  (** A continue or a break. TODO: rename to TControlFlow *)
+--- a/src/symbolic/SymbolicToPureTypes.ml
++++ b/src/symbolic/SymbolicToPureTypes.ml
+@@ -7,6 +7,42 @@
+ 
+ (** The local logger *)
+ let log = Logging.symbolic_to_pure_types_log
++
++(* Bound regions and ABI remain intact. Open signatures require a
++   substitution-aware representation and remain unsupported. *)
++let supported_closed_rust_fnptr (s : T.fun_sig T.region_binder) : bool =
++  let sg = s.binder_value in
++  let ids = List.map (fun (r : T.region_param) -> T.RegionId.to_int r.index) s.binder_regions in
++  if sg.abi <> T.AbiRust || sg.is_variadic
++     || ids <> List.init (List.length ids) Fun.id then false
++  else
++    let visitor = object
++      inherit [_] T.iter_ty as super
++      method! visit_ty () ty =
++        (match ty with
++         | T.TVar _ | T.TTraitType _ | T.TDynTrait _ | T.TFnDef _ | T.TFnPtr _
++         | T.TError _ | T.TPattern _ | T.TArray _ | T.TSlice _ -> raise Utils.Found
++         | _ -> ());
++        super#visit_ty () ty
++      method! visit_region () r =
++        match r with
++        | T.RStatic -> ()
++        | T.RVar (T.Bound (0, id)) when 0 <= T.RegionId.to_int id && T.RegionId.to_int id < List.length ids -> ()
++        | _ -> raise Utils.Found
++      method! visit_generic_args () g =
++        if g.const_generics <> [] || g.trait_refs <> [] then raise Utils.Found;
++        super#visit_generic_args () g
++    end in
++    try List.iter (visitor#visit_ty ()) (sg.inputs @ [sg.output]); true
++    with Utils.Found -> false
++
++let translate_closed_rust_fnptr span s =
++  [%cassert_opt_span] span
++    (Config.backend () = Config.Lean && supported_closed_rust_fnptr s)
++    "Unsupported open or non-Rust function pointer signature";
++  TAdt (TBuiltin (TRustFnPtr s),
++    {types = []; const_generics = []; trait_refs = []})
++
+ 
+ (* We simply ignore the bound regions. Note that this messes up the de bruijn
+    ids in variables: variables inside `rb.binder_value` are nested deeper so
+@@ -202,7 +238,8 @@
+         (generics = TypesUtils.empty_generic_args)
+         "Unimplemented";
+       TTraitType (trait_ref, type_name)
+-  | TFnDef _ | TFnPtr _ ->
++  | TFnPtr s -> translate_closed_rust_fnptr span s
++  | TFnDef _ ->
+       [%craise_opt_span] span "Arrow types are not supported yet"
+   | TDynTrait { binder } ->
+       let p = binder.binder_params in
+@@ -471,7 +508,7 @@
+           let subst = make_subst_from_generics sg.generics generics in
+           ty_substitute subst sigs.ty
+       | T.TraitMethod _ -> [%craise_opt_span] span "Unimplemented")
+-  | TFnPtr _ -> [%craise_opt_span] span "Arrow types are not supported yet"
++  | TFnPtr s -> translate_closed_rust_fnptr span s
+   | TDynTrait { binder } ->
+       let params, _predicates =
+         translate_generic_params span binder.binder_params
+--- a/src/pure/PrintPure.ml
++++ b/src/pure/PrintPure.ml
+@@ -270,6 +270,7 @@
+ 
+ let builtin_ty_to_string (aty : builtin_ty) : string =
+   match aty with
++  | TRustFnPtr s -> "RustFnPtr(" ^ T.show_ty (T.TFnPtr s) ^ ")"
+   | TResult -> "Result"
+   | TSum -> "Sum"
+   | TLoopResult -> "LoopResult"
+@@ -511,7 +512,7 @@
+   | TBuiltin aty -> (
+       (* Builtin type *)
+       match aty with
+-      | TArray | TSlice | TStr | TRawPtr _ | TU32Range ->
++      | TArray | TSlice | TStr | TRawPtr _ | TRustFnPtr _ | TU32Range ->
+           (* Those types are opaque: we can't get there *)
+           [%craise_opt_span] span "Unreachable"
+       | TResult ->
+@@ -567,7 +568,7 @@
+       | TFuel | TArray | TSlice | TStr | TU32Range ->
+           (* Opaque types: we can't get there *)
+           [%craise_opt_span] span "Unreachable"
+-      | TResult | TError | TSum | TLoopResult | TRawPtr _ ->
++      | TResult | TError | TSum | TLoopResult | TRawPtr _ | TRustFnPtr _ ->
+           (* Enumerations: we can't get there *)
+           [%craise_opt_span] span "Unreachable")
+ 
+@@ -637,7 +638,7 @@
+     | TAdt (TBuiltin aty, _) -> (
+         (* Builtin type *)
+         match aty with
+-        | TRawPtr _ | TU32Range ->
++        | TRawPtr _ | TRustFnPtr _ | TU32Range ->
+             (* This type is opaque: we can't get there *)
+             [%craise_opt_span] span "Unreachable"
+         | TResult ->
+--- a/src/extract/ExtractBase.ml
++++ b/src/extract/ExtractBase.ml
+@@ -2016,6 +2016,7 @@
+           | TBuiltin TU32Range -> "r"
+           | TBuiltin TSlice -> "s"
+           | TBuiltin TStr -> "s"
++          | TBuiltin (TRustFnPtr _) -> "fp"
+           | TBuiltin (TRawPtr _) -> "p"
+           | TAdtId adt_id ->
+               let def =
+--- a/src/pure/PureTypeCheck.ml
++++ b/src/pure/PureTypeCheck.ml
+@@ -66,7 +66,7 @@
+           if variant_id = fuel_zero_id then []
+           else if variant_id = fuel_succ_id then [ mk_fuel_ty ]
+           else [%craise] span "Unreachable: improper variant id for fuel type"
+-      | TArray | TSlice | TStr | TRawPtr _ | TU32Range ->
++      | TArray | TSlice | TStr | TRawPtr _ | TRustFnPtr _ | TU32Range ->
+           (* Array: when not symbolic values (for instance, because of aggregates),
+              the array expressions are introduced as struct updates *)
+           [%craise] span "Attempting to access the fields of an opaque type")
+--- a/src/extract/ExtractTypes.ml
++++ b/src/extract/ExtractTypes.ml
+@@ -342,6 +342,8 @@
+          ^ " ≤ rangeValue.val ∧ rangeValue.val ≤ " ^ Z.to_string hi ^ " }")
+   | TAdt (TBuiltin TU32Range, _) ->
+       [%craise] span "Malformed U32 range generic arguments"
++  | TAdt (TBuiltin (TRustFnPtr _), _) ->
++      [%craise] span "Retained Rust function pointer requires verified value/call extraction"
+   | TAdt (type_id, generics) -> (
+       [%ldebug "ADT case"];
+       let has_params = generics <> empty_generic_args in

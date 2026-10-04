@@ -1,0 +1,72 @@
+--- a/src/interp/InterpExpressions.ml
++++ b/src/interp/InterpExpressions.ml
+@@ -818,6 +818,47 @@
+       && source.binder_value.output = target.binder_value.output
+   | _ -> false
+ 
++(* This classifies a retained representation cast, not allocation validity,
++   provenance, dereference safety, or a Rust-to-Lean memory correspondence. *)
++let array_ref_nonnull_representation_supported (crate : LlbcAst.crate) src dst =
++  let no_extra (g : generic_args) =
++    g.regions=[] && g.const_generics=[] && g.trait_refs=[] in
++  let sized t = match t with
++    | TScalar _ -> true
++    | TAdt r when r.builtin=None ->
++        (match TypeDeclId.Map.find_opt r.id crate.type_decls with
++         | Some d -> d.ptr_metadata=NoMetadata | None -> false)
++    | _ -> false in
++  match src,dst with
++  | TRef(_,TArray(elem,len,None),RShared),TAdt r
++      when r.builtin=None && no_extra r.generics && r.generics.types=[elem]
++        && len.ty=TScalar(TInteger(Unsigned Usize)) && sized elem ->
++      (match TypeDeclId.Map.find_opt r.id crate.type_decls with
++       | Some d ->
++           let g=d.generics in
++           let expected=TVar(Free(TypeVarId.of_int 0)) in
++           let field=TPattern(TRawPtr(expected,RShared),NotNull) in
++           let sz=SizeExprConstant {kind=CSizeOf field;ty=TScalar(TInteger(Unsigned Usize))}
++           and al=SizeExprConstant {kind=CAlignOf field;ty=TScalar(TInteger(Unsigned Usize))} in
++           d.item_meta.name=List.map(fun n -> PeIdent(n,Disambiguator.zero)) ["core";"ptr";"non_null";"NonNull"]
++           && d.ptr_metadata=NoMetadata && d.src=NormalType
++           && g.regions=[] && g.const_generics=[] && g.trait_clauses=[]
++           && g.regions_outlive=[] && g.types_outlive=[] && g.trait_type_constraints=[]
++           && (match g.types with [p] -> p.index=TypeVarId.of_int 0 && p.variance=Covariant | _ -> false)
++           && (match d.kind with Struct[f] -> f.field_ty=field && f.field_name="pointer" | _ -> false)
++           && (match d.layout with
++               | [("aarch64-apple-darwin",l)] ->
++                   l.repr={repr_algo=Rust;align_modif=None;transparent=true;explicit_discr_type=None}
++                   && l.size={chosen=None;guarantee=Some sz}
++                   && l.align={chosen=None;guarantee=Some al}
++                   && l.discriminator=None
++                   && (match l.variant_layouts with
++                       | [Some v] -> v.tagger=[] && v.field_offsets=[{chosen=None;guarantee=Some(GuaranteedAlignment al)}]
++                       | _ -> false)
++               | _ -> false)
++       | None -> false)
++  | _ -> false
++
+ let eval_unary_op_symbolic (config : config) (span : Meta.span) (unop : unop)
+     (op : operand) (ctx : eval_ctx) :
+     (tvalue, eval_error) result
+@@ -1031,6 +1072,12 @@
+             let _ = cast_unsize_to_modified_fields span ctx ty0 ty1 in
+             ty1
+         | Cast (CastRawPtr (_, tgt_ty)), _ -> tgt_ty
++        | Cast (CastTransmute (src_ty, tgt_ty)), (TRef(_,TArray _,RShared) as value_ty) ->
++            [%cassert] span
++              (src_ty=value_ty && array_ref_nonnull_representation_supported ctx.crate src_ty tgt_ty)
++              "Unsupported array-reference to NonNull representation";
++            [%craise] span
++              "Array-reference to NonNull requires verified pointer region/provenance correspondence"
+         | Cast (CastTransmute (src_ty, tgt_ty)), (TFnPtr _ as value_ty) ->
+             [%cassert] span
+               (src_ty = value_ty
+--- a/src/interp/InterpExpressions.mli
++++ b/src/interp/InterpExpressions.mli
+@@ -105,3 +105,6 @@
+ 
+ (** Representation guard only; unsafe call ABI/receiver validity are not proved. *)
+ val fnptr_transmute_representation_supported : ty -> ty -> bool
++
++(** Fixed-target representation classifier only; no pointer value extraction. *)
++val array_ref_nonnull_representation_supported : LlbcAst.crate -> ty -> ty -> bool

@@ -1,0 +1,23 @@
+--- a/src/llbc/TypesAnalysis.ml
++++ b/src/llbc/TypesAnalysis.ml
+@@ -450,15 +450,11 @@
+         in
+         (* Return *)
+         { ty_info with mut_regions }
+-    | TFnPtr fn_sig ->
+-        let { Types.inputs; output; _ } = fn_sig.binder_value in
+-        (* Just dive into the arrow *)
+-        let ty_info =
+-          List.fold_left
+-            (fun ty_info ty -> analyze span expl_info ty_info ty)
+-            ty_info inputs
+-        in
+-        analyze span expl_info ty_info output
++    | TFnPtr _ ->
++        (* A function pointer stores code identity, not its call arguments.
++           Keep accumulated outer/adjacent borrows, but do not infer stored
++           borrows from references in the call signature. *)
++        ty_info
+     | TFnDef { binder_regions; binder_value = { kind = _; generics } } ->
+         (* For now we check that there are no regions anywhere.
+ 

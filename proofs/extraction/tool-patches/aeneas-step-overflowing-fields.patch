@@ -1,0 +1,40 @@
+--- a/backends/lean/Aeneas/Std/Core/Iter.lean
++++ b/backends/lean/Aeneas/Std/Core/Iter.lean
+@@ -22,6 +22,8 @@
+   steps_between : Self → Self → Result (Usize × (Option Usize))
+   forward_checked : Self → Usize → Result (Option Self)
+   backward_checked : Self → Usize → Result (Option Self)
++  forward_overflowing : Self → Usize → Result (Self × Bool)
++  backward_overflowing : Self → Usize → Result (Self × Bool)
+ 
+ open Result
+ 
+@@ -348,6 +350,8 @@
+   steps_between := UScalarStep.steps_between
+   forward_checked := UScalarStep.forward_checked
+   backward_checked := UScalarStep.backward_checked
++  forward_overflowing := UScalarStep.forward_overflowing
++  backward_overflowing := UScalarStep.backward_overflowing
+ }
+ 
+ /-- Generic Step instance for all unsigned scalar types. The per-type instances
+@@ -361,6 +365,8 @@
+   steps_between := IScalarStep.steps_between
+   forward_checked := IScalarStep.forward_checked
+   backward_checked := IScalarStep.backward_checked
++  forward_overflowing := IScalarStep.forward_overflowing
++  backward_overflowing := IScalarStep.backward_overflowing
+ }
+ 
+ -- Per-type abbreviations with @[rust_fun] tags for the Aeneas compiler.
+--- a/src/extract/ExtractBuiltinLean.ml
++++ b/src/extract/ExtractBuiltinLean.ml
+@@ -1390,6 +1390,8 @@
+           ("steps_between", "steps_between");
+           ("forward_checked", "forward_checked");
+           ("backward_checked", "backward_checked");
++          ("forward_overflowing", "forward_overflowing");
++          ("backward_overflowing", "backward_overflowing");
+         ];
+     (* file: "Aeneas/Std/Core/Iter.lean", line: 164 *)
+     mk_trait_decl "core::iter::traits::accum::Product"

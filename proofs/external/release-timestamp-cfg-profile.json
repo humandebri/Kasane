@@ -1,0 +1,39 @@
+{
+  "source_commit": "cf41372e3d4dc1accfe2c09a7969f8bddc729dc1",
+  "sha256": {
+    "scripts/extract_release_timestamp_cfg.py": "729ac05730a2ee2f6586565ad0090afc3b4da3dfefc23388d935fa35c8abc057",
+    "scripts/verify-release-timestamp-cfg.sh": "efb83070bc6e23a3c47914b0bc988966e4bfff9c63d625c6c95ed0e9976849f1",
+    "proofs/external/ledger-core-release-mir-profile.json": "9cb56ab87212fa72479e7223a4fc3131a1a2d46248f7146ae390d3b932ec3649",
+    "proofs/external/release-timestamp-sequence-profile.json": "06280bec7f952380ff82c7e845ac08155b93e172f7a82914a84557317648ef26",
+    "proofs/external/ledger-core-release-timestamp.mir": "1d21a3147a136befd18de74206211a911f9a227a93ce9dc44fa4f2c3dd1de3dd",
+    "proofs/extraction/operator-lean/ReleaseTimestampCFG.lean": "2675b0e434cfba6d1f6c38a5ee7e92dd143410d1997c9d5f8ad695ddd161ebc0",
+    "proofs/extraction/operator-lean/ReleaseTimestampCFGGenerated.lean": "f47aea753442385e58bab96dfd310a77f7761914457d2b2336ccf1636e86062a",
+    "proofs/extraction/operator-lean/ReleaseTimestampCFGCorrespondence.lean": "da68c72fd3162e50a26cdc00f24bdc4fb9efbee7f206d513d57d1f8dff49ad7f",
+    "proofs/extraction/operator-lean/ReleaseTimestampCFGAudit.lean": "e8931ebf7723889ccc62b166bf97c5bcfcd38d7ef8b652a99a03d28d0986e228",
+    "proofs/extraction/operator-lean/lakefile.lean": "052bcdd05dcdc1241f5d4bd227fe793b07f144b0b208f07ac1bf6c522524c0b6",
+    "proofs/extraction/operator-lean/lean-toolchain": "efac0b94923b2d8b6840cd35be9177ad0fc5ab2332f4f4311c98712cee92fdee",
+    "scripts/extract_release_timestamp_sequence.py": "7a23ae96e8f77a76107811fff978b690b35c4c5f23e4cdeccf1ab22475e0880a",
+    "scripts/verify-release-timestamp-sequence.sh": "1160282fd56de4ce99634993bfbade1ba1116900f2fcaf8391123b2935aea572",
+    "scripts/audit_ledger_core_release_mir.py": "227059da57aa842965b961c131735f7b9a31a7d7a8fa09637ff4bbdf78fca8e5",
+    "scripts/replay_ledger_core_mir.py": "519ca989af482cc9daf5044411bcbbcdc468be86a73d761278c8665262bf241b",
+    "proofs/extraction/operator-lean/ReleaseTimestampSequence.lean": "dc24a507320f9e4105f5d316ddc4f132b5ee9b797e119dcc114ee93e44c9b529",
+    "proofs/extraction/operator-lean/ReleaseTimestampGenerated.lean": "f71af2148e86338a1adcf11b797a6201a9fd40226f32a12710fe3c8a3a93b265",
+    "proofs/extraction/operator-lean/ReleaseTimestampCorrespondence.lean": "d4f8f4efd1a9cfc909b78420e7fa6087e9acc371804414d620b8764cb3df66ba",
+    "proofs/extraction/operator-lean/ReleaseTimestampAudit.lean": "a7588d11d50dbd4a17622fc33efcefd64df7481157d04174238c0b1d49848733",
+    "proofs/extraction/operator-lean/LedgerDurationModel.lean": "b429dcd2adb9bac5e1abe958afc050154e25ef57f2a4178cc43b97778b1670cf",
+    "proofs/extraction/operator-lean/LedgerDurationExtract/TypesExternal.lean": "6f9b6dfc051486d4f262e280d76f76175308499cb31858e66b4a72df51778a59"
+  },
+  "theorem_count": 11,
+  "scope": "General semantics-preserving linearization of limited single-successor block graphs with total typed call interface; actual fixed add/sub five-block graphs, register operands and successors retained; conditional all-model-input values/panic observation via previous call contracts.",
+  "extraction_validation": "Fixed actual compiler/MIR witnesses, five parser-negative mutations, changed valid successor retained, generated graph checked in Lean lowering to prior exact register programs.",
+  "unproved": [
+    "Python/text-to-typed-block-graph Rust MIR frontend refinement",
+    "StorageLive/Dead, reference creation, move ownership, unwind unreachable, layout/provenance/typevalidity abstractions",
+    "Actual Rust1.93.1 stdlib call contracts and Duration representation correspondence",
+    "LLVM/Wasm/IC runtime and external ledger protocol"
+  ],
+  "validation": "Gate passed: fixed original MIR/action witnesses and regenerated CFGs, five parser-negative mutations and changed valid successor retention, strict warningAsError on four new Lean files, eleven named theorem and namespace axiom audit, independent leanchecker, six Lean negative controls (axiom/sorry/native_decide/uninitialized local/skipped conversion block/insufficient fuel). All inherited call-sequence fixed SHA entries also verified and included.",
+  "semantic_equivalence_proved": false,
+  "lakefile_lifetime_extension": "Four local lifetime libraries appended; preceding complete Lakefile matched fixed prior SHA. Existing sequence and CFG source modules unchanged.",
+  "lakefile_soundness_extension": "Two checker-soundness libraries appended; all previous exact sources and Lakefile prefix SHA verified before changing config and ancestor metadata hashes."
+}

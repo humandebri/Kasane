@@ -1,0 +1,26 @@
+{
+  "source_commit": "cf41372e3d4dc1accfe2c09a7969f8bddc729dc1",
+  "compiler": "Rust 1.93.1 (01f6ddf75 2026-02-11)",
+  "target": "wasm32-unknown-unknown",
+  "origin": "Single actual Rustc action from official ledger_canister.wasm.gz Bazel dependency graph; entire ledger_core crate and all original dependencies retained.",
+  "action_changes": [
+    "--emit=dep-info,link -> --emit=mir=/cache/ledger-core-release-wasm32.mir",
+    "--out-dir -> /cache"
+  ],
+  "extra_mir_optimization_flags": false,
+  "scope": "Actual add/sub MIR control-flow witness. Calls to Duration::as_nanos, TryInto, Result::unwrap, and saturating arithmetic remain external calls, unlike the prior explicit MIR-level3 probe. No source-body slicing or dependency substitution was used for compilation.",
+  "sha256": {
+    "scripts/replay_ledger_core_mir.py": "519ca989af482cc9daf5044411bcbbcdc468be86a73d761278c8665262bf241b",
+    "proofs/external/ledger-core-release-timestamp.mir": "1d21a3147a136befd18de74206211a911f9a227a93ce9dc44fa4f2c3dd1de3dd",
+    ".local/proof-tools/ledger-repro-cache/ledger-core-rustc-actions.json": "92d7d6a2fc91bd92ff387740177e49228f610d627bf1ef7f53587d32774cde64",
+    ".local/proof-tools/ledger-repro-cache/ledger-core-mir-replayed-action.json": "ab5ffb96f767a13ca64f3c9e4f545025d76e837ea91dc84f25c07038fd748a53",
+    ".local/proof-tools/ledger-repro-cache/ledger-core-release-wasm32.mir": "3a9ce606a778bebdccf9d653b59c41ad8f47f458eb0f830992109ec118deb98e",
+    ".local/proof-tools/ledger-repro-cache/ledger-core-release-rustc-version.txt": "b1008d5f7681db91d446d2bb0a07af00372bb6cb4d4599e95212e3a8edce4e11",
+    ".local/proof-tools/ic-ledger-source/rs/ledger_suite/common/ledger_core/src/timestamp.rs": "fa0bb78b3dc1194697227c74c7d311602bb4224955b4088eeba943d11feb8dad",
+    "scripts/audit_ledger_core_release_mir.py": "227059da57aa842965b961c131735f7b9a31a7d7a8fa09637ff4bbdf78fca8e5"
+  },
+  "semantic_equivalence_proved": false,
+  "remaining": "MIR operational semantics and stdlib call correspondence, panic/trap behavior, LLVM/Wasm compiler refinement, IC execution and complete external ledger protocol remain unproved.",
+  "container": "kasane-ledger-core-mir-cf41372",
+  "container_final_state": "stopped; retained"
+}

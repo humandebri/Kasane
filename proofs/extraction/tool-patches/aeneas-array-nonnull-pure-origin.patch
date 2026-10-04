@@ -1,0 +1,110 @@
+--- a/src/pure/Pure.ml
++++ b/src/pure/Pure.ml
+@@ -1241,7 +1241,16 @@
+   | NanosecondsRead
+   | NanosecondsConstruct
+ 
++and rust_shared_array_origin = {
++  origin_borrow : (V.borrow_id[@visitors.opaque]);
++  origin_shared_borrow : (V.shared_borrow_id[@visitors.opaque]);
++  origin_loan_symbolic : (V.symbolic_value_id[@visitors.opaque]);
++}
++(** Interpreter identities only, not Rust addresses or allocation proofs. *)
++
+ and cast_kind =
++  | CastRustSharedArrayNonNull of rust_shared_array_origin * ty * ty
++      (** Keep borrow origin and substitution-visible endpoints; extraction is blocked. *)
+   | CastRustFnPtrTransmute of ty * ty
+       (** Retained representation transmute; no unsafe-call validity implied. *)
+   | CastRustFnItem of ty * ty
+--- a/src/pure/PrintPure.ml
++++ b/src/pure/PrintPure.ml
+@@ -893,9 +893,10 @@
+   | Pure fid -> pure_builtin_fun_id_to_string fid
+ 
+ let cast_kind_to_string (env : fmt_env) (kind : cast_kind) : string =
+-  let prefix=match kind with CastRustFnPtrTransmute _ -> "transmute" | _ -> "cast" in
++  let prefix=match kind with CastRustFnPtrTransmute _ | CastRustSharedArrayNonNull _ -> "transmute" | _ -> "cast" in
+   let src, tgt =
+     match kind with
++    | CastRustSharedArrayNonNull (_,src,tgt) -> (ty_to_string env false src,ty_to_string env false tgt)
+     | CastRustFnPtrTransmute (src,tgt) -> (ty_to_string env false src,ty_to_string env false tgt)
+     | CastRustFnItem (src,tgt) -> (ty_to_string env false src,ty_to_string env false tgt)
+     | CastLit (src, tgt) ->
+--- a/src/extract/Extract.ml
++++ b/src/extract/Extract.ml
+@@ -402,6 +402,8 @@
+     (extract_expr : inside:bool -> texpr -> unit) (fmt : F.formatter)
+     ~(inside : bool) (kind : cast_kind) (arg : texpr) : unit =
+   match kind with
++  | CastRustSharedArrayNonNull _ ->
++      [%craise] span "Retained shared-array NonNull conversion requires verified pointer address/provenance extraction"
+   | CastRustFnPtrTransmute _ ->
+       [%craise] span "Retained Rust function-pointer transmute requires verified callable extraction"
+   | CastRustFnItem _ ->
+@@ -430,6 +432,8 @@
+     (extract_expr : inside:bool -> texpr -> unit) (fmt : F.formatter)
+     ~(inside : bool) (kind : cast_kind) (arg : texpr) : unit =
+   match kind with
++  | CastRustSharedArrayNonNull _ ->
++      [%craise] span "Retained shared-array NonNull conversion requires verified pointer address/provenance extraction"
+   | CastRustFnPtrTransmute _ ->
+       [%craise] span "Retained Rust function-pointer transmute requires verified callable extraction"
+   | CastRustFnItem _ ->
+--- a/src/symbolic/SymbolicToPureExpressions.ml
++++ b/src/symbolic/SymbolicToPureExpressions.ml
+@@ -11,6 +11,33 @@
+ 
+ (* Preserve endpoint types and the operation; call ABI/receiver validity is
+    separate from the already guarded pointer representation cast. *)
++(* The call context resolves the actual borrow ID to its loan. Keeping
++   these interpreter identities avoids merging distinct shared origins; they
++   do not establish a correspondence with Rust allocation addresses. *)
++let translate_rust_shared_array_nonnull span crate translate_ty lookup src dst
++    (operand : Values.tvalue) expected_dest =
++  [%cassert_opt_span] span
++    (Config.backend ()=Config.Lean && operand.ty=src
++     && InterpExpressions.array_ref_nonnull_representation_supported crate src dst)
++    "Unsupported Pure shared-array NonNull representation/operand";
++  let bid,sid=match operand.value with
++    | Values.VBorrow(Values.VSharedBorrow(bid,sid)) -> bid,sid
++    | _ -> [%craise_opt_span] span "Pure NonNull conversion requires actual shared borrow origin" in
++  [%cassert_opt_span] span
++    (Values.BorrowId.to_int bid>=0 && Values.SharedBorrowId.to_int sid>=0)
++    "Malformed shared-array NonNull borrow origin";
++  let (value : Values.tvalue)=lookup bid in
++  let loan=match value.value with
++    | Values.VSymbolic s -> s
++    | _ -> [%craise_opt_span] span "Pure NonNull conversion requires actual symbolic array loan" in
++  [%cassert_opt_span] span
++    (Values.SymbolicValueId.to_int loan.sv_id>=0
++     && value.ty=TypesUtils.ty_erase_regions loan.sv_ty
++     && InterpExpressions.array_ref_nonnull_symbolic_type crate src dst loan=Some expected_dest)
++    "Pure NonNull conversion loan/destination region mismatch";
++  let origin={origin_borrow=bid;origin_shared_borrow=sid;origin_loan_symbolic=loan.sv_id} in
++  CastRustSharedArrayNonNull(origin,translate_ty src,translate_ty expected_dest)
++
+ let translate_rust_fnptr_transmute span translate_ty src dst =
+   [%cassert_opt_span] span
+     (Config.backend ()=Config.Lean
+@@ -653,11 +680,15 @@
+                and handled in [translate_cast_unsize] *)
+               [%internal_error] ctx.span
+           | CastTransmute ((T.TRef(_,T.TArray _,T.RShared) as src_ty), (T.TAdt _ as tgt_ty)) ->
+-              [%cassert] ctx.span
+-                (InterpExpressions.array_ref_nonnull_representation_supported ctx.decls_ctx.crate src_ty tgt_ty)
+-                "Unsupported Pure array-reference to NonNull representation";
+-              [%craise] ctx.span
+-                "Retained array-reference to NonNull requires verified pointer value extraction"
++              let operand=match call.args with [v] -> v | _ -> [%craise] ctx.span "Pure NonNull conversion operand arity mismatch" in
++              let kind=translate_rust_shared_array_nonnull (Some ctx.span) ctx.decls_ctx.crate
++                (translate_sty (Some ctx.span))
++                (InterpBorrowsCore.ctx_lookup_shared_value ctx.span call.ctx)
++                src_ty tgt_ty operand call.dest.sv_ty in
++              let src=match kind with CastRustSharedArrayNonNull(_,src,_) -> src | _ -> [%internal_error] ctx.span in
++              [%cassert] ctx.span (match args with [arg] -> arg.ty=src | _ -> false)
++                "Pure shared-array NonNull translated operand mismatch";
++              (kind,false)
+           | CastTransmute (src_ty,tgt_ty) ->
+               let kind=translate_rust_fnptr_transmute (Some ctx.span)
+                 (translate_sty (Some ctx.span)) src_ty tgt_ty in

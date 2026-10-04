@@ -1,0 +1,12 @@
+[package]
+name = "kasane-gat-diagnostic"
+version = "0.1.0"
+edition = "2021"
+[workspace]
+[lib]
+path = "lib.rs"
+[features]
+default = []
+plain = []
+rpit = []
+named = []

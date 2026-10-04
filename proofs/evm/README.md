@@ -1,6 +1,6 @@
 # EVM 接続部分の Lean 証明
 
-Lean 4.30.0 / 標準ライブラリのみ。対象は Kasane の EVM 接続部分を写した数学モデル。
+Lean 4.31.0 / 標準ライブラリのみ。対象は Kasane の EVM 接続部分を写した数学モデル。
 **Rust/Wasm 実装全体の正しさ、EVM 命令の意味論、モデルとの全入力での同値性は未証明。**
 初期の接続モデルに加え、journal の限定した巻き戻し、残高・範囲の保存、
 論理 storage map への射影と巻き戻し、資産 precompile の呼び出し制限をモデル内で証明した。
@@ -50,17 +50,19 @@ CI の `evm-proofs` job は `verify-revm.sh`、既存の `checks` job は Verus 
 | `Journal.lean` | 有効な任意長 trace で残高合計・U256 範囲・未書き込み storage を保存。trace の合成・有限 frame 列の巻き戻し・再切り詰めの冪等性 | 既存の 2 account/storage/log projection。実際の depth・スタック・account lifecycle は範囲外。消費済み Rust checkpoint の再使用を許可しない |
 | `Authorization.lean` | 許可されるのは非 static・外部許可済みの直接 CALL、target/bytecode 一致、Transfer value の場合に限る | 両資産 precompile の入口。ABI 検証・権限の由来・実送金は範囲外 |
 | `Refinement.lean` | journal の forward/undo を論理 storage 書き込みに射影すると全キーの観測が一致。有効 trace の forward＋undo は元の map を復元 | **Lean のモデル間の対応証明**。Rust の diff 抽出との対応証明ではない |
+| `Ledger.lean` | 固定hash/created_at_time、単調時刻で成功後の任意回数再送は二重適用しない | ledger coreを参照した手書きモデル。外部Rust実装との対応は未証明 |
+| `LedgerSaturation.lean` | 全u64時刻範囲の飽和加算による判定・保持・任意再送が既存モデルに一致 | 固定TimeStamp実装を参照したモデル間の対応。Duration narrowing成功後の範囲 |
 
 パスの `verified-core` / `evm-core` は `crates/` 配下。
-明示的な定理は 97 個（従来 36 個から 61 個増加。旧 `size_error_after_commit` は
-現行仕様の `size_error_preserves_state` に置換）。`Nat` で整数値を表現し、Rust の型上限は定理の仮定と
+明示的な定理は114個。旧 `size_error_after_commit` は
+現行仕様の `size_error_preserves_state` に置換。`Nat` で整数値を表現し、Rust の型上限は定理の仮定と
 `max64` / `max128` / `max256` で表す。任意の Nat を Rust の有効入力とは扱わない。
 
 ## Rust との対応と残る義務
 
 対応を確認した出発点は Git `dce03b6ee64d3f075fcb84f9c9fe235c0ca73d49`。
 2026-10-03 に `32160d7ec8c3e90f5730ef36ec4107b724229d2c` と検査時点の作業差分を確認した。
-`model-sources.sha256` が対応元 9 ファイル（manifest/lock とサイズ定数を含む）を固定する。変更時はゲートが失敗する。
+`model-sources.sha256` が対応元10ファイル（manifest/lock・サイズ定数・固定ledger source profileを含む）を固定する。変更時はゲートが失敗する。
 差分を読み、モデル・定理・比較テスト・この文書を更新してからハッシュを更新すること。
 ハッシュ一致は同値性の証明ではなく、確認済みソースからの変化を検出するもの。
 

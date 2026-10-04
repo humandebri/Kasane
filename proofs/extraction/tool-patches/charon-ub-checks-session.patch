@@ -1,0 +1,17 @@
+--- a/charon/src/bin/charon-driver/translate/translate_bodies.rs
++++ b/charon/src/bin/charon-driver/translate/translate_bodies.rs
+@@ -1208,7 +1208,13 @@
+             }
+             mir::Operand::RuntimeChecks(check) => {
+                 let op = match check {
+-                    mir::RuntimeChecks::UbChecks => NullOp::UbChecks,
++                    mir::RuntimeChecks::UbChecks => {
++                        // Match rustc codegen's evaluation for this compilation session.
++                        return Ok(Operand::Const(ConstantExpr::new(
++                            ConstantExprKind::Bool(check.value(self.tcx.sess)),
++                            Ty::mk_bool(),
++                        )));
++                    }
+                     mir::RuntimeChecks::OverflowChecks => NullOp::OverflowChecks,
+                     mir::RuntimeChecks::ContractChecks => NullOp::ContractChecks,
+                 };

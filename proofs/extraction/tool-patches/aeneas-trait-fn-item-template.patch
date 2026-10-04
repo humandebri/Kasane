@@ -1,0 +1,156 @@
+--- a/src/pure/Pure.ml
++++ b/src/pure/Pure.ml
+@@ -81,7 +81,17 @@
+ type closed_fnptr_signature = T.fun_sig T.region_binder [@@deriving show, ord]
+ 
+ (* Source signature marker; no callable lowering is asserted. *)
++(* Metadata is closed: Self type and trait evidence are ordinary generic args.
++   The retained region binder owns every Bound region in item_region_args. *)
++type rust_trait_fn_item = {
++  item_trait_id : T.trait_decl_id;
++  item_method_id : T.trait_method_id;
++  item_regions : T.region_param list;
++  item_region_args : T.region list;
++} [@@deriving show, ord]
++
+ type builtin_ty =
++  | TRustTraitFnItem of rust_trait_fn_item
+   | TRustFnPtr of closed_fnptr_signature
+   | TResult
+   | TSum  (** sum type with two variants: left and right *)
+--- a/src/symbolic/SymbolicToPureTypes.ml
++++ b/src/symbolic/SymbolicToPureTypes.ml
+@@ -183,6 +183,39 @@
+           const_generics = [translate_constant_expr_kind span lo.kind;
+                             translate_constant_expr_kind span hi.kind] })
+   | _ -> [%craise_opt_span] span "Unsupported U32 range pattern"
++
++(* A late-bound trait item is not an arrow. Capture its free Self type and
++   clause explicitly so normal Pure visitors/substitution can see both. *)
++let split_open_trait_fn_item (f : T.fn_ptr T.region_binder) =
++  let ids=List.map (fun (r : T.region_param) -> T.RegionId.to_int r.index) f.binder_regions in
++  let g=f.binder_value.generics in
++  let scoped = List.for_all (function
++    | T.RStatic -> true
++    | T.RVar(T.Bound(0,id)) -> 0 <= T.RegionId.to_int id && T.RegionId.to_int id < List.length ids
++    | _ -> false) g.regions in
++  if ids <> List.init (List.length ids) Fun.id || not scoped
++     || g.types<>[] || g.const_generics<>[] || g.trait_refs<>[] then None
++  else match f.binder_value.kind with
++  | T.TraitMethod (tr,method_id) ->
++      let pred=tr.trait_decl_ref.binder_value in
++      (match tr.kind,pred.generics.types with
++       | T.Clause(T.Free clause),[(T.TVar(T.Free self_id) as self)]
++           when T.TraitClauseId.to_int clause >= 0 && T.TypeVarId.to_int self_id >= 0
++             && tr.trait_decl_ref.binder_regions=[]
++             && pred.generics.regions=[] && pred.generics.const_generics=[] && pred.generics.trait_refs=[] ->
++           let metadata : rust_trait_fn_item = {
++             item_trait_id=pred.id;item_method_id=method_id;
++             item_regions=f.binder_regions;item_region_args=g.regions } in
++           Some(metadata,{T.regions=[];types=[self];const_generics=[];trait_refs=[tr]})
++       | _ -> None)
++  | T.Fun _ -> None
++
++let translate_open_trait_fn_item span translate_ty f =
++  [%cassert_opt_span] span (Config.backend ()=Config.Lean)
++    "Trait function-item templates require Lean";
++  let metadata,args=[%unwrap_opt_span] span (split_open_trait_fn_item f)
++    "Unsupported trait function-item template" in
++  TAdt(TBuiltin(TRustTraitFnItem metadata),translate_generic_args span translate_ty args)
+ 
+ let rec translate_sty (span : Meta.span option) (ty : T.ty) : ty =
+   let translate = translate_sty in
+@@ -239,8 +272,7 @@
+         "Unimplemented";
+       TTraitType (trait_ref, type_name)
+   | TFnPtr s -> translate_closed_rust_fnptr span s
+-  | TFnDef _ ->
+-      [%craise_opt_span] span "Arrow types are not supported yet"
++  | TFnDef f -> translate_open_trait_fn_item span (translate_sty span) f
+   | TDynTrait { binder } ->
+       let p = binder.binder_params in
+       let is_self depth = function T.TVar (T.Bound (d, id)) when d = depth ->
+@@ -483,7 +515,13 @@
+         "Unimplemented";
+       let trait_ref = translate_fwd_trait_ref span decls_ctx trait_ref in
+       TTraitType (trait_ref, type_name)
+-  | TFnDef { binder_regions; binder_value = { kind; generics } } -> (
++  | TFnDef f -> (
++      match split_open_trait_fn_item f with
++      | Some _ -> translate_open_trait_fn_item span (translate_fwd_ty span decls_ctx) f
++      | None ->
++      let binder_regions=f.T.binder_regions in
++      let ptr : T.fn_ptr = f.T.binder_value in
++      let kind=ptr.T.kind and generics=ptr.T.generics in
+       [%cassert_opt_span] span (binder_regions = []) "Unimplemented";
+       let generics = translate_fwd_generic_args span decls_ctx generics in
+       match kind with
+--- a/src/pure/PrintPure.ml
++++ b/src/pure/PrintPure.ml
+@@ -271,6 +271,7 @@
+ let builtin_ty_to_string (aty : builtin_ty) : string =
+   match aty with
+   | TRustFnPtr s -> "RustFnPtr(" ^ T.show_ty (T.TFnPtr s) ^ ")"
++  | TRustTraitFnItem m -> "RustTraitFnItem(" ^ show_rust_trait_fn_item m ^ ")"
+   | TResult -> "Result"
+   | TSum -> "Sum"
+   | TLoopResult -> "LoopResult"
+@@ -512,7 +513,7 @@
+   | TBuiltin aty -> (
+       (* Builtin type *)
+       match aty with
+-      | TArray | TSlice | TStr | TRawPtr _ | TRustFnPtr _ | TU32Range ->
++      | TArray | TSlice | TStr | TRawPtr _ | TRustFnPtr _ | TRustTraitFnItem _ | TU32Range ->
+           (* Those types are opaque: we can't get there *)
+           [%craise_opt_span] span "Unreachable"
+       | TResult ->
+@@ -568,7 +569,7 @@
+       | TFuel | TArray | TSlice | TStr | TU32Range ->
+           (* Opaque types: we can't get there *)
+           [%craise_opt_span] span "Unreachable"
+-      | TResult | TError | TSum | TLoopResult | TRawPtr _ | TRustFnPtr _ ->
++      | TResult | TError | TSum | TLoopResult | TRawPtr _ | TRustFnPtr _ | TRustTraitFnItem _ ->
+           (* Enumerations: we can't get there *)
+           [%craise_opt_span] span "Unreachable")
+ 
+@@ -638,7 +639,7 @@
+     | TAdt (TBuiltin aty, _) -> (
+         (* Builtin type *)
+         match aty with
+-        | TRawPtr _ | TRustFnPtr _ | TU32Range ->
++        | TRawPtr _ | TRustFnPtr _ | TRustTraitFnItem _ | TU32Range ->
+             (* This type is opaque: we can't get there *)
+             [%craise_opt_span] span "Unreachable"
+         | TResult ->
+--- a/src/pure/PureTypeCheck.ml
++++ b/src/pure/PureTypeCheck.ml
+@@ -66,7 +66,7 @@
+           if variant_id = fuel_zero_id then []
+           else if variant_id = fuel_succ_id then [ mk_fuel_ty ]
+           else [%craise] span "Unreachable: improper variant id for fuel type"
+-      | TArray | TSlice | TStr | TRawPtr _ | TRustFnPtr _ | TU32Range ->
++      | TArray | TSlice | TStr | TRawPtr _ | TRustFnPtr _ | TRustTraitFnItem _ | TU32Range ->
+           (* Array: when not symbolic values (for instance, because of aggregates),
+              the array expressions are introduced as struct updates *)
+           [%craise] span "Attempting to access the fields of an opaque type")
+--- a/src/extract/ExtractBase.ml
++++ b/src/extract/ExtractBase.ml
+@@ -2017,6 +2017,7 @@
+           | TBuiltin TSlice -> "s"
+           | TBuiltin TStr -> "s"
+           | TBuiltin (TRustFnPtr _) -> "fp"
++          | TBuiltin (TRustTraitFnItem _) -> "fitem"
+           | TBuiltin (TRawPtr _) -> "p"
+           | TAdtId adt_id ->
+               let def =
+--- a/src/extract/ExtractTypes.ml
++++ b/src/extract/ExtractTypes.ml
+@@ -342,6 +342,8 @@
+          ^ " ≤ rangeValue.val ∧ rangeValue.val ≤ " ^ Z.to_string hi ^ " }")
+   | TAdt (TBuiltin TU32Range, _) ->
+       [%craise] span "Malformed U32 range generic arguments"
++  | TAdt (TBuiltin (TRustTraitFnItem _), _) ->
++      [%craise] span "Rust trait function-item template requires verified value/call extraction"
+   | TAdt (TBuiltin (TRustFnPtr _), _) ->
+       [%craise] span "Retained Rust function pointer requires verified value/call extraction"
+   | TAdt (type_id, generics) -> (

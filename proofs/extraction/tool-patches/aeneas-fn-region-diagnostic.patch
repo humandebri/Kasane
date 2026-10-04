@@ -1,0 +1,12 @@
+--- a/src/interp/InterpUtils.ml
++++ b/src/interp/InterpUtils.ml
+@@ -164,7 +164,8 @@
+ (** Create a fresh symbolic value *)
+ let mk_fresh_symbolic_tvalue_opt_span (span : Meta.span option) ctx (rty : ty) :
+     tvalue =
+-  [%sanity_check_opt_span] span (ty_is_rty rty);
++  [%cassert_opt_span] span (ty_is_rty rty)
++    ("Function value rty rejected: " ^ Types.show_ty rty);
+   let ty = Substitute.erase_regions rty in
+   (* Generate the fresh a symbolic value *)
+   let value = mk_fresh_symbolic_value_opt_span span ctx rty in

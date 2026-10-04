@@ -1,0 +1,183 @@
+--- a/src/interp/InterpBorrowsCore.ml
++++ b/src/interp/InterpBorrowsCore.ml
+@@ -399,6 +399,15 @@
+     [combine]: how to combine booleans [compare_regions]: how to compare regions
+ 
+     TODO: is there a way of deriving such a comparison? TODO: rename *)
++(* Keep the non-null pattern and pointer kind distinct; region comparison
++   continues through the complete pointee type, including its metadata. *)
++let compare_notnull_pointer_pointees span compare ty1 ty2 =
++  match ty1,ty2 with
++  | TPattern(TRawPtr(p1,k1),NotNull),TPattern(TRawPtr(p2,k2),NotNull) ->
++      [%cassert_opt_span] span (k1=k2) "Non-null pointer comparison kind mismatch";
++      Some(compare p1 p2)
++  | _ -> None
++
+ let rec compare_rtys ?(allow_erased = false) (span : Meta.span) (ctx : eval_ctx)
+     (default : bool) (combine : bool -> bool -> bool)
+     (compare_regions : region -> region -> bool) (ty1 : rty) (ty2 : rty) : bool
+@@ -411,6 +420,10 @@
+     (if allow_erased then true else ty_is_rty ty1 && ty_is_rty ty2);
+   (* Normalize the associated types *)
+   match (ty1, ty2) with
++  | (TPattern(TRawPtr _,NotNull) as p1),(TPattern(TRawPtr _,NotNull) as p2) ->
++      [%unwrap_opt_span] (Some span)
++        (compare_notnull_pointer_pointees (Some span) compare p1 p2)
++        "Unsupported non-null pointer comparison"
+   | TScalar lit1, TScalar lit2 ->
+       [%sanity_check] span (lit1 = lit2);
+       default
+--- a/src/llbc/TypesAnalysis.ml
++++ b/src/llbc/TypesAnalysis.ml
+@@ -250,6 +250,11 @@
+   | ItemClause _ | UnknownTrait _ -> false
+ 
+ (* Only classify constant U32 ranges. The original range type is not rewritten. *)
++(* Classification preserves the underlying pointer analysis; it does not
++   establish non-null value construction or dereference validity. *)
++let supported_notnull_rawptr_pattern base pat =
++  match base,pat with TRawPtr _,NotNull -> true | _ -> false
++
+ let supported_u32_range_pattern (ty : ty) (pat : type_pattern) : bool =
+   match (ty, pat) with
+   | TScalar (TInteger (Unsigned U32)), Range (lo, hi) -> (
+@@ -608,6 +613,11 @@
+         in
+         [%cassert_opt_span] span (not has_regions) "Unimplemented";
+         ty_info
++    | TPattern (base, pat) when supported_notnull_rawptr_pattern base pat ->
++        (* A pointer stores an address, not a value of its pointee type.
++           Preserve accumulated outer/adjacent borrows; keep region tracking
++           in the separate type-region visitors. *)
++        ty_info
+     | TPattern (base, pat) when supported_u32_range_pattern base pat ->
+         analyze span expl_info ty_info base
+     | TError _ ->
+@@ -948,7 +958,7 @@
+                back values computed for the generated backward functions may \
+                be incorrect.";
+             ()
+-        | TPattern (base, pat) when supported_u32_range_pattern base pat ->
++        | TPattern (base, pat) when supported_u32_range_pattern base pat || supported_notnull_rawptr_pattern base pat ->
+             self#visit_ty outer base
+         | TError _ ->
+             [%craise_opt_span] span "Found type error in the output of charon"
+--- a/src/pure/Pure.ml
++++ b/src/pure/Pure.ml
+@@ -98,6 +98,8 @@
+ } [@@deriving show, ord]
+ 
+ type builtin_ty =
++  | TRustNotNullPtr of mutability
++      (** Non-null pointer refinement; pointee type is a regular generic arg. *)
+   | TRustFnPtrTemplate of rust_fnptr_template
+   | TRustTraitFnItem of rust_trait_fn_item
+   | TRustFnPtr of closed_fnptr_signature
+--- a/src/pure/PrintPure.ml
++++ b/src/pure/PrintPure.ml
+@@ -282,6 +282,8 @@
+   | TSlice -> "Slice"
+   | TStr -> "Str"
+   | TU32Range -> "U32Range"
++  | TRustNotNullPtr Mut -> "RustNotNullMutPtr"
++  | TRustNotNullPtr Const -> "RustNotNullConstPtr"
+   | TRawPtr Mut -> "MutRawPtr"
+   | TRawPtr Const -> "ConstRawPtr"
+ 
+@@ -514,7 +516,7 @@
+   | TBuiltin aty -> (
+       (* Builtin type *)
+       match aty with
+-      | TArray | TSlice | TStr | TRawPtr _ | TRustFnPtr _ | TRustFnPtrTemplate _ | TRustTraitFnItem _ | TU32Range ->
++      | TArray | TSlice | TStr | TRawPtr _ | TRustNotNullPtr _ | TRustFnPtr _ | TRustFnPtrTemplate _ | TRustTraitFnItem _ | TU32Range ->
+           (* Those types are opaque: we can't get there *)
+           [%craise_opt_span] span "Unreachable"
+       | TResult ->
+@@ -570,7 +572,7 @@
+       | TFuel | TArray | TSlice | TStr | TU32Range ->
+           (* Opaque types: we can't get there *)
+           [%craise_opt_span] span "Unreachable"
+-      | TResult | TError | TSum | TLoopResult | TRawPtr _ | TRustFnPtr _ | TRustFnPtrTemplate _ | TRustTraitFnItem _ ->
++      | TResult | TError | TSum | TLoopResult | TRawPtr _ | TRustNotNullPtr _ | TRustFnPtr _ | TRustFnPtrTemplate _ | TRustTraitFnItem _ ->
+           (* Enumerations: we can't get there *)
+           [%craise_opt_span] span "Unreachable")
+ 
+@@ -640,7 +642,7 @@
+     | TAdt (TBuiltin aty, _) -> (
+         (* Builtin type *)
+         match aty with
+-        | TRawPtr _ | TRustFnPtr _ | TRustFnPtrTemplate _ | TRustTraitFnItem _ | TU32Range ->
++        | TRawPtr _ | TRustNotNullPtr _ | TRustFnPtr _ | TRustFnPtrTemplate _ | TRustTraitFnItem _ | TU32Range ->
+             (* This type is opaque: we can't get there *)
+             [%craise_opt_span] span "Unreachable"
+         | TResult ->
+--- a/src/pure/PureTypeCheck.ml
++++ b/src/pure/PureTypeCheck.ml
+@@ -85,7 +85,7 @@
+           if variant_id = fuel_zero_id then []
+           else if variant_id = fuel_succ_id then [ mk_fuel_ty ]
+           else [%craise] span "Unreachable: improper variant id for fuel type"
+-      | TArray | TSlice | TStr | TRawPtr _ | TRustFnPtr _ | TRustFnPtrTemplate _ | TRustTraitFnItem _ | TU32Range ->
++      | TArray | TSlice | TStr | TRawPtr _ | TRustNotNullPtr _ | TRustFnPtr _ | TRustFnPtrTemplate _ | TRustTraitFnItem _ | TU32Range ->
+           (* Array: when not symbolic values (for instance, because of aggregates),
+              the array expressions are introduced as struct updates *)
+           [%craise] span "Attempting to access the fields of an opaque type")
+--- a/src/extract/ExtractBase.ml
++++ b/src/extract/ExtractBase.ml
+@@ -2020,6 +2020,7 @@
+           | TBuiltin (TRustFnPtrTemplate _) -> "fpt"
+           | TBuiltin (TRustTraitFnItem _) -> "fitem"
+           | TBuiltin (TRawPtr _) -> "p"
++          | TBuiltin (TRustNotNullPtr _) -> "np"
+           | TAdtId adt_id ->
+               let def =
+                 TypeDeclId.Map.find adt_id ctx.trans_ctx.type_ctx.type_decls
+--- a/src/extract/ExtractTypes.ml
++++ b/src/extract/ExtractTypes.ml
+@@ -346,6 +346,8 @@
+       [%craise] span "Rust trait function-item template requires verified value/call extraction"
+   | TAdt (TBuiltin (TRustFnPtrTemplate _), _) ->
+       [%craise] span "Rust function-pointer template requires verified callable extraction"
++  | TAdt (TBuiltin (TRustNotNullPtr _), _) ->
++      [%craise] span "Retained non-null pointer type requires verified pointer value extraction"
+   | TAdt (TBuiltin (TRustFnPtr _), _) ->
+       [%craise] span "Retained Rust function pointer requires verified value/call extraction"
+   | TAdt (type_id, generics) -> (
+--- a/src/symbolic/SymbolicToPureTypes.ml
++++ b/src/symbolic/SymbolicToPureTypes.ml
+@@ -251,6 +251,17 @@
+   let metadata,args=[%unwrap_opt_span] span (split_open_trait_fn_item f)
+     "Unsupported trait function-item template" in
+   TAdt(TBuiltin(TRustTraitFnItem metadata),translate_generic_args span translate_ty args)
++
++let translate_notnull_rawptr span translate_ty base pat =
++  [%cassert_opt_span] span
++    (Config.backend ()=Config.Lean && TypesAnalysis.supported_notnull_rawptr_pattern base pat)
++    "Unsupported non-null pointer pattern";
++  match base with
++  | T.TRawPtr(pointee,kind) ->
++      let mut : Pure.mutability = match kind with T.RShared -> Pure.Const | T.RMut -> Pure.Mut in
++      TAdt(TBuiltin(TRustNotNullPtr mut),
++        {types=[translate_ty pointee];const_generics=[];trait_refs=[]})
++  | _ -> [%craise_opt_span] span "Unsupported non-null pointer base"
+ 
+ let rec translate_sty (span : Meta.span option) (ty : T.ty) : ty =
+   let translate = translate_sty in
+@@ -287,6 +298,8 @@
+       TVar var
+       (* Note: the `de_bruijn_id`s are incorrect, see comment on `translate_region_binder` *)
+   | TScalar ty -> TLiteral (translate_literal_type ty)
++  | TPattern (base, pat) when TypesAnalysis.supported_notnull_rawptr_pattern base pat ->
++      translate_notnull_rawptr span (translate_sty span) base pat
+   | TPattern (base, pat) when TypesAnalysis.supported_u32_range_pattern base pat ->
+       translate_u32_range span base pat
+   | TNever -> TNever
+@@ -533,6 +546,8 @@
+   | TVar var -> TVar var
+   | TNever -> TNever
+   | TScalar scalar_ty -> TLiteral (translate_literal_type scalar_ty)
++  | TPattern (base, pat) when TypesAnalysis.supported_notnull_rawptr_pattern base pat ->
++      translate_notnull_rawptr span (translate_fwd_ty span decls_ctx) base pat
+   | TPattern (base, pat) when TypesAnalysis.supported_u32_range_pattern base pat ->
+       translate_u32_range span base pat
+   | TRef (_, rty, _) -> translate rty

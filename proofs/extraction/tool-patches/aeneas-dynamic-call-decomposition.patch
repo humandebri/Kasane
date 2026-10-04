@@ -1,0 +1,63 @@
+--- a/src/symbolic/SymbolicToPureTypes.ml
++++ b/src/symbolic/SymbolicToPureTypes.ml
+@@ -763,6 +763,15 @@
+     (decls_ctx : C.decls_ctx) (fun_id : fn_ptr_kind) (sg : A.inst_fun_sig)
+     (uninst_output : Types.ty) (input_names : string option list) :
+     decomposed_fun_type =
++  translate_inst_fun_sig_with_effects span decls_ctx
++    (fun gid -> compute_raw_fun_effect_info span decls_ctx.fun_ctx.fun_infos fun_id gid)
++    (fun pctx -> PrintPure.regular_fun_id_to_string pctx (FromLlbc (fun_id, None)))
++    sg uninst_output input_names
++
++and translate_inst_fun_sig_with_effects (span : Meta.span option)
++    (decls_ctx : C.decls_ctx) effect_for_group function_label (sg : A.inst_fun_sig)
++    (uninst_output : Types.ty) (input_names : string option list) :
++    decomposed_fun_type =
+   [%ltrace
+     let ctx = Print.Contexts.decls_ctx_to_fmt_env decls_ctx in
+     "- sg.regions_hierarchy: "
+@@ -770,8 +779,6 @@
+     ^ "\n- inst_sg (inputs, output): "
+     ^ Print.Values.inst_fun_sig_to_string ctx sg];
+ 
+-  let fun_infos = decls_ctx.fun_ctx.fun_infos in
+-
+   (* We need an evaluation context to normalize the types (to normalize the
+      associated types, etc. - for instance it may happen that the types
+      refer to the types associated to a trait ref, but where the trait ref
+@@ -779,7 +786,7 @@
+ 
+   (* Is the forward function stateful, and can it fail? *)
+   let fwd_effect_info =
+-    compute_raw_fun_effect_info span fun_infos fun_id None
++    effect_for_group None
+   in
+   (* Compute the forward inputs *)
+   let fwd_inputs = List.map (translate_fwd_ty span decls_ctx) sg.inputs in
+@@ -886,7 +893,7 @@
+           inputs
+       in
+       "translate_back_inputs_for_gid:" ^ "\n- function:"
+-      ^ PrintPure.regular_fun_id_to_string pctx (FromLlbc (fun_id, None))
++      ^ function_label pctx
+       ^ "\n- gid: "
+       ^ RegionGroupId.to_string gid
+       ^ "\n- output: " ^ output ^ "\n- back inputs: " ^ inputs];
+@@ -920,7 +927,7 @@
+           outputs
+       in
+       "compute_back_outputs_for_gid:" ^ "\n- function:"
+-      ^ PrintPure.regular_fun_id_to_string pctx (FromLlbc (fun_id, None))
++      ^ function_label pctx
+       ^ "\n- gid: "
+       ^ RegionGroupId.to_string gid
+       ^ "\n- inputs: " ^ inputs ^ "\n- back outputs: " ^ outputs];
+@@ -930,7 +937,7 @@
+       RegionGroupId.id * back_sg_info =
+     let gid = rg.id in
+     let back_effect_info =
+-      compute_raw_fun_effect_info span fun_infos fun_id (Some gid)
++      effect_for_group (Some gid)
+     in
+     let inputs = translate_back_inputs_for_gid gid in
+     (* We consider a backward function as stateful and potentially failing

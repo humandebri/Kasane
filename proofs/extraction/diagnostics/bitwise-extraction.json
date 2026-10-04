@@ -1,0 +1,17 @@
+{
+  "ruint_version": "1.20.0",
+  "bits_rs_sha256": "64804a0e352648288577193b0cfdaf301dda09f836da91a1e1b20adfc1f3de88",
+  "macros_rs_sha256": "f0e4e01da01326a2226352baa75fc3c72a2f39406f0bd1e4792416a9450b4f3a",
+  "successful_functions": [
+    "inherent const Uint::bitand",
+    "inherent const Uint::bitor",
+    "inherent const Uint::bitxor"
+  ],
+  "not_failure": {
+    "error": "Aeneas does not yet support dereferencing raw pointers",
+    "source": "ruint-1.20.0/src/macros.rs:172",
+    "compiler_source": "interp/InterpPaths.ml:112",
+    "scope": "Actual Uint::not uses a mutable pointer walk in const_range_for; no pointer semantics axioms introduced."
+  },
+  "duration_constraint_review": "TPattern has no handling in Aeneas TypesAnalysis.ml or SymbolicToPureTypes.ml; constraint-preserving support requires both interpretation/type translation changes, not erasure to plain U32."
+}

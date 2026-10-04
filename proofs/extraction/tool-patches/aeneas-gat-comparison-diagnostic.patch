@@ -1,0 +1,18 @@
+--- a/src/interp/InterpBorrowsCore.ml
++++ b/src/interp/InterpBorrowsCore.ml
+@@ -473,6 +473,15 @@
+   | TTraitType (_, _, _), TTraitType (_, _, _) ->
+       (* The types should have been normalized. If after normalization we
+          get trait types, we can consider them as variables *)
++      if ty1 <> ty2 then
++        [%ltrace
++          "GAT comparison diagnostic:\n- first: " ^ ty_to_string ctx ty1
++          ^ "\n- second: " ^ ty_to_string ctx ty2
++          ^ "\n- erased types equal: " ^ Bool.to_string (erase_regions ty1 = erase_regions ty2)
++          ^ "\n- first contains_borrow: "
++          ^ Bool.to_string (TypesAnalysis.analyze_ty (Some span) ctx.type_ctx.type_infos ty1).contains_borrow
++          ^ "\n- second contains_borrow: "
++          ^ Bool.to_string (TypesAnalysis.analyze_ty (Some span) ctx.type_ctx.type_infos ty2).contains_borrow];
+       [%sanity_check] span (ty1 = ty2);
+       default
+   | TDynTrait _, TDynTrait _ ->

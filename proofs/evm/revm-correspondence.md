@@ -163,3 +163,5 @@ python3 scripts/check_revm_verification_profile.py --print-current > proofs/evm/
 SHA256SUMS・件数を更新する。Lean/profile ゲートは独立したローカルコマンドであり、
 CI の `evm-proofs` job でも実行する。
 Rust integration tests は既存 CI の `cargo test ... --tests` にも含まれる。
+
+実JUMPDESTについて、実Interpreter/Gas構造体を含むRust抽出生成本体の全入力恒等性と任意値観測保存の2定理を `../extraction/u256-lean/RevmJumpdestCorrespondence.lean` に追加した。`scripts/verify-revm-jumpdest-experimental.sh` が再抽出から独立カーネルまで検査する。使用する未使用trait節除去の意味論保存、Rust有効型/heap状態への対応、EVMディスパッチのgas/PC効果は未証明であり、JUMPDEST全体や全命令の実装対応完了とは扱わない。

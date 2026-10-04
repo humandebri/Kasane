@@ -1,0 +1,61 @@
+{
+  "status": "unadopted-candidates-all-table-body-extraction-only",
+  "sha256": {
+    "Cargo.lock": "272266f066e89637bca1791b96688d42f4fe3e1b01a5148e25b84138bc6c3168",
+    "proofs/extraction/revm-instruction-rust/Cargo.toml": "2484a31090c5bffdc8065e658ee2f59782e121c3496063265f04483ee62ec685",
+    "proofs/extraction/revm-instruction-rust/Cargo.lock": "f89cdb50faee3b3556a5b2689fc8c40b8222276458744792e926258ebaf87523",
+    "proofs/extraction/revm-instruction-rust/lib.rs": "c280681e5b9ef240392780ffaa2246d739fe9db3aa4fa85c233d8633e7dad8a5",
+    "proofs/extraction/revm-instruction-rust/table-entries.json": "4accb83928392f9466336674eb1aeaa326b7e44b59b0798e4d5397fa6040ef6f",
+    "vendor/revm/crates/interpreter/src/instructions.rs": "708e2c64d378ea62e1eb926249013332915c440600c32872c44a3201c19343ad",
+    "vendor/revm/crates/interpreter/src/interpreter_types.rs": "de97652bfd5486d6c64bb36e7cacb45f211ff627c99d2dbd55421e8c97de1271",
+    "vendor/revm/crates/bytecode/src/opcode.rs": "1b4f53044954cd90bb3dd92670a728732e7412c46d1f94f903170fc73e9e932b",
+    "vendor/revm/crates/context/interface/src/host.rs": "5ae31bbcbabcfafefe208dec97b2b52d45e4ad5be25e4afeda9c36e6d8aa1b87",
+    ".local/proof-tools/aeneas-source/src/interp/InterpPaths.ml": "2ec49b1bf447bb1153a096b3889959b6d975a19356e1f86c14c2cad12b0ff9e1",
+    "vendor/revm/crates/interpreter/src/instructions/arithmetic.rs": "a8e27a55eae651d10329c7f6963c81b1f393013066d301744281490c58fcc0cc",
+    "vendor/revm/crates/interpreter/src/instructions/bitwise.rs": "78de77eea431caca176ba2fcc17cbed4dfe0fc726d500a138156c43fe751abdb",
+    "vendor/revm/crates/interpreter/src/instructions/block_info.rs": "d5daf6b508bdf2b6b22c1efb7bbec9cbeda79a0af8f5d03f6f0d6a43aa1621bd",
+    "vendor/revm/crates/interpreter/src/instructions/contract.rs": "de9514b2031c65c1cc475071d69dcbe35c5d74beed400e12015171952e0c99bc",
+    "vendor/revm/crates/interpreter/src/instructions/control.rs": "371b7f8b45a4b3bc98bb5092048284996a2e57401369741642cdbd9a3db90f13",
+    "vendor/revm/crates/interpreter/src/instructions/host.rs": "675ab0c527a8945c86b126b1c33e602441ee162bbe0bb6e201ab2329e2aa02cd",
+    "vendor/revm/crates/interpreter/src/instructions/i256.rs": "a49ca40dc50caa52abd53ef04a010e18dc9cb6ffe9b0d7bc1e83d75dbfcc1eac",
+    "vendor/revm/crates/interpreter/src/instructions/macros.rs": "03a7be6e8a52404302da914f86d1b189c39d338c1484ea6b11c9639fe6a64fe9",
+    "vendor/revm/crates/interpreter/src/instructions/memory.rs": "fd66e23c390e42230ffdcefe63115ac2ee77d137a7687208b1affd919792d021",
+    "vendor/revm/crates/interpreter/src/instructions/stack.rs": "8a4447a1f2360184593c20574119592448867c5d1b7fe76206922fa3215a74da",
+    "vendor/revm/crates/interpreter/src/instructions/system.rs": "1b086080a9c7a05e50097a570861b18286c51b8f27f382f8bd6244eb9c957092",
+    "vendor/revm/crates/interpreter/src/instructions/tx_info.rs": "7a7de026fc3edd77cc8d5e6397b01d259bad2ff18946310191b269d5e5d81320",
+    "vendor/revm/crates/interpreter/src/instructions/utility.rs": "6ede8760389aa474260466e3a4ceb03608dfe7b22ad02ad9d77030eef8969e68"
+  },
+  "rust": "nightly-2026-09-17",
+  "candidates": [
+    "gat-closed-item-equality-profile.json",
+    "revm-add-sub-borrow-profile.json"
+  ],
+  "table": {
+    "declared_opcode_bytes": 150,
+    "explicit_table_entries": 150,
+    "default_unknown_bytes": 106,
+    "wrappers": 151,
+    "distinct_instruction_bodies_including_unknown": 85,
+    "structured_bodies_including_wrappers": 236,
+    "opaque_function_declarations": 273
+  },
+  "extraction": {
+    "native_check": "passed --lib --locked",
+    "charon": "passed --preset=aeneas --mir promoted --monomorphize-mut=all --error-on-warnings",
+    "has_errors": false,
+    "Error_type_nodes": 0,
+    "scope": "Fresh extraction of the actual 85 generic instruction bodies and 151 concrete EthInterpreter/DummyHost probe wrappers; exact names checked against full fixed table; bodies are not all fully monomorphized; separate locked dependency graph, not production-root equivalence."
+  },
+  "borrow_check": {
+    "status": "rejected",
+    "source": "vendor/revm/crates/interpreter/src/interpreter_types.rs:141",
+    "checker": "interp/InterpPaths.ml:260",
+    "expected_destination_type": "TraitClause0::ImpliedClause1::slice_len_ty<'_>",
+    "actual_value_type": "core::cell::Ref<'_, [u8]>",
+    "meaning": "MemoryTr::slice_len is an opaque TraitDefault declaration with concrete Ref return signature; the symbolic call destination retains an associated return type. GAT default/outlives/Deref/equality constraints remain. This demonstrates extraction success is not LLBC type consistency or compiler correctness. No equality/constraint erasure or coercion added.",
+    "opaque_default_method": true,
+    "next_obligation": "Reconcile default-method return normalization with trait-call associated type substitution, preserving possible method overrides; a trait default is not an unconditional equality for every implementation.",
+    "trait_method_declaration_signature": "Also concrete Ref, equal to GAT default value; abstract call destination remains associated slice_len_ty. Normalization/default substitution consistency remains unproved."
+  },
+  "proof": "None for whole instructions; extraction inventory and negative borrow diagnostic only. No axioms, no accepted Lean output. Opaque calls, unsafe stack, host implementations, dispatch/static gas and native/Wasm remain unproved."
+}

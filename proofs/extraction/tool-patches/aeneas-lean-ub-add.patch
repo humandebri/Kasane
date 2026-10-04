@@ -1,0 +1,20 @@
+--- a/src/extract/Extract.ml
++++ b/src/extract/Extract.ml
+@@ -599,7 +599,7 @@
+   | ( Lean,
+       ( Div (OPanic, _)
+       | Rem (OPanic, _)
+-      | Add (OPanic, _)
++      | Add ((OPanic | OUB), _)
+       | Sub (OPanic, _)
+       | Mul (OPanic, _)
+       | Shl (OPanic, _, _)
+@@ -615,7 +615,7 @@
+         | Gt _ -> ">"
+         | Div (OPanic, _) -> "/"
+         | Rem (OPanic, _) -> "%"
+-        | Add (OPanic, _) -> "+"
++        | Add ((OPanic | OUB), _) -> "+"
+         | Sub (OPanic, _) -> "-"
+         | Mul (OPanic, _) -> "*"
+         | Shl (OPanic, _, _) -> "<<<"

@@ -1,0 +1,48 @@
+{
+  "candidate": "Unadopted actual Nanoseconds read-only transmute with strict native layout guard",
+  "base_source_sha256": {
+    ".local/proof-tools/aeneas-source/src/llbc/TypesAnalysis.ml": "9d4c6eb7be147df8a9fdc1cf486adadf3fc2da4a478a050ed1f0207f0368fd7b",
+    ".local/proof-tools/aeneas-source/src/pure/Pure.ml": "29646c70cd19906ee8838d769b27eb03faa6f2f08ee773de83df85bb5162221e",
+    ".local/proof-tools/aeneas-source/src/pure/PureTypeCheck.ml": "21f84a2611feb7d26db9c939949ec7ca37c251ffdaafe2ca9051ecb275faec71",
+    ".local/proof-tools/aeneas-source/src/pure/PrintPure.ml": "e92780062da67c5ab5fd5cb20292452862a43757b7bf599724f8648d88fa0d8b",
+    ".local/proof-tools/aeneas-source/src/extract/ExtractBase.ml": "43dbd83ae65ebf6a6c4cde9633ce489df03e7578da9f6b695717b7ca0fa2b230",
+    ".local/proof-tools/aeneas-source/src/extract/ExtractTypes.ml": "fa8bba38aa57df51c1e5846e8e664885b7415a0c569d0ba379965898a7d42919",
+    ".local/proof-tools/aeneas-source/src/symbolic/SymbolicToPureTypes.ml": "35107f4f7c87ec6d57f62a83c5a063eb2e024115b64f9d69e9a3341b009d25ce",
+    ".local/proof-tools/aeneas-source/src/interp/InterpExpressions.ml": "0d0ca6dfcc7fc6e4174c5b1097a54eb1f24777243ab56b2b152349be8ec1624e",
+    ".local/proof-tools/aeneas-source/src/symbolic/SymbolicToPureExpressions.ml": "f3c7faf29ea4339fa484cff52f7b688d7afe3fca9625cdb98da5e440f9274740",
+    ".local/proof-tools/aeneas-source/src/extract/Extract.ml": "c268d62a3df4c328768d071d671b2ee9ee999aa229e4b4a3f09d7c1f64b0f216",
+    ".local/proof-tools/aeneas-source/src/pure/PureMicroPassesGeneral.ml": "d38c1b3ba6270f4009eeb198ced31b557efa5248eca0de49512e45ae823141ed",
+    ".local/proof-tools/aeneas-source/src/pure/PureMicroPassesAnnots.ml": "c29fc018ba337b1363eff315b438a5b7a0d63dc7fee4d07dfc8b923fdfdfdfaf"
+  },
+  "sha256": {
+    "proofs/extraction/tool-patches/aeneas-u32-range-borrow-analysis.patch": "22a60030e0a36c3c2cff364306b2709675920846a66ca484a2573be4a4a40264",
+    "proofs/extraction/tool-patches/aeneas-u32-range-pure-subtype.patch": "cf36dc87c3bb77f6168f17e048e5b5254022757365e1085bf8644b0cd32e39b2",
+    "proofs/extraction/tool-patches/aeneas-nanoseconds-read-layout.patch": "fbc2ee851b7a884aaf7d98673fc7b29f08fb9b7d8661a838d49ce3e1dc6a7eac",
+    "proofs/extraction/tool-patches/tests/NanosecondsReadRegression.ml": "67c3ceacac3d9421ab852aa191a62b498169ad75b78dedaa878ab48b6ace9fa5",
+    "scripts/build-nanoseconds-read-candidate.sh": "7e2b717f8ba2a6861c669eb08661b27f0e466dccd8049a1a7994692aa6f329cc",
+    "scripts/verify-nanoseconds-read-candidate.sh": "4a536b348e5eb22d9ddd86d11f88289457e59bdb2db9284111be30ec792d7e4a",
+    ".local/proof-tools/aeneas-nanoseconds-read/aeneas": "05087f8cc76c00c3645b08ef203c4468a40b1b10c0414db7a840e4995986601e",
+    ".local/proof-tools/aeneas-nanoseconds-read/check": "db2823b10b2ca72bbbc9cd05c86a95b02b2b51d4fa4e1a3de19029b7bfd2c8c0",
+    "proofs/extraction/operator-lean/DurationReadGenerated.lean": "023a5b9708417ef2d2a3b434fcac3e02f592474499bfdeb37cb5c7a900391aff",
+    "proofs/extraction/operator-lean/DurationReadCorrespondence.lean": "dfedd5e60151294d4c710927a74da3fd4505da8855153929c980a99b2f62defe",
+    "proofs/extraction/operator-lean/DurationReadAudit.lean": "f0eaf0aa4a565667ca403afea549fdd8aed4be366ac33f7b50823de02006360d",
+    "proofs/extraction/ledger-time-rust/tests/nanoseconds_source.rs": "67fa84cc4b51a3eca08c8ae88b4923bf80f66f0e2874d175d2e8ce7fe55882eb",
+    "proofs/extraction/operator-lean/DurationReadRefinement.lean": "b8c12a64ecfdc94a2d6a389a35658a347b495f4d954f27b35f95bb95e9a63e58"
+  },
+  "not_proved": [
+    "Translator and layout interpretation semantic preservation",
+    "Reverse unchecked constructor validity/UB",
+    "Wasm, full EVM and IC/ICRC ledger external correspondence"
+  ],
+  "rust_primary_sources": {
+    "/Users/0xhude/.rustup/toolchains/nightly-2026-09-17-aarch64-apple-darwin/lib/rustlib/src/rust/library/core/src/time.rs": "54659df6f5b6168b53a682df2f92b47540443bc333a0a40bb2ef13a16ab12358",
+    "/Users/0xhude/.rustup/toolchains/nightly-2026-09-17-aarch64-apple-darwin/lib/rustlib/src/rust/library/core/src/num/niche_types.rs": "1a74080c73dd7687b08e667d5611d4068a1b7556311f0b58e44edadb17d0a160",
+    "/Users/0xhude/.rustup/toolchains/nightly-2026-09-17-aarch64-apple-darwin/lib/rustlib/src/rust/library/core/src/convert/num.rs": "8dbf6c64681e2dee556e0844eef3e53d62a40df0280d25f469352870a401e034",
+    "/Users/0xhude/.rustup/toolchains/nightly-2026-09-17-aarch64-apple-darwin/lib/rustlib/src/rust/library/core/src/num/error.rs": "7447f99e89ce2f0163c83cbe177008c3b789b8129602099dfe9dc3f02909baff",
+    "/Users/0xhude/.rustup/toolchains/nightly-2026-09-17-aarch64-apple-darwin/lib/rustlib/src/rust/library/core/src/result.rs": "7f23a9f38da4fc06aaee76066e468d51d4da279f2325f44a8335186420f9ee6c"
+  },
+  "scope": "Actual full Nanoseconds type and actual read CastTransmute body plus Duration.as_secs/as_nanos and one global initializer. Exact native aarch64 Apple layout and exact closed Nanoseconds U32 range guarded. Constructor direction unsupported. Candidate only, not adopted in regular gate.",
+  "native_tests": "Exact actual cast bodies, 20 borrow/outlive pairs, exact Pure endpoints, 12 malformed-range negatives in classification and Pure, three non-Lean backends; actual native layout with 24 metadata mutations, reverse constructor and wrong scalar rejected.",
+  "lean": "Five explicit all-input generated-code theorems plus six Nano/Duration type inverse and read-model refinement theorems; twenty-four audited declarations. Generated reader replaces the external read model. No Nano constructor or compiler/layout semantic-preservation theorem.",
+  "miri": "Actual std Nanoseconds, five valid values (safe/unsafe construction and actual as_inner), two invalid values through safe constructor only, native size/align equality. One test passed; sampled runtime evidence, not all-input proof."
+}

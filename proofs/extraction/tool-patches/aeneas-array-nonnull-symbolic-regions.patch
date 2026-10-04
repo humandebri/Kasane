@@ -1,0 +1,64 @@
+--- a/src/interp/InterpExpressions.ml
++++ b/src/interp/InterpExpressions.ml
+@@ -859,6 +859,19 @@
+        | None -> false)
+   | _ -> false
+ 
++(* Recover pointee-region metadata from the actual symbolic loan. This is
++   a type correspondence only; the existing unary-op AST retains its shared
++   borrow operand and cast, and executable pointer extraction is still blocked. *)
++let array_ref_nonnull_symbolic_type crate src dst (loan : symbolic_value) =
++  if not(array_ref_nonnull_representation_supported crate src dst
++         && TypesUtils.ty_is_rty loan.sv_ty) then None
++  else match src,dst,loan.sv_ty with
++    | TRef(_,array_ty,RShared),TAdt r,TArray(elem,_,None)
++        when TypesUtils.ty_erase_regions loan.sv_ty=array_ty ->
++        let result=TAdt{r with generics={r.generics with types=[elem]}} in
++        if TypesUtils.ty_is_rty result then Some result else None
++    | _ -> None
++
+ let eval_unary_op_symbolic (config : config) (span : Meta.span) (unop : unop)
+     (op : operand) (ctx : eval_ctx) :
+     (tvalue, eval_error) result
+@@ -1076,8 +1089,15 @@
+             [%cassert] span
+               (src_ty=value_ty && array_ref_nonnull_representation_supported ctx.crate src_ty tgt_ty)
+               "Unsupported array-reference to NonNull representation";
+-            [%craise] span
+-              "Array-reference to NonNull requires verified pointer region/provenance correspondence"
++            let loan=match v.value with
++              | VBorrow(VSharedBorrow(bid,_)) ->
++                  (match (InterpBorrowsCore.ctx_lookup_shared_value span ctx bid).value with
++                   | VSymbolic s -> s
++                   | _ -> [%craise] span "NonNull conversion requires an actual symbolic array loan")
++              | _ -> [%craise] span "NonNull conversion requires an actual shared array borrow" in
++            (match array_ref_nonnull_symbolic_type ctx.crate src_ty tgt_ty loan with
++             | Some ty -> ty
++             | None -> [%craise] span "NonNull conversion loan type/region correspondence mismatch")
+         | Cast (CastTransmute (src_ty, tgt_ty)), (TFnPtr _ as value_ty) ->
+             [%cassert] span
+               (src_ty = value_ty
+--- a/src/interp/InterpExpressions.mli
++++ b/src/interp/InterpExpressions.mli
+@@ -108,3 +108,6 @@
+ 
+ (** Fixed-target representation classifier only; no pointer value extraction. *)
+ val array_ref_nonnull_representation_supported : LlbcAst.crate -> ty -> ty -> bool
++
++(** Recover full pointee region metadata from a matching symbolic array loan. *)
++val array_ref_nonnull_symbolic_type : LlbcAst.crate -> ty -> ty -> Values.symbolic_value -> ty option
+--- a/src/symbolic/SymbolicToPureExpressions.ml
++++ b/src/symbolic/SymbolicToPureExpressions.ml
+@@ -652,6 +652,12 @@
+               (* We shouldn't get there: this case should have been detected before
+                and handled in [translate_cast_unsize] *)
+               [%internal_error] ctx.span
++          | CastTransmute ((T.TRef(_,T.TArray _,T.RShared) as src_ty), (T.TAdt _ as tgt_ty)) ->
++              [%cassert] ctx.span
++                (InterpExpressions.array_ref_nonnull_representation_supported ctx.decls_ctx.crate src_ty tgt_ty)
++                "Unsupported Pure array-reference to NonNull representation";
++              [%craise] ctx.span
++                "Retained array-reference to NonNull requires verified pointer value extraction"
+           | CastTransmute (src_ty,tgt_ty) ->
+               let kind=translate_rust_fnptr_transmute (Some ctx.span)
+                 (translate_sty (Some ctx.span)) src_ty tgt_ty in

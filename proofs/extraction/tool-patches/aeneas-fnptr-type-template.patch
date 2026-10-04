@@ -1,0 +1,151 @@
+--- a/src/pure/Pure.ml
++++ b/src/pure/Pure.ml
+@@ -90,7 +90,15 @@
+   item_region_args : T.region list;
+ } [@@deriving show, ord]
+ 
++(* Bound type variables at depth zero in this signature refer to template
++   slots, not Rust type binders. Ordinary generic args own their values. *)
++type rust_fnptr_template = {
++  template_signature : T.fun_sig T.region_binder;
++  template_type_slots : int;
++} [@@deriving show, ord]
++
+ type builtin_ty =
++  | TRustFnPtrTemplate of rust_fnptr_template
+   | TRustTraitFnItem of rust_trait_fn_item
+   | TRustFnPtr of closed_fnptr_signature
+   | TResult
+--- a/src/symbolic/SymbolicToPureTypes.ml
++++ b/src/symbolic/SymbolicToPureTypes.ml
+@@ -35,6 +35,41 @@
+     end in
+     try List.iter (visitor#visit_ty ()) (sg.inputs @ [sg.output]); true
+     with Utils.Found -> false
++
++(* Validate using the existing closed-shape guard, then abstract only free
++   type variables. No erased validation probe is stored or exported. *)
++let split_rust_fnptr_template (s : T.fun_sig T.region_binder) =
++  let vars=ref T.TypeVarId.Set.empty and valid=ref true in
++  let probe=object
++    inherit [_] T.map_ty as super
++    method! visit_ty () ty = match ty with
++      | T.TVar(T.Free id) ->
++          if T.TypeVarId.to_int id<0 then valid:=false;
++          vars:=T.TypeVarId.Set.add id !vars; T.TNever
++      | _ -> super#visit_ty () ty
++  end in
++  let closed_probe=probe#visit_region_binder probe#visit_fun_sig () s in
++  let ids=T.TypeVarId.Set.elements !vars in
++  if not !valid || ids=[] || not(supported_closed_rust_fnptr closed_probe) then None
++  else
++    let positions=List.mapi(fun index id -> id,index) ids in
++    let abstract=object
++      inherit [_] T.map_ty as super
++      method! visit_ty () ty = match ty with
++        | T.TVar(T.Free id) -> T.TVar(T.Bound(0,T.TypeVarId.of_int(List.assoc id positions)))
++        | _ -> super#visit_ty () ty
++    end in
++    let signature=abstract#visit_region_binder abstract#visit_fun_sig () s in
++    Some({template_signature=signature;template_type_slots=List.length ids},
++      List.map(fun id -> T.TVar(T.Free id)) ids)
++
++let translate_rust_fnptr_template span translate_ty s =
++  [%cassert_opt_span] span (Config.backend ()=Config.Lean)
++    "Function-pointer templates require Lean";
++  let metadata,captures=[%unwrap_opt_span] span (split_rust_fnptr_template s)
++    "Unsupported Rust function-pointer template" in
++  TAdt(TBuiltin(TRustFnPtrTemplate metadata),
++    {types=List.map translate_ty captures;const_generics=[];trait_refs=[]})
+ 
+ let translate_closed_rust_fnptr span s =
+   [%cassert_opt_span] span
+@@ -271,7 +306,8 @@
+         (generics = TypesUtils.empty_generic_args)
+         "Unimplemented";
+       TTraitType (trait_ref, type_name)
+-  | TFnPtr s -> translate_closed_rust_fnptr span s
++  | TFnPtr s -> if supported_closed_rust_fnptr s then translate_closed_rust_fnptr span s
++      else translate_rust_fnptr_template span (translate_sty span) s
+   | TFnDef f -> translate_open_trait_fn_item span (translate_sty span) f
+   | TDynTrait { binder } ->
+       let p = binder.binder_params in
+@@ -546,7 +582,8 @@
+           let subst = make_subst_from_generics sg.generics generics in
+           ty_substitute subst sigs.ty
+       | T.TraitMethod _ -> [%craise_opt_span] span "Unimplemented")
+-  | TFnPtr s -> translate_closed_rust_fnptr span s
++  | TFnPtr s -> if supported_closed_rust_fnptr s then translate_closed_rust_fnptr span s
++      else translate_rust_fnptr_template span (translate_fwd_ty span decls_ctx) s
+   | TDynTrait { binder } ->
+       let params, _predicates =
+         translate_generic_params span binder.binder_params
+--- a/src/pure/PrintPure.ml
++++ b/src/pure/PrintPure.ml
+@@ -271,6 +271,7 @@
+ let builtin_ty_to_string (aty : builtin_ty) : string =
+   match aty with
+   | TRustFnPtr s -> "RustFnPtr(" ^ T.show_ty (T.TFnPtr s) ^ ")"
++  | TRustFnPtrTemplate m -> "RustFnPtrTemplate(" ^ show_rust_fnptr_template m ^ ")"
+   | TRustTraitFnItem m -> "RustTraitFnItem(" ^ show_rust_trait_fn_item m ^ ")"
+   | TResult -> "Result"
+   | TSum -> "Sum"
+@@ -513,7 +514,7 @@
+   | TBuiltin aty -> (
+       (* Builtin type *)
+       match aty with
+-      | TArray | TSlice | TStr | TRawPtr _ | TRustFnPtr _ | TRustTraitFnItem _ | TU32Range ->
++      | TArray | TSlice | TStr | TRawPtr _ | TRustFnPtr _ | TRustFnPtrTemplate _ | TRustTraitFnItem _ | TU32Range ->
+           (* Those types are opaque: we can't get there *)
+           [%craise_opt_span] span "Unreachable"
+       | TResult ->
+@@ -569,7 +570,7 @@
+       | TFuel | TArray | TSlice | TStr | TU32Range ->
+           (* Opaque types: we can't get there *)
+           [%craise_opt_span] span "Unreachable"
+-      | TResult | TError | TSum | TLoopResult | TRawPtr _ | TRustFnPtr _ | TRustTraitFnItem _ ->
++      | TResult | TError | TSum | TLoopResult | TRawPtr _ | TRustFnPtr _ | TRustFnPtrTemplate _ | TRustTraitFnItem _ ->
+           (* Enumerations: we can't get there *)
+           [%craise_opt_span] span "Unreachable")
+ 
+@@ -639,7 +640,7 @@
+     | TAdt (TBuiltin aty, _) -> (
+         (* Builtin type *)
+         match aty with
+-        | TRawPtr _ | TRustFnPtr _ | TRustTraitFnItem _ | TU32Range ->
++        | TRawPtr _ | TRustFnPtr _ | TRustFnPtrTemplate _ | TRustTraitFnItem _ | TU32Range ->
+             (* This type is opaque: we can't get there *)
+             [%craise_opt_span] span "Unreachable"
+         | TResult ->
+--- a/src/pure/PureTypeCheck.ml
++++ b/src/pure/PureTypeCheck.ml
+@@ -66,7 +66,7 @@
+           if variant_id = fuel_zero_id then []
+           else if variant_id = fuel_succ_id then [ mk_fuel_ty ]
+           else [%craise] span "Unreachable: improper variant id for fuel type"
+-      | TArray | TSlice | TStr | TRawPtr _ | TRustFnPtr _ | TRustTraitFnItem _ | TU32Range ->
++      | TArray | TSlice | TStr | TRawPtr _ | TRustFnPtr _ | TRustFnPtrTemplate _ | TRustTraitFnItem _ | TU32Range ->
+           (* Array: when not symbolic values (for instance, because of aggregates),
+              the array expressions are introduced as struct updates *)
+           [%craise] span "Attempting to access the fields of an opaque type")
+--- a/src/extract/ExtractBase.ml
++++ b/src/extract/ExtractBase.ml
+@@ -2017,6 +2017,7 @@
+           | TBuiltin TSlice -> "s"
+           | TBuiltin TStr -> "s"
+           | TBuiltin (TRustFnPtr _) -> "fp"
++          | TBuiltin (TRustFnPtrTemplate _) -> "fpt"
+           | TBuiltin (TRustTraitFnItem _) -> "fitem"
+           | TBuiltin (TRawPtr _) -> "p"
+           | TAdtId adt_id ->
+--- a/src/extract/ExtractTypes.ml
++++ b/src/extract/ExtractTypes.ml
+@@ -344,6 +344,8 @@
+       [%craise] span "Malformed U32 range generic arguments"
+   | TAdt (TBuiltin (TRustTraitFnItem _), _) ->
+       [%craise] span "Rust trait function-item template requires verified value/call extraction"
++  | TAdt (TBuiltin (TRustFnPtrTemplate _), _) ->
++      [%craise] span "Rust function-pointer template requires verified callable extraction"
+   | TAdt (TBuiltin (TRustFnPtr _), _) ->
+       [%craise] span "Retained Rust function pointer requires verified value/call extraction"
+   | TAdt (type_id, generics) -> (

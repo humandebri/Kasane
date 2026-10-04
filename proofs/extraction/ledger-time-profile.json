@@ -1,0 +1,26 @@
+{
+  "source_commit": "cf41372e3d4dc1accfe2c09a7969f8bddc729dc1",
+  "source_url": "https://raw.githubusercontent.com/dfinity/ic/cf41372e3d4dc1accfe2c09a7969f8bddc729dc1/rs/ledger_suite/common/ledger_core/src/timestamp.rs",
+  "source_sha256": "fa0bb78b3dc1194697227c74c7d311602bb4224955b4088eeba943d11feb8dad",
+  "official_dependency_lock": {
+    "url": "https://raw.githubusercontent.com/dfinity/ic/cf41372e3d4dc1accfe2c09a7969f8bddc729dc1/Cargo.lock",
+    "sha256": "4e804c61d9f7c0229561ebda745b6e8ca522830e2444ab863f2c7e8d47d82b7f"
+  },
+  "direct_dependency_versions": {
+    "candid": "0.10.22",
+    "ic-stable-structures": "0.6.8",
+    "minicbor": "0.19.1",
+    "serde": "1.0.228"
+  },
+  "dependency_scope": "Selected direct versions match fixed official lock; validation crate has its own locked transitive dependency graph, not a full IC workspace build.",
+  "rust_toolchain": "nightly-2026-09-17",
+  "rustflags": [
+    "-Coverflow-checks=yes",
+    "-Coverflow-checks=no"
+  ],
+  "explicit_theorems": 12,
+  "combined_audit_declarations": 267,
+  "scope": "Unchanged fixed-release TimeStamp constructors/accessor, checked new success/error conditions, wrapping new result modulo 2^64 and success iff nanos < 10^9. Add/Sub with Duration and source-to-Wasm correspondence remain unproved.",
+  "release_profile_boundary": "Official release/canister-release profile inherits normal release overflow settings and does not enable overflow-checks in the reviewed root manifest; overflow error proofs apply only to the explicitly checked extraction profile.",
+  "validation": "Both profiles regenerate identically; warning-as-error for correspondence, audit, kernel recheck passed; axiom/sorry/native negative cases rejected."
+}

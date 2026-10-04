@@ -1,0 +1,204 @@
+--- a/src/interp/InterpStatements.ml
++++ b/src/interp/InterpStatements.ml
+@@ -1493,6 +1493,13 @@
+          abs_ids generics args args_places ret_spc dest_place)
+   in
+ 
++  (* Never has no normal successor. Preserve the call, then eliminate its
++     impossible successful result rather than continuing with a symbolic value. *)
++  if inst_sg.output = TNever then
++    ([], fun branches ->
++      [%sanity_check] span (branches = []);
++      cc (SymbolicAst.Expansion (dest_place, ret_spc, ExpandAdt [])))
++  else
+   (* Move the return value to its destination *)
+   let ctx, cc = comp cc (assign_to_place config span ret_value dest ctx) in
+ 
+--- a/src/symbolic/SymbolicToPureExpressions.ml
++++ b/src/symbolic/SymbolicToPureExpressions.ml
+@@ -1400,7 +1400,11 @@
+   | ExpandAdt branches -> (
+       (* We don't do the same thing if there is a branching or not *)
+       match branches with
+-      | [] -> [%craise] ctx.span "Unreachable"
++      | [] ->
++          [%cassert] ctx.span (sv.V.sv_ty = T.TNever && Config.backend () = Config.Lean)
++            "Empty expansion requires Never and the Lean backend";
++          { e = Switch (scrutinee, Match []);
++            ty = compute_output_ty_from_decomposed ctx.sg.fun_ty }
+       | [ (variant_id, svl, branch) ]
+         when not
+                (TypesUtils.ty_is_custom_adt sv.V.sv_ty
+--- a/src/extract/Extract.ml
++++ b/src/extract/Extract.ml
+@@ -1527,6 +1527,11 @@
+ 
+       extract_branch true e_then;
+       extract_branch false e_else
++  | Match [] ->
++      [%cassert] span (Config.backend () = Config.Lean && scrut.ty = TNever)
++        "Empty match requires Never and the Lean backend";
++      F.pp_print_string fmt "nomatch ";
++      extract_texpr span ctx fmt ~inside:false ~inside_do:false scrut
+   | Match branches -> (
+       (* Open a box for the [match ... with] *)
+       F.pp_open_hovbox fmt ctx.indent_incr;
+--- a/src/pure/PureTypeCheck.ml
++++ b/src/pure/PureTypeCheck.ml
+@@ -257,6 +257,7 @@
+           check_texpr span ctx e_then;
+           check_texpr span ctx e_else
+       | Match branches ->
++          [%pure_type_check] span (branches <> [] || scrut.ty = TNever);
+           let check_branch (br : match_branch) : unit =
+             [%pure_type_check] span (br.pat.ty = scrut.ty);
+             let ctx = check_tpat span ctx br.pat in
+--- a/src/pure/PureMicroPassesGeneral.ml
++++ b/src/pure/PureMicroPassesGeneral.ml
+@@ -1085,7 +1085,7 @@
+                 in
+                 Match branches
+           in
+-          let ty = get_switch_body_ty switch in
++          let ty = match switch with Match [] -> new_ty | _ -> get_switch_body_ty switch in
+           { e = Switch (scrut, switch); ty }
+       | Meta (m, inner) -> mk_emeta m (update inner)
+       | EError _ -> { e with ty = new_ty }
+@@ -3210,7 +3210,7 @@
+         (* *)
+         {
+           e = Switch (scrut, Match branches);
+-          ty = (List.hd branches).branch.ty;
++          ty = (match branches with [] -> e.ty | b :: _ -> b.branch.ty);
+         }
+     | Loop _ ->
+         (* Loops should have been eliminated by then *)
+--- a/src/pure/PureMicroPassesLoops.ml
++++ b/src/pure/PureMicroPassesLoops.ml
+@@ -605,7 +605,7 @@
+                     { pat; branch })
+                   branches
+               in
+-              let ty = (List.hd branches).branch.ty in
++              let ty = match branches with [] -> e.ty | b :: _ -> b.branch.ty in
+               (Match branches, ty)
+         in
+         { e = Switch (scrut, switch); ty }
+--- a/src/pure/PureUtils.ml
++++ b/src/pure/PureUtils.ml
+@@ -890,6 +890,15 @@
+     | Match (br :: _) -> br.branch.ty
+   in
+   { e = Switch (scrut, body); ty }
++
++let mk_switch_with_empty_ty file line span empty_ty (scrut : texpr)
++    (body : switch_body) : texpr =
++  match body with
++  | Match [] ->
++      if scrut.ty <> TNever then
++        Errors.craise file line span "Empty match requires Never";
++      { e = Switch (scrut, body); ty = empty_ty }
++  | _ -> mk_switch file line span scrut body
+ 
+ (** Make a "simplified" tuple value from a list of values:
+     - if there is exactly one value, just return it
+--- a/src/pure/PureMicroPassesLoops.ml
++++ b/src/pure/PureMicroPassesLoops.ml
+@@ -554,7 +554,7 @@
+                 in
+                 Match branches
+           in
+-          [%add_loc] mk_switch span scrut switch
++          [%add_loc] mk_switch_with_empty_ty span e.ty scrut switch
+       | Meta (m, e) -> mk_emeta m (update e)
+     in
+ 
+@@ -1170,7 +1170,7 @@
+               in
+               Match branches
+         in
+-        [%add_loc] mk_switch span scrut switch
++        [%add_loc] mk_switch_with_empty_ty span e.ty scrut switch
+     | Meta (m, e) -> mk_emeta m (update e)
+   in
+ 
+@@ -1730,7 +1730,7 @@
+                      { pat; branch })
+                    bl)
+         in
+-        [%add_loc] mk_switch span scrut switch
++        [%add_loc] mk_switch_with_empty_ty span e.ty scrut switch
+   in
+   let body =
+     Option.map
+@@ -1850,7 +1850,7 @@
+                 in
+                 Match branches
+           in
+-          [%add_loc] mk_switch span scrut switch
++          [%add_loc] mk_switch_with_empty_ty span e.ty scrut switch
+       | Meta (m, e) -> mk_emeta m (update e)
+     in
+ 
+@@ -2244,7 +2244,7 @@
+                      { pat; branch })
+                    bl)
+         in
+-        [%add_loc] mk_switch span scrut switch
++        [%add_loc] mk_switch_with_empty_ty span e.ty scrut switch
+   in
+   let body =
+     Option.map
+@@ -2618,7 +2618,7 @@
+               in
+               Match branches
+         in
+-        [%add_loc] mk_switch span scrut switch
++        [%add_loc] mk_switch_with_empty_ty span e.ty scrut switch
+     | Meta (m, e) -> mk_emeta m (update e)
+   and update_app_or_qualif (e : texpr) : texpr =
+     (* This might be a break or a continue *)
+--- a/src/extract/ExtractBuiltin.ml
++++ b/src/extract/ExtractBuiltin.ml
+@@ -877,7 +877,10 @@
+                    (false, "rotate_right");
+                  ])
+              all_int_names)
+-      @ lean_builtin_funs)
++      @ List.filter
++          (fun (pattern, _) -> pattern <>
++            parse_pattern "core::result::{core::result::Result<@T, @E>}::unwrap")
++          lean_builtin_funs)
+ 
+ let builtin_funs : unit -> (pattern * Pure.builtin_fun_info) list =
+   (* We need to take into account the default trait methods *)
+--- a/src/extract/ExtractTypes.ml
++++ b/src/extract/ExtractTypes.ml
+@@ -9,19 +9,15 @@
+ 
+ let extract_str (_span : Meta.span) (fmt : F.formatter) ~(inside : bool)
+     (s : string) : unit =
+-  let chars = StringUtils.string_to_chars s in
+-  (* Using the OCaml escape conventions for now.
+-
+-     TODO: does this really work? *)
+-  let s = String.concat "" (List.map Char.escaped chars) in
+-  let s = "\"" ^ s ^ "\"" in
+-
+-  (* We need to convert the string to a str (the conversion inserts a static check
+-     that the string is not too long) *)
++  (* Emit the exact source UTF-8 bytes. toStr's default length proof uses
++     native evaluation, whereas a finite byte list has a kernel proof. *)
++  let bytes = List.map
++    (fun c -> string_of_int (Char.code c) ^ "#u8")
++    (StringUtils.string_to_chars s) in
+   if inside then F.pp_print_string fmt "(";
+-  F.pp_print_string fmt "toStr";
+-  F.pp_print_space fmt ();
+-  F.pp_print_string fmt s;
++  F.pp_print_string fmt "Slice.from [";
++  F.pp_print_string fmt (String.concat ", " bytes);
++  F.pp_print_string fmt "] (by scalar_tac)";
+   if inside then F.pp_print_string fmt ")"
+ 
+ (** Format a constant value.

@@ -1,0 +1,23 @@
+{
+  "status": "eight-all-input-extracted-source-predicate-theorems",
+  "source": "fixed Charon TypeInfo::is_closed and three predicates; bitflags 2.9.1 contains/from_bits/three flags; actual source unchanged",
+  "charon_commit": "c8f15d7d658c86a95658f71ad99cddd4be002e04",
+  "rust": "nightly-2026-09-17",
+  "features": "Charon library --no-default-features; supplied public library configuration without rustc internals",
+  "default_feature_attempt": "Failed to locate rustc-private crates under extractor explicit target compilation; not accepted as verified input",
+  "selected_source_feature_branches": "TypeInfo predicate source has no feature branches; full native feature/dependency-profile equivalence remains unproved",
+  "explicit_theorems": 8,
+  "audited_theorem_declarations": 31,
+  "all_inputs": "All TypeInfo records: every optional DeBruijnId/usize index and all U8 flag values, plus all U8 masks for bitflags contains",
+  "result": "Exact Bool result and totality of extracted predicate; masks 16,2,4 and precise short-circuit behavior match closedSpec",
+  "verification": "Regeneration identical; warning-as-error; no forbidden axioms; independent kernel recheck; axiom/sorry/native evaluation negative tests rejected",
+  "reproduction": "bash scripts/verify-typeinfo-experimental.sh",
+  "remaining": [
+    "TypeInfo::compute and cached-info coherence against arbitrary AST",
+    "Semantic environment independence / substitution theorem on actual types",
+    "Native default-feature profile correspondence",
+    "GAT normalization transform correctness",
+    "Full Rust/Lean/EVM/IC/ledger/native/Wasm correspondence"
+  ],
+  "generated_sha256": "11ecf1ca23726a9583c2e936ca33817f33f8cf521eed3c0ec7631c4c3edeb818"
+}

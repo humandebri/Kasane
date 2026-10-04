@@ -56,3 +56,7 @@ argument mapping and finite execution tests.
 
 See [2026-09-30 upgrade and snapshot validation scope](mainnet-readiness-2026-09-30.md)
 for the PocketIC state-preservation tests and the remaining deployed-version migration checks.
+
+Rust由来の定義との全入力対応13関数とruint桁演算2関数は `proofs/extraction/README.md`、
+固定ledgerモデルとrevm命令抽出の未解決義務は `proofs/external/README.md` に記録する。
+Verus固定版をmacOS arm64へ導入し、分離基準版で198件、原作業ツリーで204件の契約を再検証した。

@@ -1,4 +1,4 @@
-6becc8c6d07f85fe2d5c0320df730413ed10dac8264dc4f63bc1be8263b7c6f1  crates/verified-core/src/fee.rs
+c3e4ce6a6fcf932eba974b6c6b58498f4a61af4a7c62fc6ccd7a8a836a7b1f39  crates/verified-core/src/fee.rs
 17deb4e393200692f0518611e963294b3bdf76fa5e4a8f66b93b6a0ff4f4b94c  crates/verified-core/src/state_diff.rs
 52b0dd99001d2a6ec114d36c372173eab28f0b221df869658d66e200d9b79a52  crates/evm-core/src/revm_exec.rs
 386a3d49177cd285492a335c720dffbea0b7c192eff36c59f0d3837b1bdfa252  crates/evm-core/src/revm_db.rs
@@ -7,3 +7,4 @@
 0abb0cd0e354eda71055ba76497ce4d37841a71a6befaee11e1d49db01152b8a  crates/evm-core/Cargo.toml
 272266f066e89637bca1791b96688d42f4fe3e1b01a5148e25b84138bc6c3168  Cargo.lock
 8608b1681aa2ef28ce7953ab7845955267d8eaffb25cba111f5dba7d88c32de8  crates/evm-db/src/chain_data/constants.rs
+eff9b7ecfbd0de9bb5d01077e94cc817f6e6d776ed4f5504bd699099987809d0  proofs/external/ledger-profile.json

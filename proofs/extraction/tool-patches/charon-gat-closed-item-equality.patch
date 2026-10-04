@@ -1,0 +1,82 @@
+--- a/charon/src/transform/normalize/expand_associated_types.rs
++++ b/charon/src/transform/normalize/expand_associated_types.rs
+@@ -970,6 +970,7 @@
+     // Whether the current item is a type alias, which affects error messages.
+     is_type_alias: bool,
+     item_modifications: &'a HashMap<GenericsSource, ItemModifications>,
++    trait_decls_before_update: &'a IndexMap<TraitDeclId, TraitDecl>,
+     // It's a reversed stack, for when we go under binders.
+     type_replacements: BindingStack<TypeConstraintSet>,
+ }
+@@ -1030,7 +1031,53 @@
+                 let path = path.on_tref(&TraitRefPath::parent_clause(*clause_id, tref.trait_id()));
+                 self.lookup_path_on_trait_ref(&path, parent)
+             }
+-            TraitRefKind::ItemClause { .. } => None,
++            TraitRefKind::ItemClause {
++                trait_ref,
++                type_id,
++                clause_id,
++                ..
++            } => {
++                // A closed equality declared on this exact item clause holds for
++                // every binder instantiation. Do not infer parameter-dependent
++                // equalities without proper GAT argument substitution.
++                if !path.tref.parent_path.is_empty() {
++                    return None;
++                }
++                let decl = self.trait_decls_before_update.get(trait_ref.trait_id())?;
++                let assoc = decl.types.get(*type_id)?;
++                let mut found = None;
++                for constraint in &assoc.params.trait_type_constraints {
++                    let constraint = &constraint.skip_binder;
++                    if constraint.type_id != path.type_id
++                        || constraint.trait_ref.trait_id() != tref.trait_id()
++                        || !constraint.ty.type_info().is_closed()
++                        || constraint.ty.is_error()
++                    {
++                        continue;
++                    }
++                    let TraitRefKind::ItemClause {
++                        trait_ref: bound_parent,
++                        type_id: bound_type,
++                        clause_id: bound_clause,
++                        ..
++                    } = &constraint.trait_ref.kind
++                    else {
++                        continue;
++                    };
++                    if !matches!(bound_parent.kind, TraitRefKind::SelfId)
++                        || bound_parent.trait_id() != trait_ref.trait_id()
++                        || bound_type != type_id
++                        || bound_clause != clause_id
++                    {
++                        continue;
++                    }
++                    if found.as_ref().is_some_and(|ty| ty != &constraint.ty) {
++                        return None;
++                    }
++                    found = Some(constraint.ty.clone());
++                }
++                found
++            },
+             TraitRefKind::BuiltinOrAuto {
+                 parent_trait_refs,
+                 types,
+@@ -1443,6 +1490,8 @@
+             item_modifications
+         };
+ 
++        // Keep item-clause equalities while declarations are taken out and rewritten.
++        let trait_decls_before_update = ctx.translated.trait_decls.clone();
+         // Apply the computed modifications to each item.
+         ctx.for_each_item_mut(|ctx, mut item| {
+             trace!(
+@@ -1516,6 +1565,7 @@
+                 span,
+                 is_type_alias,
+                 item_modifications: &item_modifications,
++                trait_decls_before_update: &trait_decls_before_update,
+                 type_replacements: BindingStack::new(type_replacements),
+             });
+         });

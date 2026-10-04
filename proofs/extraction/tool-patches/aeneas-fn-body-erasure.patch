@@ -1,0 +1,26 @@
+--- a/src/PrePasses.ml
++++ b/src/PrePasses.ml
+@@ -52,6 +52,10 @@
+         (* Do not erase the use of body regions inside function operands *)
+         x
+ 
++      method! visit_TFnDef _ fn =
++        TypesUtils.erase_regions_preserve_fn_binders (TFnDef fn)
++      method! visit_TFnPtr _ fn =
++        TypesUtils.erase_regions_preserve_fn_binders (TFnPtr fn)
+       method! visit_RBody _ _ = RErased
+       method! visit_RVar _ _ = RErased
+       method! visit_RStatic _ = RErased
+--- a/src/llbc/Contexts.ml
++++ b/src/llbc/Contexts.ml
+@@ -370,6 +370,10 @@
+   let v =
+     object
+       inherit [_] map_ty
++      method! visit_TFnDef _ fn =
++        TypesUtils.erase_regions_preserve_fn_binders (TFnDef fn)
++      method! visit_TFnPtr _ fn =
++        TypesUtils.erase_regions_preserve_fn_binders (TFnPtr fn)
+       method! visit_region _ _ = RErased
+     end
+   in

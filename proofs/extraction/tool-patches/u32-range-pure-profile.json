@@ -1,0 +1,40 @@
+{
+  "candidate": "Unadopted Lean Subtype extraction of well-typed constant U32 ranges",
+  "base_source_sha256": {
+    ".local/proof-tools/aeneas-source/src/llbc/TypesAnalysis.ml": "9d4c6eb7be147df8a9fdc1cf486adadf3fc2da4a478a050ed1f0207f0368fd7b",
+    ".local/proof-tools/aeneas-source/src/pure/Pure.ml": "29646c70cd19906ee8838d769b27eb03faa6f2f08ee773de83df85bb5162221e",
+    ".local/proof-tools/aeneas-source/src/pure/PureTypeCheck.ml": "21f84a2611feb7d26db9c939949ec7ca37c251ffdaafe2ca9051ecb275faec71",
+    ".local/proof-tools/aeneas-source/src/pure/PrintPure.ml": "e92780062da67c5ab5fd5cb20292452862a43757b7bf599724f8648d88fa0d8b",
+    ".local/proof-tools/aeneas-source/src/extract/ExtractBase.ml": "43dbd83ae65ebf6a6c4cde9633ce489df03e7578da9f6b695717b7ca0fa2b230",
+    ".local/proof-tools/aeneas-source/src/extract/ExtractTypes.ml": "fa8bba38aa57df51c1e5846e8e664885b7415a0c569d0ba379965898a7d42919",
+    ".local/proof-tools/aeneas-source/src/symbolic/SymbolicToPureTypes.ml": "35107f4f7c87ec6d57f62a83c5a063eb2e024115b64f9d69e9a3341b009d25ce"
+  },
+  "sha256": {
+    "proofs/extraction/tool-patches/aeneas-u32-range-borrow-analysis.patch": "22a60030e0a36c3c2cff364306b2709675920846a66ca484a2573be4a4a40264",
+    "proofs/extraction/tool-patches/aeneas-u32-range-pure-subtype.patch": "cf36dc87c3bb77f6168f17e048e5b5254022757365e1085bf8644b0cd32e39b2",
+    "proofs/extraction/tool-patches/tests/U32RangePureRegression.ml": "fd0b6196b6c64d0ab943886ec184664050f949a47396cbb355f0a7e2fc0a3beb",
+    "scripts/build-u32-range-pure-candidate.sh": "985c6b79bfc40c460c57b5cc0025c3bab6b7d0841289b3bfd7409ab5f2f2bf17",
+    "scripts/verify-u32-range-pure-candidate.sh": "c052b1f4e1a3340265a0514ebbea1cbd9b2ee20d6dd4e42337b860cabaf93408",
+    ".local/proof-tools/aeneas-u32-range-pure/aeneas": "7e6fb67f9e1a3eacbfaafc1ee7aaa885d103abc9688fd383fc1a413217676c27",
+    ".local/proof-tools/aeneas-u32-range-pure/check": "f25c6b1aa65544174a182f4846ce3b1727aaddea85370aa3b864faf6eae3c3d5",
+    "proofs/extraction/operator-lean/DurationRangeGenerated.lean": "6aee3ae121fe9c87f55a7a8c42385c6060c0a3b07f6d1cbc4fa8e16df659bc47",
+    "proofs/extraction/operator-lean/DurationRangeCorrespondence.lean": "dc82e31139f0668b3165163b308847f8aff01a4e67e3f34534469b78f29139ce",
+    "proofs/extraction/operator-lean/DurationRangeAudit.lean": "56dacb82b3b977bff7f0db4924793bda740a78b5362a757a24ab26955931e21c"
+  },
+  "rust_primary_sources": {
+    "/Users/0xhude/.rustup/toolchains/nightly-2026-09-17-aarch64-apple-darwin/lib/rustlib/src/rust/library/core/src/time.rs": "54659df6f5b6168b53a682df2f92b47540443bc333a0a40bb2ef13a16ab12358",
+    "/Users/0xhude/.rustup/toolchains/nightly-2026-09-17-aarch64-apple-darwin/lib/rustlib/src/rust/library/core/src/num/niche_types.rs": "1a74080c73dd7687b08e667d5611d4068a1b7556311f0b58e44edadb17d0a160",
+    "/Users/0xhude/.rustup/toolchains/nightly-2026-09-17-aarch64-apple-darwin/lib/rustlib/src/rust/library/core/src/convert/num.rs": "8dbf6c64681e2dee556e0844eef3e53d62a40df0280d25f469352870a401e034",
+    "/Users/0xhude/.rustup/toolchains/nightly-2026-09-17-aarch64-apple-darwin/lib/rustlib/src/rust/library/core/src/num/error.rs": "7447f99e89ce2f0163c83cbe177008c3b789b8129602099dfe9dc3f02909baff",
+    "/Users/0xhude/.rustup/toolchains/nightly-2026-09-17-aarch64-apple-darwin/lib/rustlib/src/rust/library/core/src/result.rs": "7f23a9f38da4fc06aaee76066e468d51d4da279f2325f44a8335186420f9ee6c"
+  },
+  "scope": "Actual full Nanoseconds type and Duration.as_secs extracted unchanged; range retained in Lean Subtype. Five explicit theorems, eleven audited declarations. Both actual unsafe transmute directions remain strictly unsupported.",
+  "not_proved": [
+    "Candidate translator semantic preservation",
+    "Rust pattern-type validity, layout and unsafe transmute",
+    "Rust/native/Wasm/Lean execution correspondence",
+    "All EVM instructions and IC/ICRC ledger external behavior"
+  ],
+  "native_tests": "Actual Nanoseconds and four U32 boundary ranges: 20 borrow/outlive comparison pairs with exact Pure endpoints; 12 strict negatives in both classification and signature translation; three non-Lean backends rejected. Both actual typed transmute bodies/signatures retained.",
+  "validation": "Strict clean extraction and unchanged generated getter/type; five explicit proofs, eleven audited declarations, warning-as-error, independent kernel recheck and three forbidden-axiom negative controls. Existing Duration source/refinement gate revalidated; fixed Verus 198 verified, zero errors. Full Aeneas test suite and translator semantic preservation not proved."
+}

@@ -1,0 +1,10 @@
+[package]
+name = "kasane-revm-instruction-probe"
+version = "0.1.0"
+edition = "2021"
+[workspace]
+[lib]
+path = "lib.rs"
+[dependencies]
+revm-interpreter = { path = "../../../vendor/revm/crates/interpreter", default-features = false, features = ["std"] }
+ruint = { version = "=1.20.0", default-features = false, features = ["std", "serde", "alloy-rlp"] }

@@ -1,0 +1,90 @@
+--- a/src/PrePasses.ml
++++ b/src/PrePasses.ml
+@@ -2378,6 +2378,79 @@
+       else f
+   | _ -> f
+ 
++(** Fuse only an immediately borrowed temporary pointer copy. The temporary
++    must have no uses elsewhere; preserve arbitrary/escaping mutable copies. *)
++let fuse_immediate_ref_copy (_crate : crate) (f : fun_decl) : fun_decl =
++  match f.body with
++  | StructuredBody body ->
++      let count_uses id node =
++        let count = ref 0 in
++        let visitor =
++          object
++            inherit [_] iter_statement as super
++            method! visit_place_kind env kind =
++              (match kind with PlaceLocal local when local = id -> incr count | _ -> ());
++              super#visit_place_kind env kind
++          end
++        in
++        visitor#visit_block () node;
++        !count
++      in
++      let substitute id source st =
++        let visitor =
++          object
++            inherit [_] map_statement as super
++            method! visit_place env place =
++              match place.kind with
++              | PlaceLocal local when local = id -> source
++              | _ -> super#visit_place env place
++          end
++        in
++        visitor#visit_statement () st
++      in
++      let rec root (place : place) =
++        match place.kind with
++        | PlaceLocal id -> Some id
++        | PlaceProjection (p, _) -> root p
++        | _ -> None
++      in
++      let rec dereferences id (place : place) =
++        match place.kind with
++        | PlaceProjection ({ kind = PlaceLocal local; _ }, Deref) -> local = id
++        | PlaceProjection (p, Field _) -> dereferences id p
++        | _ -> false
++      in
++      let visitor =
++        object
++          inherit [_] map_statement as super
++          method! visit_block env block =
++            let block = super#visit_block env block in
++            let rec fuse statements =
++              match statements with
++              | ({ kind = Assign ({ kind = PlaceLocal id; ty = TRef (_, _, RMut) }, Use (Copy source, NoRetag)); _ } as copy)
++                :: ({ kind = Assign (destination, RvRef (borrowed, _, metadata)); _ } as borrow) :: rest ->
++                  let metadata_ok =
++                    match metadata with
++                    | Constant _ -> true
++                    | Copy { kind = PlaceProjection ({ kind = PlaceLocal local; _ }, PtrMetadata); _ } -> local = id
++                    | _ -> false
++                  in
++                  let local_block = { block with statements = [copy; borrow] } in
++                  if dereferences id borrowed && metadata_ok
++                     && root source <> Some id && root destination <> root source
++                     && root destination <> Some id
++                     && count_uses id body.body = count_uses id local_block
++                  then { copy with kind = Nop } :: substitute id source borrow :: fuse rest
++                  else copy :: fuse (borrow :: rest)
++              | st :: rest -> st :: fuse rest
++              | [] -> []
++            in
++            { block with statements = fuse block.statements }
++        end
++      in
++      { f with body = StructuredBody { body with body = visitor#visit_block () body.body } }
++  | _ -> f
++
+ let apply_passes (crate : crate) : crate =
+   (* Passes that apply to the whole crate *)
+   let crate = update_array_default crate in
+@@ -2386,6 +2459,7 @@
+     [
+       ("fix_closure_lifetimes", fix_closure_lifetimes);
+       ("fix_closure_signature_regions", fix_closure_signature_regions);
++      ("fuse_immediate_ref_copy", fuse_immediate_ref_copy);
+       ("erase_body_regions", erase_body_regions);
+       ("remove_unreachable", remove_unreachable);
+       ("update_loop", update_loops);

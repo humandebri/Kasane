@@ -1,0 +1,40 @@
+--- a/src/llbc/TypesAnalysis.ml
++++ b/src/llbc/TypesAnalysis.ml
+@@ -204,6 +204,19 @@
+   | ParentClause (tref, _) -> trait_instance_id_reducible span tref.kind
+   | Dyn -> [%craise_opt_span] span "Unreachable"
+   | ItemClause _ | UnknownTrait _ -> false
++
++(* Only classify constant U32 ranges. The original range type is not rewritten. *)
++let supported_u32_range_pattern (ty : ty) (pat : type_pattern) : bool =
++  match (ty, pat) with
++  | TScalar (TInteger (Unsigned U32)), Range (lo, hi) -> (
++      match (lo.kind, hi.kind) with
++      | CInteger (UnsignedInteger (U32, lo_value)),
++        CInteger (UnsignedInteger (U32, hi_value)) ->
++          lo.ty = ty && hi.ty = ty && Z.sign lo_value >= 0
++          && Z.leq lo_value hi_value
++          && Z.lt hi_value (Z.shift_left Z.one 32)
++      | _ -> false)
++  | _ -> false
+ 
+ let analyze_full_ty (span : Meta.span option) (updated : bool ref)
+     (infos : type_infos) (ty_info : partial_type_info) (ty : ty) :
+@@ -481,6 +494,8 @@
+         in
+         [%cassert_opt_span] span (not has_regions) "Unimplemented";
+         ty_info
++    | TPattern (base, pat) when supported_u32_range_pattern base pat ->
++        analyze span expl_info ty_info base
+     | TError _ ->
+         [%craise_opt_span] span "Found type error in the output of charon"
+     | _ -> [%craise_opt_span] span ("unsupported type: " ^ show_ty ty)
+@@ -819,6 +834,8 @@
+                back values computed for the generated backward functions may \
+                be incorrect.";
+             ()
++        | TPattern (base, pat) when supported_u32_range_pattern base pat ->
++            self#visit_ty outer base
+         | TError _ ->
+             [%craise_opt_span] span "Found type error in the output of charon"
+         | _ -> [%craise_opt_span] span ("unsupported type: " ^ show_ty ty)

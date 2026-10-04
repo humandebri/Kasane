@@ -1,0 +1,38 @@
+{
+  "source_commit": "cf41372e3d4dc1accfe2c09a7969f8bddc729dc1",
+  "sha256": {
+    "scripts/extract_release_timestamp_sequence.py": "7a23ae96e8f77a76107811fff978b690b35c4c5f23e4cdeccf1ab22475e0880a",
+    "scripts/verify-release-timestamp-sequence.sh": "1160282fd56de4ce99634993bfbade1ba1116900f2fcaf8391123b2935aea572",
+    "scripts/audit_ledger_core_release_mir.py": "227059da57aa842965b961c131735f7b9a31a7d7a8fa09637ff4bbdf78fca8e5",
+    "scripts/replay_ledger_core_mir.py": "519ca989af482cc9daf5044411bcbbcdc468be86a73d761278c8665262bf241b",
+    "proofs/external/ledger-core-release-mir-profile.json": "9cb56ab87212fa72479e7223a4fc3131a1a2d46248f7146ae390d3b932ec3649",
+    "proofs/external/ledger-core-release-timestamp.mir": "1d21a3147a136befd18de74206211a911f9a227a93ce9dc44fa4f2c3dd1de3dd",
+    "proofs/extraction/operator-lean/ReleaseTimestampSequence.lean": "dc24a507320f9e4105f5d316ddc4f132b5ee9b797e119dcc114ee93e44c9b529",
+    "proofs/extraction/operator-lean/ReleaseTimestampGenerated.lean": "f71af2148e86338a1adcf11b797a6201a9fd40226f32a12710fe3c8a3a93b265",
+    "proofs/extraction/operator-lean/ReleaseTimestampCorrespondence.lean": "d4f8f4efd1a9cfc909b78420e7fa6087e9acc371804414d620b8764cb3df66ba",
+    "proofs/extraction/operator-lean/ReleaseTimestampAudit.lean": "a7588d11d50dbd4a17622fc33efcefd64df7481157d04174238c0b1d49848733",
+    "proofs/extraction/operator-lean/LedgerDurationModel.lean": "b429dcd2adb9bac5e1abe958afc050154e25ef57f2a4178cc43b97778b1670cf",
+    "proofs/extraction/operator-lean/LedgerDurationExtract/TypesExternal.lean": "6f9b6dfc051486d4f262e280d76f76175308499cb31858e66b4a72df51778a59",
+    "proofs/extraction/operator-lean/lakefile.lean": "052bcdd05dcdc1241f5d4bd227fe793b07f144b0b208f07ac1bf6c522524c0b6",
+    "proofs/extraction/operator-lean/lean-toolchain": "efac0b94923b2d8b6840cd35be9177ad0fc5ab2332f4f4311c98712cee92fdee"
+  },
+  "theorem_count": 11,
+  "scope": "Two generated fixed actual-MIR call-sequence witnesses, explicitly limited typed interpreter and conditional stdlib call contracts. All model-valid Duration and U64 timestamps; value-or-panic observation only.",
+  "contracts": [
+    "Duration::as_nanos total = secs*1e9+nanos on modeled valid Duration",
+    "TryInto<u64> total checked conversion bound u64::MAX; error payload abstract Unit",
+    "Result::unwrap returns Ok or abstract panic on Err; no payload/trap/termination details",
+    "saturating add/sub total natural arithmetic min(max64,x+y) and x-y"
+  ],
+  "unproved": [
+    "Rust/MIR frontend operational refinement of the restricted call sequence",
+    "StorageLive/Dead, shared-reference creation, moves, unwind unreachable, layout/provenance/typevalidity abstractions",
+    "Actual Rust1.93.1 stdlib call contracts and valid Duration representation correspondence",
+    "LLVM/Wasm compiler semantics and IC execution/ledger external protocol"
+  ],
+  "validation": "Gate passed: fixed original MIR/action SHA and regenerated programs, strict warningAsError on all four new Lean files, eleven named theorem and namespace axiom audit, independent leanchecker, axiom/sorry/native_decide rejection and uninitialized-local success rejection. Original compiler-action/MIR audit also rejects eight mutations.",
+  "semantic_equivalence_proved": false,
+  "lakefile_extension": "Only four new ReleaseTimestampCFG libraries appended; prior exact lakefile prefix matched original fixed SHA. Existing sequence proof files and extraction unchanged.",
+  "lakefile_lifetime_extension": "Four local lifetime libraries appended; preceding complete Lakefile matched fixed prior SHA. Existing sequence and CFG source modules unchanged.",
+  "lakefile_soundness_extension": "Two checker-soundness libraries appended; all previous exact sources and Lakefile prefix SHA verified before changing config and ancestor metadata hashes."
+}

@@ -1,0 +1,46 @@
+--- a/src/interp/InterpExpressions.ml
++++ b/src/interp/InterpExpressions.ml
+@@ -803,6 +803,21 @@
+       && Substitute.lookup_fndef_sig crate item = Some target
+   | _ -> false
+ 
++(* Representation-only cast. Unsafe call ABI/provenance/receiver obligations
++   are separate and are not discharged by preserving this symbolic operation. *)
++let fnptr_transmute_representation_supported (src : ty) (dst : ty) : bool =
++  match (src, dst) with
++  | TFnPtr source, TFnPtr target ->
++      TypesUtils.ty_is_rty src && TypesUtils.ty_is_rty dst
++      && source.binder_value.abi = AbiRust
++      && target.binder_value.abi = AbiRust
++      && not source.binder_value.is_variadic
++      && not target.binder_value.is_variadic
++      && target.binder_value.is_unsafe
++      && List.length source.binder_value.inputs = List.length target.binder_value.inputs
++      && source.binder_value.output = target.binder_value.output
++  | _ -> false
++
+ let eval_unary_op_symbolic (config : config) (span : Meta.span) (unop : unop)
+     (op : operand) (ctx : eval_ctx) :
+     (tvalue, eval_error) result
+@@ -1012,6 +1027,12 @@
+             let _ = cast_unsize_to_modified_fields span ctx ty0 ty1 in
+             ty1
+         | Cast (CastRawPtr (_, tgt_ty)), _ -> tgt_ty
++        | Cast (CastTransmute (src_ty, tgt_ty)), (TFnPtr _ as value_ty) ->
++            [%cassert] span
++              (src_ty = value_ty
++              && fnptr_transmute_representation_supported src_ty tgt_ty)
++              "Unsupported function-pointer transmute representation";
++            tgt_ty
+         | Cast (CastFnPtr (src_ty, tgt_ty)), (TFnDef _ as value_ty) ->
+             [%cassert] span
+               (src_ty = value_ty
+--- a/src/interp/InterpExpressions.mli
++++ b/src/interp/InterpExpressions.mli
+@@ -102,3 +102,6 @@
+ 
+ (** Exact Rust function-item signature guard; no callable pointer semantics. *)
+ val fn_item_reification_signature_matches : LlbcAst.crate -> ty -> ty -> bool
++
++(** Representation guard only; unsafe call ABI/receiver validity are not proved. *)
++val fnptr_transmute_representation_supported : ty -> ty -> bool

@@ -1,0 +1,150 @@
+--- a/src/symbolic/SymbolicToPureExpressions.ml
++++ b/src/symbolic/SymbolicToPureExpressions.ml
+@@ -8,6 +8,13 @@
+ 
+ (** The local logger *)
+ let log = Logging.symbolic_to_pure_expressions_log
++
++let apply_dynamic_callback (span : Meta.span) (callback : texpr)
++    (args : texpr list) (output : ty) : texpr =
++  let expected = mk_arrows (List.map (fun (arg : texpr) -> arg.ty) args) output in
++  [%cassert] span (callback.ty = expected)
++    "Dynamic callback type does not preserve input/effect/backward output";
++  [%add_loc] mk_apps span callback args
+ 
+ let translate_fn_ptr_kind (ctx : bs_ctx) (id : A.fn_ptr_kind) : fn_ptr_kind =
+   match id with
+@@ -407,15 +414,17 @@
+      if necessary. *)
+   let ctx, fun_id, effect_info, args, back_funs, dest_v =
+     match call.call_id with
+-    | S.Dynamic _ ->
+-        [%craise] ctx.span "Dynamic Pure application is not implemented"
+-    | S.Fun (fid, call_id) ->
+-        (* Regular function call *)
+-        let fid_t = translate_fn_ptr_kind ctx fid in
+-        let func = Fun (FromLlbc (fid_t, None)) in
+-        (* Retrieve the effect information about this function (can fail,
+-         * takes a state as input, etc.) *)
+-        let effect_info = get_fun_effect_info ctx fid_t None in
++    | (S.Fun (_, call_id) | S.Dynamic call_id) ->
++        let fid, func, effect_info = match call.call_id with
++          | S.Fun (fid, _) ->
++              let fid_t = translate_fn_ptr_kind ctx fid in
++              (Some fid, Some (Fun (FromLlbc (fid_t, None))),
++               get_fun_effect_info ctx fid_t None)
++          | S.Dynamic _ ->
++              [%cassert] ctx.span (Option.is_some call.callback)
++                "Dynamic call missing evaluated callback";
++              (None, None, { can_fail = true; can_diverge = true; is_rec = false })
++          | _ -> [%internal_error] ctx.span in
+         (* Generate the variables for the backward functions returned by the forward
+            function. *)
+         let ctx, ignore_fwd_output, back_funs =
+@@ -424,9 +433,16 @@
+           let inst_sg = Option.get call.inst_sg in
+           let decls_ctx = ctx.decls_ctx in
+           let dsg =
+-            translate_inst_fun_sig_to_decomposed_fun_type (Some ctx.span)
+-              decls_ctx fid_t inst_sg sg.output
+-              (List.map (fun _ -> None) sg.inputs)
++            let names = List.map (fun _ -> None) sg.inputs in
++            match fid with
++            | Some fid -> translate_inst_fun_sig_to_decomposed_fun_type
++                (Some ctx.span) decls_ctx (translate_fn_ptr_kind ctx fid)
++                inst_sg sg.output names
++            | None -> translate_inst_fun_sig_with_effects (Some ctx.span) decls_ctx
++                (function
++                  | None -> effect_info
++                  | Some _ -> { can_fail = false; can_diverge = true; is_rec = false })
++                (fun _ -> "dynamic callback") inst_sg sg.output names
+           in
+           let back_tys = compute_back_tys_with_info dsg in
+           [%ltrace
+@@ -439,10 +455,11 @@
+           let back_fun_name =
+             let name =
+               match fid with
+-              | Fun fid ->
++              | None -> "callback"
++              | Some (Fun fid) ->
+                   compute_back_fun_name ctx
+                     (FunDeclId.Map.find fid ctx.fun_ctx.llbc_fun_decls)
+-              | TraitMethod (trait_ref, method_id) ->
++              | Some (TraitMethod (trait_ref, method_id)) ->
+                   Charon.GAstUtils.get_method_name ctx.decls_ctx.crate
+                     trait_ref.trait_decl_ref.binder_value.id method_id
+             in
+@@ -541,7 +558,7 @@
+             in
+             let ctx, dest = fresh_var_for_symbolic_value call.dest ctx in
+             let dest = mk_tpat_from_fvar dest_mplace dest in
+-            (ctx, Unop (Not ty), effect_info, args, [], dest)
++            (ctx, Some (Unop (Not ty)), effect_info, args, [], dest)
+         | _ -> [%craise] ctx.span "Unreachable")
+     | S.Unop (E.Neg overflow) -> (
+         match args with
+@@ -558,7 +575,7 @@
+             in
+             let ctx, dest = fresh_var_for_symbolic_value call.dest ctx in
+             let dest = mk_tpat_from_fvar dest_mplace dest in
+-            (ctx, Unop (Neg int_ty), effect_info, args, [], dest)
++            (ctx, Some (Unop (Neg int_ty)), effect_info, args, [], dest)
+         | _ -> [%craise] ctx.span "Unreachable")
+     | S.Unop (E.Cast (CastTransmute (src, tgt)))
+       when Config.backend () = Config.Lean
+@@ -566,14 +583,14 @@
+         let effect_info = { can_fail = true; can_diverge = false; is_rec = false } in
+         let ctx, dest = fresh_var_for_symbolic_value call.dest ctx in
+         let dest = mk_tpat_from_fvar dest_mplace dest in
+-        (ctx, Unop NanosecondsConstruct, effect_info, args, [], dest)
++        (ctx, Some (Unop NanosecondsConstruct), effect_info, args, [], dest)
+     | S.Unop (E.Cast (CastTransmute (src, tgt)))
+       when Config.backend () = Config.Lean
+         && TypesAnalysis.supported_nanoseconds_read ctx.decls_ctx.crate.type_decls src tgt ->
+         let effect_info = { can_fail = false; can_diverge = false; is_rec = false } in
+         let ctx, dest = fresh_var_for_symbolic_value call.dest ctx in
+         let dest = mk_tpat_from_fvar dest_mplace dest in
+-        (ctx, Unop NanosecondsRead, effect_info, args, [], dest)
++        (ctx, Some (Unop NanosecondsRead), effect_info, args, [], dest)
+     | S.Unop (E.Cast kind) -> begin
+         let kind, can_fail =
+           match kind with
+@@ -621,7 +638,7 @@
+         let effect_info = { can_fail; can_diverge = false; is_rec = false } in
+         let ctx, dest = fresh_var_for_symbolic_value call.dest ctx in
+         let dest = mk_tpat_from_fvar dest_mplace dest in
+-        (ctx, Unop (Cast kind), effect_info, args, [], dest)
++        (ctx, Some (Unop (Cast kind)), effect_info, args, [], dest)
+       end
+     | S.Binop binop -> (
+         [%ldebug
+@@ -695,17 +712,22 @@
+                   [%craise] ctx.span "Not supported: `binop::offset`"
+               | Expressions.Cmp -> Cmp (get_single_int_ty ())
+             in
+-            (ctx, Binop binop, effect_info, args, [], dest)
++            (ctx, Some (Binop binop), effect_info, args, [], dest)
+         | _ -> [%craise] ctx.span "Unreachable")
+   in
+-  let func = { id = FunOrOp fun_id; generics } in
+-  let input_tys = (List.map (fun (x : texpr) -> x.ty)) args in
++  let input_tys = List.map (fun (x : texpr) -> x.ty) args in
+   let ret_ty =
+     if effect_info.can_fail then mk_result_ty dest_v.ty else dest_v.ty
+   in
+-  let func_ty = mk_arrows input_tys ret_ty in
+-  let func = { e = Qualif func; ty = func_ty } in
+-  let call_e = [%add_loc] mk_apps ctx.span func args in
++  let call_e = match fun_id with
++    | Some fun_id ->
++        let func = { id = FunOrOp fun_id; generics } in
++        let func_ty = mk_arrows input_tys ret_ty in
++        let func = { e = Qualif func; ty = func_ty } in
++        [%add_loc] mk_apps ctx.span func args
++    | None ->
++        let callback = tvalue_to_texpr ctx call.ctx (Option.get call.callback) in
++        apply_dynamic_callback ctx.span callback args ret_ty in
+   (* This is a **hack** for [Box::new]: introduce backward functions
+      which are the identity if we instantiated [Box::new] with types
+      containing mutable borrows.

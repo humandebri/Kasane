@@ -1,0 +1,37 @@
+{
+  "status": "unadopted-candidates-symbolic-borrow-check-only",
+  "sha256": {
+    ".local/proof-tools/aeneas-ref-copy-candidate/aeneas": "d4ec4b7fcb7530f4b6c9fb3974d9f223a4e296dbea32c2ed1e03b6bd09d9fed6",
+    "proofs/extraction/tool-patches/aeneas-immediate-ref-copy-fusion.patch": "d5516d088e1ae688c600b3d2b297615a6e58edb50969e055d0b8bf77a8573f2b",
+    "proofs/extraction/tool-patches/fixtures/revm-gat-closed-candidate.json": "df1bca85c7fdcc7992b4824aecec0a5bd2b8658145204ac3ff9f8eba94b89b06",
+    ".local/proof-tools/aeneas-source/src/BorrowCheck.ml": "a8a35b88f2d9bdd7849517a8ba758e5e5fc3004436327de201928e73264d2682",
+    "vendor/revm/crates/interpreter/src/instructions/arithmetic.rs": "a8e27a55eae651d10329c7f6963c81b1f393013066d301744281490c58fcc0cc",
+    "vendor/revm/crates/interpreter/src/instructions/macros.rs": "03a7be6e8a52404302da914f86d1b189c39d338c1484ea6b11c9639fe6a64fe9",
+    "vendor/revm/crates/interpreter/src/interpreter_types.rs": "de97652bfd5486d6c64bb36e7cacb45f211ff627c99d2dbd55421e8c97de1271",
+    ".local/proof-tools/aeneas-source/src/PrePasses.ml": "35ad8664761846fe4eee2b02563f5902e3b3af03e66e39a660bf1248429c5b68"
+  },
+  "frontend_profile": "gat-closed-item-equality-profile.json",
+  "aeneas_candidate": "fixed six-patch build plus unapplied immediate-ref-copy-fusion patch; source and fixed executable restored after separate candidate copy",
+  "input": "stored clean actual ADD/SUB separate concrete probe graph; not freshly extracted by this gate",
+  "structured_bodies": [
+    "kasane_revm_concrete_probe::add",
+    "kasane_revm_concrete_probe::sub",
+    "revm_interpreter::instructions::arithmetic::add",
+    "revm_interpreter::instructions::arithmetic::sub"
+  ],
+  "opaque_function_declarations": 65,
+  "checks": {
+    "candidate_borrow": "passed with -abort-on-error -warnings-as-errors",
+    "fixed_borrow": "rejected mutable reference copy",
+    "candidate_lean": "rejected retained MemoryTr GAT at SymbolicToPure.ml:224"
+  },
+  "scope": "Aeneas symbolically evaluates four structured bodies, with opaque calls interpreted from signatures and builtin models. Does not inspect the bodies of 65 opaque function declarations. This is a diagnostic, not a Lean theorem or full Rust borrow/aliasing proof.",
+  "remaining": [
+    "Candidate transformations semantic preservation",
+    "Production dependency graph correspondence",
+    "Unsafe stack mutation and concrete trait call implementation correspondence",
+    "GAT Pure/Lean translation",
+    "Instruction result/gas/stack full-input theorem",
+    "Native/Wasm/compiler and IC runtime correspondence"
+  ]
+}

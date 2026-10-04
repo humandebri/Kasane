@@ -1,0 +1,12 @@
+{
+  "status": "Rust extraction succeeded; Lean transformation failed, not proof",
+  "source": "crates/ic-evm-gateway/src/lib.rs",
+  "source_sha256": "6f06ad634428927ab2a0a282f2eb66edfb85067e1747c0d1fb5176228806f1ec",
+  "root_lock_sha256": "272266f066e89637bca1791b96688d42f4fe3e1b01a5148e25b84138bc6c3168",
+  "direct_cargo_failure": "native cdylib IC exports unresolved even with emit=metadata",
+  "successful_route": "nightly-2026-09-17 cargo check --lib --locked -vv with -Zalways-encode-mir -Zmir-opt-level=0; same rustc args via Charon rustc --sysroot default --preset=aeneas --mir optimized",
+  "selected_function": "ic_evm_gateway::refresh_transfer_quote_after_rejection",
+  "rust_extraction": "succeeded without warnings",
+  "aeneas_failure": "core/src/str/pattern.rs:99, SymbolicToPureTypes.ml:392, Unimplemented",
+  "not_verified": "actual callback/ICRC ledger call and prefix classifier correspondence"
+}

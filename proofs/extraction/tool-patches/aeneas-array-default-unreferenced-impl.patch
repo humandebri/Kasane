@@ -1,0 +1,47 @@
+--- a/src/PrePasses.ml
++++ b/src/PrePasses.ml
+@@ -157,12 +157,44 @@
+   let impl_pat = NameMatcher.parse_pattern "core::default::Default" in
+   let match_name = ExtractName.match_name crate in
+ 
++  (* Monomorphization can leave unrelated polymorphic impl metadata whose trait
++     declarations were removed. Never skip a declaration or referenced impl. *)
++  let referenced_impls = ref TraitImplId.Set.empty in
++  let refs =
++    object
++      inherit [_] iter_crate
++      method! visit_trait_impl_id _ id =
++        TraitImplId.Set.add_in_place id referenced_impls
++    end
++  in
++  List.iter (refs#visit_declaration_group ()) (Option.get crate.declarations);
++  TypeDeclId.Map.iter (fun _ d -> refs#visit_type_decl () d) crate.type_decls;
++  FunDeclId.Map.iter (fun _ d -> refs#visit_fun_decl () d) crate.fun_decls;
++  GlobalDeclId.Map.iter (fun _ d -> refs#visit_global_decl () d) crate.global_decls;
++  TraitDeclId.Map.iter (fun _ d -> refs#visit_trait_decl () d) crate.trait_decls;
++  TraitImplId.Map.iter
++    (fun own_id impl ->
++      let impl_refs =
++        object
++          inherit [_] iter_crate
++          method! visit_trait_impl_id _ id =
++            if id <> own_id then TraitImplId.Set.add_in_place id referenced_impls
++        end
++      in
++      impl_refs#visit_trait_impl () impl)
++    crate.trait_impls;
++
+   (* Helper: check whether a trait impl matches the [Default<[T; N]>] pattern,
+      and if so return its array length [N]. We ignore the case where the length
+      is equal to 0, because in this case rustc uses a different impl which
+      doesn't require that the type of the elements also has a default
+      implementation. *)
+   let matches_default_array (impl : trait_impl) : constant_expr option =
++    if not (TraitDeclId.Map.mem impl.impl_trait.id crate.trait_decls)
++       && not (TraitImplId.Set.mem impl.def_id !referenced_impls)
++       && TraitMethodId.Map.is_empty impl.methods
++    then None
++    else
+     let trait_decl =
+       [%silent_unwrap_opt_span] (Some impl.item_meta.span)
+         (TraitDeclId.Map.find_opt impl.impl_trait.id crate.trait_decls)

@@ -1,0 +1,62 @@
+--- a/src/pure/Pure.ml
++++ b/src/pure/Pure.ml
+@@ -1232,6 +1232,8 @@
+   | NanosecondsConstruct
+ 
+ and cast_kind =
++  | CastRustFnItem of ty * ty
++      (** Retained item-to-pointer coercion; endpoints are substitution-visible. *)
+   | CastLit of literal_type * literal_type
+   | CastRawPtr of (literal_type * mutability) * (literal_type * mutability)
+       (** When casting between raw pointers, we only support a subset of casts
+--- a/src/pure/PrintPure.ml
++++ b/src/pure/PrintPure.ml
+@@ -892,6 +892,7 @@
+ let cast_kind_to_string (env : fmt_env) (kind : cast_kind) : string =
+   let src, tgt =
+     match kind with
++    | CastRustFnItem (src,tgt) -> (ty_to_string env false src,ty_to_string env false tgt)
+     | CastLit (src, tgt) ->
+         (literal_type_to_string src, literal_type_to_string tgt)
+     | CastRawPtr ((src, src_mut), (tgt, tgt_mut)) ->
+--- a/src/extract/Extract.ml
++++ b/src/extract/Extract.ml
+@@ -402,6 +402,8 @@
+     (extract_expr : inside:bool -> texpr -> unit) (fmt : F.formatter)
+     ~(inside : bool) (kind : cast_kind) (arg : texpr) : unit =
+   match kind with
++  | CastRustFnItem _ ->
++      [%craise] span "Retained Rust function-item coercion requires verified callable extraction"
+   | CastLit (src, tgt) ->
+       (* Casting, say, an u32 to an i32 would be done as follows:
+          {[
+@@ -426,6 +428,8 @@
+     (extract_expr : inside:bool -> texpr -> unit) (fmt : F.formatter)
+     ~(inside : bool) (kind : cast_kind) (arg : texpr) : unit =
+   match kind with
++  | CastRustFnItem _ ->
++      [%craise] span "Retained Rust function-item coercion requires verified callable extraction"
+   | CastLit (src, tgt) ->
+       let integer_type_to_string (ty : integer_type) : string =
+         if backend () = Lean then
+--- a/src/symbolic/SymbolicToPureExpressions.ml
++++ b/src/symbolic/SymbolicToPureExpressions.ml
+@@ -606,7 +606,17 @@
+               [%craise] ctx.span "Unsupported: pointer to address casts"
+           | CastPtrWithExposedProvenance _ ->
+               [%craise] ctx.span "Unsupported: address to pointer casts"
+-          | CastFnPtr _ -> [%craise] ctx.span "TODO: function casts"
++          | CastFnPtr (src_ty,tgt_ty) ->
++              [%cassert] ctx.span
++                (Config.backend ()=Lean
++                 && InterpExpressions.fn_item_reification_signature_matches
++                      ctx.decls_ctx.crate src_ty tgt_ty)
++                "Unsupported Pure function-item coercion signature";
++              let src=translate_sty (Some ctx.span) src_ty in
++              let tgt=translate_sty (Some ctx.span) tgt_ty in
++              [%cassert] ctx.span (match args with [arg] -> arg.ty=src | _ -> false)
++                "Pure function-item coercion operand mismatch";
++              (CastRustFnItem(src,tgt),false)
+           | CastUnsize _ ->
+               (* We shouldn't get there: this case should have been detected before
+                and handled in [translate_cast_unsize] *)

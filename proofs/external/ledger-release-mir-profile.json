@@ -1,0 +1,28 @@
+{
+  "release_compiler": "Rust1.93.1 (01f6ddf75 2026-02-11)",
+  "release_target": "wasm32-unknown-unknown",
+  "release_pointer_width": 32,
+  "comparison_compiler": "nightly2026-09-17",
+  "comparison_target": "aarch64-apple-darwin",
+  "sha256": {
+    "proofs/external/release_duration_probe.rs": "0fc09d7f3d22b94901bb3513a5246b86053e0fdae6c59b097e1b0efc31009711",
+    "scripts/audit_release_duration_mir.py": "e3eee7911dfeeb964652b4fce78c53e1bafe1a427708da2b6b83f4951c4bbad8",
+    ".local/proof-tools/ledger-repro-cache/release-duration-wasm32.mir": "83ab0dc94c6f530a56cfd4f27e991f52c5ffed0218b4e4a995617f9786aa7d85",
+    ".local/proof-tools/ledger-repro-cache/nightly-duration-host.mir": "da7fce2564837513b1ef75747bc9f9c948034cae7d798e43141583c1f3e30b13",
+    ".local/proof-tools/ledger-repro-cache/release-rustc-version.txt": "b1008d5f7681db91d446d2bb0a07af00372bb6cb4d4599e95212e3a8edce4e11",
+    ".local/proof-tools/ledger-repro-cache/release-wasm32-target.json": "035a2689ad76410f44dfc352f7795ae66361b752db71689d62e1e445667d63ba"
+  },
+  "validation": "Four optimized MIR probe functions obtained with actual official build compiler and wasm32 target. duration_nanos full MIR body identical to fixed nightly host output; arithmetic/bound/comparison/saturation snapshot checks passed, four modified witnesses rejected. checked conversion error payload and unwrap control flow differ between compiler/library versions. No MIR-to-Lean or compiler semantic equivalence theorem claimed.",
+  "remaining": "Actual source timestamp wrapper, MIR semantics, scalar transmute/layout, error/panic behavior, target/compiler and IC execution correspondence remain unproved.",
+  "container": "kasane-ledger-release-mir-cf41372",
+  "container_final_state": "stopped; retained for continued proof work",
+  "probe_compile_flags": [
+    "--edition=2021",
+    "--crate-type=lib",
+    "--target=wasm32-unknown-unknown",
+    "-Copt-level=z",
+    "-Zmir-opt-level=3",
+    "--emit=mir"
+  ],
+  "release_probe_configuration_scope": "Same release compiler and wasm32 target, standalone standard-library probe with explicit MIR optimization level3; not the full ledger Bazel compilation or a semantics-preserving optimization proof."
+}

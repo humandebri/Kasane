@@ -1,0 +1,105 @@
+--- a/src/symbolic/SymbolicAst.ml
++++ b/src/symbolic/SymbolicAst.ml
+@@ -38,12 +38,15 @@
+   | Fun of fn_ptr_kind * FunCallId.id
+       (** A "regular" function (i.e., a function which is not a primitive
+           operation) *)
++  | Dynamic of FunCallId.id
++      (** An evaluated function value, stored separately from the call identifier. *)
+   | Unop of unop
+   | Binop of binop
+ [@@deriving show, ord]
+ 
+ type call = {
+   call_id : call_id;
++  callback : tvalue option;
+   span : Meta.span;
+   ctx : (Contexts.eval_ctx[@opaque]);
+       (** The context upon calling the function (after the operands have been
+--- a/src/symbolic/SynthesizeSymbolic.ml
++++ b/src/symbolic/SynthesizeSymbolic.ml
+@@ -105,7 +105,7 @@
+     (e : expr) : expr =
+   synthesize_symbolic_expansion span sv place [ Some see ] [ e ]
+ 
+-let synthesize_function_call (span : Meta.span) (call_id : call_id)
++let synthesize_function_call ?(callback = None) (span : Meta.span) (call_id : call_id)
+     (ctx : Contexts.eval_ctx) (sg : (fun_sig * inst_fun_sig) option)
+     (abstractions : AbsId.id list) (generics : generic_args)
+     (args : tvalue list) (args_places : mplace option list)
+@@ -118,6 +118,7 @@
+   let call =
+     {
+       call_id;
++      callback;
+       span;
+       ctx;
+       sg;
+@@ -147,6 +148,15 @@
+     ctx
+     (Some (sg, inst_sg))
+     abstractions generics args args_places dest dest_place e
++
++let synthesize_dynamic_function_call (span : Meta.span) (callback : tvalue)
++    (call_id : FunCallId.id) (ctx : Contexts.eval_ctx) (sg : fun_sig)
++    (inst_sg : inst_fun_sig) (abstractions : AbsId.id list)
++    (generics : generic_args) (args : tvalue list)
++    (args_places : mplace option list) (dest : symbolic_value)
++    (dest_place : mplace option) (e : expr) : expr =
++  synthesize_function_call ~callback:(Some callback) span (Dynamic call_id) ctx
++    (Some (sg, inst_sg)) abstractions generics args args_places dest dest_place e
+ 
+ let synthesize_unary_op (span : Meta.span) (ctx : Contexts.eval_ctx)
+     (unop : unop) (arg : tvalue) (arg_place : mplace option)
+--- a/src/symbolic/PrintSymbolicAst.ml
++++ b/src/symbolic/PrintSymbolicAst.ml
+@@ -9,12 +9,16 @@
+   match call_id with
+   | Fun (fid, call_id) ->
+       fn_ptr_kind_to_string env fid ^ "@" ^ FunCallId.to_string call_id
++  | Dynamic call_id -> "dynamic@" ^ FunCallId.to_string call_id
+   | Unop unop -> unop_to_string env unop
+   | Binop binop -> binop_to_string binop
+ 
+ let call_to_string (env : fmt_env) (indent : string) (call : call) : string =
+   let dest = Values.symbolic_value_to_string env call.dest in
+   let call_id = call_id_to_string env call.call_id in
++  let call_id = match call.callback with
++    | None -> call_id
++    | Some callback -> call_id ^ "[" ^ Values.tvalue_to_string env callback ^ "]" in
+   let generics = generic_args_to_string env call.generics in
+   let args =
+     if call.args = [] then ""
+--- a/src/symbolic/SymbolicToPureExpressions.ml
++++ b/src/symbolic/SymbolicToPureExpressions.ml
+@@ -407,6 +407,8 @@
+      if necessary. *)
+   let ctx, fun_id, effect_info, args, back_funs, dest_v =
+     match call.call_id with
++    | S.Dynamic _ ->
++        [%craise] ctx.span "Dynamic Pure application is not implemented"
+     | S.Fun (fid, call_id) ->
+         (* Regular function call *)
+         let fid_t = translate_fn_ptr_kind ctx fid in
+--- a/src/interp/InterpStatements.ml
++++ b/src/interp/InterpStatements.ml
+@@ -1282,8 +1282,6 @@
+  fun ctx ->
+   match call.func with
+   | FnOpDynamic operand ->
+-      if not !Config.borrow_check then
+-        [%craise] span "Dynamic callback synthesis is not implemented";
+       let values, ctx, cc = eval_operands config span [ operand ] ctx in
+       let callback = match values with [ v ] -> v | _ -> [%internal_error] span in
+       let signature = dynamic_borrow_signature span ctx.type_vars ctx.const_generic_vars callback.ty in
+@@ -1536,7 +1534,9 @@
+        | Some fid, None ->
+            S.synthesize_regular_function_call span fid call_id ctx sg inst_sg
+              abs_ids generics args args_places ret_spc dest_place
+-       | None, Some _ when !Config.borrow_check -> fun expr -> expr
++       | None, Some callback ->
++           S.synthesize_dynamic_function_call span callback call_id ctx sg inst_sg
++             abs_ids generics args args_places ret_spc dest_place
+        | _ -> [%craise] span "Dynamic callback synthesis is not implemented")
+   in
+ 

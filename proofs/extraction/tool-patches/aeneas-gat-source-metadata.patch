@@ -1,0 +1,97 @@
+--- a/src/pure/Pure.ml
++++ b/src/pure/Pure.ml
+@@ -1896,6 +1896,13 @@
+ }
+ [@@deriving show]
+ 
++type trait_associated_type_source = {
++  source_id : assoc_type_id;
++  source_name : trait_item_name;
++  source_binder : A.trait_assoc_ty T.binder;
++}
++[@@deriving show]
++
+ type trait_decl = {
+   def_id : trait_decl_id;
+   name : string;
+@@ -1915,6 +1922,7 @@
+   llbc_parent_clauses : Types.trait_param list;
+   consts : (assoc_const_id * trait_item_name * ty) list;
+   types : (assoc_type_id * trait_item_name) list;
++  associated_type_sources : trait_associated_type_source list;
+   methods : trait_method list;
+ }
+ [@@deriving show]
+--- a/src/symbolic/SymbolicToPure.ml
++++ b/src/symbolic/SymbolicToPure.ml
+@@ -185,6 +185,18 @@
+         bound_method;
+   }
+ 
++let retain_trait_associated_type_sources
++    (types : A.trait_assoc_ty T.binder T.AssocTypeId.Map.t) :
++    trait_associated_type_source list =
++  T.AssocTypeId.Map.to_list types |> List.map (fun (source_id,(source_binder : A.trait_assoc_ty T.binder)) ->
++    { source_id; source_name = source_binder.binder_value.name; source_binder })
++
++let validate_trait_associated_type_source span (source : trait_associated_type_source) =
++  [%cassert] span (source.source_binder.binder_params = TypesUtils.empty_generic_params)
++    "Can not extract trait associated types with parameters";
++  [%cassert] span (source.source_binder.binder_value.implied_clauses = [])
++    "Can not extract trait associated types with implied trait clauses"
++
+ let translate_trait_decl (ctx : Contexts.decls_ctx) (trait_decl : A.trait_decl)
+     : trait_decl =
+   let source_names = List.filter_map
+@@ -226,6 +238,7 @@
+     match_name_find_opt ctx trait_decl.item_meta.name
+       (ExtractBuiltin.builtin_trait_decls_map ())
+   in
++  let associated_type_sources = retain_trait_associated_type_sources types in
+   if (not (T.AssocTypeId.Map.is_empty types)) && builtin_info = None then
+     (* Most associated types are removed by Charon's `--remove-associated-types`. *)
+     [%warn] span
+@@ -238,16 +251,9 @@
+       ^ Contexts.compute_local_uses_error_message ctx
+           (IdTraitDecl trait_decl.def_id));
+   let types =
+-    List.map
+-      (fun ((type_id, t) : T.AssocTypeId.id * A.trait_assoc_ty T.binder) ->
+-        [%cassert] span
+-          (t.binder_params = TypesUtils.empty_generic_params)
+-          "Can not extract trait associated types with parameters";
+-        let t = t.binder_value in
+-        [%cassert] span (t.implied_clauses = [])
+-          "Can not extract trait associated types with implied trait clauses";
+-        (type_id, t.name))
+-      (T.AssocTypeId.Map.to_list types)
++    List.map (fun source ->
++      validate_trait_associated_type_source span source;
++      (source.source_id, source.source_name)) associated_type_sources
+   in
+   let consts =
+     List.map
+@@ -277,6 +283,7 @@
+     llbc_parent_clauses;
+     consts;
+     types;
++    associated_type_sources;
+     methods;
+   }
+ 
+--- a/src/pure/PureUtils.ml
++++ b/src/pure/PureUtils.ml
+@@ -1370,11 +1370,12 @@
+     llbc_parent_clauses = _;
+     consts;
+     types;
++    associated_type_sources;
+     methods;
+   } =
+     trait_decl
+   in
+-  parent_clauses = [] && consts = [] && types = [] && methods = []
++  parent_clauses = [] && consts = [] && types = [] && associated_type_sources = [] && methods = []
+ 
+ let trait_impl_is_empty (trait_impl : trait_impl) : bool =
+   let {

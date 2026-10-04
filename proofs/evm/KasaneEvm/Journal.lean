@@ -151,7 +151,7 @@ theorem step_preserves_bounds (s : World) (a : Action) (hs : Bounded s) (ha : va
     refine ⟨hs.1, hs.2.1, ?_⟩
     intro k
     by_cases h : k = key
-    · simpa [step, put, h] using ha
+    · simpa [step, put, h, valid] using ha
     · simpa [step, put, h] using hs.2.2 k
   | transfer amount =>
     exact ⟨Nat.le_trans (Nat.sub_le _ _) hs.1, ha.2, hs.2.2⟩
