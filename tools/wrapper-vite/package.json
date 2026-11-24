@@ -37,7 +37,7 @@
     "react-router-dom": "^7.18.0",
     "tailwind-merge": "^3.3.1",
     "tw-animate-css": "^1.3.7",
-    "zod": "^4.1.11"
+    "zod": "^4.6.6"
   },
   "devDependencies": {
     "@icp-sdk/bindgen": "^0.2.3",
@@ -51,7 +51,7 @@
     "tsx": "^4.22.4",
     "typescript": "^5.9.2",
     "vite": "npm:@voidzero-dev/vite-plus-core@1.0.0",
-    "vite-plus": "1.0.0"
+    "vite-plus": "1.3.0"
   },
   "overrides": {
     "vite": "$vite",
