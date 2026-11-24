@@ -30,7 +30,7 @@
     "typescript": "^5.7.3",
     "tsx": "^4.19.2",
     "viem": "^2.37.13",
-    "wrangler": "^4.0.0"
+    "wrangler": "^4.167.0"
   },
   "overrides": {
     "undici": "^7.29.1"
