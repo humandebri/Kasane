@@ -6,6 +6,8 @@ ignore = [
   "RUSTSEC-2024-0436",
   "RUSTSEC-2026-0097",
   "RUSTSEC-2026-0173",
+  # k256 0.13.4 timing variability (awaiting upstream release / alloy-revm update)
+  "RUSTSEC-2026-0387",
 ]
 
 [licenses]
